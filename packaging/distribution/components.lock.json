@@ -41,18 +41,18 @@
     {
       "id": "chromium-core-headless-archive",
       "componentId": "chromium-core",
-      "version": "145.0.7632.6",
-      "url": "https://cdn.playwright.dev/chrome-for-testing-public/145.0.7632.6/mac-arm64/chrome-headless-shell-mac-arm64.zip",
-      "sha256": "8510b9b1575538aa6a092ed16d981738b2ebf52c5e41ea4c54a7ce16756cdcf5",
+      "version": "156.0.8078.4",
+      "url": "https://cdn.playwright.dev/builds/cft/156.0.8078.4/mac-arm64/chrome-headless-shell-mac-arm64.zip",
+      "sha256": "94e4337b70cbc5638f0935fbc46b9f242bc7416f657e3fbe924baf348404b53d",
       "archiveType": "zip",
       "license": "BSD-3-Clause"
     },
     {
       "id": "playwright-mcp-archive",
       "componentId": "playwright-mcp",
-      "version": "0.0.77",
-      "url": "https://registry.npmjs.org/@playwright/mcp/-/mcp-0.0.77.tgz",
-      "sha256": "32a2d506d50ebc7025f48bdb1c9ba6fecbc31e416e32c56d5c848504e023f984",
+      "version": "0.0.83",
+      "url": "https://registry.npmjs.org/@playwright/mcp/-/mcp-0.0.83.tgz",
+      "sha256": "f0014a13361b1ee2d8607a4e187868ab9a6e8ac637dbcd66e4af43f738d0c8cb",
       "archiveType": "tar.gz",
       "license": "Apache-2.0"
     }

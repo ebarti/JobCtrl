@@ -354,6 +354,7 @@ PUBLIC_COPYRIGHT_SNIPPETS = (
 )
 PUBLIC_CONTROLLER_NAME = "El" + "oi Barti"
 PUBLIC_CONTROLLER_EMAIL = "me@" + "el" + "oi" + "barti" + ".com"
+PUBLIC_CONTROLLER_OBFUSCATED_EMAIL = PUBLIC_CONTROLLER_EMAIL.replace("@", "[at]")
 PUBLIC_CONTROLLER_SOURCE_SNIPPETS = {
     Path("apps/web/src/demo/consent/DemoConsentGate.tsx"): (
         f"Data controller: {PUBLIC_CONTROLLER_NAME}, acting as an individual. Privacy questions:",
@@ -366,20 +367,18 @@ PUBLIC_CONTROLLER_SOURCE_SNIPPETS = {
     ),
     Path("docs/user/data-and-safety.md"): (
         f"The data controller for the public demo is {PUBLIC_CONTROLLER_NAME}, acting as an individual.\n"
-        f"For privacy questions, contact [{PUBLIC_CONTROLLER_EMAIL}](mailto:{PUBLIC_CONTROLLER_EMAIL}).",
+        f"For privacy questions, contact {PUBLIC_CONTROLLER_OBFUSCATED_EMAIL} (replace [at] with @).",
         f"The data controller for this documentation measurement is {PUBLIC_CONTROLLER_NAME}, acting as\n"
         "an individual. For privacy questions, contact\n"
-        f"[{PUBLIC_CONTROLLER_EMAIL}](mailto:{PUBLIC_CONTROLLER_EMAIL}).",
+        f"{PUBLIC_CONTROLLER_OBFUSCATED_EMAIL} (replace [at] with @).",
     ),
     Path("docs/.vitepress/dist/user/data-and-safety.html"): (
         f"The data controller for the public demo is {PUBLIC_CONTROLLER_NAME}, acting as an individual. "
         "For privacy questions, contact "
-        f'<a href="mailto:{PUBLIC_CONTROLLER_EMAIL}" target="_blank" rel="noreferrer">'
-        f"{PUBLIC_CONTROLLER_EMAIL}</a>.",
+        f"{PUBLIC_CONTROLLER_OBFUSCATED_EMAIL} (replace [at] with @).",
         f"The data controller for this documentation measurement is {PUBLIC_CONTROLLER_NAME}, acting as an individual. "
         "For privacy questions, contact "
-        f'<a href="mailto:{PUBLIC_CONTROLLER_EMAIL}" target="_blank" rel="noreferrer">'
-        f"{PUBLIC_CONTROLLER_EMAIL}</a>.",
+        f"{PUBLIC_CONTROLLER_OBFUSCATED_EMAIL} (replace [at] with @).",
     ),
 }
 PUBLIC_DEMO_CONTROLLER_BUILD_ASSET_PREFIXES = (

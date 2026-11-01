@@ -446,7 +446,6 @@ function RequirementAuditDetails({
       <CollapsibleTrigger
         render={
           <Button
-            aria-label="Additional audit details"
             className="w-full justify-between"
             size="sm"
             type="button"

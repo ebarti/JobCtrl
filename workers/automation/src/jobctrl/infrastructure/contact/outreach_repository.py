@@ -1,9 +1,9 @@
 """SQLite-backed ``OutreachThreadRepository`` (ninth bounded context) — R6 Phase 3.
 
 Publisher-injected, mirroring the other Contact & Outreach adapters: ``save``
-writes the canonical ``outreach_threads`` + ``outreach_drafts`` rows first, then
-emits the draft-lifecycle domain events inside a ``try/except`` so event
-publication never blocks the write.
+compares the exact loaded canonical state under SQLite writer ownership, then
+atomically appends content, updates lifecycle state and records durable events.
+Subscriber delivery after commit is best effort.
 
 Event choice is derived from the diff between the persisted and current thread —
 no send transport is involved at any point (INV-1):
@@ -28,6 +28,8 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from contextlib import contextmanager
+from dataclasses import replace
 
 from jobctrl.domain.contact.outreach import (
     FollowUpSchedule,
@@ -36,6 +38,7 @@ from jobctrl.domain.contact.outreach import (
     OutreachDraftKind,
     OutreachSendLog,
     OutreachThread,
+    OutreachPublicationConflict,
 )
 from jobctrl.domain.contact.outreach_gates import (
     DraftGateResults,
@@ -60,7 +63,34 @@ class SqliteOutreachThreadRepository:
 
     # ------------------------------------------------------------------ load
 
+    @contextmanager
+    def _snapshot_read(self):
+        # SAVEPOINT gives all aggregate SELECTs one SQLite snapshot and releases
+        # it before returning to a potentially slow model gate.
+        self._conn.execute("SAVEPOINT outreach_read")
+        try:
+            yield
+        finally:
+            self._conn.execute("RELEASE outreach_read")
+
+    def _canonical_state(self, tenant_id: TenantId, thread_id: str) -> tuple:
+        return tuple(
+            tuple(tuple(row) for row in self._conn.execute(
+                f"SELECT * FROM {table} WHERE tenant_id = ? AND thread_id = ? ORDER BY {order}",
+                (str(tenant_id), str(thread_id)),
+            ).fetchall())
+            for table, order in (
+                ("outreach_threads", "thread_id"),
+                ("outreach_drafts", "generation, draft_id"),
+                ("outreach_send_logs", "logged_at, send_log_id"),
+            )
+        )
+
     def load(self, tenant_id: TenantId, thread_id: str) -> OutreachThread | None:
+        with self._snapshot_read():
+            return self._load(tenant_id, thread_id)
+
+    def _load(self, tenant_id: TenantId, thread_id: str) -> OutreachThread | None:
         row = self._conn.execute(
             "SELECT * FROM outreach_threads WHERE tenant_id = ? AND thread_id = ?",
             (str(tenant_id), str(thread_id)),
@@ -70,6 +100,12 @@ class SqliteOutreachThreadRepository:
         return self._row_to_thread(tenant_id, row)
 
     def load_for_contact(
+        self, tenant_id: TenantId, contact_id: str, job_id: JobId | None = None
+    ) -> OutreachThread | None:
+        with self._snapshot_read():
+            return self._load_for_contact(tenant_id, contact_id, job_id)
+
+    def _load_for_contact(
         self, tenant_id: TenantId, contact_id: str, job_id: JobId | None = None
     ) -> OutreachThread | None:
         if job_id is not None:
@@ -104,13 +140,14 @@ class SqliteOutreachThreadRepository:
             """,
             (str(tenant_id),),
         ).fetchall()
-        return [self._row_to_thread(tenant_id, row) for row in rows]
+        return [self.load(tenant_id, str(row["thread_id"])) for row in rows]
 
     def _row_to_thread(self, tenant_id: TenantId, row: sqlite3.Row) -> OutreachThread:
         thread_id = str(row["thread_id"])
         return OutreachThread(
             tenant_id=tenant_id,
             thread_id=thread_id,
+            publication_base=self._canonical_state(tenant_id, thread_id),
             contact_id=str(row["contact_id"]),
             job_id=canonical_job_id(str(row["job_id"])) if row["job_id"] else None,
             drafts=self._load_drafts(tenant_id, thread_id),
@@ -181,115 +218,163 @@ class SqliteOutreachThreadRepository:
     # ------------------------------------------------------------------ save
 
     def save(self, tenant_id: TenantId, thread: OutreachThread) -> OutreachThread:
-        previous = self.load(tenant_id, thread.thread_id)
-        self._persist_canonical(tenant_id, thread)
-        try:
+        if thread.tenant_id != tenant_id:
+            raise ValueError("Outreach tenant mismatch")
+        self._pending_events = []
+        with self._conn:
+            if not self._conn.in_transaction:
+                self._conn.execute("BEGIN IMMEDIATE")
+            else:
+                # Acquire writer ownership even in an existing transaction.
+                self._conn.execute("UPDATE outreach_threads SET thread_id = thread_id WHERE 0")
+            previous = self.load(tenant_id, thread.thread_id)
+            current_base = previous.publication_base if previous else None
+            if current_base != thread.publication_base:
+                raise OutreachPublicationConflict(thread)
+            if previous is None and self.load_for_contact(tenant_id, thread.contact_id, thread.job_id):
+                raise OutreachPublicationConflict(thread)
+            if self._before_save is not None:
+                self._before_save()
+            self._assert_append_preserving(previous, thread)
+            self._persist_canonical(tenant_id, thread, previous)
             self._emit_events(tenant_id, thread, previous)
-            self._conn.commit()
-        except Exception:  # noqa: BLE001 — event publication must not corrupt the write
-            logger.exception("Failed to emit OutreachThread domain events for %s", thread.thread_id)
-        return thread
+            saved = replace(thread, publication_base=self._canonical_state(tenant_id, thread.thread_id))
+        # Durable rows, anchors and events have committed before subscriber fanout.
+        for event in self._pending_events:
+            try:
+                self._publisher.publish(event)
+            except Exception:  # noqa: BLE001 — delivery is best effort, persistence is not
+                logger.exception("Failed to deliver Outreach event for %s", thread.thread_id)
+        return saved
 
-    def _persist_canonical(self, tenant_id: TenantId, thread: OutreachThread) -> None:
+    def publish(self, event) -> None:
+        """Collect record_job_event fanout until the canonical transaction commits."""
+        self._pending_events.append(event)
+
+    @staticmethod
+    def _assert_append_preserving(previous: OutreachThread | None, thread: OutreachThread) -> None:
+        if len({draft.generation for draft in thread.drafts}) != len(thread.drafts):
+            raise ValueError("Outreach draft generations must be unique")
+        if previous is None:
+            return
+        drafts = {draft.draft_id: draft for draft in thread.drafts}
+        for old in previous.drafts:
+            new = drafts.get(old.draft_id)
+            if new is None or replace(
+                new, status=old.status, approved_at=old.approved_at,
+                rejected_at=old.rejected_at, reason=old.reason,
+            ) != old:
+                raise ValueError("Existing Outreach draft content is immutable")
+            if old.approved_at and new.approved_at != old.approved_at:
+                raise ValueError("Existing Outreach approval evidence is immutable")
+            if old.rejected_at and (new.rejected_at, new.reason) != (old.rejected_at, old.reason):
+                raise ValueError("Existing Outreach rejection evidence is immutable")
+        logs = {log.send_log_id: log for log in thread.send_logs}
+        if any(logs.get(old.send_log_id) != old for old in previous.send_logs):
+            raise ValueError("Existing Outreach send evidence is immutable")
+
+    def _persist_canonical(
+        self, tenant_id: TenantId, thread: OutreachThread, previous: OutreachThread | None
+    ) -> None:
         tenant = str(tenant_id)
         thread_id = str(thread.thread_id)
-        with self._conn:
-            if self._before_save is not None:
-                if not self._conn.in_transaction:
-                    self._conn.execute("BEGIN IMMEDIATE")
-                self._before_save()
+        self._conn.execute(
+            """
+            INSERT INTO outreach_threads (
+                tenant_id, thread_id, contact_id, job_id, created_at, updated_at,
+                follow_up_due_at, follow_up_basis, follow_up_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_id, thread_id) DO UPDATE SET
+                contact_id       = excluded.contact_id,
+                job_id           = excluded.job_id,
+                updated_at       = excluded.updated_at,
+                follow_up_due_at = excluded.follow_up_due_at,
+                follow_up_basis  = excluded.follow_up_basis,
+                follow_up_state  = excluded.follow_up_state
+            """,
+            (
+                tenant,
+                thread_id,
+                thread.contact_id,
+                thread.job_id,
+                thread.created_at,
+                thread.updated_at,
+                thread.follow_up.due_at,
+                thread.follow_up.basis or None,
+                thread.follow_up.state.value,
+            ),
+        )
+        prior_drafts = {draft.draft_id: draft for draft in previous.drafts} if previous else {}
+        for draft in thread.drafts:
+            if draft.draft_id in prior_drafts:
+                if draft != prior_drafts[draft.draft_id]:
+                    self._conn.execute(
+                        """UPDATE outreach_drafts SET status = ?, approved_at = ?, rejected_at = ?, reason = ?
+                           WHERE tenant_id = ? AND thread_id = ? AND draft_id = ?""",
+                        (draft.status.value, draft.approved_at, draft.rejected_at, draft.reason,
+                         tenant, thread_id, draft.draft_id),
+                    )
+                continue
             self._conn.execute(
                 """
-                INSERT INTO outreach_threads (
-                    tenant_id, thread_id, contact_id, job_id, created_at, updated_at,
-                    follow_up_due_at, follow_up_basis, follow_up_state
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(tenant_id, thread_id) DO UPDATE SET
-                    contact_id       = excluded.contact_id,
-                    job_id           = excluded.job_id,
-                    updated_at       = excluded.updated_at,
-                    follow_up_due_at = excluded.follow_up_due_at,
-                    follow_up_basis  = excluded.follow_up_basis,
-                    follow_up_state  = excluded.follow_up_state
+                INSERT INTO outreach_drafts (
+                    tenant_id, draft_id, thread_id, generation, kind, status,
+                    body_text, gate_results_json, provenance_json, created_at,
+                    approved_at, rejected_at, reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tenant,
+                    draft.draft_id,
                     thread_id,
-                    thread.contact_id,
-                    thread.job_id,
-                    thread.created_at,
-                    thread.updated_at,
-                    thread.follow_up.due_at,
-                    thread.follow_up.basis or None,
-                    thread.follow_up.state.value,
+                    draft.generation,
+                    draft.kind.value,
+                    draft.status.value,
+                    draft.body_text,
+                    json.dumps(draft.gate_results.to_read_model()),
+                    json.dumps([claim.to_read_model() for claim in draft.provenance]),
+                    draft.created_at,
+                    draft.approved_at,
+                    draft.rejected_at,
+                    draft.reason,
                 ),
             )
-            self._conn.execute(
-                "DELETE FROM outreach_send_logs WHERE tenant_id = ? AND thread_id = ?",
-                (tenant, thread_id),
-            )
-            for log in thread.send_logs:
-                self._conn.execute(
-                    """
-                    INSERT INTO outreach_send_logs (
-                        tenant_id, send_log_id, thread_id, draft_id, channel,
-                        sent_at, logged_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        tenant,
-                        log.send_log_id,
-                        thread_id,
-                        log.draft_id,
-                        log.channel,
-                        log.sent_at,
-                        log.logged_at,
-                    ),
-                )
-            self._conn.execute(
-                "DELETE FROM outreach_drafts WHERE tenant_id = ? AND thread_id = ?",
-                (tenant, thread_id),
-            )
-            for draft in thread.drafts:
-                self._conn.execute(
-                    """
-                    INSERT INTO outreach_drafts (
-                        tenant_id, draft_id, thread_id, generation, kind, status,
-                        body_text, gate_results_json, provenance_json, created_at,
-                        approved_at, rejected_at, reason
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        tenant,
-                        draft.draft_id,
-                        thread_id,
-                        draft.generation,
-                        draft.kind.value,
-                        draft.status.value,
-                        draft.body_text,
-                        json.dumps(draft.gate_results.to_read_model()),
-                        json.dumps([claim.to_read_model() for claim in draft.provenance]),
-                        draft.created_at,
-                        draft.approved_at,
-                        draft.rejected_at,
-                        draft.reason,
-                    ),
-                )
-                if draft.gate_results.determination_ids:
-                    from jobctrl.infrastructure.determinations import save_artifact_anchors
+            if draft.gate_results.determination_ids:
+                from jobctrl.infrastructure.determinations import save_artifact_anchors
 
-                    save_artifact_anchors(
-                        self._conn,
-                        tenant_id=tenant,
-                        artifact_kind="outreach",
-                        artifact_id=draft.draft_id,
-                        generation=draft.generation,
-                        determination_id=draft.gate_results.determination_ids[0],
-                        quality_determination_id=draft.gate_results.determination_ids[1],
-                        anchors=draft.gate_results.line_anchors,
-                        require_pass=draft.gate_results.passed,
-                        expected_entity_id=str(thread.contact_id),
-                    )
+                save_artifact_anchors(
+                    self._conn,
+                    tenant_id=tenant,
+                    artifact_kind="outreach",
+                    artifact_id=draft.draft_id,
+                    generation=draft.generation,
+                    determination_id=draft.gate_results.determination_ids[0],
+                    quality_determination_id=draft.gate_results.determination_ids[1],
+                    anchors=draft.gate_results.line_anchors,
+                    require_pass=draft.gate_results.passed,
+                    expected_entity_id=str(thread.contact_id),
+                )
+        prior_logs = {log.send_log_id for log in previous.send_logs} if previous else set()
+        for log in thread.send_logs:
+            if log.send_log_id in prior_logs:
+                continue
+            self._conn.execute(
+                """
+                INSERT INTO outreach_send_logs (
+                    tenant_id, send_log_id, thread_id, draft_id, channel,
+                    sent_at, logged_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tenant,
+                    log.send_log_id,
+                    thread_id,
+                    log.draft_id,
+                    log.channel,
+                    log.sent_at,
+                    log.logged_at,
+                ),
+            )
 
     # ---------------------------------------------------------------- events
 
@@ -484,7 +569,7 @@ class SqliteOutreachThreadRepository:
             tenant_id=tenant_id,
             message=message,
             payload=payload,
-            publisher=self._publisher,
+            publisher=self,
             entity_kind="outreach",
             entity_ref=thread_id,
         )

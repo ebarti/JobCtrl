@@ -5,6 +5,7 @@ import type { FeatureFlagPort } from "../shared/ports/FeatureFlagPort.js";
 import type { OpenInOsPort } from "../shared/ports/OpenInOsPort.js";
 import type { Session, SessionPort } from "../shared/ports/SessionPort.js";
 import type { StoragePort } from "../shared/ports/StoragePort.js";
+import { LocalStorageAdapter } from "../shared/adapters/local/LocalStorageAdapter.js";
 import { apiCapabilityFlagKey } from "../shared/lib/apiCapabilityAvailability.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 
@@ -26,6 +27,7 @@ export class DemoSessionAdapter implements SessionPort {
 /** UI preferences are intentionally tab-local until P5 exposes a resettable UI. */
 export class DemoStorageAdapter implements StoragePort {
   private readonly values = new Map<string, unknown>();
+  private readonly coordination = new LocalStorageAdapter();
 
   get<T = unknown>(key: string): T | null {
     return (this.values.get(key) as T | undefined) ?? null;
@@ -37,6 +39,14 @@ export class DemoStorageAdapter implements StoragePort {
 
   remove(key: string): void {
     this.values.delete(key);
+  }
+
+  transact<T>(
+    key: string,
+    operation: (current: string | null) => { result: T; write?: string },
+    signal?: AbortSignal,
+  ): Promise<T> {
+    return this.coordination.transact(key, operation, signal);
   }
 }
 

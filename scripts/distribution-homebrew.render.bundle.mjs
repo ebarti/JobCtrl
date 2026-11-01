@@ -3098,12 +3098,13 @@ var require_data = __commonJS({
   }
 });
 
-// node_modules/.pnpm/fast-uri@3.1.6/node_modules/fast-uri/lib/utils.js
+// node_modules/.pnpm/fast-uri@3.1.9/node_modules/fast-uri/lib/utils.js
 var require_utils = __commonJS({
-  "node_modules/.pnpm/fast-uri@3.1.6/node_modules/fast-uri/lib/utils.js"(exports, module) {
+  "node_modules/.pnpm/fast-uri@3.1.9/node_modules/fast-uri/lib/utils.js"(exports, module) {
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
+    var isPort = RegExp.prototype.test.bind(/^\d*$/u);
     var isHexPair = RegExp.prototype.test.bind(/^[\da-f]{2}$/iu);
     var isUnreserved = RegExp.prototype.test.bind(/^[\da-z\-._~]$/iu);
     var isPathCharacter = RegExp.prototype.test.bind(/^[A-Za-z0-9\-._~!$&'()*+,;=:@/]$/u);
@@ -3330,6 +3331,37 @@ var require_utils = __commonJS({
         }
       }
       return output.join("");
+    }
+    function removeDotSegmentsRelative(path7) {
+      if (path7 === "" || path7[0] === "/") {
+        return removeDotSegments(path7);
+      }
+      const segments = path7.split("/");
+      const last = segments.length - 1;
+      const output = [];
+      let trailingDirectory = false;
+      for (let i = 0; i <= last; i++) {
+        const segment = segments[i];
+        if (segment === "." || segment === "..") {
+          if (segment === "..") {
+            if (output.length !== 0 && output[output.length - 1] !== "..") {
+              output.pop();
+            } else {
+              output.push("..");
+            }
+          }
+          trailingDirectory = i === last;
+        } else {
+          output.push(segment);
+        }
+      }
+      if (trailingDirectory && output[output.length - 1] !== "..") {
+        output.push("");
+      }
+      if (output.length === 0 || output[0] === "" || output[0].includes(":")) {
+        output.unshift(".");
+      }
+      return output.join("/");
     }
     var HOST_DELIMS = { "@": "%40", "/": "%2F", "?": "%3F", "#": "%23", ":": "%3A" };
     var HOST_DELIM_RE = /[@/?#:]/g;
@@ -3569,8 +3601,12 @@ var require_utils = __commonJS({
         uriTokens.push(host);
       }
       if (typeof component.port === "number" || typeof component.port === "string") {
+        const port = String(component.port);
+        if (!isPort(port)) {
+          throw new TypeError("URI port is malformed.");
+        }
         uriTokens.push(":");
-        uriTokens.push(String(component.port));
+        uriTokens.push(port);
       }
       return uriTokens.length ? uriTokens.join("") : void 0;
     }
@@ -3587,6 +3623,7 @@ var require_utils = __commonJS({
       encodeFragment,
       escapePreservingEscapes,
       removeDotSegments,
+      removeDotSegmentsRelative,
       isIPv4,
       isUUID,
       normalizeIPv6,
@@ -3595,9 +3632,9 @@ var require_utils = __commonJS({
   }
 });
 
-// node_modules/.pnpm/fast-uri@3.1.6/node_modules/fast-uri/lib/schemes.js
+// node_modules/.pnpm/fast-uri@3.1.9/node_modules/fast-uri/lib/schemes.js
 var require_schemes = __commonJS({
-  "node_modules/.pnpm/fast-uri@3.1.6/node_modules/fast-uri/lib/schemes.js"(exports, module) {
+  "node_modules/.pnpm/fast-uri@3.1.9/node_modules/fast-uri/lib/schemes.js"(exports, module) {
     "use strict";
     var { isUUID } = require_utils();
     var URN_REG = /^([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-./:;=@]|%[\da-f]{2})+)$/iu;
@@ -3806,20 +3843,22 @@ var require_schemes = __commonJS({
   }
 });
 
-// node_modules/.pnpm/fast-uri@3.1.6/node_modules/fast-uri/index.js
+// node_modules/.pnpm/fast-uri@3.1.9/node_modules/fast-uri/index.js
 var require_fast_uri = __commonJS({
-  "node_modules/.pnpm/fast-uri@3.1.6/node_modules/fast-uri/index.js"(exports, module) {
+  "node_modules/.pnpm/fast-uri@3.1.9/node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
-    var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
+    var { normalizeIPv6, removeDotSegments, removeDotSegmentsRelative, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
     var VALID_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*$/u;
     var MALFORMED_SCHEME_ERROR = "URI scheme is malformed.";
-    function decodeValidScheme(scheme) {
-      const decodedScheme = unescape(String(scheme));
-      if (!VALID_SCHEME.test(decodedScheme)) {
+    var MALFORMED_HOST_ERROR = "URI host is malformed.";
+    var FORBIDDEN_DOMAIN_HOST_CHARACTER = /[\0-\x20"#/:<>?@[\\\]^`{|}\x7F]/u;
+    function validateScheme(scheme) {
+      const stringScheme = String(scheme);
+      if (!VALID_SCHEME.test(stringScheme)) {
         throw new TypeError(MALFORMED_SCHEME_ERROR);
       }
-      return decodedScheme;
+      return stringScheme;
     }
     function normalize(uri, options) {
       if (typeof uri === "string") {
@@ -3856,6 +3895,9 @@ var require_fast_uri = __commonJS({
       const resolvedSchemeHandler = getSchemeHandler(options && options.scheme || resolved.scheme);
       const resolvedHost = resolved.host;
       const resolvedHostIsIP = resolvedHost !== void 0 && resolvedHost !== "" && (isIPv4(resolvedHost) || normalizeIPv6(resolvedHost).isIPV6);
+      if (hasForbiddenDomainHost(resolved, options || {}, resolvedSchemeHandler, resolvedHostIsIP)) {
+        throw new Error(MALFORMED_HOST_ERROR);
+      }
       canonicalizeHost(resolved, options || {}, resolvedSchemeHandler, resolvedHostIsIP);
       const encodedASCIIHost = resolvedHost && resolvedHost.indexOf("%") !== -1 && !new RegExp("\\P{ASCII}", "u").test(resolvedHost);
       if (resolved.error && !encodedASCIIHost) {
@@ -3897,14 +3939,15 @@ var require_fast_uri = __commonJS({
             if (relative.path[0] === "/") {
               target.path = removeDotSegments(relative.path);
             } else {
-              if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
+              const baseHasAuthority = base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0;
+              if (baseHasAuthority && !base.path) {
                 target.path = "/" + relative.path;
               } else if (!base.path) {
                 target.path = relative.path;
               } else {
                 target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative.path;
               }
-              target.path = removeDotSegments(target.path);
+              target.path = base.scheme === void 0 && !baseHasAuthority && target.path[0] !== "/" ? removeDotSegmentsRelative(target.path) : removeDotSegments(target.path);
             }
             target.query = relative.query;
           }
@@ -3942,12 +3985,13 @@ var require_fast_uri = __commonJS({
       const options = Object.assign({}, opts);
       const uriTokens = [];
       if (component.scheme) {
-        component.scheme = decodeValidScheme(component.scheme);
+        component.scheme = validateScheme(component.scheme);
       }
       const schemeHandler = getSchemeHandler(options.scheme || component.scheme);
       if (schemeHandler && schemeHandler.serialize) schemeHandler.serialize(component, options);
       const hasAuthority = component.userinfo !== void 0 || component.host !== void 0 || component.port !== void 0;
-      const pathNoScheme = !options.skipEscape && component.scheme === void 0 && !hasAuthority;
+      const schemelessReference = (component.scheme === void 0 || options.reference === "suffix") && !hasAuthority;
+      const pathNoScheme = !options.skipEscape && schemelessReference;
       if (component.path !== void 0) {
         if (!options.skipEscape) {
           component.path = serializePathEncoding(component.path, pathNoScheme);
@@ -3956,7 +4000,7 @@ var require_fast_uri = __commonJS({
         }
       }
       if (options.reference !== "suffix" && component.scheme) {
-        component.scheme = decodeValidScheme(component.scheme);
+        component.scheme = validateScheme(component.scheme);
         uriTokens.push(component.scheme, ":");
       }
       const authority = recomposeAuthority(component);
@@ -3972,9 +4016,9 @@ var require_fast_uri = __commonJS({
       if (component.path !== void 0) {
         let s = component.path;
         if (!options.absolutePath && (!schemeHandler || !schemeHandler.absolutePath)) {
-          s = removeDotSegments(s);
+          s = schemelessReference && s[0] !== "/" ? removeDotSegmentsRelative(s) : removeDotSegments(s);
         }
-        if (pathNoScheme) {
+        if (schemelessReference) {
           s = serializePathEncoding(s, true);
         }
         if (authority === void 0 && s[0] === "/" && s[1] === "/") {
@@ -4013,20 +4057,41 @@ var require_fast_uri = __commonJS({
       }
       return false;
     }
+    function isIPLiteral(host) {
+      return host[0] === "[" && host[host.length - 1] === "]";
+    }
     function hasMalformedComponentPercentEncoding(matches) {
       const host = matches[4];
-      return hasMalformedPercentEncoding(matches[3]) || host !== void 0 && !(host[0] === "[" && host[host.length - 1] === "]") && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches[6]) || hasMalformedPercentEncoding(matches[7]) || hasMalformedPercentEncoding(matches[8]);
+      return hasMalformedPercentEncoding(matches[3]) || host !== void 0 && !isIPLiteral(host) && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches[6]) || hasMalformedPercentEncoding(matches[7]) || hasMalformedPercentEncoding(matches[8]);
     }
     function canonicalizeHost(parsed, options, schemeHandler, isIP) {
-      if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport) && parsed.host && parsed.host[0] !== "[" && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
+      if (hasForbiddenDomainHost(parsed, options, schemeHandler, isIP)) {
+        parsed.error = parsed.error || MALFORMED_HOST_ERROR;
+        return true;
+      }
+      if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport) && parsed.host && !isIPLiteral(parsed.host) && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
+        let url;
         try {
-          parsed.host = new URL("http://" + parsed.host).hostname;
+          url = new URL("http://" + parsed.host);
         } catch (e) {
           parsed.error = parsed.error || "Host's domain name can not be converted to ASCII: " + e;
           return true;
         }
+        if (!isHostOnlyURL(url)) {
+          parsed.error = parsed.error || MALFORMED_HOST_ERROR;
+          return true;
+        }
+        parsed.host = url.hostname;
       }
       return false;
+    }
+    function hasForbiddenDomainHost(parsed, options, schemeHandler, isIP) {
+      return Boolean(
+        parsed.host && isIP === false && !isIPLiteral(parsed.host) && (options.domainHost || schemeHandler && schemeHandler.domainHost) && FORBIDDEN_DOMAIN_HOST_CHARACTER.test(parsed.host)
+      );
+    }
+    function isHostOnlyURL(url) {
+      return url.username === "" && url.password === "" && url.port === "" && url.pathname === "/" && url.search === "" && url.hash === "" && url.hostname !== "";
     }
     function parseWithStatus(uri, opts) {
       const options = Object.assign({}, opts);
@@ -4082,9 +4147,8 @@ var require_fast_uri = __commonJS({
         parsed.query = matches[7];
         parsed.fragment = matches[8];
         if (parsed.scheme !== void 0) {
-          const decodedScheme = unescape(parsed.scheme);
-          if (VALID_SCHEME.test(decodedScheme)) {
-            parsed.scheme = decodedScheme.toLowerCase();
+          if (VALID_SCHEME.test(parsed.scheme)) {
+            parsed.scheme = parsed.scheme.toLowerCase();
           } else {
             parsed.error = parsed.error || MALFORMED_SCHEME_ERROR;
             malformedScheme = true;
@@ -4105,13 +4169,14 @@ var require_fast_uri = __commonJS({
         if (parsed.host) {
           const ipv4result = isIPv4(parsed.host);
           if (ipv4result === false) {
-            const bracketedIPLiteral = parsed.host[0] === "[" && parsed.host[parsed.host.length - 1] === "]";
+            const bracketedIPLiteral = isIPLiteral(parsed.host);
+            const hasIPLiteralBracket = parsed.host.indexOf("[") !== -1 || parsed.host.indexOf("]") !== -1;
             const ipv6result = normalizeIPv6(parsed.host);
             isIP = ipv6result.isIPV6 || ipv6result.isIPVFuture === true;
-            malformedIPLiteral = bracketedIPLiteral && ipv6result.error === true;
+            malformedIPLiteral = hasIPLiteralBracket && (!bracketedIPLiteral || ipv6result.error === true);
             parsed.host = isIP ? ipv6result.host : ipv6result.host.toLowerCase();
             if (malformedIPLiteral) {
-              parsed.error = parsed.error || "URI host is malformed.";
+              parsed.error = parsed.error || MALFORMED_HOST_ERROR;
               malformedAuthorityOrPort = true;
             }
           } else {
@@ -4131,14 +4196,17 @@ var require_fast_uri = __commonJS({
           parsed.error = parsed.error || "URI is not a " + options.reference + " reference.";
         }
         const schemeHandler = getSchemeHandler(options.scheme || parsed.scheme);
-        malformedHost = canonicalizeHost(parsed, options, schemeHandler, isIP);
-        if (!schemeHandler || schemeHandler && !schemeHandler.skipNormalize) {
-          if (uri.indexOf("%") !== -1) {
-            if (parsed.host !== void 0 && !malformedIPLiteral) {
-              const host = isIP ? parsed.host : normalizePercentEncoding(parsed.host, true);
-              parsed.host = reescapeHostDelimiters(host, isIP);
-            }
+        if (!malformedIPLiteral) {
+          malformedHost = canonicalizeHost(parsed, options, schemeHandler, isIP);
+        }
+        if (uri.indexOf("%") !== -1 && parsed.host !== void 0 && !malformedIPLiteral) {
+          let host = isIP ? parsed.host : normalizePercentEncoding(parsed.host, true);
+          if (!isIP) {
+            host = normalizePercentEncoding(host.toLowerCase());
           }
+          parsed.host = isIP || options.scheme !== "null" ? reescapeHostDelimiters(host, isIP) : host;
+        }
+        if (!schemeHandler || schemeHandler && !schemeHandler.skipNormalize) {
           if (parsed.path) {
             parsed.path = normalizePathEncoding(parsed.path);
           }
@@ -7553,7 +7621,7 @@ var EXPECTED_CAPABILITY_POLICY = /* @__PURE__ */ new Map([
   ["authenticated-linkedin-browser", { defaultEnabled: false, componentIds: ["jobctrl-worker"] }]
 ]);
 var EXPECTED_PYTHON_LICENSE_EVIDENCE = /* @__PURE__ */ new Map([
-  ["opentelemetry-util-http@0.62b1", { license: "Apache-2.0" }],
+  ["opentelemetry-util-http@0.66b1", { license: "Apache-2.0" }],
   ["publicsuffix2@2.20191221", { license: "MIT AND MPL-2.0" }]
 ]);
 var EXPECTED_NODE_LICENSE_EVIDENCE = /* @__PURE__ */ new Map([
@@ -7561,14 +7629,13 @@ var EXPECTED_NODE_LICENSE_EVIDENCE = /* @__PURE__ */ new Map([
   ["@radix-ui/react-use-escape-keydown@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
   ["@udecode/react-hotkeys@52.0.11", { license: "MIT", evidenceKind: "license-text" }],
   ["abstract-logging@2.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
-  ["data-uri-to-buffer@4.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
   ["jotai-x@2.3.4", { license: "MIT", evidenceKind: "license-text" }],
   ["react-compiler-runtime@1.0.0", { license: "MIT", evidenceKind: "license-text" }],
   ["react-remove-scroll-bar@2.3.8", { license: "MIT", evidenceKind: "license-text" }],
   ["slate@0.126.2", { license: "MIT", evidenceKind: "license-text" }],
   ["slate-dom@0.126.0", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-hyperscript@0.125.0", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-react@0.126.4", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-hyperscript@0.127.0", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-react@0.127.1", { license: "MIT", evidenceKind: "license-text" }],
   ["zustand-x@6.2.1", { license: "MIT", evidenceKind: "license-text" }]
 ]);
 function invariant(condition, message) {
@@ -9162,7 +9229,9 @@ var PYTHON_RUNTIME_NON_RUNTIME_PATHS = /* @__PURE__ */ new Set([
   "opentelemetry/sdk/_configuration/README.md",
   "opentelemetry/sdk/metrics/_internal/exponential_histogram/mapping/ieee_754.md",
   "playwright/driver/README.md",
-  "playwright/driver/package/README.md"
+  "playwright/driver/package/README.md",
+  "playwright/driver/package/lib/tools/skills",
+  "typer/.agents"
 ]);
 function invariant3(condition, message) {
   if (!condition) throw new Error(message);
@@ -9477,7 +9546,7 @@ function componentRoot(payloadRoot, contracts, componentId) {
   invariant3(relativePath, `payload layout has no component root for ${componentId}`);
   return path3.join(payloadRoot, relativePath);
 }
-async function writeFixtureComponents(payloadRoot, contracts) {
+async function writeFixtureComponents(payloadRoot, contracts, sourceRoot) {
   for (const [componentId, relativeRoot] of contracts.componentPaths) {
     const root = path3.join(payloadRoot, relativeRoot);
     await mkdir2(root, { recursive: true, mode: 493 });
@@ -9488,6 +9557,7 @@ echo fixture:${name}:${contracts.versions[componentId]}
 `, { mode: 493 });
         await chmod2(path3.join(root, name), 493);
       }
+      await copySchemaTransitionContract(sourceRoot, root);
       continue;
     }
     const executable = ["jobctrl-launcher", "node-runtime", "python-runtime", "temporal-runtime", "playwright-mcp"].includes(componentId);
@@ -9496,6 +9566,16 @@ echo fixture:${name}:${contracts.versions[componentId]}
 `, { mode: executable ? 493 : 420 });
     await chmod2(path3.join(root, filename), executable ? 493 : 420);
   }
+}
+async function copySchemaTransitionContract(sourceRoot, launcherRoot) {
+  const source = path3.join(sourceRoot, "launcher", "schema-transition.json");
+  const sourceInfo = await lstat3(source);
+  invariant3(sourceInfo.isFile() && !sourceInfo.isSymbolicLink(), "schema transition declaration must be a regular file");
+  const contents = await readFile3(source);
+  invariant3(contents.equals(Buffer.from('{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":15}\n')), "schema transition declaration does not match v14-to-v15 contract");
+  const target = path3.join(launcherRoot, "schema-transition.json");
+  await writeFile2(target, contents, { mode: 420, flag: "wx" });
+  await chmod2(target, 420);
 }
 function shouldExcludeSourcePath(relativePath) {
   const segments = relativePath.split("/");
@@ -9786,7 +9866,7 @@ async function assembleExternalRuntimes(payloadRoot, contracts, cacheDirectory, 
   await requireFile(path3.join(temporalRoot, "temporal"), "bundled Temporal executable");
   await chmod2(path3.join(temporalRoot, "temporal"), 493);
   const chromiumRoot = componentRoot(payloadRoot, contracts, "chromium-core");
-  const headlessRevisionRoot = path3.join(chromiumRoot, "chromium_headless_shell-1208");
+  const headlessRevisionRoot = path3.join(chromiumRoot, "chromium_headless_shell-1248");
   const headlessEntries = await extractVerifiedArchive({
     archivePath: archiveById.get("chromium-core-headless-archive"),
     lock: lockById.get("chromium-core-headless-archive"),
@@ -10167,6 +10247,7 @@ async function writeGeneratedComponents(payloadRoot, root, contracts, sourceDate
   await chmod2(path3.join(launcherRoot, "runtime-manifest.json"), 420);
   await copyFile(path3.join(root, "launcher", "update-protocol.json"), path3.join(launcherRoot, "update-protocol.json"));
   await chmod2(path3.join(launcherRoot, "update-protocol.json"), 420);
+  await copySchemaTransitionContract(root, launcherRoot);
   const pdfjsRoot = componentRoot(payloadRoot, contracts, "pdfjs-renderer");
   await mkdir2(pdfjsRoot, { recursive: true, mode: 493 });
   await writeJson(path3.join(pdfjsRoot, "renderer.json"), {
@@ -10351,10 +10432,14 @@ async function collectPayloadNpmContributors(payloadRoot, nodeModules, { expecte
 }
 async function collectMcpNodeContributors(payloadRoot, contracts) {
   const mcpRoot = componentRoot(payloadRoot, contracts, "playwright-mcp");
+  const mcpPackage = JSON.parse(await readFile3(path3.join(mcpRoot, "node_modules", "@playwright", "mcp", "package.json"), "utf8"));
+  invariant3(mcpPackage.name === "@playwright/mcp" && mcpPackage.version === contracts.versions["playwright-mcp"], "Playwright MCP package identity does not match inventory");
+  const coreVersion = mcpPackage.dependencies?.["playwright-core"];
+  invariant3(typeof coreVersion === "string" && /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(coreVersion), "Playwright MCP must pin an exact playwright-core version");
   return collectPayloadNpmContributors(payloadRoot, path3.join(mcpRoot, "node_modules"), {
     expectedKeys: /* @__PURE__ */ new Set([
       `@playwright/mcp@${contracts.versions["playwright-mcp"]}`,
-      "playwright-core@1.62.0-alpha-2026-06-29"
+      `playwright-core@${coreVersion}`
     ])
   });
 }
@@ -10591,7 +10676,7 @@ async function browserCreditsEvidence(payloadRoot, contracts) {
 async function captureChromiumCredits(payloadRoot, contracts, scratchDirectory) {
   const source = path3.join(
     componentRoot(payloadRoot, contracts, "chromium-core"),
-    "chromium_headless_shell-1208",
+    "chromium_headless_shell-1248",
     "chrome-headless-shell-mac-arm64",
     "LICENSE.headless_shell"
   );
@@ -10892,6 +10977,29 @@ var LOOPBACK_ONLY_SANDBOX_PROFILE = `(version 1)
 (allow default)
 (deny network-outbound (remote ip))
 (allow network-outbound (remote ip "localhost:*"))`;
+var NATIVE_EXECUTION_QA_SANDBOX = "loopback-only-v1";
+function createNativeLauncherSmokePlan({ payloadRoot, extractedRoot, stockEnvironment = {} }) {
+  invariant3(path3.isAbsolute(payloadRoot) && path3.isAbsolute(extractedRoot), "native launcher smoke requires absolute owned extraction paths");
+  const requested = stockEnvironment.JOBCTRL_EXECUTION_QA_SANDBOX;
+  invariant3(requested === void 0 || requested === NATIVE_EXECUTION_QA_SANDBOX, "native launcher smoke requires the fixed loopback-only sandbox selector");
+  return {
+    command: path3.join(payloadRoot, "launcher", "jobctrl"),
+    options: {
+      cwd: extractedRoot,
+      env: {
+        ...stockEnvironment,
+        JOBCTRL_RUNTIME_HOME: path3.join(extractedRoot, "runtime"),
+        JOBCTRL_EXECUTION_QA_SANDBOX: NATIVE_EXECUTION_QA_SANDBOX
+      }
+    },
+    executionSandbox: {
+      controller: "outside-seatbelt",
+      runtimeHelper: "macos-sandbox-exec",
+      selector: NATIVE_EXECUTION_QA_SANDBOX,
+      profileSha256: createHash3("sha256").update(LOOPBACK_ONLY_SANDBOX_PROFILE).digest("hex")
+    }
+  };
+}
 async function runLoopbackSandboxed(command, args, options) {
   return run("/usr/bin/sandbox-exec", ["-p", LOOPBACK_ONLY_SANDBOX_PROFILE, command, ...args], options);
 }
@@ -10993,13 +11101,10 @@ async function terminateExtractedRuntimeStack(stack) {
   };
 }
 async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockEnvironment }) {
-  const launcher = path3.join(payloadRoot, "launcher", "jobctrl");
-  await requireFile(launcher, "native JobCtrl launcher");
-  const environment = {
-    ...stockEnvironment,
-    JOBCTRL_RUNTIME_HOME: path3.join(extractedRoot, "runtime")
-  };
-  const statusJson = async () => JSON.parse((await runLoopbackSandboxed(launcher, ["status", "--json"], { cwd: extractedRoot, env: environment })).stdout);
+  const plan = createNativeLauncherSmokePlan({ payloadRoot, extractedRoot, stockEnvironment });
+  await requireFile(plan.command, "native JobCtrl launcher");
+  const invoke = (args) => run(plan.command, args, plan.options);
+  const statusJson = async () => JSON.parse((await invoke(["status", "--json"])).stdout);
   const waitForStatus = async (expected, label) => {
     let observed = null;
     for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -11009,8 +11114,8 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     }
     throw new Error(`${label}: lifecycle status remained ${observed?.status}`);
   };
-  const start = async () => runLoopbackSandboxed(launcher, ["start", "--no-open"], { cwd: extractedRoot, env: environment });
-  const stop = async () => runLoopbackSandboxed(launcher, ["stop"], { cwd: extractedRoot, env: environment });
+  const start = async () => invoke(["start", "--no-open"]);
+  const stop = async () => invoke(["stop"]);
   let lifecycleStarted = false;
   try {
     const firstStart = await start();
@@ -11032,15 +11137,15 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     let status = await statusJson();
     invariant3(status.status === "running", `native launcher status is ${status.status}`);
     for (const component of ["temporal", "worker", "api"]) invariant3(status.components?.[component]?.state === "running", `native launcher ${component} status is not running`);
-    const logs = await runLoopbackSandboxed(launcher, ["logs"], { cwd: extractedRoot, env: environment });
+    const logs = await invoke(["logs"]);
     invariant3(logs.stdout.includes("== temporal ==") && logs.stdout.includes("== worker ==") && logs.stdout.includes("== api =="), "native launcher logs did not route all bounded component logs");
-    const version = JSON.parse((await runLoopbackSandboxed(launcher, ["version", "--json"], { cwd: extractedRoot, env: environment })).stdout);
+    const version = JSON.parse((await invoke(["version", "--json"])).stdout);
     invariant3(typeof version.buildId === "string" && /^[a-f0-9]{64}$/.test(version.manifestSha256), "native launcher version JSON is incomplete");
-    await runLoopbackSandboxed(launcher, ["doctor"], { cwd: extractedRoot, env: environment });
-    const digest = await runLoopbackSandboxed(launcher, ["digest", "--json"], { cwd: extractedRoot, env: environment });
+    await invoke(["doctor"]);
+    const digest = await invoke(["digest", "--json"]);
     invariant3(digest.stdout.trim().startsWith("{"), "native launcher did not transparently dispatch JSON Python CLI command");
-    await runLoopbackSandboxed(launcher, ["pipeline-status"], { cwd: extractedRoot, env: environment });
-    await runLoopbackSandboxed(launcher, ["status", "--pipeline"], { cwd: extractedRoot, env: environment });
+    await invoke(["pipeline-status"]);
+    await invoke(["status", "--pipeline"]);
     process2.kill(status.components.worker.pid, "SIGKILL");
     const degraded = await waitForStatus(["degraded"], "worker-kill recovery");
     invariant3(degraded.components.worker.state !== "running", "killed worker remained reported as running");
@@ -11058,7 +11163,7 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     status = await waitForStatus(["running"], "supervisor-kill restart");
     await stop();
     const stopped = await waitForStatus(["stopped"], "final stop");
-    return { startUrl: "http://127.0.0.1:8766", components: Object.keys(status.components).sort(bytewiseCompare3), manifestSha256: version.manifestSha256, pipelineStatusCompatibility: "passed", pythonDispatch: ["doctor", "digest --json"], recovery: { workerKill: "degraded-stop-restart", supervisorKill: "orphaned-stop-restart" } };
+    return { executionSandbox: plan.executionSandbox, startUrl: "http://127.0.0.1:8766", components: Object.keys(status.components).sort(bytewiseCompare3), manifestSha256: version.manifestSha256, pipelineStatusCompatibility: "passed", pythonDispatch: ["doctor", "digest --json"], recovery: { workerKill: "degraded-stop-restart", supervisorKill: "orphaned-stop-restart" } };
   } finally {
     if (lifecycleStarted) await stop().catch(() => null);
   }
@@ -11074,8 +11179,9 @@ async function cleanupNativeLauncherRuntime(extractedRoot) {
     JOBCTRL_RUNTIME_HOME: path3.join(canonicalRoot, "runtime"),
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin"
   };
+  const plan = createNativeLauncherSmokePlan({ payloadRoot: path3.join(canonicalRoot, "payload"), extractedRoot: canonicalRoot, stockEnvironment: environment });
   try {
-    await runLoopbackSandboxed(launcher, ["stop"], { cwd: canonicalRoot, env: environment });
+    await run(plan.command, ["stop"], plan.options);
     return { status: "stopped" };
   } catch (error) {
     return { status: "stop-failed", error: error.message };
@@ -11311,9 +11417,9 @@ async function smokePlaywrightMcpProtocol(command, args, { cwd, env }) {
       name: "browser_navigate",
       arguments: { url: `data:text/html,<title>${marker}</title><main>${marker}</main>` }
     });
-    invariant3(navigation.isError !== true, `bundled Playwright MCP navigation failed: ${JSON.stringify(navigation).slice(-2e3)}`);
+    invariant3(navigation.error === void 0 && navigation.result && navigation.result.isError !== true, `bundled Playwright MCP navigation failed: ${JSON.stringify(navigation).slice(-2e3)}`);
     const snapshot = await request("tools/call", { name: "browser_snapshot", arguments: {} });
-    invariant3(snapshot.isError !== true, `bundled Playwright MCP snapshot failed: ${JSON.stringify(snapshot).slice(-2e3)}`);
+    invariant3(snapshot.error === void 0 && snapshot.result && snapshot.result.isError !== true, `bundled Playwright MCP snapshot failed: ${JSON.stringify(snapshot).slice(-2e3)}`);
     invariant3(JSON.stringify(snapshot).includes(marker), "bundled Playwright MCP snapshot did not observe the managed local browser page");
     return {
       protocolVersion: initialize.result.protocolVersion,
@@ -11332,7 +11438,7 @@ async function managedMcpChromiumExecutable(payloadRoot, contracts) {
   invariant3(contracts.platform.id === "darwin-arm64", `unsupported MCP Chromium smoke platform: ${contracts.platform.id}`);
   const executable = path3.join(
     componentRoot(payloadRoot, contracts, "chromium-core"),
-    "chromium_headless_shell-1208",
+    "chromium_headless_shell-1248",
     "chrome-headless-shell-mac-arm64",
     "chrome-headless-shell"
   );
@@ -11341,11 +11447,11 @@ async function managedMcpChromiumExecutable(payloadRoot, contracts) {
 async function assertHeadlessChromiumPayload(payloadRoot, contracts) {
   const chromiumRoot = componentRoot(payloadRoot, contracts, "chromium-core");
   const files = await buildFileInventory(chromiumRoot);
-  const required = "chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/chrome-headless-shell";
+  const required = "chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/chrome-headless-shell";
   const executable = files.filter((file) => file.type === "file" && file.path === required);
   invariant3(executable.length === 1, "core Chromium payload must contain exactly one managed headless-shell executable");
   const topLevel = [...new Set(files.map((file) => file.path.split("/")[0]))].sort(bytewiseCompare3);
-  invariant3(JSON.stringify(topLevel) === JSON.stringify(["chromium_headless_shell-1208"]), `core Chromium payload has unexpected browser revisions: ${topLevel.join(", ")}`);
+  invariant3(JSON.stringify(topLevel) === JSON.stringify(["chromium_headless_shell-1248"]), `core Chromium payload has unexpected browser revisions: ${topLevel.join(", ")}`);
   invariant3(files.filter((file) => file.type === "file" && path3.posix.basename(file.path) === "chrome-headless-shell").length === 1, "core Chromium payload must not contain an extra headless-shell revision");
   const forbidden = files.filter((file) => file.path.startsWith("chromium-") || file.path.includes(".app/") || file.path.includes("Google Chrome for Testing"));
   invariant3(forbidden.length === 0, `core Chromium payload must exclude the full browser topology: ${forbidden.map((file) => file.path).join(", ")}`);
@@ -11435,12 +11541,15 @@ finally:
     [
       "--headless",
       "--isolated",
+      // macOS rejects nested Seatbelt sandboxes. This synthetic smoke retains
+      // LOOPBACK_ONLY_SANDBOX_PROFILE; user MCP launches keep their defaults.
+      "--no-sandbox",
       "--output-dir",
       path3.join(canonicalExtractedRoot, "playwright-mcp-smoke-output"),
       "--executable-path",
       await managedMcpChromiumExecutable(payloadRoot, contracts),
-      "--output-mode",
-      "stdout",
+      "--snapshot-mode",
+      "full",
       "--codegen",
       "none"
     ],
@@ -11617,7 +11726,7 @@ with sync_playwright() as playwright:
     from pathlib import Path
     import os
     browser_root = Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
-    required_headless = browser_root / "chromium_headless_shell-1208" / "chrome-headless-shell-mac-arm64" / "chrome-headless-shell"
+    required_headless = browser_root / "chromium_headless_shell-1248" / "chrome-headless-shell-mac-arm64" / "chrome-headless-shell"
     assert required_headless.is_file(), required_headless
     assert not any(browser_root.glob("chromium-*")), list(browser_root.glob("chromium-*"))
     assert not any(browser_root.rglob("*.app")), "full browser app bundle entered the core payload"
@@ -11712,7 +11821,7 @@ with sync_playwright() as playwright:
     playwrightMcp: mcpProtocol,
     tlsClientNative: "darwin-arm64-load-pass",
     dbBackedRoute: "/v1/jobs",
-    browserRevision: 1208,
+    browserRevision: 1248,
     offlineManualCaptureJob: offlineFixtureUrl,
     semanticModel: { provider: "distribution-smoke", model: "explicit-page-fixture", boundary: "model-port-test-double" },
     manualCaptureWorkflow: {
@@ -12487,7 +12596,7 @@ async function buildFixturePayload({
   const payloadRoot = path3.join(outputRoot, "payload");
   await rm2(outputRoot, { recursive: true, force: true });
   await mkdir2(payloadRoot, { recursive: true, mode: 493 });
-  await writeFixtureComponents(payloadRoot, contracts);
+  await writeFixtureComponents(payloadRoot, contracts, root);
   await generateReleaseMetadata(payloadRoot, contracts, { root, mode: "fixture", sourceDateEpoch });
   const manifest = await createLocalManifest(payloadRoot, contracts, { buildId, sourceDateEpoch });
   await verifyExactPayloadTree(payloadRoot, manifest);
@@ -13257,7 +13366,7 @@ ${details.stderr}`;
 }
 function chromiumEntitlementsForTarget(target, entitlements = CHROMIUM_ENTITLEMENTS) {
   const normalized = target.split(path4.sep).join("/");
-  if (/chromium_headless_shell-1208\/chrome-headless-shell-mac-arm64\/chrome-headless-shell$/.test(normalized)) return entitlements.headlessShell;
+  if (/chromium_headless_shell-1248\/chrome-headless-shell-mac-arm64\/chrome-headless-shell$/.test(normalized)) return entitlements.headlessShell;
   return null;
 }
 function createAppleSigningPlan({ machO, appBundles = [], codeBundles = appBundles, identity, chromiumEntitlements = CHROMIUM_ENTITLEMENTS }) {
@@ -14297,7 +14406,7 @@ function validateRenderedHomebrewFormula({ formula, descriptor, descriptorRaw, s
     `url "${values.ARTIFACT_URL}"`,
     `sha256 "${values.ARTIFACT_SHA256}"`,
     `version "${values.APP_VERSION}"`,
-    "version_scheme 1",
+    "version_scheme 2",
     `JOBCTRL_BUILD_ID = "${values.BUILD_ID}"`,
     `JOBCTRL_MANIFEST_SHA256 = "${values.MANIFEST_SHA256}"`,
     `JOBCTRL_DESCRIPTOR_URL = "${values.DESCRIPTOR_URL}"`,

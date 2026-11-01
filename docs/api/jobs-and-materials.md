@@ -8,30 +8,83 @@ Review, Interviews, and Outreach views.
 For field-level schemas and every route variant, use the
 [complete contract](complete-contract.md#jobs-read-model-and-lifecycle).
 
+## Generation Selection
+
+`POST /v1/jobs/:jobKey/actions/generate-materials` accepts optional `stages`.
+Omitting them prepares the résumé and PDF; it also includes a letter when
+`coverLetterGeneration` is enabled in Settings. With the setting off, mixed
+requests omit Cover and a cover-only request returns
+`409 cover_letter_generation_disabled` with guidance to enable the setting.
+Existing accepted materials remain available.
+
 ## Jobs And Evidence
 
 | Route family | What it exposes |
 | --- | --- |
 | `GET /v1/jobs` and `GET /v1/jobs/:jobKey` | List/detail projections, stage state, score summary, and audit links. |
-| `POST /v1/jobs/import-url` | Fetch and import one public posting immediately, or return a typed Manual Capture fallback without creating a placeholder job. |
+| `POST /v1/jobs/import-url` | Start one public posting import and follow completion or its typed Manual Capture fallback. |
+| `GET /v1/jobs/import-url/:workflowId/:executionId` | Read the acknowledged import execution without starting or waiting for more work. |
 | `GET /v1/scoring/keywords` | Current projected score-version keyword aggregation with canonical normalized keys. |
+| `POST /v1/scoring/stale-scores/actions/reset-for-rescore` | Reset distinct inactive stale scores while retaining their markers until a matching replacement; report active and already-pending jobs separately. |
 | `GET /v1/evidence-map` | Canonical career evidence used by scoring and materials. |
 | `GET/POST /v1/evidence-map/learning` | Read retained selected-job comparisons; preview sources, compare an explicit dated cohort, choose proposals and record milestone activity. |
 | `POST /v1/jobs/:key/score-correction` | A new score version plus explicit correction rationale. |
 | Job hide/restore/delete routes | Reversible lifecycle commands, plus a separate permanent-delete boundary. |
+
+The Jobs removed-selection flow reads a reviewable list and prepares an exact,
+short-lived cohort before confirmation. It submits that receipt with the same
+canonical IDs; a stale receipt refuses the entire deletion. See the
+[complete lifecycle contract](complete-contract.md#jobs-read-model-and-lifecycle)
+for the request and conflict details. Direct permanent deletion and the guarded
+job-data purge keep their separate existing contracts.
 
 List and detail endpoints read projection rows. Job detail also reads the latest
 accepted interview prep directly from its canonical owner, independently of
 projection lag. These reads do not recompute scores, parse salary text, or replay
 events during a request.
 
-`POST /v1/jobs/import-url` accepts `{ url }`, validates that the destination is
-public HTTP(S), and awaits `JobUrlImportWorkflow` on the local worker. A readable
-posting returns `{ ok, status: "imported", jobKey, importedAt,
+The current requirement-fit report retains each contribution's optional
+`scope` and `scopeSourceId`, bound to the recorded job-interpretation
+determination and exact requirement ID. `requirement-fit-v2-scoped` includes
+only `resume`-scope rows in capability coverage; eligibility, logistics and
+employer conditions remain visible with zero `maxPoints` and `awardedPoints`.
+These readers expose stored arithmetic without recalculating it. Legacy
+reports without a recorded scope source retain their earlier shape and formula.
+
+`POST /v1/jobs/import-url` validates a public HTTP(S) destination. The Jobs UI
+sends `{ url, awaitResult: false }` and receives `202` with
+`{ ok: true, status: "started", workflowId, executionId }` as soon as Temporal
+accepts the import. It follows that exact execution through
+`GET /v1/jobs/import-url/:workflowId/:executionId`; a running import returns
+`status: "pending"` without awaiting its result. The dialog retains this handle
+when a status read fails, retries the read, and links to Runs. It never resubmits
+the import to check progress. Terminal failed, canceled, timed-out and terminated
+histories remain explicit stopped outcomes. The worker checks the tenant,
+app/database, import workflow type and exact execution identity before reading a
+result; it does not follow a newer execution with the same workflow ID.
+
+Existing callers may omit `awaitResult` or set it to `true` to retain the awaited
+`200` response. Both the awaited response and a completed status read map a
+readable posting to `{ ok, status: "imported", jobKey, importedAt,
 alreadyExisted }`. A blocked, login-walled, rate-limited, or ambiguous page
 returns `{ ok, status: "manual_capture_required", itemId, reason }`; that
 outcome creates no Job row. Repeating an already-imported URL resolves the same
 canonical `JobId` without another fetch.
+An identified posting with public structured content may proceed through strict
+extraction and content-quality review when visual access is unknown. Unknown
+access and availability remain recorded; they are not promoted to clear or
+active. An unknown posting identity or explicit login/challenge still requires
+Manual Capture.
+This includes an exact originating URL whose accepted Manual Capture receipt
+already points to an existing job, even when the captured canonical URL differs.
+
+Provider execution errors retain their retryable domain classification, allowing
+the workflow's bounded retry to acquire another ready route. Citation, schema
+and other source-binding failures remain distinct failures after bounded model
+correction; none can create a guessed job or replace accepted data.
+An oversized public page resource retains its acquisition-limit classification
+and opens Manual Capture. Destination denial still rejects the URL; byte caps
+and public-address checks remain enforced.
 
 Each job-detail stage may include an optional `applyUrlOutcome` object with the
 allow-listed `code`, user-facing `message`, `retryable`, and resolver `method`
@@ -117,6 +170,21 @@ Unicode lowercasing: `%`, `_`, and backslash have no wildcard or escape meaning.
 Source checks the displayed source, discovery source, posting source, and posting
 URL. These rules also apply to searched lists and all-matching bulk selection.
 
+### Profile freshness and explicit score updates
+
+Jobs list/detail include `scoreProfileFreshness`: status, scored/current profile
+versions, and an optional bound review with determination ID, verdict, rationale,
+provider/model/effort and review time. Profile saves and API startup launch no
+score or material work. A score with unknown source versions is `unknown`.
+
+The existing per-job `actions/rescore-current-policy` and batch scoring actions
+remain explicit. For a changed profile on the same policy, they ask the configured
+model whether the edits affect the job. An insignificant verdict keeps the score's
+original version/date and records `reviewed_unchanged`; a significant verdict
+recomputes. Policy or posting/guidance changes can independently require a new
+score. Missing historical comparison inputs and failed checks preserve accepted
+scores and return their typed failure, without a lexical substitute.
+
 ## Saved Posting Availability
 
 `POST /v1/jobs/:jobId/actions/check-availability` accepts `{}` with no additional
@@ -146,11 +214,14 @@ owns cadence, bounds, anonymous access and costly-work freshness gates.
 | `GET /v1/learning/recommendations/:recommendationId/evidence` | Bounded structured supporting and contradicting references without source free text. |
 | `POST /v1/learning/recommendations/:recommendationId/reviews` | Explicitly accept or reject one current recommendation. |
 | `GET /v1/learning/policies/materials` | Paginated current and superseded tailoring-policy revisions with allowlisted provenance. |
-| `POST /v1/learning/policies/materials/rollbacks` | Append a `user_requested` revision restoring one earlier version. |
+| `POST /v1/learning/policies/materials/rollbacks` | Restore a reviewed earlier version against an expected current version, or replay its command receipt. |
 
 Acceptance creates one versioned Materials policy revision; rejection writes a
-review but does not change policy. Rollback is append-only and idempotent for
-the same structured request. None of these routes starts scoring, tailoring,
+review but does not change policy. A restore compares the reviewed current
+version inside the append transaction; a stale review requires a fresh review
+and new command. An identical command returns its original receipt even if a
+later revision is current. See the [complete contract](complete-contract.md#feedback-learning-and-policy-history)
+for fields and conflicts. None of these routes starts scoring, tailoring,
 Apply, or artifact work. Errors and historical metadata are sanitized before
 they cross the browser boundary.
 
@@ -164,6 +235,12 @@ they cross the browser boundary.
 | `POST /v1/jobs/:jobId/material-exports` | List original accepted text sources/retained exports or synchronously create a source-bound DOCX. |
 | `GET /v1/artifacts/:artifactId/download.docx` | Download an owned, hash-verified retained DOCX export as an attachment. |
 | `/v1/resume-templates` | Create, inspect, and select versioned resume templates. |
+
+Updating an existing template requires the current version ID. A stale update
+returns a conflict without publishing a version; clients reload and deliberately
+reconcile the draft. Creating a new template does not need a version ID. The
+default selection can also bind the active version it expects. See the
+[field-level template contract](complete-contract.md#artifacts-and-tailoring-audit).
 
 The API serves registered artifacts, never an arbitrary filesystem path. The
 job detail projection links each accepted generation to provenance, validation,
@@ -249,9 +326,26 @@ explicit workflow/action, not a read-time side effect.
 | Outcomes | job outcome routes plus `/v1/outcomes` and `/v1/analytics/outcomes` |
 | Gmail suggestions | bounded scan plus accept/reject decision routes |
 
+Manual `POST /v1/jobs/:jobKey/outcomes` and user-attested
+`POST /v1/outreach/threads/:threadId/send-logs` require a UUID `requestId`.
+Keep the same identity and validated payload for a retry. Equal retries return
+the original immutable result; a changed payload in that tenant/operation/target
+scope returns `409 action_identity_conflict` without mutation. A new deliberate
+action uses a new identity. Missing or malformed identities return `400`.
+Send logging returns `{ ok: true, sendLog }`, not a thread snapshot; use the
+existing contact Outreach read for current thread state. See the
+[complete retry contract](complete-contract.md#manual-action-retry-contract).
+
+Email approval requests echo the complete reviewed `emailApplication` preview
+as `reviewedEmailCandidate`, alongside recipient and attachment ID. The API
+compares it atomically with the current preview before recording approval.
+A replacement preview requires fresh review even when those two IDs match.
+
 `POST /v1/outcomes/gmail/scan` returns bounded evidence and suggestion summaries
 with canonical `jobId` values. It never returns raw message bodies. Scan events
-use that same identity to invalidate the matching outcome detail.
+use that same identity to invalidate the matching outcome detail. Worker-side
+failures include a safe `failureCode`; invalid input returns 400, and Gmail or
+model unavailability returns 503. Previously stored evidence is preserved.
 
 The latest accepted artifact remains reviewable while a replacement is being
 generated. Failed or rejected attempts stay in the audit history.
@@ -273,9 +367,29 @@ authorization at its authoritative claim boundary.
 
 Research candidates remain proposals until a user confirms them. Outreach drafts
 remain drafts until their review gate is satisfied.
+Research detail includes distinct source outcomes for a response that is too
+large, a timeout, a failed redirect, a transport failure, or an HTTP error.
+These do not claim that a successfully read page contains no candidates.
+
+Contact updates use the fingerprint from the detail read to reject stale edits
+without replacing newer facts. See the [contact contract](complete-contract.md#contacts)
+for the request and conflict response.
 
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>
+
+Generation and revision compare their complete starting thread state at
+publication. A concurrent draft/review/send-log/reminder change returns
+`409 outreach_publication_conflict` with private unpublished text, completed
+gates and provenance, leaving current content and history unchanged. The caller
+refetches and deliberately reconciles before retrying; see the
+[conflict response](complete-contract.md#outreach-drafts). The open editor
+retains those results across refresh, including disappearance of the review
+card. This does not make generation or revision commands idempotent or send
+anything automatically.
+The revision response identifies the draft published by that operation; clients
+check its thread, draft ID, generation and submitted text against the returned
+readback before treating it as confirmed. A matching older draft is insufficient.
 
 ## Reviewed Locale Variants
 
@@ -335,3 +449,14 @@ values and `offerRevisionId`. The worker loads canonical sources, applies the
 existing claim/quality gates and fences source changes at persistence. Stale
 offer bindings return `409 draft_gates_not_passed` on approval/send logging.
 Provider, spend and structural failures retain the last approved message.
+
+Job Detail and Apply Review read the same canonical Apply disposition and
+submission evidence. Manual `mark-skipped` records a durable local Apply stop. Its response message
+explains that an in-flight submission may still complete. Job Detail's existing
+`applyAudit.hardBlockers` distinguishes `manual_apply_skip` from
+`submission_intent_recorded`; the latter retains original intent run IDs from
+canonical events, independently of the latest run. A recorded successful
+submission or manual Applied attestation retains the intent source without
+labeling the accepted outcome as uncertain; neither authorizes blind retry. `submission_outcome_uncertain`
+retains a prior Needs verification stop even if its intent receipt is missing. See [Skip and safe
+reset](../user/apply.md#skip-and-safe-reset) for recovery limits.

@@ -14,7 +14,7 @@ class Jobctrl < Formula
   version "{{APP_VERSION}}"
   sha256 "{{ARTIFACT_SHA256}}"
   license "AGPL-3.0-only"
-  version_scheme 1
+  version_scheme 2
 
   JOBCTRL_BUILD_ID = "{{BUILD_ID}}"
   JOBCTRL_MANIFEST_SHA256 = "{{MANIFEST_SHA256}}"
@@ -95,6 +95,15 @@ class Jobctrl < Formula
   end
 
   def caveats
+    upgrade_warning = if ["0.4.0", "0.4.1"].include?(version.to_s)
+      <<~EOS
+        Upgrades from normally used JobCtrl 0.3.1 workspaces are currently
+        blocked because earlier child processes cannot be verified as stopped.
+        The previous workspace and installation records are preserved. The
+        new Homebrew command cannot start that workspace; keep the registry and
+        databases intact and see https://jobctrl.dev/user/getting-started#update-roll-back-or-remove-jobctrl
+      EOS
+    end
     <<~EOS
       JobCtrl #{version} (#{JOBCTRL_BUILD_ID}) uses the same signed ZIP and
       manifest as the curl channel. It has no Homebrew dependencies and no
@@ -102,6 +111,7 @@ class Jobctrl < Formula
       Temporal, and one managed core Chromium; Git, Corepack, uv, Poppler, and
       system Chrome are not required unless you explicitly enable an
       authenticated-browser capability.
+      #{upgrade_warning}
     EOS
   end
 

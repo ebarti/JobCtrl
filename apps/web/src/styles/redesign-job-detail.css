@@ -308,7 +308,6 @@
 }
 
 .job-detail-description .description-text {
-  max-width: 82ch;
   gap: 14px;
   color: color-mix(in oklch, var(--foreground) 88%, var(--muted-foreground));
   font-size: var(--jh-type-body-size);

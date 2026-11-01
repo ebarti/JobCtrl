@@ -10,11 +10,16 @@
  * injected worker generator. No route exposes a send transport (INV-1).
  */
 import fs from "node:fs";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { resetDefaultJsonRpcDispatcher, getDefaultJsonRpcDispatcher } from "../src/json-rpc-adapter.js";
+import type { PythonRuntimeCommandResolver } from "../src/python-runtime.js";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { GenerateOutreachDraftResultSchema } from "../src/contracts.js";
 import type { OutreachDraftGateResults, OutreachThreadDetail } from "../src/contracts.js";
 import type { OutreachDraftGenerator } from "../src/local-actions.js";
 import { buildApp } from "../src/server.js";
@@ -49,15 +54,16 @@ afterEach(() => {
   }
 });
 
-function withTempApp(generator?: OutreachDraftGenerator) {
+function withTempApp(generator?: OutreachDraftGenerator, pythonRuntime?: PythonRuntimeCommandResolver) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-outreach-"));
-  const dbPath = path.join(dir, "jobs.db");
+  const dbPath = path.join(dir, "jobctrl.db");
   initializeExactDatabase(dbPath);
   const app = buildApp({
     dbPath,
     configPath: path.join(dir, "config.json"),
     requireHealthyWorkerForActions: false,
     ...(generator ? { outreachDraftGenerator: generator } : {}),
+    ...(pythonRuntime ? { pythonRuntime } : {}),
   });
   cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
   return { app, dbPath };
@@ -452,11 +458,35 @@ describe("outreach API", () => {
       payload: { editedBodyText: "A tightened, user-edited draft body." },
     });
     expect(res.statusCode).toBe(200);
+    expect(res.json().publication).toEqual({ threadId: "thread-e", draftId: "draft-rev", generation: 2 });
     const thread = (res.json() as ThreadResponse).thread!;
     expect(thread.draftCount).toBe(2);
     expect(thread.latestGeneration).toBe(2);
     expect(generator).toHaveBeenCalledTimes(1);
     expect(generator.mock.calls[0]![0].editedBodyText).toBe("A tightened, user-edited draft body.");
+  });
+
+  it("returns the worker's publication identity when a newer draft is already in the readback", async () => {
+    const dbPathRef = { current: "" };
+    const generator = vi.fn<OutreachDraftGenerator>(async (input) => {
+      if (input.editedBodyText === undefined) throw new Error("Expected revision text");
+      seedDraft(dbPathRef.current, { draftId: "published-by-request", threadId: input.threadId,
+        generation: 2, status: "superseded", bodyText: input.editedBodyText, gate: PASSING_GATE });
+      seedDraft(dbPathRef.current, { draftId: "later-draft", threadId: input.threadId,
+        generation: 3, status: "candidate", bodyText: "A later synthetic edit", gate: PASSING_GATE });
+      return { threadId: input.threadId, contactId: "contact-e", jobId: null, draftId: "published-by-request",
+        generation: 2, kind: "intro_request", status: "candidate", gatePassed: true };
+    });
+    const { app, dbPath } = withTempApp(generator);
+    dbPathRef.current = dbPath;
+    seedThread(dbPath, { threadId: "thread-e", contactId: "contact-e", jobId: null });
+    seedDraft(dbPath, { draftId: "draft-e1", threadId: "thread-e", generation: 1, gate: PASSING_GATE });
+    const res = await app.inject({ method: "POST", url: "/v1/outreach/threads/thread-e/drafts",
+      payload: { editedBodyText: "The submitted revision" } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().publication).toEqual({ threadId: "thread-e", draftId: "published-by-request", generation: 2 });
+    expect(res.json().thread.drafts.at(-1)).toMatchObject({ draftId: "later-draft", generation: 3 });
+    expect(generator).toHaveBeenCalledTimes(1);
   });
 
   it("exposes no send transport on any outreach route (INV-1)", async () => {
@@ -487,10 +517,12 @@ describe("outreach API", () => {
     const res = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-send/send-logs",
-      payload: { draftId: "draft-send", channel: "email", sentAt: "2026-07-07" },
+      payload: { requestId: "11720000-0000-4000-8000-000000000001", draftId: "draft-send", channel: "email", sentAt: "2026-07-07" },
     });
     expect(res.statusCode).toBe(200);
-    const thread = (res.json() as ThreadResponse).thread!;
+    const current = await app.inject({ method: "GET", url: `/v1/contacts/contact-send/outreach?jobId=${JOB_ID}` });
+    const thread = (current.json() as ThreadResponse).thread!;
+    expect(res.json().sendLog).toEqual(thread.sendLogs[0]);
     expect(thread.isSent).toBe(true);
     expect(thread.sendLogs).toHaveLength(1);
     expect(thread.sendLogs[0]!.channel).toBe("email");
@@ -522,7 +554,7 @@ describe("outreach API", () => {
     const res = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-channel/send-logs",
-      payload: { draftId: "draft-channel", channel: "dana.lee@example.test", sentAt: "2026-07-07" },
+      payload: { requestId: "11720000-0000-4000-8000-000000000001", draftId: "draft-channel", channel: "dana.lee@example.test", sentAt: "2026-07-07" },
     });
     expect(res.statusCode).toBe(400);
     expect((res.json() as ThreadResponse).error).toBe("invalid_outreach_send_log");
@@ -541,7 +573,7 @@ describe("outreach API", () => {
     const res = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-c/send-logs",
-      payload: { draftId: "draft-c1", channel: "email", sentAt: "2026-07-07" },
+      payload: { requestId: "11720000-0000-4000-8000-000000000001", draftId: "draft-c1", channel: "email", sentAt: "2026-07-07" },
     });
     expect(res.statusCode).toBe(400);
     expect((res.json() as ThreadResponse).error).toBe("invalid_outreach_transition");
@@ -635,3 +667,206 @@ describe("outreach API", () => {
     expect((res.json() as ThreadResponse).error).toBe("invalid_outreach_transition");
   });
 });
+
+// Real HTTP -> local-actions -> strict RPC -> registered Python handler ->
+// canonical repository. Only profile/model ports are synthetic; no send exists.
+function publicationRuntime(): PythonRuntimeCommandResolver {
+  const project = fileURLToPath(new URL("../../../workers/automation/", import.meta.url));
+  return {
+    id: `outreach-publication:${Math.random()}`,
+    resolve(_invocation, context) {
+      return {
+        executable: path.join(project, ".venv/bin/python"),
+        argv: ["-m", "tests.outreach_rpc_harness"],
+        cwd: context.appDir,
+        env: { ...process.env, PYTHONPATH: project, JOBCTRL_DIR: context.appDir, OUTREACH_QA_BARRIERS: context.appDir },
+      };
+    },
+  };
+}
+
+function canonicalFacts(dbPath: string) {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    return Object.fromEntries(["outreach_threads", "outreach_drafts", "outreach_send_logs", "artifact_line_anchors", "job_events"].map(
+      (table) => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()],
+    ));
+  } finally { db.close(); }
+}
+
+async function rpcPublicationApp(dropAcknowledgement = false) {
+  const runtime = publicationRuntime();
+  const { app, dbPath } = withTempApp(undefined, runtime);
+  const dir = path.dirname(dbPath);
+  if (dropAcknowledgement) app.addHook("onSend", async (request, reply, payload) => {
+    if (request.headers["x-owned-drop-ack"] === "1") {
+      console.info("owned lost-ack response", reply.statusCode, payload);
+      if (reply.statusCode === 200) reply.raw.destroy();
+    }
+    return payload;
+  });
+  const created = await app.inject({ method: "POST", url: "/v1/contacts", payload: {
+    employer: "Synthetic company", role: "recruiter", attributes: [{ kind: "name", value: "Synthetic recipient" }],
+  } });
+  expect(created.statusCode).toBe(200);
+  const contactId = created.json().contact.contactId as string;
+  const generated = await app.inject({ method: "POST", url: `/v1/contacts/${contactId}/outreach/drafts`, payload: {} });
+  expect(generated.statusCode, generated.body).toBe(200);
+  const thread = generated.json().thread as OutreachThreadDetail;
+  return { app, dbPath, dir, runtime, contactId, thread, draftId: thread.drafts[0]!.draftId };
+}
+
+async function heldRevision(app: ReturnType<typeof buildApp>, dir: string, threadId: string, body: string) {
+  const barrier = path.join(dir, createHash("sha256").update(body).digest("hex"));
+  fs.writeFileSync(barrier, "hold in model port");
+  const pending = app.inject({ method: "POST", url: `/v1/outreach/threads/${threadId}/drafts`, payload: { editedBodyText: body } }).then((response) => response);
+  await vi.waitFor(() => expect(fs.existsSync(`${barrier}.ready`)).toBe(true), { timeout: 10_000 });
+  return { pending, release: () => fs.writeFileSync(`${barrier}.release`, "resume") };
+}
+
+describe("Outreach canonical publication across HTTP and Python", () => {
+  it.each(["send", "approve", "reject", "draft", "schedule", "reschedule", "complete", "dismiss"])(
+    "preserves exact committed %s facts, anchors and events after a delayed revision and reopen", async (mutation) => {
+      const { app, dbPath, dir, runtime, contactId, thread, draftId } = await rpcPublicationApp();
+      const prefix = `/v1/outreach/threads/${thread.threadId}`;
+      try {
+        if (mutation === "send") expect((await app.inject({ method: "POST", url: `${prefix}/drafts/${draftId}/approve` })).statusCode).toBe(200);
+        if (["reschedule", "complete", "dismiss"].includes(mutation)) expect((await app.inject({ method: "POST", url: `${prefix}/follow-up/schedule`, payload: { dueAt: "2026-11-01T00:00:00Z" } })).statusCode).toBe(200);
+        const held = await heldRevision(app, dir, thread.threadId, `Retained user edit for ${mutation}`);
+        let url = `${prefix}/follow-up/schedule`;
+        let payload: Record<string, unknown> = { dueAt: "2026-12-01T00:00:00Z", basis: "manual" };
+        if (mutation === "send") { url = `${prefix}/send-logs`; payload = { requestId: "11720000-0000-4000-8000-000000000001", draftId, channel: "email", sentAt: "2026-10-24T00:00:00Z" }; }
+        if (mutation === "approve" || mutation === "reject") { url = `${prefix}/drafts/${draftId}/${mutation}`; payload = mutation === "reject" ? { reason: "Synthetic review reason" } : {}; }
+        if (mutation === "draft") { url = `${prefix}/drafts`; payload = { editedBodyText: "Newer completed draft" }; }
+        if (mutation === "complete" || mutation === "dismiss") { url = `${prefix}/follow-up/${mutation}`; payload = {}; }
+        const late = await app.inject({ method: "POST", url, payload });
+        expect(late.statusCode, late.body).toBe(200);
+        if (mutation === "draft") {
+          const response = late.json();
+          expect(response.publication).toEqual({
+            threadId: thread.threadId, draftId: response.thread.drafts.at(-1).draftId,
+            generation: response.thread.drafts.at(-1).generation,
+          });
+          expect(response.thread.drafts.at(-1).bodyText).toBe("Newer completed draft");
+        }
+        const acceptedThread = mutation === "send"
+          ? (await app.inject({ method: "GET", url: `/v1/contacts/${contactId}/outreach` })).json().thread
+          : late.json().thread;
+        const expected = canonicalFacts(dbPath);
+        held.release();
+        const stale = await held.pending;
+        expect(stale.statusCode, stale.body).toBe(409);
+        expect(stale.json()).toMatchObject({ error: "outreach_publication_conflict", outcome: "conflict", unpublishedDraft: {
+          bodyText: `Retained user edit for ${mutation}`, gateResults: { passed: true },
+        } });
+        expect(stale.json().unpublishedDraft.gateResults.determinationIds).toHaveLength(2);
+        expect(stale.json().unpublishedDraft.provenance).toHaveLength(1);
+        expect(stale.json().unpublishedDraft.provenance[0].sourceCitations).toHaveLength(1);
+        expect(stale.json().unpublishedDraft).not.toHaveProperty("draftId");
+        const observed = canonicalFacts(dbPath);
+        expect(observed).toEqual(expected);
+        console.info(JSON.stringify({ scenario: mutation, acceptedFacts: expected, afterConflict: observed, conflict: stale.json() }));
+        expect(eventTypes(dbPath).filter((event) => event === "OutreachDraftRevised")).toHaveLength(mutation === "draft" ? 1 : 0);
+        expect((expected.outreach_send_logs as unknown[]).length).toBe(mutation === "send" ? 1 : 0);
+        await getDefaultJsonRpcDispatcher({ appDir: dir, pythonRuntime: runtime }).close();
+        resetDefaultJsonRpcDispatcher();
+        await app.close();
+        const restarted = buildApp({ dbPath, configPath: path.join(dir, "config.json"), pythonRuntime: runtime, requireHealthyWorkerForActions: false });
+        try {
+          const read = await restarted.inject({ method: "GET", url: `/v1/contacts/${contactId}/outreach` });
+          expect(read.statusCode).toBe(200);
+          expect(read.json().thread).toEqual(acceptedThread);
+          expect(canonicalFacts(dbPath)).toEqual(expected);
+        } finally { await restarted.close(); }
+      } finally {
+        resetDefaultJsonRpcDispatcher();
+        await app.close();
+      }
+    }, 30_000,
+  );
+
+  it("races two completed revisions without colliding generations or a loser event", async () => {
+    const { app, dbPath, dir, thread, contactId } = await rpcPublicationApp();
+    try {
+      const first = await heldRevision(app, dir, thread.threadId, "Concurrent first proposal");
+      const second = await heldRevision(app, dir, thread.threadId, "Concurrent second proposal");
+      first.release(); second.release();
+      const responses = await Promise.all([first.pending, second.pending]);
+      expect(responses.map((response) => response.statusCode).sort()).toEqual([200, 409]);
+      const published = responses.find((response) => response.statusCode === 200)!.json();
+      expect(published.publication).toEqual({
+        threadId: thread.threadId, draftId: published.thread.drafts.at(-1).draftId,
+        generation: published.thread.drafts.at(-1).generation,
+      });
+      console.info(JSON.stringify({ scenario: "concurrent revisions", responses: responses.map((response) => response.json()), facts: canonicalFacts(dbPath) }));
+      const facts = canonicalFacts(dbPath);
+      expect(facts.outreach_drafts).toHaveLength(2);
+      expect(facts.artifact_line_anchors).toHaveLength(2);
+      expect(eventTypes(dbPath).filter((event) => event === "OutreachDraftRevised")).toHaveLength(1);
+      const read = await app.inject({ method: "GET", url: `/v1/contacts/${contactId}/outreach` });
+      expect(read.json().thread.drafts.map((draft: { generation: number }) => draft.generation)).toEqual([1, 2]);
+    } finally { resetDefaultJsonRpcDispatcher(); await app.close(); }
+  }, 30_000);
+
+  it("rejects competing first-thread creation for one contact while preserving an unrelated thread", async () => {
+    const { app, dbPath, dir } = await rpcPublicationApp();
+    try {
+      const created = await app.inject({ method: "POST", url: "/v1/contacts", payload: {
+        employer: "Synthetic company", role: "recruiter", attributes: [{ kind: "name", value: "Other synthetic recipient" }],
+      } });
+      expect(created.statusCode).toBe(200);
+      const contactId = created.json().contact.contactId as string;
+      const url = `/v1/contacts/${contactId}/outreach/drafts`;
+      const barrier = path.join(dir, createHash("sha256").update("Could we discuss the team?").digest("hex"));
+      fs.writeFileSync(barrier, "hold first creation");
+      const first = app.inject({ method: "POST", url, payload: {} }).then((response) => response);
+      await vi.waitFor(() => expect(fs.existsSync(`${barrier}.ready`)).toBe(true), { timeout: 10_000 });
+      const second = app.inject({ method: "POST", url, payload: {} }).then((response) => response);
+      await vi.waitFor(() => expect(fs.readFileSync(path.join(dir, "generation-calls"), "utf8").trim().split("\n")).toHaveLength(3), { timeout: 10_000 });
+      fs.writeFileSync(`${barrier}.release`, "publish one");
+      const responses = await Promise.all([first, second]);
+      expect(responses.map((response) => response.statusCode).sort()).toEqual([200, 409]);
+      const facts = canonicalFacts(dbPath);
+      expect(facts.outreach_threads).toHaveLength(2); // original control plus one winner
+      expect(facts.outreach_drafts).toHaveLength(2);
+      expect(eventTypes(dbPath).filter((event) => event === "OutreachDraftGenerated")).toHaveLength(2);
+      console.info(JSON.stringify({ scenario: "competing creation", responses: responses.map((response) => response.json()), facts }));
+    } finally { resetDefaultJsonRpcDispatcher(); await app.close(); }
+  }, 30_000);
+
+  it("keeps a committed revision after HTTP acknowledgement loss and runtime restart without regenerating", async () => {
+    const { app, dbPath, dir, runtime, thread, contactId } = await rpcPublicationApp(true);
+    const url = `/v1/outreach/threads/${thread.threadId}/drafts`;
+    try {
+      const address = await app.listen({ port: 0, host: "127.0.0.1" });
+      await expect(fetch(address + url, { method: "POST", headers: { "content-type": "application/json", "x-owned-drop-ack": "1", origin: "http://127.0.0.1:5173" }, body: JSON.stringify({ editedBodyText: "Committed despite lost acknowledgement" }) })).rejects.toThrow();
+      const expected = canonicalFacts(dbPath);
+      console.info(JSON.stringify({ scenario: "lost acknowledgement", acceptedFacts: expected }));
+      expect(expected.outreach_drafts).toHaveLength(2);
+      expect(expected.artifact_line_anchors).toHaveLength(2);
+      expect(eventTypes(dbPath).filter((event) => event === "OutreachDraftRevised")).toHaveLength(1);
+      await getDefaultJsonRpcDispatcher({ appDir: dir, pythonRuntime: runtime }).close();
+      resetDefaultJsonRpcDispatcher(); await app.close();
+      const restarted = buildApp({ dbPath, configPath: path.join(dir, "config.json"), requireHealthyWorkerForActions: false, pythonRuntime: runtime });
+      try {
+        const read = await restarted.inject({ method: "GET", url: `/v1/contacts/${contactId}/outreach` });
+        expect(read.json().thread.drafts.at(-1).bodyText).toBe("Committed despite lost acknowledgement");
+        expect(canonicalFacts(dbPath)).toEqual(expected);
+      } finally { await restarted.close(); }
+    } finally { resetDefaultJsonRpcDispatcher(); await app.close(); }
+  }, 30_000);
+});
+
+
+it.each(["intro_request", "follow_up", "offer_negotiation", "offer_clarification", "offer_acceptance", "offer_decline"])(
+  "keeps successful %s publications distinct from unpublished proposals at the RPC boundary", (kind) => {
+    expect(GenerateOutreachDraftResultSchema.parse({
+      threadId: "thread", contactId: "contact", jobId: null, draftId: "published", generation: 1,
+      kind, status: "candidate", gatePassed: true,
+    })).toMatchObject({ kind, draftId: "published" });
+    expect(GenerateOutreachDraftResultSchema.safeParse({
+      outcome: "conflict", threadId: "thread", draftId: "must-not-be-accepted", generation: 2,
+      unpublishedDraft: { bodyText: "private proposal", kind, gateResults: {}, provenance: [] },
+    }).success).toBe(false);
+  },
+);

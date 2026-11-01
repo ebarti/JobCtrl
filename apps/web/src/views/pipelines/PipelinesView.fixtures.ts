@@ -76,6 +76,12 @@ const availableCapacity = {
   activeSlots: 2,
   availableSlots: 2,
   executorThreads: 6,
+  blockingExecutor: {
+    acceptingWorkers: 1, refusingWorkers: 0, unknownWorkers: 0,
+    unfinishedRetiredGenerations: 0, unfinishedRetiredCalls: 0,
+    controlAcceptingWorkers: 1, controlRefusingWorkers: 0, controlUnknownWorkers: 0,
+    controlUnfinishedCalls: 0,
+  },
   internalParallelism: 2,
   slotSaturation: 0.5,
   approximateTaskQueue: {
@@ -504,6 +510,7 @@ export const pipelinesMultiWorkerCapacitySnapshot = snapshot({
   capacity: {
     ...availableCapacity,
     freshWorkerCount: 3,
+    blockingExecutor: { ...availableCapacity.blockingExecutor, acceptingWorkers: 3, controlAcceptingWorkers: 3 },
     configuredSlots: 12,
     activeSlots: 9,
     availableSlots: 3,
@@ -514,6 +521,7 @@ export const pipelinesMultiWorkerCapacitySnapshot = snapshot({
   stages: discoveringStages.map((entry) => ({ ...entry, capacity: {
     ...availableCapacity,
     freshWorkerCount: 3,
+    blockingExecutor: { ...availableCapacity.blockingExecutor, acceptingWorkers: 3, controlAcceptingWorkers: 3 },
     configuredSlots: 12,
     activeSlots: 9,
     availableSlots: 3,

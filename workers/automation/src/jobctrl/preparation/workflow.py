@@ -11,6 +11,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.infrastructure.temporal.control import execute_control_activity
     from jobctrl.domain.discovery.execution import (
         DiscoveryExecutionCohortKind,
         DiscoveryExecutionRef,
@@ -33,6 +34,7 @@ with workflow.unsafe.imports_passed_through():
         _COVER_RETRY,
         _DEFAULT_HEARTBEAT_TIMEOUT,
         _DEFAULT_TIMEOUT,
+        _MODEL_ACTIVITY_TIMEOUT,
         _SCORE_RETRY,
         _TAILOR_RETRY,
     )
@@ -65,6 +67,7 @@ class JobPreparationInput:
     retailor: bool = False
     suppress_existing_artifacts: bool = False
     allow_low_fit_override: bool = False
+    explicit_material_request: bool = False
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -72,6 +75,8 @@ class JobPreparationInput:
     discovery_cohort_kind: DiscoveryExecutionCohortKind | None = None
 
     def __post_init__(self) -> None:
+        if type(self.explicit_material_request) is not bool:
+            raise ValueError("explicit_material_request must be a boolean")
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
         if (self.discovery_execution is None) != (self.discovery_cohort_kind is None):
             raise ValueError("discovery_execution and discovery_cohort_kind must be supplied together")
@@ -111,29 +116,22 @@ class JobPreparationWorkflow:
             if _preparation_spends(payload):
                 await _check_spend(payload)
             result = await self._execute_steps(payload)
-        except CancelledError:
-            await emit_workflow_outcome(
-                tenant_id=payload.tenant_id,
-                workflow_type="JobPreparationWorkflow",
-                status="canceled",
-                started_at=started_at,
-                error_code="workflow_canceled",
-                error_message="Workflow canceled by request.",
-                expected_app_dir=payload.expected_app_dir,
-                expected_db_path=payload.expected_db_path,
-            )
-            raise
         except Exception as exc:  # noqa: BLE001
+            canceled = isinstance(exc, CancelledError) or (
+                isinstance(exc, ActivityError) and _activity_error_was_cancelled(exc)
+            )
             await emit_workflow_outcome(
                 tenant_id=payload.tenant_id,
                 workflow_type="JobPreparationWorkflow",
-                status="failed",
+                status="canceled" if canceled else "failed",
                 started_at=started_at,
-                error_code=_exception_error_code(exc) or "workflow_error",
-                error_message=str(exc),
+                error_code="workflow_canceled" if canceled else _exception_error_code(exc) or "workflow_error",
+                error_message="Workflow canceled by request." if canceled else str(exc),
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
             )
+            if canceled and not isinstance(exc, CancelledError):
+                raise CancelledError("Workflow canceled by request.") from exc
             raise
 
         if result.failure:
@@ -164,17 +162,18 @@ class JobPreparationWorkflow:
         failed: list[str] = []
         failure: str | None = None
         error_code: str | None = None
-        for step in _ordered_steps(payload.steps):
+        ordered_steps = _ordered_steps(payload.steps)
+        for index, step in enumerate(ordered_steps):
             try:
                 output = await _execute_step(step, payload)
             except CancelledError:
-                if step in {"tailor", "cover"}:
-                    await _cancel_material_stage_state(step, payload)
+                if step in {"score", "tailor", "cover"}:
+                    await _cancel_stage_state(step, payload)
                 raise
             except ActivityError as exc:
                 if _activity_error_was_cancelled(exc):
-                    if step in {"tailor", "cover"}:
-                        await _cancel_material_stage_state(step, payload)
+                    if step in {"score", "tailor", "cover"}:
+                        await _cancel_stage_state(step, payload)
                     raise CancelledError("Workflow canceled by request.") from exc
                 if step in {"score", "tailor", "cover"}:
                     await _recover_stage_state(step, payload)
@@ -185,6 +184,10 @@ class JobPreparationWorkflow:
             status = _activity_output_status(output)
             if status in {"skipped", "not_eligible"}:
                 skipped.append(step)
+                if step == "cover" and getattr(output, "reason", None) == "cover_letter_generation_disabled":
+                    # This result is new; historical skips retain their old commands.
+                    # A disabled optional letter must not prevent the requested PDF.
+                    continue
                 break
             if status in {"error", "failed"}:
                 failed.append(step)
@@ -193,6 +196,17 @@ class JobPreparationWorkflow:
                 failure = f"{step}: {detail}"
                 break
             completed.append(step)
+            if step == "score" and _activity_output_blocks_materials(output):
+                next_generation_step = next(
+                    (candidate for candidate in ordered_steps[index + 1:] if candidate in {"tailor", "cover"}),
+                    None,
+                )
+                if next_generation_step and workflow.patched("preparation-score-material-block-v1"):
+                    # Match the existing not_eligible material result without
+                    # queueing a no-op behind model work. The Score result is
+                    # versioned; do not rewrite a newer score or stage state.
+                    skipped.append(next_generation_step)
+                    break
         return JobPreparationResult(
             steps_completed=completed,
             steps_skipped=skipped,
@@ -222,13 +236,14 @@ async def _recover_stage_state(
     )
 
 
-async def _cancel_material_stage_state(
+async def _cancel_stage_state(
     stage: str,
     payload: JobPreparationInput,
 ) -> None:
-    if not workflow.patched("preparation-material-cancellation-v1"):
+    marker = "preparation-score-cancellation-v1" if stage == "score" else "preparation-material-cancellation-v1"
+    if not workflow.patched(marker):
         return
-    await workflow.execute_activity(
+    await execute_control_activity(
         cancel_preparation_state_activity,
         CancelPreparationStateInput(
             tenant_id=payload.tenant_id,
@@ -258,6 +273,12 @@ def _activity_output_status(output: Any) -> str:
     return str(getattr(output, "status", "ok") or "ok").strip().lower()
 
 
+def _activity_output_blocks_materials(output: Any) -> bool:
+    if isinstance(output, dict):
+        return output.get("material_preparation_blocked") is True
+    return getattr(output, "material_preparation_blocked", False) is True
+
+
 def _activity_output_detail(output: Any) -> str:
     if isinstance(output, dict):
         return str(output.get("error") or output.get("reason") or "").strip()
@@ -266,6 +287,7 @@ def _activity_output_detail(output: Any) -> str:
 
 async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
     if step == "score":
+        wait_for_cancel = workflow.patched("preparation-score-cancellation-v1")
         return await workflow.execute_activity(
             score_job_activity,
             ScoreJobActivityInput(
@@ -274,9 +296,13 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 rescore=payload.rescore,
                 llm_model=payload.llm_model,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_SCORE_RETRY,
+            cancellation_type=(
+                workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED
+                if wait_for_cancel else workflow.ActivityCancellationType.TRY_CANCEL
+            ),
         )
     if step == "tailor":
         return await workflow.execute_activity(
@@ -290,11 +316,12 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 retailor=payload.retailor,
                 suppress_existing_artifacts=payload.suppress_existing_artifacts,
                 allow_low_fit_override=payload.allow_low_fit_override,
+                explicit_material_request=payload.explicit_material_request,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
                 llm_model=payload.llm_model,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_TAILOR_RETRY,
         )
@@ -307,8 +334,10 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 min_score=payload.min_score,
                 validation_mode=payload.validation_mode,
                 llm_model=payload.llm_model,
+                allow_low_fit_override=payload.allow_low_fit_override,
+                explicit_material_request=payload.explicit_material_request,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_COVER_RETRY,
         )
@@ -341,7 +370,7 @@ async def _check_spend(payload: JobPreparationInput) -> None:
         )
     )
     for lane in lanes:
-        await workflow.execute_activity(
+        await execute_control_activity(
             check_spend_budget,
             SpendBudgetInput(tenant_id=payload.tenant_id, lane=lane),
             start_to_close_timeout=timedelta(seconds=30),
@@ -371,6 +400,8 @@ def _input_summary(payload: JobPreparationInput) -> dict[str, Any]:
         "targetVersion": payload.target_version,
         "idempotencyKey": payload.idempotency_key,
     }
+    if payload.explicit_material_request:
+        summary["explicitMaterialRequest"] = True
     if payload.discovery_execution is not None:
         summary["discoveryExecution"] = payload.discovery_execution.safe_summary()
         summary["discoveryCohortKind"] = payload.discovery_cohort_kind

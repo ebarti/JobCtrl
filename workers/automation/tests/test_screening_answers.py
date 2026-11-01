@@ -158,6 +158,30 @@ def reviewed(svc, job):
     return svc.execute("local", job, command("review", state, decision="approved"))
 
 
+@pytest.mark.parametrize("prompt,allowed", [
+    ("artifact-quality-v2", True), ("artifact-quality-v3", True), ("artifact-quality-v999", False),
+])
+def test_quality_receipt_versions_preserve_known_history_and_refuse_unknown_authority(workspace, monkeypatch, prompt, allowed):
+    from jobctrl.domain.materials import artifact_quality
+
+    monkeypatch.setattr(artifact_quality, "ARTIFACT_QUALITY_PROMPT_VERSION", prompt)
+    conn, jobs, _ = workspace
+    model = StructuralModel()
+    svc = service(conn, model)
+    if allowed:
+        state = reviewed(svc, jobs[0])
+        assert state["decision"] == "approved"
+        monkeypatch.setattr(artifact_quality, "ARTIFACT_QUALITY_PROMPT_VERSION", "artifact-quality-v3")
+        calls = len(model.calls)
+        assert svc.repository.read("local", jobs[0])["questions"][0]["accepted"]["text"] == state["accepted"]["text"]
+        assert svc.repository.current("local", state["questionId"])["accepted"] == state["accepted"]
+        assert len(model.calls) == calls
+    else:
+        state = capture(svc, jobs[0])
+        with pytest.raises(DeterminationFailure, match="screening_authority_missing"):
+            svc.execute("local", jobs[0], command("draft", state))
+
+
 def test_full_lifecycle_retains_library_review_used_text_and_never_submits(workspace):
     conn, jobs, _ = workspace
     svc = service(conn)

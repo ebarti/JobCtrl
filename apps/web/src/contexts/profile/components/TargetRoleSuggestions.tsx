@@ -45,6 +45,7 @@ interface EditablePreferenceSuggestion extends TargetPreferenceSuggestion {
 export interface TargetRoleSuggestionsProps {
   formBaseVersion: number | null;
   profileVersion: number | null;
+  isSaving: boolean;
   onAccept: (
     titles: readonly string[],
     preferences: readonly TargetPreferenceSuggestion[],
@@ -58,6 +59,7 @@ export interface TargetRoleSuggestionsProps {
 export function TargetRoleSuggestions({
   formBaseVersion,
   profileVersion,
+  isSaving,
   onAccept,
   onRebase,
   onResolveWithoutAcceptance,
@@ -74,7 +76,10 @@ export function TargetRoleSuggestions({
   currentProfileVersion.current = profileVersion;
   currentFormBaseVersion.current = formBaseVersion;
   const isFormBaseStale = formBaseVersion !== profileVersion;
+  const needsRebase = profileVersion !== null
+    && (formBaseVersion === null || profileVersion > formBaseVersion);
   const isStale = generatedVersion !== null && generatedVersion !== profileVersion;
+  const reviewDisabled = isStale || isFormBaseStale;
 
   const generate = async () => {
     if (profileVersion === null || isFormBaseStale) return;
@@ -119,7 +124,7 @@ export function TargetRoleSuggestions({
   };
 
   const dismiss = () => {
-    if (generatedVersion !== null && !isStale && !isFormBaseStale) {
+    if (generatedVersion !== null && !reviewDisabled) {
       onResolveWithoutAcceptance(generatedVersion);
     }
     setSuggestions([]);
@@ -131,7 +136,7 @@ export function TargetRoleSuggestions({
   };
 
   const accept = () => {
-    if (generatedVersion === null || determinationId === null || isStale || isFormBaseStale) return;
+    if (generatedVersion === null || determinationId === null || reviewDisabled) return;
     const titles = suggestions
       .filter((suggestion) => suggestion.selected)
       .map((suggestion) => suggestion.title.trim())
@@ -172,20 +177,28 @@ export function TargetRoleSuggestions({
             disabled={profileVersion === null || isFormBaseStale || generation.isPending}
             onClick={() => void generate()}
           >
-            {generation.isPending ? "Generating…" : "Suggest roles"}
+            {generation.isPending ? "Generating…" : "Get suggestions for target roles"}
           </Button>
         </CardAction>
       </CardHeader>
-      {isFormBaseStale ? (
+      {isFormBaseStale && (isSaving || !needsRebase) ? (
+        <CardContent>
+          <p role="status">
+            {isSaving
+              ? "Saving your changes. Suggestions will be available when saving finishes."
+              : "Your changes are saved. Updating suggestions to use the latest profile."}
+          </p>
+        </CardContent>
+      ) : needsRebase && !isSaving ? (
         <CardContent>
           <Alert variant="warning">
             <AlertDescription>
-              The saved profile changed while this form has unsaved edits. Rebase the draft onto
-              the saved profile before generating or accepting suggestions.
+              A newer profile was saved while you were editing. Your edits are still here.
+              Combine them with the saved changes before generating or accepting suggestions.
             </AlertDescription>
           </Alert>
           <Button type="button" variant="secondary" className="mt-3" onClick={onRebase}>
-            Rebase edits onto saved profile
+            Update draft with saved changes
           </Button>
         </CardContent>
       ) : null}
@@ -196,7 +209,7 @@ export function TargetRoleSuggestions({
           </Alert>
         </CardContent>
       ) : null}
-      {isStale ? (
+      {isStale && !isSaving ? (
         <CardContent>
           <Alert variant="warning">
             <AlertDescription>
@@ -227,7 +240,7 @@ export function TargetRoleSuggestions({
                 <Checkbox
                   aria-label={`Select ${suggestion.title}`}
                   checked={suggestion.selected}
-                  disabled={isStale || isFormBaseStale}
+                  disabled={reviewDisabled}
                   onCheckedChange={(checked) => {
                     setSuggestions((current) => current.map((item, itemIndex) =>
                       itemIndex === index ? { ...item, selected: checked === true } : item));
@@ -241,7 +254,7 @@ export function TargetRoleSuggestions({
                     id={`target-role-suggestion-${index}`}
                     aria-label={`Suggested role ${index + 1}`}
                     value={suggestion.title}
-                    disabled={isStale || isFormBaseStale}
+                    disabled={reviewDisabled}
                     maxLength={100}
                     onChange={(event) => {
                       setSuggestions((current) => current.map((item, itemIndex) =>
@@ -267,7 +280,7 @@ export function TargetRoleSuggestions({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    disabled={isStale || isFormBaseStale}
+                    disabled={reviewDisabled}
                     onClick={() => {
                       const next = suggestions.filter((_, itemIndex) => itemIndex !== index);
                       if (next.length === 0 && preferenceSuggestions.length === 0 && generatedVersion !== null) {
@@ -292,7 +305,7 @@ export function TargetRoleSuggestions({
                 <Checkbox
                   aria-label={`Select historical preference ${index + 1}`}
                   checked={suggestion.selected}
-                  disabled={isStale || isFormBaseStale}
+                  disabled={reviewDisabled}
                   onCheckedChange={(checked) => setPreferenceSuggestions((current) => current.map(
                     (item, itemIndex) => itemIndex === index ? { ...item, selected: checked === true } : item,
                   ))}
@@ -313,13 +326,13 @@ export function TargetRoleSuggestions({
                     aria-label={`Proposed location ${index + 1}`}
                     value={suggestion.location}
                     maxLength={100}
-                    disabled={isStale || isFormBaseStale}
+                    disabled={reviewDisabled}
                     onChange={(event) => setPreferenceSuggestions((current) => current.map(
                       (item, itemIndex) => itemIndex === index ? { ...item, location: event.target.value } : item,
                     ))}
                   />
                   <Select
-                    disabled={isStale || isFormBaseStale}
+                    disabled={reviewDisabled}
                     items={[
                       { value: "none", label: "No work model" },
                       { value: "Remote", label: "Remote" },
@@ -350,7 +363,7 @@ export function TargetRoleSuggestions({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    disabled={isStale || isFormBaseStale}
+                    disabled={reviewDisabled}
                     onClick={() => {
                       const next = preferenceSuggestions.filter((_, itemIndex) => itemIndex !== index);
                       if (next.length === 0 && suggestions.length === 0 && generatedVersion !== null) {
@@ -371,7 +384,7 @@ export function TargetRoleSuggestions({
         <CardFooter className="gap-2 border-t">
           <Button
             type="button"
-            disabled={isStale || isFormBaseStale || selectedCount === 0}
+            disabled={reviewDisabled || selectedCount === 0}
             onClick={accept}
           >
             {selectedRoleCount && selectedPreferenceCount

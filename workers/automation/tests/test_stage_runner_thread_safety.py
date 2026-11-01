@@ -145,3 +145,25 @@ def test_failed_to_running_transition_skips_validation(
         (job_id, "tailor"),
     ).fetchone()
     assert row["state"] == "running"
+
+
+def test_profile_repository_follows_reused_activity_connection_lifetime(tmp_path, monkeypatch):
+    from jobctrl.infrastructure.temporal.run_in_activity import ActivityThreadPoolExecutor
+
+    path = tmp_path / "profile-activity.db"
+    monkeypatch.setattr(profile_factory.config, "DB_PATH", path)
+    monkeypatch.setattr("jobctrl.database.DB_PATH", path)
+    profile_factory.reset_profile_repository()
+
+    def load():
+        repository = profile_factory.get_profile_repository()
+        assert profile_factory.get_profile_repository() is repository
+        snapshot = repository.load("local")
+        repository._conn.execute("SELECT 1").fetchone()
+        return repository, snapshot
+
+    with ActivityThreadPoolExecutor(max_workers=1) as pool:
+        results = [pool.submit(load).result(timeout=10) for _ in range(3)]
+    assert all(row[1] == results[0][1] for row in results)
+    assert len({id(row[0]) for row in results}) == 3
+    assert len({id(row[0]._conn) for row in results}) == 3

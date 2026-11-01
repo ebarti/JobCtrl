@@ -99,13 +99,9 @@
                   ]
                 },
                 "locale": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "sha256": {
@@ -131,13 +127,9 @@
                   ]
                 },
                 "unavailableReason": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
@@ -270,13 +262,9 @@
             }
           },
           "exportedArtifactId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           }
         },
@@ -716,23 +704,15 @@
                   }
                 },
                 "translationId": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "verificationId": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "provider": {
@@ -1309,13 +1289,9 @@
                           "maxLength": 160
                         },
                         "staleReason": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         }
                       },
@@ -1479,13 +1455,9 @@
                           "maxLength": 160
                         },
                         "staleReason": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         }
                       },
@@ -1877,13 +1849,9 @@
                           "maxLength": 160
                         },
                         "staleReason": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         }
                       },
@@ -2047,13 +2015,9 @@
                           "maxLength": 160
                         },
                         "staleReason": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         }
                       },
@@ -2354,13 +2318,9 @@
                       "maxLength": 160
                     },
                     "staleReason": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     }
                   },
@@ -2639,13 +2599,9 @@
                               "maxLength": 160
                             },
                             "staleReason": {
-                              "anyOf": [
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "type": "null"
-                                }
+                              "type": [
+                                "string",
+                                "null"
                               ]
                             }
                           },
@@ -2809,13 +2765,9 @@
                               "maxLength": 160
                             },
                             "staleReason": {
-                              "anyOf": [
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "type": "null"
-                                }
+                              "type": [
+                                "string",
+                                "null"
                               ]
                             }
                           },
@@ -3080,13 +3032,9 @@
             ]
           },
           "sourceFailure": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "determinations": {
@@ -3540,13 +3488,9 @@
                         "maxLength": 160
                       },
                       "staleReason": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       }
                     },
@@ -3710,13 +3654,9 @@
                         "maxLength": 160
                       },
                       "staleReason": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       }
                     },
@@ -4781,13 +4721,9 @@
                   "type": "string"
                 },
                 "model": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "gateAudit": {
@@ -4813,13 +4749,9 @@
                       }
                     },
                     "judgeVerdict": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "warnings": {
@@ -6732,10 +6664,26 @@
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
+          },
+          "expectedCurrentVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "commandId": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "reasonCode": {
+            "type": "string",
+            "const": "user_requested"
           }
         },
         "required": [
-          "targetVersion"
+          "targetVersion",
+          "expectedCurrentVersion",
+          "commandId",
+          "reasonCode"
         ],
         "additionalProperties": false
       },
@@ -6762,7 +6710,27 @@
           },
           "status": {
             "type": "string",
-            "const": "current"
+            "enum": [
+              "current",
+              "superseded"
+            ]
+          },
+          "currentVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "expectedCurrentVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "commandId": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
           },
           "learnedRules": {
             "maxItems": 5,
@@ -6890,6 +6858,10 @@
           "policyKind",
           "version",
           "status",
+          "currentVersion",
+          "replayed",
+          "expectedCurrentVersion",
+          "commandId",
           "learnedRules",
           "sourceReviewId",
           "sourceRecommendationId",
@@ -6938,23 +6910,15 @@
                     "maximum": 9007199254740991
                   },
                   "baseResumeTextArtifactId": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   },
                   "baseResumePdfArtifactId": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   },
                   "rendererFormat": {
@@ -6970,13 +6934,9 @@
                     ]
                   },
                   "currentRevisionId": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   },
                   "latestRevisionNumber": {
@@ -7047,23 +7007,15 @@
                                   ]
                                 },
                                 "section": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "null"
-                                    }
+                                  "type": [
+                                    "string",
+                                    "null"
                                   ]
                                 },
                                 "semanticId": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "null"
-                                    }
+                                  "type": [
+                                    "string",
+                                    "null"
                                   ]
                                 },
                                 "lineAnchor": {
@@ -7072,13 +7024,9 @@
                                       "type": "object",
                                       "properties": {
                                         "semanticId": {
-                                          "anyOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "type": "null"
-                                            }
+                                          "type": [
+                                            "string",
+                                            "null"
                                           ]
                                         },
                                         "lineNumber": {
@@ -7106,13 +7054,9 @@
                                           ]
                                         },
                                         "textHash": {
-                                          "anyOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "type": "null"
-                                            }
+                                          "type": [
+                                            "string",
+                                            "null"
                                           ]
                                         }
                                       },
@@ -7195,23 +7139,15 @@
                           "type": "string"
                         },
                         "baseArtifactId": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "semanticId": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "lineAnchor": {
@@ -7220,13 +7156,9 @@
                               "type": "object",
                               "properties": {
                                 "semanticId": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "null"
-                                    }
+                                  "type": [
+                                    "string",
+                                    "null"
                                   ]
                                 },
                                 "lineNumber": {
@@ -7254,13 +7186,9 @@
                                   ]
                                 },
                                 "textHash": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "null"
-                                    }
+                                  "type": [
+                                    "string",
+                                    "null"
                                   ]
                                 }
                               },
@@ -7278,23 +7206,15 @@
                           ]
                         },
                         "sourcePinId": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "riskLabel": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "commentBody": {
@@ -7337,13 +7257,9 @@
                                 "type": "string"
                               },
                               "draftRevisionId": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
+                                "type": [
+                                  "string",
+                                  "null"
                                 ]
                               },
                               "author": {
@@ -7415,13 +7331,9 @@
                           "type": "string"
                         },
                         "draftRevisionId": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "sourceKind": {
@@ -7456,23 +7368,15 @@
                           "type": "string"
                         },
                         "section": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "semanticId": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "createdAt": {
@@ -7677,23 +7581,15 @@
                     "maximum": 9007199254740991
                   },
                   "baseResumeTextArtifactId": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   },
                   "baseResumePdfArtifactId": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   },
                   "rendererFormat": {
@@ -7709,13 +7605,9 @@
                     ]
                   },
                   "currentRevisionId": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   },
                   "latestRevisionNumber": {
@@ -7786,23 +7678,15 @@
                                   ]
                                 },
                                 "section": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "null"
-                                    }
+                                  "type": [
+                                    "string",
+                                    "null"
                                   ]
                                 },
                                 "semanticId": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "null"
-                                    }
+                                  "type": [
+                                    "string",
+                                    "null"
                                   ]
                                 },
                                 "lineAnchor": {
@@ -7811,13 +7695,9 @@
                                       "type": "object",
                                       "properties": {
                                         "semanticId": {
-                                          "anyOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "type": "null"
-                                            }
+                                          "type": [
+                                            "string",
+                                            "null"
                                           ]
                                         },
                                         "lineNumber": {
@@ -7845,13 +7725,9 @@
                                           ]
                                         },
                                         "textHash": {
-                                          "anyOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "type": "null"
-                                            }
+                                          "type": [
+                                            "string",
+                                            "null"
                                           ]
                                         }
                                       },
@@ -7934,23 +7810,15 @@
                           "type": "string"
                         },
                         "baseArtifactId": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "semanticId": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "lineAnchor": {
@@ -7959,13 +7827,9 @@
                               "type": "object",
                               "properties": {
                                 "semanticId": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "null"
-                                    }
+                                  "type": [
+                                    "string",
+                                    "null"
                                   ]
                                 },
                                 "lineNumber": {
@@ -7993,13 +7857,9 @@
                                   ]
                                 },
                                 "textHash": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "null"
-                                    }
+                                  "type": [
+                                    "string",
+                                    "null"
                                   ]
                                 }
                               },
@@ -8017,23 +7877,15 @@
                           ]
                         },
                         "sourcePinId": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "riskLabel": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "commentBody": {
@@ -8076,13 +7928,9 @@
                                 "type": "string"
                               },
                               "draftRevisionId": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
+                                "type": [
+                                  "string",
+                                  "null"
                                 ]
                               },
                               "author": {
@@ -8154,13 +8002,9 @@
                           "type": "string"
                         },
                         "draftRevisionId": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "sourceKind": {
@@ -8195,23 +8039,15 @@
                           "type": "string"
                         },
                         "section": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "semanticId": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "createdAt": {
@@ -8317,7 +8153,7 @@
           "recipientEmail": {
             "type": "string",
             "format": "email",
-            "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
           },
           "limit": {
             "default": 25,
@@ -8743,13 +8579,9 @@
                 "pattern": "^[a-f0-9]{64}$"
               },
               "pdfArtifactId": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "pdfSha256": {
@@ -8816,13 +8648,9 @@
                 "additionalProperties": false
               },
               "rendererVersion": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               }
             },

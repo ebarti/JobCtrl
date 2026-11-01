@@ -44,6 +44,10 @@ JOB = "10000000-0000-4000-8000-000000000123"
 
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
+    # This fixture tests cover generation after the user opts in.
+    cover_config = tmp_path / "cover-settings.json"
+    cover_config.write_text('{"cover_letter_generation":true}')
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(cover_config))
     db_path = tmp_path / "runtime.db"
     monkeypatch.setattr(config, "APP_DIR", tmp_path)
     monkeypatch.setattr(config, "DB_PATH", db_path)
@@ -90,6 +94,30 @@ def runtime(tmp_path, monkeypatch):
     )
 
     database.close_connection(db_path)
+
+
+@pytest.fixture
+def _virtual_parent_pacing(runtime, monkeypatch):
+    """Advance parent pacing for policy checks; keep real browser deadlines."""
+    clock = VirtualClock()
+    started_at = availability._now()
+    monkeypatch.setattr("jobctrl.infrastructure.network.rate_limiter._SHARED_RATE_LIMITER", no_sleep_limiter(clock))
+    monkeypatch.setattr(availability, "_now", lambda: started_at + timedelta(seconds=clock.now()))
+    monkeypatch.setattr(availability, "time", SimpleNamespace(monotonic=time.monotonic, sleep=clock.sleep))
+    yield clock
+
+    # The real acquisition still emits host-ledger events. Check pacing per
+    # host: another host may legitimately start at the same virtual instant.
+    requests_by_host = {}
+    for payload, occurred_at in runtime.conn.execute(
+        "SELECT payload_json, occurred_at FROM job_events WHERE entity_kind='availability_request' ORDER BY event_id"
+    ):
+        host = json.loads(payload)["host"]
+        requests_by_host.setdefault(host, []).append(datetime.fromisoformat(occurred_at))
+    assert any(len(times) > 1 for times in requests_by_host.values())
+    assert sum(clock.sleeps) >= 2, "the fixture must exercise pacing, not bypass acquisition"
+    for times in requests_by_host.values():
+        assert all(later - earlier >= timedelta(seconds=2) for earlier, later in zip(times, times[1:]))
 
 
 @pytest.mark.asyncio
@@ -234,7 +262,7 @@ def test_canonical_posting_change_after_real_preflight_stops_costly_preparation_
     job_id = _insert_ready_job(runtime.conn, url=url)
     runtime.conn.execute("UPDATE job_materials SET status = 'resume_approved' WHERE job_id = ?", (job_id,))
     runtime.conn.commit()
-    real_guard = availability.require_fresh_active
+    real_guard = availability.require_preparation_available
 
     def race(*args, **kwargs):
         real_guard(*args, **kwargs)
@@ -243,7 +271,7 @@ def test_canonical_posting_change_after_real_preflight_stops_costly_preparation_
                 "UPDATE jobs SET url = ? WHERE tenant_id = 'local' AND job_id = ?", (url + "-replacement", job_id)
             )
 
-    monkeypatch.setattr(availability, "require_fresh_active", race)
+    monkeypatch.setattr(availability, "require_preparation_available", race)
     for module in (scorer, tailor, cover_letter):
         monkeypatch.setattr(module, "get_connection", lambda: runtime.conn)
     monkeypatch.setattr(
@@ -292,7 +320,7 @@ def test_batch_scoring_fences_posting_changes_before_stage_attempt_or_provider(r
     from jobctrl.domain.profile.aggregate import Profile
     from jobctrl.domain.profile.snapshot import ProfileSnapshot
 
-    real_guard = availability.require_fresh_active
+    real_guard = availability.require_preparation_available
 
     def race(job_id, **kwargs):
         real_guard(job_id, **kwargs)
@@ -302,7 +330,7 @@ def test_batch_scoring_fences_posting_changes_before_stage_attempt_or_provider(r
                 (POSTING_URL + "-replacement", job_id),
             )
 
-    monkeypatch.setattr(availability, "require_fresh_active", race)
+    monkeypatch.setattr(availability, "require_preparation_available", race)
     monkeypatch.setattr(scorer, "get_connection", lambda: runtime.conn)
     monkeypatch.setattr(
         scorer,
@@ -341,7 +369,9 @@ def test_batch_scoring_fences_posting_changes_before_stage_attempt_or_provider(r
     assert not runtime.conn.in_transaction
 
 
-def test_real_chromium_hidden_css_status_requires_visibility_and_retains_fallback_lineage(runtime, monkeypatch):
+def test_real_chromium_hidden_css_status_requires_visibility_and_retains_fallback_lineage(
+    runtime, monkeypatch, _virtual_parent_pacing
+):
     runtime.page_decisions.extend(["unknown", "active"])
     public_url = "https://93.184.216.34/jobs/role-123"
     runtime.conn.execute("UPDATE jobs SET url = ? WHERE job_id = ?", (public_url, JOB))
@@ -538,7 +568,7 @@ def test_real_context_guard_blocks_native_service_worker_prototype_without_unown
     "channel", ["popup", "service_worker", "worker", "shared_worker", "websocket", "webtransport", "webrtc"]
 )
 def test_real_context_guard_blocks_private_popup_and_unowned_native_channels_before_outbound(
-    runtime, native_sinks, channel
+    runtime, native_sinks, channel, _virtual_parent_pacing
 ):
     runtime.page_decisions.extend(["unknown", "unknown"])
     public_url = "https://93.184.216.34/jobs/context-guard"
@@ -586,7 +616,9 @@ def test_real_context_guard_blocks_private_popup_and_unowned_native_channels_bef
 
 
 @pytest.mark.parametrize("secondary", ["popup", "popup_worker", "iframe_worker"])
-def test_real_context_guard_routes_first_public_popup_through_actual_host_ledger_and_ipc(runtime, secondary):
+def test_real_context_guard_routes_first_public_popup_through_actual_host_ledger_and_ipc(
+    runtime, secondary, _virtual_parent_pacing
+):
     runtime.page_decisions.extend(["unknown", "active"])
     public_url = "https://93.184.216.34/jobs/public-popup"
     popup_url = "https://1.1.1.1/synthetic-popup"
@@ -633,7 +665,7 @@ def test_real_context_guard_routes_first_public_popup_through_actual_host_ledger
     )
 
 
-def test_real_context_guard_keeps_failed_status_resource_uncertain_with_its_hash(runtime):
+def test_real_context_guard_keeps_failed_status_resource_uncertain_with_its_hash(runtime, _virtual_parent_pacing):
     runtime.page_decisions.extend(["unknown", "unknown"])
     public_url = "https://93.184.216.34/jobs/resource-failure"
     module_url = "https://1.1.1.1/synthetic-status.js"
@@ -712,8 +744,9 @@ def test_real_anonymous_fallback_renders_resource_rich_closed_page_without_exhau
     assert all(step["rawHash"] for step in value["lineage"])
 
 
+@pytest.mark.parametrize("evidence", ["observation", "fresh_capture"])
 @pytest.mark.parametrize("stage", ["score", "tailor", "cover"])
-def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime, monkeypatch, profile_snapshot, stage):
+def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime, monkeypatch, profile_snapshot, stage, evidence):
     runtime.page_decisions.extend(["unknown", "unknown"])
     from jobctrl.scoring import scorer, tailor, cover_letter
     from jobctrl.domain.identifiers import JobId
@@ -722,10 +755,39 @@ def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime
     job_id = _insert_ready_job(runtime.conn, url=POSTING_URL + "-preparation")
     runtime.conn.execute("UPDATE job_materials SET status='resume_approved' WHERE job_id=?", (job_id,))
     runtime.conn.commit()
-    claim, _ = availability.claim_job(runtime.conn, job_id)
-    availability.complete_check(
-        runtime.conn, claim, verdict="unknown", reason="access_challenge", method="fixture", lineage=[]
-    )
+    if evidence == "observation":
+        claim, _ = availability.claim_job(runtime.conn, job_id)
+        availability.complete_check(
+            runtime.conn, claim, verdict="unknown", reason="access_challenge", method="fixture", lineage=[]
+        )
+    else:
+        # The shared Apply fixture seeds positive availability. Remove only
+        # that owned observation to exercise fresh capture as the sole evidence.
+        runtime.conn.execute(
+            "DELETE FROM job_events WHERE tenant_id='local' AND entity_kind='posting_availability' AND entity_ref=?",
+            (job_id,),
+        )
+        runtime.conn.commit()
+        from jobctrl.enrichment import detail
+        from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+        from tests.page_fakes import PageModel
+
+        monkeypatch.setattr(
+            "jobctrl.infrastructure.enrichment.page_interpretation.determination_dependencies",
+            lambda conn, **_: dict(
+                llm=PageModel(availability="unknown"), repository=SqliteDeterminationRepository(conn),
+                tenant_id="local", provider="synthetic", model="synthetic", lane="enrichment", preflight=lambda: None,
+            ),
+        )
+        description = runtime.conn.execute("SELECT full_description FROM job_enrichments WHERE job_id=?", (job_id,)).fetchone()[0]
+        detail._record_posting_snapshot_from_cascade(
+            runtime.conn, job_id=job_id, url=POSTING_URL + "-preparation", source_id="synthetic", title="Synthetic role",
+            cascade_result={"full_description": description, "tier_used": 1},
+            captured_at=datetime.now(timezone.utc).isoformat(),
+        )
+        monkeypatch.setattr(
+            availability, "check_availability", lambda *_a, **_kw: pytest.fail("fresh capture repeated availability acquisition")
+        )
     for module in (scorer, tailor, cover_letter):
         monkeypatch.setattr(module, "get_connection", lambda: runtime.conn)
 
@@ -762,7 +824,7 @@ def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime
             )
         else:
             cover_letter.cover_letter_by_id(JobId(job_id), tenant_id=LOCAL_TENANT, snapshot=profile_snapshot)
-    assert availability.read_availability(runtime.conn, job_id)["verdict"] == "unknown"
+    assert availability.read_availability(runtime.conn, job_id).get("verdict") == ("unknown" if evidence == "observation" else None)
     assert not runtime.conn.execute(
         "SELECT 1 FROM job_events WHERE entity_kind='posting_availability_request'"
     ).fetchone()
@@ -772,7 +834,9 @@ def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime
     "resource, status",
     [("fetch", 403), ("fetch", 429), ("fetch", 503), ("script", 302), ("style", 302), ("iframe", 302)],
 )
-def test_real_renderer_failed_status_dependency_cannot_manufacture_closure(runtime, resource, status):
+def test_real_renderer_failed_status_dependency_cannot_manufacture_closure(
+    runtime, resource, status, _virtual_parent_pacing
+):
     runtime.page_decisions.extend(["unknown", "unknown"])
     public_url = "https://93.184.216.34/jobs/status-dependency"
     endpoint = "https://93.184.216.35/dependency"

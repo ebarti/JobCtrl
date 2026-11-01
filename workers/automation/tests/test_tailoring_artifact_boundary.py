@@ -159,9 +159,15 @@ def test_failed_local_refresh_preserves_accepted_bytes_provenance_and_approval(l
         model.mutate = lambda payload: payload["experience_updates"][0].update(id="foreign")
     case = build(model, pdf_renderer=Renderer(fail=failure == "pdf"))
     if failure == "write":
-        # Exercise a real local filesystem refusal at the replacement path.
-        accepted_path = Path(accepted.tailored_resume.path)
-        accepted_path.with_name(accepted_path.stem.removesuffix("_g1") + "_g2.txt").mkdir()
+        # Fail the replacement's own path without predicting its attempt ID.
+        original_write = LocalArtifactTextWriter.write_text
+
+        def refuse_replacement(self, path, text):
+            if path.name.endswith("_g2.txt"):
+                raise IsADirectoryError("synthetic replacement-path refusal")
+            return original_write(self, path, text)
+
+        monkeypatch.setattr(LocalArtifactTextWriter, "write_text", refuse_replacement)
     if failure == "provenance":
         def fail_provenance(*_):
             raise RuntimeError("synthetic provenance failure")

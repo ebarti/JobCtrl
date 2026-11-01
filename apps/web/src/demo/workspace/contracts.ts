@@ -69,6 +69,10 @@ export interface DemoWorkspaceSnapshot {
   readonly resetEpoch: number;
   readonly lastEventSequence: number;
   readonly eventLog: readonly DemoWorkspaceEventRecord[];
+  /** Optional in older snapshots; maintained atomically with lifecycle writes. */
+  readonly jobLifecycleRevisions?: Readonly<Record<string, number>>;
+  readonly lifecycleRevisionFloor?: number;
+  readonly lifecycleRevisionCheckpoint?: number;
   /**
    * Durable blob identifiers owned by this snapshot. Keeping the manifest in
    * the aggregate lets a memory fallback continue reading confirmed blobs
@@ -76,6 +80,7 @@ export interface DemoWorkspaceSnapshot {
    */
   readonly blobIds: readonly string[];
   readonly state: {
+    actionReceipts?: Record<string, { occurredAtOmitted: boolean; outcomeId: string }>;
     readonly title: string;
     readonly generatedAt: string;
     readonly artifacts: MaterializedDemoSeed["artifacts"];

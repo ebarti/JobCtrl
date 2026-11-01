@@ -92,6 +92,15 @@ async def reconcile_auto_apply_loop(
             settings_path=settings_path,
         ):
             return AutoApplyReconcileResult(workflow_id, "halted_budget_exceeded", True)
+        from jobctrl.database import get_connection
+        from jobctrl.infrastructure.apply_controls import capture_apply_dispatch_frontier
+        from jobctrl.infrastructure.runtime_identity import assert_expected_runtime
+
+        assert_expected_runtime(expected_app_dir=expected_app_dir, expected_db_path=expected_db_path)
+        conn = get_connection()
+        if conn.in_transaction:
+            raise RuntimeError('Apply dispatch cannot cross a caller-owned database transaction')
+        frontier, _ = capture_apply_dispatch_frontier(conn, tenant_id=tenant_id)
         payload = ApplyWorkflowInput(
             tenant_id=tenant_id,
             expected_app_dir=expected_app_dir,
@@ -103,6 +112,7 @@ async def reconcile_auto_apply_loop(
             approval_required=settings.approval_required,
             continuous=True,
             auto_apply_loop=True,
+            dispatch_frontier=frontier,
         )
         await client.start_workflow(
             ApplyWorkflow.run,
@@ -142,6 +152,9 @@ def _budget_halt_active(
     path = Path(db_path)
     if not path.exists():
         return False
+    from jobctrl.database import _refuse_unresolved_initialization
+
+    _refuse_unresolved_initialization(path)
     try:
         with sqlite3.connect(path) as conn:
             row = conn.execute(

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 
 import type {
   DiscoveryProviderProgress,
@@ -25,6 +26,45 @@ import {
 } from "./pipeline-eta.js";
 import { readWorkerRuntimeTelemetry, type WorkerRuntimeTelemetrySnapshot } from "./worker-runtime-telemetry.js";
 import { readLlmSpendHealth } from "./worker-health.js";
+
+const PREPARATION_STEPS = ["score", "tailor", "cover", "pdf"] as const;
+const PreparationStepSchema = z.enum(PREPARATION_STEPS);
+const PreparationStepsSchema = z.array(PreparationStepSchema).max(4);
+const DiscoveryExecutionRefSchema = z.object({
+  tenantId: z.string().min(1),
+  workflowId: z.string().min(1),
+  temporalRunId: z.string().min(1),
+}).strict();
+const PreparationOutcomeObservationBaseSchema = z.object({
+  tenantId: z.string().min(1),
+  evidenceKind: z.literal("temporal_history"),
+  workflowType: z.literal("JobPreparationWorkflow"),
+  workflowId: z.string().min(1),
+  temporalRunId: z.string().min(1),
+  jobId: z.string().min(1),
+  idempotencyKey: z.string().min(1),
+  requiredSteps: PreparationStepsSchema.min(1),
+  discoveryExecution: DiscoveryExecutionRefSchema,
+  terminalHistoryEventId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  result: z.object({
+    stepsCompleted: PreparationStepsSchema,
+    stepsSkipped: PreparationStepsSchema.max(1),
+    stepsFailed: z.array(PreparationStepSchema).max(0),
+    failure: z.null(),
+    errorCode: z.null(),
+  }).strict(),
+});
+
+const PreparationOutcomeObservationSchema = z.discriminatedUnion("decoderVersion", [
+  PreparationOutcomeObservationBaseSchema.extend({ decoderVersion: z.literal(1) }),
+  PreparationOutcomeObservationBaseSchema.extend({
+    decoderVersion: z.literal(2),
+    associationKind: z.literal("recorded_membership"),
+    discoveryCohortKind: z.enum(["observed_this_run", "existing_backlog"]),
+    originDiscoveryExecution: DiscoveryExecutionRefSchema.nullable(),
+    originDiscoveryCohortKind: z.enum(["observed_this_run", "existing_backlog"]).nullable(),
+  }),
+]);
 
 const DEFAULT_TENANT = "local";
 const ETA_SAMPLE_LIMIT = 50;
@@ -53,6 +93,7 @@ const STAGE_LABELS: Record<(typeof OPERATIONAL_STAGES)[number], string> = {
 };
 
 const RUNTIME_ACTIVITY_STAGE: Record<string, string> = {
+  enrich: "enrich",
   discovery_enrichment: "enrich",
   score: "score",
   score_job: "score",
@@ -101,6 +142,9 @@ interface StageStateRow extends Record<string, unknown> {
   duration_ms: number | null;
   finished_at: string | null;
   retryable: number | null;
+  error_code?: string | null;
+  metadata_json?: string | null;
+  updated_at?: string | null;
 }
 
 interface PipelineStepRow extends Record<string, unknown> {
@@ -136,6 +180,11 @@ interface JobDisplayRow extends Record<string, unknown> {
   company: string | null;
 }
 
+interface RuntimePreparationJobRow extends Pick<JobDisplayRow, "job_id" | "title" | "company">, Record<string, unknown> {
+  workflow_id: string;
+  temporal_run_id: string;
+}
+
 interface MetricRow extends Record<string, unknown> {
   stage: string;
   outcome: string;
@@ -158,6 +207,8 @@ interface Cohort {
   stageStates: Map<string, Map<string, StageStateRow>>;
   preparationWorkflowStatuses: Map<string, string>;
   preparationWorkflowRunIds: Map<string, string>;
+  observedPdfOutcomes: ReadonlyMap<string, "succeeded" | "skipped">;
+  completedEligibilityHolds: ReadonlySet<string>;
   summary: PipelineExecutionCohortSummary;
 }
 
@@ -218,6 +269,7 @@ export function buildPipelineOperationsSnapshot(
   const freshness = buildFreshness(telemetry);
   const executions = loadExecutions(db, tenantId);
   const selected = selectExecution(db, tenantId, executions);
+  const active = buildActiveItems(db, tenantId, selected, telemetry);
 
   if (!selected) {
     const overallEta = estimatePipelineEta({
@@ -248,9 +300,9 @@ export function buildPipelineOperationsSnapshot(
         : null,
       stages: buildGlobalStages(db, tenantId, capacity, generatedAt, telemetry, budgetAvailable, now),
       activeStageCounts,
-      activeItems: [],
-      activeItemsTotal: null,
-      activeItemsTruncated: null,
+      activeItems: active.items,
+      activeItemsTotal: active.total,
+      activeItemsTruncated: active.truncated,
       overallEta,
     };
   }
@@ -289,7 +341,6 @@ export function buildPipelineOperationsSnapshot(
     projectionCoverage,
   );
   const reconciliation = reconciliationProgress(selected);
-  const active = buildActiveItems(db, tenantId, selected, telemetry);
   const etaInput = buildEtaInput(
     db,
     tenantId,
@@ -383,6 +434,22 @@ function materializeExecution(
   const memberships = loadMemberships(db, tenantId, row.workflow_id, runId);
   const stageStates = loadStageStates(db, tenantId, memberships.map((membership) => membership.job_id));
   const preparationWorkflows = loadPreparationWorkflows(db, tenantId, memberships);
+  const outcomes = loadPreparationOutcomes(
+    db, tenantId, row.workflow_id, runId, memberships, preparationWorkflows,
+  );
+  const observedPdfOutcomes = new Map<string, "succeeded" | "skipped">();
+  for (const member of memberships) {
+    const outcome = outcomes.get(member.job_id);
+    const required = requiredSteps(member);
+    if (!outcome || !required.includes("pdf")) continue;
+    if (outcome.pdfCompleted) observedPdfOutcomes.set(member.job_id, "succeeded");
+    else if (outcome.step && required.indexOf("pdf") > required.indexOf(outcome.step)) {
+      observedPdfOutcomes.set(member.job_id, "skipped");
+    }
+  }
+  const completedEligibilityHolds = loadCompletedEligibilityHolds(
+    db, tenantId, memberships, stageStates, outcomes,
+  );
   const steps = loadPipelineSteps(db, tenantId, row.workflow_id, runId);
   const current = cohort(
     memberships.filter((membership) => membership.cohort_kind === "observed_this_run"),
@@ -390,6 +457,8 @@ function materializeExecution(
     steps,
     preparationWorkflows.statuses,
     preparationWorkflows.runIds,
+    observedPdfOutcomes,
+    completedEligibilityHolds,
   );
   const sweep = cohort(
     memberships.filter((membership) => membership.cohort_kind === "existing_backlog"),
@@ -397,6 +466,8 @@ function materializeExecution(
     steps,
     preparationWorkflows.statuses,
     preparationWorkflows.runIds,
+    observedPdfOutcomes,
+    completedEligibilityHolds,
   );
   const membershipClosed = hasTerminalFanout(steps, isTerminalWorkflowStatus(row.status));
   const phase = phaseFor(row.status, current, sweep, steps, membershipClosed);
@@ -425,7 +496,7 @@ function loadStageStates(db: SqliteDatabase, tenantId: string, jobIds: string[])
     const placeholders = group.map(() => "?").join(", ");
     const rows = allRows<StageStateRow>(
       db,
-      `SELECT job_id, stage, state, duration_ms, finished_at, retryable
+      `SELECT job_id, stage, state, duration_ms, finished_at, retryable, error_code, metadata_json, updated_at
          FROM job_stage_states
         WHERE tenant_id = ? AND job_id IN (${placeholders})`,
       [tenantId, ...group],
@@ -456,7 +527,8 @@ function loadPreparationWorkflows(
       db,
       `SELECT workflow_id, status, temporal_run_id
          FROM workflow_run_projections
-        WHERE tenant_id = ? AND workflow_id IN (${group.map(() => "?").join(", ")})`,
+        WHERE tenant_id = ? AND workflow_type = 'JobPreparationWorkflow'
+          AND workflow_id IN (${group.map(() => "?").join(", ")})`,
       [tenantId, ...group],
     );
     for (const row of rows) {
@@ -466,6 +538,147 @@ function loadPreparationWorkflows(
     }
   }
   return { statuses, runIds };
+}
+
+interface PreparationOutcome {
+  step: (typeof PREPARATION_STEPS)[number] | undefined;
+  pdfCompleted: boolean;
+  runId: string;
+}
+
+function loadPreparationOutcomes(
+  db: SqliteDatabase,
+  tenantId: string,
+  discoverWorkflowId: string,
+  discoverRunId: string,
+  members: MembershipRow[],
+  owners: { statuses: Map<string, string>; runIds: Map<string, string> },
+): ReadonlyMap<string, PreparationOutcome> {
+  const skipped = new Map<string, PreparationOutcome>();
+  const byWorkflowId = new Map(members.flatMap((member) =>
+    member.preparation_workflow_id ? [[member.preparation_workflow_id, member] as const] : [],
+  ));
+  for (const group of chunks([...byWorkflowId.keys()], 500)) {
+    const rows = allRows<{
+      job_id: string | null; entity_ref: string | null; idempotency_key: string | null; payload_json: string | null;
+    }>(db,
+      `SELECT job_id, entity_ref, idempotency_key, payload_json FROM job_events
+        WHERE tenant_id = ? AND stage = 'workflow' AND entity_kind = 'workflow_run'
+          AND event_type = 'PreparationWorkflowOutcomeObserved'
+          AND entity_ref IN (${group.map(() => "?").join(", ")})`,
+      [tenantId, ...group],
+    );
+    for (const row of rows) {
+      const parsed = PreparationOutcomeObservationSchema.safeParse(parseJson(row.payload_json));
+      if (!parsed.success) continue;
+      const receipt = parsed.data;
+      const member = byWorkflowId.get(receipt.workflowId);
+      if (!member || member.work_plan_state !== "planned" || row.entity_ref !== receipt.workflowId ||
+          receipt.tenantId !== tenantId || row.job_id !== member.job_id || receipt.jobId !== member.job_id ||
+          owners.statuses.get(receipt.workflowId) !== "succeeded" ||
+          owners.runIds.get(receipt.workflowId) !== receipt.temporalRunId ||
+          receipt.workflowId !== `prep-${receipt.idempotencyKey}` ||
+          receipt.discoveryExecution.tenantId !== tenantId ||
+          receipt.discoveryExecution.workflowId !== discoverWorkflowId ||
+          receipt.discoveryExecution.temporalRunId !== discoverRunId) continue;
+      const receiptKey = receipt.decoderVersion === 1
+        ? `preparation-outcome:1:${tenantId}:${receipt.workflowId}:${receipt.temporalRunId}`
+        : `preparation-outcome:2:${JSON.stringify([
+          tenantId, receipt.workflowId, receipt.temporalRunId, discoverWorkflowId, discoverRunId,
+          member.job_id, member.cohort_kind, receipt.requiredSteps,
+        ])}`;
+      if (row.idempotency_key !== receiptKey) continue;
+      if (receipt.decoderVersion === 2 && (
+        receipt.discoveryCohortKind !== member.cohort_kind ||
+        (receipt.originDiscoveryExecution === null) !== (receipt.originDiscoveryCohortKind === null) ||
+        (receipt.originDiscoveryExecution !== null && receipt.originDiscoveryExecution.tenantId !== tenantId)
+      )) continue;
+      const required = requiredSteps(member);
+      if (JSON.stringify(receipt.requiredSteps) !== JSON.stringify(parseJson(member.required_steps_json)) ||
+          JSON.stringify(required) !== JSON.stringify(PREPARATION_STEPS.filter((step) => required.includes(step)))) continue;
+      const skippedStep = receipt.result.stepsSkipped[0];
+      const done = receipt.result.stepsCompleted;
+      const completed = !skippedStep && JSON.stringify(done) === JSON.stringify(required);
+      const optionalCover = skippedStep === "cover" && required.includes("cover") &&
+        JSON.stringify(done) === JSON.stringify(required.filter((step) => step !== "cover"));
+      const skipIndex = skippedStep ? required.indexOf(skippedStep) : -1;
+      const stopped = skipIndex >= 0 && JSON.stringify(done) === JSON.stringify(required.slice(0, skipIndex));
+      if (!completed && !optionalCover && !stopped) continue;
+      skipped.set(member.job_id, {
+        step: skippedStep, pdfCompleted: done.includes("pdf"), runId: receipt.temporalRunId,
+      });
+    }
+  }
+  return skipped;
+}
+
+function loadCompletedEligibilityHolds(
+  db: SqliteDatabase,
+  tenantId: string,
+  members: MembershipRow[],
+  stageStates: Map<string, Map<string, StageStateRow>>,
+  outcomeSkips: ReadonlyMap<string, PreparationOutcome>,
+): ReadonlySet<string> {
+  const held = new Set<string>();
+  const candidates = members.filter((member) =>
+    outcomeSkips.get(member.job_id)?.step === "tailor" && requiredSteps(member).includes("score"),
+  );
+  const latest = new Map<string, { version: number; breakdown_json: string; scored_at: string }>();
+  for (const group of chunks(candidates.map((member) => member.job_id), 500)) {
+    const rows = allRows<{ job_id: string; version: number; breakdown_json: string; scored_at: string }>(db,
+      `SELECT s.job_id, s.version, s.breakdown_json, s.scored_at FROM job_scores s
+        WHERE s.tenant_id = ? AND s.job_id IN (${group.map(() => "?").join(", ")})
+          AND s.version = (SELECT MAX(current.version) FROM job_scores current
+            WHERE current.tenant_id = s.tenant_id AND current.job_id = s.job_id)
+          AND NOT EXISTS (SELECT 1 FROM job_score_staleness stale
+            WHERE stale.tenant_id = s.tenant_id AND stale.job_id = s.job_id AND stale.resolved = 0)`,
+      [tenantId, ...group],
+    );
+    for (const row of rows) latest.set(row.job_id, row);
+  }
+  for (const member of candidates) {
+    const states = stageStates.get(member.job_id);
+    const score = states?.get("score");
+    const accepted = latest.get(member.job_id);
+    const owner = parseRecord(score?.metadata_json ?? null);
+    const priorVersion = owner?.priorScoreVersion;
+    if (score?.state !== "succeeded" || !accepted ||
+        owner?.activityOwner !== outcomeSkips.get(member.job_id)?.runId ||
+        typeof owner?.rescore !== "boolean" || typeof priorVersion !== "number" ||
+        !Number.isSafeInteger(priorVersion) || priorVersion < 0 ||
+        !(accepted.version === priorVersion + 1 || (!owner.rescore && accepted.version === priorVersion))) continue;
+    const scoredAt = Date.parse(accepted.scored_at);
+    const finishedAt = Date.parse(score.finished_at ?? "");
+    if (!Number.isFinite(scoredAt) || !Number.isFinite(finishedAt) || scoredAt > finishedAt) continue;
+    const eligibility = objectRecord(parseRecord(accepted.breakdown_json)?.eligibility);
+    const blockers = eligibility?.hard_blockers;
+    if (!["eligible", "warning", "blocked", "unknown"].includes(String(eligibility?.status)) ||
+        !Array.isArray(blockers) || !blockers.every((value) => typeof value === "string") ||
+        (eligibility?.status !== "blocked" && blockers.length === 0)) continue;
+    // This reads the recorded model verdict and gate provenance. It does not
+    // infer eligibility from text or turn arbitrary blocked states into success.
+    const materialSteps = requiredSteps(member).filter((stage) => stage === "tailor" || stage === "cover");
+    const exactGates = materialSteps.every((stage) => {
+      const state = states?.get(stage);
+      const metadata = parseRecord(state?.metadata_json ?? null);
+      const updatedAt = Date.parse(state?.updated_at ?? "");
+      return state?.state === "blocked" && state.retryable === 0 &&
+        state.error_code === "SCORE_ELIGIBILITY_BLOCKED" &&
+        metadata?.reason === "score_eligibility_blocked" &&
+        JSON.stringify(metadata?.hard_blockers) === JSON.stringify(blockers) &&
+        Number.isFinite(updatedAt) && updatedAt >= scoredAt;
+    });
+    if (exactGates) held.add(member.job_id);
+  }
+  return held;
+}
+
+function isCompletedEligibilityHold(
+  member: MembershipRow,
+  stage: string,
+  completedEligibilityHolds: ReadonlySet<string>,
+): boolean {
+  return (stage === "tailor" || stage === "cover") && completedEligibilityHolds.has(member.job_id);
 }
 
 function loadPipelineSteps(
@@ -490,13 +703,17 @@ function cohort(
   steps: PipelineStepRow[] = [],
   preparationWorkflowStatuses = new Map<string, string>(),
   preparationWorkflowRunIds = new Map<string, string>(),
+  observedPdfOutcomes: ReadonlyMap<string, "succeeded" | "skipped"> = new Map(),
+  completedEligibilityHolds: ReadonlySet<string> = new Set(),
 ): Cohort {
   return {
     members,
     stageStates,
     preparationWorkflowStatuses,
     preparationWorkflowRunIds,
-    summary: cohortSummary(members, stageStates, steps, preparationWorkflowStatuses),
+    observedPdfOutcomes,
+    completedEligibilityHolds,
+    summary: cohortSummary(members, stageStates, steps, preparationWorkflowStatuses, observedPdfOutcomes, completedEligibilityHolds),
   };
 }
 
@@ -505,6 +722,8 @@ function cohortSummary(
   stageStates: Map<string, Map<string, StageStateRow>>,
   steps: PipelineStepRow[],
   preparationWorkflowStatuses: Map<string, string>,
+  observedPdfOutcomes: ReadonlyMap<string, "succeeded" | "skipped">,
+  completedEligibilityHolds: ReadonlySet<string>,
 ): PipelineExecutionCohortSummary {
   let planned = 0;
   let notEligible = 0;
@@ -515,7 +734,7 @@ function cohortSummary(
   for (const member of members) {
     if (member.work_plan_state === "planned") {
       planned += 1;
-      if (plannedMemberResolved(member, stageStates.get(member.job_id), steps, preparationWorkflowStatuses)) terminal += 1;
+      if (plannedMemberResolved(member, stageStates.get(member.job_id), steps, preparationWorkflowStatuses, observedPdfOutcomes, completedEligibilityHolds)) terminal += 1;
       else remaining += 1;
       continue;
     }
@@ -538,13 +757,17 @@ function plannedMemberResolved(
   states: Map<string, StageStateRow> | undefined,
   pipelineSteps: PipelineStepRow[],
   preparationWorkflowStatuses: Map<string, string>,
+  observedPdfOutcomes: ReadonlyMap<string, "succeeded" | "skipped">,
+  completedEligibilityHolds: ReadonlySet<string>,
 ): boolean {
   const required = requiredSteps(member);
   if (required.length === 0) return false;
+  if (!pdfStepForMember(member, pipelineSteps) && pdfStoppedByPrerequisite(member, states, preparationWorkflowStatuses) !== null) return true;
   return required.every((stage) => {
     const terminalOwner = memberPreparationWorkflowFailed(member, preparationWorkflowStatuses);
-    if (stage === "pdf") return isTerminalStepState(pdfStepForMember(member, pipelineSteps), terminalOwner);
-    return isTerminalStageState(states?.get(stage), terminalOwner);
+    if (stage === "pdf") return memberPdfResolved(member, pipelineSteps, preparationWorkflowStatuses, observedPdfOutcomes);
+    return isCompletedEligibilityHold(member, stage, completedEligibilityHolds) ||
+      isTerminalStageState(states?.get(stage), terminalOwner);
   });
 }
 
@@ -613,6 +836,8 @@ function hasUnresolvedPlannedMember(cohortValue: Cohort, steps: PipelineStepRow[
         cohortValue.stageStates.get(member.job_id),
         steps,
         cohortValue.preparationWorkflowStatuses,
+        cohortValue.observedPdfOutcomes,
+        cohortValue.completedEligibilityHolds,
       ),
   );
 }
@@ -624,6 +849,7 @@ function hasTerminalIssue(cohortValue: Cohort, steps: PipelineStepRow[]): boolea
     return requiredSteps(member).some((stage) => {
       const terminalOwner = memberPreparationWorkflowFailed(member, cohortValue.preparationWorkflowStatuses);
       if (stage === "pdf") return isTerminalStepFailure(pdfStepForMember(member, steps), terminalOwner);
+      if (isCompletedEligibilityHold(member, stage, cohortValue.completedEligibilityHolds)) return false;
       const state = states?.get(stage);
       return state !== undefined && !isSuccessfulStageState(state) && !isRetryableStageFailure(state, terminalOwner);
     });
@@ -973,6 +1199,7 @@ function buildCapacity(
     availableSlots: telemetry.availableSlots,
     executorThreads: telemetry.executorThreads,
     slotSaturation: telemetry.slotSaturation,
+    blockingExecutor: telemetry.blockingExecutor,
     approximateTaskQueue: telemetry.taskQueueObservation,
   };
   return internalParallelism === null
@@ -1005,6 +1232,19 @@ function stageCountsForCohort(
     counts.set(stage, jobStageCounts(cohortValue, stage));
   }
   return counts;
+}
+
+function etaCountsForCohort(
+  cohortValue: Cohort,
+  counts: Map<(typeof OPERATIONAL_STAGES)[number], PipelineStageCounts>,
+): Map<(typeof OPERATIONAL_STAGES)[number], PipelineStageCounts> {
+  return new Map([...counts].map(([stage, value]) => {
+    const held = cohortValue.members.filter((member) =>
+      isCompletedEligibilityHold(member, stage, cohortValue.completedEligibilityHolds) &&
+      requiredSteps(member).some((step) => step === stage),
+    ).length;
+    return [stage, held === 0 ? value : { ...value, blocked: value.blocked - held }];
+  }));
 }
 
 function sourceFamilyCounts(
@@ -1058,10 +1298,63 @@ function pdfCounts(cohortValue: Cohort, steps: PipelineStepRow[]): PipelineStage
     if (member.work_plan_state !== "planned" || !requiredSteps(member).includes("pdf")) continue;
     counts.eligible += 1;
     const step = pdfStepForMember(member, steps);
+    const stopped = pdfStoppedByPrerequisite(
+      member, cohortValue.stageStates.get(member.job_id), cohortValue.preparationWorkflowStatuses,
+    );
     if (step) addPipelineStepState(counts, step.state);
+    else if (cohortValue.observedPdfOutcomes.has(member.job_id)) {
+      counts[cohortValue.observedPdfOutcomes.get(member.job_id)!] += 1;
+    }
+    else if (stopped) counts[stopped] += 1;
+    else if (pdfAwaitsRecordedPrerequisite(cohortValue, member)) counts.waiting += 1;
     else counts.unknown += 1;
   }
   return counts;
+}
+
+function pdfStoppedByPrerequisite(
+  member: MembershipRow,
+  states: Map<string, StageStateRow> | undefined,
+  ownerStatuses: Map<string, string>,
+): "blocked" | "canceled" | null {
+  const required = requiredSteps(member);
+  const pdfIndex = required.indexOf("pdf");
+  const owner = nullableText(member.preparation_workflow_id);
+  if (pdfIndex < 0 || !owner || !isFailedTerminalWorkflowStatus(ownerStatuses.get(owner))) return null;
+  const prerequisites = required.slice(0, pdfIndex).filter(isJobStage);
+  // A successor may be recovering the job after its original owner closed.
+  // Never declare that active work stopped or fabricate a successful render.
+  if (prerequisites.some((stage) => ["queued", "running"].includes(states?.get(stage)?.state ?? ""))) return null;
+  for (const stage of prerequisites) {
+    const state = states?.get(stage);
+    if (state?.state === "canceled") return "canceled";
+    if (state?.state === "exhausted" || (state && isTerminalStageFailure(state))) return "blocked";
+  }
+  return null;
+}
+
+function memberPdfResolved(
+  member: MembershipRow,
+  steps: PipelineStepRow[],
+  ownerStatuses: Map<string, string>,
+  observedPdfOutcomes: ReadonlyMap<string, "succeeded" | "skipped">,
+): boolean {
+  const step = pdfStepForMember(member, steps);
+  return step
+    ? isTerminalStepState(step, memberPreparationWorkflowFailed(member, ownerStatuses))
+    : observedPdfOutcomes.has(member.job_id);
+}
+
+function pdfAwaitsRecordedPrerequisite(cohortValue: Cohort, member: MembershipRow): boolean {
+  const workflowId = nullableText(member.preparation_workflow_id);
+  if (!workflowId) return false;
+  const ownerStatus = cohortValue.preparationWorkflowStatuses.get(workflowId);
+  if (ownerStatus && isTerminalWorkflowStatus(ownerStatus)) return false;
+  return requiredSteps(member).some((prerequisite) => {
+    if (!isJobStage(prerequisite)) return false;
+    const state = cohortValue.stageStates.get(member.job_id)?.get(prerequisite)?.state;
+    return state === "pending" || state === "queued" || state === "running";
+  });
 }
 
 function projectionCounts(
@@ -1332,6 +1625,8 @@ function buildStages(input: {
   sourceFamilyEta: PipelineEta | null;
 }): PipelineOperationalStage[] {
   const result: PipelineOperationalStage[] = [];
+  const currentDemand = etaCountsForCohort(input.selected.current, input.currentCounts);
+  const sweepDemand = etaCountsForCohort(input.selected.sweep, input.sweepCounts);
   const selectedScope = input.projectionCoverage.status === "ready" ? "known" : "unknown";
   for (const stage of OPERATIONAL_STAGES) {
     const current = input.currentCounts.get(stage) ?? emptyCounts();
@@ -1344,7 +1639,7 @@ function buildStages(input: {
             input.db,
             input.tenantId,
             stage,
-            current,
+            currentDemand.get(stage) ?? emptyCounts(),
             input.selected,
             input.telemetry,
             input.budgetAvailable,
@@ -1363,7 +1658,7 @@ function buildStages(input: {
             currentStageContention(
               input.selected,
               stage,
-              input.sweepCounts,
+              sweepDemand,
               input.globalCounts,
               input.globalRetryability,
               input.telemetry,
@@ -1393,7 +1688,7 @@ function buildStages(input: {
           input.db,
           input.tenantId,
           stage,
-          sweep,
+          sweepDemand.get(stage) ?? emptyCounts(),
           input.selected,
           input.telemetry,
           input.budgetAvailable,
@@ -1410,7 +1705,6 @@ function buildStages(input: {
             scope: selectedScope,
           },
         ),
-        membershipOpen: false,
       }) as PipelineEta,
       asOf: input.generatedAt,
     });
@@ -1586,7 +1880,7 @@ function estimateSourceFamilyEta(input: {
       ),
     ),
     scope: input.projectionCoverage.status === "ready" ? "known" : "unknown",
-    membershipOpen: false,
+    estimateScope: "stage",
     configuredSlots,
     stages: [
       {
@@ -1733,13 +2027,13 @@ function reconciliationProgress(
 function buildActiveItems(
   db: SqliteDatabase,
   tenantId: string,
-  selected: SelectedExecution,
+  selected: SelectedExecution | null,
   telemetry: WorkerRuntimeTelemetrySnapshot,
 ): { items: PipelineActiveItem[]; total: number | null; truncated: boolean | null } {
   if (telemetry.status !== "available") return { items: [], total: null, truncated: null };
+  const members = selected ? selected.current.members.concat(selected.sweep.members) : [];
   const byWorkflow = new Map(
-    selected.current.members
-      .concat(selected.sweep.members)
+    members
       .filter((member): member is MembershipRow & { preparation_workflow_id: string } =>
         nullableText(member.preparation_workflow_id) !== null,
       )
@@ -1750,11 +2044,26 @@ function buildActiveItems(
     tenantId,
     [...byWorkflow.values()].map((member) => member.job_id),
   );
+  const preparationJobs = loadRuntimePreparationJobDisplays(
+    db,
+    tenantId,
+    telemetry.activeDetails.flatMap((detail) => detail.workflowRef ? [detail.workflowRef] : []),
+  );
   const runtimeItems: PipelineActiveItem[] = telemetry.activeDetails.map((detail) => {
     const member = detail.workflowRef ? byWorkflow.get(detail.workflowRef) : undefined;
+    const recordedJob = detail.workflowRef ? preparationJobs.get(detail.workflowRef) : undefined;
+    const memberRunId = selected && detail.workflowRef
+      ? preparationWorkflowRunId(selected, detail.workflowRef)
+      : undefined;
+    // Labels join an exact runtime execution. They never establish Discover membership.
+    const job = recordedJob?.temporal_run_id === detail.executionRef
+      ? recordedJob
+      : member && memberRunId && memberRunId === detail.executionRef
+        ? display.get(member.job_id)
+        : undefined;
     const stage = RUNTIME_ACTIVITY_STAGE[detail.activityType];
-    if (member && stage && isJobStage(stage)) {
-      const job = display.get(member.job_id);
+    if (job && stage && (isJobStage(stage) || stage === "pdf_render")
+      && ["score_job", "tailor_job", "cover_letter", "render_pdf"].includes(detail.activityType)) {
       return {
         kind: "resolved_job" as const,
         activityType: detail.activityType,
@@ -1782,48 +2091,50 @@ function buildActiveItems(
   });
   const consumedRuntimeItemIndexes = new Set<number>();
   const projectionItems: PipelineActiveItem[] = [];
-  for (const step of selected.steps
-    .filter((step) => step.state === "running")
-    .sort((left, right) => Date.parse(left.started_at ?? "") - Date.parse(right.started_at ?? ""))) {
-    const activityType = STEP_ACTIVITY_TYPES[step.step_kind] ?? step.step_kind;
-    const pdfMember =
-      step.step_kind === "pdf_render"
-        ? selected.current.members
-            .concat(selected.sweep.members)
-            .find((member) => pdfStepForMember(member, [step]) !== undefined)
-        : undefined;
-    const runtimeIndex = runtimeItems.findIndex(
-      (item, index) =>
-        !consumedRuntimeItemIndexes.has(index) &&
-        isExactRuntimeProjectionMatch(item, activityType, selected, step.step_kind === "pdf_render", pdfMember),
-    );
-    // Fresh runtime telemetry is the active-work authority. Projection rows
-    // only enrich a runtime item whose safe workflow identity proves the pair.
-    if (runtimeIndex < 0) continue;
-    const runtimeItem = runtimeItems[runtimeIndex];
-    if (runtimeItem === undefined) continue;
-    consumedRuntimeItemIndexes.add(runtimeIndex);
-    const base = {
-      activityType,
-      workflowId: runtimeItem.workflowId,
-      executionId: runtimeItem.executionId,
-      attempt: Math.max(1, Math.floor(nonnegative(step.attempt) ?? 1)),
-      startedAt: step.started_at ?? latestStepObservation([step]),
-    };
-    if (pdfMember) {
-      const job = display.get(pdfMember.job_id);
-      projectionItems.push({
-        ...base,
-        kind: "resolved_job",
-        jobKey: step.item_key,
-        title: job?.title ?? null,
-        company: job?.company ?? null,
-        stage: "pdf_render",
-      });
-    } else if (step.step_kind === "source_family") {
-      projectionItems.push({ ...base, kind: "source_family", sourceFamily: safeItemKey(step.item_key) });
-    } else {
-      projectionItems.push({ ...base, kind: "orchestration", operation: step.step_kind });
+  if (selected) {
+    for (const step of selected.steps
+      .filter((step) => step.state === "running")
+      .sort((left, right) => Date.parse(left.started_at ?? "") - Date.parse(right.started_at ?? ""))) {
+      const activityType = STEP_ACTIVITY_TYPES[step.step_kind] ?? step.step_kind;
+      const pdfMember =
+        step.step_kind === "pdf_render"
+          ? selected.current.members
+              .concat(selected.sweep.members)
+              .find((member) => pdfStepForMember(member, [step]) !== undefined)
+          : undefined;
+      const runtimeIndex = runtimeItems.findIndex(
+        (item, index) =>
+          !consumedRuntimeItemIndexes.has(index) &&
+          isExactRuntimeProjectionMatch(item, activityType, selected, step.step_kind === "pdf_render", pdfMember),
+      );
+      // Fresh runtime telemetry is the active-work authority. Projection rows
+      // only enrich a runtime item whose safe workflow identity proves the pair.
+      if (runtimeIndex < 0) continue;
+      const runtimeItem = runtimeItems[runtimeIndex];
+      if (runtimeItem === undefined) continue;
+      consumedRuntimeItemIndexes.add(runtimeIndex);
+      const base = {
+        activityType,
+        workflowId: runtimeItem.workflowId,
+        executionId: runtimeItem.executionId,
+        attempt: Math.max(1, Math.floor(nonnegative(step.attempt) ?? 1)),
+        startedAt: step.started_at ?? latestStepObservation([step]),
+      };
+      if (pdfMember) {
+        const job = display.get(pdfMember.job_id);
+        projectionItems.push({
+          ...base,
+          kind: "resolved_job",
+          jobKey: step.item_key,
+          title: job?.title ?? null,
+          company: job?.company ?? null,
+          stage: "pdf_render",
+        });
+      } else if (step.step_kind === "source_family") {
+        projectionItems.push({ ...base, kind: "source_family", sourceFamily: safeItemKey(step.item_key) });
+      } else {
+        projectionItems.push({ ...base, kind: "orchestration", operation: step.step_kind });
+      }
     }
   }
   const all = runtimeItems
@@ -1833,6 +2144,8 @@ function buildActiveItems(
   const items = all.slice(0, 20);
   return {
     items,
+    // This is the allowlisted detail count, not total slot occupancy. Consumers
+    // must also consider occupied slots and stale peers before declaring idle.
     total: telemetry.activeDetailsTotal,
     truncated:
       telemetry.activeDetailsTruncated ||
@@ -1863,6 +2176,34 @@ function isExactRuntimeProjectionMatch(
 function preparationWorkflowRunId(selected: SelectedExecution, workflowId: string): string | undefined {
   return selected.current.preparationWorkflowRunIds.get(workflowId) ??
     selected.sweep.preparationWorkflowRunIds.get(workflowId);
+}
+
+function loadRuntimePreparationJobDisplays(
+  db: SqliteDatabase,
+  tenantId: string,
+  workflowIds: string[],
+): Map<string, RuntimePreparationJobRow> {
+  const result = new Map<string, RuntimePreparationJobRow>();
+  // The fresh runtime reader already caps activity detail at twenty items.
+  for (const group of chunks([...new Set(workflowIds)], 500)) {
+    const rows = allRows<RuntimePreparationJobRow>(
+      db,
+      `SELECT wrp.workflow_id, wrp.temporal_run_id, j.job_id, j.title, j.company
+         FROM workflow_run_projections wrp
+         JOIN jobs j ON j.tenant_id = wrp.tenant_id AND j.job_id = CASE
+           WHEN json_valid(wrp.input_summary_json) THEN CASE
+             WHEN json_type(wrp.input_summary_json, '$.jobId') = 'text'
+             THEN json_extract(wrp.input_summary_json, '$.jobId')
+           END
+         END
+        WHERE wrp.tenant_id = ? AND wrp.workflow_type = 'JobPreparationWorkflow'
+          AND wrp.temporal_run_id IS NOT NULL
+          AND wrp.workflow_id IN (${group.map(() => "?").join(", ")})`,
+      [tenantId, ...group],
+    );
+    for (const row of rows) result.set(row.workflow_id, row);
+  }
+  return result;
 }
 
 function loadJobDisplays(db: SqliteDatabase, tenantId: string, jobIds: string[]): Map<string, JobDisplayRow> {
@@ -1896,10 +2237,12 @@ function buildEtaInput(
   runtimeAttribution: SelectedRuntimeAttribution,
   projectionCoverage: PipelineProjectionCoverage,
 ): PipelineEtaEstimatorInput {
+  const currentDemand = etaCountsForCohort(selected.current, currentCounts);
+  const sweepDemand = etaCountsForCohort(selected.sweep, sweepCounts);
   const stages: PipelineEtaStageInput[] = OPERATIONAL_STAGES.filter((stage) => stage !== "reconciliation").map((stage) => ({
       stage,
       remainingCurrentStage: etaRemainingCount(
-        currentCounts.get(stage) ?? emptyCounts(),
+        currentDemand.get(stage) ?? emptyCounts(),
         retryableRemainingForStage(selected, selected.current, stage, true),
       ),
       primaryEvidence: usesStepProjection(stage)
@@ -1932,10 +2275,10 @@ function buildEtaInput(
     ),
     scope: projectionCoverage.status === "ready" ? "known" as const : "unknown" as const,
     membershipOpen: !selected.membershipClosed,
-    blocked: stages.some((stage) => (currentCounts.get(stage.stage as (typeof OPERATIONAL_STAGES)[number])?.blocked ?? 0) > 0),
+    blocked: stages.some((stage) => (currentDemand.get(stage.stage as (typeof OPERATIONAL_STAGES)[number])?.blocked ?? 0) > 0),
     stages,
     remainingPaths: remainingPaths(selected.current, selected.steps),
-    contention: contention(selected, sweepCounts, globalCounts, globalRetryability, telemetry),
+    contention: contention(selected, sweepDemand, globalCounts, globalRetryability, telemetry),
   };
 }
 
@@ -1990,7 +2333,7 @@ function stageEtaInput(
       runtimeContext.runtimeActiveWork,
     ),
     scope: runtimeContext.scope,
-    membershipOpen: false,
+    estimateScope: "stage",
     blocked: counts.blocked > 0,
     stages,
     remainingPaths: [],
@@ -2160,10 +2503,14 @@ function remainingPaths(
   return cohortValue.members.flatMap((member) => {
     if (member.work_plan_state !== "planned") return [];
     const states = cohortValue.stageStates.get(member.job_id);
+    if (!pdfStepForMember(member, pipelineSteps) && pdfStoppedByPrerequisite(member, states, cohortValue.preparationWorkflowStatuses) !== null) return [];
     const stageIds = requiredSteps(member).filter((stage) => {
       const terminalOwner = memberPreparationWorkflowFailed(member, cohortValue.preparationWorkflowStatuses);
-      if (stage === "pdf") return !isTerminalStepState(pdfStepForMember(member, pipelineSteps), terminalOwner);
-      return !isTerminalStageState(states?.get(stage), terminalOwner);
+      if (stage === "pdf") return !memberPdfResolved(
+        member, pipelineSteps, cohortValue.preparationWorkflowStatuses, cohortValue.observedPdfOutcomes,
+      );
+      return !isCompletedEligibilityHold(member, stage, cohortValue.completedEligibilityHolds) &&
+        !isTerminalStageState(states?.get(stage), terminalOwner);
     });
     return stageIds.length > 0 ? [{ stageIds: stageIds.map((stage) => (stage === "pdf" ? "pdf_render" : stage)) }] : [];
   });
@@ -2176,7 +2523,8 @@ function contention(
   globalRetryability: GlobalRetryability,
   telemetry: WorkerRuntimeTelemetrySnapshot,
 ) {
-  if (telemetry.status !== "available" || hasUnboundedQueueContention(telemetry)) {
+  if (telemetry.status !== "available" || telemetry.staleWorkerCount > 0 ||
+      blockingAdmissionUncertain(telemetry) || hasUnboundedQueueContention(telemetry)) {
     return { kind: "unknown" as const };
   }
   if (telemetry.activeDetailsTruncated || telemetry.activeSlots > telemetry.activeDetailsTotal) {
@@ -2199,13 +2547,19 @@ function contention(
 }
 
 function sharedRuntimeContention(telemetry: WorkerRuntimeTelemetrySnapshot) {
-  if (telemetry.status !== "available" || hasUnboundedQueueContention(telemetry)) {
+  if (telemetry.status !== "available" || telemetry.staleWorkerCount > 0 ||
+      blockingAdmissionUncertain(telemetry) || hasUnboundedQueueContention(telemetry)) {
     return { kind: "unknown" as const };
   }
   if (telemetry.activeDetailsTruncated || telemetry.activeSlots > telemetry.activeDetailsTotal) {
     return { kind: "truncated" as const };
   }
   return { kind: "bounded" as const, existingBacklog: [], retries: [], queuePresent: false };
+}
+
+function blockingAdmissionUncertain(telemetry: WorkerRuntimeTelemetrySnapshot): boolean {
+  const status = telemetry.blockingExecutor;
+  return status === null || status.refusingWorkers > 0 || status.unknownWorkers > 0;
 }
 
 function currentStageContention(
@@ -2304,12 +2658,16 @@ function sweepMemberHasRemainingWork(
     selected.sweep.preparationWorkflowStatuses,
   );
   const states = selected.sweep.stageStates.get(member.job_id);
+  if (!pdfStepForMember(member, selected.steps) && pdfStoppedByPrerequisite(member, states, selected.sweep.preparationWorkflowStatuses) !== null) return false;
   if (!isTerminalStageState(states?.get("enrich"), terminalOwner)) return true;
   if (member.work_plan_state !== "planned") return true;
   return requiredSteps(member).some((stage) =>
     stage === "pdf"
-      ? !isTerminalStepState(pdfStepForMember(member, selected.steps), terminalOwner)
-      : !isTerminalStageState(states?.get(stage), terminalOwner),
+      ? !memberPdfResolved(
+        member, selected.steps, selected.sweep.preparationWorkflowStatuses, selected.sweep.observedPdfOutcomes,
+      )
+      : !isCompletedEligibilityHold(member, stage, selected.sweep.completedEligibilityHolds) &&
+        !isTerminalStageState(states?.get(stage), terminalOwner),
   );
 }
 
@@ -2428,7 +2786,7 @@ function unselectedExecutionCoverageRequired(
   // fresh worker telemetry also proves that every activity slot is idle.  A
   // stale/missing heartbeat or occupied non-allowlisted slot is unknown scope,
   // not an empty pipeline.
-  return telemetry.status !== "available" || telemetry.activeSlots > 0;
+  return telemetry.status !== "available" || telemetry.staleWorkerCount > 0 || telemetry.activeSlots > 0;
 }
 
 function runtimeStageActiveWork(

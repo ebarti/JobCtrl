@@ -12,7 +12,7 @@ test("Runs view: lists workflow runs and exposes a Temporal Web UI deep-link per
   await expect(card).toBeVisible({ timeout: 30_000 });
 
   const link = page.getByRole("link", {
-    name: /Open workflow qa-run-1 in Temporal Web UI/i,
+    name: /Open in Temporal: workflow qa-run-1/i,
   });
   await expect(link).toBeVisible({ timeout: 30_000 });
   await expect(link).toHaveAttribute(

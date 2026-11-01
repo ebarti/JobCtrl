@@ -17,6 +17,7 @@ import type {
   ContactResearchTaskNeedsReview,
   ContactResearchTaskCompleted,
   ContactResearchTaskFailed,
+  ContactResearchSourceAttemptFailed,
   OutreachDraftGenerated,
   OutreachDraftRevised,
   OutreachDraftApproved,
@@ -94,6 +95,13 @@ export const contactResearchTaskCompletedHandler = (
 
 export const contactResearchTaskFailedHandler = (
   event: ContactResearchTaskFailed,
+): readonly InvalidationItem[] => [
+  invalidate(outreachKeys.researchTask(event.tenantId, event.payload.taskId)),
+  invalidate(outreachKeys.researchTaskLists(event.tenantId)),
+];
+
+export const contactResearchSourceAttemptFailedHandler = (
+  event: ContactResearchSourceAttemptFailed,
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.researchTask(event.tenantId, event.payload.taskId)),
   invalidate(outreachKeys.researchTaskLists(event.tenantId)),

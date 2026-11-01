@@ -64,6 +64,10 @@ class ScoreRepository(Protocol):
         """
         ...
 
+    def record_profile_review(self, score: JobScore, *, entity_version: str, determination_id: str) -> None:
+        """Bind a recorded review atomically while this accepted score is current."""
+        ...
+
     def list_pending(self, tenant_id: TenantId, *, limit: int = 0) -> list[JobId]:
         """Return ``JobId``s that have a description but no score yet.
 
@@ -135,8 +139,4 @@ class ScoreStalenessRepository(Protocol):
         marked_at: str,
     ) -> list[ScoreStaleMarker]:
         """Mark latest uncorrected scores with older policy traces stale."""
-        ...
-
-    def resolve_for_score(self, score: JobScore) -> int:
-        """Resolve active stale markers satisfied by a new persisted score."""
         ...

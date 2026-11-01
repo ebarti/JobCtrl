@@ -36,12 +36,15 @@ from jobctrl.domain.taxonomy_codes import SeniorityCode
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+
+if TYPE_CHECKING:
+    from jobctrl.domain.determinations import DeterminationFailure
 
 
 @dataclass(frozen=True)
@@ -86,7 +89,7 @@ PROMPT_VERSION = "employer-analysis-v4-determinations"
 # or model ids change so the cache invalidates (D-12). The config.json
 # ``analysis_legs`` setting records intentional degraded-mode choices, so cache
 # keys also reflect those choices.
-SDK_SET_VERSION = "claude+codex+antigravity-v2-synth-default"
+SDK_SET_VERSION = "claude+codex+antigravity-v3-verified-single-synth-default"
 
 RequirementTier = Literal["must_have", "nice_to_have"]
 RequirementCoverageScope = Literal[
@@ -462,9 +465,13 @@ class EnsembleError(RuntimeError):
     degraded; only zero surviving drafts is a hard error surfaced to the user.
     """
 
-    def __init__(self, message: str, failures: tuple[AnalysisFailure, ...]) -> None:
+    def __init__(
+        self, message: str, failures: tuple[AnalysisFailure, ...], *,
+        determination_failure: DeterminationFailure | None = None,
+    ) -> None:
         super().__init__(message)
         self.failures = failures
+        self.determination_failure = determination_failure
 
 
 __all__ = [

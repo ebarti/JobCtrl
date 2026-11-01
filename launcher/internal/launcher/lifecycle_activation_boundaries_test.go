@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -102,7 +104,7 @@ func TestP5PolicyTamperingFailsBeforePromotion(t *testing.T) {
 				return nil
 			}
 			ctx := launchContext{Instance: instance{
-				RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "state.json"), ControlPath: filepath.Join(state, "control.lock"),
+				RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "state.json"), LockPath: filepath.Join(state, "instance.lock"), ControlPath: filepath.Join(state, "control.lock"),
 			}, Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}}
 			err = promoteExisting(ctx, store, release.Active{SchemaVersion: 1, Generation: 1, Receipt: old, SelectorBuildID: old.BuildID, Acquisition: "local-fixture"}, candidate.BuildID, "update", io.Discard)
 			if err == nil || !strings.Contains(err.Error(), "candidate is not safe to promote") {
@@ -162,26 +164,53 @@ func newPromotionBoundaryFixture(t *testing.T, python string) promotionBoundaryF
 	env := []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}
 	return promotionBoundaryFixture{
 		runtime: runtime, state: state, store: store, old: old, candidate: candidate, env: env,
-		ctx: launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), ControlPath: filepath.Join(state, "control.lock")}, Environment: env},
+		ctx: launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), LockPath: filepath.Join(state, "instance.lock"), ControlPath: filepath.Join(state, "control.lock")}, Environment: env},
 	}
 }
 
+func snapshotPromotionBoundaryFiles(t *testing.T, fixture promotionBoundaryFixture) map[string]string {
+	t.Helper()
+	result := make(map[string]string)
+	record := func(path string) error {
+		digest, err := sha256Path(path)
+		if err != nil {
+			return err
+		}
+		result[path] = digest
+		return nil
+	}
+	if err := filepath.WalkDir(fixture.state, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type().IsRegular() {
+			return record(path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(fixture.runtime, release.ActiveFile), filepath.Join(fixture.runtime, release.JournalFile), filepath.Join(fixture.runtime, "bin", "jobctrl")} {
+		if err := record(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return result
+}
+
 // This exercises the actual promotion transaction at each durable activation
-// milestone—not just advance's journal write.  Before PolicyFinalized the
-// authenticated channel state is unchanged, so recovery must restore and run
-// the predecessor.  At and after PolicyFinalized, the old release is revoked;
-// recovery must instead remain fail-closed to the independently verified,
-// already healthy candidate.
+// milestone—not just advance's journal write. Before the paired backup,
+// recovery may restart the predecessor. Once the backup is durable, a later
+// independent writer makes automatic restoration unsafe, even after revocation.
 func TestP5PromotionRecoveryRespectsEveryActivationBoundary(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 unavailable")
 	}
 	cases := []struct {
-		state               release.State
-		postPolicy          bool
-		terminal            bool
-		synchronousRollback bool
+		state      release.State
+		postPolicy bool
+		terminal   bool
 	}{
 		{state: release.MetadataVerified},
 		{state: release.ReleaseCommitted},
@@ -190,12 +219,8 @@ func TestP5PromotionRecoveryRespectsEveryActivationBoundary(t *testing.T) {
 		{state: release.Quiescing},
 		{state: release.PairBackedUp},
 		{state: release.PolicyPending},
-		// These two boundaries are inside promoteExisting's rollback guard:
-		// an injected error is recovered synchronously rather than left for a
-		// later command.  They still prove the pre-policy invariant through
-		// the same durable pair and predecessor restart.
-		{state: release.CandidateStarting, synchronousRollback: true},
-		{state: release.CandidateHealthy, synchronousRollback: true},
+		{state: release.CandidateStarting},
+		{state: release.CandidateHealthy},
 		{state: release.PolicyFinalized, postPolicy: true},
 		{state: release.Promoted, postPolicy: true, terminal: true},
 	}
@@ -239,31 +264,61 @@ func TestP5PromotionRecoveryRespectsEveryActivationBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read durable boundary %s: %v", testCase.state, err)
 			}
-			if testCase.synchronousRollback {
-				if journal.State != release.RolledBack || journal.Resumable() {
-					t.Fatalf("guarded boundary %s did not durably roll back: %#v", testCase.state, journal)
-				}
-			} else if journal.State != testCase.state {
+			if journal.State != testCase.state {
 				t.Fatalf("durable boundary %s was not retained: %#v", testCase.state, journal)
+			}
+			if !testCase.terminal && journal.BackupID != "" {
+				if !journal.PreserveLiveOnFailure || !journal.Resumable() {
+					t.Fatalf("boundary %s did not retain a resumable preservation fence: %#v", testCase.state, journal)
+				}
+				pairPath := filepath.Join(fixture.state, "backups", journal.BackupID)
+				var pair databasePair
+				if err := decodeStrictRegular(filepath.Join(pairPath, "pair.json"), &pair); err != nil || pair.ReleaseReceipt != fixture.old {
+					t.Fatalf("boundary %s lost the verified predecessor pair: %#v, %v", testCase.state, pair, err)
+				}
+				if got := lifecycleDatabaseValues(t, python, pairPath); got["jobctrl.db"] != "oldjobctrl.db" || got["temporal.db"] != "oldtemporal.db" {
+					t.Fatalf("boundary %s changed the paired backup: %v", testCase.state, got)
+				}
+				// An independent writer commits after the backup. Both commits and
+				// every owned artifact must survive repeated refusal.
+				setLifecycleSQLitePair(t, python, fixture.state, "later")
+				if got := lifecycleDatabaseValues(t, python, fixture.state); got["jobctrl.db"] != "laterjobctrl.db" || got["temporal.db"] != "latertemporal.db" {
+					t.Fatalf("independent writes not committed: %v", got)
+				}
+				before := snapshotPromotionBoundaryFiles(t, fixture)
+				previousCandidateStarts := candidateStarts
+				for attempt := 0; attempt < 2; attempt++ {
+					var handled bool
+					var recoverErr error
+					if testCase.postPolicy {
+						handled, recoverErr = recoverRevokedTransitionBeforePrepare(fixture.env, io.Discard)
+						if !handled {
+							t.Fatalf("revoked recovery was not handled at %s", testCase.state)
+						}
+					} else {
+						handled, recoverErr = recoverInterruptedTransition(fixture.ctx, fixture.store)
+						if handled {
+							t.Fatalf("unsafe recovery reported success at %s", testCase.state)
+						}
+					}
+					if recoverErr == nil || !strings.Contains(recoverErr.Error(), "retain the live databases") || !strings.Contains(recoverErr.Error(), "automatic recovery is unavailable") {
+						t.Fatalf("boundary %s recovery attempt %d = %v", testCase.state, attempt, recoverErr)
+					}
+					if after := snapshotPromotionBoundaryFiles(t, fixture); !reflect.DeepEqual(before, after) {
+						t.Fatalf("boundary %s recovery changed the live pair, companions, backup, journal or release selection", testCase.state)
+					}
+				}
+				if oldStarts != 0 || candidateStarts != previousCandidateStarts {
+					t.Fatalf("boundary %s recovery started a release: old=%d candidate=%d", testCase.state, oldStarts, candidateStarts)
+				}
+				return
 			}
 
 			if !testCase.postPolicy {
 				if err := fixture.store.Permit(fixture.old); err != nil {
 					t.Fatalf("pre-policy boundary %s revoked predecessor: %v", testCase.state, err)
 				}
-				if testCase.synchronousRollback {
-					active, activeErr := fixture.store.ReadActive()
-					if activeErr != nil || active.Receipt != fixture.old {
-						t.Fatalf("guarded pre-policy rollback at %s did not restore prior release: %#v, %v", testCase.state, active, activeErr)
-					}
-					if oldStarts != 1 {
-						t.Fatalf("guarded pre-policy rollback at %s did not make predecessor runnable exactly once: old starts=%d", testCase.state, oldStarts)
-					}
-					if _, err := verifyInstalledReleaseForExecution(fixture.store, fixture.old); err != nil {
-						t.Fatalf("guarded pre-policy rollback at %s left predecessor unverifiable: %v", testCase.state, err)
-					}
-					return
-				}
+
 				recovered, recoverErr := recoverInterruptedTransition(fixture.ctx, fixture.store)
 				if !recovered || recoverErr != nil {
 					t.Fatalf("pre-policy recovery at %s = recovered:%v err:%v", testCase.state, recovered, recoverErr)
@@ -301,17 +356,7 @@ func TestP5PromotionRecoveryRespectsEveryActivationBoundary(t *testing.T) {
 				return
 			}
 
-			handled, recoverErr := recoverRevokedTransitionBeforePrepare(fixture.env, io.Discard)
-			if !handled || recoverErr != nil {
-				t.Fatalf("post-policy recovery at %s = handled:%v err:%v", testCase.state, handled, recoverErr)
-			}
-			active, activeErr := fixture.store.ReadActive()
-			if activeErr != nil || active.Receipt != fixture.candidate {
-				t.Fatalf("post-policy recovery at %s did not select candidate: %#v, %v", testCase.state, active, activeErr)
-			}
-			if oldStarts != 0 || candidateStarts != 2 {
-				t.Fatalf("post-policy recovery at %s was not fail-closed to candidate: old=%d candidate=%d", testCase.state, oldStarts, candidateStarts)
-			}
+			t.Fatalf("unhandled post-policy boundary %s", testCase.state)
 		})
 	}
 }
@@ -445,5 +490,51 @@ func TestP5OrdinaryHomebrewRollbackRecoversBeforeFormulaBootstrap(t *testing.T) 
 	journal, err := fixture.store.ReadJournal()
 	if err != nil || journal.State != release.RolledBack || journal.Resumable() {
 		t.Fatalf("ordinary Homebrew recovery journal=%#v err=%v", journal, err)
+	}
+}
+
+func TestPendingBridgeRefusesFailClosedUninstallAtPublicEntry(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	runtime, state := t.TempDir(), t.TempDir()
+	store, err := release.Open(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := installLifecycleRelease(t, runtime, "local-bridge-source-0001", 1, python)
+	if _, err := store.WriteSelectedActive(active, 0, active.BuildID, "local-fixture"); err != nil {
+		t.Fatal(err)
+	}
+	// Missing selector routes the public command through fail-closed uninstall.
+	if err := os.WriteFile(filepath.Join(runtime, "bridge-handoff.json"), []byte("synthetic pending handoff"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profile := filepath.Join(state, "profile.json")
+	if err := os.WriteFile(profile, []byte("synthetic profile"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	activePath := filepath.Join(runtime, release.ActiveFile)
+	before, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}
+	var output bytes.Buffer
+	if err := Run(filepath.Join(runtime, "bin", "jobctrl"), []string{"uninstall"}, env, &output, io.Discard); err == nil || !strings.Contains(err.Error(), "bridge handoff") {
+		t.Fatalf("public uninstall did not refuse: %v", err)
+	}
+	if after, err := os.ReadFile(activePath); err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("active changed: %v", err)
+	}
+	if after, err := os.ReadFile(profile); err != nil || string(after) != "synthetic profile" {
+		t.Fatalf("profile changed: %q %v", after, err)
+	}
+	if _, err := os.Stat(filepath.Join(runtime, "releases", active.BuildID, "payload")); err != nil {
+		t.Fatalf("release removed: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(runtime, "bridge-handoff.json")); err != nil {
+		t.Fatalf("handoff removed: %v", err)
 	}
 }

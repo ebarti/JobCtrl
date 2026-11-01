@@ -1,9 +1,9 @@
 """Claude Agent SDK adapter for employer analysis — draft leg + synthesizer.
 
-Mirrors the mestre vendor-lane pattern (``mestre/vendor_lane/backends/
-claude_sdk.py``): a thin wrapper over ``claude_agent_sdk.query`` that forces
-native structured output via ``output_format={"type":"json_schema", ...}`` and
-reads the parsed object off the final ``ResultMessage.structured_output``.
+Dispatches native ``claude_agent_sdk.query`` through ``agent-runtime-kit``
+with a fresh tool-free conversation. Native structured output uses
+``output_format={"type":"json_schema", ...}``; JobCtrl retains terminal
+failure classification, accounting and strict result parsing.
 
 Test-mockability (no live auth in tests — D-04): the SDK ``query`` function and
 the ``ClaudeAgentOptions`` class are resolved through injectable factories that
@@ -25,9 +25,17 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysis,
     JobAnalysisDraft,
 )
+from jobctrl.domain.determinations import DeterminationFailure
+from jobctrl.domain.errors import JobCtrlError
+from jobctrl.domain.ports.llm import LlmFailure
 from jobctrl.infrastructure.analysis.prompts import build_synthesizer_user_prompt
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 from jobctrl.llm_lanes import lane_bound
+from jobctrl.infrastructure.llm.provider_errors import (
+    ProviderCallError,
+    ProviderFailureEnvelope,
+    raise_on_claude_failure,
+)
 from jobctrl.infrastructure.setup_probes import bundled_claude_sdk_options
 from jobctrl.runtime import activate_provider_pack, is_bundled_runtime
 
@@ -72,6 +80,64 @@ async def _aiter(result: AsyncIterator[Any] | Awaitable[AsyncIterator[Any]]) -> 
         return result  # type: ignore[return-value]
     awaited = await result  # type: ignore[misc]
     return awaited
+
+
+async def _collect_sdk_messages(
+    query_fn: QueryFn,
+    *,
+    prompt: str,
+    options: Any,
+    model: str,
+    operation: str,
+    record_cancelled_usage: Callable[..., None] | None = None,
+) -> list[Any]:
+    """Run every Claude generation/analysis/voice request through the kit."""
+    from jobctrl.infrastructure.llm.agent_runtime_claude import call_claude_runtime
+
+    return await call_claude_runtime(
+        query=query_fn, options=options, prompt=prompt, model=model, operation=operation,
+        record_cancelled_usage=record_cancelled_usage,
+    )
+
+
+async def _collect_raw_sdk_messages(
+    query_fn: QueryFn,
+    *,
+    prompt: str,
+    options: Any,
+    model: str,
+    operation: str,
+    messages: list[Any] | None = None,
+) -> list[Any]:
+    """Type SDK execution failures before response parsing or semantic review."""
+    if messages is None:
+        messages = []
+    try:
+        iterator = await _aiter(query_fn(prompt=prompt, options=options))
+        async for message in iterator:
+            messages.append(message)
+        return messages
+    except Exception as error:
+        if any(type(message).__name__ == "ResultMessage" for message in messages):
+            # Keep the terminal receipt and its usage; the post-terminal error
+            # is carried as a separate content-free diagnostic.
+            return _ClaudeCollectedMessages(messages)
+        if isinstance(error, (JobCtrlError, DeterminationFailure, LlmFailure)):
+            raise
+        # Preserve known authentication types for provider-wide exclusion.
+        # Cancellation inherits BaseException and never enters this catch.
+        if type(error).__name__ in {"AuthenticationError", "PermissionDeniedError"}:
+            raise
+        raise ProviderCallError(ProviderFailureEnvelope(
+            provider="claude", model=model, operation=operation,
+            category="provider_transport", error_type="claude_sdk_execution_error",
+            code="provider_unavailable", retryable=True,
+            http_status=getattr(error, "status_code", None),
+        )) from error
+
+
+class _ClaudeCollectedMessages(list[Any]):
+    post_terminal_failure = True
 
 
 def _structured_output_from_messages(messages: list[Any]) -> dict[str, Any]:
@@ -181,17 +247,22 @@ class _ClaudeStructuredCaller:
             params={},
             scope_name=self._scope_name,
         ) as record:
-            raw = query_fn(prompt=user_prompt, options=options)
-            iterator = await _aiter(raw)
-            messages = [message async for message in iterator]
+            messages = await _collect_sdk_messages(
+                query_fn, prompt=user_prompt, options=options, model=self._model, operation="analysis",
+                record_cancelled_usage=record,
+            )
             input_tokens, output_tokens = _usage_from_messages(messages)
             record("", input_tokens=input_tokens, output_tokens=output_tokens)
+            raise_on_claude_failure(messages, model=self._model, operation="analysis")
             structured = _structured_output_from_messages(messages)
             return structured
 
 
 class ClaudeAnalysisAdapter:
     """Claude Agent SDK draft leg (``AnalysisDraftPort``)."""
+
+    provider_id = "claude"
+    default_model_selection = False
 
     def __init__(
         self,

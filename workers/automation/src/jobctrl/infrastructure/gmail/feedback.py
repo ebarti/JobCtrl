@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -14,15 +13,15 @@ from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from jobctrl.database import close_connection, open_exact_v14_database
+from jobctrl.database import close_connection, open_exact_v15_database
 from jobctrl.infrastructure.migrations.schema_manifest import (
-    EXACT_V14_MANIFEST,
+    EXACT_V15_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,
 )
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.ports.events import EventHandler, EventPublisher, Subscription
-from jobctrl.infrastructure.gmail.client import GmailClient
+from jobctrl.infrastructure.gmail.client import GmailClient, GmailFeedbackInputError, validate_feedback_recipient
 from jobctrl.state import record_job_event
 
 TENANT_ID = "local"
@@ -34,18 +33,19 @@ MAX_LIMIT = 100
 MAX_RESULTS_PER_ANCHOR = 20
 MAX_WINDOW_DAYS = 180
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
 
 class GmailFeedbackError(RuntimeError):
     """Raised when a bounded feedback scan cannot run safely."""
+
+
+class GmailFeedbackRecipientError(GmailFeedbackError):
+    """A scan has no valid recipient for its bounded search."""
 
 
 class GmailFeedbackClient(Protocol):
     def search_feedback_emails(
         self,
         *,
-        query: str,
         to_email: str,
         after: datetime,
         before: datetime,
@@ -124,7 +124,7 @@ def scan_gmail_feedback(
         default=DEFAULT_WINDOW_DAYS,
     )
 
-    conn = open_exact_v14_database(db_path)
+    conn = open_exact_v15_database(db_path)
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=10000")
@@ -135,8 +135,12 @@ def scan_gmail_feedback(
         gmail = client or GmailClient()
         ensure_application_feedback_tables(conn)
         recipient = (recipient_email or _profile_email(conn)).strip().lower()
-        if not recipient or not _EMAIL_RE.match(recipient):
-            raise GmailFeedbackError("Gmail feedback scan requires a recipient email or candidate profile email.")
+        try:
+            validate_feedback_recipient(recipient)
+        except GmailFeedbackInputError:
+            raise GmailFeedbackRecipientError(
+                "Gmail feedback scan requires a recipient email or candidate profile email."
+            ) from None
 
         from jobctrl.infrastructure.determinations import determination_dependencies, SqliteDeterminationRepository
         from jobctrl.domain.feedback.message_interpretation import ModelMessageInterpreter
@@ -165,9 +169,7 @@ def scan_gmail_feedback(
         for anchor in anchors:
             after = anchor.anchor_at
             before = anchor.anchor_at + timedelta(days=bounded_window_days)
-            query = ""
             metadata_items = gmail.search_feedback_emails(
-                query=query,
                 to_email=recipient,
                 after=after,
                 before=before,
@@ -322,7 +324,6 @@ def scan_gmail_feedback(
                         "kind": classification.kind,
                         "confidence": classification.confidence,
                         "determinationId": outcome_envelope.determination_id,
-                        "citations": [citation.model_dump() for citation in outcome.citations],
                     }
                 )
 
@@ -333,9 +334,9 @@ def scan_gmail_feedback(
 
 def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
     """Validate the current feedback owner without creating or altering schema."""
-    if conn.execute("PRAGMA user_version").fetchone()[0] != EXACT_V14_MANIFEST.version:
+    if conn.execute("PRAGMA user_version").fetchone()[0] != EXACT_V15_MANIFEST.version:
         raise SchemaManifestError("Gmail feedback requires the exact current database schema")
-    assert_exact_manifest(conn, EXACT_V14_MANIFEST)
+    assert_exact_manifest(conn, EXACT_V15_MANIFEST)
 
 
 def _store_linked_message(

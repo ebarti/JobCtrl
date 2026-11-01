@@ -49,7 +49,7 @@ class ImportModel:
         title = response_schema["title"]
         if title in {"PageInterpretation", "DescriptionQuality"}:
             return self.page.chat_json(messages, response_schema=response_schema, **kwargs)
-        if title == "PostingExtraction":
+        if title == "PostingSelectionExtraction":
             sources = {row["source_id"]: row["text"] for row in data["sources"]}
             selected = str(self.selected_posting)
             values = self.fields or {
@@ -60,6 +60,25 @@ class ImportModel:
             result = {}
             for name, value in values.items():
                 source = next((key for key, text in sources.items() if value and value in text), None)
+                if name == "description":
+                    source = next((key for key, text in sources.items() if value and value == text), source)
+                    rows = next((row["lines"] for row in data["context"]["line_inventory"] if row["source_id"] == source), [])
+                    start = sources[source].index(value) if source is not None else -1
+                    end = start + len(value)
+                    offset = 0
+                    selected_lines = []
+                    for row in rows:
+                        next_offset = offset + len(row["text"])
+                        if offset < end and next_offset > start:
+                            selected_lines.append(row["line_id"])
+                        offset = next_offset
+                    result[name] = {
+                        "source_id": source or "missing",
+                        "first_line_id": selected_lines[0] if selected_lines else "missing",
+                        "last_line_id": selected_lines[-1] if selected_lines else "missing",
+                        "rationale": "Explicit description source selection",
+                    }
+                    continue
                 result[name] = {
                     "value": value,
                     "citations": [] if source is None else [{"source_id": source, "quote": value, "exact_values": []}],

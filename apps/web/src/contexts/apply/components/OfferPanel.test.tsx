@@ -1,9 +1,12 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { JobCtrlApiError } from "@jobctrl/api-client";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { OfferPanel } from "./OfferPanel.js";
+import { outcomesKeys } from "../../operations/outcomesKeys.js";
 import type {
   OfferReadResponse,
   SaveOfferTerms,
@@ -64,6 +67,163 @@ const compensation = {
 };
 
 describe("offer terms and decisions", () => {
+  it("retains newer terms after a pending save and submits only against a reviewed current revision", async () => {
+    const user = userEvent.setup();
+    let current = withTerms();
+    let resolve!: (value: OfferReadResponse) => void;
+    const saveOfferTerms = vi.fn()
+      .mockImplementationOnce(() => new Promise<OfferReadResponse>((done) => { resolve = done; }))
+      .mockImplementation(async () => current);
+    const { queryClient } = renderWithProviders(<OfferPanel jobId={JOB} />, { ports: buildTestPorts({ api: {
+      ...compensation, jobOffer: vi.fn(async () => current), saveOfferTerms,
+    } }) });
+    await user.click(await screen.findByText("Revise offer terms"));
+    fireEvent.change(screen.getByLabelText("Offer source reference"), { target: { value: "Synthetic letter" } });
+    const quote = screen.getByLabelText("Verbatim offer source quote");
+    fireEvent.change(quote, { target: { value: "Submitted offer quote A" } });
+    fireEvent.change(screen.getByLabelText("Terms revision reason"), { target: { value: "Synthetic correction" } });
+    await user.click(screen.getByRole("checkbox", { name: /I confirm these are actual offered terms/ }));
+    await user.click(screen.getByRole("button", { name: "Save confirmed offer terms" }));
+    await waitFor(() => expect(saveOfferTerms).toHaveBeenCalledOnce());
+    expect(saveOfferTerms.mock.calls[0]?.[1].expectedRevisionId).toBe(revisionId);
+    fireEvent.change(quote, { target: { value: "Newer offer quote B" } });
+    const latestRevision = "00000000-0000-4000-8000-000000000104";
+    current = { ...current, currentTerms: { ...current.currentTerms!, revisionId: latestRevision } };
+    await act(async () => { queryClient.setQueryData(outcomesKeys.offer(LOCAL_TENANT, JOB), current); });
+    expect(quote).toHaveValue("Newer offer quote B");
+    expect(screen.getByRole("button", { name: "Saving terms…" })).toBeDisabled();
+    await act(async () => resolve(current));
+    await user.click(await screen.findByRole("button", { name: "Keep draft and review latest terms" }));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Review changed offer terms" })).not.toBeInTheDocument());
+    expect(quote).toHaveValue("Newer offer quote B");
+    const confirmed = screen.getByRole("checkbox", { name: /I confirm these are actual offered terms/ });
+    expect(confirmed).not.toBeChecked();
+    await user.click(confirmed);
+    await user.click(screen.getByRole("button", { name: "Save confirmed offer terms" }));
+    await waitFor(() => expect(saveOfferTerms).toHaveBeenCalledTimes(2));
+    expect(saveOfferTerms.mock.calls[1]?.[1]).toMatchObject({ expectedRevisionId: latestRevision, terms: { source: { quote: "Newer offer quote B" } } });
+  });
+
+  it("retains a newer decision draft through a 409 and requires fresh offer IDs before retry", async () => {
+    const user = userEvent.setup();
+    let current = withTerms();
+    let failRead = false;
+    let reject!: (error: Error) => void;
+    const recordOfferDecision = vi.fn()
+      .mockImplementationOnce(() => new Promise<OfferReadResponse>((_done, fail) => { reject = fail; }))
+      .mockImplementation(async () => current);
+    const { queryClient } = renderWithProviders(<OfferPanel jobId={JOB} />, { ports: buildTestPorts({ api: {
+      ...compensation, jobOffer: vi.fn(async () => { if (failRead) throw new Error("Synthetic offer read failure"); return current; }), recordOfferDecision,
+    } }) });
+    await user.click(await screen.findByText("Record offer decision"));
+    fireEvent.change(screen.getByLabelText("Decision source reference"), { target: { value: "Synthetic decision source" } });
+    const quote = screen.getByLabelText("Decision evidence or your attestation");
+    fireEvent.change(quote, { target: { value: "Submitted decision A" } });
+    await user.click(screen.getByRole("checkbox", { name: /I attest to this offer decision/ }));
+    await user.click(screen.getByRole("button", { name: "Save offer decision" }));
+    await waitFor(() => expect(recordOfferDecision).toHaveBeenCalledOnce());
+    fireEvent.change(quote, { target: { value: "Newer decision B" } });
+    const nextTerms = "00000000-0000-4000-8000-000000000105";
+    const nextDecision = "00000000-0000-4000-8000-000000000106";
+    const decision = { expectedDecisionId: null, decisionId: nextDecision, termsRevisionId: nextTerms,
+      decision: "accepted" as const, occurredAt: source.capturedAt, recordedAt: source.capturedAt, source };
+    current = { ...current, currentTerms: { ...current.currentTerms!, revisionId: nextTerms }, currentDecision: decision, decisions: [decision] };
+    await act(async () => { queryClient.setQueryData(outcomesKeys.offer(LOCAL_TENANT, JOB), current); });
+    failRead = true;
+    await act(async () => reject(new JobCtrlApiError(409, "Conflict", "Synthetic decision conflict")));
+    expect(quote).toHaveValue("Newer decision B");
+    expect(screen.getByRole("button", { name: "Save offer decision" })).toBeDisabled();
+    await user.click(await screen.findByRole("button", { name: "Keep draft and review latest offer" }));
+    expect(await screen.findByText(/could not load the latest offer/i)).toBeInTheDocument();
+    expect(quote).toHaveValue("Newer decision B");
+    expect(screen.getByRole("button", { name: "Save offer decision" })).toBeDisabled();
+    expect(recordOfferDecision).toHaveBeenCalledOnce();
+    failRead = false;
+    await user.click(screen.getByRole("button", { name: "Keep draft and review latest offer" }));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Review changed offer decision" })).not.toBeInTheDocument());
+    expect(quote).toHaveValue("Newer decision B");
+    fireEvent.change(screen.getByLabelText("Decision correction reason"), { target: { value: "Synthetic correction" } });
+    const attestation = screen.getByRole("checkbox", { name: /I attest to this offer decision/ });
+    expect(attestation).not.toBeChecked();
+    await user.click(attestation);
+    await user.click(screen.getByRole("button", { name: "Save offer decision" }));
+    await waitFor(() => expect(recordOfferDecision).toHaveBeenCalledTimes(2));
+    expect(recordOfferDecision.mock.calls[1]?.[1]).toMatchObject({ expectedDecisionId: nextDecision, termsRevisionId: nextTerms, source: { quote: "Newer decision B" } });
+  });
+
+  it("retains newer decision input after a successful pending save and uses the acknowledged decision ID", async () => {
+    const user = userEvent.setup();
+    let current = withTerms();
+    let resolve!: (value: OfferReadResponse) => void;
+    const recordOfferDecision = vi.fn()
+      .mockImplementationOnce(() => new Promise<OfferReadResponse>((done) => { resolve = done; }))
+      .mockImplementation(async () => current);
+    const { queryClient } = renderWithProviders(<OfferPanel jobId={JOB} />, { ports: buildTestPorts({ api: {
+      ...compensation, jobOffer: vi.fn(async () => current), recordOfferDecision,
+    } }) });
+    await user.click(await screen.findByText("Record offer decision"));
+    fireEvent.change(screen.getByLabelText("Decision source reference"), { target: { value: "Synthetic decision source" } });
+    const quote = screen.getByLabelText("Decision evidence or your attestation");
+    fireEvent.change(quote, { target: { value: "Decision submitted A" } });
+    await user.click(screen.getByRole("checkbox", { name: /I attest to this offer decision/ }));
+    await user.click(screen.getByRole("button", { name: "Save offer decision" }));
+    await waitFor(() => expect(recordOfferDecision).toHaveBeenCalledOnce());
+    expect(recordOfferDecision.mock.calls[0]?.[1]).toMatchObject({ expectedDecisionId: null, termsRevisionId: revisionId });
+    fireEvent.change(quote, { target: { value: "Decision edited B" } });
+    const decisionId = "00000000-0000-4000-8000-000000000107";
+    const decision = { expectedDecisionId: null, decisionId, termsRevisionId: revisionId,
+      decision: "accepted" as const, occurredAt: source.capturedAt, recordedAt: source.capturedAt, source };
+    current = { ...current, currentDecision: decision, decisions: [decision] };
+    await act(async () => { queryClient.setQueryData(outcomesKeys.offer(LOCAL_TENANT, JOB), current); });
+    await act(async () => resolve(current));
+    expect(quote).toHaveValue("Decision edited B");
+    expect(screen.getByRole("button", { name: "Save offer decision" })).toBeDisabled();
+    await user.click(await screen.findByRole("button", { name: "Keep draft and review latest offer" }));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Review changed offer decision" })).not.toBeInTheDocument());
+    expect(quote).toHaveValue("Decision edited B");
+    fireEvent.change(screen.getByLabelText("Decision correction reason"), { target: { value: "Synthetic correction" } });
+    const attestation = screen.getByRole("checkbox", { name: /I attest to this offer decision/ });
+    expect(attestation).not.toBeChecked();
+    await user.click(attestation);
+    await user.click(screen.getByRole("button", { name: "Save offer decision" }));
+    await waitFor(() => expect(recordOfferDecision).toHaveBeenCalledTimes(2));
+    expect(recordOfferDecision.mock.calls[1]?.[1]).toMatchObject({ expectedDecisionId: decisionId, termsRevisionId: revisionId, source: { quote: "Decision edited B" } });
+  });
+
+  it("retains newer offer terms through a 409 and requires a reviewed current revision before retry", async () => {
+    const user = userEvent.setup();
+    let current = withTerms();
+    let reject!: (error: Error) => void;
+    const saveOfferTerms = vi.fn()
+      .mockImplementationOnce(() => new Promise<OfferReadResponse>((_done, fail) => { reject = fail; }))
+      .mockImplementation(async () => current);
+    const { queryClient } = renderWithProviders(<OfferPanel jobId={JOB} />, { ports: buildTestPorts({ api: {
+      ...compensation, jobOffer: vi.fn(async () => current), saveOfferTerms,
+    } }) });
+    await user.click(await screen.findByText("Revise offer terms"));
+    fireEvent.change(screen.getByLabelText("Offer source reference"), { target: { value: "Synthetic letter" } });
+    const quote = screen.getByLabelText("Verbatim offer source quote");
+    fireEvent.change(quote, { target: { value: "Offer quote A" } });
+    fireEvent.change(screen.getByLabelText("Terms revision reason"), { target: { value: "Synthetic correction" } });
+    await user.click(screen.getByRole("checkbox", { name: /I confirm these are actual offered terms/ }));
+    await user.click(screen.getByRole("button", { name: "Save confirmed offer terms" }));
+    await waitFor(() => expect(saveOfferTerms).toHaveBeenCalledOnce());
+    fireEvent.change(quote, { target: { value: "Newer offer quote B" } });
+    const latestRevision = "00000000-0000-4000-8000-000000000108";
+    current = { ...current, currentTerms: { ...current.currentTerms!, revisionId: latestRevision } };
+    await act(async () => { queryClient.setQueryData(outcomesKeys.offer(LOCAL_TENANT, JOB), current); });
+    await act(async () => reject(new JobCtrlApiError(409, "Conflict", "Synthetic terms conflict")));
+    expect(quote).toHaveValue("Newer offer quote B");
+    expect(screen.getByRole("button", { name: "Save confirmed offer terms" })).toBeDisabled();
+    await user.click(await screen.findByRole("button", { name: "Keep draft and review latest terms" }));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Review changed offer terms" })).not.toBeInTheDocument());
+    const confirmed = screen.getByRole("checkbox", { name: /I confirm these are actual offered terms/ });
+    expect(confirmed).not.toBeChecked();
+    await user.click(confirmed);
+    await user.click(screen.getByRole("button", { name: "Save confirmed offer terms" }));
+    await waitFor(() => expect(saveOfferTerms).toHaveBeenCalledTimes(2));
+    expect(saveOfferTerms.mock.calls[1]?.[1]).toMatchObject({ expectedRevisionId: latestRevision, terms: { source: { quote: "Newer offer quote B" } } });
+  });
   it("saves manually confirmed cash without filling unknown equity, benefits, currency or deadlines", async () => {
     const user = userEvent.setup();
     let current = empty;

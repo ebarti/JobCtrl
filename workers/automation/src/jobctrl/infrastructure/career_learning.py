@@ -103,7 +103,10 @@ def _profile(conn, tenant):
     version, resume = SqliteProfileRepository(conn, publisher=None).load_saved_resume(TenantId(tenant))
     # These are the same saved achievement IDs used by the Career Evidence Map.
     # Preserve exact identifiers/text rather than normalizing them on this read.
-    return version, [item for entry in resume["experience_entries"] for item in entry["achievement_evidence"]]
+    evidence = [item for entry in resume["experience_entries"] for item in entry["achievement_evidence"]]
+    if any(item.get("confirmation_review_required") for item in evidence):
+        raise DeterminationFailure("legacy_evidence_review_required")
+    return version, evidence
 
 
 def _jobs(conn, tenant, ids):
@@ -152,7 +155,7 @@ def _snapshot(conn, tenant, job_ids):
     confirmed = [
         item
         for item in evidence
-        if item["user_confirmed"]
+        if item["user_confirmed"] and not item.get("confirmation_review_required")
         and item["evidence_strength"] in {"supported", "verified"}
         and isinstance(item["id"], str)
         and item["id"].strip()

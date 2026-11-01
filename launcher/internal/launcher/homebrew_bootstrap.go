@@ -173,9 +173,15 @@ func handoffRecoveryController(store *release.Store, candidate release.Receipt) 
 		return err
 	}
 	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return err
+	}
 	journal, err := store.ReadJournal()
 	if err != nil || !journal.Resumable() {
 		return errors.New("recovery transition changed while staging its controller")
+	}
+	if journal.PreserveLiveOnFailure {
+		return errors.New("inspect the interrupted protected transition with `jobctrl rollback` before staging another controller")
 	}
 	verified, err := verifyInstalledReleaseForExecution(store, candidate)
 	if err != nil {
@@ -257,7 +263,7 @@ func bootstrapPromoteOrExec(executable string, args, inheritedEnv []string, stdo
 	var promotedContext launchContext
 	active, err := store.ReadActive()
 	if errors.Is(err, os.ErrNotExist) {
-		if err := bootstrapFirstInstall(store, candidate); err != nil {
+		if err := bootstrapFirstInstallWithEnv(store, candidate, inheritedEnv); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -287,6 +293,9 @@ func bootstrapPromoteOrExec(executable string, args, inheritedEnv []string, stdo
 				return lockErr
 			}
 			defer selection.Close()
+			if err := refusePendingBridgeHandoff(store.Home); err != nil {
+				return err
+			}
 			active, lockErr = store.ReadActive()
 			if lockErr != nil {
 				return lockErr
@@ -299,6 +308,13 @@ func bootstrapPromoteOrExec(executable string, args, inheritedEnv []string, stdo
 			// active record (and advance its generation) for every command. A
 			// matching curl/migration selection still records its acquisition
 			// adoption once so later `jobctrl update` routes through Homebrew.
+			verified, err := verifyInstalledReleaseForExecution(store, candidate)
+			if err != nil {
+				return err
+			}
+			if err := CheckWorkspaceSelection(store.Home, verified.payloadRoot, inheritedEnv, false); err != nil {
+				return err
+			}
 			if active.Acquisition != "homebrew" {
 				if _, lockErr = store.WriteSelectedActive(active.Receipt, active.Generation, active.SelectorBuildID, "homebrew"); lockErr != nil {
 					return lockErr
@@ -331,6 +347,10 @@ func bootstrapPromoteOrExec(executable string, args, inheritedEnv []string, stdo
 }
 
 func bootstrapFirstInstall(store *release.Store, candidate release.Receipt) error {
+	return bootstrapFirstInstallWithEnv(store, candidate, os.Environ())
+}
+
+func bootstrapFirstInstallWithEnv(store *release.Store, candidate release.Receipt, env []string) error {
 	transition, err := store.TransitionLock()
 	if err != nil {
 		return err
@@ -341,6 +361,9 @@ func bootstrapFirstInstall(store *release.Store, candidate release.Receipt) erro
 		return err
 	}
 	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return err
+	}
 	if _, err := store.ReadActive(); err == nil {
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -352,6 +375,9 @@ func bootstrapFirstInstall(store *release.Store, candidate release.Receipt) erro
 	}
 	policy, err := readInstalledPolicy(store.Home, candidate)
 	if err != nil {
+		return err
+	}
+	if err := CheckWorkspaceSelection(store.Home, verified.payloadRoot, env, true); err != nil {
 		return err
 	}
 	journal, err := store.Begin("install", nil, &candidate, candidate.DescriptorSHA256)

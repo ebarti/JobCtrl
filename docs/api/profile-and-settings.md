@@ -23,6 +23,17 @@ Profile writes are explicit saves/autosaves of canonical candidate data. A job
 tailoring run consumes a versioned snapshot; it does not silently mutate the
 profile to fit a posting.
 
+`GET /v1/profile` may include `legacyEvidenceReview: { status:
+"review_required", count }`. Affected achievement entries retain their original
+`user_confirmed` value and expose computed `confirmation_review_required: true`.
+Clients cannot clear that authority marker by saving a false flag. The bounded
+local [legacy review commands](../user/candidate-profile.md#review-legacy-confirmations)
+record explicit human decisions; this adds no browser mutation endpoint. Evidence
+Map freshness exposes `confirmationReviewRequired` and interview choices exclude
+pending rows. Private inventory and review payloads never enter generic SSE.
+Unresolved canonical authority reports `legacy_evidence_review_required` before
+new evidence-based generation, preserving accepted artifacts.
+
 `GET /v1/profile` includes `profileVersion` (`null` before initialization, then
 a positive monotonic integer). The API remains backward-compatible with
 callers that omit `expectedProfileVersion`, but the web form includes its saved
@@ -32,6 +43,11 @@ save uses its reviewed version. The API compares and writes in one transaction;
 a mismatch returns `409
 stale_profile_version`, writes no profile row, records no `ProfileUpdated`
 event, and creates no preparation-continuation work.
+
+Saving authored profile or preference edits never starts an LLM call. It returns
+the committed version without waiting for target-role interpretation, scoring, or
+material generation. Target-role suggestions run only after the user chooses
+**Get suggestions for target roles** in Discovery.
 
 The target-role suggestion route accepts `{ expectedProfileVersion, maximumSuggestions }`,
 where the maximum is `1–5` and defaults to `3`. It reads only that canonical
@@ -78,7 +94,10 @@ must explicitly rebase non-overlapping edits onto the refreshed snapshot,
 regenerate suggestions, review them, and then save against that new version.
 The guard covers accepted roles and historical preference rows, including
 subsequent edits to those draft values.
-Overlapping edits remain blocked for manual resolution or discard.
+A common sequence of appended bullets can be combined with later additions and
+independent edits to existing bullets. Deletions, reordered originals, duplicate
+texts, competing appended sequences and conflicting edits to the same original
+bullet remain blocked for manual resolution or discard.
 
 Required-bullet coaching accepts a saved `expectedProfileVersion` and optional
 `maximumSuggestions` (`1–24`, default `12`). It calls the configured LLM once
@@ -136,6 +155,16 @@ enter the system. They do not hold provider credentials or raw feed contents.
 | `POST /v1/browser-capabilities/:capabilityId/disable` | Disable an optional capability immediately. |
 | `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Backward-compatible operator API for copying one explicitly selected detected profile by opaque browser/profile IDs, retaining the legacy browser-only Default arm, or accepting one write-only manual source path; every arm requires explicit consent. It is not exposed by current Settings and is never used by integrated Discovery or Enrich. |
 
+Credential mutations are serialized across JobCtrl API processes for the same
+OS user. A bounded wait returns a sanitized `busy` response; uncertain helper
+completion reports incomplete recovery and fences later mutations until exit.
+An unreadable process identity returns `ownership_unverified` and preserves the
+coordination record.
+
+Discovery settings reads and writes reject an invalid saved row with
+`invalid_saved_search`; an absent row retains first-use defaults. See
+[Discovery controls](complete-contract.md#discovery-controls).
+
 Credential responses expose enough state for the UI to show whether a provider
 is configured, but do not return stored secret material. Guided provider
 replacement rolls back on failure; an unrecoverable rollback is reported as an
@@ -162,8 +191,27 @@ does not retain or fall back to an earlier path.
 Each supplied non-null ID must be in the current catalog for a ready provider;
 `null` clears a choice even when that provider is unavailable. The setting
 contains provider and model IDs only, never credentials or account metadata.
+The same readiness and exact catalog membership checks apply to explicit
+`defaultLlmModel`, `tailoringGeneratorModels` and `tailoringJudgeModel` choices. Provider-qualified
+IDs use that provider's catalog; legacy bare IDs must be uniquely offered by a
+ready provider and are saved with that provider prefix. Unoffered or ambiguous
+choices return `400 invalid_default_model` for the default route or
+`400 invalid_tailoring_model` for a material override; unavailable
+providers return `409 provider_not_ready`, and a failed live catalog returns
+`503 provider_models_failed`. Validation precedes every settings write, so an
+invalid model cannot partially save other changes. `null` and provider-neutral
+`default` material selections remain available without a catalog request.
 The settings and discovery responses also include effective-source and
 activation metadata for managed controls.
+
+`codexReasoningEfforts` patches a mapping of bare Codex model IDs to effort IDs.
+Each non-null effort must appear in that ready model's current
+`supportedReasoningEfforts` catalog. Unsupported pairs return
+`400 invalid_reasoning_effort`; readiness and catalog failures use the same
+409/503 boundary as model choices. Validation is atomic with other settings.
+A `null` entry clears just that model's effort without requiring provider
+availability. Readback includes `codexReasoningEfforts` and its effective-source
+metadata; the mapping persists as `codex_reasoning_efforts`.
 
 The same route accepts `laneTokenLimits`, an object whose only valid keys are
 `discovery`, `enrichment`, `scoring`, `tailoring`, `apply`, `contact`,
@@ -185,13 +233,17 @@ durable control composed on `/discovery` is stored in SQLite instead.
 | File field | Value and default | Meaning |
 | --- | --- | --- |
 | `apply_concurrency` | Integer `1–16`, default `1` | Maximum number of Apply jobs processed concurrently by the standing loop. |
-| `pipeline_internal_concurrency` | Integer `1–16`, default `1` | Shared internal parallelism for newly started manual Pipeline actions and automatic profile-update preparation batches. |
+| `pipeline_internal_concurrency` | Integer `1–16`, default `1` | Shared internal parallelism for newly started manual Pipeline actions, automatic profile-update preparation, and idle recovery batches. |
 | `worker_activity_slots` | Integer `1–64`, default `4` | Desired Python Temporal activity capacity. A saved change becomes active after the worker restarts. |
 | `daily_budget_usd` | Non-negative number, default `25` | Daily LLM spend ceiling in USD. `0` disables the daily ceiling. |
 | `lane_token_limits` | Object keyed only by the nine LLM product lanes, each a non-negative integer; default all `0` | UTC daily observed input-plus-output token thresholds. `0` means unlimited. |
 | `analysis_legs` | Non-empty array of `codex`, `claude`, and/or `google`; default all three | Provider legs used by newly started employer-analysis work. |
+| `default_llm_model` | Provider-qualified model ID or `null`; default `null` | Default route for newly acquired core model calls and the optional writing pass. Explicit workflow and material choices take precedence. `null` restores automatic provider selection. |
+| `codex_reasoning_efforts` | Object mapping bare Codex model IDs to effort IDs; default `{}` | Explicit effort for newly constructed Codex adapters. Applies to thread and turn, overrides legacy numeric thinking budgets, and preserves unrelated models when patched. An absent entry retains existing per-call behavior. |
 | `tailoring_generator_models` | Non-empty array of model IDs or `null`; default `null` | Ordered generator-model policy for newly started tailoring workflows. `null` uses the provider/default policy. |
 | `tailoring_judge_model` | Model ID or `null`; default `null` | Judge model for newly started tailoring workflows. `null` uses the provider/default policy. |
+| `resume_voice_polish` | Boolean, default `false` | **Extra résumé polish** under Settings → Model selection. Newly constructed résumé preparation skips the additional post-approval writing pass by default. `true` requests it; changed prose still needs fresh factual, quality and applicable persona reviews. Already-constructed résumé generations retain their choice and accepted artifacts are unchanged; queued or later Tailor steps read the new value, including within an existing workflow. |
+| `cover_letter_generation` | Boolean, default `false` | **Generate cover letters** under Settings → Model selection; API field `coverLetterGeneration`. New preparation plans omit Cover when off. Generation admission and automatic recovery enforce the saved choice before starting a letter; accepted letters and already-admitted work remain intact. Enabling releases only this setting's own skipped Cover rows. |
 | `tailoring_judge_min_score` | Number `0–1`, default `0.82` | Minimum judge score for accepting a tailored candidate. |
 | `apply_max_budget_usd` | Non-negative number, default `5` | Per-application AI-agent budget cap in USD. |
 | `apply_timeout_seconds` | Integer `60–3600`, default `900` | Time limit for one application agent run. |

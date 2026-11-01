@@ -24,6 +24,11 @@ func PromoteStagedRelease(home, build, source string, env []string, output io.Wr
 		return err
 	}
 	env = append(append([]string{}, env...), "JOBCTRL_RUNTIME_HOME="+store.Home, "JOBCTRL_ACQUISITION_SOURCE="+source)
+	if ctx, err := transitionContextForReceipt(env, store, candidate); err != nil {
+		return err
+	} else if handled, err := promoteForwardUpdate(ctx, build, source, output); handled {
+		return err
+	}
 	if journal, err := store.ReadJournal(); err == nil && journal.Resumable() {
 		if err := handoffRecoveryController(store, candidate); err != nil {
 			return err

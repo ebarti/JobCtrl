@@ -3,6 +3,17 @@
 Durable data lives on the user's machine in local SQLite stores, workspace
 files, the native OS credential store, and vendor-managed authentication stores.
 
+A fresh `jobctrl.db` is initialized as a closed exact-schema SQLite file in a
+private staging directory alongside the workspace, then published without
+replacing an existing path. Concurrent initializers either admit the published
+exact database or fail without deleting it. If database sidecars exist without
+their main file, creation refuses to adopt or remove them. Interrupted or
+unfamiliar staging directories are preserved for inspection rather than swept.
+When publication did not finish and its retained staged file still names the
+same database, a later start refuses to open it until the interrupted publication
+is investigated; the database, companions, and staging directory must be
+preserved for diagnosis.
+
 **Read this if** you need to know which table or file owns a piece of data, or
 where generated artifacts land on disk.
 
@@ -18,15 +29,77 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | `config.json` | Non-secret Settings values including spend/capacity, scoring guidance, provider metadata, provider-scoped model IDs, AI execution policy, compensation source policy, and explicitly adopted browser metadata. Transient detected-browser candidates are not persisted. |
 | `.env`, `gmail/` | Legacy plaintext environment configuration until migration, and Gmail OAuth client/token state. |
 | Native OS credential store | Allowlisted provider/CapSolver secrets; macOS Keychain, Windows Credential Manager, or Linux Secret Service. Not part of workspace database backups. |
-| `codex_home/` | Stable JobCtrl-owned Codex state; auth is outside the prompt-readable `workspace/` subtree. |
+| OS-user home `.jobctrl-credential-mutations.sqlite3` and `.inflight` | Secret-free cross-process credential mutation lock and temporary helper birth-identity record, shared across workspaces. Do not remove the lock while any API process may use it; unlinking it while held breaks coordination. The in-flight record is removed only after verified exit or replacement. |
+| `codex_home/` | Stable JobCtrl-owned Codex authentication; auth is outside the prompt-readable `workspace/` subtree, whose private empty Git metadata bounds SDK project configuration discovery. Overlapping app-server clients share a temporary SQLite store per process and credential home; the last closed client removes it. Each client has separate temporary text logs, and generation chats are ephemeral. Private ownership records and OS leases allow reclamation of abandoned stores while preserving active or unfamiliar paths. Existing provider state is preserved. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated and separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/`, `logs/` | Generated material and logs registered by SQLite metadata where applicable. |
+| `apply-invocations/<requestId>/` | Private native Apply result and launcher diagnostic log; the fixed child writes the result and the parent verifies exact native completion before reading outcome counts. |
+| `apply-runs/<launcherId>/owner.lock` | Stable per-run logical lifetime lease. It does not serialize other jobs or prove descendant exit; source recovery requires the exact existing recorded inode and preserves known failures. |
+| `apply-runs/<launcherId>/custody.json` | Private durable Apply job and birth custody, bound to the physical workspace and native execution. Records contain only resource/run identifiers, never applicant materials. Exact lifetime state fences the logical source owner; its best-effort settlement never certifies escaped-tree retirement. Native retirement uses actual completion proof. |
 | `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Consented copied profiles for separate compatibility capabilities, extension pairing, and browser/apply execution state. Integrated Discovery uses the current Chrome profile through the extension and never stores a copy; its bridge task bodies/results are API-process-memory-only. Browser-adoption metadata is in `config.json`. |
+
+Gmail authentication and refresh serialize a valid token into an exclusive
+same-directory stage, set its permissions before writing, flush the file, and
+atomically replace the canonical token. Failures before replacement preserve
+accepted bytes; handled failures remove their owned stage. New authorization
+requires its own nonblank refresh token and never borrows one from an unproven
+account identity. On POSIX the stage is
+mode `0600`. On Windows a protected DACL grants access to the current user and
+LocalSystem from file creation, and a filesystem without persistent ACLs is
+refused; a volume whose ACL support cannot be determined is also refused. A
+process killed before replacement can leave its private stage behind.
 | `backups/` and legacy `resume.*` / style files | User-created database snapshots, guarded job-data-purge recovery bundles, and pre-migration resume inputs. |
 
 Developer supervisors additionally use checkout-local `.dev/` process, log,
 and Temporal files; those are not installed-user authorities but remain
 sensitive.
+
+Installed release retention collects references before pruning. The current
+workspace comes from the resolved instance; other managed instances are mapped
+through runtime state records whose canonical workspace path hashes to the
+instance ID. Paired-backup metadata in any regular subdirectory of each
+workspace's `backups/` keeps its referenced build. The recorded pair ID may name
+a different local directory; its path components are checked and watched.
+Unrelated directories without `pair.json` are left in place and watched for a
+new reference. Active and controller releases, journal references, the
+eligible prior release, live instance releases, non-stable releases and foreign
+directories are preserved. A live installed instance must bind its payload path,
+build and manifest digest to an installed receipt. A source registry must bind
+the unchanged checkout launcher to its exact source execution scope and live
+kernel identities or a verified stopped completion. Unknown or changed ownership
+stops cleanup. An independent installed Apply receipt also needs its exact native
+completion; an unresolved receipt prevents pruning even when the supervisor has
+stopped or the current workspace has no supervisor registry. The receipt does
+not identify a build, so cleanup preserves all candidate releases when it cannot
+establish completion. This check does not stop processes or change restart.
+Older execution receipts require matching completions and must have no live
+scope. A scope born on the current boot also requires verification
+on that boot; a prior-boot scope may have been verified on a later boot. Paired
+backup references remain protected in both kinds of
+workspace. Reference
+directories and files are read through anchored handles and rechecked during
+cleanup. Cooperative native backup writers use the runtime transition lock;
+concurrent writers outside that lock can still race the reference checks.
+Cleanup binds the store and releases directory to
+their identities at store open, reads entries through anchored directory handles,
+and atomically claims each candidate without replacing another path. A candidate
+is pruned only when its sequence, build and descriptor match recorded channel
+state, its installed release evidence authenticates and its complete tree
+matches the signed payload inventory and expected release metadata. Releases
+without a recorded sequence binding are preserved.
+Unrecorded files, links and empty directories, modified payload files and
+unverifiable releases are preserved. Generated receipt and policy files are not
+independently signed; a structurally valid edit to them is not necessarily
+detectable as an edit. A changed root or entry refuses deletion. A claim that
+cannot be safely returned is kept under its private `.retention-*` name for
+inspection; an interrupted cleanup can leave a partially removed owned tree
+there. An actively concurrent writer with access inside a claimed directory can
+still race the final pathname check and individual unlink. Unsupported platforms
+refuse pruning. Unreadable, linked, missing or malformed managed
+ownership/reference authority prevents all pruning; absent `backups/` is an
+empty set. External `backup --output` locations are not discovered. Retention
+does not bypass channel revocation, protocol compatibility, or pair digest checks
+for rollback.
 
 The proposed [sensitive-artifact retention and cleanup
 contract](../plans/sensitive-artifact-retention.md) inventories these authorities
@@ -38,12 +111,43 @@ command, schedule, or implicit TTL deletion.
 
 The API's job-list query index is app-owned SQLite TEMP state on its retained
 list connection. It adds no table, index, schema-version stamp or migration to
-the canonical exact-v14 database. Python and TypeScript projection ownership
+the canonical exact-v15 database. Python and TypeScript projection ownership
 and exact-manifest admission remain unchanged. TEMP rows and freshness markers
 are disposable and rebuilt after connection close, app restart or database
 replacement; they are not a backup or a new source authority. See
 [job-list selection](read-model.md#job-list-sqlite-selection) for snapshot,
 failure and hydration boundaries.
+
+Exact v15 adds `job_lifecycle_clock` and `job_lifecycle_revisions` as the
+durable authority for removed-job selection freshness. SQLite triggers
+advance a globally monotonic revision for job creation or identity changes and
+for delete/hide tombstone writes, including writes from another connection.
+Per-job rows cascade with their job; the clock retains no job identifiers.
+Unrelated writes, such as worker heartbeats, do not advance a job's revision.
+An already reviewed destructive selection is checked against that revision in
+the same write transaction as deletion. The reviewed-selection receipt itself
+is short-lived process memory, not a substitute for the durable revision.
+
+V15 migration constructs and verifies a separate candidate from a stopped source
+and binds activation to a WAL-aware application/Temporal backup pair. The new
+authenticated installer upgrades an original protocol-1/schema-14 selection
+without executing the predecessor. Exact-v14 activation applies the additive
+schema to the live database in a single SQLite transaction without replacing
+its inode; earlier supported source versions retain the sealed-candidate path
+under a compatible controller. Runtime admission requires exact schema v15.
+
+The forward-update journal records the authenticated source receipt and
+selection generation, source schema, target, original backup and latest recovery
+backup. Each retry first cleans up instance-owned processes and snapshots the
+current live pair, including acknowledged WAL commits. Failed readiness and
+interruption retain the live pair and resumable journal. Recovery reruns the
+trusted new installer before selector replacement; after replacement, ordinary
+`jobctrl update` continues forward. Neither automatic recovery nor a cross-protocol
+rollback may restore the original backup over newer protected data. Configuration,
+resume files, provider authentication and other external workspace authorities
+remain outside the pair and are preserved separately. Initial install refuses
+schema 14 without the original predecessor selection; exact-v15 reinstall may
+preserve the pair after verified cleanup.
 
 The database is easier to understand as a set of ownership families. The
 diagram shows the main relationships; the table below names the exact tables.
@@ -147,15 +251,17 @@ invariants still verify, the command reports the committed purge, recovery
 bundle, and free-space/compaction guidance. A failed post-commit invariant keeps
 the stronger stop-and-restore guidance because the live result was not verified.
 
-### Exact v12 runtime and compatible cutovers
+### Historical v10–v12 cutovers
 
-Schema v12 is the exact runtime contract. The native lifecycle upgrades admitted
-v6, exact-v7, exact-v8, exact-v9, exact-v10, and exact-v11 installations only while the application is
-stopped. It first creates a paired backup of `jobctrl.db` and Temporal state.
+The v12 cutover migrated admitted v6, exact-v7, exact-v8, exact-v9, exact-v10,
+and exact-v11 installations while the application was stopped. It first created
+a paired backup of `jobctrl.db` and Temporal state.
 A v6 source retains the Temporal quiescence proof and identity rewrite through
 private exact-v7/v8/v9 intermediates; newer sources start at their next schema
-step. Only the final exact-v12 candidate can become live. Intermediate databases
-and their sidecars are removed after success and during failure recovery.
+step. The final exact-v12 candidate was the activation target at that cutover.
+Intermediate databases and their sidecars are removed after success and during
+failure recovery. Current v15 source and installed runtime requirements are
+described above.
 
 V10 removes `jobs.application_url`. `job_enrichments.application_url` is the
 canonical application target. A nonempty canonical value wins; otherwise the
@@ -179,8 +285,9 @@ Activation requires exact-manifest, retained-data, exact URL-transfer,
 foreign-key, integrity, source-preservation, permissions, digest, and paired-state
 verification. The receipt's comparable data digests cover every retained cell and
 sequence; the complete changed enrichment rows and alias set are verified
-separately before sealing. Any failed build, verification, activation, or readiness
-check restores the paired backup and leaves the previous version runnable.
+separately before sealing. Earlier cutovers restored the paired backup on failure;
+the current controller instead retains the live pair when an automatic restore
+could overwrite newer committed data, and leaves the transition for recovery.
 V11 replaces the global `llm_spend` primary key with `(day, lane)`. Historical
 v10 rows move byte-for-value into the migration-only `legacy` lane. Global
 totals sum all lane rows, including legacy; new runtime writes accept only the
@@ -206,20 +313,24 @@ note text or retained context.
 Before native activation, the live source must match the paired source's exact
 schema and retained cells. A private binding seals its file identity/state and
 candidate digest. Activation requires a quiescent transition to DELETE journal
-mode, then rechecks those bindings under SQLite's exclusive lock through the
-atomic rename. This refuses a WAL connection that could acknowledge a write to
-the replaced inode. Source-sidecar cleanup completes under this lock before
-publication; sidecars created on the new live database belong to its writers.
+mode, then rechecks those bindings under SQLite's exclusive lock. For exact-v14
+the additive v15 schema is committed on the existing inode, preserving every
+existing table and sequence; the verified candidate is not used to replace live
+data. Sources before v14 retain the locked atomic rename and source-sidecar
+cleanup. These checks refuse a WAL reader that prevents the exclusive cutover;
+they do not independently prove that every detached runtime process has exited.
 An unmanaged writer or a commit after backup refuses activation. When the candidate has not changed the live database,
 recovery preserves the live source, including an independent committed write,
-instead of restoring an older backup over it. Failed readiness after activation
-still restores the paired application/Temporal backup and previous release.
+instead of restoring an older backup over it. After activation or candidate
+startup, the current controller retains both live databases on a failed readiness
+check rather than automatically replacing them with an earlier pair.
 A private intent receipt binds preactivation source preservation to the exact
 journal, backup and source version, and survives interrupted old-runtime restart.
 An old schema header during partial paired restore cannot bypass Temporal recovery.
 
-The TypeScript API and Python worker accept exact v12 and reject direct v6/v7/v8/v9/v10/v11
-operation; runtime constructors do not migrate schema or commit caller work.
+The v12-era TypeScript API and Python worker accepted exact v12 and rejected
+direct v6/v7/v8/v9/v10/v11 operation; runtime constructors did not migrate
+schema or commit caller work.
 Each projection refresh owns only derived writes and its consumer cursor inside a
 transaction or the caller's savepoint. Refresh compares existing projected targets
 with canonical enrichment even without a new event, so preserved projection rows
@@ -283,6 +394,12 @@ source text such as `jobs.salary`, records explicit parse states and warnings,
 and keeps `jobs.salary` unchanged as a compatibility/raw fallback. It does not
 store full descriptions, provider raw payloads, credentials, local paths, or
 licensed-source salary data.
+The selected input is the first nonempty salary, current enriched description,
+full description, or short description. Discovery commits its intake before
+model extraction; before binding the result and emitting its update event, the fact writer
+reselects that source under a short write reservation. A changed source field or
+normalized text, including an enrichment status transition that changes the
+preferred source, rejects publication and retains the last accepted fact and event.
 Market compensation estimates live in the canonical
 `job_market_compensation_estimates` table. The estimator consumes deterministic
 local compensation observations keyed by company, role, location, and trimodal
@@ -320,6 +437,17 @@ those projection columns only; it does not parse raw salary text on read.
 
 ### Discovery lineage and operations state
 
+`DiscoveryResultPlanFrozen` and `DiscoveryNewJobAdmitted` are operational
+authorities in `job_events`. Their Job foreign key is null: the plan binds exact
+tenant/workflow/run, bounded or unbounded mode, cap, source-ID allowances and an
+integrity digest; each admission binds the canonical JobId through `entity_ref`
+and its structured payload, plus exact source-observation/run IDs. Neither
+contains posting text, queries or private search configuration. Ordinary Job
+deletion preserves these rows, so it cannot replenish a consumed execution
+allowance. The explicit full job/Discovery-data purge backs up and clears them
+with the execution ledger. Source-control events keep their separate retention
+authority.
+
 `discovery_execution_jobs` is the durable execution-membership authority. Its
 primary identity is tenant + Discover workflow ID + Temporal run ID + stable
 JobId. It stores `observed_this_run` or `existing_backlog`, the first safe
@@ -339,9 +467,8 @@ the cursor before that revision is durable.
 
 `discovery_search_unit_jobs` is the idempotent acceptance-receipt set keyed by
 execution, unit, and stable JobId. The job/source/event writes and receipt
-commit before provider acknowledgement. Durable new/existing counts and the
-run-wide result limit are derived from these receipts, so replay cannot count a
-posting twice. A newer activity attempt reclaims only `running`/`pending` units
+commit before provider acknowledgement. Durable unit-level new/existing counts
+are derived from these receipts, so replay cannot count a posting twice. A newer activity attempt reclaims only `running`/`pending` units
 and increments the lease epoch; every checkpoint or accepted-job write fences
 on that epoch. `completed`, `failed`, `skipped`, and `canceled` units are
 terminal.
@@ -526,3 +653,76 @@ source snapshot and fingerprint used for review; semantic determinations remain
 in their existing canonical tables. No new database, profile copy, file store
 or runtime migration is introduced. Offer writes are transactional and retain
 all prior revisions and decisions.
+
+
+Provider pack installation directories include the SDK version and signed
+specification hash. Activation schema 2 records that identity; readers derive
+it from the signed payload and retain schema-1 compatibility for verified
+legacy directories. Updating a closure preserves the prior installation and
+never repurposes a version-only directory. The [runtime contract](agent-runtime.md)
+keeps wheel/tree integrity and core-overlap refusal mandatory.
+
+Native lifecycle snapshots require the instance's durable execution ownership
+receipts and a completed zero-member kernel census. Process-group emptiness or
+a dead leader alone cannot certify the pair. Stop publishes its verified state
+before retiring those receipts, so an interrupted metadata cleanup can resume
+without losing the process boundary. Missing or legacy-untracked ownership
+blocks automatic backup/restore and preserves the live databases and registry.
+
+
+Native Apply crash recovery consumes the original execution's exact completion
+attestation from the runtime home's
+`instances/<instanceId>/completed-executions/<scopeId>.json`. Native cleanup
+writes it only after verified scope exit and before retiring the matching
+execution receipt. It contains the complete original receipt and its exact-byte
+SHA-256, verification boot and completion time; it survives later starts and
+binds no user application/profile facts. A missing, changed, linked or foreign
+proof preserves the Apply journal and refuses recovery. Source-only custody has
+no implicit equivalent of that native proof.
+
+## Legacy achievement confirmation history
+
+The v12-to-v13 transform preserves every retained achievement cell and records
+original rows before dropping the obsolete inferred seniority column. Legacy
+booleans have no author receipt, so all legacy confirmed records enter explicit
+review. No prose, identifier pattern or partial/exact value shape proves
+provenance. The same transform is used by every supported v6–v12 composite
+cutover to the current exact schema; no additional schema version is introduced.
+
+Private `LegacyEvidenceReviewRecorded` rows use the existing `job_events` ledger,
+null `job_id`, `entity_kind=legacy_achievement_evidence` and a JSON-array entity
+reference `[profile_id, entry_id, evidence_id]`. Version-1 payloads retain the
+complete original row, tenant/profile/evidence identities, unknown-authority
+reason and migration-inventory or explicit-human authorship. Stable
+idempotency keys keep repeated inventories unchanged; event IDs link human
+decisions to the prior inventory. A deterministic inventory uses the recorded
+profile source time (or explicit unknown), and separately states that its own
+creation time is unknown. These are structural provenance records, never model
+or semantic-determination envelopes. Generic SSE excludes their private payloads.
+
+Readers preserve the saved confirmation and add computed
+`confirmation_review_required` from that journal. Unresolved authority fails
+canonical source generation explicitly, preserving accepted artifacts. A human
+review token binds the current complete evidence inventory, profile version and
+latest event ID under a SQLite writer lock. Confirmation changes only the
+boolean, advances the profile version and appends history. Its resulting row
+fingerprint prevents later changed cells from reusing that authority. Review
+never restores strength/confidence or text from an old backup.
+
+The row fingerprint encodes only `claim_confidence` as a big-endian IEEE 754
+binary64 hex string. Original/current cells and review history retain their
+numeric values; Python and TypeScript decimal/exponent formatting cannot change
+authority for an unchanged value. Nonfinite confidence cannot publish a human
+review. An original-zero inventory clears review only while the current row is
+unique and still has exact integer-zero confirmation. Later confirmed, malformed
+or duplicate rows stay visibly pending; current confirmation drift needs a new
+fingerprint-bound human decision, including during paired-backup recovery.
+
+Already-migrated recovery validates a native `pair.json` and both immutable,
+private database files before recording originals. It rechecks backup bytes
+before commit, preserves newer edits/deletions, exposes duplicate/missing/source
+conflicts, and refuses their mutation. Explicit missing-authority inventory
+retains current cells as uncertain. Run these local commands only after stopping
+all workspace processes; SQLite locks additionally refuse active writers.
+See [Candidate Profile](../user/candidate-profile.md#review-legacy-confirmations)
+and [Auditability Checks](../developer/qa/regression-catalog.md#auditability-checks).

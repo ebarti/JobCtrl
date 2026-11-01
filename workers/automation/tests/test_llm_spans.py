@@ -11,6 +11,7 @@ from jobctrl.llm_lanes import bind_llm_lane
 
 @pytest.fixture(autouse=True)
 def _llm_lane(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("JOBCTRL_TRACE_CONTENT", raising=False)
     monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda _lane=None: None)
     with bind_llm_lane("tailoring"):
         yield
@@ -74,6 +75,20 @@ def test_llm_generation_span_sets_langfuse_attributes(in_memory_exporter):
     assert attrs["gen_ai.usage.input_tokens"] == 5
     assert attrs["gen_ai.usage.output_tokens"] == 2
     assert private_sentinel not in _exported_span_text(spans[0])
+
+
+@pytest.mark.parametrize("effort", ["high", "max", "PRIVATE_EFFORT_SENTINEL"])
+def test_effort_metadata_only_exports_known_protocol_values(in_memory_exporter, effort):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    with llm_generation_span(model="gpt-6.1-sol", messages=[], params={"effort": effort}):
+        pass
+    span = in_memory_exporter.get_finished_spans()[0]
+    if effort == "PRIVATE_EFFORT_SENTINEL":
+        assert effort not in _exported_span_text(span)
+        assert "gen_ai.request.reasoning_effort" not in _attrs(span)
+    else:
+        assert _attrs(span)["gen_ai.request.reasoning_effort"] == effort
 
 
 def test_llm_generation_span_records_spend_once(monkeypatch, in_memory_exporter):
@@ -215,3 +230,149 @@ def test_llm_generation_span_exports_safe_provider_failure_attributes(in_memory_
     assert failure.envelope.trace_id is not None
     assert failure.envelope.span_id is not None
     assert private_sentinel not in _exported_span_text(span)
+
+
+
+def test_numeric_subcounts_and_reuse_are_diagnostics_without_additional_spend(monkeypatch, in_memory_exporter):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+    from jobctrl.llm_request_context import bind_determination_request
+
+    spend = []
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: spend.append(kwargs))
+    with bind_determination_request("artifact_quality", "a" * 64):
+        with llm_generation_span(
+            model="gpt-test", messages=[], params={}, instruction_profile="b" * 64,
+        ) as record:
+            record("", input_tokens=19, output_tokens=9)
+            record("", cached_input_tokens=11, reasoning_output_tokens=7)
+            record("owned", input_tokens=19, output_tokens=9, runtime_metadata={
+                "sdk_process_reused": True, "sdk_process_start_count": 1,
+                "sdk_process_reuse_count": 3, "cwd": "PRIVATE_PATH_SENTINEL",
+            })
+    span = in_memory_exporter.get_finished_spans()[0]
+    attrs = _attrs(span)
+    assert attrs["jobctrl.llm.determination_id"] == "a" * 64
+    assert attrs["jobctrl.llm.determination_kind"] == "artifact_quality"
+    assert attrs["jobctrl.llm.instruction_profile"] == "b" * 64
+    assert attrs["jobctrl.llm.usage.cached_input_tokens"] == 11
+    assert attrs["jobctrl.llm.usage.reasoning_output_tokens"] == 7
+    assert attrs["jobctrl.llm.runtime.sdk_process_reused"] is True
+    assert attrs["jobctrl.llm.runtime.sdk_process_reuse_count"] == 3
+    assert json.loads(attrs["langfuse.observation.usage_details"]) == {
+        "input_tokens": 19, "output_tokens": 9, "total_tokens": 28,
+    }
+    assert len(spend) == 1
+    assert "PRIVATE_PATH_SENTINEL" not in _exported_span_text(span)
+
+
+def test_unknown_detail_values_and_arbitrary_identity_content_are_not_exported(in_memory_exporter):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+    from jobctrl.llm_request_context import bind_determination_request
+
+    with bind_determination_request("PRIVATE KIND SENTINEL", "PRIVATE ID SENTINEL"):
+        with llm_generation_span(
+            model="gpt-test", messages=[], params={}, instruction_profile="PRIVATE PROFILE SENTINEL",
+        ) as record:
+            record("", cached_input_tokens=-1, reasoning_output_tokens=True,
+                   runtime_metadata={"sdk_process_reused": "PRIVATE REUSE SENTINEL",
+                                     "sdk_process_start_count": -1})
+    span = in_memory_exporter.get_finished_spans()[0]
+    assert not any(key.startswith("jobctrl.llm.usage.") for key in _attrs(span))
+    assert "PRIVATE" not in _exported_span_text(span)
+
+
+@pytest.mark.parametrize("flag", ["1", "true", " yes "])
+def test_explicit_content_capture_snapshots_request_and_retains_final_response(
+    monkeypatch, in_memory_exporter, flag,
+):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    monkeypatch.setenv("JOBCTRL_TRACE_CONTENT", flag)
+    messages = [{"role": "user", "content": "Synthetic fact: café team of 3."}]
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    with llm_generation_span(
+        model="gpt-test", messages=messages, params={"private_extension": "DO_NOT_EXPORT"},
+        response_schema=schema, runtime_instructions="Synthetic runtime instructions",
+        runtime_prompt="Synthetic exact provider prompt",
+    ) as record:
+        messages[0]["content"] = "caller mutation"
+        schema["type"] = "caller mutation"
+        record("", input_tokens=10, output_tokens=5)
+        record('{"answer":"Synthetic response"}')
+        record("", cached_input_tokens=0, reasoning_output_tokens=2)
+    span = in_memory_exporter.get_finished_spans()[0]
+    attrs = _attrs(span)
+    request = json.loads(attrs["langfuse.observation.input"])
+    assert request["messages"][0]["content"] == "Synthetic fact: café team of 3."
+    assert request["response_schema"]["type"] == "object"
+    assert request["runtime_instructions"] == "Synthetic runtime instructions"
+    assert request["runtime_prompt"] == "Synthetic exact provider prompt"
+    assert attrs["langfuse.observation.output"] == '{"answer":"Synthetic response"}'
+    assert attrs["jobctrl.llm.output.character_count"] == len('{"answer":"Synthetic response"}')
+    assert attrs["jobctrl.llm.content_capture"] == "enabled"
+    assert "DO_NOT_EXPORT" not in _exported_span_text(span)
+
+
+@pytest.mark.parametrize("flag", ["", "0", "false", "enabled", "PRIVATE_FLAG"])
+def test_content_capture_requires_explicit_flag(monkeypatch, in_memory_exporter, flag):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    monkeypatch.setenv("JOBCTRL_TRACE_CONTENT", flag)
+    with llm_generation_span(
+        model="gpt-test", messages=[{"role": "user", "content": "PRIVATE_INPUT"}], params={},
+        response_schema={"description": "PRIVATE_SCHEMA"}, runtime_instructions="PRIVATE_RUNTIME",
+    ) as record:
+        record("PRIVATE_OUTPUT")
+    text = _exported_span_text(in_memory_exporter.get_finished_spans()[0])
+    assert "PRIVATE" not in text
+    assert "langfuse.observation.input" not in text
+    assert "langfuse.observation.output" not in text
+
+
+def test_enabled_capture_keeps_failure_text_private(monkeypatch, in_memory_exporter):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    monkeypatch.setenv("JOBCTRL_TRACE_CONTENT", "1")
+    with pytest.raises(RuntimeError):
+        with llm_generation_span(model="gpt-test", messages=[], params={}):
+            raise RuntimeError("PRIVATE_EXCEPTION_MESSAGE")
+    attrs = _attrs(in_memory_exporter.get_finished_spans()[0])
+    assert json.loads(attrs["langfuse.observation.input"]) == {"messages": []}
+    assert "langfuse.observation.output" not in attrs
+    assert "PRIVATE_EXCEPTION_MESSAGE" not in _exported_span_text(in_memory_exporter.get_finished_spans()[0])
+
+
+def test_capture_serialization_failure_does_not_fail_model_work(monkeypatch, in_memory_exporter):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    monkeypatch.setenv("JOBCTRL_TRACE_CONTENT", "1")
+    with llm_generation_span(model="gpt-test", messages=[], params={}, response_schema={"value": object()}) as record:
+        record("Synthetic response")
+    attrs = _attrs(in_memory_exporter.get_finished_spans()[0])
+    assert attrs["jobctrl.llm.content_capture"] == "input_serialization_failed"
+    assert attrs["jobctrl.llm.success"] is True
+
+
+
+def test_content_opt_in_without_recording_does_not_serialize_bodies(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from opentelemetry import trace
+
+    from jobctrl.infrastructure.observability import llm_spans
+
+    monkeypatch.setenv("JOBCTRL_TRACE_CONTENT", "1")
+    monkeypatch.setattr(llm_spans.trace, "get_tracer", lambda _name: SimpleNamespace(
+        start_as_current_span=lambda *_args, **_kwargs: nullcontext(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)),
+    ))
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("A nonrecording span must not serialize private request bodies")
+
+    monkeypatch.setattr(llm_spans.json, "dumps", forbidden)
+    with llm_spans.llm_generation_span(
+        model="gpt-test", messages=[{"role": "user", "content": "Synthetic input"}], params={},
+        response_schema={"unused_non_json_value": object()},
+    ) as record:
+        record("Synthetic output")

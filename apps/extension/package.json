@@ -1,6 +1,6 @@
 {
   "name": "@jobctrl/extension",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,11 +14,11 @@
   },
   "devDependencies": {
     "@jobctrl/tsconfig": "workspace:*",
-    "@playwright/test": "^1.50.0",
+    "@playwright/test": "^1.64.1",
     "@types/node": "25.9.2",
     "jsdom": "^26.0.0",
     "typescript": "^6.0.3",
-    "vite": "^7.3.5",
-    "vitest": "^4.1.11"
+    "vite": "^7.3.7",
+    "vitest": "^4.1.12"
   }
 }

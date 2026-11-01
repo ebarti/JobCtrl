@@ -118,18 +118,19 @@ def test_public_competitor_citations_preserve_private_data_tripwires() -> None:
 def test_public_controller_disclosures_are_limited_to_exact_public_surfaces() -> None:
     controller = "El" + "oi Barti"
     email = "me@" + "el" + "oi" + "barti" + ".com"
+    obfuscated_email = email.replace("@", "[at]")
     source_disclosure = (
         f"Data controller: {controller}, acting as an individual. Privacy questions:\n"
         f'<a href="mailto:{email}">{email}</a>'
     )
     docs_disclosure = (
         f"The data controller for the public demo is {controller}, acting as an individual.\n"
-        f"For privacy questions, contact [{email}](mailto:{email})."
+        f"For privacy questions, contact {obfuscated_email} (replace [at] with @)."
     )
     docs_analytics_disclosure = (
         f"The data controller for this documentation measurement is {controller}, acting as\n"
         "an individual. For privacy questions, contact\n"
-        f"[{email}](mailto:{email})."
+        f"{obfuscated_email} (replace [at] with @)."
     )
     test_disclosure = (
         f"screen.getByText(/data controller: {controller.lower()}, acting as an individual/i)\n"
@@ -176,7 +177,7 @@ def test_public_controller_disclosures_are_limited_to_exact_public_surfaces() ->
         (
             f"The data controller for the public demo is {controller}, acting as an individual. "
             "For privacy questions, contact "
-            f'<a href="mailto:{email}" target="_blank" rel="noreferrer">{email}</a>.'
+            f"{obfuscated_email} (replace [at] with @)."
         ),
         Path("docs/.vitepress/dist/user/data-and-safety.html"),
     ) == []
@@ -185,7 +186,7 @@ def test_public_controller_disclosures_are_limited_to_exact_public_surfaces() ->
         (
             f"The data controller for this documentation measurement is {controller}, "
             "acting as an individual. For privacy questions, contact "
-            f'<a href="mailto:{email}" target="_blank" rel="noreferrer">{email}</a>.'
+            f"{obfuscated_email} (replace [at] with @)."
         ),
         Path("docs/.vitepress/dist/user/data-and-safety.html"),
     ) == []
@@ -197,10 +198,20 @@ def test_public_controller_disclosures_are_limited_to_exact_public_surfaces() ->
     }
     same_page_findings = release_check.scan_text(
         "docs/user/data-and-safety.md",
-        f"Unapproved controller reference: {controller} {email}",
+        docs_disclosure + f"\nUnapproved controller reference: {controller} {email}",
         Path("docs/user/data-and-safety.md"),
     )
     assert {finding.split(": ", 1)[1] for finding in same_page_findings} == expected
+    raw_docs_disclosure = (
+        f"The data controller for the public demo is {controller}, acting as an individual.\n"
+        f"For privacy questions, contact [{email}](mailto:{email})."
+    )
+    assert {
+        finding.split(": ", 1)[1]
+        for finding in release_check.scan_text(
+            "docs/user/data-and-safety.md", raw_docs_disclosure, Path("docs/user/data-and-safety.md")
+        )
+    } == expected
     emitted_same_page_findings = release_check.scan_text(
         "docs/.vitepress/dist/user/data-and-safety.html",
         (

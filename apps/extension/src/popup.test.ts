@@ -14,6 +14,7 @@ describe("extension popup", () => {
         <button id="select-discovery" type="button" hidden>Use this Chrome profile for Discovery</button>
         <button id="capture" type="button">Save job</button>
         <button id="autofill" type="button">Review autofill</button>
+        <button id="retry-queue" type="button">Sync queued captures</button>
         <button id="clear-queue" type="button">Clear queue</button>
         <p id="status" role="status"></p>
       </main>
@@ -65,6 +66,55 @@ describe("extension popup", () => {
     expect(document.getElementById("status")?.textContent).toBe("Saved to JobCtrl: job-123");
   });
 
+  it("reports that older captures remain queued after saving the current page", async () => {
+    stubRuntimeMessages([
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 1, installationIdSuffix: "00000099" },
+      { ok: true, status: "captured", jobKey: "job-123", queueSize: 1 },
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 1, installationIdSuffix: "00000099" },
+    ]);
+    await import("./popup");
+    await flushMicrotasks();
+    document.getElementById("capture")?.click();
+    await flushMicrotasks();
+    expect(document.getElementById("status")?.textContent).toBe("Saved to JobCtrl: job-123 1 capture(s) still queued.");
+  });
+
+  it("offers explicit clear when an unreadable queue prevents readiness", async () => {
+    stubRuntimeMessages([
+      { ok: false, error: "capture_queue_unavailable", message: "The local capture queue is unreadable. Its stored data was kept; use Clear queue only to discard it." },
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
+    ]);
+    await import("./popup");
+    await flushMicrotasks();
+    expect(document.getElementById("api-state")?.textContent).toBe("Local capture queue unavailable");
+    expect((document.getElementById("capture") as HTMLButtonElement).disabled).toBe(true);
+    const clear = document.getElementById("clear-queue") as HTMLButtonElement;
+    expect(clear.disabled).toBe(false);
+    clear.click();
+    await flushMicrotasks();
+    expect(document.getElementById("status")?.textContent).toBe("Local capture queue cleared.");
+  });
+
+  it("offers an explicit retry for a full queue without discarding pending captures", async () => {
+    const sendMessage = stubRuntimeMessages([
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 25, installationIdSuffix: "00000099" },
+      { ok: true, status: "queue_flushed", flushed: 24, queueSize: 1, message: "Local JobCtrl API is unavailable." },
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 1, installationIdSuffix: "00000099" },
+    ]);
+    await import("./popup");
+    await flushMicrotasks();
+    const retry = document.getElementById("retry-queue") as HTMLButtonElement;
+    expect(retry.disabled).toBe(false);
+    retry.click();
+    await flushMicrotasks();
+    expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
+      { type: "getStatus" }, { type: "retryQueue" }, { type: "getStatus" },
+    ]);
+    expect(document.getElementById("status")?.textContent).toBe("24 capture(s) synced. 1 still queued. Local JobCtrl API is unavailable.");
+    expect(retry.disabled).toBe(false);
+  });
+
   it("does not report fake readiness when a new popup is talking to an older background worker", async () => {
     stubRuntimeMessages([
       { ok: true, status: "ready", paired: true, apiReady: true, queueSize: 0 },
@@ -78,6 +128,16 @@ describe("extension popup", () => {
     expect(document.getElementById("status")?.textContent).toContain("Reload");
     expect((document.getElementById("token-input") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("save-token") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("does not enable queue retry against the prior background protocol", async () => {
+    stubRuntimeMessages([
+      { ok: true, status: "ready", protocolVersion: 2, paired: true, apiReady: true, discoverySelected: true, queueSize: 1, installationIdSuffix: "00000099" },
+    ]);
+    await import("./popup");
+    await flushMicrotasks();
+    expect(document.getElementById("api-state")?.textContent).toBe("Extension update incomplete");
+    expect((document.getElementById("retry-queue") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("lets a paired but unselected installation claim Discovery without copying the token again", async () => {

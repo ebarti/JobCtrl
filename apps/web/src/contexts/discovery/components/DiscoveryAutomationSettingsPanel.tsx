@@ -52,9 +52,9 @@ export function DiscoveryAutomationSettingsPanel() {
       ) : null}
       {settingsQuery.data ? (
         <DiscoveryAutomationSettingsForm initial={settingsQuery.data} />
-      ) : (
+      ) : settingsQuery.isPending ? (
         <Empty title="Loading automation settings." />
-      )}
+      ) : null}
     </DisclosureSection>
   );
 }

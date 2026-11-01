@@ -1155,6 +1155,7 @@ def record_job_event(
     payload: dict[str, Any] | None = None,
     occurred_at: str | None = None,
     publisher: EventPublisher | None = None,
+    defer_publication: bool = False,
     entity_kind: str | None = None,
     entity_ref: str | None = None,
     idempotency_key: str | None = None,
@@ -1167,6 +1168,11 @@ def record_job_event(
     custom ``publisher`` for tests; the production default is the
     process-wide singleton from
     :func:`jobctrl.infrastructure.events.get_default_publisher`.
+
+    Owned Apply aggregate writes use ``defer_publication``: callbacks run only
+    after the owning connection commits and still contains the exact event row.
+    Caller rollback/savepoint rollback discards these notifications. A stopped
+    process can recover notifications through durable event replay.
 
     **Phase-3 deviation from §6.3** (round-1 review M2): the canonical §6.3
     pattern is "dispatch happens AFTER the producing transaction commits",
@@ -1250,13 +1256,31 @@ def record_job_event(
         from jobctrl.infrastructure.events import get_default_publisher
 
         publisher = get_default_publisher()
+    from jobctrl.domain.apply.event_privacy import email_event_references
+
     event = create_domain_event(
         event_type=event_type,
         tenant_id=tenant_id,
-        payload=current_payload,
+        payload=email_event_references(event_type, current_payload),
         occurred_at=ts,
     )
-    publisher.publish(event)
+    if defer_publication:
+        from jobctrl.infrastructure.commit_notifications import NotificationConnection
+
+        if not isinstance(conn, NotificationConnection):
+            raise RuntimeError("Owned Apply publication requires a commit-aware connection")
+        row_id = cursor.lastrowid
+        # Compare the complete inserted row: a savepoint rollback can reuse IDs.
+        expected = tuple(conn.execute("SELECT * FROM job_events WHERE event_id=?", (row_id,)).fetchone())
+
+        def publish_committed() -> None:
+            row = conn.execute("SELECT * FROM job_events WHERE event_id=?", (row_id,)).fetchone()
+            if row is not None and tuple(row) == expected:
+                publisher.publish(event)
+
+        conn.defer_notification(("job_event", row_id, expected), publish_committed)
+    else:
+        publisher.publish(event)
 
 
 def record_job_artifact(
@@ -1520,12 +1544,13 @@ def reset_job_stage(
     if stage not in (*STAGE_ORDER, "apply"):
         raise ValueError(f"unknown stage: {stage}")
 
-    if stage == "enrich":
+    if stage in {"enrich", "apply"}:
         from jobctrl.pipeline.retry import reset_retry_stages
 
         return reset_retry_stages(
             conn, [(job_url_or_application_url, stage)],
             tenant_id=tenant_id, reset_attempts=reset_attempts,
+            _allow_apply_only=stage == "apply",
         )[0]["jobUrl"]
 
     from jobctrl.infrastructure.job_locators import resolve_job_locator

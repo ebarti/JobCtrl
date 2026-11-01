@@ -1,6 +1,6 @@
 import type { JSX } from "react";
-import { useEffect, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { skipToken, useQuery } from "@tanstack/react-query";
 
 import { applyRunsKeys } from "../../operations/applyRunsKeys.js";
 import { Empty } from "../../../shared/ui/empty.js";
@@ -16,7 +16,9 @@ const EMPTY_EVENTS: readonly unknown[] = [];
 
 export interface ApplyRunTimelineProps {
   runId: string;
+  jobId?: string;
   events?: readonly unknown[];
+  applyEvents?: readonly unknown[];
 }
 
 function eventLabel(type: string): string {
@@ -35,35 +37,37 @@ export function applyRunEventLevelTone(level: string): StatusTagTone {
   return "info";
 }
 
-export function ApplyRunTimeline({ runId, events = EMPTY_EVENTS }: ApplyRunTimelineProps): JSX.Element {
+export function ApplyRunTimeline({ runId, jobId, events = EMPTY_EVENTS, applyEvents = EMPTY_EVENTS }: ApplyRunTimelineProps): JSX.Element {
   const tenantId = useTenantId();
-  const queryClient = useQueryClient();
   const queryKey = useMemo(() => applyRunsKeys.detail(tenantId, runId), [runId, tenantId]);
-  const initialEvents = useMemo(
-    () => events.map((event) => normalizeApplyRunEventEntry(event)),
-    [events],
-  );
   const { data } = useQuery<ApplyRunWithEvents>({
     queryKey,
-    queryFn: async () => ({ events: initialEvents }),
-    initialData: { events: initialEvents },
+    queryFn: skipToken,
+    enabled: false,
+    initialData: { events: [] },
     staleTime: Number.POSITIVE_INFINITY,
   });
 
-  useEffect(() => {
-    queryClient.setQueryData<ApplyRunWithEvents>(queryKey, (current) => {
-      const currentEvents = current?.events ?? [];
-      if (currentEvents.length >= initialEvents.length) {
-        return current ?? { events: currentEvents };
-      }
-      return { ...(current ?? {}), events: initialEvents };
+  const timeline = useMemo(() => {
+    const workflow = events.map(normalizeApplyRunEventEntry);
+    const persisted = applyEvents.map(normalizeApplyRunEventEntry);
+    const knownRunEvents = new Set(persisted.flatMap((event) => event.runEventId === undefined ? [] : [event.runEventId]));
+    const live = (data?.events ?? []).map(normalizeApplyRunEventEntry).filter((event) => {
+      if (jobId && event.jobId !== jobId) return false;
+      if (event.runEventId === undefined) return true;
+      if (knownRunEvents.has(event.runEventId)) return false;
+      knownRunEvents.add(event.runEventId);
+      return true;
     });
-  }, [initialEvents, queryClient, queryKey]);
-
-  const timeline = useMemo(
-    () => (data?.events ?? []).map((event) => normalizeApplyRunEventEntry(event)),
-    [data?.events],
-  );
+    return [...workflow, ...persisted, ...live]
+      .map((event, index) => ({ event, index, timestamp: event.at ? Date.parse(event.at) : Number.NaN }))
+      .sort((left, right) => {
+        const leftTime = Number.isFinite(left.timestamp) ? left.timestamp : Infinity;
+        const rightTime = Number.isFinite(right.timestamp) ? right.timestamp : Infinity;
+        return leftTime - rightTime || left.index - right.index;
+      })
+      .map(({ event }) => event);
+  }, [events, applyEvents, data?.events, jobId]);
 
   return (
     <div className="apply-run-timeline" data-run-id={runId}>

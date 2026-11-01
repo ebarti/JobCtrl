@@ -27,6 +27,17 @@ const detailWithAcceptedArtifact = {
 };
 
 describe("useGenerateMaterialsMutation", () => {
+  it("lets the server apply saved defaults instead of implicitly requesting a letter", async () => {
+    const requests: unknown[] = [];
+    server.use(http.post("*/v1/jobs/:jobKey/actions/generate-materials", async ({ request }) => {
+      requests.push(await request.json());
+      return HttpResponse.json({ ok: true, status: "queued" });
+    }));
+    const { result } = renderHookWithProviders(() => useGenerateMaterialsMutation());
+    await act(async () => { await result.current.mutateAsync({ jobId: "job-1" }); });
+    expect(requests).toEqual([{ dryRun: false, limit: 1 }]);
+  });
+
   it("optimistically marks the tailor stage as running, settles on success", async () => {
     const { result, queryClient } = renderHookWithProviders(() => useGenerateMaterialsMutation());
     queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"), initialDetail);

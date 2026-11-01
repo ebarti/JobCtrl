@@ -655,3 +655,159 @@ test("save conflict and render failure recover before dry-run authorization", as
   await testInfo.attach("failure-recovery-observations", { body: JSON.stringify({ acceptedSource, observations, decisions }, null, 2), contentType: "application/json" });
   await testInfo.attach("recovered-session", { body: await page.getByLabel("Editable resume page").screenshot({ path: testInfo.outputPath("render-recovery-" + renderCount + ".png") }), contentType: "image/png" });
 });
+
+test("preserves the resume caret across native selection and a pending save", async ({ page }) => {
+  test.setTimeout(60_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await installArtifactComparisonRoutes(page, false);
+  const plateDocument = [{ type: "resume_block", tagName: "main", className: "resume-page", pageNumber: 1,
+    children: [
+      { type: "resume_block", tagName: "h1", lineNumber: 1, pageNumber: 1, children: [{ text: "Principal Platform Engineer" }] },
+      { type: "resume_block", tagName: "h2", lineNumber: 2, pageNumber: 1, children: [{ text: "Experience" }] },
+      { type: "resume_block", tagName: "p", lineNumber: 3, pageNumber: 1,
+        semanticId: "experience:line:3", children: [{ text: "Saved baseline." }] },
+    ],
+  }];
+  let current = { ...draft, latestRevision: { ...draft.latestRevision, plateDocument }, commentThreads: [] };
+  const saves: unknown[] = [];
+  let acknowledge: (() => void) | undefined;
+  await page.route("**/v1/jobs/*/resume-review/draft", route => route.fulfill({ json: { ok: true, draft: current } }));
+  await page.route("**/v1/resume-review/drafts/*/comment-threads", route => route.fulfill({ json: {
+    ok: true, draft: current, commentThreads: [], seededCount: 0, updatedCount: 0,
+  } }));
+  await page.route("**/v1/resume-review/drafts/*/revisions", async route => {
+    const body = route.request().postDataJSON();
+    saves.push(body);
+    await new Promise<void>(resolve => { acknowledge = resolve; });
+    current = { ...current, currentRevisionId: "synthetic-revision-2", latestRevisionNumber: 2,
+      latestRevision: { ...current.latestRevision, revisionId: "synthetic-revision-2", revisionNumber: 2,
+        editedText: body.editedText, plateDocument: body.plateDocument } };
+    await route.fulfill({ json: { ok: true, draft: current, revision: current.latestRevision } });
+  });
+  await page.goto("/apply-review");
+  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  await expect(editor).toContainText("Saved baseline.");
+  await editor.locator('[data-resume-line-number="3"] [data-slate-string]').first().click();
+  await page.keyboard.press("Home");
+  await editor.evaluate(element => {
+    const data = new DataTransfer();
+    data.setData("text/html", "<p>First pasted paragraph.</p><p>Second pasted paragraph.</p>");
+    data.setData("text/plain", "First pasted paragraph.\nSecond pasted paragraph.");
+    const paste = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    element.dispatchEvent(paste);
+    if (!paste.defaultPrevented) element.dispatchEvent(new InputEvent("beforeinput", {
+      inputType: "insertFromPaste", dataTransfer: data, bubbles: true, cancelable: true,
+    }));
+  });
+  await expect(editor).toContainText("First pasted paragraph.");
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect.poll(() => Boolean(acknowledge)).toBe(true);
+
+  const first = editor.locator('[data-slate-string]').filter({ hasText: "First pasted paragraph." }).first();
+  await first.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  const before = await editor.evaluate(element => {
+    const selection = window.getSelection()!;
+    (element as HTMLElement & { savedCaret?: Node | null }).savedCaret = selection.anchorNode;
+    return { text: selection.anchorNode?.textContent, offset: selection.anchorOffset };
+  });
+  expect(before.text).toContain("First pasted paragraph.");
+  expect(before.offset).toBe(2);
+  acknowledge!();
+  await expect(page.getByRole("button", { name: "Render replacement" })).toBeEnabled();
+  const after = await editor.evaluate(element => {
+    const selection = window.getSelection()!;
+    return {
+      sameNode: selection.anchorNode === (element as HTMLElement & { savedCaret?: Node | null }).savedCaret,
+      offset: selection.anchorOffset,
+    };
+  });
+  expect(after.sameNode).toBe(true);
+  expect(after.offset).toBe(2);
+  await expect(editor).toBeFocused();
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  await page.waitForTimeout(1700);
+  expect(saves).toHaveLength(1);
+
+  // A fresh Slate edit can lead the DOM: navigation must not restore an older
+  // native caret after consecutive text input.
+  await first.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type("ABCD", { delay: 0 });
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.type("X", { delay: 0 });
+  await expect(editor).toContainText("First pasted paragraph.ABCXD");
+  await page.keyboard.press("End");
+  await page.keyboard.type("wxyz", { delay: 0 });
+  await page.keyboard.press("Shift+ArrowLeft");
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe("z");
+  await page.keyboard.type("Z", { delay: 0 });
+  await expect(editor).toContainText("First pasted paragraph.ABCXDwxyZ");
+
+  // Modifier and pointer selections must preserve both range endpoints.
+  await first.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Shift+ArrowRight");
+  await page.keyboard.press("Shift+ArrowRight");
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe("Fi");
+  await page.keyboard.press("ArrowRight");
+  expect(await page.evaluate(() => window.getSelection()?.anchorOffset)).toBe(2);
+
+  const points = await first.evaluate(element => {
+    const text = element.firstChild!;
+    const point = (offset: number) => {
+      const range = document.createRange();
+      range.setStart(text, offset);
+      range.collapse(true);
+      const box = range.getBoundingClientRect();
+      return { x: box.x, y: box.y + box.height / 2 };
+    };
+    return { start: point(2), end: point(8) };
+  });
+  await page.mouse.move(points.start.x, points.start.y);
+  await page.mouse.down();
+  await page.mouse.move(points.end.x, points.end.y, { steps: 6 });
+  await page.mouse.up();
+  const selected = await page.evaluate(() => {
+    const selection = window.getSelection()!;
+    return { text: selection.toString(), end: Math.max(selection.anchorOffset, selection.focusOffset) };
+  });
+  expect(selected.text.length).toBeGreaterThan(1);
+  await page.keyboard.press("ArrowRight");
+  expect(await page.evaluate(() => window.getSelection()?.anchorOffset)).toBe(selected.end);
+
+  // Chromium's IME interface produces real composition events without using a
+  // host keyboard or any user profile.
+  await first.click();
+  await page.keyboard.press("End");
+  await editor.evaluate(element => {
+    const events: string[] = [];
+    (element as HTMLElement & { compositionEvents?: string[] }).compositionEvents = events;
+    for (const name of ["compositionstart", "compositionupdate", "compositionend"]) {
+      element.addEventListener(name, () => events.push(name));
+    }
+  });
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Input.imeSetComposition", { text: "kana", selectionStart: 4, selectionEnd: 4 });
+  await editor.evaluate(element => {
+    // Exercise the key boundary while Chromium owns an active composition.
+    for (const type of ["keydown", "keyup"]) {
+      element.dispatchEvent(new KeyboardEvent(type, { key: "Home", isComposing: true, bubbles: true, cancelable: true }));
+    }
+  });
+  await cdp.send("Input.insertText", { text: "仮名" });
+  await expect(editor).toContainText("First pasted paragraph.ABCXDwxyZ仮名");
+  expect((await editor.textContent())?.split("仮名")).toHaveLength(2);
+  const compositionEvents = await editor.evaluate(element =>
+    (element as HTMLElement & { compositionEvents?: string[] }).compositionEvents ?? [],
+  );
+  expect(compositionEvents).toContain("compositionstart");
+  expect(compositionEvents).toContain("compositionupdate");
+  expect(compositionEvents).toContain("compositionend");
+  await cdp.detach();
+  expect(errors).toEqual([]);
+});

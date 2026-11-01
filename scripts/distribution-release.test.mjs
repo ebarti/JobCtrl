@@ -289,10 +289,10 @@ test("local fixture release descriptor, signature, and curl contract bind one ZI
     minimumSafeSequence: 0,
     revokedBuildIds: [],
     buildId: "fixture-build-0001",
-    appVersion: "0.3.1",
+    appVersion: "0.4.0",
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
     artifact: {
-      url: "file:///jobctrl-local-release/jobctrl-0.3.1-darwin-arm64.zip",
+      url: "file:///jobctrl-local-release/jobctrl-0.4.0-darwin-arm64.zip",
       sha256: build.archiveSha256,
       sizeBytes: build.compressedBytes,
       archiveType: "zip",
@@ -406,8 +406,8 @@ test("Apple signing rejects ad-hoc apps, preserves both signed Node executables,
   assert.ok(!classified.signingMachO.includes(node));
   assert.ok(!classified.signingMachO.includes(playwrightNode));
 
-  const headless = `${root}/chromium/chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/chrome-headless-shell`;
-  const dylib = `${root}/chromium/chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/libEGL.dylib`;
+  const headless = `${root}/chromium/chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/chrome-headless-shell`;
+  const dylib = `${root}/chromium/chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/libEGL.dylib`;
   const plan = createAppleSigningPlan({
     machO: [headless, dylib],
     codeBundles: [],

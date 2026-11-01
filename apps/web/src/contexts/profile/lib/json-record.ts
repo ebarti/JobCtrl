@@ -79,10 +79,22 @@ export function lines(value: string): string[] {
     .filter(Boolean);
 }
 
-export function defaultRepeatItem(path: string): JsonRecord {
+export function defaultRepeatItem(path: string, existingIds: Iterable<string> = []): JsonRecord {
+  const prefix = path === "resume.experience_entries" ? "experience"
+    : path === "resume.education_entries" ? "education"
+      : path === "resume.skill_categories" ? "skill" : null;
+  if (prefix === null) {
+    return {};
+  }
+  const occupied = new Set(existingIds);
+  let sequence = 1;
+  while (occupied.has(`${prefix}-${sequence}`)) {
+    sequence += 1;
+  }
+  const id = `${prefix}-${sequence}`;
   if (path === "resume.experience_entries") {
     return {
-      id: "",
+      id,
       date_range: "",
       title: "",
       company: "",
@@ -92,10 +104,10 @@ export function defaultRepeatItem(path: string): JsonRecord {
     };
   }
   if (path === "resume.education_entries") {
-    return { id: "", date: "", degree: "", institution: "", location: "" };
+    return { id, date: "", degree: "", institution: "", location: "" };
   }
   if (path === "resume.skill_categories") {
-    return { id: "", label: "", items: [""] };
+    return { id, label: "", items: [""] };
   }
   return {};
 }

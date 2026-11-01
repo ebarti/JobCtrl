@@ -46,7 +46,7 @@ describe("<RunsView>", () => {
     expect(screen.getByText(/Staff Software Engineer/i)).toBeInTheDocument();
     expect(screen.getByText(/Principal Platform Engineer/i)).toBeInTheDocument();
 
-    const links = screen.getAllByRole("link", { name: /Open workflow .* in Temporal Web UI/i });
+    const links = screen.getAllByRole("link", { name: /Open in Temporal: workflow /i });
     expect(links.length).toBe(2);
     for (const link of links) {
       expect(link.getAttribute("href")).toMatch(

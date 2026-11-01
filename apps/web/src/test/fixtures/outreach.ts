@@ -8,6 +8,7 @@ import type {
   OutreachSendLogDto,
   OutreachThreadDetail,
   OutreachThreadResponse,
+  ReviseOutreachDraftResponse,
 } from "@jobctrl/contracts";
 
 export function makeGateResultsPassing(
@@ -206,6 +207,18 @@ export function makeOutreachThreadResponse(
   return { ok: true, thread };
 }
 
+export function acknowledgeOutreachRevision(
+  response: OutreachThreadResponse,
+  draftId: string,
+): ReviseOutreachDraftResponse {
+  const draft = response.thread?.drafts.find((candidate) => candidate.draftId === draftId);
+  if (!draft) throw new Error(`Missing synthetic published draft: ${draftId}`);
+  return {
+    ...response,
+    publication: { threadId: draft.threadId, draftId: draft.draftId, generation: draft.generation },
+  };
+}
+
 export const sampleOutreachThreadDetail = makeOutreachThreadDetail();
 
 // A single candidate under review with PASSING gates — for the "candidate" state.
@@ -252,4 +265,24 @@ export function makeRejectedCandidateThread(): OutreachThreadDetail {
       }),
     ],
   });
+}
+
+/** Presentation fixture only; worker/API tests establish publication authority. */
+export function makeOutreachPublicationConflict(bodyText = "My retained message") {
+  return {
+    ok: false,
+    error: "outreach_publication_conflict",
+    message: "Outreach changed while this draft was being verified.",
+    outcome: "conflict" as const,
+    threadId: "thread-1",
+    unpublishedDraft: {
+      bodyText, kind: "intro_request" as const,
+      gateResults: {
+        ...makeOutreachDraft().gateResults,
+        determinationIds: ["synthetic-claim-review", "synthetic-quality-review"],
+        lineAnchors: [], sourceContext: null,
+      },
+      provenance: makeOutreachDraft().provenance,
+    },
+  };
 }

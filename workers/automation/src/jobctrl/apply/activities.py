@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,9 @@ class ApplyActivityInput:
     # ``limit``.  Otherwise ``max(1, limit)`` jobs are processed.
     continuous: bool = False
     auto_apply_loop: bool = False
+    # Bounded batches belonging to a standing workflow are polls, not manual retries.
+    standing_refusal_poll: bool = False
+    dispatch_frontier: int | None = None
 
     def __post_init__(self) -> None:
         if self.job_id is not None:
@@ -42,6 +48,32 @@ class ApplyActivityOutput:
     applied: int
     failed: int
     error: str | None = None
+    # Older activity histories have no worker-crash observation.
+    worker_crashes: int | None = None
+    # Only refusals with a durable refund and completed owner settlement count.
+    settled_refusals: int | None = None
+
+
+@dataclass(frozen=True)
+class ApplyFrontierInput:
+    tenant_id: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
+
+
+@activity.defn(name='capture_apply_dispatch_frontier')
+async def capture_apply_dispatch_frontier_activity(payload: ApplyFrontierInput) -> int:
+    """Start the next standing poll only after observing its own writer frontier."""
+    from jobctrl.database import get_connection
+    from jobctrl.infrastructure.apply_controls import capture_apply_dispatch_frontier
+    from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+    from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
+
+    assert_activity_runtime(expected_app_dir=payload.expected_app_dir, expected_db_path=payload.expected_db_path)
+    return await run_blocking_with_heartbeat(
+        lambda: capture_apply_dispatch_frontier(get_connection(), tenant_id=payload.tenant_id)[0],
+        starting_message='capturing Apply dispatch frontier',
+    )
 
 
 @activity.defn(name="apply")
@@ -57,8 +89,8 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
       policy can fire on transient browser / network / executor failures.
     """
 
-    # ``apply.launcher`` installs process signal handlers at import time; import
-    # it on the activity event-loop thread before handing work to the executor.
+    # Every invocation creates its own cancellation/resource owner before
+    # handing blocking launcher work to the activity executor.
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
     from jobctrl.infrastructure.scoring.criteria_provider import (
@@ -67,7 +99,9 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
         read_min_fit_score,
     )
     from jobctrl.browser_capabilities import require_system_browser_capability
-    from jobctrl.apply.launcher import main as apply_main
+    from jobctrl.apply.launcher import count_settled_email_refusals, main as apply_main
+    from jobctrl.apply.batch_outcome import ApplyBatchCleanupIncomplete, ApplyBatchWorkersCrashed
+    from jobctrl.apply.ownership import ApplyLauncherBusy, ApplyLauncherCleanupIncomplete, ApplyLauncherRun
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
@@ -76,10 +110,17 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
     # A caller may have bypassed the CLI/API workflow builder. Re-check at the
     # worker execution boundary before importing the apply launcher or touching
     # a browser profile.
-    require_system_browser_capability("auto-apply-browser")
+    from jobctrl.runtime import is_bundled_runtime
+    bundled = is_bundled_runtime()
+    dedicated_scope = bundled
+    if not dedicated_scope:
+        require_system_browser_capability("auto-apply-browser")
     workflow_id = activity.info().workflow_id
+    launcher_run = None if dedicated_scope else ApplyLauncherRun()
+    from jobctrl.apply.execution import ScopedApplyExecution
+    scoped_execution = ScopedApplyExecution() if dedicated_scope else None
 
-    def _run_apply() -> tuple[int, int]:
+    def _run_apply() -> tuple[int, int, int | None]:
         # ``continuous=True`` selects the launcher's run-forever poll mode,
         # which it activates via ``limit == 0``.  Otherwise enforce a floor
         # of one to keep ``limit < 1`` calls from no-oping.
@@ -87,22 +128,32 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
         approval_required = read_apply_approval_required(default=payload.approval_required)
         min_score = read_min_fit_score(default=payload.min_score) if payload.auto_apply_loop else payload.min_score
         workers = read_apply_concurrency(default=payload.workers) if payload.auto_apply_loop else payload.workers
-        return apply_main(
-            limit=effective_limit,
-            target_job_id=payload.job_id,
-            tenant_id=payload.tenant_id,
-            min_score=min_score,
-            headless=payload.headless,
-            model=payload.model,
-            dry_run=payload.dry_run,
-            workers=workers,
-            approval_required=approval_required,
-            workflow_id=workflow_id,
-            install_signal_handlers=False,
+        options = dict(
+            limit=effective_limit, target_job_id=str(payload.job_id) if payload.job_id is not None else None,
+            tenant_id=payload.tenant_id, min_score=min_score, headless=payload.headless, model=payload.model,
+            dry_run=payload.dry_run, continuous=payload.continuous, workers=workers, poll_interval=60,
+            approval_required=approval_required, workflow_id=workflow_id,
+            standing_refusal_poll=payload.standing_refusal_poll or payload.auto_apply_loop,
+            dispatch_frontier=payload.dispatch_frontier,
         )
+        if scoped_execution is not None:
+            applied, failed = scoped_execution.run(options)
+            owner_id = scoped_execution.identity
+        else:
+            options.pop("poll_interval")
+            applied, failed = apply_main(**options, install_signal_handlers=False, launcher_run=launcher_run)
+            owner_id = launcher_run.identity
+        settled = None
+        if failed and (payload.standing_refusal_poll or payload.auto_apply_loop):
+            try:
+                settled = count_settled_email_refusals(payload.tenant_id, owner_id)
+            except Exception:  # noqa: BLE001 — missing proof must retain the failed outcome
+                logger.warning("Could not verify settled Apply refusals; retaining failed batch status")
+        return applied, failed, settled
+
 
     try:
-        applied, failed = await run_blocking_with_heartbeat(
+        applied, failed, settled_refusals = await run_blocking_with_heartbeat(
             _run_apply,
             starting_message="apply starting",
             progress_message="apply still running",
@@ -112,7 +163,7 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
                 "job_id": str(payload.job_id) if payload.job_id is not None else "",
                 "dry_run": payload.dry_run,
             },
-            on_cancel=_signal_launcher_stop,
+            on_cancel=scoped_execution.cancel if scoped_execution is not None else launcher_run.cancel,
         )
 
         status = "ok" if failed == 0 else "failed"
@@ -121,21 +172,25 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
             applied=int(applied),
             failed=int(failed),
             error=None,
+            worker_crashes=0,
+            settled_refusals=settled_refusals,
         )
+    except ApplyBatchWorkersCrashed as exc:
+        return ApplyActivityOutput(
+            status="failed", applied=exc.counts.applied, failed=exc.counts.failed,
+            error="apply_worker_crashed", worker_crashes=exc.counts.worker_crashes,
+        )
+    except ApplyBatchCleanupIncomplete as exc:
+        raise ApplicationError(
+            str(exc), exc.counts.to_dict(), type="apply_launcher_cleanup_incomplete", non_retryable=True,
+        ) from exc
+    except (ApplyLauncherBusy, ApplyLauncherCleanupIncomplete) as exc:
+        code = "apply_launcher_busy" if isinstance(exc, ApplyLauncherBusy) else "apply_launcher_cleanup_incomplete"
+        raise ApplicationError(str(exc), type=code, non_retryable=True) from exc
     except LookupError as exc:
         # Missing JobId or other lookup misses are operator errors;
         # do not retry — surface them immediately to the workflow.
         raise ApplicationError(str(exc), type=type(exc).__name__, non_retryable=True) from exc
-
-
-def _signal_launcher_stop() -> None:
-    activity.logger.info("apply_activity cancelled — signalling launcher stop")
-    try:
-        from jobctrl.apply.launcher import _stop_event
-
-        _stop_event.set()
-    except Exception:  # noqa: BLE001 — never let cleanup mask the cancel
-        activity.logger.exception("apply_activity: failed to set launcher _stop_event during cancel")
 
 
 # Re-exported for the registry; activity decorator metadata is preserved.

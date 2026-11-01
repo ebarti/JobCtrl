@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 
 import {
   claimDiscoveryBrowserInstallation,
@@ -12,7 +13,7 @@ import {
 
 describe("extension local API client", () => {
   it("posts captures only to the loopback extension endpoint with the bearer token", async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true, itemId: "item-1", jobKey: null, importedAt: "now", provenance: { sourceKind: "user_mediated_capture", originatingUrl: "https://example.com/job", captureMode: "current_page", futureManualActionRequired: false } }), { status: 200 }));
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true, itemId: itemId("capture-1"), jobKey: null, importedAt: "now", provenance: { sourceKind: "user_mediated_capture", originatingUrl: "https://example.com/job", captureMode: "current_page", futureManualActionRequired: false } }), { status: 200 }));
 
     await postExtensionCapture(
       "token-1",
@@ -44,6 +45,78 @@ describe("extension local API client", () => {
       captureId: "capture-1",
       captureClient: "browser_extension",
     });
+  });
+
+  it.each([
+    { ok: false, itemId: itemId("capture-1") },
+    { ok: true, itemId: itemId("other"), jobKey: null, importedAt: "now", provenance: { sourceKind: "user_mediated_capture", originatingUrl: "https://example.com/job", captureMode: "current_page", futureManualActionRequired: false } },
+    { ok: true, itemId: itemId("capture-1"), jobKey: null },
+    { ok: true, status: "pending", itemId: itemId("capture-1"), jobKey: null, importedAt: "now", provenance: { sourceKind: "user_mediated_capture", originatingUrl: "https://example.com/job", captureMode: "current_page", futureManualActionRequired: false } },
+    { ok: true, status: "failed", itemId: itemId("capture-1"), jobKey: null, importedAt: "now", provenance: { sourceKind: "user_mediated_capture", originatingUrl: "https://example.com/job", captureMode: "current_page", futureManualActionRequired: false } },
+  ])("rejects a malformed or foreign acknowledgement: %j", async (body) => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }));
+    await expect(postExtensionCapture("token", {
+      captureId: "capture-1", originatingUrl: "https://example.com/job", captureMode: "current_page",
+      capturedUrl: "https://example.com/job", contentText: "Synthetic posting", futureManualActionRequired: false,
+      captureClient: "browser_extension", extensionVersion: "0.3.0",
+    }, { fetchImpl })).rejects.toThrow(/did not acknowledge this capture/i);
+  });
+
+  it("accepts a matching explicit dismissal acknowledgement", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      ok: true, itemId: itemId("capture-1"), jobKey: null, status: "dismissed", dismissedAt: null,
+      message: "Capture was already dismissed in JobCtrl.",
+    }), { status: 200 }));
+    const result = await postExtensionCapture("token", {
+      captureId: "capture-1", originatingUrl: "https://example.com/job", captureMode: "current_page",
+      capturedUrl: "https://example.com/job", contentText: "Synthetic posting", futureManualActionRequired: false,
+      captureClient: "browser_extension", extensionVersion: "0.3.0",
+    }, { fetchImpl });
+    expect(result).toMatchObject({ status: "dismissed", itemId: itemId("capture-1") });
+  });
+
+  it("times out and aborts when response headers arrive but the body stalls", async () => {
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    let signal: AbortSignal | null | undefined;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      signal = init?.signal;
+      return new Response(new ReadableStream({ start(controller) {
+        stream = controller;
+        controller.enqueue(new TextEncoder().encode("{"));
+      } }), { status: 200 });
+    };
+    try {
+      await expect(postExtensionCapture("token", {
+        captureId: "capture-1", originatingUrl: "https://example.com/job", captureMode: "current_page",
+        capturedUrl: "https://example.com/job", contentText: "Synthetic posting", futureManualActionRequired: false,
+        captureClient: "browser_extension", extensionVersion: "0.3.0",
+      }, { fetchImpl, timeoutMs: 30 })).rejects.toThrow(/timed out after 30ms/i);
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      stream.error(new Error("synthetic stream closed"));
+    }
+  }, 1_000);
+
+  it("clears the capture deadline after successful, rejected, and malformed responses", async () => {
+    vi.useFakeTimers();
+    try {
+      const capture = {
+        captureId: "capture-1", originatingUrl: "https://example.com/job", captureMode: "current_page" as const,
+        capturedUrl: "https://example.com/job", contentText: "Synthetic posting", futureManualActionRequired: false,
+        captureClient: "browser_extension" as const, extensionVersion: "0.3.0",
+      };
+      const body = { ok: true, itemId: itemId("capture-1"), jobKey: null, importedAt: "now", provenance: {
+        sourceKind: "user_mediated_capture", originatingUrl: capture.originatingUrl, captureMode: capture.captureMode, futureManualActionRequired: false,
+      } };
+      await expect(postExtensionCapture("token", capture, { fetchImpl: async () => new Response(JSON.stringify(body), { status: 200 }) })).resolves.toMatchObject(body);
+      expect(vi.getTimerCount()).toBe(0);
+      await expect(postExtensionCapture("token", capture, { fetchImpl: async () => new Response("{}", { status: 503 }) })).rejects.toThrow(/rejected capture/i);
+      expect(vi.getTimerCount()).toBe(0);
+      await expect(postExtensionCapture("token", capture, { fetchImpl: async () => new Response("{", { status: 200 }) })).rejects.toThrow(/invalid capture acknowledgement/i);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects non-loopback API origins", () => {
@@ -158,3 +231,7 @@ describe("extension local API client", () => {
     );
   });
 });
+
+function itemId(captureId: string): string {
+  return `extension:${createHash("sha256").update(captureId).digest("hex").slice(0, 32)}`;
+}
