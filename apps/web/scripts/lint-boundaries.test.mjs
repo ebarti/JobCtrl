@@ -3,11 +3,7 @@ import { test } from "node:test";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
-import {
-  dependencies,
-  lint,
-  webRoot,
-} from "./lint-boundaries.mjs";
+import { dependencies, webRoot } from "./lint-boundaries.mjs";
 
 import { check, rules } from "./lint-boundaries-fixtures.mjs";
 
@@ -381,7 +377,18 @@ test("the actual tsconfig and generated routes delegate reads without exemptions
   );
   assert.match(generated, /dashboard/);
   assert.match(generated, /activity/);
-  assert.deepEqual(lint(), []);
+  // Full production lint runs independently in the Frontend job. This control
+  // owns the generated routes, with the real complete compiler graph retained.
+  const routes = ["routes/dashboard.tsx", "routes/activity.$eventId.tsx"];
+  const files = Object.fromEntries(
+    routes.map((file) => [
+      file,
+      readFileSync(resolve(webRoot, "src", file), "utf8"),
+    ]),
+  );
+  const results = check(files, {}, true);
+  assert.deepEqual([...results], []);
+  assert.deepEqual(results.compilerDiagnostics, []);
 });
 
 test("real generated loaders reject direct capabilities independently of any/unresolved types", () => {
