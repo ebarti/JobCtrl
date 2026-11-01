@@ -227,7 +227,10 @@ accepts, corrects, or declines the suggestion. A bounded result is not proof of
 complete mailbox coverage.
 
 Raw mail bodies never enter events, broad projections, logs, telemetry, or the
-scan API response.
+worker scan result or scan API response. Each message's evidence, suggestion,
+determination bindings and event commit together. The worker reports committed
+progress and a safe typed cause when a later scan step fails; a lost worker
+response cannot establish progress. Retry deduplicates provider message IDs.
 
 ## Interview Preparation And Notes
 

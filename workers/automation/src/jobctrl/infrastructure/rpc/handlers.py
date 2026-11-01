@@ -44,7 +44,7 @@ from jobctrl.infrastructure.materials import (
 from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobctrl.infrastructure.rpc.enrichment_retry import reset_enrichment
 from jobctrl.infrastructure.rpc.workflow_starter import WorkflowCanceler
-from jobctrl.infrastructure.runtime_identity import assert_expected_runtime
+from jobctrl.infrastructure.runtime_identity import RuntimeIdentityMismatch, assert_expected_runtime
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.pipeline.preparation import (
     build_preparation_workflow_spec,
@@ -1177,21 +1177,16 @@ def render_resume_pdf(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def gmail_feedback_scan(params: dict[str, Any]) -> dict[str, Any]:
-    """Run the bounded scan and return safe, typed failures to the TS API."""
-
-    import httpx
-
-    assert_expected_runtime(
-        expected_app_dir=params.get("expectedAppDir"),
-        expected_db_path=params.get("expectedDbPath"),
-    )
+    """Run the bounded scan with safe failures and observed committed progress."""
+    try:
+        assert_expected_runtime(
+            expected_app_dir=params.get("expectedAppDir"),
+            expected_db_path=params.get("expectedDbPath"),
+        )
+    except RuntimeIdentityMismatch:
+        return {"ok": False, "status": "blocked", "failureCode": "runtime_mismatch"}
     from jobctrl.config import DB_PATH
-    from jobctrl.infrastructure.gmail.auth import GmailAuthError
-    from jobctrl.infrastructure.gmail.client import GmailFeedbackInputError
-    from jobctrl.infrastructure.gmail.feedback import GmailFeedbackRecipientError, scan_gmail_feedback
-
-    def failure(code: str, status: str, message: str) -> dict[str, Any]:
-        return {"ok": False, "status": status, "failureCode": code, "message": message}
+    from jobctrl.infrastructure.gmail.feedback import safe_scan_failure, scan_gmail_feedback
 
     kwargs: dict[str, Any] = {}
     recipient = str(params.get("recipientEmail") or "").strip()
@@ -1209,38 +1204,11 @@ def gmail_feedback_scan(params: dict[str, Any]) -> dict[str, Any]:
                     raise ValueError
                 kwargs[kwarg_name] = int(value)
             except (TypeError, ValueError, OverflowError):
-                return failure("invalid_scan_options", "invalid", "Gmail feedback scan options must be integers.")
+                return {"ok": False, "status": "invalid", "failureCode": "invalid_scan_options"}
     try:
         return scan_gmail_feedback(db_path=DB_PATH, **kwargs)
-    except GmailFeedbackRecipientError:
-        return failure(
-            "invalid_recipient", "invalid", "Gmail feedback scan requires a recipient email or candidate profile email."
-        )
-    except GmailFeedbackInputError:
-        return failure("invalid_search", "invalid", "Gmail feedback search parameters are invalid.")
-    except GmailAuthError:
-        return failure(
-            "gmail_auth_required", "unavailable", "Gmail authentication is required; reconnect Gmail and retry."
-        )
-    except httpx.TimeoutException:
-        return failure("gmail_timeout", "unavailable", "The Gmail feedback request timed out.")
-    except httpx.HTTPStatusError as exc:
-        status_code = exc.response.status_code
-        if status_code == 401:
-            code = "gmail_auth_required"
-        elif status_code == 429:
-            code = "gmail_rate_limited"
-        elif status_code >= 500:
-            code = "gmail_provider_unavailable"
-        else:
-            code = "gmail_provider_error"
-        return failure(code, "unavailable", "The Gmail feedback request was rejected by the provider.")
-    except httpx.RequestError:
-        return failure(
-            "gmail_transport_error", "unavailable", "The Gmail feedback request could not reach the provider."
-        )
-    except Exception:  # noqa: BLE001 - do not expose provider or message contents over RPC
-        return failure("gmail_scan_failed", "blocked", "Gmail feedback scan failed.")
+    except Exception as exc:  # noqa: BLE001 - never expose provider or message text
+        return safe_scan_failure(exc)
 
 
 def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:

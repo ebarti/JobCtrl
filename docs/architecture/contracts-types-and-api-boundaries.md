@@ -29,6 +29,9 @@ client call and need to know which layer owns the contract.
 Gmail feedback scan summaries and `ApplicationEmailFeedbackIngested` payloads
 use canonical `jobId` across Python, REST contracts, domain events, and web
 invalidation. Posting and application URLs are search hints, never identity.
+Scan failures carry allow-listed causes and a sanitized committed-progress
+summary across JSON-RPC and HTTP. Transport loss reports unknown progress;
+neither boundary forwards exception prose or message citations.
 
 Reviewed permanent deletion uses a process-local observation and a single-use
 selection receipt. The API retains the observed lifecycle revisions with the

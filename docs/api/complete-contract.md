@@ -1576,11 +1576,22 @@ verification-code MCP server:
   application anchors. The request accepts optional `recipientEmail`, `limit`,
   `maxResultsPerAnchor`, and `windowDays` values. The response returns counts
   plus evidence/suggestion IDs, canonical `jobId` values, kinds, and confidence
-  values only; it never returns raw Gmail body text. Worker failures return
-  `ok: false`, a safe `failureCode` and message, and an HTTP status: 400 for
-  invalid scan input, 503 for Gmail/model unavailability, and 500 for blocked
-  determinations or worker failures. Existing evidence remains stored; a
-  bounded scan is not an exhaustive mailbox search.
+  values only; it never returns raw Gmail body text. A bounded scan is not an
+  exhaustive mailbox search. On failure, the response has `ok: false`, `error`,
+  `status` (`invalid`, `blocked` or `unavailable`), a safe `failureCode`, a fixed
+  guidance `message`, and `progress`. A recognized worker status is preserved.
+  Progress contains the successful response's
+  counts and summary arrays without `ok`. `scannedAnchorCount` counts completed
+  Gmail searches; evidence and suggestion counts include only committed writes
+  from this attempt. Progress is `null` when the worker did not return a complete
+  trustworthy summary, including transport loss.
+  Existing status mappings remain: 400 for invalid scan input, 503 for Gmail/model
+  unavailability or budget denial, and 500 for blocked determinations or RPC/scan
+  failures. Workspace mismatch returns 409, spend denial returns 429, and an
+  invalid worker result returns 502. `GmailOutcomeScanFailureCodeSchema` defines
+  the allowed codes. Request parsing and database readiness retain their existing
+  error contracts. Deliberate retry deduplicates provider messages and preserves
+  earlier committed evidence and suggestions.
 
 The web review queue records approval facts only. `approve_submit` is bound to
 the material, profile, URL, and dry-run evidence shown in Apply Review; stale
