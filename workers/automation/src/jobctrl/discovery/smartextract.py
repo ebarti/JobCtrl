@@ -50,6 +50,7 @@ from jobctrl.infrastructure.discovery.live_browser import (
     LiveBrowserResult,
     LiveChromeDiscoveryClient,
     PoliteLiveChromeHttpClient,
+    trusted_live_browser_url,
     prefer_live_browser,
 )
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
@@ -1556,6 +1557,8 @@ def _run_all(
         return target.get("source_id") or f"smart_extract:{slug or 'site'}"
 
     def _browser_client_for_target(target: dict) -> PoliteLiveChromeHttpClient | None:
+        if not trusted_live_browser_url(str(target.get("url") or "")):
+            return None
         if id(target) in selected_clients:
             return selected_clients[id(target)]
         if discovery_execution is None:

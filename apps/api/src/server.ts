@@ -210,6 +210,7 @@ import {
   SUPPORTED_SCHEMA_VERSION,
 } from "./db.js";
 import { ConfigFileInputError } from "./config-file.js";
+import { isTrustedLiveBrowserUrl } from "./discovery-browser-destination.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
 import {
@@ -819,6 +820,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       const body = parseBody(reply, DiscoveryBrowserTaskCreateSchema, request.body ?? {});
       if (!body) return undefined;
+      if (!isTrustedLiveBrowserUrl(body.request.url)) {
+        void reply.code(400);
+        return {
+          ok: false,
+          error: "untrusted_discovery_browser_host",
+          message:
+            "The live Chrome transport is limited to supported provider hosts; use the address-pinned worker transport for other URLs.",
+        };
+      }
       const destination = await jobUrlValidator(body.request.url);
       if (!destination.allowed) {
         void reply.code(400);
