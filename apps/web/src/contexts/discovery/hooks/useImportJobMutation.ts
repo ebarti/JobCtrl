@@ -3,9 +3,9 @@ import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/r
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
-import { dashboardKeys } from "../../operations/dashboardKeys.js";
+import { invalidateCompletedJobUrlImport } from "../../operations/jobUrlImport.js";
+import { workflowRunsKeys } from "../../operations/workflowRunsKeys.js";
 import { jobsKeys } from "../../operations/jobsKeys.js";
-import { discoveryKeys } from "../queryKeys.js";
 
 export interface ImportJobVariables {
   readonly url: string;
@@ -21,17 +21,13 @@ export function useImportJobMutation(): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: [...jobsKeys.all(tenantId), "import-url"],
-    mutationFn: (body) => api.importJobUrl(body),
+    mutationFn: (body) => api.importJobUrl({ ...body, awaitResult: false }),
     onSuccess: async (result) => {
-      if (result.status === "imported") {
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: jobsKeys.lists(tenantId) }),
-          queryClient.invalidateQueries({ queryKey: jobsKeys.details(tenantId) }),
-          queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
-        ]);
+      if (result.status === "started") {
+        void queryClient.invalidateQueries({ queryKey: workflowRunsKeys.all(tenantId) });
         return;
       }
-      await queryClient.invalidateQueries({ queryKey: discoveryKeys.all(tenantId) });
+      await invalidateCompletedJobUrlImport(queryClient, tenantId, result);
     },
   });
 }

@@ -140,7 +140,7 @@ describe("<ArtifactsTable>", () => {
     ).toBeInTheDocument();
     expect(
       within(list).getByRole("button", {
-        name: `Open artifact ${sampleArtifact.title}`,
+        name: `Open artifact ${sampleArtifact.title}: View details`,
       }),
     ).not.toHaveClass("row-activation-focus-only");
   });

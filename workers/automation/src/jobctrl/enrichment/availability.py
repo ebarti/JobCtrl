@@ -383,14 +383,14 @@ class Response:
 
 def _public_get_in_process(url: str) -> Response:
     from jobctrl.infrastructure.network.public_http import build_public_http_opener
-    from jobctrl.infrastructure.network.politeness import resolve_honest_user_agent
+    from jobctrl.infrastructure.network.politeness import resolve_request_headers
     from jobctrl.infrastructure.network.url_safety import validate_public_http_url
 
     if not validate_public_http_url(url).allowed:
         raise DeferredCheck("unsafe_posting_url")
     request = Request(
         url,
-        headers={"User-Agent": resolve_honest_user_agent().header_value(), "Accept": "application/json,text/html"},
+        headers={**resolve_request_headers(), "Accept": "application/json,text/html"},
         method="GET",
     )
     # Each redirect is acquired separately so its actual host is reserved first.
@@ -805,8 +805,28 @@ class Acquisition:
         self.conn, self.claim, self.transport, self.browser = conn, claim, transport or public_get, browser
         self.lineage: list[dict[str, Any]] = []
         self.bytes_received = 0
-        self.deadline = time.monotonic() + ACQUISITION_TIMEOUT_SECONDS
+        started = time.monotonic()
+        self._lease_deadline = started + max(0, (claim.expires_at - _now()).total_seconds())
+        self.deadline = min(started + ACQUISITION_TIMEOUT_SECONDS, self._lease_deadline)
         self.cancel_event = cancel_event
+
+    def _verify_page(self, page: DetailPage, *, signals: list[dict[str, object]]):
+        # Model reasoning is a separate resource from posting acquisition.
+        # Credit only the time actually spent here, never extend the job lease.
+        started = time.monotonic()
+        try:
+            result = ActiveStateVerifier(
+                page_interpreter=build_page_interpreter(self.conn, tenant_id=self.claim.tenant_id)
+            ).verify(page, signals=signals)
+        finally:
+            self.deadline = min(
+                self._lease_deadline,
+                self.deadline + max(0, time.monotonic() - started),
+            )
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise DeferredCheck("check_canceled")
+        _fence(self.conn, self.claim, _now())
+        return result
 
     def _get(self, url: str, method: str, *, deadline: float | None = None) -> Response:
         deadline = min(self.deadline, deadline if deadline is not None else self.deadline)
@@ -1006,9 +1026,7 @@ class Acquisition:
             page_title=soup.title.get_text() if soup.title else "",
         )
         signals: list[dict[str, object]] = []
-        verdict, reason = ActiveStateVerifier(
-            page_interpreter=build_page_interpreter(self.conn, tenant_id=self.claim.tenant_id)
-        ).verify(page, signals=signals)
+        verdict, reason = self._verify_page(page, signals=signals)
         self.lineage[-1]["signals"] = signals
         if verdict is not ActiveState.UNKNOWN or reason in {
             "http_error",
@@ -1055,9 +1073,7 @@ class Acquisition:
             )
             raise
         signals = []
-        verdict, reason = ActiveStateVerifier(
-            page_interpreter=build_page_interpreter(self.conn, tenant_id=self.claim.tenant_id)
-        ).verify(rendered, signals=signals)
+        verdict, reason = self._verify_page(rendered, signals=signals)
         self.lineage.append(
             {
                 "sourceUrl": url,
@@ -1372,6 +1388,137 @@ def require_fresh_active(
                 "Posting availability is unverified. Check availability or use the human-reviewed/manual Apply path."
             )
         raise MissingInputError("Posting is unavailable. Check availability before retrying.")
+
+
+def _recent_preparation_capture(
+    conn: sqlite3.Connection,
+    job_id: str,
+    *,
+    posting_url: str,
+    tenant_id: str,
+    max_age: timedelta,
+) -> bool:
+    """Join existing capture judgments; never create an availability observation."""
+    from jobctrl.domain.determinations import DeterminationFailure, parse_model_result
+    from jobctrl.domain.enrichment.page_interpretation import DescriptionQuality, PageInterpretation
+    from jobctrl.domain.enrichment.snapshot_value_objects import SnapshotConfidence, SnapshotDescriptionHash
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+    from jobctrl.infrastructure.enrichment.sqlite_repository import SqlitePostingSnapshotSetRepository
+
+    row = conn.execute(
+        "SELECT full_description FROM job_enrichments WHERE tenant_id = ? AND job_id = ?",
+        (tenant_id, job_id),
+    ).fetchone()
+    if row is None or not row[0]:
+        return False
+    description = row[0]
+    try:
+        snapshot_set = SqlitePostingSnapshotSetRepository(conn).load(TenantId(tenant_id), canonical_job_id(job_id))
+        if (
+            snapshot_set is None
+            or str(snapshot_set.tenant_id) != tenant_id
+            or str(snapshot_set.job_id) != job_id
+        ):
+            return False
+        snapshot = snapshot_set.latest_snapshot
+        if (
+            snapshot is None
+            or snapshot.is_quarantined
+            or snapshot.confidence is SnapshotConfidence.LOW
+            or snapshot.active_state not in {ActiveState.ACTIVE, ActiveState.UNKNOWN}
+            or snapshot.description_hash != SnapshotDescriptionHash.from_text(description)
+        ):
+            return False
+        captured = _instant(snapshot.captured_at)
+        if captured is None or not timedelta(0) <= _now() - captured <= max_age:
+            return False
+        repository = SqliteDeterminationRepository(conn)
+
+        def receipt(prefix, *, kind, entity_id, prompt):
+            identifiers = [entry[len(prefix):] for entry in snapshot.evidence if entry.startswith(prefix)]
+            if len(identifiers) != 1:
+                return None
+            envelope = repository.find(tenant_id, identifiers[0])
+            if (
+                envelope is None
+                or envelope.kind != kind
+                or envelope.entity_id != entity_id
+                or envelope.lane != "enrichment"
+                or envelope.schema_version != "1"
+                or envelope.prompt_version != prompt
+            ):
+                return None
+            return envelope
+
+        page = receipt(
+            "page_interpretation_determination:", kind="page_interpretation",
+            entity_id=posting_url, prompt="page-interpretation-v1",
+        )
+        quality = receipt(
+            "description_quality_determination:", kind="description_quality",
+            entity_id=hashlib.sha256(description.encode()).hexdigest(), prompt="description-quality-v1",
+        )
+        if page is None or quality is None:
+            return False
+        interpretation = parse_model_result(PageInterpretation, page.result)
+        description_quality = parse_model_result(DescriptionQuality, quality.result)
+        return bool(
+            interpretation.availability.value == snapshot.active_state.value
+            and interpretation.page_kind.value == "posting"
+            and interpretation.access_state.value == "clear"
+            and description_quality.confidence == snapshot.confidence.value
+        )
+    except (ValueError, TypeError, KeyError, DeterminationFailure):
+        # Legacy or damaged capture metadata is not a reuse authority. The
+        # normal acquisition path retains its existing diagnostics and fencing.
+        return False
+
+
+def require_preparation_available(
+    job_id: str,
+    *,
+    expected_posting_url: str,
+    max_age: timedelta = timedelta(hours=6),
+    tenant_id: str = str(LOCAL_TENANT),
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Reuse recent observations or trustworthy captures for preparation.
+
+    Preparation permits unknown availability. Its six-hour refresh window is
+    measured from the actual observation attempt or canonical content capture.
+    Capture reuse joins the saved page and exact-description quality judgments;
+    automatic and explicit checks keep their independent retry schedules.
+    Apply continues to use ``require_fresh_active`` and its own freshness gate.
+    """
+    from jobctrl.database import get_connection
+
+    conn = conn if conn is not None else get_connection()
+    row = conn.execute(
+        "SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?", (tenant_id, job_id)
+    ).fetchone()
+    value = read_availability(conn, job_id, tenant_id=tenant_id)
+    attempted = _instant(value.get("lastAttemptedAt"))
+    if (
+        row is not None
+        and row[0] == expected_posting_url == value.get("postingUrl")
+        and attempted is not None
+        and timedelta(0) <= _now() - attempted <= max_age
+        and candidate_ready(conn, job_id, tenant_id=tenant_id, max_age=max_age, allow_unknown=True)
+    ):
+        return
+    if (
+        row is not None
+        and row[0] == expected_posting_url
+        and candidate_ready(conn, job_id, tenant_id=tenant_id, max_age=max_age, allow_unknown=True)
+        and _recent_preparation_capture(
+            conn, job_id, posting_url=expected_posting_url, tenant_id=tenant_id, max_age=max_age,
+        )
+    ):
+        return
+    require_fresh_active(
+        job_id, conn=conn, tenant_id=tenant_id, max_age=max_age,
+        expected_posting_url=expected_posting_url, allow_unknown=True,
+    )
 
 
 def assert_fresh_candidate(

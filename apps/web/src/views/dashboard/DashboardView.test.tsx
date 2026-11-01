@@ -1,13 +1,34 @@
 import { http, HttpResponse } from "msw";
 import { screen, waitForElementToBeRemoved } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { DemoFeatureFlagAdapter } from "../../demo/ports.js";
 import { sampleDashboardSummary } from "../../test/fixtures/projections.js";
 import { server } from "../../test/msw/server.js";
 import { renderWithProviders } from "../../test/render.js";
+import { buildTestPorts } from "../../test/testPorts.js";
 import { DashboardView } from "./DashboardView.js";
 
 describe("DashboardView", () => {
+  it("explains unavailable demo features without requesting them", async () => {
+    const learningRecommendations = vi.fn();
+    const tailoringPolicyRevisions = vi.fn();
+    const ports = buildTestPorts({ api: { learningRecommendations, tailoringPolicyRevisions } });
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+    renderWithProviders(<DashboardView />, { ports });
+
+    expect(await screen.findByText("Learning recommendations require the local audited database.")).toBeInTheDocument();
+    expect(screen.getByText("Tailoring policy history requires the local audited database.")).toBeInTheDocument();
+    const installLinks = screen.getAllByRole("link", { name: "Install JobCtrl" });
+    expect(installLinks).toHaveLength(2);
+    for (const link of installLinks) {
+      expect(link).toHaveAttribute("href", "https://jobctrl.dev/user/getting-started");
+    }
+    expect(learningRecommendations).not.toHaveBeenCalled();
+    expect(tailoringPolicyRevisions).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Demo capability .* is not available/)).not.toBeInTheDocument();
+  });
+
   it("renders the BR-007 operations surfaces without pipeline action controls", async () => {
     renderWithProviders(<DashboardView />);
 

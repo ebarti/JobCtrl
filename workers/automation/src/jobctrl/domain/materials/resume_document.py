@@ -8,10 +8,9 @@ from jobctrl.resume_profile import (
     experience_updates_by_id,
     get_education_entries,
     get_required_education_entry_ids,
-    get_required_skill_category_ids,
     get_resume_master,
     get_selected_experience_entries,
-    get_skill_categories,
+    get_selected_skill_categories,
     get_tailoring_policy,
     tailored_experience_bullets,
     tailored_experience_title,
@@ -96,14 +95,12 @@ def contact_items_from_personal(personal: dict[str, Any]) -> list[ContactItem]:
             items.append(item)
     linkedin = str(personal.get("linkedin_url", "")).strip()
     if linkedin:
-        label = _link_label(linkedin).rsplit("/", 1)[-1] or _link_label(linkedin)
-        item = _contact_url_item("linkedin", linkedin, label=label)
+        item = _contact_url_item("linkedin", linkedin)
         if item:
             items.append(item)
     github = str(personal.get("github_url", "")).strip()
     if github:
-        label = _link_label(github).rsplit("/", 1)[-1] or _link_label(github)
-        item = _contact_url_item("github", github, label=label)
+        item = _contact_url_item("github", github)
         if item:
             items.append(item)
     return order_contact_items(items)
@@ -131,11 +128,9 @@ def contact_items_from_text(contact_text: str) -> list[ContactItem]:
         if "@" in part and not lower.startswith(("http://", "https://")):
             item = _contact_item("email", part, f"mailto:{part}")
         elif "linkedin.com" in lower:
-            label = _link_label(part).rsplit("/", 1)[-1] or _link_label(part)
-            item = _contact_url_item("linkedin", part, label=label)
+            item = _contact_url_item("linkedin", part)
         elif "github.com" in lower:
-            label = _link_label(part).rsplit("/", 1)[-1] or _link_label(part)
-            item = _contact_url_item("github", part, label=label)
+            item = _contact_url_item("github", part)
         elif lower.startswith(("http://", "https://")) or "." in part:
             item = _contact_url_item("website", part)
         elif re.search(r"\d", part):
@@ -164,9 +159,7 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
     tailoring_policy = get_tailoring_policy(profile)
     resume = get_resume_master(profile)
     required_education_ids = get_required_education_entry_ids(profile)
-    required_skill_ids = get_required_skill_category_ids(profile)
     all_education_entries = get_education_entries(profile)
-    all_skill_categories = get_skill_categories(profile)
 
     experience_entries = get_selected_experience_entries(profile, tailored_payload)
     education_entries = [
@@ -174,11 +167,7 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
         for entry in all_education_entries
         if not required_education_ids or entry.get("id") in required_education_ids
     ] or all_education_entries
-    skill_categories = [
-        category
-        for category in all_skill_categories
-        if not required_skill_ids or category.get("id") in required_skill_ids
-    ] or all_skill_categories
+    skill_categories = get_selected_skill_categories(profile, tailored_payload)
 
     experience_updates = experience_updates_by_id(tailored_payload)
     skill_updates = {

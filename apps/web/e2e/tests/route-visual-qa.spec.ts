@@ -1073,11 +1073,11 @@ test("compact, regular, and comfortable modes preserve typography metrics", asyn
 test("stale score status keeps the shared transparent status treatment", async ({
   page,
 }) => {
-  await page.route(/\/v1\/jobs(?:\?.*)?$/, async (route) => {
+  await page.route(/\/v1\/jobs\/reviewable-list(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(
-        makeJobsPage([
+      body: JSON.stringify({
+        ...makeJobsPage([
           {
             ...sampleJob,
             scoreStaleness: {
@@ -1090,7 +1090,8 @@ test("stale score status keeps the shared transparent status treatment", async (
             },
           },
         ]),
-      ),
+        observationId: null,
+      }),
     });
   });
 
@@ -1570,7 +1571,8 @@ test("Discovery settings pack related controls and reflow with available width",
       Math.min(...desktopBoards.map(({ left }) => left)),
   ).toBeLessThanOrEqual(700);
   await expect(page.getByText(/Saved in SQLite/i)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /^Help for / })).toHaveCount(8);
+  await expect(page.getByRole("button", { name: /^Help for / })).toHaveCount(7);
+  await expect(page.getByRole("button", { name: "Help for Use browser headers", exact: true })).toHaveCount(1);
   await page.getByRole("button", { name: "Help for Results per board" }).click();
   const settingHelp = page.getByRole("dialog", { name: "Results per board help" });
   await expect(settingHelp).toBeVisible();
@@ -1839,7 +1841,7 @@ test("warning actions use the contrasting focus token in both themes", async ({ 
   for (const theme of ["light", "dark"] as const) {
     await page.goto("/jobs");
     if (theme === "dark") {
-      await page.getByRole("button", { name: "Switch to dark theme" }).click();
+      await page.getByRole("button", { name: "Light theme: Switch to dark theme" }).click();
     }
     await page
       .getByRole("button", { name: /^Open job Senior Engineering Manager - Risk/ })
@@ -1954,7 +1956,7 @@ test("Crawl sources keeps provider traversal separate from exact outcomes", asyn
   expect(mobile.providerBottom).toBeLessThanOrEqual(mobile.outcomesTop + 1);
 });
 
-test("pipeline recovery explains the automatic previous-run check in plain language", async ({
+test("pipeline recovery explains the current run record check in plain language", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1491, height: 1245 });
@@ -1965,19 +1967,20 @@ test("pipeline recovery explains the automatic previous-run check in plain langu
 
   const alert = page
     .getByRole("alert")
-    .filter({ hasText: "Checking previous run records" });
-  await expect(alert).toContainText("Checking previous run records");
-  await expect(alert).toContainText("15 of 72 linked jobs checked");
-  await expect(alert).toContainText("3 of 8 stage records checked");
-  await expect(alert).toContainText("finishes automatically and needs no restart");
+    .filter({ hasText: "Checking current run records" });
+  await expect(alert).toContainText("Checking current run records");
+  await expect(alert).toContainText("15 of 72 linked jobs recorded");
+  await expect(alert).toContainText("3 of 8 stage records stored");
+  await expect(alert.locator("time")).toHaveAttribute("datetime", pipelinesRecoveringProjectionSnapshot.projectionCoverage!.updatedAt!);
+  await expect(alert).toContainText("updates every 15 seconds while visible");
   await expect(alert).not.toContainText(/restoring history|terminal/i);
 
   const summary = page.getByLabel("Pipeline operations summary");
-  await expect(summary).toContainText("Checking previous run");
+  await expect(summary).toContainText("Checking current run");
   await expect(summary).not.toContainText("Restoring history");
 });
 
-test("busy replacement guidance keeps its title readable without an action", async ({
+test("draining preparation guidance keeps its title readable without an action", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1491, height: 1245 });
@@ -2007,7 +2010,7 @@ test("busy replacement guidance keeps its title readable without an action", asy
   await page.goto("/pipelines");
 
   const alert = page.getByRole("alert").filter({
-    hasText: "This Discover run has ended",
+    hasText: "Source collection complete",
   });
   const title = alert.locator('[data-slot="alert-title"]');
   await expect(title).toBeVisible({ timeout: 30_000 });
@@ -2507,6 +2510,8 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
   );
   const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 30_000 });
+  await drawer.getByRole("button", { name: "Sections", exact: true }).click();
+  await page.getByRole("button", { name: "Expand all", exact: true }).click();
 
   const drawerRequirement = drawer
     .locator(".employer-analysis-requirement")
@@ -2551,7 +2556,7 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
     drawerRequirement.locator('[data-slot="requirement-profile-evidence"]'),
   ).toBeVisible();
   await expect(
-    drawerRequirement.getByRole("button", { name: "Additional audit details" }),
+    drawerRequirement.getByRole("button", { name: /^Additional audit details \d+ signals?$/ }),
   ).toHaveAttribute("aria-expanded", "false");
   await expectVisualSnapshot(
     drawerRequirement,

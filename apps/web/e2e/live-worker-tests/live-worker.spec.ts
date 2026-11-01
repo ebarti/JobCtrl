@@ -219,7 +219,7 @@ test("real cover workflow reaches worker running and terminal state in the brows
     .toBe(true);
 
   const runLink = runsPage.getByRole("link", {
-    name: `Open workflow ${workflowId} in Temporal Web UI`,
+    name: `View in Temporal: workflow ${workflowId}`,
   });
   await expect(runLink).toBeVisible({ timeout: 30_000 });
   const runRow = runLink.locator("xpath=ancestor::tr");

@@ -202,6 +202,8 @@ class JsonRpcServer:
             )
 
         try:
+            from jobctrl.apply.dispatch import bind_apply_dispatch_spec
+            start_spec = bind_apply_dispatch_spec(start_spec)
             handle = asyncio.run(self._workflow_starter(start_spec))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Workflow start failed for %s", request.method)

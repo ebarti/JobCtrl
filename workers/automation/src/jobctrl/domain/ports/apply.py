@@ -13,7 +13,9 @@ needing to know.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from hashlib import sha256
+import json
 from typing import Any, Callable, Mapping, Protocol
 
 from jobctrl.domain.apply.aggregate import ApplyRun
@@ -30,10 +32,13 @@ from jobctrl.domain.tenant import TenantId
 __all__ = [
     "AgentResult",
     "ApplyRunRepository",
+    "ApplyRunWriteConflict",
     "AutonomousAgentPort",
     "BrowserPort",
     "BrowserSession",
     "EmailApplicationCandidate",
+    "EmailApplicationAuthorization",
+    "EmailApplicationOperation",
     "EmailApplicationSenderPort",
     "EmailApplicationSendResult",
 ]
@@ -62,6 +67,8 @@ class BrowserSession:
     worker_dir: str | None = None
     handle: Any | None = None
     dry_run_evidence: Callable[[], Mapping[str, Any]] | None = None
+    # Exact browser-level WebSocket identity from the owned profile receipt.
+    browser_ws_url: str = ""
 
     @property
     def cdp_port(self) -> int:
@@ -168,6 +175,33 @@ class EmailApplicationCandidate:
     attachment_artifact_id: str
     attachment_name: str
     attachment_path: str
+    # Set only by final authorization. Private bytes never enter event payloads.
+    attachment_bytes: bytes | None = field(default=None, repr=False)
+
+    def fingerprint(self) -> str:
+        """Bind the preview and immutable material reference, excluding private bytes."""
+        value = asdict(self)
+        value.pop("attachment_bytes")
+        return sha256(json.dumps(value, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class EmailApplicationAuthorization:
+    """Validated send inputs, separate from serializable intent evidence."""
+
+    candidate: EmailApplicationCandidate
+    evidence: Mapping[str, Any]
+
+@dataclass(frozen=True)
+class EmailApplicationOperation:
+    """Immutable identity persisted before admitting an external send."""
+
+    tenant_id: str
+    job_id: str
+    run_id: str
+    intent_id: str
+    material_version: str
+    candidate_fingerprint: str
 
 
 @dataclass(frozen=True)
@@ -176,14 +210,24 @@ class EmailApplicationSendResult:
 
     provider: str = "gmail"
     message_id: str = ""
-    thread_id: str = ""
+    thread_id: str | None = None
+    operation: EmailApplicationOperation | None = None
+
+    def confirms(self, operation: EmailApplicationOperation) -> bool:
+        return (
+            self.provider == "gmail"
+            and isinstance(self.message_id, str) and bool(self.message_id.strip())
+            and (self.thread_id is None or (isinstance(self.thread_id, str) and bool(self.thread_id.strip())))
+            and type(self.operation) is EmailApplicationOperation
+            and self.operation == operation
+        )
 
 
 class EmailApplicationSenderPort(Protocol):
     """Driven port: send an approved email application outside the agent."""
 
-    def send_email_application(self, candidate: EmailApplicationCandidate) -> EmailApplicationSendResult:
-        """Send the approved candidate and return provider metadata."""
+    def send_email_application(self, candidate: EmailApplicationCandidate, *, operation: EmailApplicationOperation) -> EmailApplicationSendResult:
+        """Send immutable authorized attachment bytes and return an operation-bound receipt."""
         ...
 
 
@@ -192,13 +236,20 @@ class EmailApplicationSenderPort(Protocol):
 # ---------------------------------------------------------------------------
 
 
+class ApplyRunWriteConflict(RuntimeError):
+    """A competing execution cannot append to an already-owned run history.
+
+    This refusal must not become a terminal result or consume the existing
+    operation's settlement authority. Exact immutable event replays remain valid.
+    """
+
+
 class ApplyRunRepository(Protocol):
     """Persistence port for the ``ApplyRun`` aggregate.
 
-    All methods are tenant-scoped. ``save`` is an upsert keyed on
-    ``(tenant_id, run_id)`` — saving a previously stored aggregate
-    overwrites it (event order + lifecycle progression encode
-    versioning inside the aggregate, not at the row level).
+    All methods are tenant-scoped. ``save`` appends immutable events keyed on
+    ``(tenant_id, job_id, run_id, event_id)``. Exact replays are idempotent;
+    different events at the same sequence raise ``ApplyRunWriteConflict``.
     ``list_active`` returns the in-flight runs (status in
     {starting, in_progress}) so the orchestrator can enforce the
     §4.6 "at most one in_progress per JobId" invariant before
@@ -210,7 +261,22 @@ class ApplyRunRepository(Protocol):
         ...
 
     def save(self, run: ApplyRun) -> None:
-        """Upsert the aggregate (and its events)."""
+        """Append the aggregate events, refusing conflicting replay identities."""
+        ...
+
+    def admit_email_intent(self, run: ApplyRun) -> None:
+        """Persist a new owned intent; duplicate admission raises ApplyRunWriteConflict."""
+        ...
+
+    def email_intent_matches(self, run: ApplyRun) -> bool:
+        """Read whether this exact intent was recorded before an admission error.
+
+        This does not grant transport permission or create/rewrite any intent.
+        """
+        ...
+
+    def email_intent_durable(self, run: ApplyRun) -> bool:
+        """Confirm the exact owned intent committed before admitting transport."""
         ...
 
     def list_recent(

@@ -17,6 +17,7 @@ import { StatusBadge } from "../../../shared/ui/status-badge.js";
 
 export interface JobActionsProps {
   jobId: string;
+  detailQueryId?: string;
   currentStage: Stage;
   canRetryStage?: boolean;
   canRunCurrentStage?: boolean;
@@ -28,6 +29,7 @@ export interface JobActionsProps {
 
 export function JobActions({
   jobId,
+  detailQueryId,
   currentStage,
   canRetryStage = false,
   canRunCurrentStage = true,
@@ -50,6 +52,7 @@ export function JobActions({
           <RetryStageButton
             className={buttonVariants({ size: "sm", variant: "default" })}
             jobId={jobId}
+            {...(detailQueryId === undefined ? {} : { detailQueryId })}
             stage={currentStage}
             runAfter={shouldRunAfterRetry(currentStage)}
           />
@@ -70,7 +73,7 @@ export function JobActions({
         <RescoreJobButton
           className={buttonVariants({ size: "sm", variant: "outline" })}
           jobId={jobId}
-          label="Rescore current policy"
+          label="Update score"
         />
         <GenerateMaterialsButton
           className={buttonVariants({ size: "sm", variant: "outline" })}

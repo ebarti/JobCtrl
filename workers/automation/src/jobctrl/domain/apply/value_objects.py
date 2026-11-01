@@ -290,6 +290,7 @@ __all__ = [
     "BrowserWorkerConfig",
     "Captcha",
     "DryRunComplete",
+    "EMAIL_AUTHORITY_REFUSAL_EVENT",
     "EmailOnlyApplication",
     "Expired",
     "Failed",
@@ -319,3 +320,6 @@ APPROVAL_GATE_REFUSAL_REASONS: frozenset[str] = frozenset(
         "override_evidence_invalid",
     }
 )
+
+# Reserved for the owned saga; agent-reported events cannot grant settlement authority.
+EMAIL_AUTHORITY_REFUSAL_EVENT = "ApplyEmailAuthorityRefused"

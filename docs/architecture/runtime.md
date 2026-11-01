@@ -21,6 +21,91 @@ or where a change belongs.
 You start the first four; the API spawns and reuses the `jobctrl rpc`
 subprocess itself.
 
+## Agent execution
+
+The Python worker and RPC process use a process-owned `agent-runtime-kit`
+service for provider generation. Its persistent event loop, bounded idle cache,
+fresh request conversations and cancellation/shutdown rules are defined in
+[Agent Runtime Ownership](agent-runtime.md). Pipeline admission and Temporal
+activity capacity remain owned by their existing layers.
+
+### Apply browser ownership
+
+The Apply browser lifecycle records the exact `Popen` handle and original PID
+when it launches an isolated browser. Worker cleanup, launch failure,
+cancellation, capability revocation and Python exit use those records. They
+never discover termination targets from a CDP port or process name. An occupied
+CDP port fails before profile setup with guidance to choose another port or
+stop its owner explicitly. Worker IDs already being acquired or owned cannot
+replace a live record.
+
+On POSIX, `start_new_session` creates the browser's own session and group.
+Cleanup verifies that the original child still leads that session and group,
+and holds CPython's `Popen` reaping lock across verification and signaling.
+The unreaped child prevents PID/group reuse during that operation; a reaped
+leader or changed identity cannot authorize a group signal. On Windows,
+cleanup terminates the original browser kernel handle; it never invokes a
+PID-based tree-kill tool. That root exit cannot certify descendant exit, so
+Windows Apply cleanup reports unavailable descendant verification and retains
+ownership. Native Windows Apply remains unqualified; this does not change the
+separate Windows credential adapter.
+
+Root exit alone does not prove POSIX session exit. After waiting for the root,
+cleanup uses a read-only kernel process census (`libproc` on macOS and `/proc`
+on Linux) to observe the old session, including members in other groups. For
+an installed Apply child, the authenticated native scope is checked around its
+birth. A read-only scan can then use the scope's kernel task-start counter as
+its fork fence: task-start and exit counts must remain unchanged throughout the
+scan, every active task in the resource coalition must be accounted for, and
+no live session member may be observed. An uninspectable owned task keeps the
+proof unresolved. Other scopes may start and stop without invalidating it. If
+the binding or counter is unavailable, PID enumeration is fenced before and
+after inspection and retirement requires two
+complete identical global PID/generation/membership inventories with no live
+session members. macOS kernel unique IDs/PID versions and Linux kernel start
+ticks bind process generations; macOS also verifies identity around separate
+session/status reads. A fork followed by a session handoff, PID reuse, changed
+membership or unavailable/incomplete evidence keeps cleanup unresolved; a
+leader already exited before cleanup never starts new signal authority. Zombies
+count as exited.
+The observation does not recover authority over descendants that escape the
+launch session.
+
+When Apply runs inside the managed source fleet, it authenticates the inherited
+fleet scope as runtime context. That scope covers more than one Apply attempt
+and is never recorded as an individual attempt's native custody or completion.
+Source Apply retains its own lifetime and best-effort cleanup rules; dedicated
+installed Apply scopes retain their existing completion requirements.
+For an original live child verified in that same source coalition, its task-start
+counter can fence a session census against unrelated host churn. This transient
+observation is not per-Apply completion or authority to signal a recovered PID;
+unavailable or incomplete scope evidence retains the conservative census path.
+
+Scoped browser and agent cleanup attempt each selected worker and preserve
+failed ownership records while reporting incomplete cleanup. Worker-specific
+verification and adapter termination use per-worker guards, so one waiting
+handle does not serialize an unrelated worker. Publication of a tracked birth
+uses the same worker guard and checks its exact run and epoch; a standalone
+child whose publication and cleanup both fail remains separately retryable.
+The agent reserves its worker's MCP configuration before writing and releases
+that reservation after its own final unlink. A remaining file reservation alone
+does not imply a live or unverified process.
+The original child receives TERM first and has a bounded grace to drain. Only a
+still-owned, unreaped launch group is eligible for KILL after that grace, with its original
+PID pinned even if the leader exits during the wait. A leader already exited
+before cleanup cannot authorize a new signal. The agent adapter verifies cleanup
+after a naturally exited root before removing its record. A launcher cleanup pass
+shares a deadline across selected handles and ownership-lock waits. A full-run
+interrupt attempts available workers before waiting on contended worker guards.
+It fences concurrent birth attempts until the pass finishes, then permits later
+births if the run remains active. Handles registered during a pass remain owned
+and prevent that pass from declaring completion. Stream closure runs outside the
+run lock and remains tracked if a reader holds the pipe open. Expiry or an
+unavailable lock retains custody; neither extends signal authority to a reaped
+or newly discovered PID.
+The exit handler logs failures and does not sweep ports or adopt leftovers.
+These rules complement the native instance shutdown boundary described below.
+
 ## Source and bundled runtime boundaries
 
 The table above describes the source-development topology. The bundled
@@ -41,12 +126,30 @@ checkout or asking the user for a language/runtime toolchain:
 - PDF page previews are rendered by PDF.js in the web client. The installed
   runtime has no Poppler component or `pdftoppm` route.
 
+The authenticated protocol-2 installer owns the forward upgrade from an
+original protocol-1/schema-14 installation. It verifies the retained predecessor
+as historical evidence and the target for execution under the transition and
+selection locks. It uses normal instance cleanup before the paired backup,
+never executes the predecessor, and continues an interrupted upgrade forward.
+Before selector replacement, recovery requires rerunning the trusted new
+installer because the immutable old binary cannot decode the new journal.
+After replacement, ordinary `jobctrl update` uses the new controller. There is no separate bridge catalog or reboot
+precondition. Actual signed/notarized release qualification remains separate
+from source merge; see the
+[release contract](../developer/releasing.md#schema-15-installed-upgrade-qualification).
+
 `JOBCTRL_RUNTIME_MODE=bundled` makes this boundary fail closed. The launcher
 must supply an absolute `JOBCTRL_PAYLOAD_DIR`; the API realpaths its Python,
 web, and Chromium roots and rejects paths outside that payload. Python isolated
 mode ignores ambient `PYTHONHOME`, `PYTHONPATH`, user-site, and virtualenv
 state. Bundled dotenv discovery is limited to the JobCtrl-owned state file and
 never searches the current directory or a checkout.
+
+Provider pack directories identify the exact signed wheel closure as well as
+the SDK version. A changed closure installs alongside the previous directory;
+activation validates its schema-2 installation identity against the signed
+payload. Compatible legacy schema-1 version directories retain the same full
+wheel and tree verification. See [Agent Runtime Ownership](agent-runtime.md).
 
 Provider runtimes that JobCtrl cannot redistribute are a separate mutable
 boundary under the JobCtrl state directory. The signed payload owns the exact
@@ -66,6 +169,22 @@ When isolated auth is absent, setup and generation retain one-time reuse
 of a regular Codex CLI `auth.json`; the explicit Codex provider verify action
 uses the same copy-once behavior before checking the isolated login. Existing
 JobCtrl-owned auth is not overwritten, and the normal Codex home is unchanged.
+The generated workspace also has an explicit private project root, so SDK
+configuration discovery cannot inherit unrelated settings from its physical
+ancestors. Its initialization and validation are defined in
+[Agent Runtime Ownership](agent-runtime.md#codex).
+Only `auth.json` is reused; user configuration, instructions, skills, sessions
+and logs are never copied. Generation threads are ephemeral. Live native clients
+in one process share a private temporary `sqlite_home` for the same isolated
+credential home, avoiding repeated imports of retained provider history into
+separate databases. Each client has its own temporary `log_dir`. The last client
+removes the shared SQLite store, including SQLite logs, only after every client
+has closed; startup failures and cancellation release the same leases. An OS
+lease protects active stores from reclamation. A later startup can reclaim an
+abandoned store only when its private ownership record matches the same
+credential home and its OS lease is available. Unknown or redirected paths are
+preserved. Existing files in the stable credential home are preserved.
+JobCtrl retains its own provider-error, usage and provenance records.
 SDK processes clear ambient credential values and pin refresh/revocation URLs
 to OpenAI's default HTTPS endpoints. These URL overrides cannot be blank:
 Codex consumes an empty value literally and cannot build a refresh request.
@@ -84,17 +203,85 @@ instead of requiring system `npx`. Nested Python setup/doctor and MCP processes
 run with isolated mode plus bytecode suppression (`-I -B`) so they cannot write
 `__pycache__` into the launcher-verified payload.
 
-The installed payload uses a native `jobctrl` supervisor.
-It verifies the manifest envelope/tree before dispatch, starts fixed loopback
-Temporal (gRPC `7233`, Web UI `8233`) → worker → API (`8766`) in that order,
-and waits for Temporal plus API worker-heartbeat health. Each canonical
-`JOBCTRL_DIR` gets one `flock`-protected registry at
-`~/Library/Application Support/JobCtrl/instances/<sha256>` (or
-`JOBCTRL_RUNTIME_HOME`); records bind PID, PGID, start identity, executable,
-build ID, manifest digest, and ports so lifecycle cleanup cannot target a
-reused PID. The P6 workflow now makes Developer ID signing, notarization, and
-authenticated publication mandatory for promotion. Public artifacts pass those
-gates before the stable release pointer or Homebrew formula can reference them.
+The installed payload uses a native `jobctrl` supervisor. It verifies the
+manifest envelope/tree before dispatch, then starts fixed loopback Temporal
+(gRPC `7233`, Web UI `8233`) → worker → API (`8766`) and waits for Temporal and
+API worker-heartbeat health. Each canonical `JOBCTRL_DIR` has one locked runtime
+registry. Records bind its instance, payload, manifest, PID/start identities,
+process groups and execution scope.
+
+Runtime starts and Python CLI commands execute inside uniquely labeled,
+ephemeral per-user launchd jobs. The launcher records the kernel resource and
+jetsam coalition IDs in a private instance receipt **before authorizing work**.
+These IDs remain attached to descendants through fork, new sessions, changed
+environments, platform executables and parent exit. Shutdown enumerates those
+kernel memberships and rechecks each PID/start identity before signaling. Names,
+command substrings, environment tags and numeric process groups do not replace
+that durable ownership proof. Receipts contain ownership metadata, never the
+full environment or credentials; command configuration and standard descriptors
+travel over a private Unix connection. Jobs do not install automatic startup.
+The boot-session identity only prevents stale coalition-ID reuse after a natural
+OS boot; it imposes no reboot prerequisite.
+
+`stop` requests the verified supervisor's ordered clean shutdown first. API and
+worker handlers close HTTP/RPC/provider work and drain admitted blocking activity
+threads. Foreground cancellation reaches the command root first; it does not
+signal its cooperative children concurrently. After the configured grace,
+verified leftovers receive TERM, then KILL after their timeout, followed by an
+actual zero-member proof. The kernel's atomic resource-coalition task count
+proves zero without requiring other applications' PID inventories to remain
+stable. A currently executing control command and its exact live transport are
+excluded only after their scope and process identities are verified. If the
+counter is unavailable, the existing complete inventory proof remains. Detached descendants remain identifiable even when
+all original parents and groups are gone. Other instances stay outside that
+ownership boundary. When a normal command finishes with no remaining tasks,
+its original controller can attest its own exact receipt after joining the
+helper. Stop may use that proof if the kernel later reports the same-boot
+coalition reaped. The controller authenticated that scope at birth; an absent
+ID from a later receipt read alone is not completion proof. A Stop may also
+remember an exact scope it directly observed while draining, then use kernel
+reaping as zero proof for that same scope and boot. It persists exact per-scope
+completions before the stopped registry checkpoint, so interruption leaves the
+same evidence available to recovery. Successful cleanup permits normal restart.
+
+Stop's control lock also serializes new execution admission. After cleanup,
+the launcher durably publishes the stopped proof before retiring exact owned
+launchd labels and receipts. Interrupted finalization can be repeated without
+losing ownership evidence or blocking restart behind a deleted receipt. Missing,
+changed or unfamiliar active ownership metadata produces an explicit cleanup
+failure and preserves the registry and database pair. Legacy registries that
+never recorded complete ownership remain `ownership-unverified`; an empty old
+process group cannot certify their historical descendants. Do not delete that
+registry or restore old databases to bypass the refusal. No self-service recovery
+is currently documented for an untracked legacy runtime; establishing the
+missing boundary requires a verified recovery design. Restarting the computer
+alone does not clear this refusal.
+
+Python CLI execution retains the shared release-selection lock across exec.
+Backup, update, rollback and uninstall take exclusive selection, and direct
+backup always invokes the same complete stop gate even without a live recorded
+leader. The API/worker drain and SQLite locks alone do not establish process
+ownership. The [QA matrix](../local-reliability-qa.md) requires detached platform
+and writer cases, other-instance preservation, ordered cancellation, actual
+process interruption, paired readback and restart.
+
+The distribution smoke runs native controllers outside Seatbelt so launchd can
+establish the jobs, while the exact internal QA selector applies the compiled
+loopback-only sandbox to the authenticated helper and all payload descendants.
+Actual native Python dispatch proves loopback access and non-loopback `EPERM`.
+Direct extracted Python/Node/Temporal/MCP smoke subprocesses keep their existing
+sandbox. Signed/notarized artifact and clean-machine qualification remain
+release/first-use gates, separately from synthetic source proof.
+
+Homebrew caches only prefix-owned release resources. Its build sandbox verifies
+strict Developer ID certificate-chain requirements for the launcher, installer
+and managed headless shell without contacting Apple's live syspolicy service.
+Before a cached release's installer can execute, the normal-user bootstrap
+requires strict notarization checks on both bootstrap executables. The installer
+then checks every payload executable's signature and notarization, and assesses
+outer application bundles through Gatekeeper, before selecting the payload.
+This preserves the pre-activation trust boundary without changing Homebrew's
+sandbox permissions or treating ad-hoc signatures as Developer ID signatures.
 
 The P5 lifecycle store is user-owned (`JOBCTRL_RUNTIME_HOME`), not a package
 manager Cellar. `active.json` atomically records the selected payload, the
@@ -104,31 +291,50 @@ transition journal records selector handoff, database-pair backup, pending and
 finalized channel policy, and promotion. Acquisition, update, rollback,
 backup, retention, and uninstall serialize through transition then selection
 locking; selector resolution holds a shared selection lock through supervisor
-readiness. Before a candidate is promoted, the old process tree is quiesced
-with the registry's PID/PGID identity checks and both `JOBCTRL_DIR/jobctrl.db`
-and `JOBCTRL_DIR/temporal.db` receive online, hash-verified paired backups.
-While a journal is unfinished, ordinary commands remain blocked. Internal
-`start --no-open` and its detached supervisor may proceed only from the exact
-payload authorized by the matching durable journal, executable transition state
-and immutable manifest. A compatible authenticated public selector may supervise
-that payload; arbitrary public commands and environment flags alone cannot grant
-this exception. Rollback retains this compatible controller while restoring the
-older payload and its exact database pair. The Homebrew frontend respects the
-completed rollback until an explicit update is requested. When a historical
-controller skipped migration using its own compiled schema target, the new
-candidate performs its target-owned sealed migration from that controller's
-verified paired backup before starting services.
+readiness. Before a candidate is promoted, native cleanup must prove that
+instance-owned
+processes and descendants exited, including verified leftovers after the clean
+shutdown timeout. Both `JOBCTRL_DIR/jobctrl.db` and `JOBCTRL_DIR/temporal.db`
+receive WAL-aware, hash-verified online backups from the stopped pair.
+While a journal is unfinished, ordinary commands remain blocked except cleanup
+and forward-update recovery. Internal `start --no-open` and its detached
+supervisor may proceed only from the exact payload authorized by the matching
+durable journal, executable transition state and immutable manifest.
+
+For signed protocol-2 targets, the journal binds source generation/schema and
+candidate identity and records original and recovery backup IDs. Each retry
+backs up the current live pair. Exact-v14 activation is additive and preserves
+the application database inode. Readiness failure or interruption keeps live
+data and the journal. Before selector replacement, rerun the trusted new
+installer; after replacement, `jobctrl stop` followed by `jobctrl update`
+continues forward. Pure native cleanup authenticates immutable evidence without
+requiring execution permission, so a revoked candidate's writers can still be
+stopped. Update and startup retain current policy checks. Revoked predecessors
+may remain authenticated historical evidence but cannot execute. A revoked candidate, changed source selection, regressed schema
+or unknown legacy handoff refuses without restoring stale data. Cross-protocol
+rollback is refused. Same-protocol explicit rollback retains its separate paired
+restore contract and must preserve the live pair on a target-start failure.
 The signed `launcher/update-protocol.json` declaration distinguishes controllers
 that support journal-bound selector startup from historical selectors that would
 wait on their parent's selection lock. A new installer owns staged activation;
 it does not delegate migration control back to the older installed executable.
 For an already interrupted update, a new formula can stage its verified recovery
 controller without replacing the old/candidate journal or activating new data.
-If a selected installation has never created either database, the controller
-initializes and stops its verified predecessor before taking the normal paired
-backup. A partial pair, unsafe file or orphaned SQLite sidecar is refused before
-the update changes release selection.
-The current runtime admits only exact schema v14. A stopped v6 database retains
+A signed forward update requires an initialized predecessor pair. If it has
+never created either database, initialize and stop the original version before
+retrying the new installer; the forward controller does not execute it. A partial
+pair, unsafe file or orphaned SQLite sidecar is refused before the update changes
+release selection.
+The macOS source controller shares the installed workspace selection and
+instance locks and uses an authenticated per-user process scope for foreground
+and detached source fleets. For an owned schema-14 pair, source startup stops
+the owned fleet, creates a WAL-aware paired backup, builds and binds an exact-v15
+candidate, and activates it in place. A source journal fences installed writers
+until recovery finishes; retries take a fresh stopped-pair backup instead of
+restoring old data. A locally trusted checkout does not impersonate a signed
+release. Unverified older source processes are not migration authority.
+
+The current runtime admits only exact schema v15. A stopped v6 database retains
 the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8
 start at their next intermediate. Exact v9 transfers application URL authority
 to enrichment and retains historical lookup aliases before removing the legacy
@@ -137,18 +343,16 @@ explicit `legacy` lane before v11 activation. The legacy lane contributes to
 global USD totals but is never a runtime write target. Exact v11 adds generation
 bindings through private v12, then v13 withdraws heuristic classifications and
 adds persisted determinations. Exact v14 removes the redundant search-preference
-approval binding and retains historical raw intake captures. New source results ingest without a separate intake model gate.
-Historical employer-analysis generations remain
-stored, while current readers select only the v4 determination contract.
-Neither Python nor the
-TypeScript API runs against an intermediate schema. Recovery removes all staged
-candidates and their sidecars before restoring the retained database pair.
-Policy finalization happens only after the candidate has passed readiness and
-the paired backup is durable, so a failed health gate cannot revoke the only
-runnable release. A pre-finalization failure restores the full pair and
-restarts the still-permitted prior release. An interruption after a healthy
-candidate finalizes a revocation fails closed to that authenticated candidate
-instead of executing revoked code. Published builds have passed signing,
+approval binding and retains historical raw intake captures. New source results
+ingest without a separate intake model gate.
+Exact v15 adds durable job lifecycle revisions for reviewed permanent deletion.
+Historical employer-analysis generations remain stored, while current readers
+select only the v4 determination contract. Neither Python nor the TypeScript API
+runs against an intermediate schema. Successful or failed prepublication builds
+clean up their owned candidates and sidecars; ambiguous activation preserves
+the live pair, journal and evidence for recovery. Policy finalization follows
+readiness and a durable paired backup. Forward recovery authenticates the target
+under current channel policy and never executes a revoked predecessor. Published builds have passed signing,
 notarization, authenticated publication, and clean-machine acquisition gates
 before this lifecycle boundary can promote them.
 
@@ -374,8 +578,11 @@ travel through `SubprocessJsonRpcAdapter` to the long-lived `jobctrl rpc`
 subprocess. Method-specific calls use the shared contract boundary described in
 [Contracts, Types & API Boundaries](contracts-types-and-api-boundaries.md#typescript-to-python-json-rpc):
 parameters validate before transport and results validate before consumption.
-Awaited profile continuations require completed pipeline results before a
-handled marker is persisted. Workflow-mode handlers return a workflow spec that the RPC server
+Profile saves commit their audit event without admitting preparation. Startup
+leaves historical profile-continuation events intact without reattachment.
+Already admitted legacy workflows retain their existing result and replay
+contracts. Explicit refresh uses the [Scoring profile-impact boundary](scoring.md#profile-edits-and-explicit-refresh).
+Workflow-mode handlers return a workflow spec that the RPC server
 starts on Temporal (`run_stage`,
 `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
 `retailor_job`, `retailor_current_policy`, `refresh_compensation`, `apply`,
@@ -435,6 +642,19 @@ autofill reads a separate sanitized profile DTO from the Candidate Profile read
 path; it does not expose profile passwords, resume content, generated
 artifacts, or apply submission authority.
 
+The extension background worker persists a capture in its separate local queue
+before the first send. Short storage mutations are serialized; network sends
+run outside the queue lock, and a completed-import or explicit-dismissal
+acknowledgement removes only its matching queued ID. A request deadline covers
+the response body; a timeout or nonterminal response leaves the item queued.
+Flushes using different pairing tokens run in order, with each retry taking a
+fresh queue snapshot after the previous flush settles. Pending captures survive
+pairing, reload, and age until an acknowledgement or explicit clear. The
+25-item capacity rejects new captures rather than evicting existing ones. Legacy
+rows without a capture ID receive one durably before their next send. A response
+lost before that legacy ID existed remains historically ambiguous; later retries
+reuse the new ID.
+
 Discovery adds an installation-identity layer above the token: an explicit
 token save binds one extension-local UUID in a mode-`0600` app-dir file, and
 every heartbeat, lease-control, and completion request must present it. The
@@ -472,6 +692,14 @@ is not a runtime secret read performed by the API:
   legacy `OPENAI_API_KEY` deletion path. AWS, Google, and Azure credential files
   stay in their vendor stores. A batch either applies completely or restores
   its pre-change native credential state; a recovery failure is explicit and sanitized.
+  Mutations across API processes for the same OS user share one credential
+  owner through snapshot, mutation, compensation, and response construction.
+  A secret-free in-flight record fences a surviving native helper after an API
+  crash; a timed-out helper retains ownership until it exits. Its PID is bound
+  to an OS process birth identity, so PID reuse does not retain a stale fence.
+  Unavailable inspection preserves the record and reports an unverified owner.
+  The distinct
+  plaintext migration workflow is not covered by this owner.
   `GET /v1/credentials` and post-mutation responses return presence only; each
   `configured` state is `true`, `false`, or `null`. An inspection failure is
   `configured=null` with `unavailableReason=inspection_failed`, not an absent
@@ -613,9 +841,14 @@ choke point in `infrastructure/network/`:
   monotonic min-interval per host) so `ThreadPoolExecutor` fan-out cannot bypass
   pacing. A server `Retry-After` is honored but clamped at the sink, so a
   hostile header cannot freeze a pooled worker.
-- The UA is one honest identity resolved from `resolve_honest_user_agent()`
-  (built-in default `JobCtrl/<version> (+repo)`, owner-overridable via env);
-  it never impersonates a browser on a controlled surface.
+- `resolve_request_headers()` snapshots SQLite's
+  `crawl_user_agent.use_browser_headers` for each gateway. Missing/false uses
+  `resolve_honest_user_agent()` to retain the saved product/version/contact UA.
+  True uses `ua-generator`'s latest bundled desktop Chrome identity and matching
+  client hints, generated once per gateway. Controlled HTTP and anonymous
+  Playwright callers carry this set; caller-specific Accept/Content-Type and
+  encoding headers remain unchanged. Connected Chrome retains its own headers;
+  JobStreaming's anonymous integration accepts only the selected UA.
 - Robots-deny / rate-limit / budget-exhaustion are recorded as first-class
   **outcomes** in `operational_attempt_metrics` (`is_scrape_failure=0`,
   `is_operational_failure=0`) via `record_politeness_outcome`, and projected to
@@ -628,12 +861,87 @@ The plan and phase-by-phase surface inventory live in
 `docs/plans/implemented/2026-07-05-crawl-politeness-plan.md`; the ADR is in
 [`docs/decisions.md`](../decisions.md).
 
+## Apply Launcher Ownership
+
+In the installed macOS runtime, the activity invokes the fixed native
+`__apply-execution` command before executable readiness or other external
+preflight. It creates a fresh existing launchd execution scope with durable
+`purpose: "apply"`; a mere environment marker cannot authorize the worker.
+The fixed `jobctrl.apply.execution` module runs the launcher there. Normal
+completion, error, cancellation and controller loss drain only that scope,
+including detached descendants, before publishing exact native completion.
+After joining the helper, the controller can retire its exact same-boot receipt
+using that durable completion; a missing or mismatched proof cannot substitute
+for a zero census. The parent consumes counts only after controller exit and
+proof verification. A known inspection permission denial is carried as a
+bounded error category and reported only against the exact retained Apply
+receipt. It is diagnostic only and never proves exit or authorizes cleanup;
+other failures stay unclassified.
+Ordinary same-job retries therefore need no whole-app stop. Other scopes remain
+active. This uses the existing native execution machinery and shared activity
+capacity, not another scheduler or containment service.
+
+Apply launchers admit distinct jobs independently. Each invocation owns its
+cancellation event, cleanup monitor, dashboard resource set and fresh resource
+identities. Every subsequent attempt receives another exclusive work/profile
+namespace. Chrome's private endpoint file binds its OS-assigned port and browser
+WebSocket identity, and both MCP transports receive that exact socket; a display worker number never
+selects an earlier run's resources. Startup does not recover all running jobs.
+
+Private `apply-runs/<launcherId>/custody.json` manifests bind the physical
+workspace, canonical job attempts and authenticated native execution receipt.
+A process birth intent is fsynced before `Popen`. A crash before or after spawn
+publication leaves unknown custody; there is no missing-receipt waiver or
+inherited-descriptor/bootstrap protocol. Synchronous no-created-child spawn
+failure can abort only that birth intent. Ordinary exact-handle/session cleanup
+closes in-memory resources but does not certify full-tree retirement: descendants
+may have escaped the recorded session. Different-job peers continue independently.
+
+Recovery of the selected old installed launcher requires its exact native execution's
+completion attestation at
+`instances/<instanceId>/completed-executions/<scopeId>.json`. Native scope stop
+persists the full-receipt/digest-bound proof before removing the original
+execution receipt. It survives restart and covers escaped descendants. Missing,
+changed or linked proofs preserve native custody.
+
+Source-checkout Apply uses best-effort descendant cleanup with no Go/helper
+requirement. It joins workers, attempts and waits for its exact tracked children,
+and allows an ordinarily finished job to retry after an accepted canonical
+terminal outcome. It records `full_tree_verified: false`; detached-descendant
+completion is not proven. Each source owner holds a private per-run lifetime lease through its blocking
+thread and cleanup. A normal source retry or an ended-owner crash recovery can
+settle only that exact logical claim; it never claims escaped-tree verification.
+An active/abandoned thread keeps its lease, known cleanup failures are durable,
+and recorded submit intent stays protected even after a generic stage reset.
+Lifetime files are never created, unlinked or replaced as recovery proof. Fresh namespaces and RunId writer
+fences preserve successors and accepted data.
+
+After launcher workers have joined and tracked cleanup succeeds, source claims
+can publish best-effort `ApplyClaimSettled` only when the exact accepted event
+matches the canonical terminal stage. Installed claims with born resources wait
+for the native completion; a no-birth logical claim can settle directly. A saga event whose canonical result write
+rolled back does not settle ownership. Submit-intent ambiguity remains parked.
+Installed born-process custody uses the actual native completion instead.
+
+`ApplyClaimAcquired` establishes the canonical attempt owner separately from
+replayable saga start events. Automatic results, repository events, determinations,
+artifacts, lock-release notices, integration publications and final submit
+checks compare the exact tenant/job/RunId under the SQLite writer. Late old
+callbacks cannot overwrite a successor. Same-job admission checks only that
+job's retained owner and preserves submit-intent ambiguity. Each worker proves
+its prior scoped cleanup before its next claim; failure preserves its files and
+stops further claims while peers settle already-owned work. See
+[Apply launcher admission](pipeline/concurrency.md#apply-launcher-admission).
+
 ## Workflow Orchestration (Local Temporal)
 
 A local Temporal dev server (`temporal server start-dev --db-filename
 "$JOBCTRL_TEMPORAL_DB"`) is the workflow engine for the Python worker. The dev
-launcher defaults `JOBCTRL_TEMPORAL_DB` to
-`$JOBCTRL_DIR/temporal/temporal.db`. The JobCtrl event/projection database and
+launcher uses `$JOBCTRL_DIR/temporal.db` for a new workspace, matching the
+installed launcher. A sole existing source history under
+`$JOBCTRL_DIR/temporal/temporal.db` remains in place; conflicting histories or
+orphaned companions refuse startup. The updated installed launcher also uses the
+sole legacy source path after source ownership has been verified. The JobCtrl event/projection database and
 Temporal history are one runtime identity, so both remain stable when the same
 local app is relaunched from another source worktree. An isolated development
 stack uses a distinct `JOBCTRL_DIR`, rather than combining the shared
@@ -648,14 +956,18 @@ lives under `workers/automation/src/jobctrl/infrastructure/temporal/`:
   so workflow code can construct activity-input dataclasses at the workflow
   boundary (the sandbox proxy mechanism otherwise refuses to instantiate
   frozen dataclasses imported through `imports_passed_through()`). Activity
-  execution is bounded by the `worker_activity_slots` value saved in
+  Server-dispatched activity execution is bounded by the `worker_activity_slots` value saved in
   `config.json` (default `4`) and two worker-owned
   `ThreadPoolExecutor(max_workers = slots + 2)` pools: one for Temporal's
   synchronous activities and one for blocking stage helpers. Cancellation
   retires the affected blocking-pool generation before its grace wait, so an
-  immediate retry uses fresh bounded capacity without affecting Temporal's
-  synchronous pool. The worker heartbeat records the activity slots and
-  configured executor width, exact all-activity slot use, bounded active detail,
+  retry can use fresh bounded capacity without affecting Temporal's
+  synchronous pool. At most three blocking generations remain outstanding;
+  at the cap, new blocking submissions are refused until a whole retired
+  generation returns. Short spend, owner-cancellation, and lifecycle controls
+  use a separate pool with at most two unfinished calls. The worker heartbeat
+  records the activity slots and configured executor width, exact
+  server-dispatched slot use, bounded active detail,
   completed-activity duration summaries, and an approximate task-queue
   observation for `GET /v1/health` and `GET /v1/pipeline/operations` (see
   [Concurrency & Fan-out](pipeline/concurrency.md)).
@@ -663,7 +975,10 @@ lives under `workers/automation/src/jobctrl/infrastructure/temporal/`:
   async Temporal activities while heartbeating. Cancellation sets a cooperative
   `threading.Event`, retires that blocking executor generation before waiting up
   to the activity's cancel deadline, and records an `abandoned_thread`
-  operational metric if the old thread ignores cancellation.
+  operational metric if the old thread ignores cancellation. The heartbeat
+  separately reports stage and control admission, unfinished retired stage
+  calls, and unfinished control calls;
+  neither cancellation nor retirement proves a thread or child process stopped.
 - `task_queues.py` — single `JOBCTRL_TASK_QUEUE = "jobctrl-default"`.
 - `registry.py` — single source of truth for `WORKFLOWS` and `ACTIVITIES`.
   The CLI imports both lists and passes them to `build_worker`; new
@@ -691,8 +1006,10 @@ planning/families, reconciliation/fan-out, backlog sweep, and PDF. Per-job
 `job_stage_states` remains authoritative for enrich/score/tailor/cover.
 
 The activity telemetry interceptor never reads activity arguments. It counts
-every active slot, but retains details only for allowlisted activity kinds;
-unsafe identifiers become non-reversible local opaque hashes and only validated
+every active slot, but retains details only for allowlisted activity kinds,
+including saved-posting availability checks that can occupy shared capacity
+after a Discover run closes. Unsafe identifiers become non-reversible local
+opaque hashes and only validated
 safe workflow/run references remain readable. URLs, job/profile content,
 prompts, provider output, artifact paths, payloads, credentials, and exception
 text are excluded. Telemetry failure is caught so it cannot change business
@@ -710,6 +1027,7 @@ as the durable error code:
 | `TransientNetworkError` | `transient_network` | yes |
 | `BrowserTransientError` | `browser_transient` | yes |
 | `LlmTransientError` | `llm_transient` | yes |
+| `MaterialRejectedError` | `material_rejected` | no |
 | `SourceUnavailableError` | `source_unavailable` | yes |
 | `BudgetExceededError` | `budget_exceeded` | no |
 
@@ -812,6 +1130,13 @@ The pipeline package (`jobctrl/pipeline/`) is split into `runner.py`
 Temporal batch orchestrator). The deleted in-process `run_pipeline` engine is
 not re-exported; every CLI, API, and local-action entry point starts a workflow.
 
+Preparation cancellation during `check_spend_budget` records a canceled
+outcome, including when Temporal wraps cancellation in an `ActivityError`.
+No preparation step runs after that canceled preflight; real budget failures
+retain their failure code.
+URL-import cancellation likewise preserves its canceled execution and event
+instead of returning a normal failed-import workflow result.
+
 All workflows that can spend LLM tokens run `check_spend_budget` with an
 explicit product lane before their heavy activity. Provider and retry
 boundaries repeat the same check. Usage is recorded in `llm_spend` by UTC day
@@ -853,6 +1178,13 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
   `record_workflow_started` / `record_workflow_outcome`. Those
   activities reuse `record_job_event` + a projection refresh; workflow bodies
   stay deterministic (all SQLite/clock IO is inside the activities).
+  New histories execute these short writes as local activities in two bounded
+  SDK slots, independently of long-running remote activity capacity. Each
+  attempt retains a 30-second deadline and five-attempt retry limit; the local
+  schedule has a three-minute total bound. A version marker preserves existing
+  remote-activity histories. Local writes do not heartbeat or consume reported
+  remote slots. Events deduplicate on tenant, workflow ID, Temporal run ID and
+  event type, so a repeated committed write cannot duplicate canonical history.
 - **Describe-based reconciler** — `_reconcile_workflow_runs` runs in the worker
   heartbeat loop (15s). It pins each lookup to the exact recorded Temporal run
   ID. CLOSED executions map to their matching terminal event and RUNNING
@@ -897,6 +1229,22 @@ ephemeral and no point-in-time lineage reconstruction is implemented,
 `GET /v1/pipeline/operations` is explicitly a current snapshot rather than a
 historical execution API.
 
+## Activity Storage Lifetimes
+
+Broad-board and explicit-URL intake commit completed canonical identity and
+intake events before optional posted-compensation inference. Model calls run
+without retaining that intake writer. Fact persistence then reserves the
+writer, rechecks the source text and any discovery lease, and preserves the
+previous accepted fact if the source changed during inference. Provider retries
+therefore cannot hold the database writer for the duration of an intake pay
+analysis.
+
+Activity cleanup closes thread-owned connections and rolls back unfinished
+writes before executor threads are reused. The Profile repository cache follows
+the live connection identity as well as its thread and reset generation; a later
+activity rebuilds a repository whose previous connection was closed. Keeping a
+pool thread alive cannot extend a repository's database lifetime.
+
 ## Saved Posting Availability Runtime
 
 The local worker admits `SavedPostingAvailabilityWorkflow` at startup and on
@@ -912,14 +1260,27 @@ Discovery hygiene or policy deletion. Its durable event-ledger leases serialize
 checks per job and reserve each actual request host; independent jobs can overlap,
 with foreground capacity reserved in the hourly acquisition quota; acquisition
 runs after short writer transactions commit. Each check
-caps a full acquisition at 120 seconds, including rendered capture and browser
-cleanup. Browser supervision reserves the final three seconds for cancellation
+caps cumulative posting-acquisition time at 120 seconds, including rendered
+capture and browser cleanup. Independent page-model interpretation pauses only
+that network clock; its actual monotonic duration is credited back, capped at
+the original job lease's deadline. After interpretation, cancellation and the
+owner/URL/deletion fence run before fallback can start. Browser supervision
+reserves the final three seconds for cancellation
 and reaping. Its admission and pacing waits in the shared politeness gateway
 also receive the remaining deadline; other fetch surfaces retain their existing
 wait policy. Public requests run in an owned spawned
 transport process with a 20-second total DNS/header/body deadline; timeout kills
 and reaps it before releasing the host reservation. The aggregate page/fallback
-budget remains below the five-minute lease lifetime.
+deadline never exceeds the original five-minute lease; model work does not renew
+ownership or authorize a stale result.
+Preparation uses a separate local availability guard. Score, résumé and cover
+entry points reuse an exact-URL observation attempted within six hours, including
+unknown evidence, only while the current candidate remains usable. Otherwise they
+run the existing fenced acquisition. Cache hits write no observation or retry
+clocks and never declare unknown evidence active. Publication still rechecks the
+canonical candidate under the stage writer. Apply retains its independent active
+success and reviewed-uncertainty freshness gates.
+
 The explicit API/RPC/CLI command uses the same activity and runtime identity
 guard. Availability uses exact
 public ATS APIs, guarded HTTP, and guarded anonymous Playwright. It does not

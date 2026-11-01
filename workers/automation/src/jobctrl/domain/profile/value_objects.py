@@ -304,6 +304,7 @@ class AchievementEvidence:
     evidence_strength: str = "draft"
     claim_confidence: float = 0.0
     user_confirmed: bool = False
+    confirmation_review_required: bool = False
     tags: tuple[str, ...] = ()
 
     @classmethod
@@ -322,6 +323,7 @@ class AchievementEvidence:
             evidence_strength=strength,
             claim_confidence=_float(data.get("claim_confidence"), 0.0),
             user_confirmed=_bool(data.get("user_confirmed"), False),
+            confirmation_review_required=_bool(data.get("confirmation_review_required"), False),
             tags=_str_tuple(data.get("tags")),
         )
 
@@ -337,6 +339,7 @@ class AchievementEvidence:
             "evidence_strength": self.evidence_strength,
             "claim_confidence": self.claim_confidence,
             "user_confirmed": self.user_confirmed,
+            **({"confirmation_review_required": True} if self.confirmation_review_required else {}),
             "tags": list(self.tags),
         }
 

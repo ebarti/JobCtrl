@@ -14,8 +14,11 @@ The exact-v7 schema owns initialization and accepts only canonical UUID
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from typing import Any, Final
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
@@ -42,6 +45,7 @@ from jobctrl.state import record_job_event, set_stage_state
 
 
 _SCORE_SAVEPOINT: Final = "score_with_keywords"
+log = logging.getLogger(__name__)
 
 
 class ScoreVersionConflict(ValueError):
@@ -59,6 +63,15 @@ class ScoreVersionConflict(ValueError):
             f"JobScore version conflict for job_id={job_id!r}: "
             f"got version={attempted}, expected {expected}"
         )
+
+
+@dataclass(frozen=True)
+class ScoreStalenessSnapshot:
+    """The accepted score and unresolved markers observed before inference."""
+
+    score_version: int
+    trace_json: str
+    markers: tuple[tuple[Any, ...], ...]
 
 
 class SqliteScoreStalenessRepository:
@@ -144,32 +157,77 @@ class SqliteScoreStalenessRepository:
         self._conn.commit()
         return marked
 
-    def resolve_for_score(self, score: JobScore, *, commit: bool = True) -> int:
-        """Resolve markers satisfied by a fresh, non-corrected score version."""
-        if score.correction is not None or score.trace.scoring_policy_version <= 0:
+    def capture_for_score(self, tenant_id: TenantId, job_id: JobId) -> ScoreStalenessSnapshot:
+        """Capture identities on the connection thread before inference starts."""
+        job_id = canonical_job_id(str(job_id))
+        previous = self._conn.execute(
+            "SELECT version, trace_json FROM job_scores WHERE tenant_id=? AND job_id=? "
+            "ORDER BY version DESC LIMIT 1", (str(tenant_id), str(job_id)),
+        ).fetchone()
+        markers = self._conn.execute(
+            "SELECT rowid, stale_reason, old_policy_id, old_policy_version, "
+            "new_policy_id, new_policy_version, marked_at FROM job_score_staleness "
+            "WHERE tenant_id=? AND job_id=? AND resolved=0", (str(tenant_id), str(job_id)),
+        ).fetchall()
+        return ScoreStalenessSnapshot(
+            score_version=int(previous[0]) if previous else 0,
+            trace_json=str(previous[1] or "") if previous else "",
+            markers=tuple(tuple(row) for row in markers),
+        )
+
+    def resolve_for_score(self, score: JobScore, snapshot: ScoreStalenessSnapshot | None, *, publisher=None) -> int:
+        """Resolve only captured policy markers satisfied by this replacement."""
+        if (snapshot is None or not snapshot.markers or snapshot.score_version <= 0
+                or score.version != snapshot.score_version + 1 or score.correction is not None
+                or score.trace.scoring_policy_version <= 0):
             return 0
         job_id = canonical_job_id(str(score.job_id))
+        tenant_id = str(score.tenant_id)
+        policy_version = score.trace.scoring_policy_version
+        if score.trace.scoring_policy_id != f"{tenant_id}:scoring-policy-v{policy_version}":
+            return 0
+        previous = self._conn.execute(
+            "SELECT trace_json FROM job_scores WHERE tenant_id=? AND job_id=? AND version=?",
+            (tenant_id, str(job_id), snapshot.score_version),
+        ).fetchone()
+        if previous is None or str(previous[0] or "") != snapshot.trace_json:
+            return 0
+        if self._conn.execute(
+            "SELECT 1 FROM scoring_policies WHERE tenant_id=? AND version=?",
+            (tenant_id, policy_version),
+        ).fetchone() is None:
+            return 0
+        source_policies = set()
+        for row in self._conn.execute(
+            "SELECT trace_json FROM job_scores WHERE tenant_id=? AND job_id=? AND version<=?",
+            (tenant_id, str(job_id), snapshot.score_version),
+        ):
+            trace = _json_object(row[0])
+            source_policies.add((str(trace.get("scoring_policy_id") or ""),
+                                 _int_or_default(trace.get("scoring_policy_version"), 0)))
         now = _utc_now()
-        result = self._conn.execute(
-            """
-            UPDATE job_score_staleness
-               SET resolved = 1,
-                   resolved_at = ?,
-                   resolved_by_score_version = ?
-             WHERE tenant_id = ?
-               AND job_id = ?
-               AND resolved = 0
-               AND new_policy_version <= ?
-            """,
-            (
-                now,
-                score.version,
-                str(score.tenant_id),
-                str(job_id),
-                score.trace.scoring_policy_version,
-            ),
-        )
-        if result.rowcount > 0:
+        resolved = 0
+        for rowid, reason, marker_old_id, marker_old_version, new_id, new_version, marked_at in snapshot.markers:
+            if (reason != "scoring_policy_changed" or (marker_old_id, marker_old_version) not in source_policies
+                    or new_version <= marker_old_version
+                    or new_version > policy_version
+                    or new_id != f"{tenant_id}:scoring-policy-v{new_version}"):
+                continue
+            if self._conn.execute(
+                "SELECT 1 FROM scoring_policies WHERE tenant_id=? AND version=?",
+                (tenant_id, new_version),
+            ).fetchone() is None:
+                continue
+            result = self._conn.execute(
+                "UPDATE job_score_staleness SET resolved=1, resolved_at=?, resolved_by_score_version=? "
+                "WHERE rowid=? AND tenant_id=? AND job_id=? AND stale_reason=? "
+                "AND old_policy_id=? AND old_policy_version=? AND new_policy_id=? "
+                "AND new_policy_version=? AND marked_at=? AND resolved=0",
+                (now, score.version, rowid, tenant_id, str(job_id), reason, marker_old_id,
+                 marker_old_version, new_id, new_version, marked_at),
+            )
+            resolved += int(result.rowcount)
+        if resolved:
             self._record_score_event(
                 score.tenant_id,
                 job_id,
@@ -181,10 +239,9 @@ class SqliteScoreStalenessRepository:
                     "scoreVersion": score.version,
                     "scoringPolicyVersion": score.trace.scoring_policy_version,
                 },
+                publisher=publisher,
             )
-        if commit:
-            self._conn.commit()
-        return int(result.rowcount)
+        return resolved
 
     def reset_for_rescore(
         self,
@@ -193,72 +250,117 @@ class SqliteScoreStalenessRepository:
         limit: int = 0,
         reset_at: str | None = None,
     ) -> list[ScoreStaleMarker]:
-        """Clear active markers and reset their score stage for explicit rescore."""
-        now = reset_at or _utc_now()
-        sql = (
-            "SELECT tenant_id, job_id, stale_reason, old_policy_id, "
-            "old_policy_version, new_policy_id, new_policy_version, marked_at, "
-            "resolved, resolved_at, resolved_by_score_version "
-            "FROM job_score_staleness "
-            "WHERE tenant_id = ? AND resolved = 0 "
-            "ORDER BY marked_at ASC"
-        )
-        params: list[Any] = [str(tenant_id)]
-        if limit > 0:
-            sql += " LIMIT ?"
-            params.append(limit)
-        rows = self._conn.execute(sql, params).fetchall()
-        markers = [self._row_to_marker(row) for row in rows]
-        for marker in markers:
-            set_stage_state(
-                self._conn,
-                marker.job_id,
-                "score",
-                "pending",
-                tenant_id=marker.tenant_id,
-                attempt_count=0,
-                next_action="jobctrl run score --rescore",
-                metadata={
-                    "stale_reason": marker.stale_reason,
-                    "new_policy_version": marker.new_policy_version,
-                },
-                validate_transition=False,
-            )
-            self._conn.execute(
-                """
-                UPDATE job_score_staleness
-                   SET resolved = 1,
-                       resolved_at = ?
-                 WHERE tenant_id = ?
-                   AND job_id = ?
-                   AND stale_reason = ?
-                   AND old_policy_version = ?
-                   AND new_policy_version = ?
-                """,
-                (
-                    now,
-                    str(marker.tenant_id),
-                    str(marker.job_id),
-                    marker.stale_reason,
-                    marker.old_policy_version,
-                    marker.new_policy_version,
-                ),
-            )
-            self._record_score_event(
-                marker.tenant_id,
-                marker.job_id,
-                "ScoreRescoreRequested",
-                "Stale score reset for explicit rescore.",
-                {
-                    "tenantId": str(marker.tenant_id),
-                    "jobId": str(marker.job_id),
-                    "staleReason": marker.stale_reason,
-                    "oldPolicyVersion": marker.old_policy_version,
-                    "newPolicyVersion": marker.new_policy_version,
-                    "nextAction": "jobctrl run score --rescore",
-                },
-            )
-        self._conn.commit()
+        """Reset distinct active jobs without disturbing score owners or stale markers."""
+        owns_writer = not self._conn.in_transaction
+        if owns_writer:
+            self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute("SAVEPOINT score_stale_reset")
+        except BaseException:
+            if owns_writer:
+                self._conn.rollback()
+            raise
+        events = []
+
+        class BufferedPublisher:
+            def publish(self, event):
+                events.append(event)
+
+        released = False
+        try:
+            sql = """
+                WITH markers AS (
+                    SELECT marker.*, ROW_NUMBER() OVER (
+                        PARTITION BY marker.tenant_id, marker.job_id
+                        ORDER BY marker.marked_at, marker.stale_reason, marker.old_policy_version, marker.new_policy_version
+                    ) AS marker_rank
+                    FROM job_score_staleness marker
+                    WHERE marker.tenant_id = ? AND marker.resolved = 0
+                      AND EXISTS (
+                        SELECT 1 FROM jobs j
+                        WHERE j.tenant_id = marker.tenant_id AND j.job_id = marker.job_id
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM jobctrl_deleted_jobs deleted
+                        WHERE deleted.tenant_id = marker.tenant_id AND deleted.job_id = marker.job_id
+                          AND (deleted.restored_at IS NULL OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at))
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM jobctrl_hidden_jobs hidden
+                        WHERE hidden.tenant_id = marker.tenant_id AND hidden.job_id = marker.job_id
+                          AND hidden.unhidden_at IS NULL
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM posting_snapshot_sets snapshots
+                        WHERE snapshots.tenant_id = marker.tenant_id AND snapshots.job_id = marker.job_id
+                          AND snapshots.latest_active_state IN ('closed', 'expired', 'removed', 'location_incompatible')
+                      )
+                )
+                SELECT markers.*, score_stage.metadata_json AS stage_metadata_json FROM markers
+                LEFT JOIN job_stage_states score_stage
+                  ON score_stage.tenant_id = markers.tenant_id
+                 AND score_stage.job_id = markers.job_id AND score_stage.stage = 'score'
+                WHERE markers.marker_rank = 1
+                  AND (score_stage.state IS NULL OR score_stage.state NOT IN ('pending', 'queued', 'running'))
+                ORDER BY markers.marked_at, markers.job_id
+            """
+            params: list[Any] = [str(tenant_id)]
+            if limit > 0:
+                sql += " LIMIT ?"
+                params.append(limit)
+            rows = self._conn.execute(sql, params).fetchall()
+            markers = [self._row_to_marker(row) for row in rows]
+            for row, marker in zip(rows, markers, strict=True):
+                metadata = _json_object(row["stage_metadata_json"])
+                for key in ("activityOwner", "workflowId", "temporalRunId", "automaticPreparation", "activityAttempt"):
+                    metadata.pop(key, None)
+                metadata.update(stale_reason=marker.stale_reason, new_policy_version=marker.new_policy_version)
+                set_stage_state(
+                    self._conn,
+                    marker.job_id,
+                    "score",
+                    "pending",
+                    tenant_id=marker.tenant_id,
+                    attempt_count=0,
+                    next_action="jobctrl score --rescore",
+                    metadata=metadata,
+                    validate_transition=False,
+                )
+                self._record_score_event(
+                    marker.tenant_id,
+                    marker.job_id,
+                    "ScoreRescoreRequested",
+                    "Stale score reset for explicit rescore.",
+                    {
+                        "tenantId": str(marker.tenant_id),
+                        "jobId": str(marker.job_id),
+                        "staleReason": marker.stale_reason,
+                        "oldPolicyVersion": marker.old_policy_version,
+                        "newPolicyVersion": marker.new_policy_version,
+                        "nextAction": "jobctrl score --rescore",
+                    },
+                    publisher=BufferedPublisher(),
+                )
+            self._conn.execute("RELEASE SAVEPOINT score_stale_reset")
+            released = True
+            if owns_writer:
+                self._conn.commit()
+        except BaseException:
+            if owns_writer:
+                self._conn.rollback()
+            elif not released:
+                self._conn.execute("ROLLBACK TO SAVEPOINT score_stale_reset")
+                self._conn.execute("RELEASE SAVEPOINT score_stale_reset")
+            raise
+        if owns_writer and events:
+            try:
+                from jobctrl.infrastructure.events import get_default_publisher
+
+                publisher = get_default_publisher()
+                for event in events:
+                    publisher.publish(event)
+            except Exception:  # noqa: BLE001 — already committed
+                log.exception("Failed to notify score reset subscriber")
         return markers
 
     def _mark_score_stage_stale(self, marker: ScoreStaleMarker) -> None:
@@ -305,6 +407,8 @@ class SqliteScoreStalenessRepository:
         event_type: str,
         message: str,
         payload: dict[str, Any],
+        *,
+        publisher=None,
     ) -> None:
         record_job_event(
             self._conn,
@@ -314,6 +418,7 @@ class SqliteScoreStalenessRepository:
             tenant_id=tenant_id,
             message=message,
             payload=payload,
+            publisher=publisher,
         )
 
     @staticmethod
@@ -357,10 +462,13 @@ class SqliteRequirementFitReportRepository:
                  FROM job_requirement_fit_reports
                  WHERE tenant_id = ?
                    AND job_id = ?
-                 ORDER BY score_version DESC
+                   AND score_version = (
+                       SELECT MAX(version) FROM job_scores
+                       WHERE tenant_id = ? AND job_id = ?
+                   )
                  LIMIT 1
                 """,
-                (str(tenant_id), str(stable_job_id)),
+                (str(tenant_id), str(stable_job_id), str(tenant_id), str(stable_job_id)),
             ).fetchone()
         else:
             row = self._conn.execute(
@@ -420,6 +528,16 @@ class SqliteRequirementFitReportRepository:
         )
 
     def save(self, tenant_id: TenantId, report: RequirementFitReport) -> None:
+        self._conn.execute("SAVEPOINT score_requirement_report")
+        try:
+            self._save_report(tenant_id, report)
+        except BaseException:
+            self._conn.execute("ROLLBACK TO SAVEPOINT score_requirement_report")
+            raise
+        finally:
+            self._conn.execute("RELEASE SAVEPOINT score_requirement_report")
+
+    def _save_report(self, tenant_id: TenantId, report: RequirementFitReport) -> None:
         job_id = canonical_job_id(str(report.job_id))
         now = _utc_now()
         self._conn.execute(
@@ -497,7 +615,6 @@ class SqliteRequirementFitReportRepository:
                     position,
                 ),
             )
-        self._conn.commit()
 
     @staticmethod
     def _row_to_assessment(row: sqlite3.Row) -> RequirementFitAssessment:
@@ -536,11 +653,82 @@ class SqliteScoreRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
         self._staleness = SqliteScoreStalenessRepository(conn)
+        self._publication_events = None
 
     @property
     def connection(self) -> sqlite3.Connection:
         """SQLite connection backing this repository."""
         return self._conn
+
+    @contextmanager
+    def publication(self, tenant_id: TenantId, job_id: JobId):
+        """Commit the aggregate and its bindings before notifying subscribers."""
+        if self._publication_events is not None:
+            raise RuntimeError("Nested score publication is unsupported")
+        owns_writer = not self._conn.in_transaction
+        if owns_writer:
+            self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute("SAVEPOINT score_publication")
+        except BaseException:
+            if owns_writer:
+                self._conn.rollback()
+            raise
+        released = False
+        events = []
+
+        class BufferedPublisher:
+            def publish(self, event):
+                events.append(event)
+
+        self._publication_events = BufferedPublisher()
+        try:
+            yield
+            self._conn.execute("RELEASE SAVEPOINT score_publication")
+            released = True
+            if owns_writer:
+                self._conn.commit()
+        except BaseException:
+            if owns_writer:
+                self._conn.rollback()
+            elif not released:
+                self._conn.execute("ROLLBACK TO SAVEPOINT score_publication")
+                self._conn.execute("RELEASE SAVEPOINT score_publication")
+            raise
+        finally:
+            self._publication_events = None
+        if owns_writer and events:
+            try:
+                from jobctrl.infrastructure.events import get_default_publisher
+
+                publisher = get_default_publisher()
+                for event in events:
+                    publisher.publish(event)
+            except Exception:  # noqa: BLE001 — already committed; never report a false rollback
+                log.exception("Failed to notify score staleness subscriber")
+        # An inherited transaction is controlled by its caller. Durable event
+        # rows remain part of that transaction; no premature in-process fanout
+        # can claim a commit that the caller may still roll back.
+
+    def bind_score_determination(self, **binding) -> None:
+        """Bind on the writer connection, even when inference used another connection."""
+        from jobctrl.domain.determinations import DeterminationFailure
+        from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+        repository = SqliteDeterminationRepository(self._conn)
+        envelope = repository.find(binding["tenant_id"], binding["determination_id"])
+        if (envelope is None or envelope.kind != binding["determination_kind"]
+                or envelope.entity_id != binding["entity_id"] or envelope.lane != "scoring"):
+            raise DeterminationFailure("score_determination_binding_invalid")
+        repository.bind(**binding)
+
+    def capture_staleness_for_score(self, tenant_id: TenantId, job_id: JobId) -> ScoreStalenessSnapshot:
+        return self._staleness.capture_for_score(tenant_id, job_id)
+
+    def resolve_staleness_for_score(self, score: JobScore, snapshot: ScoreStalenessSnapshot | None) -> int:
+        if self._publication_events is None:
+            raise RuntimeError("Score staleness resolution requires a complete publication")
+        return self._staleness.resolve_for_score(score, snapshot, publisher=self._publication_events)
 
     # ------------------------------------------------------------------
     # Read
@@ -561,6 +749,53 @@ class SqliteScoreRepository:
         if row is None:
             return None
         return self._row_to_score(row)
+
+    def record_profile_review(self, score, *, entity_version, determination_id):
+        from pydantic import ValidationError
+        from jobctrl.domain.determinations import DeterminationFailure
+        from jobctrl.domain.scoring.profile_impact import ProfileImpactDecision
+        from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+        owns_writer = not self._conn.in_transaction
+        if owns_writer:
+            self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute("SAVEPOINT score_profile_review")
+            try:
+                current = self.load(score.tenant_id, score.job_id)
+                repository = SqliteDeterminationRepository(self._conn)
+                envelope = repository.find(str(score.tenant_id), determination_id)
+                try:
+                    result = ProfileImpactDecision.model_validate(envelope.result) if envelope else None
+                except ValidationError:
+                    raise DeterminationFailure("score_profile_binding_invalid") from None
+                if (current is None or current.version != score.version
+                        or current.trace.determination_id != score.trace.determination_id
+                        or envelope is None or envelope.kind != "score_profile_impact"
+                        or envelope.entity_id != str(score.job_id) or envelope.lane != "scoring"
+                        or envelope.schema_version != "1" or envelope.prompt_version != "score-profile-impact-v1"
+                        or result is None or result.score_version != score.version
+                        or result.job_id != str(score.job_id)
+                        or result.scoring_determination_id != score.trace.determination_id
+                        or result.scored_profile_version != score.trace.profile_snapshot_version
+                        or result.profile_id != score.trace.profile_inputs.get("profile_id")
+                        or result.reviewed_profile_version <= result.scored_profile_version
+                        or entity_version != f"{score.version}:{result.profile_id}:{result.reviewed_profile_version}"):
+                    raise DeterminationFailure("score_profile_binding_invalid")
+                repository.bind(tenant_id=str(score.tenant_id), entity_kind="score_profile_review",
+                    entity_id=str(score.job_id), entity_version=entity_version,
+                    determination_kind="score_profile_impact", determination_id=determination_id)
+            except BaseException:
+                self._conn.execute("ROLLBACK TO score_profile_review")
+                raise
+            finally:
+                self._conn.execute("RELEASE score_profile_review")
+            if owns_writer:
+                self._conn.commit()
+        except BaseException:
+            if owns_writer:
+                self._conn.rollback()
+            raise
 
     def list_pending(self, tenant_id: TenantId, *, limit: int = 0) -> list[JobId]:
         """Return enriched canonical JobIds that have no score row yet."""
@@ -623,6 +858,7 @@ class SqliteScoreRepository:
 
     def save(self, score: JobScore) -> None:
         job_id = canonical_job_id(str(score.job_id))
+        owns_writer = not self._conn.in_transaction
         self._conn.execute(f"SAVEPOINT {_SCORE_SAVEPOINT}")
         try:
             latest = self._conn.execute(
@@ -684,13 +920,13 @@ class SqliteScoreRepository:
                     )
                 ),
             )
-            self._staleness.resolve_for_score(score, commit=False)
         except BaseException:
             self._conn.execute(f"ROLLBACK TO SAVEPOINT {_SCORE_SAVEPOINT}")
             self._conn.execute(f"RELEASE SAVEPOINT {_SCORE_SAVEPOINT}")
             raise
         self._conn.execute(f"RELEASE SAVEPOINT {_SCORE_SAVEPOINT}")
-        self._conn.commit()
+        if owns_writer:
+            self._conn.commit()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -744,6 +980,7 @@ class SqliteScoringPolicyRepository:
         return policy
 
     def save(self, policy: ScoringPolicy) -> None:
+        owns_writer = not self._conn.in_transaction
         self._conn.execute(
             """
             INSERT INTO scoring_policies (
@@ -760,7 +997,8 @@ class SqliteScoringPolicyRepository:
                 policy.created_from_event_id,
             ),
         )
-        self._conn.commit()
+        if owns_writer:
+            self._conn.commit()
 
     def save_correction_signal(self, signal: CorrectionSignal) -> ScoringPolicy:
         current = self.get_current(signal.tenant_id)

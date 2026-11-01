@@ -30,6 +30,8 @@ from jobctrl.infrastructure.materials.sqlite_repository import (
     SqliteMaterialsRepository,
     SqliteTailoringPolicyRepository,
     TailoringPolicyRevisionError,
+    TailoringPolicyStaleReviewError,
+    TailoringPolicyCommandConflictError,
 )
 from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
 
@@ -45,4 +47,6 @@ __all__ = [
     "SqliteTailoringPolicyRepository",
     "SqliteUnitOfWork",
     "TailoringPolicyRevisionError",
+    "TailoringPolicyStaleReviewError",
+    "TailoringPolicyCommandConflictError",
 ]

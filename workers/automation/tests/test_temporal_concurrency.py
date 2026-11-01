@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from jobctrl.infrastructure.temporal.concurrency import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
     activity_executor_max_workers,
     resolve_max_concurrent_activities,
+    resolve_pipeline_internal_concurrency,
     resolved_max_parallel_discovery_families,
 )
 
@@ -50,3 +55,17 @@ def test_discovery_fanout_uses_sqlite_config_and_is_capped_by_worker_slots() -> 
     assert resolved_max_parallel_discovery_families({"max_parallel_families": "invalid"}, 20) == 1
     assert resolved_max_parallel_discovery_families({"max_parallel_families": 4}, 2) == 2
     assert resolved_max_parallel_discovery_families({"max_parallel_families": 99}, 20) == 4
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [(None, 1), (10, 10), ("10", 10), ("  +10.9", 10), (99, 16), (-2, 1), ("invalid", 1), (True, 1), ({}, 1)],
+)
+def test_pipeline_internal_concurrency_uses_the_saved_bounded_value(tmp_path, raw, expected):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"pipeline_internal_concurrency": raw, "worker_activity_slots": 4}))
+    assert resolve_pipeline_internal_concurrency(path) == expected
+
+
+def test_pipeline_internal_concurrency_defaults_when_missing(tmp_path):
+    assert resolve_pipeline_internal_concurrency(tmp_path / "absent.json") == 1

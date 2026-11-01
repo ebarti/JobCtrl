@@ -208,6 +208,22 @@ export function createContactResearchTaskFailed(
   return createDomainEvent("ContactResearchTaskFailed", tenantId, payload);
 }
 
+export interface ContactResearchSourceAttemptFailedPayload {
+  readonly taskId: string;
+  readonly outcome: string;
+  readonly attemptedAt: string;
+}
+export type ContactResearchSourceAttemptFailed = DomainEvent<
+  "ContactResearchSourceAttemptFailed",
+  ContactResearchSourceAttemptFailedPayload
+>;
+export function createContactResearchSourceAttemptFailed(
+  tenantId: TenantId,
+  payload: ContactResearchSourceAttemptFailedPayload,
+): ContactResearchSourceAttemptFailed {
+  return createDomainEvent("ContactResearchSourceAttemptFailed", tenantId, payload);
+}
+
 // -- OutreachThread aggregate -----------------------------------------------
 
 export interface OutreachDraftGeneratedPayload {

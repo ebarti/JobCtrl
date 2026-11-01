@@ -10,4 +10,6 @@ export const workflowRunsKeys = {
   details: (tenantId: TenantId) => [...workflowRunsKeys.all(tenantId), "detail"] as const,
   detail: (tenantId: TenantId, workflowId: string) =>
     [...workflowRunsKeys.details(tenantId), workflowId] as const,
+  jobDetail: (tenantId: TenantId, workflowId: string, jobId: string) =>
+    [...workflowRunsKeys.detail(tenantId, workflowId), { jobId }] as const,
 };

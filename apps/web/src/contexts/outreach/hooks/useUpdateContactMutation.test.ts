@@ -24,16 +24,16 @@ describe("useUpdateContactMutation", () => {
       makeContactDetailResponse(),
     );
     await act(async () => {
-      result.current.mutate({ contactId: "contact-1", body: { role: "referrer" } });
+      result.current.mutate({ contactId: "contact-1", body: { expectedFingerprint: sampleContactDetail.fingerprint, role: "referrer" } });
       await Promise.resolve();
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
   });
 
-  it("rolls back the optimistic role change when the PATCH fails", async () => {
+  it.each([409, 500])("rolls back the optimistic role change when PATCH returns %s", async (status) => {
     server.use(
       http.patch("*/v1/contacts/:contactId", () =>
-        new HttpResponse(JSON.stringify({ ok: false }), { status: 500 }),
+        new HttpResponse(JSON.stringify({ ok: false, error: status === 409 ? "contact_revision_conflict" : "failed" }), { status }),
       ),
     );
     const { result, queryClient } = renderHookWithProviders(() => useUpdateContactMutation());
@@ -46,7 +46,7 @@ describe("useUpdateContactMutation", () => {
       makeContactListResponse([sampleContactSummary]),
     );
     await act(async () => {
-      result.current.mutate({ contactId: "contact-1", body: { role: "referrer" } });
+      result.current.mutate({ contactId: "contact-1", body: { expectedFingerprint: sampleContactDetail.fingerprint, role: "referrer" } });
     });
     await waitFor(() => expect(result.current.isError).toBe(true));
     const restored = queryClient.getQueryData(

@@ -71,6 +71,8 @@ class ScoreParseResult:
     criteria: ScoringCriteria = field(default_factory=ScoringCriteria)
     trace: ScoreTrace = field(default_factory=ScoreTrace)
     error: str = ""
+    retained_score_version: int | None = None
+    profile_review: dict[str, str] = field(default_factory=dict)
 
 
 class ScoreParser:

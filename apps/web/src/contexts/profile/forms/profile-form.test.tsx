@@ -88,6 +88,68 @@ async function renderSkillProjection(items: string[]) {
 }
 
 describe("<ProfileForm>", () => {
+  it("shows legacy confirmation uncertainty without editing saved evidence", async () => {
+    const initial = { ...structuredClone(sampleProfileResponse), legacyEvidenceReview: { status: "review_required" as const, count: 3 } };
+    const updateProfile = vi.fn();
+    renderWithProviders(<ProfileForm initial={initial} />, {
+      ports: buildTestPorts({ api: { updateProfile } }), withRouter: true,
+    });
+    expect(await screen.findByText(/3 saved achievement records need confirmation review/)).toBeInTheDocument();
+    expect(screen.getByText(/original text and saved confirmations are retained/)).toBeInTheDocument();
+    expect(screen.getByText("jobctrl legacy-evidence")).toBeInTheDocument();
+    expect(updateProfile).not.toHaveBeenCalled();
+  });
+  it("saves newly added skill categories with stable IDs and unchanged unrelated profile fields", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const profile = ProfileSchema.parse(initial.profile);
+    profile.resume.skill_categories = [{ id: "skill-1", label: "Original skills", items: ["Python"] }];
+    profile.resume.tailoring_rules.required_skill_category_ids = ["skill-1"];
+    profile.resume.tailoring_rules.required_experience_entry_ids = [profile.resume.experience_entries[0]!.id];
+    initial.profile = profile;
+    const updateProfile = vi.fn(async (request: ProfileUpdateRequest) => ({
+      ...initial, profileVersion: (initial.profileVersion ?? 0) + 1, profile: JSON.parse(request.profileText!),
+    }));
+    const targetRoleSuggestions = vi.fn();
+    renderWithProviders(<ProfileForm initial={initial} />, {
+      ports: buildTestPorts({ api: { updateProfile, targetRoleSuggestions } }), withRouter: true,
+    });
+    await user.click(await screen.findByRole("button", { name: /^Skill categories\b/ }));
+    await user.click(screen.getByRole("button", { name: "Add skill category" }));
+    await user.click(screen.getByRole("button", { name: "Add skill category" }));
+    const categories = screen.getAllByRole("group", { name: /^(Original skills|Skill category [23])$/ });
+    const cloud = within(categories[1]!);
+    const architecture = within(categories[2]!);
+    fireEvent.change(cloud.getByLabelText("Label"), { target: { value: "Cloud" } });
+    fireEvent.change(cloud.getByLabelText("Skill 1"), { target: { value: "Kubernetes" } });
+    await user.click(cloud.getByRole("checkbox", { name: "Must appear in final resume" }));
+    fireEvent.change(cloud.getByLabelText("Label"), { target: { value: "Platform & Cloud" } });
+    fireEvent.change(architecture.getByLabelText("Label"), { target: { value: "Architecture" } });
+    fireEvent.change(architecture.getByLabelText("Skill 1"), { target: { value: "Microservices" } });
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Edited synthetic candidate" } });
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const request = updateProfile.mock.calls[0]![0];
+    expect(request.expectedProfileVersion).toBe(initial.profileVersion);
+    const saved = JSON.parse(request.profileText!) as ProfileShape;
+    expect(ProfileSchema.safeParse(saved).success).toBe(true);
+    const savedCategories = saved.resume.skill_categories;
+    expect(savedCategories).toHaveLength(3);
+    expect(new Set(savedCategories.map((entry) => entry.id)).size).toBe(3);
+    expect(savedCategories.map((entry) => entry.id)).not.toContain("");
+    expect(savedCategories[0]).toEqual(profile.resume.skill_categories[0]);
+    expect(savedCategories.slice(1).map(({ label, items }) => ({ label, items }))).toEqual([
+      { label: "Platform & Cloud", items: ["Kubernetes"] }, { label: "Architecture", items: ["Microservices"] },
+    ]);
+    expect(saved.resume.tailoring_rules.required_skill_category_ids).toEqual(["skill-1", savedCategories[1]!.id]);
+    const expected = structuredClone(profile);
+    expected.personal.full_name = "Edited synthetic candidate";
+    expected.resume.skill_categories = savedCategories;
+    expected.resume.tailoring_rules.required_skill_category_ids = ["skill-1", savedCategories[1]!.id];
+    expect(saved).toEqual(expected);
+    expect(targetRoleSuggestions).not.toHaveBeenCalled();
+  });
+
   it.each(coachingFixtures.flatMap((fixture) => fixture.expected.suggestions
     .filter((item) => item.kind === "grammar" && item.canApply)
     .map((_item, applicableIndex) => ({ name: `${fixture.name} (${applicableIndex + 1})`, fixture, applicableIndex }))))(
@@ -737,6 +799,58 @@ describe("<ProfileForm>", () => {
     expect(updateProfile).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["query-first", "response-first"] as const)(
+    "does not treat its own target-search save as a conflict when updates arrive %s",
+    async (order) => {
+      const user = userEvent.setup();
+      let resolveSave!: (response: typeof sampleProfileResponse) => void;
+      const updateProfile = vi.fn()
+        .mockImplementationOnce(() => new Promise<typeof sampleProfileResponse>((resolve) => {
+          resolveSave = resolve;
+        }))
+        .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+          ...sampleProfileResponse,
+          profileVersion: 5,
+          profile: JSON.parse(request.profileText!),
+        }));
+      const { rerender } = renderWithProviders(
+        <ProfileForm initial={sampleProfileResponse} section="target-search" />,
+        { ports: buildTestPorts({ api: { updateProfile } }) },
+      );
+      fireEvent.change(screen.getByLabelText("Target roles 1"), {
+        target: { value: "Synthetic Director" },
+      });
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+      const saved = {
+        ...sampleProfileResponse,
+        profileVersion: 4,
+        profile: JSON.parse(updateProfile.mock.calls[0]![0].profileText),
+      };
+      const conflictAction = /Rebase edits onto saved profile|Update draft with saved changes/;
+      if (order === "query-first") {
+        rerender(<ProfileForm initial={saved} section="target-search" />);
+        expect(screen.queryByRole("button", { name: conflictAction })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Get suggestions for target roles" })).toBeDisabled();
+      }
+      await act(async () => resolveSave(saved));
+      expect(await screen.findByText("Discovery settings saved")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: conflictAction })).not.toBeInTheDocument();
+      if (order === "response-first") {
+        expect(screen.getByRole("button", { name: "Get suggestions for target roles" })).toBeDisabled();
+        rerender(<ProfileForm initial={saved} section="target-search" />);
+      }
+      expect(screen.getByRole("button", { name: "Get suggestions for target roles" })).toBeEnabled();
+      fireEvent.change(screen.getByLabelText("Target roles 1"), {
+        target: { value: "Synthetic VP" },
+      });
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+      expect(updateProfile.mock.calls[1]![0].expectedProfileVersion).toBe(4);
+      expect(screen.getByLabelText("Target roles 1")).toHaveValue("Synthetic VP");
+    },
+  );
+
   it("autosaves edited target search settings after five seconds", async () => {
     vi.useFakeTimers();
     const updateProfile = vi.fn(async (request) => ({
@@ -761,6 +875,85 @@ describe("<ProfileForm>", () => {
     expect(updateProfile).toHaveBeenCalledTimes(1);
     const request = updateProfile.mock.calls[0]?.[0];
     expect(JSON.parse(request.profileText).experience.target_role).toBe("Director of Engineering");
+  });
+
+  it("retains a failed autosave without resubmitting it and permits a versioned manual retry", async () => {
+    vi.useFakeTimers();
+    let fail = true;
+    let savedVersion = 3;
+    const updateProfile = vi.fn(async (request: ProfileUpdateRequest): Promise<typeof sampleProfileResponse> => {
+      if (fail) throw new Error("Synthetic profile save failed");
+      return {
+        ...sampleProfileResponse,
+        profileVersion: ++savedVersion,
+        profile: JSON.parse(request.profileText!),
+      };
+    });
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    const targetRole = screen.getByLabelText("Target roles 1");
+    fireEvent.change(targetRole, { target: { value: "Synthetic Director" } });
+    for (let period = 0; period < 4; period++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    }
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    expect(updateProfile.mock.calls[0]![0].expectedProfileVersion).toBe(3);
+    expect(targetRole).toHaveValue("Synthetic Director");
+    expect(screen.getByText("Synthetic profile save failed")).toBeInTheDocument();
+
+    fail = false;
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(updateProfile).toHaveBeenCalledTimes(2);
+    expect(updateProfile.mock.calls[1]![0].expectedProfileVersion).toBe(3);
+    expect(targetRole).toHaveValue("Synthetic Director");
+
+    fireEvent.change(targetRole, { target: { value: "Synthetic VP" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(updateProfile).toHaveBeenCalledTimes(3);
+    expect(updateProfile.mock.calls[2]![0].expectedProfileVersion).toBe(4);
+    expect(JSON.parse(updateProfile.mock.calls[2]![0].profileText!).experience.target_role).toBe("Synthetic VP");
+  });
+
+  it("does not overlap a delayed failed autosave and saves the newer profile draft", async () => {
+    vi.useFakeTimers();
+    let rejectFirst: ((error: Error) => void) | undefined;
+    const updateProfile = vi.fn()
+      .mockImplementationOnce(() => new Promise<typeof sampleProfileResponse>((_resolve, reject) => {
+        rejectFirst = reject;
+      }))
+      .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+        ...sampleProfileResponse,
+        profileVersion: 4,
+        profile: JSON.parse(request.profileText!),
+      }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    const targetRole = screen.getByLabelText("Target roles 1");
+    fireEvent.change(targetRole, { target: { value: "Synthetic Director" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    fireEvent.change(targetRole, { target: { value: "Synthetic VP" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    expect(targetRole).toHaveValue("Synthetic VP");
+
+    await act(async () => {
+      rejectFirst?.(new Error("Synthetic delayed profile failure"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(targetRole).toHaveValue("Synthetic VP");
+    expect(screen.getByText("Synthetic delayed profile failure")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(updateProfile).toHaveBeenCalledTimes(2);
+    expect(updateProfile.mock.calls[1]![0].expectedProfileVersion).toBe(3);
+    expect(JSON.parse(updateProfile.mock.calls[1]![0].profileText!).experience.target_role).toBe("Synthetic VP");
   });
 
   it("keeps newer edits on a late autosave response and discards them to the persisted snapshot", async () => {
@@ -917,6 +1110,60 @@ describe("<ProfileForm>", () => {
     });
   });
 
+  it("rebases shared appended bullets while preserving later additions and independent edits", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const newer = structuredClone(initial);
+    newer.profileVersion = 4;
+    (newer.profile as ProfileShape).resume.experience_entries[0]!.bullets.push("Shared saved addition.");
+    const updateProfile = vi.fn(async (request: ProfileUpdateRequest) => ({
+      ...newer, profileVersion: 5, profile: JSON.parse(request.profileText!),
+    }));
+    const { changeInitial } = renderRequiredProfileWithInitialChanges(
+      initial, buildTestPorts({ api: { updateProfile } }),
+    );
+    await openExperienceEntries(user);
+    fireEvent.change(screen.getByLabelText("Bullet 1"), { target: { value: "Independent manual revision." } });
+    await user.click(screen.getByRole("button", { name: "Add bullet" }));
+    fireEvent.change(screen.getByLabelText("Bullet 3"), { target: { value: "Shared saved addition." } });
+    await user.click(screen.getByRole("button", { name: "Add bullet" }));
+    fireEvent.change(screen.getByLabelText("Bullet 4"), { target: { value: "Later pending addition." } });
+    changeInitial(newer);
+    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    expect(screen.queryByText(/Saved and local edits overlap/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Independent manual revision.");
+    expect(screen.getByLabelText("Bullet 3")).toHaveValue("Shared saved addition.");
+    expect(screen.getByLabelText("Bullet 4")).toHaveValue("Later pending addition.");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const request = updateProfile.mock.calls[0]![0];
+    expect(request.expectedProfileVersion).toBe(4);
+    expect(JSON.parse(request.profileText!).resume.experience_entries[0].bullets).toEqual([
+      "Independent manual revision.", "Led the SRE org.", "Shared saved addition.", "Later pending addition.",
+    ]);
+  });
+
+  it("keeps competing appended bullets blocked without losing the local draft", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const newer = structuredClone(initial);
+    newer.profileVersion = 4;
+    (newer.profile as ProfileShape).resume.experience_entries[0]!.bullets.push("Different remote addition.");
+    const updateProfile = vi.fn();
+    const { changeInitial } = renderRequiredProfileWithInitialChanges(
+      initial, buildTestPorts({ api: { updateProfile } }),
+    );
+    await openExperienceEntries(user);
+    await user.click(screen.getByRole("button", { name: "Add bullet" }));
+    fireEvent.change(screen.getByLabelText("Bullet 3"), { target: { value: "Pending local addition." } });
+    changeInitial(newer);
+    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    expect(screen.getByText(/Saved and local edits overlap/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Bullet 3")).toHaveValue("Pending local addition.");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(updateProfile).not.toHaveBeenCalled();
+  });
+
   it("blocks a stale target-search autosave and rebases its draft before saving", async () => {
     vi.useFakeTimers();
     const initial = structuredClone(sampleProfileResponse);
@@ -945,7 +1192,7 @@ describe("<ProfileForm>", () => {
     });
     expect(updateProfile).not.toHaveBeenCalled();
     expect(screen.getByText(/Rebase your manual edits before saving/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update draft with saved changes" }));
     expect(screen.getByLabelText("Target roles 1")).toHaveValue("Director of Engineering");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -1047,7 +1294,7 @@ describe("<ProfileForm>", () => {
       ports: buildTestPorts({ api: { targetRoleSuggestions, updateProfile } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     expect(targetRoleSuggestions).toHaveBeenCalledWith({
       expectedProfileVersion: 3,
       maximumSuggestions: 3,
@@ -1132,7 +1379,7 @@ describe("<ProfileForm>", () => {
       ports: buildTestPorts({ api: { targetRoleSuggestions, updateProfile } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     expect(await screen.findByText(/Historical preference proposal 1/)).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Select Platform Engineering Manager" })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Select Platform Reliability Manager" })).not.toBeChecked();
@@ -1204,7 +1451,7 @@ describe("<ProfileForm>", () => {
       ports: buildTestPorts({ api: { targetRoleSuggestions, updateProfile } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -1271,13 +1518,13 @@ describe("<ProfileForm>", () => {
       { ports },
     );
 
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     await user.click(await screen.findByRole("checkbox", { name: "Select Director of Infrastructure" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     const savedA = { ...sampleProfileResponse, profileVersion: 4 };
@@ -1297,7 +1544,7 @@ describe("<ProfileForm>", () => {
     expect(updateProfile).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/regenerate suggestions, and review them before saving/i)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     await user.click(await screen.findByRole("checkbox", { name: "Select Director of Infrastructure" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -1338,7 +1585,7 @@ describe("<ProfileForm>", () => {
       ports: buildTestPorts({ api: { targetRoleSuggestions, updateProfile } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     const acceptedRole = screen.getByLabelText("Target roles 1");
@@ -1374,18 +1621,18 @@ describe("<ProfileForm>", () => {
       { ports },
     );
 
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     const acceptedRole = screen.getByLabelText("Target roles 1");
     await user.clear(acceptedRole);
     await user.type(acceptedRole, "Manual Architect");
     rerender(<ProfileForm initial={initialV4} section="target-search" />);
-    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    await user.click(screen.getByRole("button", { name: "Update draft with saved changes" }));
 
     expect(screen.getByText(/accepted suggestion was edited in this stale draft/i)).toBeInTheDocument();
     expect(screen.getByLabelText("Target roles 1")).toHaveValue("Manual Architect");
-    expect(screen.getByRole("button", { name: "Suggest roles" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Get suggestions for target roles" })).toBeDisabled();
   });
 
   it("requires a conflict-aware rebase and regeneration after a stale suggestion save", async () => {
@@ -1428,7 +1675,7 @@ describe("<ProfileForm>", () => {
     );
 
     await user.type(screen.getByLabelText("Target location 1"), "Madrid");
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -1437,10 +1684,10 @@ describe("<ProfileForm>", () => {
 
     rerender(<ProfileForm initial={initialV4} section="target-search" />);
 
-    const suggestRoles = screen.getByRole("button", { name: "Suggest roles" });
+    const suggestRoles = screen.getByRole("button", { name: "Get suggestions for target roles" });
     expect(suggestRoles).toBeDisabled();
-    expect(screen.getByText(/saved profile changed while this form has unsaved edits/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    expect(screen.getByText(/A newer profile was saved while you were editing/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Update draft with saved changes" }));
     await waitFor(() => expect(suggestRoles).toBeEnabled());
     expect(screen.getByText(/Draft rebased and stale suggestions removed/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -1518,7 +1765,7 @@ describe("<ProfileForm>", () => {
     );
 
     await user.type(screen.getByLabelText("Target location 1"), "Madrid");
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     expect(screen.getByDisplayValue("VP Engineering")).toBeInTheDocument();
@@ -1529,7 +1776,7 @@ describe("<ProfileForm>", () => {
     expect(await screen.findByText("The saved profile changed. Refresh and try again.")).toBeInTheDocument();
 
     rerender(<ProfileForm initial={initialV4} section="target-search" />);
-    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    await user.click(screen.getByRole("button", { name: "Update draft with saved changes" }));
     expect(screen.getByDisplayValue("VP Engineering")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("Head of Platform")).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("Manual Architect")).toBeInTheDocument();
@@ -1539,7 +1786,7 @@ describe("<ProfileForm>", () => {
     expect(updateProfile).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/regenerate suggestions, and review them before saving/i)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     expect(await screen.findByText(
       "The model returned no target suggestions for this profile version.",
     )).toBeInTheDocument();
@@ -1590,7 +1837,7 @@ describe("<ProfileForm>", () => {
       ports: buildTestPorts({ api: { targetRoleSuggestions } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
     expect(
       await screen.findByText("Model suggestions require your confirmation before they change your search."),
     ).toBeInTheDocument();
@@ -1614,7 +1861,7 @@ describe("<ProfileForm>", () => {
       ports: buildTestPorts({ api: { targetRoleSuggestions } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(screen.getByRole("button", { name: "Get suggestions for target roles" }));
 
     expect(await screen.findByText("Suggestions are temporarily unavailable.")).toBeInTheDocument();
     expect(screen.getByLabelText("Target roles 1")).toHaveValue("");

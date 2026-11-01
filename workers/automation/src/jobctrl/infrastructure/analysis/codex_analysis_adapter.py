@@ -1,10 +1,9 @@
 """Codex SDK adapter for employer analysis — one ensemble draft leg.
 
-Mirrors the mestre vendor-lane pattern (``mestre/vendor_lane/backends/
-codex_sdk.py``): drive the official ``openai_codex`` Python SDK directly (no
-Node sidecar, no CLI-subprocess wrapper), forcing JSON-schema-constrained
-output via ``output_schema`` and consuming the public turn stream. This keeps
-the SDK's structured ``TurnError`` available without serializing provider text.
+Dispatches through ``agent-runtime-kit`` with reusable official
+``openai_codex`` clients and a fresh ephemeral thread for every request.
+A narrow stream facade preserves structured ``TurnError`` and token accounting;
+JobCtrl retains strict schema parsing and saved model/effort selection.
 
 Codex isolation + permissions: the live factory redirects the SDK to a
 JobCtrl-owned ``CODEX_HOME`` so Codex app-server state does not pollute the
@@ -18,15 +17,20 @@ resolved through an injectable factory that defaults to a lazy import, so tests
 pass a fake context-manager whose thread returns a canned ``final_response``.
 No live Codex login / app-server is needed in the suite.
 
-No timeout (D-19): the public turn stream is awaited to completion; effort is
-pinned to ``high`` (D-18). Cancellation = cancel the wrapping asyncio task.
+No timeout (D-19): the public turn stream is awaited to completion. Effort uses
+the saved model choice or the existing ``high`` default. Cancellation cancels
+the wrapping asyncio task.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
-from collections.abc import Callable
+import tempfile
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -36,7 +40,7 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysisDraft,
 )
 from jobctrl.infrastructure.analysis.strict_schema import strict_json_schema
-from jobctrl.infrastructure.llm.codex_turn import run_codex_turn
+from jobctrl.infrastructure.llm.codex_runtime_storage import shared_codex_storage
 from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, provider_exception_error
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 from jobctrl.llm_lanes import lane_bound
@@ -51,18 +55,16 @@ from jobctrl.runtime import is_bundled_runtime
 
 AsyncCodexFactory = Callable[[], Any]
 
-# Top current Codex model (gpt-5.5) + max reasoning effort (D-18). Matches
-# mestre's vendor-lane default for the Codex leg.
-CODEX_ANALYSIS_MODEL = "gpt-5.5"
+# Default for an unpinned Codex leg. Saved provider preferences take precedence.
+CODEX_ANALYSIS_MODEL = "gpt-6.1-sol"
 
 # OTel instrumentation scope for the Codex draft leg's generation span.
 _CODEX_SCOPE = "jobctrl.analysis.codex"
 
 # Disable Codex plugins/apps and force prompt-driven commands into a minimal
 # read-only permissions profile. The profile is supplied as a TOML CLI override
-# because openai-codex==0.1.0b3 exposes only legacy Sandbox presets in its
-# public Python wrapper, while the pinned app-server runtime supports
-# default_permissions profiles.
+# so catalog discovery and generation use the same minimal permissions profile
+# supported by the pinned app-server runtime.
 _CODEX_PERMISSION_PROFILE = "jobctrl-analysis-readonly"
 _CODEX_STATIC_CONFIG_OVERRIDES = (
     "features.plugins=false",
@@ -73,6 +75,9 @@ _CODEX_STATIC_CONFIG_OVERRIDES = (
     # receives provider auth through CodexConfig.env.
     "features.shell_tool=false",
     "allow_login_shell=false",
+    # Keep SDK project discovery and the kit's native-policy inspection inside
+    # the generated workspace, independently of ambient/system root markers.
+    'project_root_markers=[".git"]',
     'shell_environment_policy={inherit="none"}',
     f'default_permissions="{_CODEX_PERMISSION_PROFILE}"',
 )
@@ -100,7 +105,13 @@ def _prepare_isolated_codex_home(*, ensure_auth: bool = True) -> _CodexHomeDirs:
     already-ready JobCtrl-owned session without copying ambient credentials.
     """
 
+    from jobctrl.infrastructure.llm.codex_workspace import (
+        ensure_codex_workspace_root,
+        reject_codex_path_redirection,
+    )
+
     codex_home = _isolated_codex_home()
+    reject_codex_path_redirection(codex_home)
     if ensure_auth:
         ensure_jobctrl_codex_auth()
     ensure_private_directory(codex_home.parent)
@@ -108,7 +119,9 @@ def _prepare_isolated_codex_home(*, ensure_auth: bool = True) -> _CodexHomeDirs:
     workdir = codex_home / _CODEX_WORKSPACE_DIRNAME
     process_home = codex_home / _CODEX_PROCESS_HOME_DIRNAME
     for directory in (workdir, process_home):
+        reject_codex_path_redirection(directory)
         ensure_private_directory(directory, parent=codex_home)
+    ensure_codex_workspace_root(codex_home, workdir)
     return _CodexHomeDirs(
         codex_home=codex_home,
         workdir=workdir,
@@ -189,6 +202,107 @@ def _codex_config_kwargs(dirs: _CodexHomeDirs) -> dict[str, Any]:
     }
 
 
+@asynccontextmanager
+async def _codex_client_context(
+    async_codex: Any, codex_config: Any, *, configuration: dict[str, Any]
+) -> AsyncIterator[Any]:
+    """Keep auth stable and share temporary metadata across live native clients.
+
+    Close the app server before removing its private runtime directory, including
+    on failed startup, provider errors and cancellation. Never clean up the
+    credential home or any pre-existing provider state.
+    """
+
+    with (
+        shared_codex_storage(Path(configuration["env"]["CODEX_HOME"])) as sqlite_root,
+        tempfile.TemporaryDirectory(prefix="jobctrl-codex-runtime-") as runtime_dir,
+    ):
+        runtime_root = Path(runtime_dir).resolve()
+        runtime_configuration = {
+            **configuration,
+            "config_overrides": (
+                *configuration["config_overrides"],
+                f"sqlite_home={json.dumps(str(sqlite_root))}",
+                f"log_dir={json.dumps(str(runtime_root / 'logs'))}",
+            ),
+        }
+        client = async_codex(config=codex_config(**runtime_configuration))
+        # The pinned SDK offloads process creation to a worker thread. Joining
+        # just that operation prevents close() racing an unpublished process,
+        # while the subsequent local initialize handshake remains cancellable.
+        startup = asyncio.create_task(client._client.start())
+        request_cancelled = False
+        entry_error: BaseException | None = None
+        try:
+            try:
+                # Waiting does not cancel startup or install shield's event-loop
+                # exception reporter when the caller is cancelled on Python 3.14.
+                try:
+                    await asyncio.wait({startup})
+                    startup.result()
+                    await client.__aenter__()
+                except BaseException as error:
+                    entry_error = error
+                    raise
+                yield client
+            except asyncio.CancelledError:
+                request_cancelled = True
+                raise
+        finally:
+            async def stop() -> None:
+                try:
+                    try:
+                        await startup
+                    except BaseException as error:
+                        # The startup task must be joined, but re-awaiting an
+                        # already observed cancellation can replace its args.
+                        same_cancellation = (
+                            startup.cancelled()
+                            and isinstance(error, asyncio.CancelledError)
+                            and isinstance(entry_error, asyncio.CancelledError)
+                        )
+                        if error is not entry_error and not same_cancellation:
+                            raise
+                finally:
+                    try:
+                        await client.close()
+                    except Exception:
+                        if entry_error is None:
+                            raise
+                        # A failed managed entry never reaches the kit's
+                        # sanitized __aexit__ boundary. Preserve its original
+                        # failure and report the secondary cleanup failure.
+                        logging.getLogger(__name__).warning('Codex client cleanup failed during startup.')
+                    except BaseException as error:
+                        if entry_error is None:
+                            raise
+                        # Cleanup cancellation and fatal control flow must not
+                        # be hidden, but their SDK payloads can be private.
+                        from jobctrl.infrastructure.llm.agent_runtime_codex import _safe_cleanup_exception
+
+                        safe_error = _safe_cleanup_exception(error)
+                        logging.getLogger(__name__).warning('Codex client cleanup failed during startup.')
+                        raise safe_error from None
+
+            shutdown = asyncio.create_task(stop())
+            interrupted = False
+            while not shutdown.done():
+                try:
+                    await asyncio.wait({shutdown})
+                except asyncio.CancelledError:
+                    interrupted = True
+            try:
+                shutdown.result()
+            except asyncio.CancelledError:
+                raise
+            except BaseException:
+                if request_cancelled or interrupted:
+                    logging.getLogger(__name__).warning("Codex startup or cleanup failed during cancellation.")
+                raise
+            if interrupted:
+                raise asyncio.CancelledError()
+
+
 def _load_async_codex_factory() -> AsyncCodexFactory:
     """Build an ``AsyncCodex`` CM with a locked-down command permissions profile.
 
@@ -202,10 +316,14 @@ def _load_async_codex_factory() -> AsyncCodexFactory:
         activate_provider_pack("codex-provider-runtime", app_dir=APP_DIR)
     from openai_codex import AsyncCodex, CodexConfig  # type: ignore[import-untyped]
 
-    def _make() -> Any:
-        dirs = _prepare_isolated_codex_home()
-        return AsyncCodex(config=CodexConfig(**_codex_config_kwargs(dirs)))
+    dirs = _prepare_isolated_codex_home()
+    configuration = _codex_config_kwargs(dirs)
 
+    def _make() -> Any:
+        return _codex_client_context(AsyncCodex, CodexConfig, configuration=configuration)
+
+    _make.jobctrl_managed_startup = True
+    _make.jobctrl_runtime_config = configuration
     return _make
 
 
@@ -225,9 +343,11 @@ def _load_catalog_async_codex_factory() -> AsyncCodexFactory:
         activate_provider_pack("codex-provider-runtime", app_dir=APP_DIR)
     from openai_codex import AsyncCodex, CodexConfig  # type: ignore[import-untyped]
 
+    dirs = _prepare_isolated_codex_home(ensure_auth=False)
+    configuration = _codex_config_kwargs(dirs)
+
     def _make() -> Any:
-        dirs = _prepare_isolated_codex_home(ensure_auth=False)
-        return AsyncCodex(config=CodexConfig(**_codex_config_kwargs(dirs)))
+        return _codex_client_context(AsyncCodex, CodexConfig, configuration=configuration)
 
     return _make
 
@@ -243,6 +363,9 @@ def _deny_all_approval_mode() -> Any:
 class CodexAnalysisAdapter:
     """Codex SDK draft leg (``AnalysisDraftPort``)."""
 
+    provider_id = "codex"
+    default_model_selection = False
+
     def __init__(
         self,
         *,
@@ -250,6 +373,9 @@ class CodexAnalysisAdapter:
         async_codex_factory: AsyncCodexFactory | None = None,
     ) -> None:
         self._model = model
+        from jobctrl.infrastructure.scoring.criteria_provider import read_codex_reasoning_effort
+
+        self.reasoning_effort = read_codex_reasoning_effort(model)
         self._async_codex_factory = async_codex_factory
 
     @property
@@ -259,7 +385,11 @@ class CodexAnalysisAdapter:
     @lane_bound("discovery")
     async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:
         factory = self._async_codex_factory or _load_async_codex_factory()
+        from jobctrl.infrastructure.llm.task_instructions import CODEX_TASK_INSTRUCTIONS, CODEX_TASK_INSTRUCTION_PROFILE
+
+        effort = self.reasoning_effort or "high"
         prompt = f"{system_prompt}\n\nJOB DESCRIPTION:\n{jd_snapshot}"
+        output_schema = strict_json_schema(JobAnalysis.model_json_schema())
         span_input = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": jd_snapshot},
@@ -267,39 +397,27 @@ class CodexAnalysisAdapter:
         with llm_generation_span(
             model=self._model,
             messages=span_input,
-            params={"structured": True},
+            params={"structured": True, "effort": effort},
             scope_name=_CODEX_SCOPE,
+            instruction_profile=CODEX_TASK_INSTRUCTION_PROFILE,
+            response_schema=output_schema,
+            runtime_instructions=CODEX_TASK_INSTRUCTIONS,
+            runtime_prompt=prompt,
         ) as record:
             try:
-                async with factory() as codex:  # reuses existing Codex login (D-04)
-                    thread = await codex.thread_start(
-                        # Analysis has no local-tool use case. Never auto-review or
-                        # approve an escalation even if a future runtime exposes a
-                        # tool despite the locked-down feature configuration.
-                        approval_mode=_deny_all_approval_mode(),
-                        model=self._model,
-                        # Max reasoning effort (D-18). Command filesystem access is
-                        # governed by the configured Codex permissions profile.
-                        config={"model_reasoning_effort": "high"},
-                    )
-                    outcome = await run_codex_turn(
-                        thread,
-                        prompt,
-                        model=self._model,
-                        operation="chat_json",
-                        run_kwargs={
-                            # Codex/OpenAI strict structured output requires every object
-                            # to set additionalProperties:false and list all props in
-                            # required; Pydantic's model_json_schema() emits neither.
-                            "output_schema": strict_json_schema(JobAnalysis.model_json_schema()),
-                            "effort": "high",
-                        },
-                        record_usage=lambda input_tokens, output_tokens: record(
-                            "",
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                        ),
-                    )
+                from jobctrl.infrastructure.llm.agent_runtime_codex import call_codex_runtime
+
+                outcome = await call_codex_runtime(
+                    factory=factory, approval=_deny_all_approval_mode,
+                    model=self._model, effort=effort, prompt=prompt, operation="chat_json",
+                    output_schema=output_schema,
+                    record_usage=lambda input_tokens, output_tokens: record(
+                        "", input_tokens=input_tokens, output_tokens=output_tokens,
+                    ),
+                    record_usage_details=lambda cached, reasoning: record(
+                        "", cached_input_tokens=cached, reasoning_output_tokens=reasoning,
+                    ),
+                )
             except ProviderCallError:
                 raise
             except Exception as exc:  # noqa: BLE001 - preserve only safe provider fields
@@ -310,11 +428,12 @@ class CodexAnalysisAdapter:
                     error=exc,
                 ) from exc
             record(
-                outcome.final_response,
+                outcome.text,
                 input_tokens=outcome.input_tokens,
                 output_tokens=outcome.output_tokens,
+                runtime_metadata=outcome.runtime_metadata,
             )
-            analysis = JobAnalysis.model_validate_json(outcome.final_response)
+            analysis = JobAnalysis.model_validate_json(outcome.text)
             return JobAnalysisDraft(model_id=self._model, **analysis.model_dump())
 
 

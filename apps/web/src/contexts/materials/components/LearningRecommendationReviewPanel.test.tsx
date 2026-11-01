@@ -1,4 +1,5 @@
 import type {
+  LearningRecommendationEvidenceListResponse,
   LearningRecommendationListResponse,
   LearningRecommendationReviewRequest,
   LearningRecommendationReviewResponse,
@@ -219,5 +220,110 @@ describe("LearningRecommendationReviewPanel", () => {
       }),
     ).toBeDisabled();
     expect(reviewLearningRecommendation).not.toHaveBeenCalled();
+  });
+
+  it("keeps the current page and accepted decisions during later-page failures and retries", async () => {
+    const user = userEvent.setup();
+    let current = Array.from({ length: 52 }, (_, index) => ({
+      ...sampleLearningRecommendation,
+      recommendationId: `learning-recommendation:${index.toString(16).padStart(64, "0")}`,
+      ruleKey: `synthetic_${index}`,
+      active: index !== 51,
+      tombstoneCount: index === 51 ? 1 : 0,
+    }));
+    const acceptedId = current[0]!.recommendationId;
+    const inspectedId = current[1]!.recommendationId;
+    const links = Array.from({ length: 102 }, (_, index) => ({
+      ...sampleLearningRecommendationEvidence.evidence[0]!,
+      signalId: index >= 100 ? "synthetic-shared-signal" : `synthetic-signal-${index}`,
+      jobId: `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+    }));
+    let listFailures = 1;
+    let evidenceFailures = 1;
+    const learningRecommendations = vi.fn(async (query?: { page?: unknown; pageSize?: unknown }): Promise<LearningRecommendationListResponse> => {
+      const page = Number(query?.page ?? 1);
+      const pageSize = Number(query?.pageSize ?? 50);
+      if (page === 2 && listFailures-- > 0) throw new Error("List page temporarily unavailable.");
+      return { ok: true, recommendations: current.slice((page - 1) * pageSize, page * pageSize), page, pageSize, total: current.length, totalPages: Math.ceil(current.length / pageSize) };
+    });
+    const learningRecommendationEvidence = vi.fn(async (recommendationId: string, query?: { page?: number; pageSize?: number }): Promise<LearningRecommendationEvidenceListResponse> => {
+      const page = query?.page ?? 1;
+      const pageSize = query?.pageSize ?? 100;
+      if (page === 2 && evidenceFailures-- > 0) throw new Error("Evidence page temporarily unavailable.");
+      return { ok: true, recommendationId, evidence: links.slice((page - 1) * pageSize, page * pageSize), page, pageSize, total: links.length, totalPages: Math.ceil(links.length / pageSize) };
+    });
+    const reviewLearningRecommendation = vi.fn(async (recommendationId: string, body: LearningRecommendationReviewRequest) => {
+      current = current.filter((item) => item.recommendationId !== recommendationId);
+      return reviewResponse(recommendationId, body.decision);
+    });
+    renderWithProviders(<LearningRecommendationReviewPanel />, {
+      ports: buildTestPorts({ api: { learningRecommendations, learningRecommendationEvidence, reviewLearningRecommendation } }),
+    });
+
+    await screen.findByText("synthetic_0 → preserve_user_edit_pattern");
+    const listPages = screen.getByRole("navigation", { name: "Learning recommendations pages" });
+    expect(within(listPages).getByText("Page 1 of 2 · Showing 50 of 52 review items")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Accept learning recommendation synthetic_0 → preserve_user_edit_pattern" }));
+    await waitFor(() => expect(within(listPages).getByText("Page 1 of 2 · Showing 50 of 51 review items")).toBeInTheDocument());
+    expect(reviewLearningRecommendation).toHaveBeenCalledWith(acceptedId, { decision: "accepted" });
+
+    await user.click(screen.getByRole("button", { name: "Inspect evidence for synthetic_1 → preserve_user_edit_pattern" }));
+    const evidencePages = await screen.findByRole("navigation", { name: "Evidence for synthetic_1 → preserve_user_edit_pattern pages" });
+    expect(within(evidencePages).getByText("Page 1 of 2 · Showing 100 of 102 evidence links")).toBeInTheDocument();
+    await user.click(within(evidencePages).getByRole("button", { name: "Next page" }));
+    expect(await within(evidencePages).findByText("Could not load page 2")).toBeInTheDocument();
+    expect(screen.getByText("synthetic-signal-0")).toBeInTheDocument();
+    expect(within(evidencePages).getByText("Page 1 of 2 · Showing 100 of 102 evidence links")).toBeInTheDocument();
+    await user.click(within(evidencePages).getByRole("button", { name: "Retry page 2" }));
+    expect(await within(evidencePages).findByText("Page 2 of 2 · Showing 2 of 102 evidence links")).toBeInTheDocument();
+    expect(screen.getAllByText("synthetic-shared-signal")).toHaveLength(2);
+    expect(screen.getByText(/job 00000000-0000-4000-8000-000000000100/)).toBeInTheDocument();
+    expect(screen.getByText(/job 00000000-0000-4000-8000-000000000101/)).toBeInTheDocument();
+    expect(learningRecommendationEvidence).toHaveBeenLastCalledWith(inspectedId, { page: 2, pageSize: 100 });
+
+    await user.click(within(listPages).getByRole("button", { name: "Next page" }));
+    expect(await within(listPages).findByText("Could not load page 2")).toBeInTheDocument();
+    expect(screen.getByText("synthetic_1 → preserve_user_edit_pattern")).toBeInTheDocument();
+    expect(screen.queryByText("synthetic_0 → preserve_user_edit_pattern")).not.toBeInTheDocument();
+    await user.click(within(listPages).getByRole("button", { name: "Retry page 2" }));
+    expect(await within(listPages).findByText("Page 2 of 2 · Showing 1 of 51 review items")).toBeInTheDocument();
+    const tombstoned = screen.getByRole("article", { name: "synthetic_51 → preserve_user_edit_pattern" });
+    expect(within(tombstoned).getByText(/source evidence was tombstoned/)).toBeInTheDocument();
+    expect(within(tombstoned).getByRole("button", { name: /accept learning recommendation/i })).toBeDisabled();
+    await user.click(within(listPages).getByRole("button", { name: "Previous page" }));
+    await screen.findByText("synthetic_1 → preserve_user_edit_pattern");
+    expect(screen.queryByText("synthetic_0 → preserve_user_edit_pattern")).not.toBeInTheDocument();
+    expect(reviewLearningRecommendation).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps navigation available when a review removes the last item on the last page", async () => {
+    const user = userEvent.setup();
+    let current = Array.from({ length: 51 }, (_, index) => ({
+      ...sampleLearningRecommendation,
+      recommendationId: `learning-recommendation:${index.toString(16).padStart(64, "0")}`,
+      ruleKey: `synthetic_${index}`,
+    }));
+    const learningRecommendations = vi.fn(async (query?: { page?: unknown; pageSize?: unknown }): Promise<LearningRecommendationListResponse> => {
+      const page = Number(query?.page ?? 1);
+      const pageSize = Number(query?.pageSize ?? 50);
+      return { ok: true, recommendations: current.slice((page - 1) * pageSize, page * pageSize), page, pageSize, total: current.length, totalPages: Math.ceil(current.length / pageSize) };
+    });
+    const reviewLearningRecommendation = vi.fn(async (recommendationId: string, body: LearningRecommendationReviewRequest) => {
+      current = current.filter((item) => item.recommendationId !== recommendationId);
+      return reviewResponse(recommendationId, body.decision);
+    });
+    renderWithProviders(<LearningRecommendationReviewPanel />, {
+      ports: buildTestPorts({ api: { learningRecommendations, reviewLearningRecommendation } }),
+    });
+    await screen.findByText("synthetic_0 → preserve_user_edit_pattern");
+    const pages = screen.getByRole("navigation", { name: "Learning recommendations pages" });
+    await user.click(within(pages).getByRole("button", { name: "Next page" }));
+    await screen.findByText("synthetic_50 → preserve_user_edit_pattern");
+    await user.click(screen.getByRole("button", { name: "Accept learning recommendation synthetic_50 → preserve_user_edit_pattern" }));
+    expect(await screen.findByText("No recommendations on this page. Use the previous page to see remaining reviews.")).toBeInTheDocument();
+    expect(within(pages).getByText("Page 2 · 1 page currently available · Showing 0 of 50 review items")).toBeInTheDocument();
+    await user.click(within(pages).getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText("synthetic_0 → preserve_user_edit_pattern")).toBeInTheDocument();
+    expect(screen.queryByText("synthetic_50 → preserve_user_edit_pattern")).not.toBeInTheDocument();
   });
 });

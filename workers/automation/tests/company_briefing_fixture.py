@@ -4,13 +4,13 @@ import json
 import sqlite3
 import sys
 from types import SimpleNamespace
-from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+from jobctrl.infrastructure.migrations.schema_v15 import create_exact_v15_schema
 from jobctrl.infrastructure.materials.company_briefings import CompanyBriefingRepository, refresh_briefing
 from jobctrl.infrastructure.determinations import determination_dependencies
 
 conn = sqlite3.connect(sys.argv[1])
 if not conn.execute("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1").fetchone():
-    create_exact_v14_schema(conn)
+    create_exact_v15_schema(conn)
 for job in ("90000000-0000-4000-8000-000000000021", "90000000-0000-4000-8000-000000000022"):
     conn.execute(
         "INSERT OR IGNORE INTO jobs(tenant_id,job_id,url,title,company) VALUES('local',?,?,?,?)",

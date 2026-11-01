@@ -13,6 +13,11 @@ market evidence or an extrapolated range as a direct observation.
 
 A configured model extracts what the posting states: amounts, currency, period and base/OTE/bonus/equity component, with verbatim citations and a rationale. Code checks exact numbers and quotes, then performs explicit annualization arithmetic. Missing or ambiguous pay remains visible; a nearby salary word or an annual-pay threshold cannot invent a period. The accepted fact cites its extraction determination.
 
+JobCtrl chooses the salary field first, then a current enriched description,
+the full posting description, and finally the short description. If that
+preferred source changes while extraction is running, the refresh is rejected
+and the previously accepted posted fact remains available.
+
 An explicitly stated annual amount stays unchanged; monthly amounts use 12
 months and hourly amounts use 2,080 work hours. An unknown period remains
 unknown. Unpriced bonus and equity remain separate from the cash amount.
@@ -24,11 +29,36 @@ Job interpretation and cached provider-row classifications use the same versione
 A failed refresh retains a previously accepted model-backed estimate and reports the blocked reason. It never substitutes a title/location classifier or fixed exchange rate. Compensation remains warning-only and cannot manufacture a hard eligibility blocker. The offline demo reports refresh unavailable. Native schema 13 withdraws old inferred estimates for recomputation from source evidence; the paired pre-upgrade backup remains recoverable.
 
 Ordinary Discovery refreshes missing slices or those whose seven-day freshness
-window has expired. Failed source availability retries after one day. A focused
+window has expired. Independent provider-row classifications run concurrently,
+bounded by the configured worker activity capacity. Each keeps its own strict
+source-bound determination; duplicate rows and cached classifications reuse the
+same recorded identity. An interrupted refresh stops new model admissions and
+preserves accepted ranges. A refresh still owned by another attempt, or waiting
+through a recorded failure backoff, reports that deferred state rather than
+claiming fresh completion. Failed source availability retries after one day. A focused
 retry uses the same lease and source policy. Euro Top Tech is a fixed public
 source; Glassdoor and Levels.fyi require an explicitly permitted access mode in
 Settings. An absent Levels.fyi preference leaves it disabled. **Reads are passive:**
 opening a compensation panel neither fetches a provider nor refreshes an estimate.
+
+Levels.fyi refresh diagnostics distinguish supported targets from unsupported
+role or country coverage. A failed lookup applies only to its role, level and
+country; an unrelated target does not inherit that source error. The automatic
+activity's recorded result retains each target's request outcomes, HTTP rejection
+codes when available, source-body hashes and parsing status. Empty, blocked and
+incompatible responses do not establish that salary data is absent. The result
+distinguishes `levels_fyi_public_unavailable` (required pages could not be read),
+`levels_fyi_public_unparsed` (reachable pages yielded no supported salary
+structure), and `levels_fyi_public_page_budget_exhausted` (the bounded traversal
+ended with coverage incomplete). Target receipts retain all applicable error
+codes. Incomplete lookups keep the same retry and accepted-evidence preservation
+rules; a page cap does not establish a provider outage. The result also retains
+the source fingerprint and exact classification ID for up to 128
+rejected observations, with an explicit omitted count if that bound is reached.
+Each diagnostic list retains up to 128 entries and 128 KiB, with explicit
+omission counts. These receipts contain no response bodies, headers or exception
+messages and do not enter the public Jobs read model. Failed refreshes continue
+to preserve accepted ranges.
 
 Conversions use source-dated ECB exchange-rate snapshots. When exact-country
 evidence is missing, an auditable geographic bridge can use official Eurostat
@@ -121,6 +151,8 @@ source conflict is a warning to inspect, not a hidden decision rule.
 3. **Finish Discovery.** After terminal enrichment, `DiscoverWorkflow` invokes
    the replay-safe `automatic_compensation_refresh` activity. It deduplicates
    active role/level/country slices and skips every slice that is still fresh.
+   Healthy work renews its exact publication leases; cancellation and owner
+   replacement fence publication without withdrawing the last accepted result.
 4. **Parse posted evidence.** The worker records a model-backed posted-fact
    state, normalized legal range fields when available, parser identity,
    confidence, and warnings without overwriting the raw salary.

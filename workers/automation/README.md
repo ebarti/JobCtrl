@@ -13,8 +13,13 @@ uv --project workers/automation run jobctrl worker
 ```
 
 The full local application is normally started from the repository root with
-`pnpm dev`, which runs Temporal, the TypeScript API, the React web app, and this
+`corepack pnpm dev`, which runs Temporal, the TypeScript API, the React web app, and this
 worker together.
+
+Provider generation runs through `agent-runtime-kit`. The worker owns the
+persistent async service and idle runtime cache; provider SDKs remain optional
+source/runtime packs. See `docs/architecture/agent-runtime.md` for request
+isolation, reuse, permissions and shutdown.
 
 Useful docs:
 

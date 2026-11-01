@@ -3,6 +3,7 @@ import { useForm } from "@tanstack/react-form";
 import { IconFileTypePdf } from "@tabler/icons-react";
 import { z } from "zod";
 
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../../shared/ui/button.js";
 import { Checkbox } from "../../../shared/ui/checkbox.js";
@@ -17,7 +18,10 @@ import {
   FieldSet,
 } from "../../../shared/ui/field.js";
 import { PdfPreviewViewer } from "../../../shared/ui/PdfPreviewViewer.js";
-import { useProfileImportStore } from "../stores/profile-import-store.js";
+import {
+  hasCompletedImport,
+  useProfileImportStore,
+} from "../stores/profile-import-store.js";
 
 interface PreviewFormValues {
   importProfile: boolean;
@@ -35,11 +39,14 @@ const PreviewValidator = z
 
 export function ImportPreviewForm() {
   const navigate = useNavigate();
+  const { storage } = usePorts();
   const filename = useProfileImportStore((state) => state.filename);
   const pdfBase64 = useProfileImportStore((state) => state.pdfBase64);
   const importProfile = useProfileImportStore((state) => state.importProfile);
   const importStyle = useProfileImportStore((state) => state.importStyle);
   const setOptions = useProfileImportStore((state) => state.setOptions);
+  const storageFailure = useProfileImportStore((state) => state.storageFailure);
+  const completedImport = useProfileImportStore(hasCompletedImport);
 
   const form = useForm({
     defaultValues: { importProfile, importStyle } satisfies PreviewFormValues,
@@ -54,11 +61,12 @@ export function ImportPreviewForm() {
     listeners: {
       onChange: ({ formApi }) => {
         const value = formApi.state.values;
-        setOptions(value.importProfile, value.importStyle);
+        void setOptions(value.importProfile, value.importStyle, storage);
       },
     },
     onSubmit: async ({ value }) => {
-      setOptions(value.importProfile, value.importStyle);
+      if (!(await setOptions(value.importProfile, value.importStyle, storage)))
+        return;
       await navigate({ to: "/profile/import/confirm" });
     },
   });
@@ -70,6 +78,24 @@ export function ImportPreviewForm() {
         <div className="form-actions resume-import-actions">
           <Link className={buttonVariants()} to="/profile/import/upload">
             Return to upload
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (completedImport) {
+    return (
+      <div className="wizard-step resume-import-step resume-import-empty-step">
+        <Alert role="status">
+          <AlertDescription>
+            The import request for this PDF already completed. Continue to
+            remove the saved PDF without submitting the import again.
+          </AlertDescription>
+        </Alert>
+        <div className="form-actions resume-import-actions">
+          <Link className={buttonVariants()} to="/profile/import/confirm">
+            Continue to cleanup
           </Link>
         </div>
       </div>
@@ -97,6 +123,18 @@ export function ImportPreviewForm() {
           bring across.
         </p>
       </header>
+
+      {storageFailure ? (
+        <Alert className="resume-import-alert" variant="destructive">
+          <AlertDescription>
+            {storageFailure === "conflict"
+              ? "Another tab changed the saved PDF. Return to upload and load the latest saved PDF."
+              : storageFailure === "read"
+                ? "The saved PDF could not be read from browser storage. Return to upload and retry browser storage before changing options."
+                : "The import options could not be saved in browser storage. Check site data permissions or free space, then continue again to retry."}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <div className="resume-import-selected-file">
         <IconFileTypePdf size={22} stroke={1.65} aria-hidden="true" />

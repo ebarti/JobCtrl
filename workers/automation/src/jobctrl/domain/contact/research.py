@@ -71,6 +71,16 @@ class ResearchSourceOutcome(str, Enum):
     MANUAL_CAPTURE_REQUIRED = "manual_capture_required"
     REJECTED = "rejected"
     EXTRACTION_FAILED = "extraction_failed"
+    RESPONSE_TOO_LARGE = "response_too_large"
+    ACQUISITION_TIMEOUT = "acquisition_timeout"
+    REDIRECT_FAILED = "redirect_failed"
+    TRANSPORT_FAILED = "transport_failed"
+    HTTP_ERROR = "http_error"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    PROVIDER_FAILED = "provider_failed"
+    SPEND_DENIED = "spend_denied"
+    INVALID_OUTPUT = "invalid_output"
+    EMPTY_CONTENT = "empty_content"
 
 
 @dataclass(frozen=True)
@@ -86,6 +96,7 @@ class ResearchSourceAttempt:
     outcome: str
     attempted_at: str
     detail: str = ""
+    determination_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_ref, str) or not self.source_ref.strip():
@@ -201,6 +212,8 @@ class ContactResearchTask:
             status=ResearchTaskStatus.RUNNING,
             started_at=started_at,
             updated_at=started_at,
+            failed_at=None,
+            error_class=None,
         )
 
     def propose(
@@ -225,9 +238,11 @@ class ContactResearchTask:
             self,
             status=ResearchTaskStatus.NEEDS_REVIEW,
             candidates=tuple(candidates),
-            source_attempts=tuple(source_attempts),
+            source_attempts=self.source_attempts + tuple(source_attempts),
             needs_review_at=needs_review_at,
             updated_at=needs_review_at,
+            failed_at=None,
+            error_class=None,
         )
 
     def confirm_candidate(
@@ -282,6 +297,16 @@ class ContactResearchTask:
     @property
     def confirmed_count(self) -> int:
         return sum(1 for candidate in self.candidates if candidate.status is CandidateStatus.CONFIRMED)
+
+    @property
+    def has_accepted_result(self) -> bool:
+        """A failed or blocked fetch alone must not claim the result slot."""
+        return bool(self.candidates) or self.status is ResearchTaskStatus.COMPLETED or (
+            self.status is ResearchTaskStatus.NEEDS_REVIEW
+            and any(attempt.outcome in {
+                ResearchSourceOutcome.ALLOWED.value, ResearchSourceOutcome.NO_CANDIDATES.value,
+            } for attempt in self.source_attempts)
+        )
 
     @property
     def needs_review_count(self) -> int:

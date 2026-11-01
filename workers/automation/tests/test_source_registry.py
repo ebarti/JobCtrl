@@ -262,6 +262,8 @@ def test_load_source_registry_generates_entries_from_packaged_yaml_shapes(tmp_pa
     assert greenhouse.policy.policy_id == "ats_api_canonical"
     assert greenhouse.adapter_config["board_token"] == "acme"
 
+    assert by_id["jobspy:linkedin"].state is SourceState.ACTIVE
+    assert by_id["jobspy:indeed"].state is SourceState.ACTIVE
     assert by_id["jobspy:linkedin"].kind is SourceKind.BROAD_BOARD
     assert by_id["jobspy:linkedin"].display_name == "JobStreaming LinkedIn"
     assert by_id["jobspy:indeed"].adapter_config["board"] == "indeed"

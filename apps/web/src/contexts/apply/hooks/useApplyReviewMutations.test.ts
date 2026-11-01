@@ -144,6 +144,7 @@ describe("apply review mutations", () => {
       result.current.mutate({
         jobId: "job-2",
         body: {
+          requestId: "11720000-0000-4000-8000-000000000001",
           kind: "interview",
           occurredAt: "2026-05-06T08:35:00.000Z",
           note: "Local note",
@@ -177,6 +178,7 @@ describe("apply review mutations", () => {
       result.current.mutate({
         jobId: "job-2",
         body: {
+          requestId: "11720000-0000-4000-8000-000000000001",
           kind: "interview",
           occurredAt: "2026-05-06T08:35:00.000Z",
         },

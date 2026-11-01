@@ -5,6 +5,7 @@ import {
   isE2eStubDispatchEnabled,
 } from "./e2e-dispatch.js";
 import { buildApp } from "./server.js";
+import { installApiShutdown } from "./shutdown.js";
 
 const config = resolveApiConfig();
 // INSPECT-01 E2E: when running under the Playwright harness, swap the real
@@ -23,6 +24,8 @@ const app = buildApp({
       }
     : {}),
 });
+
+installApiShutdown(app);
 
 try {
   await app.listen({ host: config.host, port: config.port });

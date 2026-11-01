@@ -31,9 +31,9 @@ from typing import Any
 
 from jobctrl.domain.ports.artifact_review import ValidationResult
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.profile.canonical_sources import experience_bullet_evidence_ids_by_role
 from jobctrl.resume_profile import (
     experience_updates_by_id,
-    get_achievement_evidence,
     get_education_entries,
     get_experience_entries,
     get_max_experience_bullets,
@@ -43,6 +43,7 @@ from jobctrl.resume_profile import (
     get_required_skill_category_ids,
     get_resume_master,
     get_selected_experience_entries,
+    get_selected_skill_categories,
     get_skill_categories,
     get_tailoring_policy,
     require_resume_master,
@@ -143,9 +144,9 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
     all_experience_ids = {entry.get("id") for entry in experience_entries}
     required_experience_ids = set(get_required_experience_entry_ids(profile)) & all_experience_ids
     required_bullets_by_entry = get_required_bullets_by_experience_id(profile)
-    evidence_entry_ids = {item["experience_entry_id"] for item in get_achievement_evidence(profile)}
+    evidence_entry_ids = {ident for ident, evidence in experience_bullet_evidence_ids_by_role(profile).items() if evidence}
     required_skill_ids = set(get_required_skill_category_ids(profile))
-    max_bullets = get_max_experience_bullets(profile)
+    all_skill_ids = {category.get("id") for category in get_skill_categories(profile)}
 
     all_text_parts: list[str] = [executive_profile]
     seen_experience_ids: set[str] = set()
@@ -162,8 +163,20 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
             errors.append(f"Duplicate experience update: {entry_id}")
             continue
         seen_experience_ids.add(entry_id)
+        baseline_ids = {f"experience:{entry_id}:source:{index}" for index, bullet in
+                        enumerate(entry_by_id.get(entry_id, {}).get("bullets") or []) if str(bullet).strip()}
+        omission_records = data.get("experience_omissions", ())
+        if not isinstance(omission_records, (list, tuple)):
+            omission_records = ()
+        omission_ids = {row.get("evidence_id") for row in omission_records
+                        if isinstance(row, dict) and row.get("experience_entry_id") == entry_id
+                        and row.get("reason") == "clearly_inapplicable"}
+        all_baseline_omitted = bool(baseline_ids) and baseline_ids == omission_ids
         if not isinstance(bullets, list) or (
-            not bullets and (entry_id in evidence_entry_ids or required_bullets_by_entry.get(entry_id))
+            not bullets and (
+                (entry_id in evidence_entry_ids and not all_baseline_omitted)
+                or required_bullets_by_entry.get(entry_id)
+            )
         ):
             errors.append(f"Experience update '{entry_id}' must include bullets")
             continue
@@ -174,6 +187,7 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
             if normalized_required and normalized_required not in seen_effective:
                 effective_bullets.append(required_bullet)
                 seen_effective.add(normalized_required)
+        max_bullets = get_max_experience_bullets(profile)
         if len(effective_bullets) > max_bullets:
             errors.append(f"Experience update '{entry_id}' exceeds {max_bullets} bullets")
         title = str(update.get("title") or "").strip()
@@ -209,7 +223,7 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
         all_text_parts.extend(str(item) for item in items)
 
     missing_skill_ids = required_skill_ids - seen_skill_ids
-    extra_skill_ids = seen_skill_ids - required_skill_ids
+    extra_skill_ids = seen_skill_ids - all_skill_ids
     if missing_skill_ids:
         errors.append("Missing skill category updates: " + ", ".join(sorted(missing_skill_ids)))
     if extra_skill_ids:
@@ -362,23 +376,17 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
     personal = profile.get("personal", {})
     tailoring_policy = get_tailoring_policy(profile)
     resume = get_resume_master(profile)
-    required_skill_ids = get_required_skill_category_ids(profile)
     required_education_ids = set(
         get_resume_master(profile).get("tailoring_rules", {}).get("required_education_entry_ids", [])
     )
     all_education_entries = get_education_entries(profile)
-    all_skill_categories = get_skill_categories(profile)
     experience_entries = get_selected_experience_entries(profile, data)
     education_entries = [
         entry
         for entry in all_education_entries
         if not required_education_ids or entry.get("id") in required_education_ids
     ] or all_education_entries
-    skill_categories = [
-        category
-        for category in all_skill_categories
-        if not required_skill_ids or category.get("id") in required_skill_ids
-    ] or all_skill_categories
+    skill_categories = get_selected_skill_categories(profile, data)
 
     experience_updates = experience_updates_by_id(data)
     skill_updates = {
@@ -390,17 +398,11 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
     lines: list[str] = []
     lines.append(personal.get("full_name", ""))
 
-    contact_parts: list[str] = []
-    if personal.get("email"):
-        contact_parts.append(personal["email"])
-    if personal.get("phone"):
-        contact_parts.append(personal["phone"])
-    if personal.get("website_url"):
-        contact_parts.append(personal["website_url"])
-    if personal.get("linkedin_url"):
-        contact_parts.append(personal["linkedin_url"])
-    if contact_parts:
-        lines.append(" | ".join(contact_parts))
+    from jobctrl.domain.materials.resume_document import contact_items_from_personal, contact_items_text
+
+    contact = contact_items_text(contact_items_from_personal(personal))
+    if contact:
+        lines.append(contact)
     lines.append("")
 
     lines.append("EXECUTIVE PROFILE")

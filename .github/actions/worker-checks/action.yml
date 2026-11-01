@@ -1,0 +1,93 @@
+name: Complete primary worker verification
+description: Run all locked Python 3.12 checks after the caller prepares the worker
+  project
+runs:
+  using: composite
+  steps:
+  - name: Lint
+    run: uv --project workers/automation run --locked --all-extras ruff check workers/automation/src
+      workers/automation/tests
+    shell: bash
+  - name: Check generated semantic result contracts
+    run: uv --project workers/automation run --locked --all-extras python scripts/generate-semantic-result-schemas.py
+      --check
+    shell: bash
+  - name: Enable Linux user namespaces for Bubblewrap
+    if: "${{ runner.os == 'Linux' && runner.environment == 'github-hosted' }}"
+    shell: bash
+    run: |
+      set -euo pipefail
+
+      # Bubblewrap needs unprivileged user namespaces on GitHub-hosted
+      # Linux runners for the sandboxed Codex SDK regression test.
+      current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
+      if [[ -n "$current_userns" && "$current_userns" != "1" ]]; then
+        sudo sysctl -w kernel.unprivileged_userns_clone=1
+      fi
+      current_apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
+      if [[ -n "$current_apparmor" && "$current_apparmor" != "0" ]]; then
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      fi
+  - name: Use memory-backed temp storage when available
+    shell: bash
+    run: |
+      set -euo pipefail
+
+      # Hosted-runner disk latency once stretched the SQLite migration
+      # tests from ~50s to ~620s in one lane; tmpfs removes that
+      # amplification. The macOS launcher workflow still exercises the
+      # migration boundary on real disk.
+      if [[ -d /dev/shm && -w /dev/shm ]]; then
+        tmpdir="/dev/shm/jobctrl-${GITHUB_RUN_ID}-py${{ env.PYTHON_VERSION }}"
+        mkdir -p "$tmpdir"
+        echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
+      fi
+  - name: Install verified Temporal CLI for integration tests
+    shell: bash
+    run: |
+      set -euo pipefail
+
+      # Pin the Linux archive for the same CLI version used by the
+      # packaged runtime. Avoid SDK downloads during individual tests.
+      if [[ "$RUNNER_OS" != "Linux" || "$RUNNER_ARCH" != "X64" ]]; then
+        echo "No verified Temporal CLI for $RUNNER_OS/$RUNNER_ARCH" >&2
+        exit 1
+      fi
+      archive="$RUNNER_TEMP/jobctrl-temporal-linux-amd64.tar.gz"
+      executable_dir="$RUNNER_TEMP/jobctrl-temporal-linux-amd64"
+      curl --fail --location --silent --show-error --retry 4 --retry-all-errors \
+        --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        --output "$archive" \
+        https://github.com/temporalio/cli/releases/download/v1.7.3/temporal_cli_1.7.3_linux_amd64.tar.gz
+      printf '%s  %s\n' '32a4320080342bccab37633b8777f548aa0b413c3d37fdbc7cb9d861c5fa11d0' "$archive" | sha256sum --check
+      mkdir -p "$executable_dir"
+      tar -xOf "$archive" temporal > "$executable_dir/temporal"
+      chmod 700 "$executable_dir/temporal"
+      "$executable_dir/temporal" --version
+      echo "JOBCTRL_TEMPORAL_CLI_PATH=$executable_dir/temporal" >> "$GITHUB_ENV"
+  - name: Install verified Temporal time-skipping test server
+    shell: bash
+    run: bash scripts/install-temporal-test-server.sh
+  - name: Bound hosted Ubuntu package transport
+    run: bash scripts/ci-apt-timeouts.sh
+    shell: bash
+  - name: Install Chromium for guarded availability regression
+    run: timeout --signal=TERM --kill-after=15s 8m uv --project workers/automation run
+      --locked --all-extras playwright install --with-deps chromium
+    shell: bash
+  - name: Test
+    run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests
+      -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25 --junitxml="$RUNNER_TEMP/python-$PYTHON_VERSION.xml"
+    shell: bash
+  - name: Build package
+    run: uv --project workers/automation run --locked --all-extras python -m build
+      --no-isolation workers/automation
+    shell: bash
+  - name: Upload synthetic Python JUnit report
+    if: always()
+    uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+    with:
+      name: python-${{ env.PYTHON_VERSION }}-junit-${{ github.run_attempt }}
+      path: "${{ runner.temp }}/python-${{ env.PYTHON_VERSION }}.xml"
+      retention-days: 7
+      if-no-files-found: warn

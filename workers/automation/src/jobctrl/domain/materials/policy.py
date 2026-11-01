@@ -37,6 +37,15 @@ TailoringPolicyRollbackReason = Literal["user_requested"]
 
 
 @dataclass(frozen=True)
+class TailoringPolicyRollbackResult:
+    """An accepted restore receipt and the current head observed with it."""
+
+    policy: "TailoringPolicy"
+    current_version: int
+    replayed: bool
+
+
+@dataclass(frozen=True)
 class LearnedTailoringRules:
     """Closed, privacy-safe Materials rules accepted from recommendations."""
 

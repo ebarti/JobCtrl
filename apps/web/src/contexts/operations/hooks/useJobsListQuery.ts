@@ -5,7 +5,7 @@ import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { jobsKeys } from "../jobsKeys.js";
 import { fetchJobsList } from "../jobsListQuery.js";
 import type { JobsListInput } from "../types.js";
-import type { JobSummary, PaginatedResponse } from "@jobctrl/contracts";
+import type { JobSummary, PaginatedResponse, ReviewableJobsResponse } from "@jobctrl/contracts";
 
 export function useJobsListQuery(
   input: JobsListInput,
@@ -15,5 +15,14 @@ export function useJobsListQuery(
   return useQuery({
     queryKey: jobsKeys.list(tenantId, input),
     queryFn: () => fetchJobsList(api, input),
+  });
+}
+
+export function useReviewableJobsListQuery(input: JobsListInput): UseQueryResult<ReviewableJobsResponse> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  return useQuery({
+    queryKey: [...jobsKeys.list(tenantId, input), "reviewable"],
+    queryFn: () => fetchJobsList({ jobs: (query) => api.reviewableJobs(query) }, input),
   });
 }

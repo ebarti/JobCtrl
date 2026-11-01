@@ -12,6 +12,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.infrastructure.temporal.control import execute_control_activity
     from jobctrl.domain.discovery.execution import (
         DiscoveryExecutionCohortKind,
         DiscoveryExecutionRef,
@@ -100,6 +101,9 @@ _DISCOVERY_TIMEOUT = timedelta(hours=6)
 _LIVE_ENRICH_HEARTBEAT_TIMEOUT = timedelta(seconds=5)
 _DEFAULT_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
 _AUTOMATIC_COMPENSATION_REFRESH_PATCH = "discover-automatic-compensation-refresh-v1"
+_COMPENSATION_MODEL_BUDGET_PATCH = "discover-compensation-model-budget-v1"
+_SOURCE_RESULT_BUDGET_PATCH = "discover-source-result-budget-v1"
+_TERMINAL_ENRICHMENT_HANDOFF_PATCH = "discover-terminal-enrichment-handoff-v1"
 
 
 @workflow.defn(name="DiscoverWorkflow")
@@ -192,6 +196,7 @@ class DiscoverWorkflow:
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
                 discovery_execution=discovery_execution,
+                use_source_result_budget=workflow.patched(_SOURCE_RESULT_BUDGET_PATCH),
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -272,6 +277,7 @@ class DiscoverWorkflow:
                 progress_total=plan.progress_total,
                 pipeline_step_item_key="terminal",
                 pipeline_step_detail_code="terminal_reconciliation",
+                per_job_handoff=workflow.patched(_TERMINAL_ENRICHMENT_HANDOFF_PATCH),
             )
             enrichment_status = enrichment_result.status
             enrichment_site_errors = dict(enrichment_result.site_errors)
@@ -400,6 +406,8 @@ class DiscoverWorkflow:
                     progress_total=plan.progress_total,
                     next_run_settings=plan.next_run_settings,
                     discovery_execution=discovery_execution,
+                    use_source_result_budget=plan.use_source_result_budget,
+                    source_result_limits=plan.source_result_limits,
                 ),
                 start_to_close_timeout=_DISCOVERY_TIMEOUT,
                 heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -517,7 +525,9 @@ async def _run_automatic_compensation_refresh_activity(
             expected_db_path=payload.expected_db_path,
             discovery_execution=discovery_execution,
         ),
-        start_to_close_timeout=_DEFAULT_TIMEOUT,
+        start_to_close_timeout=(
+            _DISCOVERY_TIMEOUT if workflow.patched(_COMPENSATION_MODEL_BUDGET_PATCH) else _DEFAULT_TIMEOUT
+        ),
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
         retry_policy=_SOURCE_RETRY,
     )
@@ -670,7 +680,7 @@ def _chunk(items: list[Any], size: int) -> list[list[Any]]:
 
 async def _check_spend(payload: DiscoverWorkflowInput) -> None:
     for lane in ("discovery", "enrichment"):
-        await workflow.execute_activity(
+        await execute_control_activity(
             check_spend_budget,
             SpendBudgetInput(tenant_id=payload.tenant_id, lane=lane),
             start_to_close_timeout=timedelta(seconds=30),

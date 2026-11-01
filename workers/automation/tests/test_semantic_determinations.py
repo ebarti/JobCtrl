@@ -106,6 +106,32 @@ def test_same_sources_bind_opposite_valid_model_decisions() -> None:
         assert len(model.calls) == 1
 
 
+def test_effort_is_persisted_and_changes_cache_identity_without_relabeling_history():
+    repository = Repository()
+    high = Model(response("accept"))
+    high.reasoning_effort = "high"
+    _, first = call(high, repository)
+    low = Model(response("reject"))
+    low.reasoning_effort = "low"
+    second_result, second = call(low, repository)
+    assert second_result.verdict == "reject"
+    assert first.determination_id != second.determination_id
+    assert first.reasoning_effort == "high"
+    assert second.reasoning_effort == "low"
+    assert first.result["verdict"] == "accept"
+    _, cached = call(high, repository)
+    assert cached == first
+    assert len(high.calls) == 1
+    assert len(repository.rows) == 2
+
+
+def test_legacy_receipts_without_recorded_effort_remain_readable():
+    _, envelope = call(Model(response()), Repository())
+    legacy = envelope.model_dump()
+    legacy.pop("reasoning_effort")
+    assert DeterminationEnvelope.model_validate(legacy).reasoning_effort is None
+
+
 @pytest.mark.parametrize("quote", ["alpha, beta", "alpha. beta", "alpha,beta", "1,alpha,beta,2"])
 def test_literal_values_accept_punctuation_delimiters_without_deciding_the_verdict(quote):
     for verdict in ("accept", "reject"):
@@ -236,6 +262,94 @@ def test_unavailable_and_budget_denial_are_distinct_and_do_not_call() -> None:
     assert repository.rows == {}
 
 
+def test_invalid_evidence_is_reasked_under_the_same_sources_and_budget():
+    class CorrectingModel(Model):
+        def chat_json(self, messages, **kwargs):
+            self.output = response() if self.calls else {
+                **response(), "citations": [{"source_id": "canonical:1", "quote": "invented"}],
+            }
+            return super().chat_json(messages, **kwargs)
+
+    model, repository = CorrectingModel(None), Repository()
+    admissions = []
+    result, envelope = call(model, repository, lambda: admissions.append(current_llm_lane()))
+    assert result.verdict == "accept"
+    assert admissions == ["interview", "interview"]
+    assert model.calls[0][0][:2] == model.calls[1][0][:2]
+    assert "non_verbatim_quote" in model.calls[1][0][-1].content
+    feedback = json.loads(model.calls[1][0][-1].content.split("\n", 1)[1])
+    rejected = feedback["rejected_response"]
+    assert rejected["citations"][0]["quote"] == "invented"
+    assert feedback["binding_failure"]["citation"]["quote"] == "invented"
+    assert "untrusted data" in model.calls[1][0][-1].content
+    assert len(repository.rows) == 1
+    assert call(model, repository)[1] == envelope
+    assert len(model.calls) == 2
+
+
+def test_provider_failure_is_not_reasked_as_a_response_repair():
+    model = Model(RuntimeError("private provider details"))
+    with pytest.raises(DeterminationFailure, match="provider_error"):
+        call(model, Repository())
+    assert len(model.calls) == 1
+
+
+def test_exact_value_repair_identifies_the_literal_without_disclosing_it_in_failure_state():
+    class RecordingRepository(Repository):
+        def record_state(self, **kwargs):
+            self.last_state = kwargs
+
+    invalid = {**response(), "citations": [
+        {"source_id": "canonical:1", "quote": "value 10%", "exact_values": ["private invalid value"]},
+    ]}
+    repository, model = RecordingRepository(), Model(invalid)
+    with pytest.raises(DeterminationFailure) as caught:
+        call(model, repository)
+    assert str(caught.value) == "semantic_determination:mismatched_value"
+    assert "private invalid value" not in json.dumps(repository.last_state)
+    feedback = json.loads(model.calls[1][0][-1].content.split("\n", 1)[1])
+    assert feedback["binding_failure"]["invalid_exact_value"] == "private invalid value"
+    assert feedback["binding_failure"]["citation"] == invalid["citations"][0]
+    assert len(model.calls) == 3
+
+
+@pytest.mark.parametrize("code", ["claim_line_binding_invalid", "missing_compensation_citation", "inconsistent_verdict"])
+def test_domain_structural_binding_failure_receives_bounded_response_repair(code):
+    model = Model(response())
+    checked = []
+
+    def validate(result):
+        checked.append(result)
+        if len(checked) == 1:
+            raise DeterminationFailure(code)
+
+    result, _ = call(model, Repository(), validate=validate)
+    assert result.verdict == "accept"
+    assert len(model.calls) == 2
+    assert code in model.calls[1][0][-1].content
+
+
+def test_valid_semantic_rejection_is_not_reasked_as_a_binding_repair():
+    model = Model(response("reject"))
+
+    def validate(result):
+        raise DeterminationFailure("claim_verification_failed")
+
+    with pytest.raises(DeterminationFailure, match="claim_verification_failed"):
+        call(model, Repository(), validate=validate)
+    assert len(model.calls) == 1
+
+
+def test_evidence_repairs_are_bounded_and_preserve_an_accepted_result():
+    repository = Repository()
+    accepted = call(Model(response()), repository)[1]
+    invalid = Model({**response(), "citations": [{"source_id": "canonical:1", "quote": "invented"}]})
+    with pytest.raises(DeterminationFailure, match="non_verbatim_quote"):
+        call(invalid, repository, entity_id="synthetic:2")
+    assert len(invalid.calls) == 3
+    assert list(repository.rows.values()) == [accepted]
+
+
 def test_concurrent_identical_requests_make_one_paid_call():
     from concurrent.futures import ThreadPoolExecutor
 
@@ -244,3 +358,89 @@ def test_concurrent_identical_requests_make_one_paid_call():
         results = list(pool.map(lambda _: call(model, repository), range(2)))
     assert results[0] == results[1]
     assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize("retryable,code", [(True, "provider_error"), (False, "provider_non_retryable")])
+def test_provider_retry_authority_survives_the_safe_determination_protocol(retryable, code):
+    from jobctrl.domain.determinations import serialized_determination_failure
+    from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, ProviderFailureEnvelope
+
+    failure = ProviderCallError(ProviderFailureEnvelope(
+        provider="openai", model="synthetic", operation="chat_json", category="provider_turn",
+        error_type="codex_turn_error", code="other", retryable=retryable,
+    ))
+    model = Model(failure)
+    with pytest.raises(DeterminationFailure) as raised:
+        call(model, Repository())
+    assert raised.value.code == code
+    assert raised.value.retryable is retryable
+    assert serialized_determination_failure(str(raised.value)).retryable is retryable
+    assert len(model.calls) == 1
+
+
+
+def test_instruction_profile_changes_receipt_identity_and_preserves_accepted_history():
+    repository = Repository()
+    first_model, second_model = Model(response("accept")), Model(response("reject"))
+    first_model.instruction_profile = "a" * 64
+    second_model.instruction_profile = "b" * 64
+    _, first = call(first_model, repository)
+    result, second = call(second_model, repository)
+    assert result.verdict == "reject"
+    assert first.determination_id != second.determination_id
+    assert first.instruction_profile == "a" * 64
+    assert second.instruction_profile == "b" * 64
+    assert call(first_model, repository)[1] == first
+    assert len(first_model.calls) == len(second_model.calls) == 1
+    assert first.result["verdict"] == "accept"
+    legacy = first.model_dump()
+    legacy.pop("instruction_profile")
+    assert DeterminationEnvelope.model_validate(legacy).instruction_profile is None
+
+
+def test_cached_receipt_cannot_relabel_instruction_profile():
+    repository, model = Repository(), Model(response())
+    model.instruction_profile = "a" * 64
+    _, envelope = call(model, repository)
+    repository.rows[("synthetic", envelope.determination_id)] = envelope.model_copy(
+        update={"instruction_profile": "b" * 64},
+    )
+    with pytest.raises(DeterminationFailure, match="cache_binding_invalid"):
+        call(model, repository)
+    assert len(model.calls) == 1
+
+
+def test_model_call_context_records_exact_receipt_id_and_resets_on_failure():
+    from jobctrl.llm_request_context import current_determination_request
+
+    contexts = []
+    class ObservedModel(Model):
+        def chat_json(self, messages, **kwargs):
+            contexts.append(current_determination_request())
+            return super().chat_json(messages, **kwargs)
+    _, receipt = call(ObservedModel(response()), Repository())
+    assert contexts[0].kind == receipt.kind
+    assert contexts[0].fingerprint == receipt.determination_id
+    assert current_determination_request() is None
+    with pytest.raises(DeterminationFailure, match="provider_error"):
+        call(ObservedModel(RuntimeError("owned failure")), Repository())
+    assert current_determination_request() is None
+
+
+def test_determination_context_isolated_between_threads_and_nested_failures():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from jobctrl.llm_request_context import bind_determination_request, current_determination_request
+
+    barrier = Barrier(2)
+    def observe(marker):
+        assert current_determination_request() is None
+        with bind_determination_request("owned", marker * 64):
+            barrier.wait(timeout=2)
+            with pytest.raises(RuntimeError):
+                with bind_determination_request("inner", "c" * 64):
+                    raise RuntimeError("owned")
+            assert current_determination_request().fingerprint == marker * 64
+        return current_determination_request()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert list(executor.map(observe, ("a", "b"))) == [None, None]

@@ -50,7 +50,6 @@ describe("<GenerateMaterialsButton>", () => {
 
     await waitFor(() =>
       expect(generateMaterials).toHaveBeenCalledWith("job-1", {
-        stages: ["tailor", "cover"],
         dryRun: false,
         limit: 1,
       }),

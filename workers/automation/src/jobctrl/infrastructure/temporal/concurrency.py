@@ -5,12 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Literal
 
 from jobctrl.infrastructure.scoring.criteria_provider import read_config_settings
 
 
 DEFAULT_MAX_CONCURRENT_ACTIVITIES = 4
+LOCAL_CONTROL_ACTIVITY_SLOTS = 2
 
 # R9 Phase 3. Number of discovery source families crawled concurrently. Default
 # 1 preserves the sequential-for-isolation behavior; a value > 1 runs that many
@@ -49,6 +51,15 @@ def resolve_max_concurrent_activities(
     )
 
 
+def resolve_pipeline_internal_concurrency(config_path: Path | str | None = None) -> int:
+    """Snapshot Settings internal parallelism for a newly dispatched workflow."""
+    raw = read_config_settings(config_path).get("pipeline_internal_concurrency")
+    # Match the Settings reader's decimal-prefix parsing for saved numeric and
+    # legacy string values. This is format parsing, not a semantic decision.
+    match = re.match(r"^[+-]?[0-9]+", str(raw).strip())
+    return min(16, max(1, int(match[0]))) if match else 1
+
+
 def resolved_max_parallel_discovery_families(
     search_cfg: Mapping[str, object],
     active_activity_slots: int,
@@ -62,4 +73,4 @@ def resolved_max_parallel_discovery_families(
 
 
 def activity_executor_max_workers(max_concurrent_activities: int) -> int:
-    return max(1, int(max_concurrent_activities)) + 2
+    return max(1, int(max_concurrent_activities)) + LOCAL_CONTROL_ACTIVITY_SLOTS

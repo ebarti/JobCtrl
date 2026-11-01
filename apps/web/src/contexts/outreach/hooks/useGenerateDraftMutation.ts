@@ -21,6 +21,7 @@ export function useGenerateDraftMutation(
   const { api } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
+    retry: false,
     mutationKey: outreachKeys.threads(tenantId),
     mutationFn: (body: GenerateOutreachDraftRequest) => api.generateOutreachDraft(contactId, body),
     onSettled: (_data, _error, variables) => {

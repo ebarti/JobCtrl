@@ -47,7 +47,7 @@ func main() {
 	if source == "curl" && descriptorURL != "" {
 		fail("signed cached release inputs are reserved for the Homebrew acquisition adapter")
 	}
-	options := installer.Options{Home: home, ReleaseURL: releaseURL, Trust: trust, Policy: policy, AllowUnsignedLocal: allowUnsignedLocal, AcquisitionSource: source, StageOnly: stageOnly}
+	options := installer.Options{Home: home, ReleaseURL: releaseURL, Trust: trust, Policy: policy, AllowUnsignedLocal: allowUnsignedLocal, AcquisitionSource: source, StageOnly: stageOnly, Environment: os.Environ()}
 	var receipt installer.Receipt
 	var err error
 	if allowUnsignedLocal {

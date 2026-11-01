@@ -44,11 +44,11 @@ test("Discovery Target search reviews persisted model decisions and saves only e
   await page.goto("/discovery");
   await expect(page).toHaveTitle(/JobCtrl.*Discovery/);
   await expect(page.getByRole("heading", { name: "Discovery", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Suggest roles" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Get suggestions for target roles" })).toBeVisible();
   const responsePromise = page.waitForResponse((response) =>
     new URL(response.url()).pathname === "/v1/profile/target-role-suggestions",
   );
-  await page.getByRole("button", { name: "Suggest roles" }).click();
+  await page.getByRole("button", { name: "Get suggestions for target roles" }).click();
   const suggestionResponse = await responsePromise;
   expect(suggestionResponse.status(), await suggestionResponse.text()).toBe(200);
   const result = await suggestionResponse.json();
@@ -106,7 +106,7 @@ test("Discovery Target search reviews persisted model decisions and saves only e
   await page.reload();
   await expect(page.getByRole("textbox", { name: "Target roles 2", exact: true })).toHaveValue("Platform Delivery Manager");
 
-  await page.getByRole("button", { name: "Suggest roles" }).click();
+  await page.getByRole("button", { name: "Get suggestions for target roles" }).click();
   await expect(page.getByRole("button", { name: "Add selected roles" })).toBeVisible();
   await page.getByRole("checkbox", { name: "Select Model proposal A" }).check();
   await page.getByRole("button", { name: "Reject Model proposal B" }).click();
@@ -149,11 +149,11 @@ test("Discovery Target search reviews persisted model decisions and saves only e
     releaseSave();
     if (!page.isClosed()) await page.unroute("**/v1/profile", pauseProfileSave);
   }
-  await expect(page.getByText(/saved profile changed/i).first()).toBeVisible();
+  await expect(page.getByText(/A newer profile was saved while you were editing/i)).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Target roles 3", exact: true })).toHaveValue("Model proposal A");
-  await page.getByRole("button", { name: "Rebase edits onto saved profile" }).click();
+  await page.getByRole("button", { name: "Update draft with saved changes" }).click();
   await expect(page.getByText(/Draft rebased and stale suggestions removed/)).toBeVisible();
-  await page.getByRole("button", { name: "Suggest roles" }).click();
+  await page.getByRole("button", { name: "Get suggestions for target roles" }).click();
   await page.getByRole("button", { name: "Reject Model proposal A" }).click();
   await page.getByRole("button", { name: "Reject Model proposal C" }).click();
   await page.getByRole("checkbox", { name: "Select Model proposal B" }).check();

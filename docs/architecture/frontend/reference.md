@@ -59,10 +59,10 @@ the upstream advances its watermark before redelivery.
 **Mitigations:**
 - The 30s "connection lost — events paused" UI banner (§7.7) makes the
   failure visible to the user.
-- On reconnect, the `EventStreamProvider` triggers a one-shot
-  `queryClient.invalidateQueries()` (full cache invalidation) as a
-  backstop; `Last-Event-ID` covers the common case, the full
-  invalidation covers the long-gap case.
+- On first open and reconnect, the `EventStreamProvider` reconciles the
+  current tenant's cached reads once. An unfinished initial read settles before
+  its own invalidation, preserving route-loader callers while ensuring a later
+  canonical refresh. `Last-Event-ID` covers the common reconnect case.
 - The endpoint sets `X-Accel-Buffering: no` (§7.1) to disable nginx /
   proxy buffering at the edge.
 - The client periodically receives `event: heartbeat` (every 30s)
@@ -255,7 +255,7 @@ first's reconciliation.
 | **ApiClientPort** | Frontend (Hexagonal) | The interface through which feature code reaches the backend HTTP API. Local adapter wraps `@jobctrl/api-client`; hosted adapter adds JWT injection. |
 | **AppliedAction** | Frontend (Apply context) | UI affordance to manually mark a job as applied without running the apply automation. Surfaces `MarkAppliedUseCase`. |
 | **ApplyRunBadge** | Frontend (Apply context) | Legacy-named status component that renders a compact dot/glyph plus text in dashboard ledgers and run detail workspaces to summarize an `ApplyRun`'s current `SubmissionResult`. |
-| **ApplyRunTimeline** | Frontend (Apply context) | Live-updating timeline of `ApplyRunEvent` rows; updates via SSE `setQueryData` (not `invalidate`) for high-frequency events. |
+| **ApplyRunTimeline** | Frontend (Apply context) | Combines workflow history, the selected run's persisted Apply history, and live Apply events; run-scoped event IDs reconcile durable and live copies. |
 | **AppShell** | Frontend (Layout) | The persistent chrome around the route content: a grouped left rail (14 destinations in 5 groups via `SideRail`) that users can collapse to accessible icons on desktop with the choice persisted in `jh:ui-preferences`; mobile uses a separate navigation sheet. A slim topbar provides the desktop rail trigger, global job search that navigates to `/jobs?q=…`, density and theme toggles, and inline connection-status dot/glyph plus text. Lives in `shared/layout/AppShell.tsx`. |
 | **Bounded Context (Frontend)** | Architecture | A folder under `contexts/` mirroring a backend bounded context (one of the nine: Discovery, Enrichment, Profile, Scoring, Materials, Apply, Pipeline, Operations, Contact & Outreach). Owns its query keys (where applicable), hooks, components, forms, selectors, and event handlers. Imports from `shared/` and from other contexts' *components* only. |
 | **CacheKey (Profile HTML)** | Frontend (Profile) | A monotonically increasing token derived from the profile mutation count, appended as `?v=...` to the Profile baseline resume HTML preview URL to refresh the Plate editor after each profile mutation. |

@@ -292,6 +292,11 @@ class GenerateOutreachDraftUseCase:
         contact = self.contact_repository.load(tenant_id, contact_id)  # type: ignore[arg-type]
         if contact is None:
             raise OutreachDraftInputError(f"Contact {contact_id!r} not found")
+        # Capture expected state (including absence) before generation or review.
+        existing_thread = self.repository.load(tenant_id, thread_id) or OutreachThread.create(
+            tenant_id=tenant_id, thread_id=thread_id, contact_id=str(contact.contact_id),
+            job_id=job_id, created_at=self.clock(),
+        )
         target_company = contact.link.employer or ""
         composer = _OutreachDraftComposer(
             llm=self.llm,
@@ -325,6 +330,7 @@ class GenerateOutreachDraftUseCase:
             model=model,
             clock=self.clock,
             new_id=self.new_id,
+            existing_thread=existing_thread,
         )
 
 
@@ -569,7 +575,7 @@ def _persist_new_draft(
     model: str | None,
     clock: Callable[[], str],
     new_id: Callable[[], str],
-    existing_thread: OutreachThread | None = None,
+    existing_thread: OutreachThread,
 ) -> OutreachThread:
     gate_results, provenance = composer.gate(
         body_text=body_text,
@@ -582,14 +588,6 @@ def _persist_new_draft(
     )
     now = clock()
     thread = existing_thread
-    if thread is None:
-        thread = repository.load(tenant_id, thread_id) or OutreachThread.create(
-            tenant_id=tenant_id,
-            thread_id=thread_id,
-            contact_id=str(contact.contact_id),
-            job_id=job_id,
-            created_at=now,
-        )
     draft = OutreachDraft(
         draft_id=str(new_id()),
         thread_id=thread_id,

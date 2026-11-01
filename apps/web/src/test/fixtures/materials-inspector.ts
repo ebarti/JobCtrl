@@ -198,6 +198,33 @@ export const populatedRequirementFitReport: RequirementFitReport = {
   ],
 };
 
+export const blockedRequirementFitReport: RequirementFitReport = {
+  ...populatedRequirementFitReport,
+  resolvedFitScore: 4,
+  fitBand: "stretch",
+  summary: { weightedFit: 0.8, mustHaveCoverage: 0.8, blockerCount: 1, missingHighWeightCount: 0 },
+  assessments: [
+    {
+      ...populatedRequirementFitReport.assessments[0]!,
+      weight: 1,
+      contribution: { maxPoints: 1.25, awardedPoints: 1.25, weightedImpact: 1.25, rationale: "Direct evidence covers req-1." },
+    },
+    {
+      ...populatedRequirementFitReport.assessments[1]!,
+      requirementText: "Hold the required current clearance",
+      jobEvidenceSpan: "A current clearance is required.",
+      tier: "must_have",
+      weight: 0.25,
+      fit: { kind: "blocked", blocker: "The posting requires a current clearance." },
+      contribution: { maxPoints: 0.3125, awardedPoints: 0, weightedImpact: 0, rationale: "Requirement req-2 is blocked." },
+      tailoring: {
+        action: "avoid_claim", priority: 0.25, allowedEvidenceIds: [], targetKeywords: [],
+        prohibitedClaims: ["Holds the required current clearance"], instruction: "Do not claim unrecorded clearance.",
+      },
+    },
+  ],
+};
+
 export const provenanceEntries: BulletProvenanceEntry[] = [
   {
     bulletId: "exp-1-0",

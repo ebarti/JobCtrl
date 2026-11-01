@@ -45,6 +45,7 @@ import re
 import sqlite3
 import threading
 import urllib.parse
+from jobctrl.domain.apply.event_privacy import public_apply_error_message
 from jobctrl.infrastructure.projections.fetch_failure import fetch_failure_from_stage_metadata
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -304,6 +305,7 @@ CONTACT_RESEARCH_EVENT_TYPES: frozenset[str] = frozenset(
         "ContactResearchTaskNeedsReview",
         "ContactResearchTaskCompleted",
         "ContactResearchTaskFailed",
+        "ContactResearchSourceAttemptFailed",
     }
 )
 
@@ -773,6 +775,10 @@ class ProjectionBuilder:
     For single-threaded callers (CLI bootstrap, tests) the factory can
     legitimately return the same shared connection on every call:
     ``ProjectionBuilder(conn_factory=lambda: conn)``.
+
+    ``strict_reads`` propagates database errors that legacy-compatible reads
+    normally tolerate, so the enclosing refresh rolls back instead of
+    publishing an incomplete projection. Missing rows remain valid empty data.
     """
 
     def __init__(
@@ -780,9 +786,11 @@ class ProjectionBuilder:
         *,
         conn_factory: Callable[[], sqlite3.Connection],
         tenant_id: TenantId = LOCAL_TENANT,
+        strict_reads: bool = False,
     ) -> None:
         self._conn_factory = conn_factory
         self._tenant_id: TenantId = tenant_id
+        self._strict_reads = strict_reads
         # Thread-local binding scope for refresh().  Each thread that
         # calls refresh() (or _on_event) gets its own conn / store /
         # watermarks rooted at the connection the factory returned on
@@ -982,6 +990,8 @@ class ProjectionBuilder:
                     if job_id:
                         dirty_job_ids.add(str(job_id))
             except sqlite3.OperationalError:
+                if self._strict_reads:
+                    raise
                 # ``jobs`` table not yet created (very-fresh DB) — nothing
                 # to backfill.
                 pass
@@ -990,6 +1000,7 @@ class ProjectionBuilder:
         dirty_job_ids.update(self._stale_artifact_projection_jobs())
         dirty_job_ids.update(self._stale_stage_projection_jobs())
         dirty_job_ids.update(self._stale_compensation_projection_jobs())
+        dirty_job_ids.update(self._backfill_late_apply_settlements())
 
         # One-time score-audit backfill (see SCORE_AUDIT_BACKFILL): rebuild any
         # already-projected scored job whose audit columns are still NULL. This
@@ -1112,6 +1123,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         return row is not None
 
@@ -1134,6 +1147,8 @@ class ProjectionBuilder:
                 (tenant,),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return
         live_ids: set[str] = set()
         for row in contact_rows:
@@ -1203,6 +1218,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         return row is not None
 
@@ -1227,6 +1244,8 @@ class ProjectionBuilder:
                 (tenant,),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return
         live_ids: set[str] = set()
         for row in task_rows:
@@ -1305,6 +1324,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         return row is not None
 
@@ -1329,6 +1350,8 @@ class ProjectionBuilder:
                 (tenant,),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return
         live_ids: set[str] = set()
         for row in thread_rows:
@@ -1415,6 +1438,8 @@ class ProjectionBuilder:
                 (tenant,),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return
         live_ids: set[str] = set()
         for row in rows:
@@ -1460,7 +1485,12 @@ class ProjectionBuilder:
         score = self._load_latest_score(job_id)
         materials = self._load_latest_materials(job_id)
         material_analytics = self._load_material_analytics(job_id)
-        requirement_fit_report_json = self._load_requirement_fit_report(job_id)
+        score_version = score.get("version")
+        requirement_fit_report_json = (
+            self._load_requirement_fit_report(job_id, score_version=score_version)
+            if score_version is not None
+            else None
+        )
         requirement_fit_band = _fit_band_from_report_json(requirement_fit_report_json)
         provenance_by_artifact = self._load_bullet_provenance_by_artifact(job_id)
         layout_boxes_by_artifact = self._load_layout_boxes_by_artifact(job_id)
@@ -1915,10 +1945,10 @@ class ProjectionBuilder:
               {job_metadata["join_sql"]}{lifecycle["join_sql"]}
              WHERE items.tenant_id = ?{lifecycle["where_sql"]}
                AND items.score_version = (
-                 SELECT MAX(report.score_version)
-                  FROM job_requirement_fit_reports AS report
-                  WHERE report.tenant_id = items.tenant_id
-                    AND report.job_id = items.job_id
+                 SELECT MAX(score.version)
+                  FROM job_scores AS score
+                  WHERE score.tenant_id = items.tenant_id
+                    AND score.job_id = items.job_id
                )
              ORDER BY items.job_id, items.position, items.requirement_id
             """,
@@ -2113,6 +2143,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             row = None
         if row is None:
             return {
@@ -2163,6 +2195,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             row = None
         if row is None:
             return {"ok": True, "recordStatus": "not_requested", "jobId": job_id}
@@ -2269,6 +2303,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             rows = []
         # ``sqlite3.Row`` (configured via ``row_factory``) is always mapping-like,
         # never a plain tuple — drop the dead isinstance branch so the dict's
@@ -2298,7 +2334,7 @@ class ProjectionBuilder:
                     finished_at=_row_nullable_str(row, "finished_at"),
                     duration_ms=_row_nullable_int(row, "duration_ms"),
                     error_code=_row_nullable_str(row, "error_code"),
-                    error_message=_row_nullable_str(row, "error_message"),
+                    error_message=public_apply_error_message(_row_nullable_str(row, "error_code"), _row_nullable_str(row, "error_message")),
                     retryable=_row_nullable_int(row, "retryable") != 0,
                     blocked_by=tuple(str(item) for item in blocked_by) if isinstance(blocked_by, list) else (),
                     next_action=_row_nullable_str(row, "next_action"),
@@ -2325,6 +2361,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         if row is None:
             return {}
@@ -2365,6 +2403,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         if generation_row is None:
             return {}
@@ -2382,6 +2422,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id, int(max_generation)),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         result: dict = {"generation": int(max_generation)}
         for row in artifact_rows:
@@ -2430,6 +2472,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         metadata_jsons = [
             _row_nullable_str(row, "metadata_json"),
@@ -2459,6 +2503,8 @@ class ProjectionBuilder:
                     (str(self._tenant_id), job_id, base_generation),
                 ).fetchone()
             except sqlite3.OperationalError:
+                if self._strict_reads:
+                    raise
                 row = None
             metadata.append(_row_nullable_str(row, "metadata_json"))
             try:
@@ -2480,6 +2526,8 @@ class ProjectionBuilder:
                     (str(self._tenant_id), job_id, base_generation),
                 ).fetchall()
             except sqlite3.OperationalError:
+                if self._strict_reads:
+                    raise
                 rows = []
             metadata.extend(_row_nullable_str(row, "metadata_json") for row in rows)
         if base_artifact_ids:
@@ -2503,12 +2551,14 @@ class ProjectionBuilder:
                     (str(self._tenant_id), job_id, *base_artifact_ids),
                 ).fetchall()
             except sqlite3.OperationalError:
+                if self._strict_reads:
+                    raise
                 rows = []
             metadata.extend(_row_nullable_str(row, "metadata_json") for row in rows)
         return metadata
 
-    def _load_requirement_fit_report(self, job_id: str) -> str | None:
-        """Project the latest canonical requirement-fit report read shape.
+    def _load_requirement_fit_report(self, job_id: str, *, score_version: int | None = None) -> str | None:
+        """Project the requirement-fit report for the selected canonical score.
 
         The score aggregate owns the source rows. The detail projection exposes
         the latest ``RequirementFitReport.to_read_model()`` so the UI can show
@@ -2518,8 +2568,15 @@ class ProjectionBuilder:
         from jobctrl.infrastructure.scoring import SqliteRequirementFitReportRepository
 
         try:
-            record = SqliteRequirementFitReportRepository(self._conn).load(self._tenant_id, JobId(job_id))
+            repository = SqliteRequirementFitReportRepository(self._conn)
+            record = (
+                repository.load(self._tenant_id, JobId(job_id), score_version=score_version)
+                if score_version is not None
+                else repository.load(self._tenant_id, JobId(job_id))
+            )
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return None
         if record is None:
             return None
@@ -2557,6 +2614,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return empty
         if not generation_rows:
             return empty
@@ -2606,6 +2665,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         if row is None:
             return {}
@@ -2636,6 +2697,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         if row is None:
             return {}
@@ -2666,6 +2729,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             row = None
         occurred_at = _row_nullable_str(row, "occurred_at")
         if occurred_at:
@@ -2684,6 +2749,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return None
         occurred_at = _row_nullable_str(row, "occurred_at")
         return ("external_confirmed", occurred_at) if occurred_at else None
@@ -2699,6 +2766,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return None
         if row is None:
             return None
@@ -2732,6 +2801,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2787,6 +2858,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2821,6 +2894,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2853,6 +2928,8 @@ class ProjectionBuilder:
                 (self._score_audit_backfill_marker,),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         return row is not None
 
@@ -2877,6 +2954,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2898,6 +2977,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2920,6 +3001,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2963,6 +3046,8 @@ class ProjectionBuilder:
                     }
                 )
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             pass
         try:
             for row in self._conn.execute(
@@ -2995,6 +3080,8 @@ class ProjectionBuilder:
                     }
                 )
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             pass
         return artifacts
 
@@ -3015,6 +3102,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
 
         by_artifact: dict[str, list[dict[str, Any]]] = {}
@@ -3099,6 +3188,8 @@ class ProjectionBuilder:
                 ).fetchone()[0]
             )
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             dry_runs = 0
 
         # Funnel per stage.
@@ -3318,6 +3409,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         grouped: dict[str, list[dict[str, str | None]]] = {}
         for row in rows:
@@ -3341,6 +3434,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return counts
         for row in rows:
             status = _row_str(row, "status").strip().lower()
@@ -3413,6 +3508,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         event_count = int(event_row[0] or 0) if event_row else 0
         projection_count = int(projection_row[0] or 0) if projection_row else 0
@@ -3740,6 +3837,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         event_count = int(event_row[0] or 0) if event_row else 0
         projection_count = int(projection_row[0] or 0) if projection_row else 0
@@ -3778,6 +3877,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), *WORKFLOW_EVENT_TYPES),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         out: dict[str, list[dict]] = {}
         for row in rows:
@@ -3861,6 +3962,14 @@ class ProjectionBuilder:
                     )
                 ):
                     continue
+                # Dispatch acknowledgements and the workflow both emit starts.
+                # Their order is not fixed, and the acknowledgement may omit
+                # job/configuration fields. Retain recorded keys only when the
+                # exact Temporal execution matches; a new or unidentified run
+                # cannot inherit another execution's input metadata.
+                same_execution = bool(event_run_id) and event_run_id == temporal_run_id
+                if not same_execution:
+                    input_summary = {}
                 status = "in_progress"
                 error_code = None
                 error_message = None
@@ -3870,7 +3979,7 @@ class ProjectionBuilder:
                 started_at = payload.get("startedAt") or occurred_at or started_at
                 summary = payload.get("inputSummary")
                 if isinstance(summary, dict):
-                    input_summary = summary
+                    input_summary = {**input_summary, **summary}
                 if event_run_id:
                     temporal_run_id = event_run_id
             elif event_type in _WORKFLOW_TERMINAL_STATUS:
@@ -3943,6 +4052,28 @@ class ProjectionBuilder:
                 continue
             self._store.upsert_apply_run(projection)
 
+    def _backfill_late_apply_settlements(self) -> set[str]:
+        """Repair existing fallback rows once, even with a current event cursor.
+
+        The refresh writer/savepoint owns both the repair and marker. History,
+        canonical stage state and tenant boundaries retain their authority.
+        """
+        marker = f"late_apply_settlement_v3:{self._tenant_id}"
+        if self._conn.execute("SELECT 1 FROM projection_backfills WHERE name=?", (marker,)).fetchone():
+            return set()
+        jobs = {str(row[0]) for row in self._conn.execute(
+            "SELECT DISTINCT job_id FROM job_events WHERE tenant_id=? AND stage='apply' "
+            "AND event_type='LockReleased' AND json_extract("
+            "CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END,'$.stage_preserved')=1",
+            (str(self._tenant_id),),
+        )}
+        if jobs:
+            self._rebuild_apply_runs()
+        self._conn.execute(
+            "INSERT INTO projection_backfills (name,completed_at) VALUES (?,?)", (marker, _utc_now()),
+        )
+        return jobs
+
     def _collect_apply_events_by_run(self) -> dict[str, list[dict]]:
         try:
             rows = self._conn.execute(
@@ -3957,6 +4088,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         out: dict[str, list[dict]] = {}
         for row in rows:
@@ -4054,6 +4187,25 @@ class ProjectionBuilder:
                 if event_type == "LockReleased" and result is not None:
                     continue
                 term_status, term_result = self._TERMINAL_EVENT_STATUS[event_type]
+                if event_type == "LockReleased" and payload.get("stage_preserved") is True:
+                    # Settlement reports the original run's result independently
+                    # of a newer/local stage disposition. This is display evidence,
+                    # not an ApplicationSubmitted fact or retry authority.
+                    late_status = payload.get("late_status")
+                    if late_status == "applied":
+                        # Only the sender's receipt-validated ApplicationSubmitted
+                        # event can establish success. An arbitrary sent event or
+                        # a caller's return value is not that evidence.
+                        term_status, term_result = "manual", "needs_verification"
+                    elif late_status == "dry_run":
+                        term_status, term_result = "dry_run_complete", "dry_run_complete"
+                        dry_run = True
+                    elif late_status == "skipped":
+                        term_status, term_result = "manual", "manual"
+                    elif late_status in {"failed", "needs_verification"} and any(
+                        item["event_type"] == "ApplySubmitIntended" and item["job_id"] == job_id for item in events
+                    ):
+                        term_status, term_result = "manual", "needs_verification"
                 status = term_status
                 result = str(payload.get("result")) if isinstance(payload.get("result"), str) else term_result
                 finished_at = (
@@ -4091,6 +4243,32 @@ class ProjectionBuilder:
         if not job_id:
             return None
 
+        # A late caller result, or even a contradictory terminal event, cannot
+        # resolve an admitted live intent. Only an exact operation-bound email
+        # receipt followed by its submitted fact establishes success.
+        same_job = [event for event in events if event["job_id"] == job_id]
+        late = any(event["event_type"] == "LockReleased" and event["payload"].get("stage_preserved") is True
+                   for event in same_job)
+        intents = [event for event in same_job if event["event_type"] == "ApplySubmitIntended"]
+        if late and intents:
+            from jobctrl.infrastructure.apply_controls import valid_email_confirmation
+
+            confirmed = False
+            submitted = False
+            if len(intents) == 1:
+                found_intent = False
+                for event in same_job:
+                    if event is intents[0]:
+                        found_intent = True
+                    elif found_intent and event["event_type"] == "EmailApplicationSent":
+                        confirmed = confirmed or valid_email_confirmation(
+                            intents[0]["payload"], event["payload"], self._tenant_id, job_id, run_id,
+                        )
+                    elif confirmed and event["event_type"] == "ApplicationSubmitted":
+                        submitted = True
+            if not submitted:
+                status, result, dry_run = "manual", "needs_verification", False
+
         # Hydrate denormalised job columns from the parent ``jobs`` row
         # so the read-side widgets render real values rather than
         # "Untitled" / "Unknown company".
@@ -4104,23 +4282,28 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             meta = None
         if meta is not None:
             title = _row_str(meta, "title") or title
 
         employer = _canonical_employer(meta)
 
+        from jobctrl.domain.apply.event_privacy import email_event_references
+
         events_payload: list[dict] = []
         for event in events:
+            safe_payload = email_event_references(event["event_type"], event["payload"])
             entry = {
                 "event_type": event["event_type"],
                 "level": event["level"],
                 "occurred_at": event["occurred_at"],
             }
-            if event["message"]:
+            if event["message"] and safe_payload is event["payload"]:
                 entry["message"] = event["message"]
-            if event["payload"]:
-                entry["payload"] = event["payload"]
+            if safe_payload:
+                entry["payload"] = safe_payload
             events_payload.append(entry)
 
         return ApplyRunProjection(

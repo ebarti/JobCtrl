@@ -48,18 +48,54 @@ There is no second spend table or preflight.
 The worker checks saved preparation state at startup and on its 15-second
 heartbeat. `pipeline/automatic_preparation.py` resumes pending or retryable
 failed Enrich, Score, Tailor, and Cover work without running Discover or Apply.
-It waits while Temporal reports another discovery, import, or preparation
-workflow, or canonical stage rows are queued/running. An unavailable Temporal
-inventory prevents dispatch.
+Discovery, imports and unscoped/manual batch workflows retain a global dispatch
+gate. A single-job `JobPreparationWorkflow` or one-stage automatic
+`JobPipelineWorkflow` may overlap recovery for other jobs: its first immutable
+history event must identify the exact run, local cohort, permitted stage and
+compatible workspace. Every member stays excluded even between activities.
+Missing or unavailable inventory/history prevents dispatch.
 
-Each recovery workflow handles one stage for at most 25 local jobs. Canonical
-queue predicates determine description, score, policy, threshold, and approved
-material prerequisites. A later heartbeat selects the next eligible stage.
-Recovery excludes explicit cancellation, blocked/non-retryable and exhausted
-states, deleted jobs, and closed/incompatible postings. Existing scores and
-approved materials are reused. Attempts are preserved, capped by the smaller
-of the stage limit and five, and delayed by `min(1800, 60 * 2^attempts)` seconds.
-Both dispatch and the workflow enforce the normal spend preflight.
+Under the SQLite write lock, every queued/running stage must belong to a
+verified execution or an unchanged frozen reservation. Unknown or conflicting
+ownership prevents dispatch. A frozen reservation already executing under its
+verified cohort keeps its rows while unrelated work can proceed. An unstarted
+reservation retains its exact cohort and deterministic workflow ID; a recorded
+run must be described before settlement, and missing owner history cannot
+justify a replacement execution. Enrich's activity/run/attempt lease token and
+Score/Tailor/Cover's run owner are checked using their respective formats.
+
+Each recovery workflow handles one stage for at most 25 local jobs. Automatic
+batches share the saved `pipeline_internal_concurrency` budget (default 1,
+bounded 1–16): each executing batch accounts for the smaller of its immutable
+worker count and unfinished cohort membership. The next dispatch receives only
+the remaining parallelism, rather than multiplying the setting for each batch.
+Existing execution input is never rewritten. Worker activity slots and source
+politeness remain separate limits. One new cohort is dispatched per heartbeat.
+Heartbeats retain only the generated `prepare-auto-local-<stage>-<24 hex>`
+workflow ID and Temporal run ID. Pipelines uses the literal activity type to
+show its stage without assigning the batch to an individual job or inventing
+Discovery membership.
+
+Canonical queue predicates determine description, score, policy, threshold,
+and approved material prerequisites. A later heartbeat selects the next
+eligible stage. Recovery excludes explicit cancellation, blocked/non-retryable
+and exhausted states, deleted jobs, and closed/incompatible postings. Existing
+scores and approved materials are reused. Attempts are preserved, capped by
+the smaller of the stage limit and five, and delayed by
+`min(1800, 60 * 2^attempts)` seconds. Both dispatch and the workflow enforce the
+normal spend preflight.
+
+Automatic Tailor/Cover also respect a canonical manual Apply decline: `skipped`,
+no error code, and non-retryable. This differs from a `MIN_SCORE` policy skip;
+legacy fields and retained reason metadata do not decide the outcome. New
+selection, activity filtering and the locked per-job claim share this veto.
+Before reusing a frozen reservation, the coordinator releases only declined,
+unstarted queued automatic material ownership to pending, recording its former
+reservation without consuming an attempt. Surviving members retain the original
+frozen cohort/workflow identity; an all-declined cohort cannot block unrelated
+work. The Apply outcome and accepted materials remain intact. Resetting Apply
+can restore normal automatic eligibility. Explicit foreground generation and
+Enrich/Score are unchanged; cooperative Cancel stops already-admitted work.
 
 `pipeline/public_fetch_recovery.py` is a narrow exception for a still-current
 non-retryable `DETAIL_UNSAFE_URL`: the canonical stage, enrichment attempt, and
@@ -111,6 +147,12 @@ its execution lease so a disconnected predecessor cannot commit late results.
 Scoring and material generation fence both admission and persistence against
 cancellation or changed ownership, without holding a database lock during
 provider calls.
+Global Score sweeps use the same admission and publication fences, including
+queued automatic reservations that have no activity owner yet. A profile
+continuation cannot replace a live recovery owner. Selected batches report a
+typed ownership loss as a skipped job and continue independent peers. Global
+failed-job summaries and safe determination errors still fail their activity;
+previously accepted peer results remain saved.
 
 Stopping discovery's streaming enrichment consumer for its terminal pass is an
 internal handoff, not a user cancellation. The consumer releases unfinished
@@ -158,6 +200,15 @@ Because the loop is a normal workflow run, it is projected into
 same place as manually-started runs.
 
 ## Discovery Schedule
+
+Discovery planning and each source family distinguish missing first-use rows
+from unreadable or invalid saved settings and profile targets. Read failures
+remain retryable; invalid saved inputs require recovery. Both stop before source
+acquisition and leave the stored inputs intact. If schedule settings cannot be
+read during worker startup, reconciliation leaves the existing schedule alone;
+the worker starts and any scheduled Discovery still goes through the same
+planning guard. Unrelated network operations read only their crawler identity;
+they do not need the profile's saved Discovery targets.
 
 Scheduled discovery is **off by default**. A single Temporal Schedule,
 `jobctrl-discovery-local`, can run `DiscoverWorkflow` on a cron expression, but
@@ -279,7 +330,12 @@ the latest terminal execution. The phase vocabulary is `discovering`,
 `draining`, `completed`, `completed_with_issues`, `failed`, and `canceled`.
 Both execution cohorts participate in the delivered phase calculation:
 unresolved observed jobs or swept backlog can keep an otherwise successful
-workflow in `draining`.
+workflow in `draining`. While a successful, error-free source workflow is closed
+and shared work has not been confirmed idle, the UI reports **Source collection
+complete**, counts remaining jobs across both execution cohorts, and points to
+running and waiting preparation stages. Closing source collection does not imply
+that active preparation needs another Discover run. An unavailable runtime
+inventory remains explicit; the notice does not claim the workers are idle.
 
 ### Operator stop and failure recovery
 
@@ -291,12 +347,23 @@ stop request cannot leave the live workspace stale. A closed workflow whose
 durable phase still says `draining` is not cancelable.
 
 A failed execution is never treated as proof that the runtime is idle. The UI
-uses `activeItemsTotal` as a three-state recovery gate: a positive value reports
-remaining work, `null` reports that the inventory is unavailable, and exactly
-zero permits **Set up a new Discover run**. That action only selects and focuses
-the Discover launch controls; it never dispatches work implicitly. The same
-fresh zero-active-slot guard disables direct Discover submission for failed,
-completed-with-issues, closed-draining, and incomplete-history replacement
+uses fresh `capacity.activeSlots` to report remaining worker activity, including
+activities whose details are intentionally omitted. A failed operations refresh
+keeps the cached snapshot but marks its runtime facts unavailable and blocks
+Discover until a read succeeds. It marks cached overall, stage, and source-family
+estimates stale as well. A zero allowlisted `activeItemsTotal` alone cannot
+establish idle. If a heartbeat is stale, fresh-worker counts are only a lower
+bound and global occupancy remains unknown; the old row is not proof of worker
+exit. To avoid trapping normal restart on historical heartbeat rows, fresh zero
+slots and a complete empty fresh-worker inventory still permit the user to
+review and explicitly start Discover while that uncertainty is stated. Temporal
+reuses an already-running `discover-{tenant}` execution, preventing a second
+concurrent Discover workflow. That identity fence does not establish cleanup of
+detached activity from a closed execution or unrelated background work.
+**Set up a new Discover run** only selects and focuses the Discover launch
+controls; it never dispatches work implicitly. Fresh observed activity, failed
+refreshes, and unavailable or inconsistent fresh inventory disable direct
+Discover submission for failed, completed-with-issues, closed-draining, and incomplete-history replacement
 runs, so selecting the action tab cannot bypass recovery safety.
 
 `reconciled_not_found` is a provisional verdict: the worker could not find the
@@ -309,16 +376,15 @@ run is appropriate only when the exact execution is genuinely absent and the
 runtime inventory confirms that no work remains. Workflow IDs, Temporal run
 IDs, and the raw reason code stay in a collapsed technical disclosure.
 
-Condition-driven preparation is resumed by the mutation that resolves the
-condition. A genuine candidate-profile change and its outbox event commit in
-the same SQLite transaction. Before Temporal start, the API appends a durable
-dispatch-intent fact. Startup and every later profile save drain that outbox,
-reattach and await any older intended execution, coalesce only revisions that
-provably never started, and use one deterministic Temporal identity per
-delivered profile event. The
-continuation runs Score, Tailor, and Cover without forcing a rescore, so valid
-current scores are reused; a normalized no-op or an unrelated style/template
-save does not start preparation. A selected live-profile extension connection
+A candidate-profile edit and its audit event commit in one SQLite transaction,
+but saving a profile never schedules Score, Tailor or Cover. API startup leaves
+historical profile-continuation events intact without dispatching them. Already
+admitted work retains its frozen profile version. Explicit score refresh uses
+the [source-bound profile impact check](../scoring.md#profile-edits-and-explicit-refresh);
+material generation remains an explicit action.
+
+Other condition-driven preparation keeps its existing ownership. A selected
+live-profile extension connection
 maps the resolved `discovery_browser_extension_unavailable` condition to
 canonical `enrich` rows blocked with `ENRICH_ROBOTS_DISALLOWED`, selects only
 LinkedIn jobs carrying that typed condition (including the former
@@ -381,8 +447,68 @@ Likewise, while the Discover workflow is starting or in progress, a planned
 source family whose bounded batch has not been scheduled yet is **waiting**.
 Once that workflow is terminal, a planned family with no durable lifecycle is
 **unknown** because it is then a genuine projection gap.
-Missing stage state after work-plan resolution remains **unknown** and therefore
-actionable; the read model does not hide a genuine projection gap.
+An unrecorded planned PDF is **waiting** while a recorded prerequisite in its
+required-step list is pending, queued or running, provided its preparation owner
+is not already terminal. A recorded PDF lifecycle always takes precedence.
+A missing PDF is **skipped** only when a run-owned
+`PreparationWorkflowOutcomeObserved` receipt proves that the exact successful
+preparation execution stopped at an earlier required step. The worker derives
+that bounded receipt from the exact Temporal run's start input and completed
+result, binding tenant, job, idempotency key, required plan and Discover run. The
+API joins its recorded owner/run and indexed event identity; current unowned
+`MIN_SCORE` rows or successful preparation alone cannot supply this proof. The
+same classification resolves cohort completion and removes PDF demand from
+remaining paths and swept-backlog contention. It does not change the immutable
+plan, create a PDF lifecycle or claim that a document was generated.
+
+A missing PDF is **succeeded** when the exact successful preparation run's
+literal completed result records PDF completion. This includes a cover letter
+disabled after admission: the result may skip Cover while completing all other
+required steps. No receipt can override an actual queued, running or failed PDF
+lifecycle.
+
+Discover can associate an already-started manual or reused preparation with its
+execution sweep. That owner's immutable input retains its actual origin. When
+the origin differs from the observing Discover run, a version-2 outcome receipt
+records the explicit membership association and original origin separately.
+The worker checks the exact job, tenant, owner/run, frozen plan and workspace
+identity against the start input and completed history, then rechecks the
+current membership/cohort and successful owner under its write transaction.
+Every new preparation producer captures the current workspace identity when
+its caller does not supply an explicit identity. Existing unscoped histories
+that also lack a workspace binding remain unknown; a recorded job row alone
+cannot establish that missing authority.
+Receipts are idempotent per association, cohort and frozen plan; an observation
+for one Discover run cannot suppress a different association. The API validates
+the recorded association, current owner/run, plan and indexed identity before
+using its result. Missing history, foreign workspaces, replaced owners or changed
+plans remain unknown. This observation appends an audit receipt only; it never
+rewrites workflow input or fabricates a PDF lifecycle or accepted artifact.
+
+A successful preparation result that completed Score and stopped at Tailor may
+also resolve a recorded eligibility hold. The API requires the exact owner/run
+receipt, the current successful Score owner and accepted score version, no
+unresolved score staleness, and matching non-retryable
+`SCORE_ELIGIBILITY_BLOCKED` gate provenance for every planned material stage.
+It reads the saved typed eligibility verdict and exact blocker list; it does
+not judge the posting again. Canonical Tailor/Cover counts remain **blocked**,
+while cohort completion, issue classification, ETA demand, remaining paths and
+swept-backlog contention treat that proven policy outcome as finished. A newer
+score or owner, reset stage, foreign/missing receipt, generic setup block or
+retryable block remains unresolved. An actually recorded PDF lifecycle still
+wins. No canonical stage, score, accepted file or frozen plan is rewritten.
+
+A closed failed/canceled preparation owner plus a recorded non-retryable,
+exhausted or canceled prerequisite also proves that its unexecuted PDF cannot
+start. That PDF is **blocked** or **canceled**, and the cohort finishes with
+issues rather than staying in `draining`. This never claims a render succeeded.
+Queued/running successor work, retryable failures and an actual PDF lifecycle
+retain their own authority.
+
+Otherwise, without the exact successful outcome receipt, missing prerequisites,
+a terminal owner alone, or no unfinished required prerequisite leave the missing PDF **unknown**. Other missing stage state after work-plan
+resolution remains **unknown** and actionable; a genuinely missing or failed PDF
+is never hidden by unrelated work.
 The producer-lifetime live enrichment activity is runtime telemetry, not a
 durable `enrichment_pass` projection: it ends by intentional cancellation and
 the lifecycle schema has no canceled terminal state. Per-job stage rows record
@@ -433,6 +559,13 @@ expected sets remain exclusively owned by history reconciliation. A heartbeat
 also keeps an already-verified checkpoint visible while it reads history and
 publishes `recovering` only after it has evidence that repair is needed.
 
+Final recovery publication reserves the SQLite writer while folding projections,
+reading the exact key sets and saving their counts/digest. A native producer may
+have extended the execution while its marker was `recovering`; those canonical
+keys join the final proof. Expected historical keys must still exist. No history
+or network read runs inside this final transaction. Reconstructed proofs retain
+strict expected-set equality.
+
 The worker runs reconciliation before accepting activities and again on every
 heartbeat. Legacy activity history is decoded into queued, running, completed,
 and failed step events. Exact source observations and preparation-workflow roots
@@ -479,6 +612,8 @@ being restored, and hides selected-run counts, percentages, and ETAs. Recovery
 is an automatic transition state, not an accepted tracking mode. For selected
 scopes, `no_work` is valid only after coverage is `ready`, execution membership
 is closed, and projected demand is exactly zero.
+Positive-demand stage and source-family ranges may remain available before
+closure; their scope does not turn an open membership into proof of zero work.
 
 `incomplete` is a terminal audit state, not a degraded operating mode. Pipelines
 shows the exact partial evidence and bounded reason, withholds claims about the
@@ -494,9 +629,35 @@ Temporal task-queue observations. The operations reader derives the expected
 app directory from the configured database path, filters heartbeats to that
 resolved database/app-dir identity, selects the task queue named by the newest
 matching heartbeat, and aggregates fresh schema-valid workers from that queue.
+The heartbeat's backward-compatible queue-observation JSON also carries a
+separate blocking-executor status for the same worker. Operations totals
+accepting, refusing, and unknown workers and unfinished retired generations and
+calls, separately from short-control admission and unfinished control calls.
+Old or malformed status from a fresh worker remains unknown; a stale peer is
+excluded from these counts and its admission remains unconfirmed. Free Temporal
+slots do not guarantee that a stage call can be admitted, and unfinished retired calls
+may still run; they disappear from the count only after their futures return.
+Any refusal or unknown blocking admission makes contention unbounded for ETA.
+A stale peer on the selected task queue also makes contention unbounded because
+its activity and admission are not confirmed by the fresh-worker aggregate.
 Active slots count every activity; active-item detail is a separate
 oldest-first list capped at 20 with an exact allowlisted total and truncation
-marker.
+marker. This global runtime inventory remains available when no Discover
+execution is selected, including manual URL intake and preparation activity.
+URL imports appear as `job_url_import` / `job-url-import` runtime items with
+the label **Import job URL**. Intake does not invent a pipeline stage or
+selected Discover membership. Fresh empty
+inventory reports zero; unavailable or stale inventory reports unknown.
+A fresh preparation activity can receive its job title and company from an
+exact same-tenant `JobPreparationWorkflow` projection: the workflow ID and
+Temporal run ID must match the runtime detail, and its text `jobId` must join a
+canonical Job. This bounded, read-only join works without a selected Discover;
+it reuses the opaque runtime display key and never exposes workflow inputs.
+Selected-membership enrichment also requires the exact preparation run.
+Missing, malformed, foreign-tenant or stale-run bindings remain unresolved.
+These job labels do not establish Discover membership, change selected-run
+counts or coverage, or contribute new ETA evidence. Their absence does not
+erase worker activity.
 
 This boundary is deliberately privacy-safe. The interceptor never reads
 activity arguments. It retains only allowlisted activity kinds, validated safe
@@ -678,6 +839,31 @@ defensive dashboard read keep them truthful on existing databases:
 - **Nothing stays "running" forever.** Finalize records the terminal outcome on
   every normal/cancel path; the describe-based reconciler backstops killed
   workers, timeouts, and dev-server history loss.
+  Short lifecycle writes use bounded local capacity independent of the remote
+  model-work pool, so completed intake can acknowledge its result while scoring
+  remains busy. Exact execution/event keys make those writes safe to repeat;
+  versioned replay retains the old remote lifecycle history.
+  Spend preflight and owner-scoped preparation cancellation share that same
+  two-slot local control pool with independent patch markers. Their SQLite work
+  runs off the worker event loop, each attempt is limited to 30 seconds, and
+  scheduling plus retries is limited to three minutes. Old remote control
+  histories retain their original commands. This removes dependence on remote
+  model-slot occupancy; it does not shorten model calls or bypass spend,
+  cancellation ownership, or accepted-result preservation checks.
+  Per-job Score cancellation uses a separate replay marker, waits for the
+  activity's bounded cancellation cleanup, and settles only its exact owned
+  stage. Direct Score activities carry a cooperative stop event and fence both
+  score publication and terminal stage writes against cancellation or a newer
+  owner. Lost ownership skips the predecessor instead of retrying it. Startup
+  recovery also checks ordinary preparation owners against their exact Temporal
+  execution, canonical job and selected step; unavailable history leaves the
+  row untouched. Already committed results survive cancellation.
+  Direct admission and cached-score reuse check current ownership under the
+  writer lock before changing a stage. Recovery mutates only the verified job
+  for a single-job preparation and requires an explicit known terminal status;
+  an unknown status never releases ownership. To revoke queued work, cancel its
+  exact workflow and observe terminalization before resetting the stage. A
+  reset-only action changes local stage state without canceling Temporal work.
 
 ## Recurring Saved Posting Checks
 

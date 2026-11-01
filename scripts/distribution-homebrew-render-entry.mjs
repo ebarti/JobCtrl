@@ -3,7 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { main } from "./distribution-homebrew.mjs";
-export { renderHomebrewFormula } from "./distribution-homebrew.mjs";
+export { renderHomebrewFormula, verifyReleaseDescriptorSignature } from "./distribution-homebrew.mjs";
 
 const invokedPath = process.argv[1]
   ? pathToFileURL(path.resolve(process.argv[1])).href

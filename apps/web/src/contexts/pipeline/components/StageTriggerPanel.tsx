@@ -556,7 +556,7 @@ function applyModelValue(model: string): (typeof APPLY_MODEL_OPTIONS)[number] {
 
 export interface StageTriggerPanelProps {
   readonly stagePanels?: Partial<Record<PipelineRunStage, ReactNode>>;
-  readonly stageRunBlockReasons?: Partial<Record<PipelineRunStage, string>>;
+  readonly stageRunBlockReasons?: Partial<Record<PipelineRunStage, ReactNode>>;
 }
 
 export function StageTriggerPanel({
@@ -641,7 +641,9 @@ export function StageTriggerPanel({
     progressWorkflowRunId(visibleStageProgress);
   const headerMeta = runStages.isPending
     ? "starting"
-    : (runStages.data?.status ?? (runStages.error ? "failed" : "ready"));
+    : stageRunBlockReason
+      ? "waiting"
+      : (runStages.data?.status ?? (runStages.error ? "failed" : "ready"));
   const activeStagePanel = stagePanels[activeStage] ?? null;
   const workerUnhealthy =
     health.isPending ||
@@ -807,7 +809,7 @@ export function StageTriggerPanel({
                 render={
                   <Button
                     id={fieldId("sources")}
-                    aria-label="Sources"
+                    aria-label={`Sources: ${selectedDiscoverySourceLabel}`}
                     aria-describedby={fieldId("sources-summary")}
                     className="w-full justify-between overflow-hidden font-normal"
                     type="button"

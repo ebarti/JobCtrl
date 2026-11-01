@@ -406,8 +406,8 @@ test("Apple signing rejects ad-hoc apps, preserves both signed Node executables,
   assert.ok(!classified.signingMachO.includes(node));
   assert.ok(!classified.signingMachO.includes(playwrightNode));
 
-  const headless = `${root}/chromium/chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/chrome-headless-shell`;
-  const dylib = `${root}/chromium/chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/libEGL.dylib`;
+  const headless = `${root}/chromium/chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/chrome-headless-shell`;
+  const dylib = `${root}/chromium/chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/libEGL.dylib`;
   const plan = createAppleSigningPlan({
     machO: [headless, dylib],
     codeBundles: [],

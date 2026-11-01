@@ -484,8 +484,18 @@ class RequirementScoreContribution:
     awarded_points: float
     weighted_impact: float
     rationale: str = ""
+    scope: str = "resume"
+    scope_source_id: str = ""
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "scope",
+            _clean_enum(self.scope, ("resume", "eligibility", "logistics", "employer_condition"), "resume"),
+        )
+        object.__setattr__(self, "scope_source_id", str(self.scope_source_id or "").strip())
+        if self.scope != "resume" and not self.scope_source_id:
+            raise ValueError("Non-resume requirement contributions require a recorded scope source")
         max_points = _non_negative_float(self.max_points, field_name="RequirementScoreContribution.max_points")
         awarded_points = _non_negative_float(
             self.awarded_points,
@@ -510,23 +520,31 @@ class RequirementScoreContribution:
             awarded_points=data.get("awarded_points", data.get("awardedPoints", 0.0)),
             weighted_impact=data.get("weighted_impact", data.get("weightedImpact", 0.0)),
             rationale=str(data.get("rationale") or ""),
+            scope=str(data.get("scope") or "resume"),
+            scope_source_id=str(data.get("scope_source_id", data.get("scopeSourceId", "")) or ""),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "max_points": self.max_points,
             "awarded_points": self.awarded_points,
             "weighted_impact": self.weighted_impact,
             "rationale": self.rationale,
         }
+        if self.scope_source_id:
+            payload.update(scope=self.scope, scope_source_id=self.scope_source_id)
+        return payload
 
     def to_read_model(self) -> dict[str, Any]:
-        return {
+        payload = {
             "maxPoints": self.max_points,
             "awardedPoints": self.awarded_points,
             "weightedImpact": self.weighted_impact,
             "rationale": self.rationale,
         }
+        if self.scope_source_id:
+            payload.update(scope=self.scope, scopeSourceId=self.scope_source_id)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -1060,11 +1078,13 @@ class ScoreTrace:
     """Non-sensitive trace metadata for one score version."""
 
     determination_id: str = ""
+    scoring_source_fingerprint: str = ""
     prompt_version: str = "score-fit-assessment-v1"
     schema_version: str = "score-fit-assessment-v1"
     model: str = "llm-port-default"
     criteria_version: str = ""
     profile_snapshot_version: int = 0
+    profile_inputs: dict[str, Any] = field(default_factory=dict)
     scoring_policy_id: str = ""
     scoring_policy_version: int = 0
     rubric_version: str = ""
@@ -1082,6 +1102,7 @@ class ScoreTrace:
     def __post_init__(self) -> None:
         for name in (
             "determination_id",
+            "scoring_source_fingerprint",
             "prompt_version",
             "schema_version",
             "model",
@@ -1098,6 +1119,7 @@ class ScoreTrace:
         except (TypeError, ValueError):
             profile_version = 0
         object.__setattr__(self, "profile_snapshot_version", profile_version)
+        object.__setattr__(self, "profile_inputs", _clean_mapping(self.profile_inputs))
         object.__setattr__(
             self,
             "scoring_policy_version",
@@ -1133,6 +1155,7 @@ class ScoreTrace:
         data = data or {}
         return cls(
             determination_id=str(data.get("determination_id") or ""),
+            scoring_source_fingerprint=str(data.get("scoring_source_fingerprint") or ""),
             prompt_version=str(data.get("prompt_version", data.get("promptVersion", "score-fit-assessment-v1"))),
             schema_version=str(data.get("schema_version", data.get("schemaVersion", "score-fit-assessment-v1"))),
             model=str(data.get("model") or "llm-port-default"),
@@ -1155,6 +1178,7 @@ class ScoreTrace:
                 ),
                 0,
             ),
+            profile_inputs=_clean_mapping(data.get("profile_inputs", {})),
             rubric_version=str(data.get("rubric_version", data.get("rubricVersion", ""))),
             raw_weighted_score=_float_or_none(data.get("raw_weighted_score", data.get("rawWeightedScore"))),
             calibration_adjustment=_float_or_default(
@@ -1227,11 +1251,13 @@ class ScoreTrace:
     def to_dict(self) -> dict[str, Any]:
         return {
             "determination_id": self.determination_id,
+            **({"scoring_source_fingerprint": self.scoring_source_fingerprint} if self.scoring_source_fingerprint else {}),
             "prompt_version": self.prompt_version,
             "schema_version": self.schema_version,
             "model": self.model,
             "criteria_version": self.criteria_version,
             "profile_snapshot_version": self.profile_snapshot_version,
+            **({"profile_inputs": self.profile_inputs} if self.profile_inputs else {}),
             "scoring_policy_id": self.scoring_policy_id,
             "scoring_policy_version": self.scoring_policy_version,
             "rubric_version": self.rubric_version,

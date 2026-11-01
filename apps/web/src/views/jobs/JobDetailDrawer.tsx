@@ -6,7 +6,7 @@ import { JobCtrlApiError } from "@jobctrl/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobctrl/contracts";
 import { IconArrowLeft, IconChevronDown } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import {
@@ -31,6 +31,7 @@ import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQ
 import type { ArtifactSummary, EvidenceMapEntry } from "@jobctrl/contracts";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { RetryStageButton } from "../../contexts/pipeline/components/RetryStageButton.js";
+import { RetryStatusNotice } from "../../contexts/pipeline/components/RetryStatusNotice.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
 import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
@@ -199,6 +200,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   const [sectionsOpen, setSectionsOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const jumpTarget = useRef<string | null>(null);
+  const pendingJumpFocus = useRef<string | null>(null);
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
   const offer = useOfferQuery(jobId);
   const evidenceMap = useEvidenceMapQuery();
@@ -235,6 +237,18 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   const artifactGroups = groupJobArtifacts(detail?.artifacts ?? []);
   const sections: JobDetailSectionDefinition[] = detail ? [
     {
+      id: "description",
+      title: "Description",
+      description: "Captured posting text",
+      content: <section className="section job-detail-description">
+        <div className="job-detail-section-heading">
+          <h3 aria-label="Description">Description <ContextHelp label="Description" description="Saved text captured from the original job posting. It may differ from the live posting after capture; use the original posting link to verify current wording." /></h3>
+          <span data-typography="label">Original posting text</span>
+        </div>
+        <JobDescription text={detail.job.descriptionPreview} />
+      </section>,
+    },
+    {
       id: "fit-evidence",
       title: "Fit & evidence",
       description: "Assessment, requirement fit, and apply concerns",
@@ -255,7 +269,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       content: <>
         <PostingAvailability jobId={detail.job.jobKey} postingUrl={detail.job.url} availability={detail.job.availability} />
         <Section title="Preparation diagnostics" help="Saved preparation stage states and diagnostic messages. A failed, blocked, or exhausted stage calls for review; these stages do not by themselves submit an application.">
-          <StageTimeline jobId={detail.job.jobKey} postingUrl={detail.job.url} stages={preparationStages(detail.stages)} />
+          <StageTimeline jobId={detail.job.jobKey} detailQueryId={jobId} postingUrl={detail.job.url} stages={preparationStages(detail.stages)} />
         </Section>
         {!detail.job.applicationUrl && isLinkedInPosting(detail.job.url)
           && detail.stages.some((stage) => stage.stage === "enrich" && stage.state === "succeeded") ? (
@@ -267,7 +281,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 <p className="muted">{detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message}</p>
               ) : null}
             </div>
-            <RetryStageButton jobId={detail.job.jobKey} stage="enrich" runAfter refreshApplyUrl label="Refresh application target" />
+            <RetryStageButton jobId={detail.job.jobKey} detailQueryId={jobId} stage="enrich" runAfter refreshApplyUrl label="Refresh application target" />
           </section>
         ) : null}
       </>,
@@ -300,18 +314,6 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       title: "Locale variants",
       description: "Independently reviewed resume and letter translations",
       content: <MaterialLocaleVariants jobId={detail.job.jobKey} />,
-    },
-    {
-      id: "description",
-      title: "Description",
-      description: "Captured posting text",
-      content: <section className="section job-detail-description">
-        <div className="job-detail-section-heading">
-          <h3 aria-label="Description">Description <ContextHelp label="Description" description="Saved text captured from the original job posting. It may differ from the live posting after capture; use the original posting link to verify current wording." /></h3>
-          <span data-typography="label">Original posting text</span>
-        </div>
-        <JobDescription text={detail.job.descriptionPreview} />
-      </section>,
     },
     {
       id: "role-analysis",
@@ -359,14 +361,12 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
 
   function jumpToSection(id: string) {
     jumpTarget.current = id;
+    pendingJumpFocus.current = id;
     setExpandedSections((current) => ({ ...current, [id]: true }));
     setSectionsOpen(false);
   }
 
-  function focusJumpTarget() {
-    const id = jumpTarget.current;
-    if (!id) return;
-    jumpTarget.current = null;
+  function focusJumpTarget(id: string) {
     const section = document.getElementById(`job-detail-${id}`);
     const trigger = section?.querySelector<HTMLButtonElement>("[data-slot='collapsible-trigger']");
     if (!section || !trigger) return;
@@ -376,8 +376,18 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
     trigger.focus({ preventScroll: true });
   }
 
+  useLayoutEffect(() => {
+    const id = pendingJumpFocus.current;
+    if (sectionsOpen || !id || !expandedSections[id]) return;
+    pendingJumpFocus.current = null;
+    // Move focus as soon as the section has expanded. The popover's closing
+    // animation may finish after the user has already moved to another control.
+    focusJumpTarget(id);
+  }, [expandedSections, sectionsOpen]);
+
   return (
     <div className="route-page route-page--job-detail" aria-label="Job details">
+      <RetryStatusNotice jobId={detail?.job.jobKey ?? jobId} detailQueryId={jobId} />
       {errorMessage ? <Empty title={errorMessage} /> : null}
       {!detail && !errorMessage ? <Empty title="Loading job." /> : null}
       {detail ? (
@@ -450,6 +460,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   >
                     <JobActions
                       jobId={detail.job.jobKey}
+                      detailQueryId={jobId}
                       currentStage={detail.job.currentSubstage}
                       canRetryStage={canRetryStage(currentSubstage)}
                       canRunCurrentStage={canRunCurrentStage(currentSubstage)}
@@ -464,7 +475,10 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 </Popover>
               </div>
               <JobOverview detail={detail} />
-              <Popover open={sectionsOpen} onOpenChange={setSectionsOpen}>
+              <Popover open={sectionsOpen} onOpenChange={(open) => {
+                if (open) jumpTarget.current = null;
+                setSectionsOpen(open);
+              }}>
                 <PopoverTrigger asChild>
                   <Button className="job-detail-sections-trigger" size="sm" type="button" variant="outline">
                     Sections
@@ -478,7 +492,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   onCloseAutoFocus={(event) => {
                     if (jumpTarget.current) {
                       event.preventDefault();
-                      focusJumpTarget();
+                      jumpTarget.current = null;
                     }
                   }}
                   side="top"
@@ -488,7 +502,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                     {sections.map((section) => (
                       <Button
                         aria-controls={`job-detail-${section.id}`}
-                        aria-expanded={expandedSections[section.id] ?? true}
+                        aria-expanded={expandedSections[section.id] ?? false}
                         key={section.id}
                         size="sm"
                         type="button"
@@ -523,7 +537,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 id={`job-detail-${section.id}`}
                 key={section.id}
                 onOpenChange={(open) => setExpandedSections((current) => ({ ...current, [section.id]: open }))}
-                open={expandedSections[section.id] ?? true}
+                open={expandedSections[section.id] ?? false}
                 title={`${String(index + 1).padStart(2, "0")} · ${section.title}`}
               >
                 {section.content}

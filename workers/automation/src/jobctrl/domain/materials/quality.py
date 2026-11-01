@@ -55,6 +55,7 @@ class EvidencePlanItem:
     claim_confidence: float = 0.0
     user_confirmed: bool = False
     tags: tuple[str, ...] = ()
+    requires_generated_claim: bool = True
 
     @property
     def prompt_dict(self) -> dict[str, Any]:
@@ -71,6 +72,7 @@ class EvidencePlanItem:
             "claim_confidence": self.claim_confidence,
             "user_confirmed": self.user_confirmed,
             "tags": list(self.tags),
+            "requires_generated_claim": self.requires_generated_claim,
         }
 
     @property
@@ -83,6 +85,7 @@ class EvidencePlanItem:
             "evidence_strength": self.evidence_strength,
             "user_confirmed": self.user_confirmed,
             "tags": list(self.tags),
+            "requires_generated_claim": self.requires_generated_claim,
         }
 
 
@@ -149,6 +152,9 @@ class TailoringPlan:
     requirement_led_controls: RequirementLedTailoringControls = field(default_factory=RequirementLedTailoringControls)
     target_profile: TargetProfile | None = None
     coverage_graph: CoverageGraph | None = None
+    selection_determination_id: str | None = None
+    baseline_evidence_ids_by_role: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    max_experience_bullets: int = 4
 
     @property
     def evidence_by_id(self) -> dict[str, EvidencePlanItem]:
@@ -161,6 +167,8 @@ class TailoringPlan:
             "target_seniority": self.target_seniority,
             "job_keywords": list(self.job_keywords),
             "requirement_directives": [directive.prompt_dict for directive in self.requirement_directives],
+            "baseline_evidence_ids_by_role": {key: list(value) for key, value in self.baseline_evidence_ids_by_role.items()},
+            "max_experience_bullets": self.max_experience_bullets,
             "required_evidence": [
                 required[evidence_id].prompt_dict
                 for evidence_id in self.required_evidence_ids
@@ -187,15 +195,41 @@ class TailoringPlan:
             ],
         }
 
-    def to_prompt_context(self, *, include_alternatives: bool = False) -> str:
-        return "TAILORING QUALITY PLAN:\n" + json.dumps(
-            self.to_prompt_dict(include_alternatives=include_alternatives),
-            indent=2,
-            ensure_ascii=False,
+    def to_prompt_projection(self, *, include_alternatives: bool = False) -> dict[str, Any]:
+        """Lossless prompt encoding; canonical plan and metadata remain unchanged."""
+        value = self.to_prompt_dict(include_alternatives=include_alternatives)
+        target, graph = value["target_profile"], value["coverage_graph"]
+        if isinstance(target, dict) and isinstance(graph, dict):
+            achievements = target.get("profile_achievements")
+            graph_achievements = graph.get("achievements")
+            # Compare complete JSON values, including type, field and list order.
+            # A different catalogue stays inline; never select evidence by prose.
+            if (
+                isinstance(achievements, list) and achievements
+                and isinstance(graph_achievements, list)
+                and json.dumps(achievements, sort_keys=True, ensure_ascii=False)
+                == json.dumps(graph_achievements, sort_keys=True, ensure_ascii=False)
+            ):
+                graph["achievements"] = {"$ref": "#/target_profile/profile_achievements"}
+                value["prompt_encoding"] = (
+                    "A $ref is a local reference within this plan object. Read the "
+                    "complete referenced catalogue in place; every field, source ID "
+                    "and record order is retained. It authorizes no additional evidence."
+                )
+        return value
+
+    def to_prompt_json(self, *, include_alternatives: bool = False) -> str:
+        return json.dumps(
+            self.to_prompt_projection(include_alternatives=include_alternatives),
+            ensure_ascii=False, separators=(",", ":"),
         )
+
+    def to_prompt_context(self, *, include_alternatives: bool = False) -> str:
+        return "TAILORING QUALITY PLAN:\n" + self.to_prompt_json(include_alternatives=include_alternatives)
 
     def to_metadata(self) -> dict[str, Any]:
         return {
+            "selection_determination_id": self.selection_determination_id,
             "claim_mode": self.claim_mode,
             "auto_approvable_claim_modes": list(self.auto_approvable_claim_modes),
             "writing_style": {
@@ -206,6 +240,8 @@ class TailoringPlan:
             "target_seniority": self.target_seniority,
             "job_keywords": list(self.job_keywords),
             "required_evidence_ids": list(self.required_evidence_ids),
+            "baseline_evidence_ids_by_role": {key: list(value) for key, value in self.baseline_evidence_ids_by_role.items()},
+            "max_experience_bullets": self.max_experience_bullets,
             "verified_metric_count": len(self.verified_metrics),
             "requirement_directives": [directive.metadata_dict for directive in self.requirement_directives],
             "prohibited_claims": list(self.prohibited_claims),
@@ -444,6 +480,9 @@ def build_tailoring_plan(
     ripped out outright (no shim). The rest of the plan (evidence selection,
     seniority, verified metrics) is unchanged.
     """
+    from jobctrl.domain.profile.canonical_sources import assert_evidence_reviewed
+
+    assert_evidence_reviewed(profile)
     controls = get_tailoring_quality_controls(profile)
     writing_style = get_writing_style(profile)
     requirement_led_controls = adapt_requirement_led_controls(
@@ -456,7 +495,7 @@ def build_tailoring_plan(
         additional_guidance=get_custom_tailoring_prompt(profile),
     )
     evidence_items = (
-        *tuple(_evidence_item(item) for item in get_achievement_evidence(profile) if item.get("user_confirmed")),
+        *tuple(_evidence_item(item) for item in get_achievement_evidence(profile) if item.get("user_confirmed") and not item.get("confirmation_review_required")),
         *_canonical_fact_items(profile),
     )
     if requirement_fit_report is not None and not _requirement_fit_report_matches(
@@ -516,6 +555,14 @@ def build_tailoring_plan(
         evidence_items=evidence_items,
         requirement_directives=requirement_directives,
         prohibited_claims=_directive_prohibited_claims(requirement_directives),
+        max_experience_bullets=get_max_experience_bullets(profile),
+        baseline_evidence_ids_by_role={
+            str(entry["id"]): tuple(
+                f"experience:{entry['id']}:source:{index}"
+                for index, bullet in enumerate(entry.get("bullets") or []) if str(bullet).strip()
+            )
+            for entry in get_experience_entries(profile)
+        },
         requirement_led_controls=requirement_led_controls,
         target_profile=target_profile,
         coverage_graph=coverage_graph,
@@ -611,6 +658,7 @@ def _canonical_fact_items(profile: dict) -> tuple[EvidencePlanItem, ...]:
                     scope="",
                     action="",
                     user_confirmed=True,
+                    requires_generated_claim=False,
                 )
             )
     return tuple(items)

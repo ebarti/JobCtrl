@@ -1,5 +1,7 @@
 """Model authority, isolated sources and actual persistence; no semantic corpus."""
 
+from tests.determination_fakes import claim_verification_input, claim_verification_response
+
 import json
 import sqlite3
 
@@ -72,7 +74,7 @@ class Model:
                     }
                 ]
             }
-        data = json.loads(messages[1].content)
+        data = claim_verification_input(json.loads(messages[1].content))
         sources = {source["source_id"]: source["text"] for source in data["sources"]}
         if title == "InterviewPlan":
             selection = data["context"]["selection"]
@@ -137,7 +139,7 @@ class Model:
                         "findings": findings,
                     }
                 )
-            return {"verdict": self.verdict, "lines": rows, "rationale": "Model verification reason"}
+            return claim_verification_response(data, {"verdict": self.verdict, "lines": rows, "rationale": "Model verification reason"})
         if title == "ArtifactQuality":
             return {
                 "verdict": self.quality,

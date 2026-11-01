@@ -315,6 +315,7 @@ describe("seeded local QA workflow", () => {
       preferred_name: "John",
       email: "john.doe@example.com",
     });
+    const dispatchCountBeforeProfileSave = actionDispatcher.mock.calls.length;
     const profileDraft = profileResponse.json().profile;
     profileDraft.personal.full_name = "John Doe Edited";
     const updateProfile = await app.inject({
@@ -327,10 +328,8 @@ describe("seeded local QA workflow", () => {
     const profileAfterUpdate = await app.inject({ method: "GET", url: "/v1/profile" });
     expect(profileAfterUpdate.statusCode, profileAfterUpdate.body).toBe(200);
     expect(profileAfterUpdate.json().profile.personal.full_name).toBe("John Doe Edited");
-    await vi.waitFor(() => expect(actionDispatcher).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "run_stage", stages: ["score", "tailor", "cover"] }),
-      expect.objectContaining({ dbPath: workspace.dbPath }),
-    ));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(actionDispatcher).toHaveBeenCalledTimes(dispatchCountBeforeProfileSave);
 
     const preview = await app.inject({ method: "GET", url: "/v1/profile/preview.pdf" });
     expect(preview.statusCode, preview.body).toBe(200);

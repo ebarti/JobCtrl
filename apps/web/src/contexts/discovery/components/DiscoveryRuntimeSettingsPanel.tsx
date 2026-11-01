@@ -7,7 +7,7 @@ import {
   type EffectiveSetting,
 } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { Empty } from "../../../shared/ui/empty.js";
@@ -23,8 +23,11 @@ import {
   FieldSet,
 } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { useDiscoverySettingsQuery } from "../../operations/hooks/useDiscoverySettingsQuery.js";
+import { useAcknowledgedRuntimeValues } from "../../operations/hooks/useAcknowledgedRuntimeValues.js";
 import { useUpdateDiscoverySettingsMutation } from "../hooks/useUpdateDiscoverySettingsMutation.js";
+import { discoveryKeys } from "../queryKeys.js";
 import {
   DiscoverySettingHelp,
   type DiscoverySettingHelpContent,
@@ -36,6 +39,16 @@ const BOARD_OPTIONS: Array<{ value: DiscoverySettings["boards"][number]; label: 
   { value: "zip_recruiter", label: "ZipRecruiter" },
   { value: "glassdoor", label: "Glassdoor" },
 ];
+
+const RUNTIME_FIELDS = [
+  "boards",
+  "resultsPerSite",
+  "hoursOld",
+  "maxParallelFamilies",
+  "useBrowserHeaders",
+  "schedulingEnabled",
+  "scheduleCron",
+] as const;
 
 const DISCOVERY_GUIDE_URL = "https://jobctrl.dev/user/discovery";
 
@@ -64,17 +77,11 @@ const RUNTIME_SETTING_HELP = {
       "Limit how many source families may crawl concurrently in a Discover run. JobCtrl caps the value at four and at available worker activity slots. The next run snapshots it.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-parallel-source-families`,
   },
-  crawlUserAgentProduct: {
-    title: "Crawler product name",
+  useBrowserHeaders: {
+    title: "Use browser headers",
     description:
-      "Set the product token in JobCtrl's honest outbound user-agent identity. The next source family uses the updated identity.",
-    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-crawler-product-name`,
-  },
-  crawlUserAgentContact: {
-    title: "Crawler contact",
-    description:
-      "Optionally add a contact URL or address to the outbound user-agent identity. The next source family uses the updated identity.",
-    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-crawler-contact`,
+      "Use ua-generator for browser User-Agent and matching client-hint headers on JobCtrl-managed requests. Off by default; when off, requests use the existing JobCtrl identity. Changes apply to new request sessions. Your connected browser keeps its own headers.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-use-browser-headers`,
   },
   schedulingEnabled: {
     title: "Enable scheduled discovery",
@@ -101,8 +108,7 @@ function toFormValues(response: DiscoverySettingsResponse): DiscoverySettingsUpd
   };
   for (const field of [
     "maxParallelFamilies",
-    "crawlUserAgentProduct",
-    "crawlUserAgentContact",
+    "useBrowserHeaders",
   ] as const) {
     if (effectiveSettings[field].editable) {
       Object.assign(values, { [field]: settings[field] });
@@ -128,19 +134,27 @@ export function DiscoveryRuntimeSettingsPanel() {
       ) : null}
       {settingsQuery.data ? (
         <DiscoveryRuntimeSettingsForm initial={settingsQuery.data} />
-      ) : (
+      ) : settingsQuery.isPending ? (
         <Empty title="Loading runtime settings." />
-      )}
+      ) : null}
     </DisclosureSection>
   );
 }
 
 export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySettingsResponse }) {
   const updateSettings = useUpdateDiscoverySettingsMutation();
+  const tenantId = useTenantId();
   const [statusMessage, setStatusMessage] = useState("");
   const toValues = useCallback((response: DiscoverySettingsResponse) => toFormValues(response), []);
+  const baseline = useAcknowledgedRuntimeValues(
+    discoveryKeys.settings(tenantId),
+    ["tenant", tenantId, "runtime-settings-baseline", "discovery"],
+    toValues(initial),
+    toValues,
+  );
+  const acceptedValues = useRef(baseline.values);
   const form = useForm({
-    defaultValues: toValues(initial),
+    defaultValues: acceptedValues.current,
     validators: {
       onSubmit: ({ value }) => {
         const result = DiscoverySettingsUpdateRequestSchema.safeParse(value);
@@ -149,23 +163,48 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
     },
     onSubmit: async ({ value, formApi }) => {
       setStatusMessage("");
-      const scheduleChanged =
-        value.schedulingEnabled !== initial.settings.schedulingEnabled ||
-        value.scheduleCron !== initial.settings.scheduleCron;
-      const response = await updateSettings.mutateAsync(value);
-      formApi.reset(toValues(response));
+      const submitted = { ...value, boards: value.boards?.slice() };
+      const editedFields = RUNTIME_FIELDS.filter((field) => formApi.getFieldMeta(field)?.isDirty);
+      let savedValues: DiscoverySettingsUpdateRequest;
+      let scheduleChanged: boolean;
+      try {
+        const outcome = await baseline.runSave(async () => {
+          const latest = baseline.currentValues();
+          const request: DiscoverySettingsUpdateRequest = {};
+          for (const field of editedFields) Object.assign(request, { [field]: submitted[field] });
+          const response = await updateSettings.mutateAsync(request);
+          const saved = baseline.acknowledge(toValues(response));
+          return {
+            saved,
+            scheduleChanged: saved.schedulingEnabled !== latest.schedulingEnabled || saved.scheduleCron !== latest.scheduleCron,
+          };
+        });
+        savedValues = outcome.saved;
+        scheduleChanged = outcome.scheduleChanged;
+      } catch {
+        // The mutation owns error presentation and cache rollback; retain the draft.
+        return;
+      }
+      const current = formApi.state.values;
+      const pendingFields = RUNTIME_FIELDS.filter((field) =>
+        JSON.stringify(current[field]) !== JSON.stringify(submitted[field])
+        && JSON.stringify(current[field]) !== JSON.stringify(savedValues[field]),
+      );
+      acceptedValues.current = savedValues;
+      formApi.reset(savedValues);
+      for (const field of pendingFields) {
+        formApi.setFieldValue(field, current[field]);
+      }
       setStatusMessage(
-        scheduleChanged
-          ? "Runtime settings saved. Restart pending for scheduled discovery changes."
-          : "Runtime settings saved.",
+        `Runtime settings saved.${scheduleChanged ? " Restart pending for scheduled discovery changes." : ""}${pendingFields.length ? " Newer changes pending." : ""}`,
       );
     },
   });
 
   useEffect(() => {
-    if (form.state.isDirty || form.state.isSubmitting) return;
-    form.reset(toValues(initial));
-  }, [form, initial, toValues]);
+    acceptedValues.current = baseline.values;
+    if (!form.state.isDirty && !form.state.isSubmitting) form.reset(baseline.values);
+  }, [form, baseline.values]);
 
   const effective = initial.effectiveSettings;
   return (
@@ -178,7 +217,7 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
       }}
       onReset={(event) => {
         event.preventDefault();
-        form.reset(toValues(initial));
+        form.reset(acceptedValues.current);
         setStatusMessage("");
       }}
     >
@@ -235,11 +274,25 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         <form.Field name="maxParallelFamilies">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.maxParallelFamilies} id="discovery-max-parallel" name="maxParallelFamilies" label="Parallel source families" min={1} max={4} value={field.state.value ?? initial.settings.maxParallelFamilies} metadata={effective.maxParallelFamilies} onChange={field.handleChange} />}
         </form.Field>
-        <form.Field name="crawlUserAgentProduct">
-          {(field) => <TextControl help={RUNTIME_SETTING_HELP.crawlUserAgentProduct} id="discovery-ua-product" name="crawlUserAgentProduct" label="Crawler product name" value={String(field.state.value ?? initial.settings.crawlUserAgentProduct)} metadata={effective.crawlUserAgentProduct} onChange={field.handleChange} />}
-        </form.Field>
-        <form.Field name="crawlUserAgentContact">
-          {(field) => <TextControl help={RUNTIME_SETTING_HELP.crawlUserAgentContact} id="discovery-ua-contact" name="crawlUserAgentContact" label="Crawler contact" value={String(field.state.value ?? "")} metadata={effective.crawlUserAgentContact} optional onChange={field.handleChange} />}
+        <form.Field name="useBrowserHeaders">
+          {(field) => (
+            <Field className="field check" orientation="horizontal">
+              <Checkbox
+                id="discovery-browser-headers"
+                checked={field.state.value ?? initial.settings.useBrowserHeaders}
+                disabled={!effective.useBrowserHeaders.editable}
+                onCheckedChange={(checked) => field.handleChange(checked)}
+              />
+              <FieldContent>
+                <DiscoverySettingLabel
+                  help={RUNTIME_SETTING_HELP.useBrowserHeaders}
+                  htmlFor="discovery-browser-headers"
+                >
+                  Use browser headers
+                </DiscoverySettingLabel>
+              </FieldContent>
+            </Field>
+          )}
         </form.Field>
         <form.Field name="schedulingEnabled">
           {(field) => (
@@ -373,27 +426,6 @@ function NumberControl({ help, name, id, label, min, max, metadata, value, onCha
     <Field className="field">
       <DiscoverySettingLabel help={help} htmlFor={id}>{label}</DiscoverySettingLabel>
       <Input id={id} name={name} type="number" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
-    </Field>
-  );
-}
-
-function TextControl({ help, id, name, label, value, metadata, onChange, optional = false }: {
-  help: DiscoverySettingHelpContent;
-  id: string;
-  name: "crawlUserAgentProduct" | "crawlUserAgentContact";
-  label: string;
-  value: string;
-  metadata: EffectiveSetting<string | null> | EffectiveSetting<string>;
-  onChange: (value: string) => void;
-  optional?: boolean;
-}) {
-  if (!metadata.editable) {
-    return <ReadOnlyField help={help} id={id} label={label} value={metadata.value ?? ""} />;
-  }
-  return (
-    <Field className="field">
-      <DiscoverySettingLabel help={help} htmlFor={id} optional={optional}>{label}</DiscoverySettingLabel>
-      <Input id={id} name={name} type="text" value={value} onChange={(event) => onChange(event.target.value)} />
     </Field>
   );
 }

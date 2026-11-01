@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type { SecretCredentialKey } from "./contracts.js";
 import { CREDENTIAL_VALUE_MAX_LENGTH } from "./contracts.js";
+import { CredentialMutationLockError } from "./credential-mutation-lock.js";
 
 export const LINUX_SECRET_TOOL_BINARY = "/usr/bin/secret-tool";
 export const NATIVE_CREDENTIAL_COMMAND_TIMEOUT_MS = 5_000;
@@ -35,6 +36,7 @@ export interface NativeCredentialCommandResult {
 export type NativeCredentialCommandRunner = (
   command: NativeCredentialCommand,
   timeoutMs: number,
+  options?: { onSpawn: (pid: number, isRunning?: () => boolean) => Promise<void> },
 ) => Promise<NativeCredentialCommandResult>;
 
 interface ChildInputStream {
@@ -50,10 +52,12 @@ interface ChildOutputStream {
 }
 
 export interface NativeCredentialChildProcess {
+  readonly pid?: number;
   readonly stdin: ChildInputStream;
   readonly stdout: ChildOutputStream;
   readonly stderr: ChildOutputStream;
   on(event: "error", listener: () => void): unknown;
+  on(event: "exit", listener: (code: number | null) => void): unknown;
   on(event: "close", listener: (code: number | null) => void): unknown;
   kill(signal: NodeJS.Signals): boolean;
 }
@@ -101,7 +105,7 @@ export function nativeCredentialMaxBytes(platform: NodeJS.Platform): number | nu
 export function createLinuxSecretServiceRunner(
   spawnProcess: NativeCredentialProcessSpawner = defaultSpawner,
 ): NativeCredentialCommandRunner {
-  const runner: NativeCredentialCommandRunner = async (command, timeoutMs) => {
+  const runner: NativeCredentialCommandRunner = async (command, timeoutMs, options) => {
     const attributes = ["service", command.service, "key", command.key];
     if (command.operation === "set") {
       return runProcess(
@@ -110,6 +114,8 @@ export function createLinuxSecretServiceRunner(
         ["store", `--label=${command.service} ${command.key}`, ...attributes],
         command.value ?? "",
         timeoutMs,
+        options?.onSpawn,
+        true,
       );
     }
     if (command.operation === "delete") {
@@ -119,6 +125,8 @@ export function createLinuxSecretServiceRunner(
         ["clear", ...attributes],
         undefined,
         timeoutMs,
+        options?.onSpawn,
+        true,
       );
       if (cleared.code === 0 || cleared.stderr || cleared.stdout || cleared.code !== 1) {
         return cleared;
@@ -164,7 +172,7 @@ export function createWindowsCredentialManagerRunner(
   env: NodeJS.ProcessEnv = process.env,
   spawnProcess: NativeCredentialProcessSpawner = defaultSpawner,
 ): NativeCredentialCommandRunner {
-  return async (command, timeoutMs) => {
+  return async (command, timeoutMs, options) => {
     const systemRoot = env.SystemRoot?.trim() || env.WINDIR?.trim();
     if (!systemRoot) {
       return { code: 1, stderr: "credential helper is unavailable", stdout: "" };
@@ -188,6 +196,7 @@ export function createWindowsCredentialManagerRunner(
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CREDENTIAL_SCRIPT],
       payload,
       timeoutMs,
+      options?.onSpawn,
     );
   };
 }
@@ -198,11 +207,16 @@ function runProcess(
   args: string[],
   stdin: string | undefined,
   timeoutMs: number,
+  onSpawn?: (pid: number, isRunning?: () => boolean) => Promise<void>,
+  gateWithShell = false,
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     let child: NativeCredentialChildProcess;
     try {
-      child = spawnProcess(binary, args, {
+      child = spawnProcess(gateWithShell ? "/bin/sh" : binary, gateWithShell
+        ? ["-c", 'guard=$(/bin/dd bs=1 count=1 2>/dev/null); [ "$guard" = 1 ] || exit 1; exec "$@"',
+            "jobctrl-credential-helper", binary, ...args]
+        : args, {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
@@ -212,6 +226,11 @@ function runProcess(
     }
 
     let settled = false;
+    let failure: Error | undefined;
+    let registrationPending = false;
+    let closed = false;
+    let exited = false;
+    let exitCode: number | null = null;
     let stdout = "";
     let stderr = "";
     const append = (current: string, chunk: string | Buffer) =>
@@ -229,10 +248,23 @@ function runProcess(
         // Sanitized failure below remains authoritative.
       }
       try {
-        child.kill("SIGKILL");
+        if (!exited && !closed) child.kill("SIGKILL");
       } catch {
         // Sanitized failure below remains authoritative.
       }
+    };
+    const failAfterExit = (message: string, cause?: unknown) => {
+      if (settled || failure) return;
+      failure = cause instanceof CredentialMutationLockError ? cause : new Error(message);
+      clearTimeout(timer);
+      terminate();
+    };
+    const finishAfterClose = () => {
+      if (!closed || registrationPending) return;
+      finish(() => {
+        if (failure) reject(failure);
+        else resolve({ code: exitCode ?? 1, stderr: stderr.trim(), stdout });
+      });
     };
 
     child.stdout.setEncoding("utf8");
@@ -243,32 +275,34 @@ function runProcess(
     child.stderr.on("data", (chunk) => {
       stderr = append(stderr, chunk);
     });
-    child.on("error", () => finish(() => {
-      terminate();
-      reject(new Error("credential helper could not start"));
-    }));
-    child.on("close", (code) => finish(() => resolve({
-      code: code ?? 1,
-      stderr: stderr.trim(),
-      stdout,
-    })));
-    child.stdin.on("error", () => finish(() => {
-      terminate();
-      reject(new Error("credential helper input failed"));
-    }));
-    const timer = setTimeout(() => finish(() => {
-      terminate();
-      reject(new Error("credential helper timed out"));
-    }), timeoutMs);
+    child.on("error", () => failAfterExit("credential helper could not start"));
+    child.on("exit", () => { exited = true; });
+    child.on("close", (code) => { closed = true; exitCode = code; finishAfterClose(); });
+    child.stdin.on("error", () => failAfterExit("credential helper input failed"));
+    const timer = setTimeout(() => failAfterExit("credential helper timed out"), timeoutMs);
 
-    try {
-      if (stdin === undefined) child.stdin.end();
-      else child.stdin.end(stdin, "utf8");
-    } catch {
-      finish(() => {
-        terminate();
-        reject(new Error("credential helper input failed"));
-      });
+    const sendInput = () => {
+      if (settled || failure || closed) return;
+      try {
+        if (gateWithShell) child.stdin.end(`1${stdin ?? ""}`, "utf8");
+        else if (stdin === undefined) child.stdin.end();
+        else child.stdin.end(stdin, "utf8");
+      } catch { failAfterExit("credential helper input failed"); }
+    };
+    if (onSpawn) {
+      try {
+        if (!child.pid) throw new CredentialMutationLockError("unverified");
+        registrationPending = true;
+        void onSpawn(child.pid, () => !closed && !exited).then(
+          () => { registrationPending = false; sendInput(); finishAfterClose(); },
+          (error: unknown) => { registrationPending = false; failAfterExit("credential helper identity is unavailable", error); finishAfterClose(); },
+        );
+      } catch (error) {
+        registrationPending = false;
+        failAfterExit("credential helper identity is unavailable", error);
+      }
+    } else {
+      sendInput();
     }
   });
 }

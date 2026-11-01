@@ -8,6 +8,8 @@ import {
 import { useApplicationOutcomesQuery } from "../../contexts/operations/hooks/useApplicationOutcomesQuery.js";
 import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDashboardSummaryQuery.js";
 import { useWorkflowRunsListQuery } from "../../contexts/operations/hooks/useWorkflowRunsListQuery.js";
+import { getApiCapabilityAvailability, LOCAL_INSTALL_GUIDE_URL } from "../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
@@ -28,6 +30,9 @@ import {
 } from "../../contexts/operations/activeRuns.js";
 
 export function DashboardView() {
+  const { featureFlags } = usePorts();
+  const learningAvailability = getApiCapabilityAvailability(featureFlags, "learningRecommendations");
+  const policyHistoryAvailability = getApiCapabilityAvailability(featureFlags, "tailoringPolicyRevisions");
   const { data: summary, isLoading, error } = useDashboardSummaryQuery();
   const outcomes = useApplicationOutcomesQuery();
   const startingRuns = useWorkflowRunsListQuery(STARTING_RUNS_INPUT);
@@ -87,8 +92,16 @@ export function DashboardView() {
             />
             <RecentActivityCard summary={summary} />
             <ApplyRunsCard summary={summary} />
-            <LearningRecommendationReviewPanel />
-            <TailoringPolicyHistoryPanel />
+            {learningAvailability.available ? (
+              <LearningRecommendationReviewPanel />
+            ) : (
+              <LocalAppFeatureCard title="Learning recommendations" reason={learningAvailability.reason} />
+            )}
+            {policyHistoryAvailability.available ? (
+              <TailoringPolicyHistoryPanel />
+            ) : (
+              <LocalAppFeatureCard title="Tailoring policy history" reason={policyHistoryAvailability.reason} />
+            )}
             <section className="card col-span-full">
               <CardHeader
                 title="Outcome suggestions"
@@ -116,5 +129,17 @@ export function DashboardView() {
         />
       )}
     </div>
+  );
+}
+
+function LocalAppFeatureCard({ title, reason }: { title: string; reason: string | null }) {
+  return (
+    <section className="card col-span-full">
+      <CardHeader title={title} meta="Local app" />
+      <p className="px-4 py-3">
+        <span>{reason}</span>{" "}
+        <a className="underline underline-offset-2" href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a> to use this feature.
+      </p>
+    </section>
   );
 }

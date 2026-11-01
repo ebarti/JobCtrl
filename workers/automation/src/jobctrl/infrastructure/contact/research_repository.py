@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from collections.abc import Callable
+from dataclasses import replace
 
 from jobctrl.domain.contact.research import (
     CandidateStatus,
@@ -26,6 +28,7 @@ from jobctrl.domain.contact.research import (
     ResearchSourceAttempt,
     ResearchTaskStatus,
 )
+from jobctrl.domain.contact.research_services import FAILED_SOURCE_ATTEMPT_OUTCOMES
 from jobctrl.domain.contact.value_objects import (
     ContactAttribute,
     ContactFactProvenance,
@@ -130,14 +133,88 @@ class SqliteContactResearchTaskRepository:
     def save(self, tenant_id: TenantId, task: ContactResearchTask) -> ContactResearchTask:
         previous = self.load(tenant_id, task.task_id)
         self._persist_canonical(tenant_id, task)
+        self._publish(tenant_id, task, previous)
+        return task
+
+    def save_attempt_if_unproposed(
+        self, tenant_id: TenantId, task: ContactResearchTask, *,
+        check_cancelled: Callable[[], None] | None = None,
+        new_attempts: tuple[ResearchSourceAttempt, ...] = (),
+    ) -> tuple[ContactResearchTask, bool]:
+        """Fence overlapping activity attempts in a short SQLite write transaction."""
+        try:
+            if self._conn.in_transaction:
+                # An earlier gateway outcome may have opened a deferred
+                # transaction. Acquire its writer lock before reading state.
+                self._conn.execute("UPDATE contact_research_tasks SET updated_at = updated_at WHERE 0")
+            else:
+                self._conn.execute("BEGIN IMMEDIATE")
+            if check_cancelled is not None:
+                check_cancelled()
+            previous = self.load(tenant_id, task.task_id)
+            if previous is not None and previous.link != task.link:
+                raise ValueError("Research task already belongs to a different link")
+            if previous is not None and previous.has_accepted_result:
+                failures = tuple(
+                    attempt for attempt in new_attempts
+                    if attempt.outcome in FAILED_SOURCE_ATTEMPT_OUTCOMES
+                )
+                pending_events = []
+
+                class BufferedPublisher:
+                    def publish(self, event):
+                        pending_events.append(event)
+
+                if failures:
+                    previous = replace(previous, source_attempts=previous.source_attempts + failures)
+                    self._conn.execute(
+                        "UPDATE contact_research_tasks SET source_attempts_json = ? WHERE tenant_id = ? AND task_id = ?",
+                        (_encode_attempts(previous.source_attempts), str(tenant_id), task.task_id),
+                    )
+                    for failure in failures:
+                        record_job_event(
+                            self._conn, previous.link.job_id, None, "ContactResearchSourceAttemptFailed",
+                            tenant_id=tenant_id, message="Contact research source attempt failed.",
+                            payload={
+                                "taskId": task.task_id,
+                                "outcome": failure.outcome,
+                                "attemptedAt": failure.attempted_at,
+                            },
+                            publisher=BufferedPublisher(),
+                            entity_kind="contact_research", entity_ref=task.task_id,
+                        )
+                self._conn.commit()
+                for event in pending_events:
+                    try:
+                        self._publisher.publish(event)
+                    except Exception:  # noqa: BLE001 — the durable event is the replay authority
+                        logger.exception("Failed to publish contact research source attempt event for %s", task.task_id)
+                return previous, False
+            if check_cancelled is not None:
+                check_cancelled()
+            if previous is not None:
+                # Another unaccepted attempt may have recorded a failure while
+                # this one was in flight. Keep its history under the writer
+                # fence and append only this attempt's newly produced records.
+                task = replace(task, source_attempts=previous.source_attempts + new_attempts)
+            self._persist_canonical(tenant_id, task)
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._publish(tenant_id, task, previous)
+        return task, True
+
+    def _publish(
+        self, tenant_id: TenantId, task: ContactResearchTask, previous: ContactResearchTask | None,
+    ) -> None:
         try:
             self._emit_events(tenant_id, task, previous)
             self._conn.commit()
         except Exception:  # noqa: BLE001 — event publication must not corrupt the write
+            self._conn.rollback()
             logger.exception(
                 "Failed to emit ContactResearchTask domain events for %s", task.task_id
             )
-        return task
 
     def _persist_canonical(self, tenant_id: TenantId, task: ContactResearchTask) -> None:
         tenant = str(tenant_id)
@@ -235,8 +312,9 @@ class SqliteContactResearchTaskRepository:
                 },
             )
 
-        if task.status is ResearchTaskStatus.NEEDS_REVIEW and previous_status is not (
-            ResearchTaskStatus.NEEDS_REVIEW
+        if task.status is ResearchTaskStatus.NEEDS_REVIEW and (
+            previous_status is not ResearchTaskStatus.NEEDS_REVIEW
+            or (previous is not None and not previous.has_accepted_result and task.has_accepted_result)
         ):
             known = {c.candidate_id for c in previous.candidates} if previous else set()
             for candidate in task.candidates:
@@ -294,7 +372,10 @@ class SqliteContactResearchTaskRepository:
 
         if (
             task.status is ResearchTaskStatus.FAILED
-            and previous_status is not ResearchTaskStatus.FAILED
+            and (
+                previous_status is not ResearchTaskStatus.FAILED
+                or (previous is not None and task.source_attempts != previous.source_attempts)
+            )
         ):
             self._record(
                 tenant_id,
@@ -364,6 +445,7 @@ def _encode_attempts(attempts: tuple[ResearchSourceAttempt, ...]) -> str:
                 "outcome": attempt.outcome,
                 "attemptedAt": attempt.attempted_at,
                 "detail": attempt.detail,
+                "determinationId": attempt.determination_id,
             }
             for attempt in attempts
         ]
@@ -389,6 +471,7 @@ def _decode_attempts(raw: object) -> tuple[ResearchSourceAttempt, ...]:
                     outcome=str(item.get("outcome") or ""),
                     attempted_at=str(item.get("attemptedAt") or ""),
                     detail=str(item.get("detail") or ""),
+                    determination_id=item.get("determinationId") if isinstance(item.get("determinationId"), str) else None,
                 )
             )
         except ValueError:

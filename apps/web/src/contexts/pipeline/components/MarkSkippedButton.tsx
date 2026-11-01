@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import { useId, type JSX } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
 import { useMarkSkippedMutation } from "../hooks/useMarkSkippedMutation.js";
@@ -16,16 +16,23 @@ export function MarkSkippedButton({
 }: MarkSkippedButtonProps): JSX.Element {
   const markSkipped = useMarkSkippedMutation();
   const isPending = markSkipped.isPending;
+  const descriptionId = useId();
   return (
-    <Button
-      type="button"
-      {...(className ? { className } : {})}
-      variant="ghost"
-      size="sm"
-      disabled={isPending}
-      onClick={() => markSkipped.mutate({ jobId })}
-    >
-      {isPending ? "Skipping" : label}
-    </Button>
+    <>
+      <Button
+        type="button"
+        aria-describedby={descriptionId}
+        {...(className ? { className } : {})}
+        variant="ghost"
+        size="sm"
+        disabled={isPending}
+        onClick={() => markSkipped.mutate({ jobId })}
+      >
+        {isPending ? "Skipping" : label}
+      </Button>
+      <span id={descriptionId} className="text-xs text-muted-foreground">
+        Skip stops future Apply locally. In-flight submissions may still complete.
+      </span>
+    </>
   );
 }

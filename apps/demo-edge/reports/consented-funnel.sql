@@ -5,12 +5,12 @@ WITH current_events AS (
   SELECT release, 'core_funnel' AS metric,
          CASE
            WHEN event_name = 'demo_session_started' THEN '01_session'
+           WHEN event_name = 'demo_install_cta_clicked' THEN '07_install_cta'
            WHEN route_name = 'job_detail' THEN '02_job_detail'
            WHEN route_name = 'evidence' THEN '03_evidence'
            WHEN route_name = 'tailor' THEN '04_tailor'
            WHEN route_name = 'apply_review' THEN '05_apply_review'
            WHEN route_name = 'apply_dry_run' THEN '06_apply_dry_run'
-           WHEN event_name = 'demo_install_cta_clicked' THEN '07_install_cta'
          END AS dimension_1,
          '' AS dimension_2,
          COUNT(*) AS events,
