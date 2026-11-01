@@ -690,6 +690,23 @@ observed product-path evidence; fixture coverage is not independent runtime QA.
 
 ## Auditability Checks
 
+For source-supervisor process identity (#1297), run
+`node --test scripts/dev-lifecycle.test.mjs` with synthetic homes, state and
+processes only. Exercise the actual `scripts/dev` status, stop, start, restart
+and foreground paths. PID-only, malformed, changed-identity and unreachable
+records must remain unverified, preserve exact metadata and a separately owned
+peer, and refuse automatic replacement. Verify metadata-only recovery without
+signals, successful stop followed by ordinary restart, TERM-ignoring owned
+descendants, and cancellation. An actual cleanup refusal must remain a visible
+failure with retained ownership, never a successful stop or reboot instruction.
+Keep signal authority in the original unreaped child handle/session; a kernel
+birth check followed by numeric `kill` is not an atomic identity guarantee.
+Hold a component's real publication lock beyond the leaf-process grace while
+the synthetic controller drains its inner supervisor; every owner must still
+publish and retire verified completion, preserving an independent peer. Gate
+one Stop request and overlap another original client: the second operation
+waits without blocking the owner's publication lock, then reads fresh state.
+
 For Skip during Apply custody, run `test_apply_stopped_owner_recovery.py` and
 `test_apply_crash_custody.py`, with the existing Apply claim, workflow, reset
 and projection selections. A real owned source process and retained child must

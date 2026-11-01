@@ -271,11 +271,36 @@ corepack pnpm dev:logs worker
 scripts/dev list
 ```
 
-`corepack pnpm dev:status` reports tracked PID liveness separately from health.
+`corepack pnpm dev:status` reports authenticated source-launch ownership separately
+from health. Each component's launch owner retains its original child handle;
+status and stop authenticate that same launch through a private local endpoint.
+A PID file alone never grants signal authority. `unverified` means a legacy,
+malformed, changed or unreachable launch record could not establish ownership.
+Stop and replacement then fail visibly and preserve the records and processes.
 The API row can show `migration`, `incompatible`, `healthy`, or `unknown` when
 its watcher is alive. `unknown` means the health probe did not establish a
 result; it does not prove the process is down. When the worker process is alive
 but its heartbeat is stale, the worker row reports `stale`.
+
+After reviewing an unverifiable earlier process, retire only its local metadata
+with an explicit component name, for example:
+
+```bash
+scripts/dev forget docs
+```
+
+This command never signals a process or removes logs or workspace data. It
+refuses an authenticated live owner, which must be stopped normally first.
+Forgetting an unreachable record does not prove its earlier processes exited;
+review those processes and any occupied bindings before starting a replacement.
+No reboot is required. Successful managed stop and ordinary start/restart keep
+their existing commands.
+
+Source cleanup uses the existing original-child/session ownership helper. If
+the original owner is lost, a child changes ownership, or descendant exit cannot
+be verified, cleanup remains a reported failure rather than recovering signal
+authority from a PID or process-group number. This source-only recovery is best
+effort; the macOS workspace scope remains the stronger database-writer boundary.
 
 For a detached background stack in a normal shell, use the explicit daemon mode:
 
@@ -600,6 +625,10 @@ diagnostics after a failure. The role-named `frontend-lanes` artifacts retain
 logs and per-command outcomes. Both E2E modes retain separate JUnit and
 screenshot evidence. Resource logs record available CPUs and memory for timing
 comparisons.
+
+Native shard 0 also runs the complete source-supervisor lifecycle in an owned
+offline macOS workspace with Python 3.14.4. The manual repository-scripts
+workflow retains the same standalone diagnostic.
 
 The web profile keeps the original lint, types, unit, public-type and production
 build sequence. Browser installation is selected only for profiles that need it

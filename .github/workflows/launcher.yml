@@ -1,6 +1,7 @@
+---
 name: Native Launcher CI
 'on':
-  workflow_dispatch:
+  workflow_dispatch: 
   workflow_call:
     inputs:
       enabled:
@@ -108,6 +109,46 @@ jobs:
         if [[ "$TEST_SHARD" = 0 ]]; then
           go list ./... | grep -v '/internal/launcher$' | xargs go test -race -timeout 18m -count=1
         fi
+    - name: Set up source lifecycle Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: 3.14.4
+    - name: Test the complete source lifecycle in an owned offline workspace
+      shell: bash
+      run: |
+        set -euo pipefail
+        node=$(command -v node)
+        python=$(command -v python3)
+        qa=$(mktemp -d "$RUNNER_TEMP/jobctrl-source-lifecycle.XXXXXX")
+        qa=$(cd "$qa" && pwd -P)
+        mkdir -p "$qa/home" "$qa/tmp" "$qa/bin"
+        # The fixture supplies every service CLI. Only Python's stdlib is needed.
+        printf '#!/bin/bash\nexec %q -I -S -B -W error::SyntaxWarning "$@"\n' "$python" > "$qa/bin/python3"
+        chmod 700 "$qa/bin/python3"
+        cat > "$qa/offline.sb" <<EOF
+        (version 1)
+        (allow default)
+        (deny network-outbound (remote ip))
+        (deny network-inbound (local ip))
+        (deny file-write*)
+        (allow file-write* (subpath "$qa"))
+        (allow file-write-data (literal "/dev/null"))
+        (deny mach-lookup (global-name "com.apple.securityd") (global-name "com.apple.securityd.xpc") (global-name "com.apple.SecurityServer"))
+        (deny file-read* (subpath "$HOME/Library/Keychains") (subpath "/Library/Keychains") (subpath "/System/Library/Keychains"))
+        (deny process-exec (literal "/usr/bin/security") (literal "/usr/bin/open") (subpath "/Applications"))
+        EOF
+        # Permit owned Unix control sockets, but no IP traffic or inherited keys.
+        env -i HOME="$qa/home" TMPDIR="$qa/tmp" PATH="$qa/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+          PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
+          /usr/bin/sandbox-exec -f "$qa/offline.sb" \
+          "$node" --test --test-concurrency=1 --test-reporter=tap \
+          scripts/dev-lifecycle.test.mjs | tee "$qa/lifecycle.tap"
+        grep -Eq '^# tests [1-9][0-9]*$' "$qa/lifecycle.tap"
+        grep -Fx '# fail 0' "$qa/lifecycle.tap"
+        grep -Fx '# cancelled 0' "$qa/lifecycle.tap"
+        grep -Fx '# skipped 0' "$qa/lifecycle.tap"
+        grep -Fx '# todo 0' "$qa/lifecycle.tap"
+      timeout-minutes: 10
   launcher1:
     if: "${{ github.event_name == 'workflow_dispatch' || inputs.enabled }}"
     name: Darwin launcher shard 1
