@@ -54,6 +54,7 @@ from jobctrl.domain.determinations import Source, DeterminationFailure
 from jobctrl.domain.ports.claim_verification import ArtifactLine, ClaimVerifier
 from jobctrl.domain.ports.analysis_agreement import AnalysisAgreementJudge
 from jobctrl.domain.ports.job_interpretation import JobInterpreter
+from jobctrl.domain.ports.analysis_checks import AnalysisChecks
 from jobctrl.domain.materials.analysis import EeoScreenHit
 import json
 
@@ -89,6 +90,8 @@ class AnalyzeJobUseCase:
         ensemble_runner: EnsembleRunner | None = None,
         prompt_version: str = PROMPT_VERSION,
         sdk_set_version: str = SDK_SET_VERSION,
+        analysis_checks: AnalysisChecks | None = None,
+        execution_guard: Callable[[], None] | None = None,
     ) -> None:
         if not adapters:
             raise ValueError("AnalyzeJobUseCase requires at least one draft adapter")
@@ -104,6 +107,8 @@ class AnalyzeJobUseCase:
         self._ensemble_runner = ensemble_runner
         self._prompt_version = prompt_version
         self._sdk_set_version = sdk_set_version
+        self._analysis_checks = analysis_checks
+        self._execution_guard = execution_guard
 
     # ------------------------------------------------------------------ sync
 
@@ -152,6 +157,12 @@ class AnalyzeJobUseCase:
                 return AnalyzeJobOutcome(analysis=cached, cached=True)
 
         verification_ids = {}
+        checked_proposals = {}
+
+        def proposal_key(analysis):
+            # Sole-draft promotion removes model_id and changes no input. This
+            # request-local reuse never crosses a posting or analysis change.
+            return json.dumps(analysis.model_dump(exclude={"model_id"}), sort_keys=True, ensure_ascii=False)
 
         def verify_prose(analysis):
             # The existing gate supplies exact posting excerpts, never model
@@ -161,7 +172,7 @@ class AnalyzeJobUseCase:
             excerpts = dict.fromkeys(
                 row.evidence_span for row in [*grounded.requirements, *grounded.keywords]
             )
-            result, envelope = self._claim_verifier.verify(
+            claim_request = dict(
                 artifact_kind="employer_analysis",
                 entity_id=str(job_id),
                 lines=lines,
@@ -173,6 +184,26 @@ class AnalyzeJobUseCase:
                     "support": "Employer statements and target-role requirements must rest on the posting. Candidate fact claims have no personal evidence.",
                 },
             )
+            key = proposal_key(grounded)
+            # Multiple admitted drafts retain their ordinary independent
+            # checks. Only their final canonical gets an interpretation.
+            if self._analysis_checks is not None and (len(self._adapters) == 1 or not hasattr(analysis, "model_id")):
+                pair = checked_proposals.get(key)
+                if pair is None:
+                    pair = self._analysis_checks.review(
+                        claim_request=claim_request,
+                        interpretation_request={
+                            "job": job,
+                            "requirements": [Source(source_id=row.id, text=row.evidence_span) for row in grounded.requirements],
+                            "tenant_id": str(tenant_id),
+                        },
+                        execution_guard=self._execution_guard,
+                    )
+                result, envelope = pair.claims
+                if result.verdict != "fail":
+                    checked_proposals[key] = pair
+            else:
+                result, envelope = self._claim_verifier.verify(**claim_request)
             if result.verdict == "fail":
                 error = DeterminationFailure("claim_verification_failed")
                 error.repair_feedback = json.dumps(result.model_dump(), ensure_ascii=False)
@@ -217,7 +248,8 @@ class AnalyzeJobUseCase:
             prompt_version=self._prompt_version,
             sdk_set_version=self._sdk_set_version,
         )
-        interpretation = self._job_interpreter.interpret(job=job, employer_analysis=record)
+        checked = checked_proposals.get(proposal_key(grounded_canonical))
+        interpretation = checked.interpretation if checked is not None else self._job_interpreter.interpret(job=job, employer_analysis=record)
         interpreted = {row.requirement_id: row for row in interpretation.requirements}
         canonical = canonical.model_copy(
             update={
@@ -245,6 +277,8 @@ class AnalyzeJobUseCase:
                 if row.protected_class
             ),
         )
+        if self._execution_guard is not None:
+            self._execution_guard()
         self._repository.save(record)  # supersede, never destroy (D-13)
         if record.is_degraded:
             log.warning(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 import hashlib
 import json
+from pathlib import Path
 
 from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.ports.events import EventPublisher
@@ -140,9 +141,18 @@ def build_analyze_use_case(
     from jobctrl.domain.materials.analysis_agreement import ModelAnalysisAgreementJudge
     from jobctrl.infrastructure.enrichment.interpretation import PersistedJobInterpreter
 
+    from jobctrl.infrastructure.analysis.parallel_checks import ParallelAnalysisChecks
+    from jobctrl.infrastructure.llm.attempt_admission import check_model_attempt_admission
+
     deps = determination_dependencies(conn, tenant_id=tenant_id, lane="enrichment", adapter=llm)
+    database = conn.execute("PRAGMA database_list").fetchone()[2]
+    # Thread-owned file-backed connections only; custom/in-memory construction
+    # retains the existing sequential domain path.
+    parallel_checks = ParallelAnalysisChecks(Path(database).resolve(), deps) if database else None
     return AnalyzeJobUseCase(
         repository=SqliteEmployerAnalysisRepository(conn),
+        analysis_checks=parallel_checks,
+        execution_guard=check_model_attempt_admission,
         adapters=tuple(adapters),
         synthesizer=synthesizer,
         claim_verifier=ModelClaimVerifier(**deps),
