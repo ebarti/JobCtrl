@@ -834,10 +834,6 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	if err := store.Permit(target); err != nil {
 		return fmt.Errorf("rollback target is not safe: %w", err)
 	}
-	targetPair, err := retainedPairForReceipt(ctx.Instance.StateDir, target)
-	if err != nil {
-		return fmt.Errorf("rollback requires a verified paired backup for %s: %w", target.BuildID, err)
-	}
 	ctx, err = rebindActiveContext(ctx, active.Receipt.BuildID)
 	if err != nil {
 		return err
@@ -853,6 +849,21 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	}
 	if !protocolSupports(activeVerified.distribution, launcherProtocol) || !protocolSupports(targetVerified.distribution, launcherProtocol) {
 		return fmt.Errorf("current launcher protocol %d cannot supervise both active and rollback payloads; keep the current release; cross-schema rollback is unavailable", launcherProtocol)
+	}
+	targetPair, err := retainedPairForReceipt(ctx.Instance.StateDir, target)
+	if err != nil {
+		// Older forward controllers labeled their first schema-15 snapshot
+		// with the candidate receipt. Only the completed transition's original
+		// journal and both signed schema contracts can establish its source.
+		journal, journalErr := store.ReadJournal()
+		if journalErr != nil {
+			return fmt.Errorf("rollback requires a verified paired backup for %s: %w", target.BuildID, err)
+		}
+		compatible, compatibilityErr := compatibleForwardRollbackPair(ctx, journal, active, activeVerified, targetVerified)
+		if compatibilityErr != nil {
+			return fmt.Errorf("rollback requires a verified paired backup for %s: %w", target.BuildID, err)
+		}
+		targetPair = compatible
 	}
 	journal, err := store.Begin("rollback", &active.Receipt, &target, target.DescriptorSHA256)
 	if err != nil {
