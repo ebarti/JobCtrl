@@ -4,12 +4,11 @@ name: Repo Scripts
 # repository: docs launch copy against README/ROADMAP and
 # .env.example, version parity into launcher.go and the release workflows,
 # demo composition and headers, and the dev supervisor lifecycle. The suite is
-# small and fast, so it runs on every pull request instead of maintaining a
-# path map of everything it reads.
+# small and fast. PR execution lives in pr-ci.yml; main/manual execution stays
+# here instead of maintaining a path map of everything the contracts read.
 on:
   push:
     branches: ["main"]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -37,6 +36,8 @@ jobs:
           node-version: 22.21.1
           cache: pnpm
       - name: Install locked dependencies
+        id: dependencies
         run: corepack pnpm install --frozen-lockfile
       - name: Test repository scripts
+        timeout-minutes: 10
         run: corepack pnpm scripts:test

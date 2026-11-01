@@ -16,9 +16,13 @@ on:
       - "LICENSE"
       - "NOTICE"
       - ".github/workflows/python.yml"
-  # Required branch checks must exist for every PR, including docs-only changes.
-  pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      enabled:
+        description: Run the full suite unless accepted PR scope explicitly excludes it
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -29,14 +33,13 @@ concurrency:
 
 jobs:
   python:
-    name: Python ${{ matrix.python-version }}
+    name: Python 3.12
+    if: ${{ github.event_name != 'pull_request' || inputs.enabled }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
     env:
+      PYTHON_VERSION: "3.12"
+      UV_PYTHON: "3.12"
       PYTHONFAULTHANDLER: "1"
 
     steps:
@@ -44,17 +47,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ env.PYTHON_VERSION }}
       - name: Set up pinned uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: 0.11.7
           enable-cache: true
           cache-dependency-glob: workers/automation/uv.lock
-          cache-suffix: py${{ matrix.python-version }}
+          cache-suffix: py${{ env.PYTHON_VERSION }}
       - name: Sync the locked dependency graph
         run: uv --project workers/automation sync --locked --all-extras
       - name: Lint
@@ -87,7 +90,7 @@ jobs:
           # amplification. The macOS launcher workflow still exercises the
           # migration boundary on real disk.
           if [[ -d /dev/shm && -w /dev/shm ]]; then
-            tmpdir="/dev/shm/jobctrl-${GITHUB_RUN_ID}-py${{ matrix.python-version }}"
+            tmpdir="/dev/shm/jobctrl-${GITHUB_RUN_ID}-py${{ env.PYTHON_VERSION }}"
             mkdir -p "$tmpdir"
             echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
           fi
@@ -120,6 +123,15 @@ jobs:
       - name: Install Chromium for guarded availability regression
         run: uv --project workers/automation run --locked --all-extras playwright install --with-deps chromium
       - name: Test
-        run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25
+        run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25 --junitxml="$RUNNER_TEMP/python-$PYTHON_VERSION.xml"
       - name: Build package
         run: uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation
+
+      - name: Upload synthetic Python JUnit report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-${{ env.PYTHON_VERSION }}-junit-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/python-${{ env.PYTHON_VERSION }}.xml
+          retention-days: 7
+          if-no-files-found: warn

@@ -66,12 +66,19 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          if ! fixture_temp="$(node -p 'require("node:fs").realpathSync(require("node:os").tmpdir())')"; then
+            echo "Could not resolve the synthetic fixture directory" >&2
+            exit 1
+          fi
           found=0
-          while IFS= read -r -d '' binary; do
-            found=1
-            echo "Rechecking the retained synthetic 0.3.0 payload with the original notarization requirement"
-            /usr/bin/codesign --verify --strict --check-notarization -R=notarized --verbose=4 "$binary" || echo "Notarization recheck failed (exit $?)"
-          done < <(find "$RUNNER_TEMP" -type f -path '*/jobctrl-acquisition-upgrades-*/curl/runtime/staging/*/payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node' -print0)
+          for fixture in "$fixture_temp"/jobctrl-acquisition-upgrades-*; do
+            [[ -d "$fixture" && ! -L "$fixture" ]] || continue
+            while IFS= read -r -d '' binary; do
+              found=1
+              echo "Rechecking the retained synthetic 0.3.0 payload with the original notarization requirement"
+              /usr/bin/codesign --verify --strict --check-notarization -R=notarized --verbose=4 "$binary" || echo "Notarization recheck failed (exit $?)"
+            done < <(find "$fixture" -type f -path '*/from-*/curl/runtime/staging/*/payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node' -print0)
+          done
           if [[ "$found" = 0 ]]; then echo "No retained 0.3.0 SQLite binary was available for a notarization recheck"; fi
 
       - name: Retain synthetic upgrade evidence

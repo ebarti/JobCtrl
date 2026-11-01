@@ -1,6 +1,11 @@
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { lintProgram, webRoot } from "./lint-boundaries.mjs";
+
+// Separate compiler configurations never share a builder or syntax cache.
+// Versions bind reuse to current bytes, including files read from disk.
+const compilers = new Map();
 
 export function check(files, exemptions = {}, realProgram = false) {
   const sources = new Map(
@@ -9,12 +14,13 @@ export function check(files, exemptions = {}, realProgram = false) {
       source,
     ]),
   );
-  const parsed = ts.parseJsonConfigFileContent(
-    ts.readConfigFile(resolve(webRoot, "tsconfig.json"), ts.sys.readFile)
-      .config,
-    ts.sys,
-    webRoot,
-  );
+  const parsed = realProgram
+    ? ts.parseJsonConfigFileContent(
+        ts.readConfigFile(resolve(webRoot, "tsconfig.json"), ts.sys.readFile).config,
+        ts.sys,
+        webRoot,
+      )
+    : undefined;
   const options = realProgram
     ? parsed.options
     : {
@@ -26,6 +32,9 @@ export function check(files, exemptions = {}, realProgram = false) {
         paths: { "@/*": ["src/*"] },
         skipLibCheck: true,
       };
+  const key = JSON.stringify({ realProgram, options });
+  if (!compilers.has(key)) compilers.set(key, { files: new Map() });
+  const compiler = compilers.get(key);
   const host = ts.createCompilerHost(options);
   const getSourceFile = host.getSourceFile.bind(host);
   const fileExists = host.fileExists.bind(host);
@@ -36,17 +45,34 @@ export function check(files, exemptions = {}, realProgram = false) {
     directoryExists(path);
   host.fileExists = (path) => sources.has(path) || fileExists(path);
   host.readFile = (path) => sources.get(path) ?? readFile(path);
-  host.getSourceFile = (path, languageVersion, onError) =>
-    sources.has(path)
-      ? ts.createSourceFile(path, sources.get(path), languageVersion, true)
-      : getSourceFile(path, languageVersion, onError);
-  const program = ts.createProgram(
+  // Added, removed and changed overlays can change module resolution even when
+  // an importing production file has identical text. Never reuse resolutions.
+  host.hasInvalidatedResolutions = () => true;
+  host.getSourceFile = (path, languageVersion, onError, shouldCreateNewSourceFile) => {
+    const text = host.readFile(path);
+    const cacheKey = JSON.stringify([path, languageVersion]);
+    const previous = compiler.files.get(cacheKey);
+    if (!shouldCreateNewSourceFile && text !== undefined && previous?.text === text)
+      return previous;
+    const source = sources.has(path)
+      ? ts.createSourceFile(path, text, languageVersion, true)
+      : getSourceFile(path, languageVersion, onError, shouldCreateNewSourceFile);
+    if (source) {
+      source.version = createHash("sha256").update(source.text).digest("hex");
+      compiler.files.set(cacheKey, source);
+    } else compiler.files.delete(cacheKey);
+    return source;
+  };
+  const builder = ts.createSemanticDiagnosticsBuilderProgram(
     realProgram
       ? [...new Set([...parsed.fileNames, ...sources.keys()])]
       : [...sources.keys()],
     options,
     host,
+    compiler.builder,
   );
+  compiler.builder = builder;
+  const program = builder.getProgram();
   // Ignore unrelated real imported production files; the fixture owns its source set.
   const scoped = {
     getTypeChecker: () => program.getTypeChecker(),
@@ -56,9 +82,8 @@ export function check(files, exemptions = {}, realProgram = false) {
       program.getSourceFiles().filter((source) => sources.has(source.fileName)),
   };
   const results = lintProgram(scoped, webRoot, exemptions);
-  // Compiler diagnostics are evidence only, never a substitute for boundary diagnostics.
-  if (realProgram)
-    results.compilerDiagnostics = program.getSemanticDiagnostics();
+  // Compiler diagnostics remain independent evidence for the current program.
+  if (realProgram) results.compilerDiagnostics = builder.getSemanticDiagnostics();
   return results;
 }
 export const rules = (results) =>

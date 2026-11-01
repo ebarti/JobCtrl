@@ -42,42 +42,6 @@ on:
       - "pnpm-workspace.yaml"
       - "packages/tsconfig/**"
       - ".github/workflows/launcher.yml"
-  pull_request:
-    paths:
-      - "launcher/**"
-      - "workers/automation/src/jobctrl/database.py"
-      - "workers/automation/src/jobctrl/browser_capabilities.py"
-      - "workers/automation/src/jobctrl/config.py"
-      - "workers/automation/src/jobctrl/state.py"
-      - "workers/automation/src/jobctrl/runtime.py"
-      - "workers/automation/src/jobctrl/apply/**"
-      - "workers/automation/src/jobctrl/infrastructure/apply/**"
-      - "workers/automation/src/jobctrl/domain/**"
-      - "workers/automation/src/jobctrl/infrastructure/migrations/**"
-      - "workers/automation/src/jobctrl/infrastructure/projections/**"
-      - "workers/automation/src/jobctrl/infrastructure/scoring/**"
-      - "workers/automation/src/jobctrl/infrastructure/temporal/**"
-      - "workers/automation/tests/fixtures/shipped_v6_schema.sql"
-      - "workers/automation/tests/v6_migration_fixture.py"
-      - "workers/automation/tests/helpers/apply_*.py"
-      - "workers/automation/tests/test_native_apply_readiness.py"
-      - "workers/automation/tests/test_apply_regressions.py"
-      - "workers/automation/tests/test_apply_use_cases.py"
-      - "workers/automation/tests/temporal_env.py"
-      - "workers/automation/tests/availability_fixture.py"
-      - "packaging/distribution/components.lock.json"
-      - "packaging/distribution/capability-policy.json"
-      - "workers/automation/pyproject.toml"
-      - "workers/automation/uv.lock"
-      - "apps/api/package.json"
-      - "apps/api/tsconfig.json"
-      - "apps/api/src/db.ts"
-      - "apps/api/src/schema-manifest.ts"
-      - "apps/api/test/support/reopen-exact-v8.ts"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "packages/tsconfig/**"
-      - ".github/workflows/launcher.yml"
   workflow_dispatch:
 
 permissions:
@@ -88,6 +52,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Both matrix results determine workflow success without a summary runner.
   launcher-shard:
     name: Darwin launcher shard ${{ matrix.shard }}
     runs-on: macos-15
@@ -187,11 +152,3 @@ jobs:
           if [[ "$TEST_SHARD" = 0 ]]; then
             go list ./... | grep -v '/internal/launcher$' | xargs go test -race -timeout 18m -count=1
           fi
-
-  launcher:
-    name: Darwin launcher (vet + race)
-    needs: launcher-shard
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Confirm both native shards passed
-        run: echo "Both native launcher test shards passed."

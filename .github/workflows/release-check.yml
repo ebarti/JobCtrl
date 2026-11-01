@@ -1,15 +1,9 @@
 name: Release Privacy Gate
 
-# This is the privacy gate for a public repository: any file anywhere can carry
-# owner PII or a secret, so `pull_request` deliberately takes no `paths` filter.
-# It takes no `branches` filter either — stacked pull requests target their
-# parent branch rather than main, and restricting to main skipped the scan on
-# every stacked layer. `push` stays scoped to main, where it backstops the
-# merged result.
+# PR privacy and scope admission live in pr-ci.yml; main/manual scans stay here.
 on:
   push:
     branches: ["main"]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -21,7 +15,6 @@ concurrency:
 
 jobs:
   release-check:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: Release check
     runs-on: ubuntu-latest
     timeout-minutes: 5
