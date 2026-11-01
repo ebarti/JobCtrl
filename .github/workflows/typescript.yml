@@ -12,8 +12,6 @@ on:
       - "package.json"
       - "pnpm-workspace.yaml"
       - ".github/workflows/typescript.yml"
-  # Required branch checks must exist for every PR, including docs-only changes.
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -81,9 +79,10 @@ jobs:
       - name: Install locked dependencies
         run: corepack pnpm install --frozen-lockfile
       - name: Lint web boundaries
-        run: |
-          corepack pnpm web:lint
-          corepack pnpm web:lint:test
+        run: corepack pnpm web:lint
+      - name: Test frontend boundary regression controls
+        if: ${{ github.event_name != 'pull_request' }}
+        run: corepack pnpm web:lint:test
       - name: Check web
         run: corepack pnpm web:check
       - name: Test web
@@ -160,11 +159,13 @@ jobs:
           corepack pnpm --filter @jobctrl/web e2e:check-pdf-tools
       - name: Test web end-to-end
         env:
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ${{ runner.temp }}/e2e-isolated.xml
           JOBCTRL_E2E_ISOLATED: "1"
           JOBCTRL_E2E_PROFILE_SUGGESTIONS: "1"
         run: corepack pnpm web:e2e
       - name: Test real API and worker RPC boundaries
         env:
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ${{ runner.temp }}/e2e-real-rpc.xml
           JOBCTRL_E2E_ISOLATED: "0"
           JOBCTRL_E2E_PROFILE_SUGGESTIONS: "0"
           JOBCTRL_E2E_WEB_SERVER: dev
@@ -180,8 +181,21 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: synthetic-first-connection-screenshots
-          path: dist/playwright-report/**/first-open-*.png
+          path: |
+            ${{ runner.temp }}/e2e-isolated.xml.artifacts/**/first-open-*.png
+            ${{ runner.temp }}/e2e-real-rpc.xml.artifacts/**/first-open-*.png
           if-no-files-found: ignore
+
+      - name: Upload synthetic E2E JUnit reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-junit-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/e2e-isolated.xml
+            ${{ runner.temp }}/e2e-real-rpc.xml
+          retention-days: 7
+          if-no-files-found: warn
 
   extension:
     name: Browser extension

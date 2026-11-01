@@ -553,28 +553,87 @@ The repository requires maintainer approval for workflow runs from all external
 fork contributors. Review the proposed changes before approving a run. Issue
 labels and Project status do not approve code execution.
 
-CI is plain path-filtered GitHub Actions with no routing layer: each workflow
-under `.github/workflows/` declares the paths it owns. Demo edge verification
-has its own PR workflow; the site workflow retains it as a pre-deployment step
-on `main` pushes and manual runs. `typescript.yml` runs the API, web,
-Storybook, web E2E, and extension suites, including `web:lint` frontend boundary
-checks; `python.yml` lints and
-runs the full pytest suite on each supported Python version; `launcher.yml`
-runs the native launcher race suite together with the cross-runtime migration
-boundary (Go opens the candidate with the locked Python migration runtime,
-then the TypeScript API reopens it); `distribution.yml` audits the fail-closed
-release contracts when dependency locks or packaging inputs change — the
-surface Dependabot PRs touch; `docs-site.yml` builds and verifies its rendered
-site in Chromium, and `demo-site.yml` builds its site. Both deploy on `main`.
-`native-credentials.yml` runs its three-OS native-store matrix for the credential
-adapters and host bridge, their shared configuration/contracts, and Node
-manifest, lockfile or toolchain changes. Unrelated API routes and tests do not
-trigger that matrix.
-Two workflows deliberately take no paths
-filter: `release-check.yml` (any file can leak PII) and `repo-scripts.yml`,
-whose `scripts:test` suite asserts contracts across inputs that sprawl the
-repository (docs launch copy, version parity into `launcher.go` and the
-release workflows, demo composition, dev supervisor lifecycle).
+Pull requests use `.github/workflows/pr-ci.yml`. It retains the required safety
+and product checks while admitting suites according to the changed surfaces.
+`Release check` scans the actual candidate with accepted base-owned privacy code,
+verifies the base, head and tested merge identities, and classifies the complete
+Git diff with the accepted `scripts/pr-ci-routing.mjs` policy. The preflight
+executes no candidate code or candidate dependency installation. Its scope
+notice records the identities, policy and selected checks.
+
+Missing policy at first adoption, unknown paths, shared dependencies, CI or
+privacy inputs, and uncertain scope select full coverage or block verification.
+Forks, stacked bases outside the default branch and moving policy bases use
+full coverage. A leaf runs unless the trusted decision explicitly excludes it;
+missing outputs cannot silently omit a suite. Each selected suite's own required
+check reports failure and cancellation. There is no final aggregation runner.
+
+| Changed surface | Required product checks, in addition to privacy and repository scripts |
+| --- | --- |
+| Published site documentation | Docs build, emitted links/redirects and rendered Chromium checks |
+| Documentation outside the built site | No unrelated product suite |
+| Web source | Web lint/types/unit/build, Storybook/browser controls and web E2E |
+| API source | API checks/tests and web E2E, including real worker RPC |
+| Worker source | API/RPC integration and the full worker suite on primary Python 3.12 |
+| Shared contracts, locks, toolchains, CI, privacy or unknown inputs | Full PR validation |
+
+The Python suite has one canonical recipe in `.github/workflows/python.yml`.
+PR admission calls that reusable workflow; main-push and manual runs execute the
+same job. The installed app bundles CPython 3.12, so the complete locked suite,
+including migration and security cases, runs once on 3.12. This removes the
+complete 3.11 and 3.13 executions; it does not certify those source interpreters
+as having passed the full suite. Package interpreter metadata is unchanged.
+The required replacement context is `Python / Python 3.12` for the PR call;
+retire the old three Python contexts only after the replacement has passed.
+
+The native launcher still exercises race checks and the cross-runtime migration
+boundary: Go opens the candidate with the locked Python migration runtime, then
+the TypeScript API reopens it. Native credentials, distribution, Gmail and demo
+checks retain their affected inputs and execution recipes. Timing reports
+identify these checks separately from the required contexts.
+
+`Script unit tests` runs the full cross-repository contract suite for every
+verified PR, including docs launch copy, version parity, release workflows,
+demo composition and supervisor lifecycle. When privacy policy inputs change,
+it also scans the pristine candidate with that candidate's privacy policy
+before candidate installation or tests can modify the workspace. This
+complements the trusted base-policy scan. Frontend boundary regression tests
+run on the selected Storybook runner alongside the web job; `web:lint` remains
+in the web job. Push and manual TypeScript runs keep the boundary regression
+tests in the web job.
+
+The owning TypeScript, Python, documentation, scripts, privacy and native
+workflows retain their main-push and manual behavior. Docs and demo site
+workflows retain their gated deployments on `main`.
+PR demo previews additionally require affected-only admission and the original
+Demo Site input paths. Bootstrap, full, shared, CI, security and uncertain
+admissions build and verify their selected surfaces without publishing a preview.
+
+For the elapsed-time study, retain the workflow, all-attempt job metadata and
+trusted scope notice while the PR association is available. GitHub's REST API
+provides the workflow and job timestamps:
+
+```bash
+gh api repos/ebarti/JobCtrl/actions/runs/RUN_ID
+gh api --paginate 'repos/ebarti/JobCtrl/actions/runs/RUN_ID/jobs?filter=all&per_page=100'
+```
+
+Measure total candidate elapsed time from the earliest attributable
+workflow creation, including prerequisites and retries, alongside the original
+required-job span. Separate pre-start delay from execution, runner allocations
+from materialized job records, and executed checks from intentional exclusions.
+Full-workflow completion stays unavailable while a workflow can still create
+later jobs. Required-context rules are recorded at collection time.
+Incomplete, failed or unattributed proof cannot enter a successful sample;
+missing historical PR or tested-base identity remains unknown. Compare similar
+changes, test coverage, runner load and toolchains before claiming a speedup.
+
+Dependabot automatic rebases are disabled to keep parked dependency PRs from
+restarting CI after unrelated merges. Refresh the PR selected for its next
+merge, then verify that candidate. Update schedules and dependency groups still
+apply. GitHub may continue automatically rebasing PRs opened before this policy
+change until they are 30 days old; see the
+[Dependabot rebase policy](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#rebase-strategy).
 
 Python CI syncs `workers/automation/uv.lock` with `--locked --all-extras`; it
 must never resolve the floating ranges in `pyproject.toml` in place of the
