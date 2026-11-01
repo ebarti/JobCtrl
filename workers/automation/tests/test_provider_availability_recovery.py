@@ -7,7 +7,7 @@ import pytest
 from jobctrl.domain.ports.llm import LlmMessage
 from jobctrl.infrastructure.llm import llm_client
 from jobctrl.infrastructure.llm.provider_availability import provider_route_available, record_provider_failure
-from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, ProviderFailureEnvelope, raise_on_claude_execution_failure
+from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, ProviderFailureEnvelope, raise_on_claude_failure
 
 _ROUTED_CHAT_JSON = llm_client.LlmAdapter.chat_json
 
@@ -155,12 +155,15 @@ def test_claude_execution_error_is_not_generated_content_or_schema_failure():
     message = result_type()
     message.is_error, message.subtype = True, "error_during_execution"
     with pytest.raises(ProviderCallError) as raised:
-        raise_on_claude_execution_failure([message], model="model", operation="analysis")
+        raise_on_claude_failure([message], model="model", operation="analysis")
     assert record_provider_failure("claude", "model", raised.value)
     assert not provider_route_available("claude", "model")
     llm_client.reset_llm_adapter()
     message.subtype = "error_max_structured_output_retries"
-    raise_on_claude_execution_failure([message], model="model", operation="analysis")
+    with pytest.raises(ProviderCallError) as schema_error:
+        raise_on_claude_failure([message], model="model", operation="analysis")
+    assert schema_error.value.code == "schema_validation_failed"
+    assert not record_provider_failure("claude", "model", schema_error.value)
     assert provider_route_available("claude", "model")
 
 

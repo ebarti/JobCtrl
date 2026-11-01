@@ -1,3 +1,4 @@
+import { BrowserRequestIdentityAdapter } from "../shared/adapters/local/BrowserRequestIdentityAdapter.js";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { vi } from "vitest";
 
@@ -128,6 +129,10 @@ class FakeSubscription implements EventStreamSubscription {
 
 export class InMemoryStoragePort implements StoragePort {
   private readonly map = new Map<string, unknown>();
+  private static readonly locks = new Map<string, Promise<void>>();
+  static readonly transactionValues = new Map<string, string>();
+  static failTransaction: "read" | "write" | null = null;
+  static failWrite: ((value: string) => boolean) | null = null;
   get<T = unknown>(key: string): T | null {
     return (this.map.get(key) as T | undefined) ?? null;
   }
@@ -136,6 +141,42 @@ export class InMemoryStoragePort implements StoragePort {
   }
   remove(key: string): void {
     this.map.delete(key);
+  }
+
+  async transact<T>(
+    name: string,
+    operation: (current: string | null) => { result: T; write?: string },
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const previous = InMemoryStoragePort.locks.get(name) ?? Promise.resolve();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.then(() => held);
+    InMemoryStoragePort.locks.set(name, queued);
+    await previous;
+    try {
+      if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
+      if (InMemoryStoragePort.failTransaction === "read")
+        throw new Error("storage unavailable");
+      const change = operation(
+        InMemoryStoragePort.transactionValues.get(name) ?? null,
+      );
+      if (change.write !== undefined) {
+        if (
+          InMemoryStoragePort.failTransaction === "write" ||
+          InMemoryStoragePort.failWrite?.(change.write)
+        )
+          throw new Error("storage unavailable");
+        InMemoryStoragePort.transactionValues.set(name, change.write);
+      }
+      return change.result;
+    } finally {
+      release();
+      if (InMemoryStoragePort.locks.get(name) === queued)
+        InMemoryStoragePort.locks.delete(name);
+    }
   }
 }
 
@@ -176,7 +217,9 @@ export class FakeOpenInOsPort implements OpenInOsPort {
 }
 
 export class FakePdfExportPort implements PdfExportPort {
-  readonly downloadPdf = vi.fn(async (_request: PdfExportRequest): Promise<void> => {});
+  readonly downloadPdf = vi.fn(
+    async (_request: PdfExportRequest): Promise<void> => {},
+  );
 }
 
 export class FakeTelemetryPort implements TelemetryPort {
@@ -345,14 +388,25 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
         baseApi,
         templateApiDefaults,
       );
+  if (overrides.api?.jobs && !overrides.api.reviewableJobs) {
+    api.reviewableJobs = async (
+      query: Parameters<Ports["api"]["jobs"]>[0],
+    ) => ({
+      ...(await overrides.api!.jobs!(query)),
+      observationId: "00000000-0000-4000-8000-000000000001",
+    });
+  }
   return {
+    requestIdentity: new BrowserRequestIdentityAdapter(),
     api,
     eventStream: overrides.eventStream ?? new FakeEventStreamPort(),
     storage: new InMemoryStoragePort(),
     session: new FakeSessionPort(),
     clipboard: new FakeClipboardPort(),
     openInOs: overrides.openInOs ?? new FakeOpenInOsPort(),
-    artifactDownload: overrides.artifactDownload ?? { downloadDocx: vi.fn(async () => {}) },
+    artifactDownload: overrides.artifactDownload ?? {
+      downloadDocx: vi.fn(async () => {}),
+    },
     pdfExport: overrides.pdfExport ?? new FakePdfExportPort(),
     telemetry: new FakeTelemetryPort(),
     featureFlags: new FakeFeatureFlagPort(),

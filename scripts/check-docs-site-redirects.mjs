@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 const dist = process.argv[2] ?? "docs/.vitepress/dist";
 const redirect = "/user/screenshots /user/product-tour 301";
+const installRedirect = "/install.sh https://github.com/ebarti/JobCtrl/releases/latest/download/install.sh 302";
 const redirectsPath = join(dist, "_redirects");
 const productTourPage = join(dist, "user", "product-tour.html");
 const legacyTourPage = join(dist, "user", "screenshots.html");
@@ -19,6 +20,11 @@ const redirects = readFileSync(redirectsPath, "utf8")
   .map((line) => line.trim())
   .filter((line) => line !== "" && !line.startsWith("#"));
 
+if (redirects[0] !== installRedirect || redirects.filter((line) => /^\/install\.sh\s/.test(line)).length !== 1) {
+  console.error(`docs redirect check FAILED: current stable installer must be the first and only /install.sh rule`);
+  process.exit(1);
+}
+
 if (!redirects.includes(redirect)) {
   console.error(`docs redirect check FAILED: missing ${redirect}`);
   process.exit(1);
@@ -32,4 +38,4 @@ if (existsSync(legacyTourPage)) {
   process.exit(1);
 }
 
-console.log("docs redirect check passed: legacy Product Tour URL permanently redirects to /user/product-tour.");
+console.log("docs redirect check passed: the installer follows the latest stable release and the legacy Product Tour URL redirects.");

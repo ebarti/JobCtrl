@@ -3,15 +3,16 @@ package launcher
 import (
 	"encoding/json"
 	"errors"
-	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ebarti/jobctrl/launcher/internal/release"
 )
 
-func TestInterruptedV14RecoveryRemovesActualExecutorStagesAndSidecars(t *testing.T) {
+func TestInterruptedV14RecoveryPreservesActualExecutorStagesAndSidecars(t *testing.T) {
 	python := migrationIntegrationPython(t)
 	for _, stage := range []release.State{release.PolicyPending, release.MigrationCandidateReady, release.MigrationActivated} {
 		t.Run(string(stage), func(t *testing.T) {
@@ -54,7 +55,7 @@ def interrupt(source,candidate,**kwargs):
     for path in dict.fromkeys(paths):
         for suffix in ('','-journal','-shm','-wal'):
             artifact=Path(str(path)+suffix)
-            artifact.touch(mode=0o600)
+            artifact.write_bytes(('retained:'+str(artifact)).encode())
             artifacts.append(str(artifact))
     receipt=Path(sys.argv[2]+'.source-binding.json')
     receipt.touch(mode=0o600)
@@ -74,6 +75,17 @@ execute_legacy_to_v14_candidate(sys.argv[1],sys.argv[2],source_version=6,migrati
 			if err := json.Unmarshal(output, &artifacts); err != nil || len(artifacts) != 33 {
 				t.Fatalf("actual executor artifacts = %s, %v", output, err)
 			}
+			// Writes through separate connections after the paired snapshot must
+			// survive even though the executor has left interrupted artifacts.
+			setLifecycleSQLitePair(t, python, fixture.state, "post-snapshot-")
+			values := lifecycleDatabaseValues(t, python, fixture.state)
+			if values["jobctrl.db"] != "post-snapshot-jobctrl.db" || values["temporal.db"] != "post-snapshot-temporal.db" {
+				t.Fatalf("independent writes not committed: %v", values)
+			}
+			backupValues := lifecycleDatabaseValues(t, python, filepath.Join(fixture.state, "backups", pair.ID))
+			if backupValues["jobctrl.db"] != "oldjobctrl.db" || backupValues["temporal.db"] != "oldtemporal.db" {
+				t.Fatalf("paired backup does not retain original values: %v", backupValues)
+			}
 			oldStarts := 0
 			startReleaseCommand = func(_ launchContext, receipt release.Receipt, journalID string) error {
 				if receipt != fixture.old || journalID != journal.ID {
@@ -82,16 +94,54 @@ execute_legacy_to_v14_candidate(sys.argv[1],sys.argv[2],source_version=6,migrati
 				oldStarts++
 				return nil
 			}
-			if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); !recovered || err != nil {
-				t.Fatalf("recover interrupted %s = %v, %v", stage, recovered, err)
+			// Freeze the journal, active selection, selector, paired backup, live
+			// databases and all real executor artifacts including sidecars.
+			paths := append([]string{}, artifacts...)
+			paths = append(paths,
+				filepath.Join(fixture.runtime, release.JournalFile),
+				filepath.Join(fixture.runtime, release.ActiveFile),
+				filepath.Join(fixture.runtime, "bin", "jobctrl"),
+				filepath.Join(fixture.state, "jobctrl.db"),
+				filepath.Join(fixture.state, "temporal.db"),
+				filepath.Join(fixture.state, "backups", pair.ID, "pair.json"),
+			)
+			for _, file := range pair.Files {
+				paths = append(paths, filepath.Join(fixture.state, "backups", pair.ID, file.Name))
 			}
-			if oldStarts != 1 {
-				t.Fatalf("predecessor starts = %d", oldStarts)
-			}
-			for _, path := range artifacts {
-				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-					t.Errorf("actual executor artifact survived recovery: %q, %v", path, err)
+			snapshot := func() map[string]string {
+				t.Helper()
+				digests := make(map[string]string, len(paths))
+				for _, path := range paths {
+					digest, err := sha256Path(path)
+					if err != nil {
+						t.Fatalf("read retained file %s: %v", path, err)
+					}
+					digests[path] = digest
 				}
+				return digests
+			}
+			before := snapshot()
+			for attempt := 0; attempt < 2; attempt++ {
+				recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
+				if recovered || err == nil || !strings.Contains(err.Error(), "retain the live databases") {
+					t.Fatalf("attempt %d: recovery at %s = %v, %v", attempt, stage, recovered, err)
+				}
+				if after := snapshot(); !reflect.DeepEqual(before, after) {
+					t.Fatalf("attempt %d changed the live pair, backup, artifacts, journal, active or selector", attempt)
+				}
+				retained, err := fixture.store.ReadJournal()
+				if err != nil || retained.ID != journal.ID || retained.State != stage || !retained.Resumable() || retained.BackupID != pair.ID {
+					t.Fatalf("attempt %d: transition is not retained for explicit recovery: %#v, %v", attempt, retained, err)
+				}
+			}
+			if oldStarts != 0 {
+				t.Fatalf("predecessor started %d times", oldStarts)
+			}
+			if after := lifecycleDatabaseValues(t, python, fixture.state); !reflect.DeepEqual(values, after) {
+				t.Fatalf("independent post-snapshot writes changed: before=%v after=%v", values, after)
+			}
+			if after := lifecycleDatabaseValues(t, python, filepath.Join(fixture.state, "backups", pair.ID)); !reflect.DeepEqual(backupValues, after) {
+				t.Fatalf("retained backup values changed: before=%v after=%v", backupValues, after)
 			}
 		})
 	}

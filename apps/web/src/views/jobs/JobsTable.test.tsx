@@ -145,7 +145,7 @@ describe("<JobsTable>", () => {
     expect(activationButton).toHaveTextContent("View details");
     expect(activationButton).toHaveAttribute(
       "aria-label",
-      `Open job ${sampleJob.title} at ${sampleJob.company}`,
+      `Open job ${sampleJob.title} at ${sampleJob.company}: View details`,
     );
     expect(rowForTitle(expiredJob.title)).toHaveTextContent("Posting expired");
   });
@@ -219,7 +219,7 @@ describe("<JobsTable>", () => {
     ).toBeInTheDocument();
     expect(
       within(list).getByRole("button", {
-        name: `Open job ${sampleJob.title} at Acme Corp`,
+        name: `Open job ${sampleJob.title} at Acme Corp: View details`,
       }),
     ).not.toHaveClass("row-activation-focus-only");
   });

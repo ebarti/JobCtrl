@@ -180,8 +180,25 @@ class DiscoveryPreparationFanoutOutput:
 @activity.defn(name="plan_discovery_sources")
 def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoverySourcesOutput:
     """Plan the source-family activities for ``DiscoverWorkflow``."""
-    from jobctrl.pipeline.runner import plan_discovery_source_families
+    from jobctrl.pipeline.runner import plan_discovery_source_families, require_discovery_result_plan
 
+    try:
+        require_discovery_result_plan(
+            limit=payload.limit, discovery_execution=payload.discovery_execution,
+            use_source_result_budget=payload.use_source_result_budget, planning=True,
+        )
+    except JobCtrlError as exc:
+        raise to_application_error(exc) from exc
+    if payload.discovery_execution is not None:
+        from jobctrl.database import get_connection
+        from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan_start
+
+        try:
+            check_result_plan_start(
+                get_connection(), payload.discovery_execution, limit=payload.limit, bounded=payload.limit > 0,
+            )
+        except JobCtrlError as exc:
+            raise to_application_error(exc) from exc
     lifecycle = begin_pipeline_step_attempt(
         _pipeline_step_scope(
             payload.discovery_execution,
@@ -231,12 +248,31 @@ async def discovery_source_family_activity(
         run_blocking_with_heartbeat,
     )
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
-    from jobctrl.pipeline.runner import run_discovery_source_family
+    from jobctrl.pipeline.runner import require_discovery_result_plan, run_discovery_source_family
 
+    try:
+        require_discovery_result_plan(
+            limit=payload.limit, discovery_execution=payload.discovery_execution,
+            use_source_result_budget=payload.use_source_result_budget,
+            source_result_limits=payload.source_result_limits,
+        )
+    except JobCtrlError as exc:
+        raise to_application_error(exc) from exc
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
+    if payload.discovery_execution is not None:
+        from jobctrl.database import get_connection
+        from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan
+
+        try:
+            check_result_plan(
+                get_connection(), payload.discovery_execution, limit=payload.limit,
+                source_limits=payload.source_result_limits, bounded=payload.limit > 0, required=payload.limit > 0,
+            )
+        except JobCtrlError as exc:
+            raise to_application_error(exc) from exc
     lifecycle = begin_pipeline_step_attempt(
         _pipeline_step_scope(
             payload.discovery_execution,

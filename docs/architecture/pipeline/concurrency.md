@@ -53,14 +53,19 @@ worker startup in
   They bypass the remote queue, so these controls do not wait for a model slot.
   Each control attempt has a 30-second limit and its scheduling plus retries has
   a three-minute limit. Existing retry policies and cancellation ownership checks
-  still apply. The two reserve executor threads serve this pool; remote
-  activity-slot telemetry excludes it.
+  still apply. A separate two-thread blocking-control pool serves spend checks,
+  owner-scoped cancellation, and workflow lifecycle writes. It accepts at most
+  two unfinished calls; a full or draining pool refuses further controls until
+  calls return. Remote activity-slot telemetry excludes this pool.
 - **Executor threads** — separate worker-owned Temporal-sync and blocking-stage
   `ThreadPoolExecutor` pools, each sized `slots + 2`, so blocking stage work
   never spills into the process default executor or starves Temporal's own
   synchronous activities. Cancellation retires the affected blocking pool
-  generation before its grace wait, so a fresh bounded generation accepts an
-  immediate retry even when the old provider call ignores cancellation.
+  generation before its grace wait. Up to three generations, including the
+  current one, may remain outstanding; beyond that the helper refuses new
+  submissions until an entire retired generation returns. This limits the
+  blocking-pool threads to at most three times the configured pool width per
+  process, without treating a cancellation as a stopped thread.
 
 Cover-letter factual and quality reviews use a third, separate executor. Its
 running-leaf limit is the startup activity setting `N`; each pair submits exactly
@@ -224,18 +229,26 @@ Two knobs that look like Temporal concurrency but are not:
 - Concurrent workflows (a discovery run, a scoring batch, an apply) share the
   worker's activity slots; Temporal queues whatever exceeds them.
 
+Material renderers write to attempt-owned paths and publish only after their
+source snapshot and PDF slot are rechecked in the SQLite writer transaction.
+That transaction serializes publication with owned email intent. Tailor and
+Cover similarly recheck their captured material state before saving. A stale
+attempt cannot replace a winner's rows or files; a lost publication acknowledgement
+retains its file because the committed row may already reference it. Independent
+external file writes do not participate in the SQLite writer lock.
+
 ## What Bounds Throughput
 
 | Bound | Mechanism | Where |
 | --- | --- | --- |
-| Activity slots and executor pools | Settings `worker_activity_slots`; Temporal-sync and blocking-stage executors each `slots + 2`; canceled blocking generations retire before grace | `config.json`, `infrastructure/temporal/worker.py`, `infrastructure/temporal/run_in_activity.py` |
+| Activity slots and executor pools | Settings `worker_activity_slots`; Temporal-sync and blocking-stage executors each `slots + 2`; at most three outstanding blocking generations per process | `config.json`, `infrastructure/temporal/worker.py`, `infrastructure/temporal/run_in_activity.py` |
 | Parallel discovery families | Discovery Runtime `max_parallel_families` (default `1`) | SQLite, `infrastructure/temporal/concurrency.py`, `discovery/workflow.py` |
 | LLM spend | `check_spend_budget` preflight stops spendful workflows at the daily ceiling | [Spend Ceiling](operations.md#spend-ceiling) |
 | Retries | per-activity retry policies from the error taxonomy | [Envelope & Activities](envelope.md) |
 | Worker readiness | worker-backed API actions return 503 until a healthy heartbeat exists | [Runtime & Processes](../runtime.md) |
 | Observed capacity | fresh matching heartbeat rows; exact slots include every activity even when safe detail is omitted | [Operations & Events](operations.md#pipeline-operations-snapshot) |
 | Task-queue pressure | approximate workflow/activity backlog and poller observations; unavailable/unsupported are not zero | `GET /v1/pipeline/operations` |
-| Apply single-flight | per-job workflow id + submit-intent checkpoint | [Stage Walkthrough](stages.md#apply) |
+| Apply ownership | independent launcher resources, exact canonical attempt owner, per-job workflow id and submit-intent checkpoint | [Stage Walkthrough](stages.md#apply) |
 
 ### Worker-Capacity Analysis (Parallel Families)
 
@@ -300,3 +313,79 @@ resources, four canonical redirect hops, 20-second HTTP/browser operations,
 one million bytes per response and 12 million bytes per check. All waits and
 network work happen outside SQLite writer transactions. Local refusals release
 job ownership without recording employer evidence or increasing evidence backoff.
+
+## Apply Launcher Admission
+
+Distinct-job Apply activities can overlap within the existing shared activity
+capacity. Installed macOS activities first enter a dedicated native execution;
+its real full-scope cleanup/completion permits normal same-job retry without
+stopping the application. Each launcher keeps its own stop event, dashboard selection, process
+handles and cleanup monitor. Completion, failure or cancellation selects only
+that launcher's resources, including children registered after cancellation's
+first cleanup pass. The monitor is joined before the launcher returns.
+
+Every attempt receives fresh exclusive work/profile identities, even when a
+worker continues to another job or another activity displays worker 0. Chrome
+chooses port 0 and publishes its actual endpoint in the fresh profile's private
+`DevToolsActivePort`. The producer binds the exact process, file and browser
+WebSocket UUID. Guards, Playwright MCP and apply tools use that verified socket
+on `127.0.0.1`; they never rediscover a browser through a reused port or localhost
+alias. An occupied caller hint never grants signal authority. Prior files are retained, never reset for a new attempt. Internal
+fan-out and finite-batch claim limits retain their existing bounds.
+
+An exception escaping an internal worker fails the batch while preserving
+completed job counts from that worker and any peers. The
+`failed` count remains a count of job failures; `worker_crashes` separately
+reports crashed workers without asserting an individual job or submission
+outcome. The workflow records a failed lifecycle and does not automatically
+retry the batch. Cleanup refusal still fails non-retryably and retains custody;
+when all workers joined, its result includes their completed counts. Otherwise
+`counts_known` is false. Older activity histories with no worker-crash
+observation also leave their count completeness unknown. Empty queues and
+handled per-job failures retain their existing outcomes.
+
+In installed execution, the child defers its terminal batch metric in the
+private invocation directory. The parent publishes it only after native
+completion and custody recovery have been verified for the exact invocation.
+An unverified cleanup is recorded as failed with unknown counts; if the parent
+exits before settlement, only the started metric may remain. In this protocol, a
+missing or invalid deferred record cannot produce a successful metric. This
+record carries no job content and does not establish custody or authorize a
+retry. Legacy children retain their earlier metric behavior; arbitrary mixed
+versions do not gain the new ordering guarantee.
+
+Canonical `ApplyClaimAcquired` records establish tenant/job/RunId ownership.
+Writer-locked comparisons protect result, saga, artifact and integration-event
+publication; a late old `ApplyRunStarted` cannot establish a new owner. Startup
+never sweeps active peer jobs. An active source lifetime lease, known cleanup
+failure or ambiguous submit intent blocks only its exact job, regardless of a
+workflow projection or administrative stage reset.
+Exact native completion can retire the selected old custody and preserve any
+submit-intent outcome as `needs_verification`. An accepted canonical terminal
+source claim can settle best-effort after tracked cleanup; an isolated saga
+event or rolled-back terminal write cannot release an active owner.
+
+Durable per-run birth intents survive owner death before process registration.
+Root/session cleanup does not prove escaped descendant exit. Installed full-tree
+custody uses its dedicated native execution's verified completion; source
+logical settlement explicitly remains best effort.
+Different-job successors need no global cleanup or app-stop admission gate.
+Source-only unresolved custody remains explicit; neither missing metadata nor
+session-zero is a recovery waiver. A scoped cleanup failure fences that worker's
+next claim and preserves its prior files. Existing approval, posting-availability
+and final-submit authorization remain mandatory.
+
+Process-session exit verification requires two consecutive complete, identical
+system-wide process-generation inventories with no active members of the owned
+session within one second. Unrelated process churn can prevent verification even
+when no active owned-session members appear in the samples; the result remains
+cleanup unverified and custody is retained. A reboot is neither an admission
+prerequisite nor a substitute for the required completion proof.
+
+Source-only owner crash recovery acquires only that run's existing lifetime file
+and rechecks the canonical tenant/job/RunId under the writer. Batch candidate
+selection exposes running rows only to this cheap exact-owner gate; it stops at
+the next eligible candidate, preserving active peers. The recovery marker says
+tracked cleanup and full-tree verification were not established. Recorded submit
+intent remains protected even if a generic stage reset made the job pending.
+Missing/replaced lifetime metadata and known cleanup failure refuse recovery.

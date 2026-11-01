@@ -23,7 +23,7 @@ describe("whole interview atlas", () => {
   });
   it("drills into a topic with readable labels and returns through Overview", async () => {
     const p = props(); const user = userEvent.setup(); const view = render(<InterviewLibraryGraph {...p} />); const topic = catalog.topics[0]!;
-    await user.click(screen.getByRole("button", { name: `${topic.name}: ${topic.questionIds.length} questions` }));
+    await user.click(screen.getByRole("button", { name: `${topic.name} ${topic.questionIds.length} questions` }));
     expect(p.onSelectTopic).toHaveBeenCalledWith(topic.id);
     view.rerender(<InterviewLibraryGraph {...p} topicId={topic.id} questions={catalog.questions.filter((question) => question.topic === topic.id)} />);
     expect(view.container.querySelectorAll(".interview-atlas__named-node")).toHaveLength(topic.questionIds.length);

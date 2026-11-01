@@ -1,6 +1,6 @@
-import { SettingsUpdateRequestSchema } from "@jobctrl/contracts";
+import { SettingsUpdateRequestSchema, type SettingsResponse } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
@@ -10,11 +10,14 @@ import {
   FieldDescription,
 } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import {
   SettingLabelWithHelp,
   type SettingHelpContent,
 } from "../../../shared/ui/setting-help.js";
 import { useSettingsPolicyQuery } from "../../operations/hooks/useSettingsPolicyQueries.js";
+import { useAcknowledgedRuntimeValues } from "../../operations/hooks/useAcknowledgedRuntimeValues.js";
+import { settingsKeys } from "../../operations/settingsKeys.js";
 import { useUpdateApplyRuntimeSettingsMutation } from "../hooks/useUpdateApplyRuntimeSettingsMutation.js";
 
 const APPLY_GUIDE_URL = "https://jobctrl.dev/user/apply";
@@ -33,19 +36,34 @@ const APPLY_RUNTIME_SETTING_HELP = {
   },
 } satisfies Record<string, SettingHelpContent>;
 
+function toFormValues(response: SettingsResponse) {
+  return {
+    applyMaxBudgetUsd: response.settings.applyMaxBudgetUsd,
+    applyTimeoutSeconds: response.settings.applyTimeoutSeconds,
+  };
+}
+
 export function ApplyRuntimeSettingsPanel() {
   const settingsQuery = useSettingsPolicyQuery();
   const updateSettings = useUpdateApplyRuntimeSettingsMutation();
+  const tenantId = useTenantId();
   const [status, setStatus] = useState<{
     kind: "error" | "success";
     message: string;
   } | null>(null);
   const response = settingsQuery.data;
-  const form = useForm({
-    defaultValues: {
+  const baseline = useAcknowledgedRuntimeValues(
+    settingsKeys.settings(tenantId),
+    ["tenant", tenantId, "runtime-settings-baseline", "apply"],
+    {
       applyMaxBudgetUsd: response?.settings.applyMaxBudgetUsd ?? 5,
       applyTimeoutSeconds: response?.settings.applyTimeoutSeconds ?? 900,
     },
+    toFormValues,
+  );
+  const acceptedValues = useRef(baseline.values);
+  const form = useForm({
+    defaultValues: acceptedValues.current,
     validators: {
       onSubmit: ({ value }) =>
         SettingsUpdateRequestSchema.safeParse(value).success
@@ -55,24 +73,36 @@ export function ApplyRuntimeSettingsPanel() {
     onSubmit: async ({ value, formApi }) => {
       if (!response) return;
       setStatus(null);
-      const request = {
-        ...(response.effectiveSettings.applyMaxBudgetUsd.editable
-          ? { applyMaxBudgetUsd: value.applyMaxBudgetUsd }
-          : {}),
-        ...(response.effectiveSettings.applyTimeoutSeconds.editable
-          ? { applyTimeoutSeconds: value.applyTimeoutSeconds }
-          : {}),
-      };
+      const submitted = { ...value };
+      const budgetEdited = Boolean(formApi.getFieldMeta("applyMaxBudgetUsd")?.isDirty);
+      const timeoutEdited = Boolean(formApi.getFieldMeta("applyTimeoutSeconds")?.isDirty);
       try {
-        const saved = await updateSettings.mutateAsync(request);
-        formApi.reset({
-          applyMaxBudgetUsd: saved.settings.applyMaxBudgetUsd,
-          applyTimeoutSeconds: saved.settings.applyTimeoutSeconds,
+        const savedValues = await baseline.runSave(async () => {
+          const request = {
+            ...(response.effectiveSettings.applyMaxBudgetUsd.editable && budgetEdited
+              ? { applyMaxBudgetUsd: submitted.applyMaxBudgetUsd }
+              : {}),
+            ...(response.effectiveSettings.applyTimeoutSeconds.editable && timeoutEdited
+              ? { applyTimeoutSeconds: submitted.applyTimeoutSeconds }
+              : {}),
+          };
+          const saved = await updateSettings.mutateAsync(request);
+          return baseline.acknowledge(toFormValues(saved));
         });
+        const current = formApi.state.values;
+        const budgetPending = current.applyMaxBudgetUsd !== submitted.applyMaxBudgetUsd
+          && current.applyMaxBudgetUsd !== savedValues.applyMaxBudgetUsd;
+        const timeoutPending = current.applyTimeoutSeconds !== submitted.applyTimeoutSeconds
+          && current.applyTimeoutSeconds !== savedValues.applyTimeoutSeconds;
+        acceptedValues.current = savedValues;
+        formApi.reset(savedValues);
+        if (budgetPending) formApi.setFieldValue("applyMaxBudgetUsd", current.applyMaxBudgetUsd);
+        if (timeoutPending) formApi.setFieldValue("applyTimeoutSeconds", current.applyTimeoutSeconds);
         setStatus({
           kind: "success",
-          message:
-            "Application runtime saved for newly started application jobs.",
+          message: budgetPending || timeoutPending
+            ? "Saved; newer changes pending."
+            : "Application runtime saved for newly started application jobs.",
         });
       } catch {
         setStatus({
@@ -85,13 +115,9 @@ export function ApplyRuntimeSettingsPanel() {
   });
 
   useEffect(() => {
-    if (response && !form.state.isDirty) {
-      form.reset({
-        applyMaxBudgetUsd: response.settings.applyMaxBudgetUsd,
-        applyTimeoutSeconds: response.settings.applyTimeoutSeconds,
-      });
-    }
-  }, [form, response]);
+    acceptedValues.current = baseline.values;
+    if (!form.state.isDirty && !form.state.isSubmitting) form.reset(baseline.values);
+  }, [form, baseline.values]);
 
   if (!response) {
     return (
@@ -124,10 +150,7 @@ export function ApplyRuntimeSettingsPanel() {
         }}
         onReset={(event) => {
           event.preventDefault();
-          form.reset({
-            applyMaxBudgetUsd: response.settings.applyMaxBudgetUsd,
-            applyTimeoutSeconds: response.settings.applyTimeoutSeconds,
-          });
+          form.reset(acceptedValues.current);
           setStatus(null);
         }}
       >

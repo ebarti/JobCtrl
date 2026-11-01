@@ -1,5 +1,7 @@
+import { PermanentDeleteSelectionConflict, PermanentDeleteSelectionRegistry } from "./permanent-delete-selection.js";
 import { readJobCtrlSettings } from "./settings-config.js";
-import { OutreachGenerationError } from "./outreach-generation-errors.js";
+import { ActionReceiptConflictError } from "./action-receipts.js";
+import { OutreachGenerationError, OutreachPublicationConflictError } from "./outreach-generation-errors.js";
 import { registerOfferRoutes } from "./offer-routes.js";
 import { readCompanyBriefing } from "./company-briefings.js";
 
@@ -31,6 +33,8 @@ import {
   RepeatApplicationOverrideRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
+  BulkPermanentDeleteRequestSchema,
+  PreparePermanentDeleteSelectionRequestSchema,
   type BulkRunPendingPreparationRequest,
   BulkRunPendingPreparationRequestSchema,
   type BulkRunPendingPreparationResponse,
@@ -148,6 +152,7 @@ import {
   importContacts,
   listContacts,
   updateContact,
+  ContactRevisionConflictError,
 } from "./contacts.js";
 import {
   validatePublicHttpUrl,
@@ -194,7 +199,16 @@ import {
   DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE,
   commandForResolvedBlockCondition,
 } from "./blocked-condition-recovery.js";
-import { createRetainedDatabase, databaseExists, getRow, openDatabase, openReadOnlyDatabase } from "./db.js";
+import {
+  createRetainedDatabase,
+  databaseExists,
+  getRow,
+  IncompatibleSchemaManifestError,
+  IncompatibleSchemaVersionError,
+  openDatabase,
+  openReadOnlyDatabase,
+  SUPPORTED_SCHEMA_VERSION,
+} from "./db.js";
 import { ConfigFileInputError } from "./config-file.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
@@ -206,6 +220,7 @@ import {
   listQuarantine,
   listRoleMatchFeedbackSuggestions,
   readDiscoverySettings,
+  InvalidSavedDiscoverySettingsError,
   listSourceLocatorCandidates,
   listSourceRegistry,
   patchSourceState,
@@ -349,6 +364,7 @@ import {
   getResumeTemplateDetail,
   listResumeTemplates,
   ResumeTemplateInputError,
+  ResumeTemplateVersionConflictError,
   resolveCurrentResumeArtifactIdForOpen,
   resolveEffectiveResumeTemplate,
   setDefaultResumeTemplate,
@@ -391,6 +407,7 @@ import {
   hideJob,
   hideJobs,
   InputError,
+  ApplyResetRefusedError,
   markJobApplied,
   markJobSkipped,
   permanentlyDeleteJob,
@@ -480,10 +497,18 @@ export interface BuildAppOptions {
 }
 
 export function buildApp(options: BuildAppOptions): FastifyInstance {
-  normalizeExistingDatabase(options.dbPath);
+  try {
+    normalizeExistingDatabase(options.dbPath);
+  } catch (error) {
+    if (error instanceof IncompatibleSchemaVersionError || error instanceof IncompatibleSchemaManifestError) {
+      return buildIncompatibleDatabaseApp(options, error);
+    }
+    throw error;
+  }
   const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
   const jobListDatabase = createRetainedDatabase(options.dbPath);
-  app.addHook("onClose", async () => { jobListDatabase.close(); });
+  const permanentDeleteSelections = new PermanentDeleteSelectionRegistry(options.dbPath);
+  app.addHook("onClose", async () => { jobListDatabase.close(); permanentDeleteSelections.close(); });
   installVitestInjectMutationDefaults(app);
   const appDir = options.appDir ?? path.dirname(options.dbPath);
   const readInterviewCatalog = createInterviewCatalogReader(options.interviewCatalogAssetLoader
@@ -509,6 +534,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     options.providerDispatcher ??
     createRuntimeJsonRpcDispatcherFactory(pythonRuntime)(actionContext);
   let discoveryBrowserContinuation: Promise<void> | null = null;
+  app.addHook("onClose", async () => {
+    // The reconnect route can start this work without awaiting it. It may use
+    // the RPC child after the HTTP response, so retain it during shutdown.
+    if (discoveryBrowserContinuation) await discoveryBrowserContinuation;
+  });
   const continueDiscoveryBrowserPreparation = (): Promise<void> => {
     if (discoveryBrowserContinuation) return discoveryBrowserContinuation;
     const continuation = dispatchDiscoveryBrowserContinuation(actionDispatcher, actionContext)
@@ -1127,6 +1157,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
                   ? "invalid_gmail_feedback_scan"
                   : "gmail_feedback_scan_failed",
               message: error.message,
+              ...(error.failureCode ? { failureCode: error.failureCode } : {}),
             };
           }
           throw error;
@@ -1496,6 +1527,17 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query)), jobListDatabase),
   );
 
+  app.get("/v1/jobs/reviewable-list", async (request, reply) => {
+    const query = JobListQuerySchema.parse(request.query);
+    const activeOnly = query.jobStates
+      ? !query.jobStates.some((state) => state !== "active")
+      : query.deleted === "active";
+    if (activeOnly) {
+      return withDb(reply, options.dbPath, (db) => ({ ...listJobs(db, query), observationId: null }), jobListDatabase);
+    }
+    return withDb(reply, options.dbPath, (db) => permanentDeleteSelections.observe(db, query, jobListDatabase.identity()), jobListDatabase);
+  });
+
   app.post("/v1/jobs/import-url", async (request, reply) => {
     const body = parseBody(reply, JobUrlImportRequestSchema, request.body ?? {});
     if (!body) {
@@ -1850,12 +1892,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     return withWritableDb(reply, options.dbPath, (db) => softDeleteJobs(db, body));
   });
 
+  app.post("/v1/jobs/permanent-delete-selection", async (request, reply) => {
+    const body = parseBody(reply, PreparePermanentDeleteSelectionRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    return withWritableDb(reply, options.dbPath, () => permanentDeleteSelections.prepare(body));
+  });
+
   app.post("/v1/jobs/bulk-delete-permanent", async (request, reply) => {
-    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
-    if (!body) {
-      return undefined;
-    }
-    return withWritableDb(reply, options.dbPath, (db) => permanentlyDeleteJobs(db, body));
+    const body = parseBody(reply, BulkPermanentDeleteRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    return withWritableDb(reply, options.dbPath, (db) => body.selectionId
+      ? permanentDeleteSelections.delete(body)
+      : permanentlyDeleteJobs(db, body));
   });
 
   app.post("/v1/jobs/bulk-restore", async (request, reply) => {
@@ -2714,7 +2762,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (body.reason) {
         command.reason = body.reason;
       }
-      return buildActionResponse(command, { status: "skipped" }, { stage: marked.stage });
+      return buildActionResponse(command, { status: "skipped", message: "Skipped locally. Future Apply is stopped; an in-flight submission may still complete. Verify any uncertain external outcome." }, { stage: marked.stage });
     });
   });
 
@@ -2767,7 +2815,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get<{ Params: { runId: string } }>("/v1/workflow-runs/:runId", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => {
-      const detail = getWorkflowRunDetail(db, decodeRouteParam(request.params.runId));
+      const { jobId } = z.object({ jobId: z.string().uuid().optional() }).parse(request.query);
+      const detail = getWorkflowRunDetail(db, decodeRouteParam(request.params.runId), jobId);
       if (!detail) {
         void reply.code(404);
         return { ok: false, error: "workflow_run_not_found" };
@@ -3718,6 +3767,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       try {
         return { ok: true, contact: updateContact(db, decodeRouteParam(request.params.contactId), body) };
       } catch (error) {
+        if (error instanceof ContactRevisionConflictError) {
+          void reply.code(409);
+          return { ok: false, error: "contact_revision_conflict", message: error.message };
+        }
         if (error instanceof ContactNotFoundError) {
           void reply.code(404);
           return { ok: false, error: "contact_not_found", message: error.message };
@@ -3927,7 +3980,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       const threadId = decodeRouteParam(request.params.threadId);
       return withWritableDb(reply, options.dbPath, async (db) => {
-        await outreachDraftGenerator(
+        const publication = await outreachDraftGenerator(
           {
             threadId,
             editedBodyText: body.editedBodyText,
@@ -3938,7 +3991,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           },
           actionContext,
         );
-        return { ok: true, thread: getOutreachThreadDetail(db, threadId) };
+        return {
+          ok: true,
+          thread: getOutreachThreadDetail(db, threadId),
+          publication: {
+            threadId: publication.threadId,
+            draftId: publication.draftId,
+            generation: publication.generation,
+          },
+        };
       });
     },
   );
@@ -4022,12 +4083,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         try {
           return {
             ok: true,
-            thread: logOutreachSend(
+            sendLog: logOutreachSend(
               db,
               decodeRouteParam(request.params.threadId),
-              body.draftId,
-              body.channel,
-              body.sentAt,
+              body,
             ),
           };
         } catch (error) {
@@ -4101,6 +4160,43 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     installWebAssetsNotFoundHandler(app, options.webAssetsDir);
   }
 
+  return app;
+}
+
+/** A database schema refusal must remain visible without opening product routes. */
+function buildIncompatibleDatabaseApp(
+  options: BuildAppOptions,
+  error: IncompatibleSchemaVersionError | IncompatibleSchemaManifestError,
+): FastifyInstance {
+  const app = Fastify({ logger: options.logger ?? false });
+  const currentVersion = error instanceof IncompatibleSchemaVersionError ? error.current : null;
+  const migrationRequired = currentVersion !== null && currentVersion >= 6 && currentVersion < SUPPORTED_SCHEMA_VERSION;
+  const newerDatabase = currentVersion !== null && currentVersion > SUPPORTED_SCHEMA_VERSION;
+  const problem = {
+    ok: false as const,
+    error: migrationRequired ? "database_migration_required" : "database_schema_incompatible",
+    currentVersion,
+    expectedVersion: SUPPORTED_SCHEMA_VERSION,
+    message: migrationRequired
+      ? "The workspace database needs an upgrade before this JobCtrl build can start. Use a compatible build or see the update guidance."
+      : newerDatabase
+        ? "This workspace was created by a newer JobCtrl version. Use a compatible newer build."
+        : "The workspace database schema is not compatible with this build. Stop JobCtrl and inspect the workspace before retrying.",
+  };
+
+  void app.register(cors, { origin: LOCAL_ORIGIN_PATTERNS, methods: LOCAL_CORS_METHODS });
+  app.addHook("onRequest", async (request, reply) => {
+    if (!isLoopbackHostHeader(request.headers.host)) {
+      return reply.code(403).send({ ok: false, error: "forbidden_host" });
+    }
+    if (!isLoopbackPeerAddress(request.ip || request.raw.socket.remoteAddress)) {
+      return reply.code(403).send({ ok: false, error: "forbidden_remote_client" });
+    }
+    return;
+  });
+  app.get("/v1/health", async (_request, reply) => reply.code(503).send(problem));
+  app.all("/v1/*", async (_request, reply) => reply.code(503).send(problem));
+  if (options.webAssetsDir) installWebAssetsNotFoundHandler(app, options.webAssetsDir);
   return app;
 }
 
@@ -5100,6 +5196,14 @@ function withDb<T>(
     db = retained ? retained.open() : openDatabase(dbPath);
     return read(db);
   } catch (error) {
+    if (error instanceof InvalidSavedDiscoverySettingsError) {
+      void reply.code(409);
+      return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
+    if (error instanceof PermanentDeleteSelectionConflict) {
+      void reply.code(409);
+      return { ok: false, error: "permanent_delete_selection_conflict", message: error.message };
+    }
     if (error instanceof ProfileInputError) {
       void reply.code(400);
       return {
@@ -5107,6 +5211,10 @@ function withDb<T>(
         error: "invalid_profile",
         message: error.message,
       };
+    }
+    if (error instanceof OutreachPublicationConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "outreach_publication_conflict", message: error.message, ...error.conflict };
     }
     if (error instanceof OutreachGenerationError) {
       void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
@@ -5183,6 +5291,23 @@ async function withWritableDb<T>(
     db = openDatabase(dbPath);
     return await write(db);
   } catch (error) {
+    if (error instanceof InvalidSavedDiscoverySettingsError) {
+      void reply.code(409);
+      return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
+    if (error instanceof PermanentDeleteSelectionConflict) {
+      void reply.code(409);
+      return { ok: false, error: "permanent_delete_selection_conflict", message: error.message,
+        ...(error.conflictingJobKeys ? {
+          deletedJobKeys: [], conflictingJobKeys: error.conflictingJobKeys,
+          unprocessedJobKeys: error.unprocessedJobKeys ?? [],
+        } : {}),
+      };
+    }
+    if (error instanceof OutreachPublicationConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "outreach_publication_conflict", message: error.message, ...error.conflict };
+    }
     if (error instanceof OutreachGenerationError) {
       void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
       return { ok: false, error: error.code, message: error.message };
@@ -5194,6 +5319,10 @@ async function withWritableDb<T>(
     if (error instanceof ResumeTemplateInputError) {
       void reply.code(400);
       return { ok: false, error: "invalid_resume_template", message: error.message };
+    }
+    if (error instanceof ResumeTemplateVersionConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "resume_template_version_conflict", message: error.message };
     }
     if (error instanceof SourceLocatorReviewError) {
       void reply.code(error.status);
@@ -5226,6 +5355,14 @@ async function withWritableDb<T>(
     if (error instanceof ResumeRenderError) {
       void reply.code(502);
       return { ok: false, error: "resume_render_failed", message: error.message };
+    }
+    if (error instanceof ApplyResetRefusedError) {
+      void reply.code(409);
+      return { ok: false, error: "apply_reset_refused", message: error.message };
+    }
+    if (error instanceof ActionReceiptConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "action_identity_conflict", message: error.message };
     }
     if (error instanceof InputError) {
       if (APPLY_REVIEW_PRECONDITION_ERRORS.has(error.message)) {

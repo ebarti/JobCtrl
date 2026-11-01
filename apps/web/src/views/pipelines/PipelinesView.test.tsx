@@ -63,6 +63,127 @@ describe("PipelinesView", () => {
     useStageTriggerStore.getState().reset();
   });
 
+  it("reports refused blocking work separately from free Temporal slots and unfinished calls", async () => {
+    const user = userEvent.setup();
+    const capacity = pipelinesIdleSnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available capacity fixture");
+    await renderPipelineOperations({
+      ...pipelinesIdleSnapshot,
+      capacity: {
+        ...capacity,
+        blockingExecutor: {
+          acceptingWorkers: 0, refusingWorkers: 1, unknownWorkers: 0,
+          unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 3,
+          controlAcceptingWorkers: 1, controlRefusingWorkers: 0, controlUnknownWorkers: 0,
+          controlUnfinishedCalls: 0,
+        },
+      },
+    });
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent("0 of 4");
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent(
+      "4 free Temporal slots · 1 worker refusing stage work",
+    );
+    await user.click(screen.getByRole("button", { name: /Freshness and capacity/i }));
+    const ledger = screen.getByRole("region", { name: "Worker capacity facts" });
+    expect(ledger).toHaveTextContent("Stage work admission1 worker refusing stage work");
+    expect(ledger).toHaveTextContent("Short control admission1 accepting");
+    expect(ledger).toHaveTextContent("Unfinished retired calls3 reported");
+    expect(ledger).toHaveTextContent("Cancellation does not confirm that they or their child processes stopped.");
+  });
+
+  it("keeps missing blocking admission unknown for older workers", async () => {
+    const capacity = pipelinesIdleSnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available capacity fixture");
+    await renderPipelineOperations({
+      ...pipelinesIdleSnapshot,
+      capacity: { ...capacity, blockingExecutor: null },
+    });
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent(
+      "4 free Temporal slots · Stage work admission unknown",
+    );
+  });
+
+  it("reports mixed worker admission without promising which worker receives the next task", async () => {
+    const capacity = pipelinesMultiWorkerCapacitySnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available capacity fixture");
+    await renderPipelineOperations({
+      ...pipelinesMultiWorkerCapacitySnapshot,
+      capacity: {
+        ...capacity,
+        blockingExecutor: {
+          acceptingWorkers: 1, refusingWorkers: 1, unknownWorkers: 1,
+          unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 3,
+        },
+      },
+    });
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent(
+      "1 worker refusing stage work · 1 worker with unknown admission · 1 worker accepting",
+    );
+  });
+
+  it("scopes activity, stage admission, and short-control counts to reporting workers when a peer is stale", async () => {
+    const user = userEvent.setup();
+    const capacity = pipelinesIdleSnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available capacity fixture");
+    await renderPipelineOperations({
+      ...pipelinesIdleSnapshot,
+      activeStageCounts: [{ stage: "score", count: 1 }],
+      activeItemsTotal: 1,
+      activeItemsTruncated: true,
+      capacity: {
+        ...capacity,
+        staleWorkerCount: 1,
+        activeSlots: 1,
+        availableSlots: 3,
+        slotSaturation: 0.25,
+        blockingExecutor: {
+          acceptingWorkers: 0, refusingWorkers: 1, unknownWorkers: 0,
+          unfinishedRetiredGenerations: 1, unfinishedRetiredCalls: 2,
+          controlAcceptingWorkers: 1, controlRefusingWorkers: 0, controlUnknownWorkers: 0,
+          controlUnfinishedCalls: 0,
+        },
+      },
+    });
+    const slots = getLivePipelineMetric("Worker slots in use");
+    expect(slots).toHaveTextContent("3 free Temporal slots among reporting workers");
+    expect(slots).toHaveTextContent("Other workers unconfirmed");
+    expect(slots).toHaveTextContent("1 worker refusing stage work (reporting workers only)");
+    expect(slots).toHaveTextContent("Short controls: 1 accepting (reporting workers only)");
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("At least 1");
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("Score 1 (reporting workers only)");
+    await user.click(screen.getByRole("button", { name: /Freshness and capacity/i }));
+    const ledger = screen.getByRole("region", { name: "Worker capacity facts" });
+    expect(ledger).toHaveTextContent("Stage work admission1 worker refusing stage work (reporting workers only)");
+    expect(ledger).toHaveTextContent("Short control admission1 accepting (reporting workers only)");
+    expect(ledger).toHaveTextContent("Slot, executor, admission, and unfinished-call figures describe reporting workers only.");
+    expect(ledger).toHaveTextContent("Other workers' activity and admission are unconfirmed.");
+  });
+
+  it("does not present fresh-worker admission as global when stale peers may still be active", async () => {
+    const capacity = pipelinesIdleSnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available capacity fixture");
+    await renderPipelineOperations({
+      ...pipelinesIdleSnapshot,
+      capacity: {
+        ...capacity,
+        staleWorkerCount: 1,
+        blockingExecutor: {
+          acceptingWorkers: 1, refusingWorkers: 0, unknownWorkers: 0,
+          unfinishedRetiredGenerations: 0, unfinishedRetiredCalls: 0,
+          controlAcceptingWorkers: 1, controlRefusingWorkers: 0, controlUnknownWorkers: 0,
+          controlUnfinishedCalls: 0,
+        },
+      },
+    });
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent(
+      "Workers accepting stage work (reporting workers only)",
+    );
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent(
+      "Short controls: 1 accepting (reporting workers only)",
+    );
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("Unknown");
+  });
+
   it.each([
     { reason: "no_work" as const, label: "No work remaining", tone: "ok" },
     { reason: "telemetry_stale" as const, label: "Unavailable · Telemetry stale", tone: "danger" },
@@ -391,7 +512,7 @@ describe("PipelinesView", () => {
       "Worker slots in use0 of 4",
     );
     expect(getLivePipelineMetric("Active work")).toHaveTextContent(
-      "Active workNo active workNo active stages",
+      "Active workNo remote activityNo active stages",
     );
     expect(getLivePipelineMetric("Queue backlog")).toHaveTextContent(
       "Queue backlog0 queuedOldest queued task 0 sec",
@@ -519,7 +640,7 @@ describe("PipelinesView", () => {
     expect(screen.queryByText("No work remaining")).not.toBeInTheDocument();
     expect(getLivePipelineMetric("Active work")).toHaveTextContent(`Active workUnknown${summary}`);
     expect(screen.getByText("Active work details are unavailable.")).toBeInTheDocument();
-    expect(screen.queryByText("No active work is visible in the current runtime inventory.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No remote worker activity is visible in the current inventory.")).not.toBeInTheDocument();
   });
 
   it("names all active URL imports without inventing a Discover run", async () => {
@@ -543,7 +664,7 @@ describe("PipelinesView", () => {
     expect(getLivePipelineMetric("Active work")).toHaveTextContent("Active work4");
     expect(screen.getAllByRole("heading", { name: "Import job URL" })).toHaveLength(4);
     expect(screen.getByRole("alert")).toHaveTextContent("Discover run not identified");
-    expect(screen.queryByText("No active work is visible in the current runtime inventory.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No remote worker activity is visible in the current inventory.")).not.toBeInTheDocument();
     expect(screen.queryByText("No work remaining")).not.toBeInTheDocument();
   });
 
@@ -583,7 +704,7 @@ describe("PipelinesView", () => {
       screen.getByRole("button", { name: /Freshness and capacity/i }),
     );
     expect(screen.getByRole("region", { name: "Worker capacity facts" })).toHaveTextContent(
-      "Configured slots4Active slots4Available slots0",
+      "Configured slots4Active slots4Free Temporal slots0",
     );
 
     expect(
@@ -782,7 +903,7 @@ describe("PipelinesView", () => {
 
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("Previous discovery history is unavailable");
-    expect(alert).toHaveTextContent("No work is running");
+    expect(alert).toHaveTextContent("No remote worker activity is reported");
     expect(alert).toHaveTextContent("Start Discover again below");
     expect(alert).toHaveTextContent("survive normal app restarts");
     const restart = within(alert).getByRole("link", {
@@ -811,7 +932,7 @@ describe("PipelinesView", () => {
     expect(await within(tools).findByRole("button", { name: "Run Discover" })).toBeEnabled();
     expect(alert).not.toHaveTextContent("reconciled_not_found");
     expect(getLivePipelineMetric("Active work")).toHaveTextContent(
-      "No active work",
+      "No remote activity",
     );
     expect(screen.queryByRole("button", { name: "Stop discovery" })).not.toBeInTheDocument();
 
@@ -820,19 +941,261 @@ describe("PipelinesView", () => {
   });
 
   it("does not claim a failed execution is idle while active work remains", async () => {
+    const capacity = pipelinesFailedHistorySnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available synthetic capacity");
     await renderPipelineOperations({
       ...pipelinesFailedHistorySnapshot,
+      capacity: { ...capacity, activeSlots: 2, availableSlots: capacity.configuredSlots - 2, slotSaturation: 0.5 },
       activeItemsTotal: 2,
     });
 
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("2 active work items remain");
     expect(alert).toHaveTextContent("Review active work before restarting discovery");
-    expect(alert).not.toHaveTextContent("No work is running");
+    expect(alert).not.toHaveTextContent("No remote worker activity is reported");
     expect(
       within(alert).queryByRole("link", { name: "Set up a new Discover run" }),
     ).not.toBeInTheDocument();
   });
+
+  it("reports hidden occupied slots and updates recovery guidance as inventory changes", async () => {
+    const capacity = pipelinesFailedHistorySnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available synthetic capacity");
+    const occupied = {
+      ...pipelinesFailedHistorySnapshot,
+      capacity: { ...capacity, activeSlots: 1, availableSlots: capacity.configuredSlots - 1, slotSaturation: 0.25 },
+      activeItems: [],
+      activeItemsTotal: 0,
+      activeItemsTruncated: true,
+    } satisfies PipelineOperationsSnapshot;
+    const unavailable = {
+      ...occupied,
+      capacity: pipelinesUnavailableTelemetrySnapshot.capacity,
+      activeStageCounts: null,
+      activeItemsTotal: null,
+      activeItemsTruncated: null,
+    } satisfies PipelineOperationsSnapshot;
+    const pipelineOperations = vi.fn()
+      .mockResolvedValueOnce(occupied)
+      .mockResolvedValueOnce(unavailable)
+      .mockResolvedValueOnce(pipelinesFailedHistorySnapshot);
+    const { queryClient } = renderWithProviders(<PipelinesView />, {
+      ports: buildTestPorts({ api: { pipelineOperations } }),
+    });
+    await screen.findByRole("heading", { name: "Live pipeline" });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("1 background worker activity is running");
+    expect(alert).toHaveTextContent("details are unavailable");
+    expect(alert).not.toHaveTextContent("No remote worker activity is reported");
+    expect(getLivePipelineMetric("Active work")).not.toHaveTextContent("No remote activity");
+    expect(within(alert).queryByRole("link", { name: "Set up a new Discover run" })).not.toBeInTheDocument();
+
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["tenant", "local", "pipeline", "operations"] }); });
+    await waitFor(() => expect(alert).toHaveTextContent("cannot confirm whether work remains active"));
+    expect(alert).not.toHaveTextContent("No remote worker activity is reported");
+    expect(within(alert).queryByRole("link", { name: "Set up a new Discover run" })).not.toBeInTheDocument();
+
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["tenant", "local", "pipeline", "operations"] }); });
+    await waitFor(() => expect(alert).toHaveTextContent("No remote worker activity is reported"));
+    expect(alert).not.toHaveTextContent("No work is running");
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("No remote activity");
+    expect(within(alert).getByRole("link", { name: "Set up a new Discover run" })).toBeInTheDocument();
+  });
+
+  it("does not use a cached idle snapshot after a failed refresh, and recovers on later reads", async () => {
+    const capacity = pipelinesFailedHistorySnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available synthetic capacity");
+    const occupied = {
+      ...pipelinesFailedHistorySnapshot,
+      capacity: { ...capacity, activeSlots: 1, availableSlots: capacity.configuredSlots - 1, slotSaturation: 0.25 },
+      activeItems: [], activeItemsTotal: 0, activeItemsTruncated: true,
+    } satisfies PipelineOperationsSnapshot;
+    const pipelineOperations = vi.fn()
+      .mockResolvedValueOnce(pipelinesFailedHistorySnapshot)
+      .mockRejectedValueOnce(new Error("Synthetic operations refresh failed"))
+      .mockResolvedValueOnce(occupied)
+      .mockResolvedValueOnce(pipelinesFailedHistorySnapshot);
+    const { queryClient } = renderWithProviders(<PipelinesView />, {
+      ports: buildTestPorts({ api: { pipelineOperations } }),
+    });
+    await screen.findByText("No remote worker activity is reported.", { exact: false });
+    expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
+    const key = ["tenant", "local", "pipeline", "operations"];
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: key }); });
+    await screen.findByText("Pipeline operations unavailable");
+    expect(queryClient.getQueryData(key)).toEqual(pipelinesFailedHistorySnapshot);
+    expect(screen.queryByText("No remote worker activity is reported.", { exact: false })).not.toBeInTheDocument();
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("Unknown");
+    expect(screen.getByLabelText("Pipeline operations summary")).toHaveTextContent("TelemetryUnavailable");
+    expect(screen.queryByRole("link", { name: "Set up a new Discover run" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run Discover" })).toBeDisabled();
+
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: key }); });
+    await screen.findByText("1 background worker activity is running", { exact: false });
+    expect(screen.queryByText("Pipeline operations unavailable")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run Discover" })).toBeDisabled();
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: key }); });
+    await screen.findByText("No remote worker activity is reported.", { exact: false });
+    expect(screen.getByRole("button", { name: "Run Discover" })).toBeEnabled();
+  });
+
+  it("marks a cached source-family ETA stale after a failed refresh and restores the next estimate", async () => {
+    const source = pipelinesDiscoveringSnapshot.sourceFamilies;
+    if (!source || source.eta.status !== "available") throw new Error("Expected a source ETA fixture");
+    const recovered = {
+      ...pipelinesDiscoveringSnapshot,
+      sourceFamilies: {
+        ...source,
+        eta: { ...source.eta, lowSeconds: 1_800, highSeconds: 1_860, asOf: "2026-07-14T12:01:00.000Z" },
+        asOf: "2026-07-14T12:01:00.000Z",
+      },
+    } satisfies PipelineOperationsSnapshot;
+    const pipelineOperations = vi.fn()
+      .mockResolvedValueOnce(pipelinesDiscoveringSnapshot)
+      .mockRejectedValueOnce(new Error("Synthetic operations refresh failed"))
+      .mockResolvedValueOnce(recovered);
+    const { queryClient } = renderWithProviders(<PipelinesView />, {
+      ports: buildTestPorts({ api: { pipelineOperations } }),
+    });
+    const key = ["tenant", "local", "pipeline", "operations"];
+    const ledger = await screen.findByLabelText("Source-family ETA facts");
+    expect(ledger).toHaveTextContent("StatusAvailable");
+    expect(ledger).toHaveTextContent("Low20 min");
+    expect(ledger).toHaveTextContent("High21 min");
+
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: key }); });
+    await screen.findByText("Pipeline operations unavailable");
+    expect(queryClient.getQueryData(key)).toEqual(pipelinesDiscoveringSnapshot);
+    expect(ledger).toHaveTextContent("StatusStale");
+    expect(ledger).toHaveTextContent("ReasonTelemetry stale");
+    expect(ledger).not.toHaveTextContent("Low20 min");
+    expect(ledger).not.toHaveTextContent("High21 min");
+    expect(screen.getByRole("button", { name: "Run Discover" })).toBeDisabled();
+
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: key }); });
+    await waitFor(() => expect(ledger).toHaveTextContent("Low30 min"));
+    expect(ledger).toHaveTextContent("StatusAvailable");
+    expect(ledger).toHaveTextContent("High31 min");
+    expect(queryClient.getQueryData(key)).toEqual(recovered);
+    expect(screen.queryByText("Pipeline operations unavailable")).not.toBeInTheDocument();
+  });
+
+  it.each(["source_retry_exhausted", "other_issue"])(
+    "keeps completed-with-issues guidance consistent with stale-peer recovery: %s",
+    async (errorCode) => {
+      const capacity = pipelinesFailedHistorySnapshot.capacity;
+      const execution = pipelinesFailedHistorySnapshot.execution;
+      if (capacity.status !== "available" || !execution) throw new Error("Expected synthetic capacity and execution");
+      await renderPipelineOperations({
+        ...pipelinesFailedHistorySnapshot,
+        capacity: { ...capacity, staleWorkerCount: 1 },
+        execution: { ...execution, phase: "completed_with_issues", workflowStatus: "succeeded", errorCode },
+      });
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveTextContent("cannot confirm whether background work remains active");
+      expect(alert).toHaveTextContent("if a Discover run is already active, JobCtrl will reuse it");
+      expect(alert).toHaveTextContent("active-work status");
+      expect(alert).not.toHaveTextContent("confirms nothing is running");
+      expect(within(alert).getByRole("link", { name: "Set up a new Discover run" })).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
+    },
+  );
+
+  it("reports stale peers as unknown without trapping a user-initiated restart", async () => {
+    const capacity = pipelinesFailedHistorySnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available synthetic capacity");
+    const uncertain = {
+      ...pipelinesFailedHistorySnapshot,
+      capacity: { ...capacity, staleWorkerCount: 1 },
+    } satisfies PipelineOperationsSnapshot;
+    const occupied = {
+      ...uncertain,
+      capacity: { ...uncertain.capacity, activeSlots: 1, availableSlots: capacity.configuredSlots - 1, slotSaturation: 0.25 },
+      activeItems: [], activeItemsTotal: 0, activeItemsTruncated: true,
+    } satisfies PipelineOperationsSnapshot;
+    const pipelineOperations = vi.fn()
+      .mockResolvedValueOnce(uncertain)
+      .mockResolvedValueOnce(occupied)
+      .mockResolvedValueOnce(pipelinesFailedHistorySnapshot);
+    const { queryClient } = renderWithProviders(<PipelinesView />, {
+      ports: buildTestPorts({ api: { pipelineOperations } }),
+    });
+    await screen.findByText("Some worker reports are out of date", { exact: false });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("cannot confirm whether background work remains active");
+    expect(alert).toHaveTextContent("if a Discover run is already active, JobCtrl will reuse it");
+    expect(alert).not.toHaveTextContent("No remote worker activity is reported");
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("Unknown");
+    expect(screen.getByLabelText("Pipeline operations summary")).toHaveTextContent("TelemetryPartial");
+    expect(within(alert).getByRole("link", { name: "Set up a new Discover run" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
+
+    const key = ["tenant", "local", "pipeline", "operations"];
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: key }); });
+    await screen.findByText("At least 1 background worker activity is running", { exact: false });
+    expect(alert).toHaveTextContent("Other worker activity is unconfirmed");
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("At least 1");
+    expect(screen.getByRole("button", { name: "Run Discover" })).toBeDisabled();
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: key }); });
+    await screen.findByText("No remote worker activity is reported.", { exact: false });
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("No remote activity");
+    expect(screen.getByRole("button", { name: "Run Discover" })).toBeEnabled();
+  });
+
+  it("keeps an unidentified run reviewable when only historical worker reports are stale", async () => {
+    const capacity = pipelinesIdleSnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available synthetic capacity");
+    await renderPipelineOperations({
+      ...pipelinesIdleSnapshot,
+      capacity: { ...capacity, staleWorkerCount: 1 },
+      projectionCoverage: pipelinesRecoveringProjectionSnapshot.projectionCoverage,
+    });
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("Unknown");
+    expect(screen.getByRole("alert")).toHaveTextContent("background activity is unconfirmed");
+    expect(screen.getByRole("link", { name: "Set up a new Discover run" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
+  });
+
+  it("includes hidden occupancy alongside allowlisted active work", async () => {
+    const capacity = pipelinesFailedHistorySnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available synthetic capacity");
+    await renderPipelineOperations({
+      ...pipelinesFailedHistorySnapshot,
+      capacity: { ...capacity, activeSlots: 2, availableSlots: capacity.configuredSlots - 2, slotSaturation: 0.5 },
+      activeStageCounts: [{ stage: "score", count: 1 }],
+      activeItemsTotal: 1,
+      activeItemsTruncated: true,
+    });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("2 active work items remain");
+    expect(alert).toHaveTextContent("Some activity details are unavailable");
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("Active work2");
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("Partial inventory");
+    expect(within(alert).queryByRole("link", { name: "Set up a new Discover run" })).not.toBeInTheDocument();
+  });
+
+  it("does not treat a contradictory zero-slot partial inventory as idle", async () => {
+    await renderPipelineOperations({
+      ...pipelinesFailedHistorySnapshot,
+      activeItemsTruncated: true,
+    });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("cannot confirm whether work remains active");
+    expect(alert).not.toHaveTextContent("No remote worker activity is reported");
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("Unknown");
+    expect(within(alert).queryByRole("link", { name: "Set up a new Discover run" })).not.toBeInTheDocument();
+  });
+
+  it.each([{ freshWorkerCount: 0, invalidWorkerCount: 0 }, { freshWorkerCount: 1, invalidWorkerCount: 1 }])(
+    "does not treat contradictory worker availability as idle: %o", async (workers) => {
+      const capacity = pipelinesFailedHistorySnapshot.capacity;
+      if (capacity.status !== "available") throw new Error("Expected available synthetic capacity");
+      await renderPipelineOperations({ ...pipelinesFailedHistorySnapshot, capacity: { ...capacity, ...workers } });
+      expect(screen.getByRole("alert")).toHaveTextContent("cannot confirm whether work remains active");
+      expect(getLivePipelineMetric("Active work")).toHaveTextContent("Unknown");
+      expect(await screen.findByRole("button", { name: "Run Discover" })).toBeDisabled();
+    },
+  );
 
   it("states when a failed execution has no trustworthy active-work inventory", async () => {
     await renderPipelineOperations({
@@ -844,7 +1207,7 @@ describe("PipelinesView", () => {
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("runtime inventory is unavailable");
     expect(alert).toHaveTextContent("cannot confirm whether work remains active");
-    expect(alert).not.toHaveTextContent("No work is running");
+    expect(alert).not.toHaveTextContent("No remote worker activity is reported");
     expect(
       within(alert).queryByRole("link", { name: "Set up a new Discover run" }),
     ).not.toBeInTheDocument();
@@ -972,7 +1335,7 @@ describe("PipelinesView", () => {
       expect(await screen.findByRole("button", { name: "Run Discover" })).toBeDisabled();
       if (activeItemsTotal === null) {
         expect(alert).toHaveTextContent("runtime inventory is unavailable");
-        expect(alert).not.toHaveTextContent("No work is running");
+        expect(alert).not.toHaveTextContent("No remote worker activity is reported");
       }
     },
   );
@@ -1319,7 +1682,7 @@ describe("PipelinesView", () => {
     expect(activityQueue).toHaveTextContent("Dispatch rate0.5/sec");
     expect(capacity).toHaveTextContent("Configured slots4");
     expect(capacity).toHaveTextContent("Active slots2");
-    expect(capacity).toHaveTextContent("Available slots2");
+    expect(capacity).toHaveTextContent("Free Temporal slots2");
     expect(capacity).toHaveTextContent("Internal concurrency2");
     expect(eta).toHaveTextContent("ConfidenceMedium");
     expect(eta).toHaveTextContent("BasisStage throughput");
@@ -1362,7 +1725,7 @@ describe("PipelinesView", () => {
     });
     if (!activeWork) throw new Error("Expected active-work disclosure.");
 
-    expect(activeWork).toHaveTextContent("Inventory total9");
+    expect(activeWork).toHaveTextContent("Activities eligible for details9");
     expect(activeWork).toHaveTextContent("Inventory truncatedYes");
     expect(
       within(activeWork).getAllByText("Staff Platform Engineer").length,
@@ -1371,8 +1734,30 @@ describe("PipelinesView", () => {
     expect(capacity).toHaveTextContent("Fresh workers3");
     expect(capacity).toHaveTextContent("Configured slots12");
     expect(capacity).toHaveTextContent("Active slots9");
-    expect(capacity).toHaveTextContent("Available slots3");
+    expect(capacity).toHaveTextContent("Free Temporal slots3");
     expect(capacity).toHaveTextContent("Internal concurrency3");
+  });
+
+  it("distinguishes eligible activity totals from the returned detail list", async () => {
+    const user = userEvent.setup();
+    const capacity = pipelinesFailedHistorySnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available synthetic capacity");
+    await renderPipelineOperations({
+      ...pipelinesFailedHistorySnapshot,
+      capacity: { ...capacity, activeSlots: 1, availableSlots: capacity.configuredSlots - 1, slotSaturation: 0.25 },
+      activeItems: [],
+      activeItemsTotal: 1,
+      activeItemsTruncated: true,
+    });
+
+    const heading = screen.getByRole("heading", { name: "Active work" });
+    const activeWork = heading.closest<HTMLElement>(".configuration-section");
+    if (!activeWork) throw new Error("Expected active-work disclosure.");
+    expect(activeWork).toHaveTextContent("Activities eligible for details1");
+    expect(activeWork).toHaveTextContent("Details shown0");
+    expect(activeWork).toHaveTextContent("No details were returned for the active work.");
+    await user.click(within(activeWork).getByRole("button"));
+    expect(activeWork).toHaveTextContent("1 active · 0 details shown · partial details");
   });
 
   it("withholds URL-shaped job keys from active-work provenance", async () => {
@@ -1403,7 +1788,8 @@ describe("PipelinesView", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("keeps pipeline actions available when the operations read fails", async () => {
+  it("blocks Discover but preserves other pipeline actions when the operations read fails", async () => {
+    const user = userEvent.setup();
     const pipelineOperations = vi.fn(async () => {
       throw new Error("Operations snapshot failed.");
     });
@@ -1416,7 +1802,9 @@ describe("PipelinesView", () => {
     if (!operationsAlert) throw new Error("Expected operations error alert.");
     expect(operationsAlert).toHaveTextContent("Operations snapshot failed.");
     const tools = screen.getByRole("group", { name: "Pipeline action tools" });
-    expect(within(tools).getByRole("button", { name: "Run Discover" })).toBeEnabled();
+    expect(within(tools).getByRole("button", { name: "Run Discover" })).toBeDisabled();
+    await user.click(within(tools).getByRole("tab", { name: "Apply" }));
+    expect(within(tools).getByRole("button", { name: "Run Apply" })).toBeEnabled();
   });
 
   it("replaces raw demo capability errors with a disabled control and supported path", async () => {

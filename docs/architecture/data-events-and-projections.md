@@ -10,6 +10,14 @@ update, audit entry, or telemetry span and need to identify the source of truth.
 
 ## Current Data Flow
 
+The removed-job confirmation boundary binds each selected canonical job to its
+persisted lifecycle revision. Database triggers advance that revision in the
+same transaction as a delete or hide tombstone change, including writes from
+other processes. The permanent-delete writer checks the frozen cohort and all
+of its revisions under its write lock; job-list projections and SSE are not
+the authority for that decision. An unrelated event or heartbeat does not
+invalidate the selection.
+
 The event log marks what changed; projection builders read events plus canonical
 rows to materialize client-friendly views. Solid arrows form the correctness
 path. Dashed arrows carry invalidation signals; they never transfer canonical
@@ -58,6 +66,22 @@ mail retrieval, that transaction rechecks the tenant-scoped job and provider
 message so concurrent deletion or scanning cannot leave orphaned or duplicate
 evidence. Raw message bodies stay out of event payloads and scan summaries.
 
+Manual outcomes, interview reflections and user-attested send logs commit their
+canonical fact and a durable event carrying the retry receipt in one transaction.
+Equal retries return the original fact without a second event. The private
+binding stays in SQLite rather than streamed event payloads; see the
+[read-model retry contract](read-model.md).
+
+Apply ownership is established by `ApplyClaimAcquired` for the exact tenant,
+job and RunId in the claim writer transaction. Replayed `ApplyRunStarted` saga
+records do not change that authority. Result, saga, determination, artifact and
+integration publication compare the current claim under the SQLite writer.
+`ApplyClaimSettled` records a joined source launcher's canonical terminal outcome
+after tracked cleanup, explicitly marking full-tree verification false; `ApplyCustodyRetired` records the selected native execution’s
+verified completion. Both retain the original RunId, and neither a projection’s
+workflow status nor a stage reset transfers an unknown old owner. Submit-intent
+ambiguity remains `needs_verification` even when process custody settles.
+
 ## Name The Layer Before Changing It
 
 | Layer | Meaning | Authority and recovery |
@@ -100,12 +124,71 @@ identify a dirty job or family, then read canonical aggregate tables to build
 the current read shape. Apply-run and workflow-run projections fold their
 lifecycle events more directly.
 
+Workflow-run detail keeps its lifecycle timeline separate from Apply history.
+For an Apply workflow it also reads the selected tenant, job, and run's durable
+Apply event rows directly, so a delayed Python projection does not hide a
+committed event. The response exposes only event identity, type, time, level and
+message; it does not return event payloads. Where the Apply writer supplies a
+monotonic run-event ID, the web timeline uses it to reconcile live and saved
+copies. If the projection has not established a job yet, a job-scoped request
+must find a matching durable Apply start before its events can be read.
+
+Discovery's `DiscoveryResultPlanFrozen` operational marker binds an exact
+tenant/workflow/run to its bounded or unbounded mode, result cap and source-ID
+allowances using a versioned integrity digest. It contains no queries or private
+search settings. The planner retains the first marker across retries and refuses
+to create one over prior source effects. Canonical writers validate that marker
+under their SQLite writer transaction before recording `DiscoveryNewJobAdmitted`.
+These admission receipts, rather than global job-count changes, authorize the
+new-job limit across source families. Existing jobs consume no additional slot.
+Admission receipts carry no Job foreign key; their explicit canonical JobId,
+source-observation ID and run ID survive permanent Job deletion. Deletion cannot
+replenish the execution allowance. Exact capture acknowledgements may finish
+from that receipt without admitting again or recreating the deleted owner.
+
 Safety-sensitive event and projection families keep private content at their
 canonical owner and expose allow-listed identifiers, kinds, counts, state,
 timestamps, and provenance metadata. This is not yet a universal guarantee for
 all historical event families: pipeline failures can persist an exception
 message. Treat exception text as potentially durable and sanitize it at the
 producer rather than placing sensitive values in exceptions.
+
+Owned email Apply keeps the full `EmailApplicationCandidateRecorded` preview
+in the canonical event ledger for Apply Review. Its direct publisher event,
+wrapped `ApplyRunEventRecorded`, derived Apply timeline and SSE replay expose
+only references/status. This filtering also applies when historical private
+rows are replayed. The same filtering covers `AgentResult`, `AssistantText`,
+`ToolUse` and `ApplyTerminalDetermination`: raw model output, tool-input previews,
+recipient data and citation excerpts can repeat private application content.
+Canonical events and determination provenance retain those sources; their direct
+and wrapped notifications carry references. Historical `ApplicationFailed`
+payloads with the exact `email_send_outcome_ambiguous` code, including its former
+colon-delimited exception suffix, expose only a bounded reason/result. Broad
+stage messages for `APPLY_NEEDS_VERIFICATION` use a bounded verification message.
+`EmailApplicationSent` retains validated provider identifiers
+and the operation binding in canonical storage; broad delivery omits those
+provider identifiers. Send failures use a bounded ambiguity reason, without raw
+exceptions or provider bodies. Apply Review reads the canonical preview rather
+than reconstructing it from broad events.
+The launcher owns the email `ApplicationSubmitted` publication when it settles
+the durable receipt; the use case does not emit an earlier duplicate terminal
+notification. Owned Apply aggregate notifications wait until the SQLite owner
+commits, including when settlement inherits a caller transaction. Rollback,
+rollback to a caller savepoint and connection close discard uncommitted
+notifications. Each callback checks its exact committed event row before fan-out;
+receipt and submitted-fact subscribers observe the complete settlement together.
+A process stop after commit can lose an in-memory notification; durable event
+replay remains authoritative.
+
+Apply child-event replay compares immutable type, timestamp, level, message and
+source payload, with a stored fingerprint for newly written events. A sequence
+number alone cannot authorize replay. Older events are compared against their
+canonical envelope without rewriting accepted history. A duplicate execution
+or intent admission raises a write conflict and produces no competing terminal
+aggregate or lock-release event. If intent admission loses acknowledgement, the
+saga reads back the exact owned operation before retaining that intent in its
+nonretryable failure checkpoint; an unavailable read leaves resolution to
+recovery and never authorizes another transport call.
 
 Interview preparation has three separate authorities: the installed immutable
 public catalog, generation-versioned job prep with retained source context,
@@ -130,7 +213,8 @@ still begins at the owning domain/application boundary.
 2. `record_job_event` inserts the `job_events` row that becomes durable when
    the caller commits, then publishes an in-memory `DomainEvent` through the
    process-wide `InProcessEventBus`.
-3. That notification currently occurs before the caller commits. The wildcard
+3. Outside the commit-bound owned Apply aggregate path described above, that
+   notification occurs before the caller commits. The wildcard
    `ProjectionBuilder` subscriber refreshes through the publishing thread's
    thread-local SQLite connection inside a savepoint when a transaction is
    already open. The publisher retains commit and rollback ownership.
@@ -239,6 +323,9 @@ transaction to its caller. Any failure rolls back the entire pass, including
 replacement deletes. TypeScript applies its per-pass event bound after tenant
 filtering. Direct contact, contact-research, and outreach refreshes use the same
 transaction boundary; outreach threads and due follow-ups publish together.
+An overlapping failed contact-research attempt appends its safe source outcome
+and `ContactResearchSourceAttemptFailed` event together under the writer fence.
+The winning review stays current, and the event invalidates its open detail.
 Permanent job deletion rebuilds affected aggregates synchronously
 and retains these cursors; it does not replay unrelated history. First-run and
 schema-recovery paths also detect missing/stale projection rows and rebuild from
@@ -331,6 +418,47 @@ invalidation; the latter invalidates detail/lists only for job-scoped command
 feedback and ignores workspace/host reservation churn. Internal lease,
 request and sweep facts do not become user application outcomes. Source closure
 never calls Discovery's policy-deletion routine and cannot emit `JobDeleted`.
+
+## Archived Smart Extract publication
+
+Archived capture recovery persists its qualified posting, determination
+envelopes, capture/source identity and original canonical owner in the private
+`ArchivedSmartPostingPrepared` event receipt, including the original
+`JobDiscovered`, `CanonicalJobIdentityResolved` and `JobSourceObserved` event
+facts and a typed original identity/observation/source context. The receipt
+joins the canonical insert transaction. Recovered events must match that context
+exactly, including native IDs, source/run identity, confidence and observation
+clocks. When the original observation still owns the source generation, recovery
+also joins the canonical identity, observation and owner source records before
+publishing. Damaged event facts never substitute for those sources. Model authority remains the
+three canonical tenant-bound determination envelopes. Retry checks the
+receipt contents and field bindings before using the saved capture, and never
+replaces it with a newly fetched page.
+
+The snapshot/enrichment writes, their existing domain events, accepted progress
+and `ArchivedSmartPostingCompleted` share one publication transaction. An
+existing owner alone cannot authorize acknowledgement. A deleted or changed
+owner, a later source observation or accepted enrichment/snapshot makes
+pending publication obsolete without modifying those accepted records. An
+unfinished Enrich attempt or stage owner retains the capture for retry; its
+existence is not proof of a durable replacement. Source activity ownership receipts and cancellation fence both
+publication and acknowledgement. Retry restores any missing original discovery events idempotently in the
+publication transaction, without changing the recorded observation or creating
+another admission. Each content-duplicate candidate has its own stable event
+key, so multiple candidates retain their complete audit trail. The prepared body is not published to the in-process bus or logs and is
+excluded from generic Activity payloads and SSE. Completion and owner receipts
+contain references only. A known pre-upgrade partial insert without its original
+qualified capture is recognized from its exact capture-bound initial owner
+observation, even when the first discovery event was never written. It refuses
+before browser/provider setup with nonretryable
+`archived_posting_original_capture_unavailable`. The operator can explicitly
+Enrich the existing Job, then retry Discovery; recovery never reconstructs
+unknown original bytes from a fresh page.
+
+At an exhausted run or source allowance, the prepared publication may still
+complete without another admission. After checking that receipt and the
+missing-original condition, recovery leaves other unprepared captures pending
+before initializing a browser or qualifying another posting.
 
 ## Company briefing reads
 

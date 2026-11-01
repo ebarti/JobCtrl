@@ -159,6 +159,7 @@ def test_smart_extract_sites_infer_search_type_from_query_placeholder() -> None:
 
     assert runner._smart_extract_sites((source,)) == [
         {
+            "source_id": source.source_id,
             "name": "WelcomeToTheJungle",
             "url": "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
             "type": "search",

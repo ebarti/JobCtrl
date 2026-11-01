@@ -18,6 +18,10 @@ import type {
   ArtifactOpenResponse,
   ArtifactSummary,
   BulkJobMutationRequest,
+  BulkPermanentDeleteRequest,
+  PreparePermanentDeleteSelectionRequest,
+  PreparePermanentDeleteSelectionResponse,
+  ReviewableJobsResponse,
   BulkRunPendingPreparationRequest,
   BulkRunPendingPreparationResponse,
   BulkRetryFailedRequest,
@@ -51,8 +55,10 @@ import type {
   OutreachThreadResponse,
   GenerateOutreachDraftRequest,
   ReviseOutreachDraftRequest,
+  ReviseOutreachDraftResponse,
   RejectOutreachDraftRequest,
   LogOutreachSendRequest,
+  LogOutreachSendResponse,
   LlmLane,
   ScheduleFollowUpRequest,
   DueFollowUpsResponse,
@@ -340,12 +346,14 @@ export interface ApiClientPort extends EndpointClientMethods {
   ): Promise<OutcomeSuggestionDecisionResponse>;
 
   jobs(query?: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
+  reviewableJobs(query?: Partial<JobListQuery>): Promise<ReviewableJobsResponse>;
   job(jobKey: string): Promise<JobDetail>;
   evidenceMap(): Promise<EvidenceMapResponse>;
   deleteJob(jobKey: string, body?: DeleteJobRequest): Promise<JobMutationResponse>;
   deleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   permanentlyDeleteJob(jobKey: string): Promise<JobMutationResponse>;
-  permanentlyDeleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
+  permanentlyDeleteJobs(body: BulkPermanentDeleteRequest): Promise<JobMutationResponse>;
+  preparePermanentDeleteSelection(body: PreparePermanentDeleteSelectionRequest): Promise<PreparePermanentDeleteSelectionResponse>;
   restoreJob(jobKey: string): Promise<JobMutationResponse>;
   restoreJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   hideJob(jobKey: string, body?: DeleteJobRequest): Promise<JobMutationResponse>;
@@ -369,7 +377,7 @@ export interface ApiClientPort extends EndpointClientMethods {
   retailorCurrentPolicy(body: BulkRetailorCurrentPolicyRequest): Promise<ActionRunResponse>;
 
   workflowRuns(query?: Partial<WorkflowRunsListQuery>): Promise<PaginatedResponse<WorkflowRunSummary>>;
-  workflowRun(runId: string): Promise<WorkflowRunDetail>;
+  workflowRun(runId: string, jobId?: string): Promise<WorkflowRunDetail>;
   cancelWorkflowRun(runId: string): Promise<ActionRunResponse>;
 
   artifacts(query?: Partial<ArtifactListQuery>): Promise<PaginatedResponse<ArtifactSummary>>;
@@ -434,7 +442,7 @@ export interface ApiClientPort extends EndpointClientMethods {
   reviseOutreachDraft(
     threadId: string,
     body: ReviseOutreachDraftRequest,
-  ): Promise<OutreachThreadResponse>;
+  ): Promise<ReviseOutreachDraftResponse>;
   approveOutreachDraft(threadId: string, draftId: string): Promise<OutreachThreadResponse>;
   rejectOutreachDraft(
     threadId: string,
@@ -444,7 +452,7 @@ export interface ApiClientPort extends EndpointClientMethods {
   logOutreachSend(
     threadId: string,
     body: LogOutreachSendRequest,
-  ): Promise<OutreachThreadResponse>;
+  ): Promise<LogOutreachSendResponse>;
   scheduleOutreachFollowUp(
     threadId: string,
     body?: ScheduleFollowUpRequest,

@@ -480,6 +480,9 @@ def build_tailoring_plan(
     ripped out outright (no shim). The rest of the plan (evidence selection,
     seniority, verified metrics) is unchanged.
     """
+    from jobctrl.domain.profile.canonical_sources import assert_evidence_reviewed
+
+    assert_evidence_reviewed(profile)
     controls = get_tailoring_quality_controls(profile)
     writing_style = get_writing_style(profile)
     requirement_led_controls = adapt_requirement_led_controls(
@@ -492,7 +495,7 @@ def build_tailoring_plan(
         additional_guidance=get_custom_tailoring_prompt(profile),
     )
     evidence_items = (
-        *tuple(_evidence_item(item) for item in get_achievement_evidence(profile) if item.get("user_confirmed")),
+        *tuple(_evidence_item(item) for item in get_achievement_evidence(profile) if item.get("user_confirmed") and not item.get("confirmation_review_required")),
         *_canonical_fact_items(profile),
     )
     if requirement_fit_report is not None and not _requirement_fit_report_matches(

@@ -91,6 +91,7 @@ the Historical Spec Ledger in `plans/README.md`.
 **Data durability & spend**
 
 - [SQLite Backup Command + Schema-Version Guard](#_2026-07-02-sqlite-backup-command-schema-version-guard) · 2026-07-02
+- [Source Startup Preserves Temporal History Identity](#_2026-10-29-source-startup-preserves-temporal-history-identity) · 2026-10-29
 - [Local LLM Spend Ceiling](#_2026-07-03-local-llm-spend-ceiling) · 2026-07-03
 
 ## 2026-05-01: Local-First Before SaaS Hardening
@@ -1219,6 +1220,8 @@ Consequences:
 - ambiguous live runs after submit intent park in `needs_verification` for
   human resolution instead of being auto-requeued
 - live runs without approval stay pending and record an awaiting-approval event
+- an owned email approval refusal before submit intent restores its own attempt
+  allowance at settlement or recovery without erasing the claim and refusal history
 - every run persists raw agent output, and successful live results persist
   confirmation evidence with conservative verification confidence
 
@@ -2722,6 +2725,18 @@ Candidate interpretations are pending suggestions until the owner confirms selec
 
 Exact schema 13 removed inferred seniority fields and withdrew unconfirmed old classification, provenance, pay and benchmark outputs for recomputation. Authored profile text, reviewed outcomes, comments and accepted artifact content remain; the paired backup is recoverable. No startup lexical reparse or silent admission repairs old records. Exact schema 14 follows the same stopped-runtime native backup/candidate/activation boundary. The v13-to-v14 cutover removes the redundant preference-approval foreign key, supersedes earlier intake decisions and retains their raw posting captures and historical determination envelopes. Canonical jobs, authored profile cells and accepted files are preserved.
 
+Owner correction (2026-10-27, #1281): legacy confirmation booleans have no
+recorded author authority. Cutover preserves all original evidence fields and
+confirmation history, and records explicit pending review in the private
+`job_events` ledger. Neither matching prose nor an exact or partial value shape
+can classify a record as system-derived. These non-model inventory/human review
+records are disjoint from semantic determinations. Canonical source generation
+fails explicitly while review is unresolved and preserves accepted artifacts.
+Current-state-bound human decisions and paired-backup recovery preserve newer
+edits and refuse conflicts; missing authority stays visible and never triggers
+automatic reconfirmation. See [Storage](architecture/storage.md#legacy-achievement-confirmation-history).
+
+
 Validation uses fake-model authority tests, strict failure/binding tests, one-off deletion searches and owned synthetic product-path QA. No eval sets, labeled sentence corpora, baseline comparisons or recorded-output replay fixtures are permitted. Temporal replay consumes persisted results; it does not call a provider. Merge and release remain owner decisions.
 
 ## Screening Answer Revisions on the Existing Ledger
@@ -3048,3 +3063,42 @@ in the ordinary attempt audit. This uses existing generation and review calls;
 it adds no model stage. Optional role selection, immutable metadata, explicit
 pins, selected model/effort and accepted-artifact preservation remain in force.
 The owning contract is [Tailoring](architecture/tailoring.md).
+
+## 2026-10-27: Native Execution Ownership Uses Per-User Jobs
+
+Decision: start native runtime and Python CLI content in ephemeral per-user
+launchd jobs and durably record their kernel coalition identities before
+execution. Descendant ownership must survive detached sessions, platform exec,
+environment replacement and parent exit. Environment tags and PID/group probes
+alone cannot establish that contract. No root service, VM or automatic startup
+is introduced.
+
+The command root gets the first clean-shutdown signal. Verified timed-out
+leftovers are terminated and observed exited before restart or paired database
+work. Admission and stop share a control lock; durable stopped proof precedes
+receipt retirement. Unknown or legacy-untracked ownership is an explicit failure
+that preserves the registry and live data. Reboot remains last-resort manual
+troubleshooting, never the normal lifecycle contract.
+
+QA must exercise actual same-user scopes, detached platform and writer cases,
+other-instance preservation, interruption recovery and native Python network
+isolation. Release and genuine signed/notarized first-use qualification remain
+separate gates. See [runtime ownership](architecture/runtime.md) and
+[Reliability & QA](local-reliability-qa.md).
+
+## 2026-10-29: Source Startup Preserves Temporal History Identity
+
+Source development and installed releases share a workspace and select
+`$JOBCTRL_DIR/temporal.db` for new histories. A sole existing source history
+under `$JOBCTRL_DIR/temporal/temporal.db` stays at that path. Multiple histories
+or orphaned SQLite companions block startup rather than selecting either.
+
+On macOS, a source fleet uses the native workspace locks and process scope.
+For a verified owned schema-14 pair, its next startup automatically backs up
+both databases and activates the sealed schema-15 migration. Interrupted
+attempts are resumed forward using a fresh backup, preserving later writes.
+An older untracked runtime does not establish cleanup authority. Unsupported or
+unverified migrations leave the default source diagnostic API and web interface
+available without the worker or Temporal. Older application versions do not
+automatically downgrade the workspace. See
+[Local Development](local-development.md#schema-migrations-and-source-updates).

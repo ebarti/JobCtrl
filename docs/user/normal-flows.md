@@ -219,11 +219,18 @@ unavailable ETA does not mean that the workflow itself is paused.
 An unknown provider page total prevents a crawl percentage, not necessarily a
 source-family ETA: after at least five recent family completions, Pipelines can
 use whole-family duration history when live capacity and queue observations
-bound the current source lane.
-When a closed run leaves work behind, **Set up a new Discover run** becomes
-available only after the live operations snapshot proves that shared runtime
-capacity is idle. The Discover run control follows the same guard, so selecting
-the tab directly cannot bypass it.
+bound the current source lane. A stale worker on that queue leaves contention
+unconfirmed, so Pipelines withholds numeric estimates. If an operations refresh
+fails, cached overall, stage, and source-family estimates are marked stale until
+a later read succeeds.
+For a failed run, a run completed with issues, a closed workflow still shown as
+draining, or an incomplete historical run, **Set up a new Discover run** may
+become available when reporting workers show zero occupied slots and their
+active-work inventory is complete and empty. If other worker reports are stale,
+background activity remains unknown even though the setup option is available.
+In those replacement cases, freshly reported activity or unavailable inventory
+blocks the Discover run control, including when you select the tab directly. A
+failed operations refresh also blocks Discover until a read succeeds.
 
 ### Workers, Activity Slots, And Queue Backlog
 
@@ -235,11 +242,22 @@ The capacity strip separates worker processes from the concurrency they offer:
   freshness window; they are excluded from online capacity.
 - **Activity slots in use** reports concurrent Temporal activities across all
   online worker processes as `active of configured`. For example, `0 of 4`
-  means the worker pool is healthy and idle: no activity is executing and all
-  four slots are available. Slots are execution capacity, not workers or jobs.
-- **Active work** is the bounded, privacy-safe inventory of allowlisted runtime
-  activities. It may be smaller than the number of occupied slots when details
-  are unavailable or intentionally omitted.
+  means the reporting workers have four available slots and report none in use.
+  If other worker reports are stale, their activity remains unknown. Stage-work
+  and short-control admission are reported separately: a worker may refuse new
+  stage work while canceled calls are still running, even when slots are free.
+  Short cancellation, budget, and lifecycle controls have their own bounded
+  capacity. Slot and admission counts describe reporting workers only; stale
+  workers' activity and admission remain unconfirmed. Slots are execution
+  capacity, not workers or jobs.
+- **Active work** counts occupied worker activity slots. Its details are a
+  bounded, privacy-safe inventory and can omit activities or show only part of
+  the list. A count with unavailable details still means work is running; an
+  unavailable inventory means its status is unknown. If a worker report is
+  stale, JobCtrl cannot confirm its activity and shows fresh-worker activity as
+  a minimum rather than a global total. You may review and start Discover when
+  reporting workers are idle; an already-running Discover workflow is reused.
+  This does not confirm that detached activity from an older run has stopped.
 - **Queue backlog** is the combined approximate count of tasks waiting in
   Temporal's workflow and activity queues. Workflow tasks wait for workflow
   pollers, while activity tasks wait for activity workers and their available
@@ -251,6 +269,10 @@ slots are configured slots minus active slots. The expanded **Freshness and
 capacity** inspector shows the underlying worker, slot, executor-thread, and
 task-queue observations. For the exact API semantics, see
 [Operations & Events](../api/operations-and-events.md#capacity-active-work-and-task-queue).
+The inspector reports unfinished calls in retired worker pools. Cancellation
+does not prove those calls or their child processes have stopped. If admission
+is refused, capacity returns after a retired pool's calls actually finish;
+already accepted results are not replaced by the refusal.
 
 Selected-run tracking is reconstructed automatically after an upgrade or worker
 restart when an older execution predates native lineage. Pipelines labels that
@@ -260,22 +282,25 @@ and ETAs until the worker verifies the complete membership and stage-key sets.
 
 Use **Stop discovery** while the selected Discover workflow is actively
 discovering or draining. Cancellation refreshes Pipelines as well as Runs and
-Dashboard. After a failed execution, Pipelines reports the active-work total or
-states that the runtime inventory is unavailable; it never turns missing
-inventory into "no work." If the exact history cannot be read or mapped safely
+Dashboard. After a failed execution, Pipelines reports observed active work or
+states that the runtime inventory is unavailable; stale worker reports leave
+global occupancy unconfirmed. It never turns missing inventory into "no work."
+If the exact history cannot be read or mapped safely
 on one pass, the repair remains in automatic retry instead of becoming a
 permanent tracking mode. Reconnecting to its authoritative history restores that
 run or records its real terminal outcome. The same repair closes native activity
 rows when exact Temporal history proves that a closed workflow timed out or
-failed after its worker stopped reporting, so a closed run cannot remain shown
-as processing. If immutable legacy history ended
+failed after its worker stopped reporting; those proven terminal activities no
+longer appear as processing. If immutable legacy history ended
 before recording every target, the run is labeled **Historical run incomplete**;
 JobCtrl preserves all exact recovered evidence and does not fabricate or
-continuously retry the unknown remainder. **Set up a new Discover run** is
-appropriate only when the prior execution is closed or genuinely absent and
-fresh runtime capacity confirms zero active slots; it selects the Discover
-controls and does not start a run until you submit them. Workflow identifiers
-and bounded reason codes remain
+continuously retry the unknown remainder. When reporting workers show no
+activity and their inventory is complete and empty, you can use **Set up a new
+Discover run** to review the Discover controls, including when stale reports
+leave other background activity unknown.
+The option does not start a run until you submit it. If a Discover workflow is
+already running, JobCtrl reuses it; this does not prove that detached work from
+an older run has stopped. Workflow identifiers and bounded reason codes remain
 under **Technical details**.
 
 Internal stages such as Enrich and Score, and material generation (the `tailor`
@@ -302,6 +327,10 @@ owns the complete background-check policy.
 The Jobs view supports filters, sorting, pagination, deep links, job-state and
 fit-score filters, stage state, source provenance, compensation evidence, and
 route-level job workspaces.
+
+In Job Detail, retrying a failed Discover stage resets it to pending without
+starting another run. Retrying a supported preparation stage also requests the
+remaining preparation work; its progress is reconciled with the recorded state.
 
 </WorkflowSurfacePanel>
 
@@ -341,6 +370,12 @@ and permanently remove deleted or hidden jobs. Delete and permanent-delete
 actions use destructive styling, while restore and unhide remain recovery
 actions. Opening a row uses its keyboard-focusable row action, so the table does
 not add a redundant visible **Open** control to every record.
+
+Permanent deletion confirms a fixed set of removed jobs from the observed list.
+If their lifecycle state changes before confirmation finishes, the app refuses
+the entire deletion and asks you to refresh and select again. The selection
+expires after one minute; existing jobs and materials remain intact when a
+selection is refused. Unrelated workspace changes do not invalidate it.
 
 At 900px and below, the Jobs, Artifacts, Contacts, Discovery, and Settings data
 tables reflow into labelled record cards. Their sorting and filtering controls
@@ -595,11 +630,15 @@ partial, or blocked.
 ```bash
 jobctrl apply --dry-run --limit 1
 jobctrl apply --url https://example.com/job/123 --dry-run
+jobctrl apply --recover-stopped
 ```
 
 The first dry-runs Apply for one eligible job; the second dry-runs a specific job
-by URL. A dry run never submits — it shows what would happen without sending
-anything.
+by URL. The third checks stopped Apply custody without starting an application or
+resetting Skip. A dry run never submits — it shows what would happen without
+sending anything. A finite `--limit` bounds the number of jobs claimed by that batch,
+including jobs skipped after claim. A URL-targeted batch stays on that job even
+if more workers are configured. Use `--continuous` to keep polling instead.
 
 </WorkflowSurfacePanel>
 
@@ -780,6 +819,15 @@ it does not send messages or replace the review surfaces.
 
 </WorkflowSurfacePanel>
 
+## Stopping And Restarting
+
+`jobctrl stop` asks the instance to shut down cleanly, then kills verified
+leftovers that exceed the timeout and waits for exit. Detached children remain
+part of that instance. A successful stop permits normal restart. Actual cleanup
+failures report the process or ownership problem; investigate it and retry,
+keeping the registry and data intact. Reboot is a last-resort troubleshooting
+option, not part of the normal workflow. See [startup and cleanup](getting-started.md#_2-start-jobctrl).
+
 ## Command Reference
 
 ```bash
@@ -795,10 +843,18 @@ In a source checkout, run the Python commands with
 `uv --project workers/automation run jobctrl <command>`; the lifecycle commands
 exist only in the installed launcher.
 
+For the schema-15 protocol change, the new authenticated installer upgrades the
+original installation after normal cleanup. Interrupted upgrades preserve live
+data. Before the new command replaces the old one, rerun the trusted new
+installer; the old binary cannot read the new recovery journal. After command
+replacement, resume with `jobctrl stop` followed by `jobctrl update`.
+Cross-protocol rollback is refused. See
+[Getting Started](getting-started.md#update-roll-back-or-remove-jobctrl).
+
 | Lifecycle command | What it does |
 | --- | --- |
 | `start` | Start the local services and open the app (`--no-open`, `--foreground`). |
-| `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. |
+| `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. Stop refuses to report success when recorded service ownership or exit is unresolved; see [Start JobCtrl](getting-started.md#_2-start-jobctrl). |
 | `logs [component]` | Show the last 200 lines of the `temporal`, `worker`, or `api` log, or of all three when no component is given. |
 | `version` | Print the installed version (`--json`). |
 | `update` / `rollback` / `uninstall` | Install a newer release, restore an earlier application and its saved database pair (`--to <build-id>`), or remove JobCtrl. Rollback keeps a compatible recovery launcher; Homebrew preserves the selection until an explicit update. `uninstall --remove-data` also deletes your local data after you type a confirmation phrase. |
@@ -810,10 +866,11 @@ exist only in the installed launcher.
 | `setup` | Detect provider auth, save the enabled employer-analysis legs, and finish with a `doctor` report. In a source checkout it also syncs pnpm/uv dependencies and Playwright Chromium. |
 | `doctor` | Report setup checks for the database, LLM providers, Temporal, browser, Gmail, and telemetry. Read every row: it exits zero even when a check prints `MISSING`. |
 | `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
+| `legacy-evidence list` / `recover` / `decide` | Inspect unknown legacy confirmation provenance; inventory a validated pre-cutover paired backup or explicitly missing authority, then make one current-state-bound human decision with the runtime stopped. Preserves source cells and history; see [Review legacy confirmations](candidate-profile.md#review-legacy-confirmations). |
 | `source-proposals from-history` / `list` / `reset CANDIDATE_ID` | Explicitly propose sources from saved canonical posting/application URLs, read retained evidence and review history, or reset one rejected coordinate. Review and promotion use the existing Source locator; see [Discovery](discovery.md#propose-sources-from-saved-posting-history). |
-| `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores jobs that already have a score. |
+| `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` includes eligible jobs that already have a score, across the scoring queue. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
-| `apply` | Start apply automation (`--dry-run`, `--url`, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
+| `apply` | Start apply automation (`--dry-run`, `--url`, `--limit` for a maximum number of claimed jobs, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
 | `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). Enrich retains accepted content and automatically renews an exhausted stage budget; see [Enrichment](enrichment-and-extraction.md). |
 | `action <stage>` | Low-level single-action dispatch with JSON output, for scripts. |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates for all jobs or one (`--job-id`, `--observations-json`, `--no-eurotoptech`). |
@@ -827,6 +884,14 @@ exist only in the installed launcher.
 | `backup` | Source checkout only: write a `VACUUM INTO` copy of `jobctrl.db` (`--output`). |
 | `worker` | Run the long-lived Temporal worker. |
 | `rpc` | JSON-RPC server started by the TypeScript API (internal). |
+
+The digest counts new matches, stale scores and review items by their saved job
+identity. Hidden, closed and deleted jobs are excluded from those counts. New
+matches use the last review time and the configured high-fit threshold, which
+`--min-fit-score` can override for one read. Follow-ups use saved application
+outcomes and the seven-day threshold. Reading the digest does not advance its
+review time; `--acknowledge` records it with a review event. If the digest cannot
+refresh or read its data, the command fails instead of reporting zero counts.
 
 
 ## Semantic Determination Authority

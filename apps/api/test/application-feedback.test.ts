@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { AUTOMATION_PROJECT_DIR } from "../src/python-runtime.js";
 import { recordArtifactAuthority, recordCompensationAuthority, recordRoleFeedback } from "./semantic-fixtures.js";
 import { recordOutcomeDecision, recordRepeatDecision } from "./semantic-fixtures.js";
 import { seedApplicationUrl } from "./seed-enrichment.js";
@@ -5,6 +7,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -1550,6 +1554,87 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it.each(["0-later-committed", "z-later-committed"])("keeps tied-clock revocation effective for %s", async (decisionId) => {
+    const app = buildApp(options);
+    const first = await app.inject({ method: "POST", url: `/v1/jobs/${READY_JOB_ID}/apply-review/decision`, payload: { decision: "defer" } });
+    expect(first.statusCode, first.body).toBe(200);
+    const db = new Database(options.dbPath);
+    db.prepare("UPDATE application_review_decisions SET decision='approve_submit',decision_id='a-approved' WHERE decision_id=?").run(first.json().decision.decisionId);
+    db.prepare(`INSERT INTO application_review_decisions (tenant_id,decision_id,job_id,decision,decided_by,decided_at)
+      SELECT tenant_id,?,job_id,'reset',decided_by,decided_at FROM application_review_decisions WHERE decision_id='a-approved'`).run(decisionId);
+    db.close();
+    const queue = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    expect(queueItem(queue.json(), READY_JOB_ID)!.review.decision).toBe("reset");
+    expect(queueItem(queue.json(), READY_JOB_ID)!.approvalGate.reasons).toEqual(["awaiting_approval"]);
+    await app.close();
+  });
+  it("reads actual worker-written private stream events through API summaries and canonical review", async () => {
+    const fixtureRoot = path.join(tempDir, "owned-worker");
+    const fixture = spawnSync(path.join(AUTOMATION_PROJECT_DIR, ".venv", "bin", "python"),
+      [path.join(AUTOMATION_PROJECT_DIR, "tests", "apply_receipt_privacy_fixture.py"), fixtureRoot],
+      { encoding: "utf8", timeout: 20_000, env: { ...process.env, JOBCTRL_DIR: path.join(fixtureRoot, "sandbox") } });
+    expect(fixture.status, `${fixture.stdout}\n${fixture.stderr}`).toBe(0);
+    const observed = JSON.parse(fixture.stdout.trim()) as { dbPath: string; jobId: string; runId: string;
+      canary: string; httpCalls: number; intent: number; confirmation: number; submitted: number };
+    expect(observed).toMatchObject({ httpCalls: 1, intent: 1, confirmation: 0, submitted: 0 });
+    const db = new Database(observed.dbPath);
+    const stored = db.prepare("SELECT event_type,message,payload_json FROM job_events WHERE job_id=?").all(observed.jobId);
+    expect(JSON.stringify(stored)).toContain(observed.canary);
+    const lastId = (db.prepare("SELECT MAX(event_id) AS id FROM job_events").get() as { id: number }).id;
+    db.close();
+    const app = buildApp({ ...options, dbPath: observed.dbPath });
+    try {
+      for (const url of ["/v1/dashboard/summary", "/v1/debug/activity?pageSize=100", "/v1/jobs"]) {
+        const response = await app.inject({ method: "GET", url });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.body, url).not.toContain(observed.canary);
+        expect(response.body, url).not.toContain("private-candidate-canary");
+        expect(response.body, url).not.toContain("apply@example.com");
+      }
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      const address = app.server.address();
+      if (!address || typeof address === "string") throw new Error("Expected owned API address");
+      const abort = new AbortController();
+      const stream = await fetch(`http://127.0.0.1:${address.port}/v1/events/stream?tenantId=local&since=0`, { signal: abort.signal });
+      const reader = stream.body?.getReader();
+      if (!reader) throw new Error("Expected owned event stream");
+      let replay = "";
+      const decoder = new TextDecoder();
+      try {
+        while (!replay.includes(`id: ${lastId}\n`)) {
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+          const next = await Promise.race([reader.read(), new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("Owned Apply replay timed out")), 5_000);
+          })]).finally(() => clearTimeout(timeout));
+          if (next.done) break;
+          replay += decoder.decode(next.value, { stream: true });
+        }
+        expect(replay).toContain(`id: ${lastId}\n`);
+        expect(replay).toContain("event: AssistantText");
+        expect(replay).toContain("event: ToolUse");
+        expect(replay).not.toContain(observed.canary);
+        expect(replay).not.toContain("private-candidate-canary");
+        expect(replay).not.toContain("apply@example.com");
+      } finally {
+        await reader.cancel();
+        abort.abort();
+      }
+      const review = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+      expect(review.statusCode, review.body).toBe(200);
+      expect(queueItem(review.json(), observed.jobId)?.emailApplication).toMatchObject({
+        body: expect.stringContaining("private-candidate-canary"), candidateRunId: observed.runId,
+      });
+      expect(queueItem(review.json(), observed.jobId)?.latestApplyRun?.result).not.toBe("applied");
+      const detail = await app.inject({ method: "GET", url: `/v1/jobs/${observed.jobId}` });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect((detail.json().stages as Array<{ stage: string; state: string }>).find((stage) => stage.stage === "apply"))
+        .toMatchObject({ state: "needs_verification" });
+      expect(detail.body).not.toContain(observed.canary);
+    } finally {
+      await app.close();
+    }
+  }, 30_000);
+
   it("requires submit approval to bind the email application candidate", async () => {
     const db = new Database(options.dbPath);
     db.prepare(
@@ -1573,11 +1658,16 @@ describe("application feedback API", () => {
         run_id: "dry-run-email-candidate",
         recipient: "apply@example.com",
         subject: "Application for Staff Engineer",
-        body: "Hello",
-        attachment_artifact_id: "resume-pdf-1",
+        body: "private-apply-review-canary",
+        attachment_artifact_id: "apply-ready-resume-pdf",
         attachment_name: "Resume.pdf",
       }),
     );
+    db.prepare(`INSERT INTO job_events (
+      tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+    ) VALUES ('local', ?, 1, 'apply', 'AgentResult', 'info', ?, ?, ?)`)
+      .run(READY_JOB_ID, "private-agent-review-canary", NOW,
+        JSON.stringify({ run_id: "dry-run-email-candidate", raw_output: "private-agent-review-canary" }));
     db.close();
     const app = buildApp(options);
     const readyKey = encodeURIComponent(READY_JOB);
@@ -1585,11 +1675,16 @@ describe("application feedback API", () => {
     expect(queueItem(queue.json(), READY_JOB_ID)?.emailApplication).toMatchObject({
       recipient: "apply@example.com",
       subject: "Application for Staff Engineer",
-      attachmentArtifactId: "resume-pdf-1",
+      attachmentArtifactId: "apply-ready-resume-pdf",
       attachmentName: "Resume.pdf",
       candidateRunId: "dry-run-email-candidate",
+      body: "private-apply-review-canary",
     });
 
+    const dashboard = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+    expect(dashboard.statusCode, dashboard.body).toBe(200);
+    expect(dashboard.body).not.toContain("private-agent-review-canary");
+    expect(dashboard.body).not.toContain("private-apply-review-canary");
     const missingBinding = await app.inject({
       method: "POST",
       url: `/v1/jobs/${readyKey}/apply-review/decision`,
@@ -1606,6 +1701,7 @@ describe("application feedback API", () => {
       error: "approval_stale_email_candidate",
     });
 
+    const reviewedEmailCandidate = queueItem(queue.json(), READY_JOB_ID)!.emailApplication!;
     const bound = await app.inject({
       method: "POST",
       url: `/v1/jobs/${readyKey}/apply-review/decision`,
@@ -1615,17 +1711,135 @@ describe("application feedback API", () => {
         profileVersion: 7,
         applicationUrl: READY_JOB,
         emailRecipient: "apply@example.com",
-        emailAttachmentArtifactId: "resume-pdf-1",
+        emailAttachmentArtifactId: "apply-ready-resume-pdf",
+        reviewedEmailCandidate,
       },
     });
     expect(bound.statusCode, bound.body).toBe(200);
     expect(bound.json().decision).toMatchObject({
       emailRecipient: "apply@example.com",
-      emailAttachmentArtifactId: "resume-pdf-1",
+      emailAttachmentArtifactId: "apply-ready-resume-pdf",
     });
 
+    const audit = new Database(options.dbPath);
+    const recorded = audit.prepare("SELECT payload_json FROM job_events WHERE event_type='ApplyReviewDecisionRecorded' AND json_extract(payload_json,'$.decisionId')=?").get(bound.json().decision.decisionId) as { payload_json: string };
+    const binding = JSON.parse(recorded.payload_json).emailApprovalBinding;
+    expect(binding).toMatchObject({ version: 1, candidateSha256: expect.stringMatching(/^[0-9a-f]{64}$/), materialsSha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    // Current posting inputs and accepted bytes are part of the same approval,
+    // even when the visible email preview and material generation are unchanged.
+    const approved = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    expect(queueItem(approved.json(), READY_JOB_ID)!.approvalGate.reasons).toEqual([]);
+    audit.prepare("UPDATE job_events SET payload_json=json_set(payload_json,'$.attachment_artifact_id','different-attachment') WHERE event_type='EmailApplicationCandidateRecorded'").run();
+    const changedAttachment = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    expect(queueItem(changedAttachment.json(), READY_JOB_ID)!.approvalGate.reasons).toEqual(["approval_stale_email_candidate"]);
+    const foreignPreview = queueItem(changedAttachment.json(), READY_JOB_ID)!.emailApplication!;
+    const foreignApproval = await app.inject({ method: "POST", url: `/v1/jobs/${readyKey}/apply-review/decision`, payload: {
+      decision: "approve_submit", materialsGeneration: 1, profileVersion: 7, applicationUrl: READY_JOB,
+      emailRecipient: foreignPreview.recipient, emailAttachmentArtifactId: foreignPreview.attachmentArtifactId,
+      reviewedEmailCandidate: foreignPreview,
+    } });
+    expect(foreignApproval.statusCode).toBe(409);
+    expect(foreignApproval.json().error).toBe("approval_stale_materials");
+    audit.prepare("UPDATE job_events SET payload_json=json_set(payload_json,'$.attachment_artifact_id','apply-ready-resume-pdf') WHERE event_type='EmailApplicationCandidateRecorded'").run();
+    const priorTitle = (audit.prepare("SELECT title FROM jobs WHERE job_id=?").get(READY_JOB_ID) as { title: string }).title;
+    audit.prepare("UPDATE jobs SET title=? WHERE job_id=?").run("Changed synthetic role", READY_JOB_ID);
+    const changedPosting = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    expect(queueItem(changedPosting.json(), READY_JOB_ID)!.approvalGate.reasons).toEqual(["approval_stale_email_candidate"]);
+    audit.prepare("UPDATE jobs SET title=? WHERE job_id=?").run(priorTitle, READY_JOB_ID);
+    audit.prepare("UPDATE jobs SET url=? WHERE job_id=?").run("https://example.com/changed-posting", READY_JOB_ID);
+    const changedPostingUrl = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    expect(queueItem(changedPostingUrl.json(), READY_JOB_ID)!.approvalGate.reasons).toEqual(["approval_stale_url"]);
+    audit.prepare("UPDATE jobs SET url=? WHERE job_id=?").run(READY_JOB, READY_JOB_ID);
+    const resumePath = path.join(tempDir, "resume.pdf");
+    const approvedResume = fs.readFileSync(resumePath);
+    fs.writeFileSync(resumePath, Buffer.from("synthetic changed approved material"));
+    const changedMaterial = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    expect(queueItem(changedMaterial.json(), READY_JOB_ID)!.approvalGate.reasons).toEqual(["approval_stale_materials"]);
+    fs.writeFileSync(resumePath, approvedResume);
+    const priorMetadata = (audit.prepare("SELECT metadata_json FROM job_materials_artifacts WHERE artifact_id='apply-ready-resume-pdf'").get() as { metadata_json: string }).metadata_json;
+    audit.prepare("UPDATE job_materials_artifacts SET metadata_json=? WHERE artifact_id='apply-ready-resume-pdf'").run('{"changed":true}');
+    const changedMetadata = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    expect(queueItem(changedMetadata.json(), READY_JOB_ID)!.approvalGate.reasons).toEqual(["approval_stale_materials"]);
+    audit.prepare("UPDATE job_materials_artifacts SET metadata_json=? WHERE artifact_id='apply-ready-resume-pdf'").run(priorMetadata);
+    // Same recipient/attachment IDs do not let a newer rehearsal rewrite A's authority.
+    audit.prepare("UPDATE job_events SET payload_json=json_set(payload_json,'$.subject','Different role','$.body','Different body') WHERE event_type='EmailApplicationCandidateRecorded'").run();
+    expect(JSON.parse((audit.prepare("SELECT payload_json FROM job_events WHERE event_type='ApplyReviewDecisionRecorded'").get() as { payload_json: string }).payload_json).emailApprovalBinding).toEqual(binding);
+    // Reapproval captures the complete new preview; unreadable material refuses atomically.
+    const staleRequest = { decision: "approve_submit", materialsGeneration: 1, profileVersion: 7, applicationUrl: READY_JOB, emailRecipient: "apply@example.com", emailAttachmentArtifactId: "apply-ready-resume-pdf", reviewedEmailCandidate };
+    const stale = await app.inject({ method: "POST", url: `/v1/jobs/${readyKey}/apply-review/decision`, payload: staleRequest });
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json().error).toBe("approval_stale_email_candidate");
+    expect((audit.prepare("SELECT count(*) AS count FROM application_review_decisions WHERE job_id=?").get(READY_JOB_ID) as { count: number }).count).toBe(1);
+    // No complete preview identity is also a refusal, even when the old IDs match.
+    const { reviewedEmailCandidate: _oldPreview, ...idsOnly } = staleRequest;
+    const missingPreview = await app.inject({ method: "POST", url: `/v1/jobs/${readyKey}/apply-review/decision`, payload: idsOnly });
+    expect(missingPreview.statusCode, missingPreview.body).toBe(409);
+    const refreshed = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    expect(queueItem(refreshed.json(), READY_JOB_ID)!.approvalGate.reasons).toContain("approval_stale_email_candidate");
+    const request = { ...staleRequest, reviewedEmailCandidate: queueItem(refreshed.json(), READY_JOB_ID)!.emailApplication! };
+    for (const [field, value] of Object.entries({ subject: "Unseen subject", body: "Unseen body", recipient: "other@example.com", attachmentArtifactId: "foreign-attachment", attachmentName: "Other.pdf", candidateRunId: "foreign-run", recordedAt: "2026-06-01T12:01:00.000Z" })) {
+      const altered = await app.inject({ method: "POST", url: `/v1/jobs/${readyKey}/apply-review/decision`, payload: { ...request, reviewedEmailCandidate: { ...request.reviewedEmailCandidate, [field]: value } } });
+      expect(altered.statusCode, altered.body).toBe(409);
+      expect(altered.json().error).toBe("approval_stale_email_candidate");
+    }
+    expect((audit.prepare("SELECT count(*) AS count FROM application_review_decisions WHERE job_id=?").get(READY_JOB_ID) as { count: number }).count).toBe(1);
+    const reapproved = await app.inject({ method: "POST", url: `/v1/jobs/${readyKey}/apply-review/decision`, payload: request });
+    expect(reapproved.statusCode, reapproved.body).toBe(200);
+    const updated = JSON.parse((audit.prepare("SELECT payload_json FROM job_events WHERE event_type='ApplyReviewDecisionRecorded' AND json_extract(payload_json,'$.decisionId')=?").get(reapproved.json().decision.decisionId) as { payload_json: string }).payload_json).emailApprovalBinding;
+    expect(updated.candidateSha256).not.toBe(binding.candidateSha256);
+    expect(updated.materialsSha256).toBe(binding.materialsSha256);
+    fs.unlinkSync(path.join(tempDir, "resume.pdf"));
+    const unreadable = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    expect(queueItem(unreadable.json(), READY_JOB_ID)!.approvalGate.reasons).toEqual(["approval_stale_materials"]);
+    const missing = await app.inject({ method: "POST", url: `/v1/jobs/${readyKey}/apply-review/decision`, payload: request });
+    expect(missing.statusCode, missing.body).toBe(409);
+    expect(missing.json().error).toBe("approval_stale_materials");
+    expect((audit.prepare("SELECT count(*) AS count FROM application_review_decisions WHERE job_id=?").get(READY_JOB_ID) as { count: number }).count).toBe(2);
+    audit.close();
     await app.close();
   });
+
+  it.each(["unchanged", "defer"])(
+    "honors an API-created exact email approval through the worker (%s)", async (lateChange) => {
+      const db = new Database(options.dbPath);
+      // This control has no prior application: the shared API fixture also
+      // seeds an unrelated applied role for repeat-protection tests.
+      db.prepare("UPDATE jobs SET apply_status=NULL, applied_at=NULL WHERE job_id=?").run(APPLIED_JOB_ID);
+      db.prepare("INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)")
+        .run(7, NOW);
+      insertVersionedDryRunEvidence(db, {
+        applicationUrl: READY_JOB, materialsGeneration: 1, profileVersion: 7, runId: "dry-run-email-candidate",
+      });
+      db.close();
+      const workerRoot = fileURLToPath(new URL("../../../workers/automation/", import.meta.url));
+      const python = process.env.JOBCTRL_MIGRATION_TEST_PYTHON ?? path.join(workerRoot, ".venv/bin/python");
+      const probe = (phase: string, mode = "") => JSON.parse(execFileSync(
+        python,
+        [path.join(workerRoot, "tests/email_approval_api_probe.py"), phase, options.dbPath, READY_JOB_ID, mode],
+        { cwd: workerRoot, encoding: "utf8", env: {
+          PATH: process.env.PATH, HOME: tempDir, JOBCTRL_DIR: tempDir, LANGFUSE_DISABLE: "1",
+          PYTHONDONTWRITEBYTECODE: "1", PYTHONPATH: `${workerRoot}:${path.join(workerRoot, "src")}`,
+        } },
+      ).trim().split("\n").at(-1)!);
+      expect(probe("prepare")).toEqual({ prepared: true });
+      const app = buildApp(options);
+      const queue = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+      const reviewedEmailCandidate = queueItem(queue.json(), READY_JOB_ID)!.emailApplication!;
+      const bound = await app.inject({
+        method: "POST", url: `/v1/jobs/${READY_JOB_ID}/apply-review/decision`,
+        payload: {
+          decision: "approve_submit", materialsGeneration: 1, profileVersion: 7, applicationUrl: READY_JOB,
+          emailRecipient: reviewedEmailCandidate.recipient,
+          emailAttachmentArtifactId: reviewedEmailCandidate.attachmentArtifactId, reviewedEmailCandidate,
+        },
+      });
+      expect(bound.statusCode, bound.body).toBe(200);
+      expect(probe("run", lateChange)).toMatchObject(lateChange === "unchanged"
+        ? { result: "applied", intents: 1, sends: 1 }
+        : { result: "failed", error: "awaiting_approval", intents: 0, sends: 0 });
+      await app.close();
+    },
+  );
 
   it("rejects submit approval when the displayed review binding is stale", async () => {
     const db = new Database(options.dbPath);
@@ -1794,7 +2008,7 @@ describe("application feedback API", () => {
     const write = await app.inject({
       method: "POST",
       url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
-      payload: {
+      payload: { requestId: "11720000-0000-4000-8000-000000000001",
         kind: "interview",
         occurredAt: "2026-06-01T11:00:00.000Z",
         note,
@@ -1840,7 +2054,7 @@ describe("application feedback API", () => {
     const write = await app.inject({
       method: "POST",
       url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
-      payload: {
+      payload: { requestId: "11720000-0000-4000-8000-000000000001",
         kind: "interview",
         occurredAt: "2026-06-01T12:00:00.000Z",
         note,
@@ -1882,7 +2096,7 @@ describe("application feedback API", () => {
     const write = await app.inject({
       method: "POST",
       url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
-      payload: {
+      payload: { requestId: "11720000-0000-4000-8000-000000000001",
         kind: "interview",
         occurredAt: "2026-06-01T12:00:00.000Z",
         note: "private reflection",
@@ -2028,10 +2242,41 @@ describe("application feedback API", () => {
     expect(response.json()).toEqual({
       ok: false,
       error: "gmail_feedback_scan_failed",
-      message: "Gmail feedback scan failed: JSON-RPC request timed out after 600000ms",
+      message: "Gmail feedback worker transport failed.",
+      failureCode: "rpc_transport_error",
     });
 
     await app.close();
+  });
+
+  it("preserves a terminal model failure code without exposing worker text", async () => {
+    const privateText = "Synthetic private mail text in worker error";
+    const dispatcher: JsonRpcDispatcher = {
+      call: async () => ({ jsonrpc: "2.0", id: 1,
+        result: { ok: false, status: "blocked", failureCode: "provider_non_retryable", message: privateText } }),
+      close: async () => {},
+    };
+    const app = buildApp({ ...options, gmailFeedbackScanner: createWorkerGmailFeedbackScanner(dispatcher) });
+    const response = await app.inject({ method: "POST", url: "/v1/outcomes/gmail/scan", payload: {} });
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({ ok: false, failureCode: "provider_non_retryable" });
+    expect(response.body).not.toContain(privateText);
+    await app.close();
+  });
+
+  it("does not expose an unrecognized worker failure code or RPC error data", async () => {
+    const privateText = "Synthetic private mail text in worker error";
+    for (const rpcReply of [
+      { jsonrpc: "2.0" as const, id: 1, result: { ok: false, failureCode: privateText, message: privateText } },
+      { jsonrpc: "2.0" as const, id: 1, error: { code: -32603, message: privateText, data: privateText } },
+    ]) {
+      const dispatcher: JsonRpcDispatcher = { call: async () => rpcReply, close: async () => {} };
+      const app = buildApp({ ...options, gmailFeedbackScanner: createWorkerGmailFeedbackScanner(dispatcher) });
+      const response = await app.inject({ method: "POST", url: "/v1/outcomes/gmail/scan", payload: {} });
+      expect(response.statusCode).toBe(500);
+      expect(response.body).not.toContain(privateText);
+      await app.close();
+    }
   });
 
   it("rejects non-timestamp outcome dates before they reach event payloads", async () => {
@@ -2042,7 +2287,7 @@ describe("application feedback API", () => {
     const manual = await app.inject({
       method: "POST",
       url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
-      payload: {
+      payload: { requestId: "11720000-0000-4000-8000-000000000001",
         kind: "interview",
         occurredAt: privateTimestampText,
         note: "manual note",
@@ -3075,3 +3320,35 @@ function seedInterviewPrepGeneration(dbPath: string, jobId: string, generation: 
     db.close();
   }
 }
+
+it.each([true, false])("Apply Review and Job Detail retain identical durable controls after relabel and restart (intent=%s)", async (withIntent) => {
+  const db = new Database(options.dbPath);
+  db.prepare("UPDATE job_stage_states SET state='needs_verification' WHERE tenant_id='local' AND job_id=? AND stage='apply'").run(READY_JOB_ID);
+  if (withIntent) db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','ApplySubmitIntended',?,'2026-10-24')")
+    .run(READY_JOB_ID, JSON.stringify({ run_id: "original-uncertain" }));
+  const app = buildApp(options);
+  const skipped = await app.inject({ method: "POST", url: `/v1/jobs/${READY_JOB_ID}/actions/mark-skipped`, payload: {} });
+  expect(skipped.statusCode, skipped.body).toBe(200);
+  await app.close();
+  db.prepare("UPDATE job_stage_states SET state='pending' WHERE tenant_id='local' AND job_id=? AND stage='apply'").run(READY_JOB_ID);
+  const before = db.prepare("SELECT * FROM job_events WHERE job_id=? ORDER BY event_id").all(READY_JOB_ID);
+  db.close();
+  const restarted = buildApp(options);
+  try {
+    const queue = await restarted.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    const detail = await restarted.inject({ method: "GET", url: `/v1/jobs/${READY_JOB_ID}` });
+    expect(queue.statusCode, queue.body).toBe(200);
+    expect(detail.statusCode, detail.body).toBe(200);
+    const queued = (queue.json() as ApplyReviewQueueResponse).items.find(item => item.jobKey === READY_JOB_ID)!;
+    expect(queued).toBeDefined();
+    expect(queued.applyAudit.hardBlockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "manual_apply_skip" }), expect.objectContaining({ code: "submission_outcome_uncertain" }),
+      ...(withIntent ? [expect.objectContaining({ code: "submission_intent_recorded", detail: expect.stringContaining("original-uncertain") })] : []),
+    ]));
+    expect(queued.applyAudit.hardBlockers).toEqual(detail.json().applyAudit.hardBlockers);
+    expect(queued.applyAudit.sources).toEqual(detail.json().applyAudit.sources);
+    const after = new Database(options.dbPath);
+    expect(after.prepare("SELECT * FROM job_events WHERE job_id=? ORDER BY event_id").all(READY_JOB_ID)).toEqual(before);
+    after.close();
+  } finally { await restarted.close(); }
+});

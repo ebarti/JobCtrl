@@ -81,6 +81,55 @@ def test_initial_watermark_is_zero(conn: sqlite3.Connection) -> None:
     assert repo.get(PYTHON_WATERMARK_NAME) == 0
 
 
+def test_projections_bind_requirement_report_to_selected_score(conn: sqlite3.Connection) -> None:
+    job_id = _seed_job(conn, "https://example.com/score-report-binding")
+    now = utc_now()
+    conn.execute(
+        "INSERT INTO job_scores (tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at) "
+        "VALUES ('local', ?, 1, 8, '{}', '[]', ?)",
+        (str(job_id), now),
+    )
+    conn.execute(
+        "INSERT INTO job_requirement_fit_reports (tenant_id, job_id, score_version, "
+        "employer_analysis_generation, profile_snapshot_version, scoring_policy_version, "
+        "formula_version, resolved_fit_score, fit_band, confidence, summary_json, created_at) "
+        "VALUES ('local', ?, 1, 1, 1, 1, 'v1', 8, 'strong', 'high', '{}', ?)",
+        (str(job_id), now),
+    )
+    conn.execute(
+        "INSERT INTO job_requirement_fit_items (tenant_id, job_id, score_version, requirement_id, "
+        "requirement_text, tier, weight, job_evidence_span, fit_json, contribution_json, tailoring_json, position) "
+        "VALUES ('local', ?, 1, 'r1', 'Old requirement', 'must_have', 1, 'Old requirement', "
+        "'{\"kind\":\"missing\",\"reason\":\"Missing\"}', '{}', '{}', 0)",
+        (str(job_id),),
+    )
+    record_job_event(conn, job_id, "score", "JobScored")
+    conn.commit()
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    builder.refresh()
+    row = conn.execute("SELECT score_version, fit_band FROM job_list_projections WHERE job_id = ?", (str(job_id),)).fetchone()
+    assert tuple(row) == (1, "strong")
+    assert conn.execute("SELECT COUNT(*) FROM evidence_usage_projections WHERE projection_kind = 'gap'").fetchone()[0] == 1
+
+    # A historical score can lack its corresponding report. The earlier
+    # report remains stored but must not be shown as the new score's evidence.
+    conn.execute(
+        "INSERT INTO job_scores (tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at) "
+        "VALUES ('local', ?, 2, 6, '{}', '[]', ?)",
+        (str(job_id), now),
+    )
+    record_job_event(conn, job_id, "score", "JobScored")
+    conn.commit()
+    builder.refresh()
+    row = conn.execute("SELECT score_version, fit_band FROM job_list_projections WHERE job_id = ?", (str(job_id),)).fetchone()
+    assert tuple(row) == (2, "unreported")
+    with builder._bind(conn):
+        assert builder._load_requirement_fit_report(str(job_id), score_version=2) is None
+        assert json.loads(builder._load_requirement_fit_report(str(job_id), score_version=1) or "{}")['scoreVersion'] == 1
+    assert conn.execute("SELECT COUNT(*) FROM evidence_usage_projections WHERE projection_kind = 'gap'").fetchone()[0] == 0
+    assert conn.execute("SELECT score_version FROM job_requirement_fit_reports WHERE job_id = ?", (str(job_id),)).fetchone()[0] == 1
+
+
 def test_refresh_advances_watermark(conn: sqlite3.Connection) -> None:
     job_id = _seed_job(conn, "https://example.com/a")
     record_job_event(conn, job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT)

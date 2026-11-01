@@ -125,7 +125,7 @@ def test_exact_v13_and_durable_tenant_bound_envelopes(tmp_path: Path) -> None:
     reopened.close()
 
 
-def test_upgrade_invalidates_system_written_confirmation_and_preserves_authored_evidence() -> None:
+def test_upgrade_preserves_ambiguous_confirmation_and_records_review_required() -> None:
     connection = sqlite3.connect(":memory:")
     create_exact_v12_schema(connection)
     for index, evidence_id, source, action, confidence in [
@@ -158,8 +158,11 @@ def test_upgrade_invalidates_system_written_confirmation_and_preserves_authored_
     derived, authored = connection.execute(
         "SELECT evidence_id,source_text,action,evidence_strength,claim_confidence,user_confirmed FROM candidate_profile_achievement_evidence ORDER BY evidence_index"
     ).fetchall()
-    assert derived == ("entry_bullet_1", "synthetic source", "synthetic source", "draft", 0, 0)
+    assert derived == ("entry_bullet_1", "synthetic source", "synthetic source", "supported", 0.8, 1)
     assert authored == ("authored", "authored source", "independent action", "supported", 0.9, 1)
+    from jobctrl.infrastructure.profile.legacy_evidence import prepare_review
+
+    assert len(prepare_review(connection, tenant_id="synthetic", profile_id="profile")) == 2
 
 
 def test_failed_upgrade_is_atomic(monkeypatch) -> None:

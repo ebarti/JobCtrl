@@ -25,10 +25,18 @@ Existing accepted materials remain available.
 | `POST /v1/jobs/import-url` | Start one public posting import and follow completion or its typed Manual Capture fallback. |
 | `GET /v1/jobs/import-url/:workflowId/:executionId` | Read the acknowledged import execution without starting or waiting for more work. |
 | `GET /v1/scoring/keywords` | Current projected score-version keyword aggregation with canonical normalized keys. |
+| `POST /v1/scoring/stale-scores/actions/reset-for-rescore` | Reset distinct inactive stale scores while retaining their markers until a matching replacement; report active and already-pending jobs separately. |
 | `GET /v1/evidence-map` | Canonical career evidence used by scoring and materials. |
 | `GET/POST /v1/evidence-map/learning` | Read retained selected-job comparisons; preview sources, compare an explicit dated cohort, choose proposals and record milestone activity. |
 | `POST /v1/jobs/:key/score-correction` | A new score version plus explicit correction rationale. |
 | Job hide/restore/delete routes | Reversible lifecycle commands, plus a separate permanent-delete boundary. |
+
+The Jobs removed-selection flow reads a reviewable list and prepares an exact,
+short-lived cohort before confirmation. It submits that receipt with the same
+canonical IDs; a stale receipt refuses the entire deletion. See the
+[complete lifecycle contract](complete-contract.md#jobs-read-model-and-lifecycle)
+for the request and conflict details. Direct permanent deletion and the guarded
+job-data purge keep their separate existing contracts.
 
 List and detail endpoints read projection rows. Job detail also reads the latest
 accepted interview prep directly from its canonical owner, independently of
@@ -206,11 +214,14 @@ owns cadence, bounds, anonymous access and costly-work freshness gates.
 | `GET /v1/learning/recommendations/:recommendationId/evidence` | Bounded structured supporting and contradicting references without source free text. |
 | `POST /v1/learning/recommendations/:recommendationId/reviews` | Explicitly accept or reject one current recommendation. |
 | `GET /v1/learning/policies/materials` | Paginated current and superseded tailoring-policy revisions with allowlisted provenance. |
-| `POST /v1/learning/policies/materials/rollbacks` | Append a `user_requested` revision restoring one earlier version. |
+| `POST /v1/learning/policies/materials/rollbacks` | Restore a reviewed earlier version against an expected current version, or replay its command receipt. |
 
 Acceptance creates one versioned Materials policy revision; rejection writes a
-review but does not change policy. Rollback is append-only and idempotent for
-the same structured request. None of these routes starts scoring, tailoring,
+review but does not change policy. A restore compares the reviewed current
+version inside the append transaction; a stale review requires a fresh review
+and new command. An identical command returns its original receipt even if a
+later revision is current. See the [complete contract](complete-contract.md#feedback-learning-and-policy-history)
+for fields and conflicts. None of these routes starts scoring, tailoring,
 Apply, or artifact work. Errors and historical metadata are sanitized before
 they cross the browser boundary.
 
@@ -224,6 +235,12 @@ they cross the browser boundary.
 | `POST /v1/jobs/:jobId/material-exports` | List original accepted text sources/retained exports or synchronously create a source-bound DOCX. |
 | `GET /v1/artifacts/:artifactId/download.docx` | Download an owned, hash-verified retained DOCX export as an attachment. |
 | `/v1/resume-templates` | Create, inspect, and select versioned resume templates. |
+
+Updating an existing template requires the current version ID. A stale update
+returns a conflict without publishing a version; clients reload and deliberately
+reconcile the draft. Creating a new template does not need a version ID. The
+default selection can also bind the active version it expects. See the
+[field-level template contract](complete-contract.md#artifacts-and-tailoring-audit).
 
 The API serves registered artifacts, never an arbitrary filesystem path. The
 job detail projection links each accepted generation to provenance, validation,
@@ -309,9 +326,26 @@ explicit workflow/action, not a read-time side effect.
 | Outcomes | job outcome routes plus `/v1/outcomes` and `/v1/analytics/outcomes` |
 | Gmail suggestions | bounded scan plus accept/reject decision routes |
 
+Manual `POST /v1/jobs/:jobKey/outcomes` and user-attested
+`POST /v1/outreach/threads/:threadId/send-logs` require a UUID `requestId`.
+Keep the same identity and validated payload for a retry. Equal retries return
+the original immutable result; a changed payload in that tenant/operation/target
+scope returns `409 action_identity_conflict` without mutation. A new deliberate
+action uses a new identity. Missing or malformed identities return `400`.
+Send logging returns `{ ok: true, sendLog }`, not a thread snapshot; use the
+existing contact Outreach read for current thread state. See the
+[complete retry contract](complete-contract.md#manual-action-retry-contract).
+
+Email approval requests echo the complete reviewed `emailApplication` preview
+as `reviewedEmailCandidate`, alongside recipient and attachment ID. The API
+compares it atomically with the current preview before recording approval.
+A replacement preview requires fresh review even when those two IDs match.
+
 `POST /v1/outcomes/gmail/scan` returns bounded evidence and suggestion summaries
 with canonical `jobId` values. It never returns raw message bodies. Scan events
-use that same identity to invalidate the matching outcome detail.
+use that same identity to invalidate the matching outcome detail. Worker-side
+failures include a safe `failureCode`; invalid input returns 400, and Gmail or
+model unavailability returns 503. Previously stored evidence is preserved.
 
 The latest accepted artifact remains reviewable while a replacement is being
 generated. Failed or rejected attempts stay in the audit history.
@@ -333,9 +367,29 @@ authorization at its authoritative claim boundary.
 
 Research candidates remain proposals until a user confirms them. Outreach drafts
 remain drafts until their review gate is satisfied.
+Research detail includes distinct source outcomes for a response that is too
+large, a timeout, a failed redirect, a transport failure, or an HTTP error.
+These do not claim that a successfully read page contains no candidates.
+
+Contact updates use the fingerprint from the detail read to reject stale edits
+without replacing newer facts. See the [contact contract](complete-contract.md#contacts)
+for the request and conflict response.
 
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>
+
+Generation and revision compare their complete starting thread state at
+publication. A concurrent draft/review/send-log/reminder change returns
+`409 outreach_publication_conflict` with private unpublished text, completed
+gates and provenance, leaving current content and history unchanged. The caller
+refetches and deliberately reconciles before retrying; see the
+[conflict response](complete-contract.md#outreach-drafts). The open editor
+retains those results across refresh, including disappearance of the review
+card. This does not make generation or revision commands idempotent or send
+anything automatically.
+The revision response identifies the draft published by that operation; clients
+check its thread, draft ID, generation and submitted text against the returned
+readback before treating it as confirmed. A matching older draft is insufficient.
 
 ## Reviewed Locale Variants
 
@@ -395,3 +449,14 @@ values and `offerRevisionId`. The worker loads canonical sources, applies the
 existing claim/quality gates and fences source changes at persistence. Stale
 offer bindings return `409 draft_gates_not_passed` on approval/send logging.
 Provider, spend and structural failures retain the last approved message.
+
+Job Detail and Apply Review read the same canonical Apply disposition and
+submission evidence. Manual `mark-skipped` records a durable local Apply stop. Its response message
+explains that an in-flight submission may still complete. Job Detail's existing
+`applyAudit.hardBlockers` distinguishes `manual_apply_skip` from
+`submission_intent_recorded`; the latter retains original intent run IDs from
+canonical events, independently of the latest run. A recorded successful
+submission or manual Applied attestation retains the intent source without
+labeling the accepted outcome as uncertain; neither authorizes blind retry. `submission_outcome_uncertain`
+retains a prior Needs verification stop even if its intent receipt is missing. See [Skip and safe
+reset](../user/apply.md#skip-and-safe-reset) for recovery limits.

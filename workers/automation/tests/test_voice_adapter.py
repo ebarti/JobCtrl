@@ -78,6 +78,7 @@ class ResultMessage:
 class _FakeClaudeOptions:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
+        self.__dict__.update(kwargs)
 
 
 def _isolated_sdk_options() -> dict[str, object]:

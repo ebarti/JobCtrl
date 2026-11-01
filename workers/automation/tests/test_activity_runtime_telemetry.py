@@ -127,6 +127,42 @@ async def test_interceptor_cleans_up_success_failure_retry_and_cancellation(monk
     assert snapshot.durations_by_type["tailor_job"].max_duration_ms == 1_000
 
 
+def test_registered_apply_occupies_a_slot_without_private_details():
+    from temporalio import activity
+
+    from jobctrl.apply.activities import apply_activity
+    from jobctrl.infrastructure.temporal.registry import ACTIVITIES
+
+    assert apply_activity in ACTIVITIES
+    activity_type = activity._Definition.must_from_callable(apply_activity).name
+    assert activity_type == "apply"
+    inventory = ActiveActivityInventory()
+    private_marker = "synthetic-private-apply-canary"
+    token = inventory.start(
+        activity_type=activity_type,
+        activity_id=private_marker,
+        workflow_id=private_marker,
+        workflow_run_id=private_marker,
+        attempt=1,
+        started_at=datetime(2026, 7, 14, 8, 0, tzinfo=UTC),
+    )
+
+    occupied = inventory.snapshot()
+    assert occupied.active_activity_count == 1
+    assert occupied.active_details_total == 0
+    assert occupied.active_details == () and occupied.counts_by_type == {}
+    assert private_marker not in json.dumps({
+        "details": occupied.details_json_list(),
+        "counts": occupied.counts_json_dict(),
+        "durations": occupied.durations_json_dict(),
+    })
+
+    inventory.finish(token)
+    idle = inventory.snapshot()
+    assert idle.active_activity_count == idle.active_details_total == 0
+    assert idle.active_details == () and not idle.active_details_truncated
+
+
 def test_inventory_returns_exact_total_with_bounded_longest_running_safe_details():
     canaries = (
         "https://jobs.example/private/role?token=raw-url",

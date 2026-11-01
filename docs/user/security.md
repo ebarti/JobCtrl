@@ -148,8 +148,19 @@ completion. A selected extension disconnect can fail its acquisition; it does
 not trigger another transport for that fetch. The next acquisition setup may
 select anonymous access if the bounded status probe reports unavailable.
 
-Capture requires a click and sends the active page URL/visible text to the local
-API. If the stack is down, the extension holds a bounded local queue. Autofill
+Capture requires a click. Before sending the active page URL/visible text to the
+local API, the extension stores it in its local queue. The queue holds up to 25
+pending captures. Pending captures remain until JobCtrl acknowledges
+each one or you choose **Clear queue**; saving a pairing token and the passage
+of time do not remove them. If synchronization times out or JobCtrl has not
+confirmed an import or dismissal, the capture stays queued. A retry after
+re-pairing waits for any in-flight sync, then uses the new token. A full queue
+refuses a new capture and
+reports that the current page was not saved. Reconnect and choose **Sync queued
+captures** to retry pending captures, then save the current page again, or
+explicitly clear them. An unreadable queue is preserved
+and reported; **Clear queue** discards its stored contents. A capture already
+being sent when you clear the queue cannot be recalled from JobCtrl. Autofill
 has page access on ordinary HTTP(S) sites so it is not coupled to a fixed ATS
 host list, but its content script stays passive until **Review autofill** is
 clicked. Only then does it read the current form and receive whitelisted profile
@@ -397,6 +408,9 @@ extension-pairing changes do not require that restart. Provider
 replacement is atomic from the web contract; native reads for presence,
 rollback, or migration stay internal and never cross the HTTP boundary. Windows uses Credential Manager and Linux uses Secret Service. Unavailable or
 locked stores are reported without falling back to plaintext persistence.
+API credential updates share an OS-user lock and a temporary helper identity
+record containing no credential values. Later saves wait for a surviving helper
+to exit; the separate plaintext migration has its own ownership rules.
 
 ## Runtime And Supply-Chain Boundary
 

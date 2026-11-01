@@ -35,7 +35,7 @@ from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from hashlib import sha1
+from hashlib import sha1, sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from jobctrl.domain.events import (
@@ -118,8 +118,8 @@ from jobctrl.domain.materials.services import (
 from jobctrl.domain.ports.artifact_review import ArtifactStatus, JudgeVerdict, ValidationResult
 from jobctrl.domain.materials.value_objects import ArtifactType, ControlRule, LlmModelSpec, RenderFormat, TransformType
 from jobctrl.domain.ports.events import EventPublisher
-from jobctrl.domain.ports.llm import LlmMessage, LlmPort
-from jobctrl.domain.determinations import Source, DeterminationFailure, call_model, parse_model_result
+from jobctrl.domain.ports.llm import LlmFailure, LlmMessage, LlmPort
+from jobctrl.domain.determinations import Source, DeterminationFailure, call_model, llm_failure_code, parse_model_result
 from jobctrl.domain.job_snapshot import build_jd_snapshot
 from jobctrl.domain.ports.claim_verification import ArtifactLine, ClaimVerifier
 from jobctrl.domain.ports.job_interpretation import JobInterpreter
@@ -1858,6 +1858,17 @@ def _quality_request_fingerprint(request):
 # ---------------------------------------------------------------------------
 
 
+class MaterialsChangedDuringGeneration(RuntimeError):
+    """A later canonical material update superseded this attempt's inputs."""
+
+
+def _materials_write_boundary(repository: MaterialsRepository, unit_of_work: UnitOfWork | None):
+    if unit_of_work is not None:
+        return unit_of_work
+    transaction = getattr(repository, "write_transaction", None)
+    return transaction() if callable(transaction) else nullcontext()
+
+
 @dataclass(frozen=True)
 class TailorOutcome:
     """Result of a single :meth:`TailorResumeUseCase.execute` call.
@@ -2107,9 +2118,11 @@ class TailorResumeUseCase:
                 execution_id=audit_execution_id,
                 durable_attempt=durable_attempt,
             )
-            with self._unit_of_work if self._unit_of_work is not None else nullcontext():
+            with _materials_write_boundary(self._repository, self._unit_of_work):
                 if commit_guard is not None:
                     commit_guard()
+                if self._repository.load(tenant_id, job_id) != previous:
+                    raise MaterialsChangedDuringGeneration("materials_changed_during_tailoring")
                 self._repository.save(materials)
             provider_failed = str(report.get("status")) == "provider_error"
             self._publish_failed(
@@ -2163,7 +2176,9 @@ class TailorResumeUseCase:
         # Persist the evaluated text itself; no later assembly may diverge from
         # the payload, provenance or review evidence that was accepted.
         tailored_text = final_candidate.tailored_text
-        prefix = f"{_safe_filename_prefix(job)}_g{materials.generation}"
+        # Concurrent attempts can allocate the same generation before either
+        # publishes. Their source files must never share an output path.
+        prefix = f"{_safe_filename_prefix(job)}_{uuid.uuid4().hex}_g{materials.generation}"
         text_path = tailored_dir / f"{prefix}.txt"
 
         # Field-invalid candidates never reach assembly. Preserve their source
@@ -2307,11 +2322,14 @@ class TailorResumeUseCase:
                     verdict=verdict,
                     updated_at=_utc_now(),
                 )
-                with self._unit_of_work if self._unit_of_work is not None else nullcontext():
+                with _materials_write_boundary(self._repository, self._unit_of_work):
                     self._assert_generation_persistable(
                         policy=tailoring_policy,
                         profile_snapshot=profile_snapshot,
                         commit_guard=commit_guard,
+                        previous=previous,
+                        tenant_id=tenant_id,
+                        job_id=job_id,
                     )
                     self._repository.save(rejected)
                 self._publish_failed(
@@ -2351,11 +2369,14 @@ class TailorResumeUseCase:
         # connection — doing so silently splits the flip back into non-atomic
         # writes and reopens the crash window A9 closed. Event publication and
         # projection refresh (which do commit) stay OUTSIDE the block, below.
-        with self._unit_of_work if self._unit_of_work is not None else nullcontext():
+        with _materials_write_boundary(self._repository, self._unit_of_work):
             self._assert_generation_persistable(
                 policy=tailoring_policy,
                 profile_snapshot=profile_snapshot,
                 commit_guard=commit_guard,
+                previous=previous,
+                tenant_id=tenant_id,
+                job_id=job_id,
             )
             if materials.is_resume_approved and prior_generation is not None:
                 self._repository.save(prior_generation)
@@ -2924,11 +2945,19 @@ class TailorResumeUseCase:
         policy: TailoringPolicy,
         profile_snapshot: ProfileSnapshot,
         commit_guard: Callable[[], None] | None,
+        previous: MaterialsSet | None,
+        tenant_id: TenantId,
+        job_id: JobId,
     ) -> None:
         """Fence the final artifact write inside its transaction."""
 
         if commit_guard is not None:
             commit_guard()
+        # The lineage token prevents competing generation allocation, but two
+        # attempts can legitimately share one existing lineage. Never let a
+        # stale snapshot replace artifacts published by the other attempt.
+        if self._repository.load(tenant_id, job_id) != previous:
+            raise MaterialsChangedDuringGeneration("materials_changed_during_tailoring")
         if self._unit_of_work is not None and self._policy_repository is not None:
             self._policy_repository.assert_generation_current(
                 policy,
@@ -3681,6 +3710,8 @@ class TailorResumeUseCase:
             result = self._run_voice_sdk(request)
         except DeterminationFailure:
             raise
+        except LlmFailure as error:
+            raise DeterminationFailure(llm_failure_code(error)) from None
         except Exception:
             raise DeterminationFailure("provider_error") from None
         voiced_payload = apply_voice_to_payload(tailored_payload, result)
@@ -3936,6 +3967,7 @@ class GenerateCoverLetterUseCase:
                 status="error",
                 error="No MaterialsSet exists for this job — tailor first",
             )
+        previous = materials
         if not materials.is_resume_approved:
             return CoverLetterOutcome(
                 materials=materials,
@@ -3961,8 +3993,9 @@ class GenerateCoverLetterUseCase:
                 error=f"Tailored resume missing on disk: {resume_path}",
             )
         try:
-            resume_text = resume_path.read_text(encoding="utf-8")
-        except OSError as exc:
+            resume_bytes = resume_path.read_bytes()
+            resume_text = resume_bytes.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        except (OSError, UnicodeError) as exc:
             return CoverLetterOutcome(
                 materials=materials,
                 status="error",
@@ -4044,9 +4077,16 @@ class GenerateCoverLetterUseCase:
                         "cover_letter_attempts": attempt_history,
                     }
                 )
-        with self._unit_of_work if self._unit_of_work is not None else nullcontext():
+        with _materials_write_boundary(self._repository, self._unit_of_work):
             if commit_guard is not None:
                 commit_guard()
+            current = _load_current_approved_materials(self._repository, tenant_id, stable_job_id)
+            try:
+                source_unchanged = resume_path.read_bytes() == resume_bytes
+            except OSError:
+                source_unchanged = False
+            if current != previous or not source_unchanged:
+                raise MaterialsChangedDuringGeneration("materials_changed_during_cover")
             self._repository.save(materials)
 
         if validation.passed:
@@ -4263,6 +4303,19 @@ def _pdf_with_accepted_source(pdf, source, generation):
     )
 
 
+def _pdf_attempt_path(source: Path) -> Path:
+    """A render never writes to a path owned by an earlier attempt."""
+    return source.with_name(f"{source.stem}-{uuid.uuid4().hex}.pdf")
+
+
+def _discard_pdf_attempt(path: Path) -> None:
+    for candidate in (path, path.with_suffix(".html")):
+        try:
+            candidate.unlink(missing_ok=True)
+        except OSError:
+            log.warning("Could not remove unaccepted PDF attempt: %s", candidate)
+
+
 class RenderPdfUseCase:
     """Render the missing PDF artifacts for a MaterialsSet.
 
@@ -4318,16 +4371,17 @@ class RenderPdfUseCase:
             and profile_dict is not None
         ):
             text_path = Path(materials.tailored_resume.path)
-            pdf_path = text_path.with_suffix(".pdf")
+            pdf_path = _pdf_attempt_path(text_path)
             resume_template = _resolve_effective_resume_template(
                 self._repository,
                 tenant_id,
                 job_id,
             )
+            publishing = False
             try:
-                if ResumeAssembler().assemble_resume_text(tailored_payload, profile_dict) != text_path.read_text(
-                    encoding="utf-8"
-                ):
+                source_bytes = text_path.read_bytes()
+                source_text = source_bytes.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+                if ResumeAssembler().assemble_resume_text(tailored_payload, profile_dict) != source_text:
                     return RenderPdfOutcome(
                         materials=materials, rendered=(), status="error", error="pdf_source_binding_invalid"
                     )
@@ -4339,11 +4393,24 @@ class RenderPdfUseCase:
                     resume_theme=resume_template.get("theme") if resume_template else None,
                     resume_template=resume_template.get("metadata") if resume_template else None,
                 )
+                if Path(pdf_artifact.path) != pdf_path:
+                    raise ValueError("PDF renderer returned a different output path")
                 pdf_artifact = _pdf_with_accepted_source(pdf_artifact, materials.tailored_resume, materials.generation)
-                materials = materials.with_resume_pdf(pdf_artifact, updated_at=_utc_now())
+                publishing = True
+                saved = self._repository.publish_rendered_pdf(materials, pdf_artifact, sha256(source_bytes).hexdigest())
+                if saved is None:
+                    _discard_pdf_attempt(pdf_path)
+                    return RenderPdfOutcome(materials=materials, rendered=tuple(rendered), status="error", error="pdf_source_changed")
+                materials = saved
                 rendered.append(ArtifactType.RESUME_PDF)
+                self._publish_rendered(materials, ArtifactType.RESUME_PDF)
             except Exception as exc:  # noqa: BLE001
+                # A failed acknowledgement may follow a successful commit. Do
+                # not delete a file that the committed row may now reference.
+                if not publishing:
+                    _discard_pdf_attempt(pdf_path)
                 log.error("Resume PDF render failed for %s: %s", job_id, exc)
+                return RenderPdfOutcome(materials=materials, rendered=tuple(rendered), status="error", error="pdf_render_failed")
 
         # Render cover-letter PDF if missing.
         if (
@@ -4352,24 +4419,34 @@ class RenderPdfUseCase:
             and (materials.cover_letter_pdf is None or materials.cover_letter_pdf.status is not ArtifactStatus.APPROVED)
         ):
             text_path = Path(materials.cover_letter.path)
-            pdf_path = text_path.with_suffix(".pdf")
+            pdf_path = _pdf_attempt_path(text_path)
+            publishing = False
             try:
-                cover_text = text_path.read_bytes().decode("utf-8")
+                source_bytes = text_path.read_bytes()
+                cover_text = source_bytes.decode("utf-8")
                 pdf_artifact = self._cover_letter_renderer.render_cover_letter_to_pdf(
                     cover_letter_text=cover_text,
                     output_path=str(pdf_path),
                     created_at=_utc_now(),
                 )
+                if Path(pdf_artifact.path) != pdf_path:
+                    raise ValueError("PDF renderer returned a different output path")
                 pdf_artifact = _pdf_with_accepted_source(pdf_artifact, materials.cover_letter, materials.generation)
-                materials = materials.with_cover_letter_pdf(pdf_artifact, updated_at=_utc_now())
+                publishing = True
+                saved = self._repository.publish_rendered_pdf(materials, pdf_artifact, sha256(source_bytes).hexdigest())
+                if saved is None:
+                    _discard_pdf_attempt(pdf_path)
+                    return RenderPdfOutcome(materials=materials, rendered=tuple(rendered), status="error", error="pdf_source_changed")
+                materials = saved
                 rendered.append(ArtifactType.COVER_LETTER_PDF)
+                self._publish_rendered(materials, ArtifactType.COVER_LETTER_PDF)
             except Exception as exc:  # noqa: BLE001
+                if not publishing:
+                    _discard_pdf_attempt(pdf_path)
                 log.error("Cover letter PDF render failed for %s: %s", job_id, exc)
+                return RenderPdfOutcome(materials=materials, rendered=tuple(rendered), status="error", error="pdf_render_failed")
 
         if rendered:
-            self._repository.save(materials)
-            for artifact_type in rendered:
-                self._publish_rendered(materials, artifact_type)
             return RenderPdfOutcome(materials=materials, rendered=tuple(rendered), status="ok")
 
         return RenderPdfOutcome(

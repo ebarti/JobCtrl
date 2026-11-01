@@ -371,6 +371,7 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
     const editVersion = owner.editVersion;
     const approving = value.startsWith("approve_");
     const initialItem = owner.item;
+    const reviewedEmailCandidate = initialItem.emailApplication ? { ...initialItem.emailApplication } : undefined;
     let preparedRender: AcceptedRender | undefined;
     const waitingForRender = owner.pending.has("render") ? owner.renderTask : null;
     const waitingForSave = owner.pending.has("save");
@@ -404,8 +405,8 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
         }
         if (owner.renderResult && !owner.renderResult.ok) return;
       }
-      // Read canonical bindings after preparation. Never send a pre-render
-      // materials generation, profile version, URL or email candidate.
+      // Refresh material bindings after preparation while retaining the email
+      // preview the user reviewed before any asynchronous work.
       const queue = approving ? await queryClient.fetchQuery({
         queryKey: applyReviewKeys.queue(tenantId), queryFn: () => api.applyReviewQueue(), staleTime: 0,
       }) : null;
@@ -417,8 +418,13 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
         JSON.stringify([canonical.materialsPreview.coverLetter?.source, canonical.materialsPreview.coverLetter?.pdfArtifactId, canonical.materialsPreview.coverLetter?.pdfSha256, canonical.materialsPreview.coverLetter?.settings]) !== JSON.stringify([initialItem.materialsPreview.coverLetter?.source, initialItem.materialsPreview.coverLetter?.pdfArtifactId, initialItem.materialsPreview.coverLetter?.pdfSha256, initialItem.materialsPreview.coverLetter?.settings])
         || canonical.approvalGate.profileVersion !== initialItem.approvalGate.profileVersion
         || canonical.approvalGate.applicationUrl !== initialItem.approvalGate.applicationUrl
-        || canonical.emailApplication?.recipient !== initialItem.emailApplication?.recipient
-        || (canonical.emailApplication?.attachmentArtifactId !== initialItem.emailApplication?.attachmentArtifactId
+        || canonical.emailApplication?.recipient !== reviewedEmailCandidate?.recipient
+        || canonical.emailApplication?.subject !== reviewedEmailCandidate?.subject
+        || canonical.emailApplication?.body !== reviewedEmailCandidate?.body
+        || canonical.emailApplication?.attachmentName !== reviewedEmailCandidate?.attachmentName
+        || canonical.emailApplication?.candidateRunId !== reviewedEmailCandidate?.candidateRunId
+        || canonical.emailApplication?.recordedAt !== reviewedEmailCandidate?.recordedAt
+        || (canonical.emailApplication?.attachmentArtifactId !== reviewedEmailCandidate?.attachmentArtifactId
           && canonical.emailApplication?.attachmentArtifactId !== preparedRender?.artifacts.resumePdf.artifactId)
         || (!preparedRender && (canonical.approvalGate.materialsGeneration !== initialItem.approvalGate.materialsGeneration
           || canonical.materialsPreview.resumeTextArtifactId !== initialItem.materialsPreview.resumeTextArtifactId
@@ -444,7 +450,10 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
           profileVersion: canonical.approvalGate.profileVersion,
           applicationUrl: canonical.approvalGate.applicationUrl,
           ...(canonical.emailApplication ? { emailRecipient: canonical.emailApplication.recipient,
-            emailAttachmentArtifactId: canonical.emailApplication.attachmentArtifactId } : {}),
+            emailAttachmentArtifactId: canonical.emailApplication.attachmentArtifactId,
+            ...(reviewedEmailCandidate ? { reviewedEmailCandidate: { ...reviewedEmailCandidate,
+              attachmentArtifactId: canonical.emailApplication.attachmentArtifactId } } : {}),
+          } : {}),
         } : {}),
         ...(partialOverrideRunId ? { partialOverrideRunId } : {}),
       } });

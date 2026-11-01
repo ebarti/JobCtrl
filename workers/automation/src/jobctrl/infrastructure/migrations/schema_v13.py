@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from importlib.resources import files
 
@@ -29,51 +28,15 @@ def _statements() -> tuple[str, ...]:
     return tuple(result)
 
 
-def _invalidate_derived_confirmation(conn: sqlite3.Connection) -> None:
-    # Recognize the exact system-written legacy record shape. This identifies
-    # provenance, not prose meaning. Preserve independent user evidence rows.
-    rows = conn.execute(
-        "SELECT tenant_id, profile_id, entry_id, evidence_index, evidence_id, source_text, action, outcome, tools_json, tags_json, evidence_strength, claim_confidence, user_confirmed FROM candidate_profile_achievement_evidence"
-    ).fetchall()
-    for row in rows:
-        (
-            tenant,
-            profile,
-            entry,
-            index,
-            evidence_id,
-            source,
-            action,
-            outcome,
-            tools,
-            tags,
-            strength,
-            confidence,
-            confirmed,
-        ) = row
-        entry_key = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(entry).strip()).strip("_") or "experience"
-        prefix = entry_key + "_bullet_"
-        suffix = evidence_id[len(prefix) :] if evidence_id.startswith(prefix) else ""
-        if (
-            suffix.isdigit()
-            and int(suffix) > 0
-            and source
-            and source == action == outcome
-            and tools == tags == "[]"
-            and strength == "supported"
-            and confidence == 0.8
-            and confirmed == 1
-        ):
-            conn.execute(
-                "UPDATE candidate_profile_achievement_evidence SET evidence_strength = 'draft', claim_confidence = 0, user_confirmed = 0 WHERE tenant_id = ? AND profile_id = ? AND entry_id = ? AND evidence_index = ?",
-                (tenant, profile, entry, index),
-            )
-
-
 def _extend(conn: sqlite3.Connection) -> None:
-    _invalidate_derived_confirmation(conn)
+    from jobctrl.infrastructure.profile.legacy_evidence import evidence_rows, record_legacy_inventory
+
+    # Legacy schemas record a boolean, not who supplied it. Preserve the exact
+    # original and its history; no value pattern establishes authorship.
+    originals = evidence_rows(conn)
     for statement in _statements():
         conn.execute(statement)
+    record_legacy_inventory(conn, originals)
     conn.execute("PRAGMA user_version = 13")
     assert_exact_manifest(conn, EXACT_V13_MANIFEST)
 

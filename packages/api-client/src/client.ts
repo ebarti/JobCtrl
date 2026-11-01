@@ -18,9 +18,11 @@ import type {
   ConfirmContactCandidateResponse,
   GenerateOutreachDraftRequest,
   ReviseOutreachDraftRequest,
+  ReviseOutreachDraftResponse,
   RejectOutreachDraftRequest,
   OutreachThreadResponse,
   LogOutreachSendRequest,
+  LogOutreachSendResponse,
   LlmLane,
   ScheduleFollowUpRequest,
   DueFollowUpsResponse,
@@ -42,6 +44,10 @@ import type {
   ArtifactOpenResponse,
   ArtifactSummary,
   BulkJobMutationRequest,
+  BulkPermanentDeleteRequest,
+  PreparePermanentDeleteSelectionRequest,
+  PreparePermanentDeleteSelectionResponse,
+  ReviewableJobsResponse,
   BulkRunPendingPreparationRequest,
   BulkRunPendingPreparationResponse,
   BulkRetryFailedRequest,
@@ -183,8 +189,9 @@ export class JobCtrlApiError extends Error {
   readonly status: number;
   readonly statusText: string;
   readonly responseBody: unknown;
+  readonly writeOutcomeUnknown: boolean;
 
-  constructor(status: number, statusText: string, detail?: string, responseBody?: unknown) {
+  constructor(status: number, statusText: string, detail?: string, responseBody?: unknown, writeOutcomeUnknown = false) {
     super(
       detail?.trim() || `JobCtrl API request failed: ${status} ${statusText}`,
     );
@@ -192,6 +199,42 @@ export class JobCtrlApiError extends Error {
     this.status = status;
     this.statusText = statusText;
     this.responseBody = responseBody;
+    this.writeOutcomeUnknown = writeOutcomeUnknown;
+  }
+}
+
+/** The request deadline expired before its complete response was received. */
+export class JobCtrlApiTimeoutError extends Error {
+  readonly method: string;
+  readonly path: string;
+  readonly timeoutMs: number;
+  readonly writeOutcomeUnknown: boolean;
+
+  constructor(method: string, path: string, timeoutMs: number) {
+    const writeOutcomeUnknown = method !== "GET";
+    super(
+      `JobCtrl API request timed out after ${timeoutMs}ms: ${method} ${path}` +
+      (writeOutcomeUnknown ? ". The change may have completed; check its current state before retrying." : ""),
+    );
+    this.name = "JobCtrlApiTimeoutError";
+    this.method = method;
+    this.path = path;
+    this.timeoutMs = timeoutMs;
+    this.writeOutcomeUnknown = writeOutcomeUnknown;
+  }
+}
+
+/** A write was attempted, but the client could not read a complete acknowledgement. */
+export class JobCtrlApiUnconfirmedWriteError extends Error {
+  readonly method: string;
+  readonly path: string;
+  readonly writeOutcomeUnknown = true;
+
+  constructor(method: string, path: string, cause: unknown) {
+    super(`JobCtrl API could not confirm the response: ${method} ${path}. The change may have completed; check its current state before retrying.`, { cause });
+    this.name = "JobCtrlApiUnconfirmedWriteError";
+    this.method = method;
+    this.path = path;
   }
 }
 
@@ -671,6 +714,10 @@ export class JobCtrlApiClient {
     return this.get("/v1/jobs", query);
   }
 
+  reviewableJobs(query: Partial<JobListQuery> = {}): Promise<ReviewableJobsResponse> {
+    return this.get("/v1/jobs/reviewable-list", query);
+  }
+
   importJobUrl(body: JobUrlImportRequest): Promise<JobUrlImportResponse> {
     return this.post("/v1/jobs/import-url", body);
   }
@@ -771,7 +818,7 @@ export class JobCtrlApiClient {
   reviseOutreachDraft(
     threadId: string,
     body: ReviseOutreachDraftRequest,
-  ): Promise<OutreachThreadResponse> {
+  ): Promise<ReviseOutreachDraftResponse> {
     return this.post(
       `/v1/outreach/threads/${encodeURIComponent(threadId)}/drafts`,
       body,
@@ -806,7 +853,7 @@ export class JobCtrlApiClient {
   logOutreachSend(
     threadId: string,
     body: LogOutreachSendRequest,
-  ): Promise<OutreachThreadResponse> {
+  ): Promise<LogOutreachSendResponse> {
     return this.post(
       `/v1/outreach/threads/${encodeURIComponent(threadId)}/send-logs`,
       body,
@@ -857,9 +904,15 @@ export class JobCtrlApiClient {
   }
 
   permanentlyDeleteJobs(
-    body: BulkJobMutationRequest,
+    body: BulkPermanentDeleteRequest,
   ): Promise<JobMutationResponse> {
     return this.post("/v1/jobs/bulk-delete-permanent", body);
+  }
+
+  preparePermanentDeleteSelection(
+    body: PreparePermanentDeleteSelectionRequest,
+  ): Promise<PreparePermanentDeleteSelectionResponse> {
+    return this.post("/v1/jobs/permanent-delete-selection", body);
   }
 
   restoreJob(jobKey: string): Promise<JobMutationResponse> {
@@ -968,8 +1021,8 @@ export class JobCtrlApiClient {
     return this.get("/v1/workflow-runs", query);
   }
 
-  workflowRun(runId: string): Promise<WorkflowRunDetail> {
-    return this.get(`/v1/workflow-runs/${encodeURIComponent(runId)}`);
+  workflowRun(runId: string, jobId?: string): Promise<WorkflowRunDetail> {
+    return this.get(`/v1/workflow-runs/${encodeURIComponent(runId)}`, jobId ? { jobId } : undefined);
   }
 
   cancelWorkflowRun(runId: string): Promise<ActionRunResponse> {
@@ -1277,36 +1330,55 @@ export class JobCtrlApiClient {
       init.body = JSON.stringify(options.body);
       init.headers = { "content-type": "application/json" };
     }
-    // Bound every request with an AbortController so a stuck API call (e.g. the
-    // API waiting on a hung worker) fails cleanly instead of freezing the tab.
+    // The deadline covers both response headers and the complete response body.
+    // Race it explicitly as well as aborting the transport: even a body source
+    // that fails to observe abort must not keep a request pending forever.
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
-    let response: Response;
-    try {
-      response = await fetch(href, { ...init, signal: controller.signal });
-    } catch (error) {
+    const timeoutError = new JobCtrlApiTimeoutError(method, path, this.requestTimeoutMs);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(timeoutError);
+      }, this.requestTimeoutMs);
+    });
+    const operation = async (): Promise<T> => {
+      const response = await fetch(href, { ...init, signal: controller.signal });
       if (controller.signal.aborted) {
-        throw new Error(
-          `JobCtrl API request timed out after ${this.requestTimeoutMs}ms: ${method} ${path}`,
-        );
+        void response.body?.cancel().catch(() => {});
+        throw timeoutError;
+      }
+      if (!response.ok) {
+        let detail: string | undefined;
+        let responseBody: unknown;
+        try {
+          const payload: unknown = await response.json();
+          responseBody = payload;
+          if (payload !== null && typeof payload === "object" && "message" in payload
+            && typeof payload.message === "string") detail = payload.message;
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          if (method !== "GET" && !(error instanceof SyntaxError)) throw error;
+          // Preserve the status-only fallback for non-JSON error responses.
+        }
+        // A server error can occur after a write commits, for example while
+        // refreshing a projection for the response. Preserve the HTTP error
+        // while exposing that uncertainty to the owning mutation.
+        throw new JobCtrlApiError(response.status, response.statusText, detail, responseBody, method !== "GET" && response.status >= 500);
+      }
+      return (await response.json()) as T;
+    };
+    try {
+      return await Promise.race([operation(), deadline]);
+    } catch (error) {
+      if (controller.signal.aborted) throw timeoutError;
+      if (method !== "GET" && !(error instanceof JobCtrlApiError)) {
+        throw new JobCtrlApiUnconfirmedWriteError(method, path, error);
       }
       throw error;
     } finally {
-      clearTimeout(timeout);
+      if (timeout !== undefined) clearTimeout(timeout);
     }
-    if (!response.ok) {
-      let detail: string | undefined;
-      let responseBody: unknown;
-      try {
-        const payload = (await response.json()) as { message?: unknown };
-        responseBody = payload;
-        if (typeof payload.message === "string") detail = payload.message;
-      } catch {
-        // Preserve the status-only fallback for non-JSON error responses.
-      }
-      throw new JobCtrlApiError(response.status, response.statusText, detail, responseBody);
-    }
-    return (await response.json()) as T;
   }
 }
 

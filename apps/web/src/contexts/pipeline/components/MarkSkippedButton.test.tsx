@@ -12,3 +12,9 @@ describe("<MarkSkippedButton>", () => {
     expect(button).toHaveAttribute("data-typography", "control");
   });
 });
+
+it("describes Skip as a local stop without promising provider cancellation", () => {
+  renderWithProviders(<MarkSkippedButton jobId="job-1" />);
+  expect(screen.getByRole("button", { name: "Skip" })).toHaveAccessibleDescription(
+    "Skip stops future Apply locally. In-flight submissions may still complete.");
+});

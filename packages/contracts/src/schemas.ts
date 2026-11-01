@@ -305,6 +305,8 @@ export interface ResetStaleScoresForRescoreResponse {
   count: number;
   jobKeys: string[];
   nextAction: string;
+  skippedActiveJobKeys?: string[];
+  alreadyPendingJobKeys?: string[];
 }
 
 export const RescoreJobRequestSchema = z
@@ -401,6 +403,16 @@ export const APPLY_REVIEW_DECISION_VALUES = [
 ] as const;
 export type ApplyReviewDecisionValue = (typeof APPLY_REVIEW_DECISION_VALUES)[number];
 
+export const ApplyReviewEmailApplicationPreviewSchema = z.object({
+  recipient: z.string().email(),
+  subject: z.string().min(1),
+  body: z.string().min(1),
+  attachmentArtifactId: z.string().min(1),
+  attachmentName: z.string().min(1),
+  candidateRunId: z.string().min(1),
+  recordedAt: z.string().nullable(),
+}).strict();
+
 export const ApplyReviewDecisionRequestSchema = z
   .object({
     decision: z.enum(APPLY_REVIEW_DECISION_VALUES),
@@ -413,6 +425,7 @@ export const ApplyReviewDecisionRequestSchema = z
     partialOverrideRunId: z.string().trim().min(1).max(120).optional(),
     emailRecipient: z.string().trim().email().optional(),
     emailAttachmentArtifactId: z.string().trim().min(1).max(160).optional(),
+    reviewedEmailCandidate: ApplyReviewEmailApplicationPreviewSchema.optional(),
   })
   .strict();
 export type ApplyReviewDecisionRequest = z.infer<typeof ApplyReviewDecisionRequestSchema>;
@@ -742,11 +755,16 @@ export interface ResumeTemplateDetailResponse {
 export const ResumeTemplateVersionSaveRequestSchema = z
   .object({
     templateId: z.string().trim().min(1).max(120).optional(),
+    expectedVersionId: z.string().trim().min(1).max(200).optional(),
     displayName: z.string().trim().min(1).max(120),
     theme: ResumeTemplateThemeSchema,
     layout: ResumeTemplateLayoutSchema.optional().default({}),
   })
-  .strict();
+  .strict()
+  .refine((value) => Boolean(value.templateId) === Boolean(value.expectedVersionId), {
+    path: ["expectedVersionId"],
+    message: "Updating a template requires the current version; new templates must not specify one.",
+  });
 export type ResumeTemplateVersionSaveRequest = z.infer<
   typeof ResumeTemplateVersionSaveRequestSchema
 >;
@@ -760,6 +778,7 @@ export const ResumeTemplateDefaultSelectionRequestSchema = z
   .object({
     templateId: z.string().trim().min(1).max(120),
     versionId: z.string().trim().min(1).max(160).optional(),
+    expectedActiveVersionId: z.string().trim().min(1).max(160).optional(),
   })
   .strict();
 export type ResumeTemplateDefaultSelectionRequest = z.infer<
@@ -964,15 +983,7 @@ export interface ApplyReviewApprovalGate {
   reasons: ApplyReviewApprovalGateReason[];
 }
 
-export interface ApplyReviewEmailApplicationPreview {
-  recipient: string;
-  subject: string;
-  body: string;
-  attachmentArtifactId: string;
-  attachmentName: string;
-  candidateRunId: string;
-  recordedAt: string | null;
-}
+export type ApplyReviewEmailApplicationPreview = z.infer<typeof ApplyReviewEmailApplicationPreviewSchema>;
 
 export interface ApplyReviewQueueItem {
   jobKey: string;
@@ -1394,6 +1405,7 @@ export type ApplicationOutcomeSource = (typeof APPLICATION_OUTCOME_SOURCES)[numb
 
 export const ManualApplicationOutcomeRequestSchema = z
   .object({
+    requestId: z.string().uuid(),
     kind: z.enum(APPLICATION_OUTCOME_KINDS),
     occurredAt: IsoTimestampSchema.optional(),
     note: z.string().trim().max(4000).optional(),
@@ -1587,6 +1599,34 @@ export const BulkJobMutationRequestSchema = BulkJobMutationRequestBaseSchema
   });
 export type BulkJobMutationRequest = z.infer<typeof BulkJobMutationRequestSchema>;
 
+/** An explicit removed-job confirmation is prepared from a frozen cohort. */
+export const PreparePermanentDeleteSelectionRequestSchema = z.object({
+  observationId: z.string().uuid(),
+  selections: z.array(BulkJobMutationRequestSchema).min(1).max(50),
+  expected: z.array(z.object({
+    jobKey: z.string().trim().min(1),
+    deletedAt: z.string().nullable(),
+    hiddenAt: z.string().nullable(),
+  }).strict()).max(5000).optional(),
+}).strict();
+export type PreparePermanentDeleteSelectionRequest = z.infer<typeof PreparePermanentDeleteSelectionRequestSchema>;
+
+export const PreparePermanentDeleteSelectionResponseSchema = z.object({
+  ok: z.literal(true),
+  selectionId: z.string().uuid(),
+  jobKeys: z.array(z.string().min(1)).max(5000),
+}).strict();
+export type PreparePermanentDeleteSelectionResponse = z.infer<typeof PreparePermanentDeleteSelectionResponseSchema>;
+
+export const BulkPermanentDeleteRequestSchema = BulkJobMutationRequestBaseSchema.extend({
+  selectionId: z.string().uuid().optional(),
+}).strict().refine((value) => value.allMatching || value.jobKeys.length > 0, {
+  message: "Provide jobKeys or set allMatching.",
+}).refine((value) => !value.selectionId || !value.allMatching, {
+  message: "A reviewed selection must use its exact job keys.",
+});
+export type BulkPermanentDeleteRequest = z.infer<typeof BulkPermanentDeleteRequestSchema>;
+
 export const BulkRetryFailedRequestSchema = BulkJobMutationRequestBaseSchema
   .extend({
     runAfter: z.boolean().default(false),
@@ -1715,6 +1755,7 @@ const ProfileAchievementEvidenceSchema = z.object({
   evidence_strength: z.enum(EVIDENCE_STRENGTHS).default("draft"),
   claim_confidence: z.number().min(0).max(1).default(0),
   user_confirmed: z.boolean().default(false),
+  confirmation_review_required: z.boolean().optional(),
   tags: z.array(z.string()).default([]),
 });
 
@@ -2440,6 +2481,10 @@ export const TailoringPolicyLearnedRuleSchema = z.discriminatedUnion("ruleKey", 
 ]);
 export type TailoringPolicyLearnedRule = z.infer<typeof TailoringPolicyLearnedRuleSchema>;
 
+export const TailoringPolicyRestoreCommandIdSchema = z.string().regex(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+);
+
 export const TailoringPolicyRevisionSummarySchema = z
   .object({
     context: z.literal("materials"),
@@ -2451,6 +2496,8 @@ export const TailoringPolicyRevisionSummarySchema = z
     sourceRecommendationId: LearningRecommendationIdSchema.nullable(),
     rollbackOfVersion: z.number().int().positive().nullable(),
     rollbackReasonCode: z.enum(["user_requested", "historical_or_unspecified"]).nullable(),
+    restoreCommandId: TailoringPolicyRestoreCommandIdSchema.optional(),
+    restoredFromCurrentVersion: z.number().int().positive().optional(),
     createdAt: IsoTimestampSchema,
   })
   .strict()
@@ -2461,6 +2508,10 @@ export const TailoringPolicyRevisionSummarySchema = z
   .refine(
     (value) => (value.rollbackOfVersion === null) === (value.rollbackReasonCode === null),
     "Policy rollback version and reason must be present together.",
+  )
+  .refine(
+    (value) => (value.restoreCommandId === undefined) === (value.restoredFromCurrentVersion === undefined),
+    "Restore command and reviewed predecessor must be present together.",
   );
 export type TailoringPolicyRevisionSummary = z.infer<
   typeof TailoringPolicyRevisionSummarySchema
@@ -2706,6 +2757,17 @@ export interface WorkflowRunTimelineEvent {
   readonly message: string | null;
 }
 
+/** A persisted Apply event, scoped to its workflow run and job. */
+export interface WorkflowApplyTimelineEvent {
+  readonly sourceEventId: string;
+  /** Monotonic event identity within the Apply run, when the writer supplied it. */
+  readonly runEventId: number | null;
+  readonly at: string | null;
+  readonly type: string;
+  readonly level: string;
+  readonly message: string | null;
+}
+
 /**
  * Privacy-safe aggregation of provider failures recorded for one tailoring
  * workflow. No prompts, provider messages, SDK objects, or generated content
@@ -2784,6 +2846,8 @@ export interface WorkflowRunDetail {
   readonly finishedAt: string | null;
   readonly durationMs: number | null;
   readonly events: readonly WorkflowRunTimelineEvent[];
+  /** Separate Apply history; omitted by older or browser-local adapters. */
+  readonly applyEvents?: readonly WorkflowApplyTimelineEvent[];
 }
 
 export const APPLY_URL_OUTCOME_CODES = [
@@ -2996,6 +3060,7 @@ export interface EvidenceUsageRef {
 }
 
 export interface EvidenceFreshness {
+  confirmationReviewRequired?: boolean;
   evidenceDateRange: string | null;
   evidenceStrength: "verified" | "supported" | "inferred" | "draft" | string | null;
   userConfirmed: boolean;
@@ -3280,6 +3345,10 @@ export interface PaginatedResponse<T> {
   filter: Record<string, unknown>;
 }
 
+export interface ReviewableJobsResponse extends PaginatedResponse<JobSummary> {
+  observationId: string | null;
+}
+
 export interface ActivityEventSummary {
   eventId: string;
   eventType: string;
@@ -3507,10 +3576,22 @@ const PipelineAvailableCapacityBaseSchema = z.object({
   staleWorkerCount: z.number().int().nonnegative(),
   invalidWorkerCount: z.number().int().nonnegative(),
   configuredSlots: z.number().int().nonnegative(),
+  /** Fresh workers only; a stale worker makes global occupancy unknown. */
   activeSlots: z.number().int().nonnegative(),
   availableSlots: z.number().int().nonnegative(),
   executorThreads: z.number().int().nonnegative(),
   slotSaturation: z.number().min(0).max(1).nullable(),
+  blockingExecutor: z.object({
+    acceptingWorkers: z.number().int().nonnegative(),
+    refusingWorkers: z.number().int().nonnegative(),
+    unknownWorkers: z.number().int().nonnegative(),
+    unfinishedRetiredGenerations: z.number().int().nonnegative(),
+    unfinishedRetiredCalls: z.number().int().nonnegative(),
+    controlAcceptingWorkers: z.number().int().nonnegative().optional(),
+    controlRefusingWorkers: z.number().int().nonnegative().optional(),
+    controlUnknownWorkers: z.number().int().nonnegative().optional(),
+    controlUnfinishedCalls: z.number().int().nonnegative().optional(),
+  }).strict().nullable().optional(),
   approximateTaskQueue: PipelineApproximateTaskQueueSchema,
 });
 
@@ -3792,9 +3873,9 @@ export const PipelineOperationsSnapshotSchema = z
     /** Exact fresh runtime activity totals grouped by known operational stage. */
     activeStageCounts: z.array(PipelineActiveStageCountSchema).nullable(),
     activeItems: z.array(PipelineActiveItemSchema).max(20),
-    /** Null when worker runtime inventory cannot make an exact statement. */
+    /** Exact allowlisted activity count, not total occupancy; null if inventory is unavailable. */
     activeItemsTotal: z.number().int().nonnegative().nullable(),
-    /** Null when the inventory itself is unavailable or stale. */
+    /** True when activity details are omitted or bounded; null when inventory is unavailable or stale. */
     activeItemsTruncated: z.boolean().nullable(),
     overallEta: PipelineEtaSchema,
   })
@@ -4527,6 +4608,7 @@ export interface ArtifactOpenResponse {
 
 export interface ProfileConfigResponse {
   ok: true;
+  legacyEvidenceReview?: { status: "review_required"; count: number };
   candidateInterpretation?: {status:"missing"|"pending_confirmation"|"confirmed"|"unavailable";failureCode:string|null;determination:import("./semantic-determinations.js").DeterminationEnvelope|null};
   /** Monotonic version of the canonical saved profile, or null before setup. */
   profileVersion: number | null;
@@ -5357,7 +5439,7 @@ export interface CredentialValueUnsupportedResponse {
 export interface CredentialStoreErrorResponse {
   ok: false;
   error: "credential_store_unavailable";
-  reason: "operational_failure" | "partial_failure" | "unsupported_platform";
+  reason: "busy" | "ownership_unverified" | "operational_failure" | "partial_failure" | "unsupported_platform";
   message: string;
 }
 
@@ -6533,6 +6615,8 @@ export interface ContactSummary {
 }
 
 export interface ContactDetail {
+  /** Opaque canonical edit base; required unchanged on replacement saves. */
+  fingerprint: string;
   contactId: string;
   displayName: string;
   role: ContactRole;
@@ -6583,12 +6667,22 @@ export const ContactCreateRequestSchema = z
   );
 export type ContactCreateRequest = z.infer<typeof ContactCreateRequestSchema>;
 
+// A retained saved fact may predate current input limits or use an unsupported
+// kind. The contact writer validates kind and normalized value if it creates a
+// new fact, after it has checked whether this input retains an existing row.
+const ContactUpdateAttributeInputSchema = z.object({
+  kind: z.string(),
+  value: z.string(),
+  attributeId: z.string().min(1).optional(),
+}).strict();
+
 export const ContactUpdateRequestSchema = z
   .object({
+    expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     role: ContactRoleSchema.optional(),
     employer: contactEmployerField,
     jobId: contactApiJobIdField,
-    attributes: z.array(ContactAttributeInputSchema).max(50).optional(),
+    attributes: z.array(ContactUpdateAttributeInputSchema).max(50).optional(),
   })
   .strict();
 export type ContactUpdateRequest = z.infer<typeof ContactUpdateRequestSchema>;
@@ -6734,6 +6828,16 @@ export const RESEARCH_SOURCE_OUTCOMES = [
   "manual_capture_required",
   "rejected",
   "extraction_failed",
+  "provider_unavailable",
+  "provider_failed",
+  "spend_denied",
+  "invalid_output",
+  "empty_content",
+  "response_too_large",
+  "acquisition_timeout",
+  "redirect_failed",
+  "transport_failed",
+  "http_error",
 ] as const;
 export type ResearchSourceOutcome = (typeof RESEARCH_SOURCE_OUTCOMES)[number];
 
@@ -6751,6 +6855,7 @@ export interface ContactResearchSourceAttempt {
   outcome: ResearchSourceOutcome | string;
   attemptedAt: string;
   detail: string;
+  determinationId?: string | null;
 }
 
 /** A proposed candidate. `attributes` carry values (served only in the detail DTO). */
@@ -6998,6 +7103,11 @@ export interface OutreachThreadResponse {
   thread: OutreachThreadDetail | null;
 }
 
+/** Revision acknowledgement identifying the draft published by this request. */
+export interface ReviseOutreachDraftResponse extends OutreachThreadResponse {
+  publication: { threadId: string; draftId: string; generation: number };
+}
+
 // ---------------------------------------------------------------------------
 // Contact & Outreach (R6 Phase 4 — user-attested send log + follow-ups)
 //
@@ -7026,6 +7136,11 @@ export interface OutreachSendLogDto {
   channel: string;
   sentAt: string;
   loggedAt: string;
+}
+
+export interface LogOutreachSendResponse {
+  ok: true;
+  sendLog: OutreachSendLogDto;
 }
 
 export const FOLLOW_UP_STATES = ["none", "scheduled", "completed", "dismissed"] as const;
@@ -7064,6 +7179,7 @@ export interface DueFollowUpsResponse {
 
 export const LogOutreachSendRequestSchema = z
   .object({
+    requestId: z.string().uuid(),
     draftId: z.string().trim().min(1).max(200),
     channel: z.enum(OUTREACH_SEND_CHANNELS),
     sentAt: z.string().trim().min(1).max(40),

@@ -69,6 +69,10 @@ Langfuse instance for LLM tracing. The wiring lives under
   runtime paths and exception messages remain excluded. This opt-in sends private
   request/output text to the configured tracing destination and does not alter
   model, effort, spend admission, review requirements or determination authority.
+  Gmail feedback's message-link and message-outcome determinations never capture
+  mail input or output, even when content tracing is enabled. Gmail feedback
+  search and message reads emit content-free operation spans; their HTTP query
+  and message URL are excluded from automatic HTTP spans and transport logs.
 
 ## Span Sources
 
@@ -202,7 +206,10 @@ Both Worker configs disable automatic invocation logs and traces. The Workers
 emit only closed lifecycle fields and never log request bodies, cookies, IPs,
 URLs, user agents, or referrers. Optional product measurement uses the typed,
 consent-gated D1 event contract; non-linkable operational counters and
-consented reports remain separate populations. After the versioned consent
+consented reports remain separate populations. The consented core funnel groups
+unexpired events by release: session starts and install clicks use their event
+types, while the route stages count only the corresponding route-view events.
+After the versioned consent
 service confirms acceptance, the demo also loads GA4 tag `G-6MJGD17JN0` with
 Google Signals, advertising, and personalization disabled. The Google tag is a
 separate third-party measurement boundary and is never loaded before consent.

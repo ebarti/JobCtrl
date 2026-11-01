@@ -16,7 +16,7 @@ func main() {
 	}
 	if err := launcher.Run(executable, os.Args[1:], os.Environ(), os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "jobctrl:", err)
-		os.Exit(launcher.ExitCode(err))
+		os.Exit(launcher.ExitCodeForCommand(err, os.Args[1:]))
 	}
 }
 

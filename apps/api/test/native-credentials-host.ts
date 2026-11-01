@@ -1,5 +1,6 @@
 /** Opt-in native-host bridge. Never uses the production credential namespace. */
 import fs from "node:fs";
+import path from "node:path";
 import { KeychainCredentialStore } from "../src/credentials.js";
 
 const request = JSON.parse(fs.readFileSync(0, "utf8")) as {
@@ -15,7 +16,10 @@ const env: NodeJS.ProcessEnv = {};
 for (const key of ["SystemRoot", "WINDIR"]) {
   if (process.env[key]) env[key] = process.env[key];
 }
-const store = new KeychainCredentialStore({ service: request.service, configPath: request.configPath, env });
+const store = new KeychainCredentialStore({
+  service: request.service, configPath: request.configPath, env,
+  mutationLockPath: path.join(path.dirname(request.configPath), "credential-mutations.sqlite3"),
+});
 try {
   const result = request.operation === "set"
     ? await store.set("GEMINI_API_KEY", request.value ?? "")

@@ -318,6 +318,7 @@ def _normalize_achievement_evidence(item: dict) -> dict:
         "evidence_strength": strength,
         "claim_confidence": confidence,
         "user_confirmed": bool(item.get("user_confirmed", False)),
+        **({"confirmation_review_required": True} if item.get("confirmation_review_required") else {}),
         "tags": _text_list(item.get("tags")),
     }
 

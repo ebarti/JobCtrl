@@ -236,6 +236,17 @@ class SqliteJobRepository:
     # ------------------------------------------------------------------
 
     def _fence_search_unit_write(self) -> None:
+        if self._result_budget is not None:
+            self._result_budget.fence_write()
+        elif self._discovery_execution is not None:
+            from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan
+
+            # Omitting the optional object must never turn an already bounded
+            # execution into an unbounded canonical writer. Claims call this
+            # fence under BEGIN IMMEDIATE/their caller's writer transaction.
+            check_result_plan(
+                self._conn, self._discovery_execution, limit=0, source_limits={}, bounded=False, required=False,
+            )
         if self._search_unit_repository is None:
             return
         assert self._search_unit_lease is not None
@@ -530,8 +541,6 @@ class SqliteJobRepository:
         identity = self.resolve_by_job_id(job.tenant_id, candidate_job_id)
         if identity is None:
             raise RuntimeError("Inserted Job is missing its stable identity alias")
-        if self._result_budget is not None:
-            self._result_budget.record_insert(str(candidate_job_id), self._result_budget_source_id)
         return identity, True
 
     def soft_delete(
@@ -609,6 +618,8 @@ class SqliteJobRepository:
         the existing owner before any candidate row becomes visible.
         """
 
+        if self._result_budget is not None and observation.source_id != self._result_budget_source_id:
+            raise ValueError("canonical observation source does not match discovery result budget")
         owns_transaction = not self._conn.in_transaction
         savepoint = "claim_new_job"
         if owns_transaction:
@@ -646,6 +657,11 @@ class SqliteJobRepository:
                     basis="canonical_url_match",
                 )
 
+            if self._result_budget is not None:
+                self._result_budget.record_insert(
+                    str(persisted_identity.job_id), self._result_budget_source_id,
+                    observation_id=observation.source_observation_id, source_run_id=observation.run_id,
+                )
             self._sync_tombstone(job, persisted_identity)
             self._set_canonical_identity(persisted_identity, identity)
             owner_match = self._attach_source_observation(

@@ -31,15 +31,18 @@ const (
 	v11JobCtrlSchemaVersion      = int64(11)
 	v12JobCtrlSchemaVersion      = int64(12)
 	v13JobCtrlSchemaVersion      = int64(13)
-	currentJobCtrlSchemaVersion  = int64(14)
+	v14JobCtrlSchemaVersion      = int64(14)
+	currentJobCtrlSchemaVersion  = int64(15)
 )
 
 var (
-	temporalQuiescenceProof = proveStoppedTemporalQuiescence
+	errInitializationNotAdmitted     = errors.New("database initialization cannot be safely admitted")
+	errUnresolvedDatabasePublication = errInitializationNotAdmitted
+	temporalQuiescenceProof          = proveStoppedTemporalQuiescence
 	// These seam names are retained for the existing lifecycle fault-injection
-	// matrix. Production builds and installs the current exact-v14 candidate.
-	sealedV7CandidateBuilder   = buildSealedV14Candidate
-	sealedV7CandidateInstaller = installSealedV14Candidate
+	// matrix. Production builds and installs the current exact-v15 candidate.
+	sealedV7CandidateBuilder   = buildSealedV15Candidate
+	sealedV7CandidateInstaller = installSealedV15Candidate
 )
 
 type temporalQuiescenceReceipt struct {
@@ -69,10 +72,52 @@ func jobCtrlSchemaVersion(ctx launchContext) (int64, error) {
 	return sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
 }
 
+// A retained staging hard link marks an unresolved initial publication. Do not
+// let any SQLite subprocess open or recover its unfamiliar companions.
+func refuseUnresolvedInitialization(database string, info os.FileInfo) error {
+	entries, err := os.ReadDir(filepath.Dir(database))
+	if err != nil {
+		return fmt.Errorf("%w: inspect database initialization state: %v", errInitializationNotAdmitted, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), ".jobctrl-init-") {
+			continue
+		}
+		candidate, err := os.Lstat(filepath.Join(filepath.Dir(database), entry.Name(), "candidate.db"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("%w: inspect database initialization candidate: %v", errInitializationNotAdmitted, err)
+		}
+		if candidate.Mode().IsRegular() && os.SameFile(info, candidate) {
+			return fmt.Errorf("%w: database initialization has an unresolved publication; preserve the database and companions and inspect the retained staging directory", errInitializationNotAdmitted)
+		}
+	}
+	return nil
+}
+
+func checkDatabasePublication(database string) error {
+	info, err := os.Lstat(database)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect database initialization state: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("database is not a regular file")
+	}
+	return refuseUnresolvedInitialization(database, info)
+}
+
 func sqliteUserVersion(python, database string) (int64, error) {
 	info, err := os.Lstat(database)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return 0, errors.New("database is not a regular file")
+	}
+	if err := refuseUnresolvedInitialization(database, info); err != nil {
+		return 0, err
 	}
 	code := `import pathlib,sqlite3,sys
 p=pathlib.Path(sys.argv[1]).resolve().as_uri()+"?mode=ro"
@@ -170,6 +215,10 @@ type gatedTemporalProcess struct {
 }
 
 func startGatedTemporal(ctx launchContext) (*gatedTemporalProcess, error) {
+	ctx, err := withTemporalHistory(ctx)
+	if err != nil {
+		return nil, err
+	}
 	spec, err := componentByName(ctx.Manifest, "temporal")
 	if err != nil {
 		return nil, err
@@ -180,7 +229,10 @@ func startGatedTemporal(ctx launchContext) (*gatedTemporalProcess, error) {
 	}
 	arguments := make([]string, len(spec.Arguments))
 	for index, argument := range spec.Arguments {
-		arguments[index] = substitute(argument, ctx)
+		arguments[index], err = substitute(argument, ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	logPath := filepath.Join(ctx.Instance.LogDir, "temporal.log")
 	if info, err := os.Stat(logPath); err == nil && info.Size() > 0 {
@@ -353,6 +405,9 @@ func installSealedV7Candidate(candidate launchContext, candidatePath string) err
 		return errors.New("v7 activation candidate is not an owner-private regular file")
 	}
 	live := filepath.Join(candidate.Instance.StateDir, "jobctrl.db")
+	if err := checkDatabasePublication(live); err != nil {
+		return err
+	}
 	liveInfo, err := os.Lstat(live)
 	if err != nil || !liveInfo.Mode().IsRegular() || liveInfo.Mode()&os.ModeSymlink != 0 {
 		return errors.New("live v6 database is not a regular file")

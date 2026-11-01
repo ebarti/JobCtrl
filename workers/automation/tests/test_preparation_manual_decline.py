@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from jobctrl.domain.tenant import TenantId
-from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+from jobctrl.infrastructure.migrations.schema_v15 import create_exact_v15_schema
 from jobctrl.materials import activities
 from jobctrl.scoring import tailor, cover_letter
 from tests.test_automatic_preparation_temporal_qa import world as world
@@ -31,7 +31,7 @@ def seed(tmp_path, monkeypatch, stage):
     monkeypatch.setattr("jobctrl.config.APP_DIR", tmp_path)
     conn = sqlite3.connect(tmp_path / "owned.db")
     conn.row_factory = sqlite3.Row
-    create_exact_v14_schema(conn)
+    create_exact_v15_schema(conn)
     if stage == "tailor":
         job_id = TAILOR_JOB
         _seed_job(conn, tenant_id=TENANT, job_id=job_id, url="https://example.test/owned", fit_score=7)

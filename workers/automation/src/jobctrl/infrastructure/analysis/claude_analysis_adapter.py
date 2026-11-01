@@ -34,7 +34,7 @@ from jobctrl.llm_lanes import lane_bound
 from jobctrl.infrastructure.llm.provider_errors import (
     ProviderCallError,
     ProviderFailureEnvelope,
-    raise_on_claude_execution_failure,
+    raise_on_claude_failure,
 )
 from jobctrl.infrastructure.setup_probes import bundled_claude_sdk_options
 from jobctrl.runtime import activate_provider_pack, is_bundled_runtime
@@ -89,12 +89,14 @@ async def _collect_sdk_messages(
     options: Any,
     model: str,
     operation: str,
+    record_cancelled_usage: Callable[..., None] | None = None,
 ) -> list[Any]:
     """Run every Claude generation/analysis/voice request through the kit."""
     from jobctrl.infrastructure.llm.agent_runtime_claude import call_claude_runtime
 
     return await call_claude_runtime(
         query=query_fn, options=options, prompt=prompt, model=model, operation=operation,
+        record_cancelled_usage=record_cancelled_usage,
     )
 
 
@@ -105,14 +107,23 @@ async def _collect_raw_sdk_messages(
     options: Any,
     model: str,
     operation: str,
+    messages: list[Any] | None = None,
 ) -> list[Any]:
     """Type SDK execution failures before response parsing or semantic review."""
+    if messages is None:
+        messages = []
     try:
         iterator = await _aiter(query_fn(prompt=prompt, options=options))
-        return [message async for message in iterator]
-    except (JobCtrlError, DeterminationFailure, LlmFailure):
-        raise
+        async for message in iterator:
+            messages.append(message)
+        return messages
     except Exception as error:
+        if any(type(message).__name__ == "ResultMessage" for message in messages):
+            # Keep the terminal receipt and its usage; the post-terminal error
+            # is carried as a separate content-free diagnostic.
+            return _ClaudeCollectedMessages(messages)
+        if isinstance(error, (JobCtrlError, DeterminationFailure, LlmFailure)):
+            raise
         # Preserve known authentication types for provider-wide exclusion.
         # Cancellation inherits BaseException and never enters this catch.
         if type(error).__name__ in {"AuthenticationError", "PermissionDeniedError"}:
@@ -123,6 +134,10 @@ async def _collect_raw_sdk_messages(
             code="provider_unavailable", retryable=True,
             http_status=getattr(error, "status_code", None),
         )) from error
+
+
+class _ClaudeCollectedMessages(list[Any]):
+    post_terminal_failure = True
 
 
 def _structured_output_from_messages(messages: list[Any]) -> dict[str, Any]:
@@ -234,10 +249,11 @@ class _ClaudeStructuredCaller:
         ) as record:
             messages = await _collect_sdk_messages(
                 query_fn, prompt=user_prompt, options=options, model=self._model, operation="analysis",
+                record_cancelled_usage=record,
             )
             input_tokens, output_tokens = _usage_from_messages(messages)
             record("", input_tokens=input_tokens, output_tokens=output_tokens)
-            raise_on_claude_execution_failure(messages, model=self._model, operation="analysis")
+            raise_on_claude_failure(messages, model=self._model, operation="analysis")
             structured = _structured_output_from_messages(messages)
             return structured
 

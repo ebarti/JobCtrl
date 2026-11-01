@@ -6,6 +6,8 @@ const local = (reason: string) => ({ class: "browser_local", reason }) as const;
 const rehearsal = (reason: string) => ({ class: "rehearsed_external", reason }) as const;
 const unavailable = (reason: string) => ({ class: "unavailable", reason }) as const;
 
+export const DEMO_RESCORE_UNAVAILABLE_MESSAGE = "Rescoring is unavailable in the demo.";
+
 const endpointCapabilities = Object.fromEntries(
   Object.values(ENDPOINTS).map((endpoint) => [endpoint.name, endpoint.demo]),
 ) as Readonly<Record<keyof EndpointClientMethods, DemoCapability>>;
@@ -91,6 +93,8 @@ export const DEMO_CAPABILITY_MANIFEST = {
   deleteJobs: local("Soft-deletes synthetic jobs locally."),
   permanentlyDeleteJob: local("Permanently deletes only browser-local synthetic data."),
   permanentlyDeleteJobs: local("Permanently deletes only browser-local synthetic data."),
+  reviewableJobs: local("Reads browser-local example jobs and freezes the reviewed selection."),
+  preparePermanentDeleteSelection: local("Reviews the selected browser-local example jobs before deletion."),
   restoreJob: local("Restores a synthetic job locally."),
   restoreJobs: local("Restores synthetic jobs locally."),
   hideJob: local("Hides a synthetic job locally."),
@@ -157,7 +161,7 @@ export const DEMO_CAPABILITY_MANIFEST = {
   completeOutreachFollowUp: local("Completes a synthetic follow-up locally."),
   dismissOutreachFollowUp: local("Dismisses a synthetic follow-up locally."),
   dueOutreachFollowUps: local("Reads synthetic due follow-ups."),
-  retryStage: unavailable("This capability needs a configured model determination."),
+  retryStage: unavailable("Stage retry is unavailable in the public demo."),
   runJobStage: unavailable("This capability needs a configured model determination."),
   generateMaterials: unavailable("Material generation is deferred from the public-demo MVP."),
   generateInterviewPrep: unavailable("Interview-preparation generation is deferred from the public-demo MVP."),

@@ -174,6 +174,11 @@ func (s *Store) Permit(receipt Receipt) error {
 	if err != nil {
 		return err
 	}
+	return state.Permit(receipt)
+}
+
+// Permit evaluates a receipt against a previously read channel authority.
+func (state ChannelState) Permit(receipt Receipt) error {
 	if receipt.Sequence < state.MinimumSafeSequence {
 		return fmt.Errorf("release sequence %d is below minimum-safe sequence %d", receipt.Sequence, state.MinimumSafeSequence)
 	}
@@ -227,15 +232,32 @@ type Journal struct {
 	PendingPolicy    *ChannelMetadata `json:"pendingPolicy,omitempty"`
 	BackupID         string           `json:"backupId,omitempty"`
 	TargetBackupID   string           `json:"targetBackupId,omitempty"`
-	Error            string           `json:"error,omitempty"`
-	UpdatedAt        time.Time        `json:"updatedAt"`
+	// Bridge controllers set this before their first resumable milestone when
+	// the live pair must never be automatically replaced during recovery.
+	PreserveLiveOnFailure bool   `json:"preserveLiveOnFailure,omitempty"`
+	ForwardOnlyUpgrade    bool   `json:"forwardOnlyUpgrade,omitempty"`
+	SourceGeneration      uint64 `json:"sourceGeneration,omitempty"`
+	SourceSchemaVersion   int64  `json:"sourceSchemaVersion,omitempty"`
+	RecoveryBackupID      string `json:"recoveryBackupId,omitempty"`
+	// BridgeSourceGeneration binds a bridge handoff to its source selection.
+	BridgeSourceGeneration uint64    `json:"bridgeSourceGeneration,omitempty"`
+	Error                  string    `json:"error,omitempty"`
+	UpdatedAt              time.Time `json:"updatedAt"`
 }
+
+// Version 2 marks journals owned by the protocol-2 controller. Protocol-1
+// controllers reject the version before attempting transition recovery.
+const currentJournalSchemaVersion = 2
 
 func (j Journal) Resumable() bool {
 	return j.State != Idle && j.State != Promoted && j.State != RolledBack && j.State != Failed
 }
 
-type Store struct{ Home string }
+type Store struct {
+	Home             string
+	homeIdentity     os.FileInfo
+	releasesIdentity os.FileInfo
+}
 
 // Open refuses symlinked management roots and creates only owner-private
 // paths. It never follows a user-controlled final component.
@@ -252,7 +274,21 @@ func Open(home string) (*Store, error) {
 			return nil, err
 		}
 	}
-	return &Store{Home: abs}, nil
+	homeIdentity, err := os.Lstat(abs)
+	if err != nil || !homeIdentity.IsDir() || homeIdentity.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("release store home is not a regular directory")
+	}
+	releasesIdentity, err := os.Lstat(filepath.Join(abs, "releases"))
+	if err != nil || !releasesIdentity.IsDir() || releasesIdentity.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("release store releases is not a regular directory")
+	}
+	return &Store{Home: abs, homeIdentity: homeIdentity, releasesIdentity: releasesIdentity}, nil
+}
+
+// RetentionIdentities bind destructive cleanup to the directories that were
+// present when this store was opened, not replacements installed later.
+func (s *Store) RetentionIdentities() (os.FileInfo, os.FileInfo) {
+	return s.homeIdentity, s.releasesIdentity
 }
 
 func ensureDirectory(path string) error {
@@ -281,6 +317,28 @@ func ensureDirectory(path string) error {
 }
 
 type Lock struct{ file *os.File }
+
+// InheritOnExec keeps an already-held selection lock across a successful
+// syscall.Exec. The returned function restores the descriptor flags if exec
+// fails and the calling process continues. A nil lock represents an execution
+// path without an installed selector lock and needs no handoff.
+func (l *Lock) InheritOnExec() (func(), error) {
+	if l == nil {
+		return func() {}, nil
+	}
+	if l.file == nil {
+		return nil, errors.New("cannot inherit a closed release lock")
+	}
+	fd := l.file.Fd()
+	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFD, 0)
+	if errno != 0 {
+		return nil, errno
+	}
+	if _, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFD, flags&^syscall.FD_CLOEXEC); errno != 0 {
+		return nil, errno
+	}
+	return func() { _, _, _ = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFD, flags) }, nil
+}
 
 func (l *Lock) Close() error {
 	if l == nil || l.file == nil {
@@ -374,7 +432,7 @@ func (s *Store) ReadJournal() (Journal, error) {
 	if err := readStrictRegular(filepath.Join(s.Home, JournalFile), &journal); err != nil {
 		return journal, err
 	}
-	if journal.SchemaVersion != 1 || journal.ID == "" || journal.Operation == "" || journal.State == "" {
+	if (journal.SchemaVersion != 1 && journal.SchemaVersion != currentJournalSchemaVersion) || journal.ID == "" || journal.Operation == "" || journal.State == "" {
 		return journal, errors.New("invalid release transition journal")
 	}
 	return journal, nil
@@ -388,14 +446,17 @@ func (s *Store) Begin(operation string, old, candidate *Receipt, descriptorDiges
 	if err != nil {
 		return Journal{}, err
 	}
-	j := Journal{SchemaVersion: 1, ID: id, Operation: operation, State: Idle, Old: old, Candidate: candidate, DescriptorSHA256: descriptorDigest, UpdatedAt: time.Now().UTC()}
+	j := Journal{SchemaVersion: currentJournalSchemaVersion, ID: id, Operation: operation, State: Idle, Old: old, Candidate: candidate, DescriptorSHA256: descriptorDigest, UpdatedAt: time.Now().UTC()}
 	return j, s.writeJournal(j)
 }
 
 func (s *Store) Advance(j *Journal, state State, cause error) error {
-	if j == nil || j.SchemaVersion != 1 || j.ID == "" {
+	if j == nil || (j.SchemaVersion != 1 && j.SchemaVersion != currentJournalSchemaVersion) || j.ID == "" {
 		return errors.New("invalid transition journal")
 	}
+	// A recovered legacy journal must become unreadable to an old controller
+	// before this controller records any new transition state.
+	j.SchemaVersion = currentJournalSchemaVersion
 	j.State, j.UpdatedAt = state, time.Now().UTC()
 	if cause != nil {
 		j.Error = cause.Error()

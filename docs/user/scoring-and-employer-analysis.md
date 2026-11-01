@@ -20,11 +20,25 @@ new provider work while preserving the accepted score and evidence. Use Job
 Detail’s **Check availability** to retry; see
 [saved posting availability](enrichment-and-extraction.md#saved-posting-availability).
 
+Scoring also uses your saved exact-title exclusions as part of its source
+context. If those saved settings cannot be read or the exclusions are damaged,
+the attempt stops before checking the posting or starting model work. Your
+previous score and evidence remain available. Check workspace access and retry;
+if data is damaged, preserve the workspace and consult
+[Back Up And Restore](data-and-safety.md#back-up-and-restore).
+Reusing an existing score does not need to read those settings; posting
+availability and work ownership are still checked.
+
 ## How The Score Is Calculated
 
 JobCtrl does not ask a model for one opaque number and save it. The model
 classifies the evidence for each posting requirement; versioned, deterministic
 code turns those classifications into the persisted 1–10 score.
+
+Each distinct saved job has its own assessment and recorded evidence, even if
+another job has similar posting text. Repeating an unchanged assessment for the
+same job can reuse its recorded decision; scoring a different job can require
+another model call.
 
 When Discovery supplies explicit requirements, the calculation works like
 this:
@@ -180,6 +194,10 @@ offers bounded current-policy maintenance for selected or outdated scores.
 A correction and a re-score are different: correction records your reviewed
 decision; re-score runs the current scoring pipeline and creates a new model-
 derived version.
+Resetting stale scores prepares their stages for another run; it does not run
+scoring. The suggested `jobctrl score --rescore` command starts the scoring
+queue for eligible enriched jobs, including jobs with existing scores; it is not
+limited to the selected reset jobs. It uses the normal provider and budget checks.
 If employer analysis changes after the last assessment, Job Detail labels the
 requirement fit outdated and offers a per-job re-score. The earlier score and
 accepted materials stay available while the new assessment runs. Jobs with an
@@ -268,7 +286,16 @@ not for an employer ranking people.
 6. **Correct or evolve deliberately.** A user correction creates a new score
    version and a calibration anchor. A new scoring policy can mark comparable
    older scores stale, but it does not silently replace them; an explicit
-   re-score adopts the current policy.
+   re-score adopts the current policy. Resetting stale work keeps the saved
+   score visible and marked stale until a matching replacement is committed.
+   Failed or canceled work, or reuse of the saved score, does not clear the
+   warning. A later policy change remains visible if an older assessment finishes.
+   Reset leaves queued or running scoring alone. Wait for it to finish, then
+   retry the reset if the score is still stale; an already-pending score is
+   ready for scoring. Reset only targets active jobs: hidden, deleted, or
+   inactive postings retain their saved scores and warnings. Unhide or restore
+   a job, or wait until the posting is active again, before retrying its reset.
+   A manual correction also retains any existing warning.
 7. **Review profile edits on request.** Saving your profile does not update scores
    or regenerate materials. Jobs indicate when your saved score predates the
    profile. **Update score** first asks your configured scoring model whether the

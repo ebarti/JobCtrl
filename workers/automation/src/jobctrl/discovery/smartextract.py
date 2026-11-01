@@ -54,6 +54,7 @@ from jobctrl.infrastructure.discovery.live_browser import (
 )
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultLimitReached
 from jobctrl.infrastructure.discovery.smart_postings import LivePostingFetcher, SmartPostingIntake
 from jobctrl.discovery.target_queries import (
     query_specs_for_source,
@@ -138,16 +139,31 @@ def _store_jobs(
     observation_id_factory=None,
     idempotency_prefix=None,
     source_native_id=None,
+    result_budget=None,
+    write_fence=None,
 ):
     from jobctrl.domain.enrichment.snapshot_use_case import CapturePostingSnapshotUseCase
     from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository, SqlitePostingSnapshotSetRepository
     from jobctrl.infrastructure.enrichment.playwright_fetcher import PlaywrightDetailPageFetcher
     from jobctrl.state import ensure_job_stage_rows, set_stage_state, utc_now
 
-    repository = SqliteJobRepository(
+    source_id = source_id or f"smartextract:{site}"
+    from jobctrl.infrastructure.discovery.archived_smart_posting import (
+        CaptureJobRepository, CapturePublication, OriginalCaptureUnavailable, PublicationConnection, PublicationPublisher,
+    )
+    publication = (
+        CapturePublication(conn, tenant_id=tenant_id, capture_id=idempotency_prefix,
+                           source_id=source_id, write_fence=write_fence)
+        if not refresh_existing_job and idempotency_prefix is not None else None
+    )
+    repository_type = CaptureJobRepository if publication is not None else SqliteJobRepository
+    repository = repository_type(
         conn,
         discovery_execution=discovery_execution,
         source_family="smartextract" if discovery_execution is not None else None,
+        result_budget=result_budget,
+        result_budget_source_id=source_id if result_budget is not None else None,
+        **({"publication": publication} if publication is not None else {}),
     )
     use_case = DiscoverJobsUseCase(
         exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
@@ -156,7 +172,9 @@ def _store_jobs(
         refresh_existing_job=refresh_existing_job,
         observation_id_factory=observation_id_factory,
     )
-    source_id = source_id or f"smartextract:{site}"
+    resume = publication.prepared() if publication is not None else None
+    if publication is not None and resume is None and publication.requires_missing_receipt():
+        raise OriginalCaptureUnavailable()
     intake = intake or SmartPostingIntake(
         conn,
         source_id=source_id,
@@ -164,22 +182,32 @@ def _store_jobs(
         search_cfg=search_cfg,
         cancel_event=cancel_event,
         tenant_id=tenant_id,
+        **({"dependencies": {}} if resume is not None else {}),
         fetcher=LivePostingFetcher(browser_client)
         if browser_client is not None
         else PlaywrightDetailPageFetcher(
             raise_on_unavailable=True,
-            session=_smart_extract_session(source_id=f"smartextract:{site}", run_id=run_id),
+            session=_smart_extract_session(source_id=source_id, run_id=run_id),
         ),
     )
     new, existing = 0, 0
     for job in jobs:
         _raise_if_canceled(cancel_event)
+        if write_fence is not None:
+            write_fence()
         if limit > 0 and new >= limit:
             break
         url = _normalize_job_url(job.get("url"), source_url)
         if not url:
             continue
-        qualified = intake.prepare(url, job)
+        prepared = publication.prepared() if publication is not None else None
+        if prepared is None and publication is not None and publication.requires_missing_receipt():
+            raise OriginalCaptureUnavailable()
+        if result_budget is not None and prepared is None and (
+            result_budget.run_exhausted() or result_budget.source_exhausted(source_id)
+        ):
+            break
+        qualified = prepared[1] if prepared is not None else intake.prepare(url, job)
         if qualified is None:
             continue
         fields = qualified.fields
@@ -199,59 +227,108 @@ def _store_jobs(
             canonical_url=qualified.url,
         )
         _raise_if_canceled(cancel_event)
-        summary = use_case.execute(tenant_id=tenant_id, postings=(posting,), run_id=run_id)
-        new += summary.new_jobs
-        existing += int(summary.new_jobs == 0 and (summary.observed > 0 or summary.duplicates_linked > 0))
-        if not summary.total:
-            intake.record(url, "filtered", "exact_title_exclusion", receipts=qualified.determinations)
-            continue
-        identity = repository.find_canonical_owner(
-            tenant_id,
-            source_id=posting.source_id,
-            source_native_id=posting.source_native_id,
-            canonical_url=posting.canonical_url,
-        )
-        if identity is None:
-            raise RuntimeError("Qualified Smart Extract posting has no canonical identity")
-        if not summary.new_jobs and not refresh_existing_job:
-            # Archived captures may add an observation, but never refresh an
-            # owner's newer content, accepted enrichment or deleted state.
-            intake.record(
-                url, "accepted", "verified_posting", receipts=qualified.determinations, job_id=identity.job_id
+        if write_fence is not None:
+            write_fence()
+        if prepared is not None:
+            # Resume the recorded owner directly: observation upserts would erase
+            # evidence that a newer capture has since replaced this generation.
+            new_count, observed = 0, 1
+            owner_job_id = prepared[0]["ownerJobId"]
+        else:
+            if publication is not None:
+                repository.qualified = qualified
+            try:
+                summary = use_case.execute(tenant_id=tenant_id, postings=(posting,), run_id=run_id)
+            except DiscoveryResultLimitReached:
+                if not refresh_existing_job:
+                    raise
+                break
+            new_count = summary.new_jobs
+            observed = int(summary.new_jobs == 0 and (summary.observed > 0 or summary.duplicates_linked > 0))
+            if not summary.total:
+                intake.record(url, "filtered", "exact_title_exclusion", receipts=qualified.determinations)
+                continue
+            identity = repository.find_canonical_owner(
+                tenant_id, source_id=posting.source_id, source_native_id=posting.source_native_id,
+                canonical_url=posting.canonical_url,
             )
+            if identity is None:
+                raise RuntimeError("Qualified Smart Extract posting has no canonical identity")
+            owner_job_id = identity.job_id
+            prepared = publication.prepared() if publication is not None else None
+        new += new_count
+        existing += observed
+        if not new_count and not refresh_existing_job and prepared is None:
+            if publication is not None and publication.requires_missing_receipt(owner_job_id):
+                raise OriginalCaptureUnavailable()
+            intake.record(url, "accepted", "verified_posting", receipts=qualified.determinations, job_id=owner_job_id)
             continue
-        outcome = CapturePostingSnapshotUseCase(
-            snapshot_repository=SqlitePostingSnapshotSetRepository(conn),
-            acquisition_service=qualified,
-            publisher=DurableJobEventPublisher(conn, stage="enrich"),
-            enrichment_repository=SqliteEnrichmentRepository(conn),
-        ).execute(
-            tenant_id=tenant_id,
-            job_id=identity.job_id,
-            url=qualified.url,
-            source_id=posting.source_id,
-            policy_id="smart_extract_verified_posting",
-            promote_to_job_enrichment=True,
-        )
-        if not outcome.ok:
-            raise RuntimeError("Qualified Smart Extract posting snapshot was not persisted")
-        if outcome.promoted_to_job_enrichment:
-            now = utc_now()
-            ensure_job_stage_rows(conn, identity.job_id, tenant_id=tenant_id, discovered_at=now)
-            set_stage_state(
-                conn, identity.job_id, "enrich", "running", tenant_id=tenant_id, started_at=now, attempt_count=1
+        snapshot_conn = conn
+        if publication is not None:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                publication.publish_original_discovery(prepared[0])
+                if publication.completed():
+                    conn.commit()
+                    continue
+                if prepared is None or not publication.can_publish(*prepared):
+                    publication.finish(reason="owner_superseded")
+                    conn.commit()
+                    continue
+            except BaseException:
+                conn.rollback()
+                raise
+            snapshot_conn = PublicationConnection(conn)
+        try:
+            snapshot_publisher = (PublicationPublisher if publication is not None else DurableJobEventPublisher)(
+                snapshot_conn, stage="enrich", idempotency_prefix=idempotency_prefix,
             )
-            set_stage_state(
-                conn,
-                identity.job_id,
-                "enrich",
-                "succeeded",
+            outcome = CapturePostingSnapshotUseCase(
+                snapshot_repository=SqlitePostingSnapshotSetRepository(snapshot_conn),
+                acquisition_service=qualified,
+                publisher=snapshot_publisher,
+                enrichment_repository=SqliteEnrichmentRepository(snapshot_conn),
+            ).execute(
                 tenant_id=tenant_id,
-                started_at=now,
-                finished_at=now,
-                attempt_count=1,
+                job_id=owner_job_id,
+                url=qualified.url,
+                source_id=posting.source_id,
+                policy_id="smart_extract_verified_posting",
+                promote_to_job_enrichment=True,
             )
-        intake.record(url, "accepted", "verified_posting", receipts=qualified.determinations, job_id=identity.job_id)
+            if not outcome.ok:
+                raise RuntimeError("Qualified Smart Extract posting snapshot was not persisted")
+            if outcome.promoted_to_job_enrichment:
+                now = utc_now()
+                ensure_job_stage_rows(snapshot_conn, owner_job_id, tenant_id=tenant_id, discovered_at=now)
+                set_stage_state(
+                    snapshot_conn, owner_job_id, "enrich", "running", tenant_id=tenant_id, started_at=now, attempt_count=1
+                )
+                set_stage_state(
+                    snapshot_conn,
+                    owner_job_id,
+                    "enrich",
+                    "succeeded",
+                    tenant_id=tenant_id,
+                    started_at=now,
+                    finished_at=now,
+                    attempt_count=1,
+                )
+            if publication is not None:
+                if snapshot_publisher.failed:
+                    raise RuntimeError("Archived posting snapshot events were not persisted")
+                if not outcome.promoted_to_job_enrichment:
+                    raise RuntimeError("Archived posting enrichment was not persisted")
+                intake.record(url, "accepted", "verified_posting", receipts=qualified.determinations,
+                              job_id=owner_job_id, commit=False)
+                publication.finish(reason="snapshot_published")
+                conn.commit()
+        except BaseException:
+            if publication is not None:
+                conn.rollback()
+            raise
+        if publication is None:
+            intake.record(url, "accepted", "verified_posting", receipts=qualified.determinations, job_id=owner_job_id)
     conn.commit()
     return new, existing
 
@@ -1415,6 +1492,7 @@ def build_scrape_targets(
                 targets.append(
                     {
                         "name": site_name,
+                        **({"source_id": site["source_id"]} if site.get("source_id") else {}),
                         "url": expanded_url,
                         "query": query,
                         "query_spec": query_spec,
@@ -1427,6 +1505,7 @@ def build_scrape_targets(
             targets.append(
                 {
                     "name": site_name,
+                    **({"source_id": site["source_id"]} if site.get("source_id") else {}),
                     "url": expanded_url,
                     "query": None,
                     "queries": query_specs,
@@ -1448,6 +1527,9 @@ def _run_all(
     cancel_event: threading.Event | None = None,
     run_id: str = "smartextract",
     discovery_execution: DiscoveryExecutionRef | None = None,
+    result_budget=None,
+    activity_attempt=None,
+    activity_owner_token=None,
 ) -> dict:
     """Run smart extract on all targets.
 
@@ -1455,6 +1537,11 @@ def _run_all(
     using ThreadPoolExecutor. DB storage is still serialized after each result.
     """
     conn = init_db()
+    from jobctrl.infrastructure.discovery.archived_smart_posting import claim_recovery_owner
+    write_fence = claim_recovery_owner(
+        conn, execution=discovery_execution, family="smartextract", attempt=activity_attempt,
+        owner_token=activity_owner_token, cancel_event=cancel_event,
+    )
     pre_stats = get_stats(conn)
     log.info(
         "Database: %d jobs already stored, %d pending detail scrape", pre_stats["total"], pre_stats["pending_detail"]
@@ -1464,13 +1551,16 @@ def _run_all(
     total_existing = 0
     selected_clients = {}
 
+    def _target_source_id(target):
+        slug = re.sub("[^a-z0-9]+", "-", str(target.get("name") or "site").casefold()).strip("-")
+        return target.get("source_id") or f"smart_extract:{slug or 'site'}"
+
     def _browser_client_for_target(target: dict) -> PoliteLiveChromeHttpClient | None:
         if id(target) in selected_clients:
             return selected_clients[id(target)]
         if discovery_execution is None:
             return None
-        slug = re.sub("[^a-z0-9]+", "-", str(target.get("name") or "site").casefold()).strip("-")
-        source_id = f"smart_extract:{slug or 'site'}"
+        source_id = _target_source_id(target)
         client = LiveChromeDiscoveryClient(
             discovery_execution, source_family="smartextract", source_id=source_id, cancel_event=cancel_event
         )
@@ -1501,6 +1591,9 @@ def _run_all(
                 discovery_execution=discovery_execution,
                 cancel_event=cancel_event,
                 browser_client=selected_clients.get(id(target)),
+                source_id=_target_source_id(target),
+                result_budget=result_budget,
+                write_fence=write_fence,
             )
             total_new += new
             total_existing += existing
@@ -1598,6 +1691,9 @@ def run_smart_extract(
     run_id: str | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
     search_cfg: dict | None = None,
+    result_budget=None,
+    activity_attempt=None,
+    activity_owner_token=None,
 ) -> dict:
     """Main entry point for AI-powered smart extraction.
 
@@ -1633,4 +1729,7 @@ def run_smart_extract(
         cancel_event=cancel_event,
         run_id=run_id or "smartextract",
         discovery_execution=discovery_execution,
+        result_budget=result_budget,
+        activity_attempt=activity_attempt,
+        activity_owner_token=activity_owner_token,
     )

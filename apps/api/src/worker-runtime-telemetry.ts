@@ -91,6 +91,18 @@ type CurrentTaskQueueObservationTelemetry = Exclude<
 
 export type WorkerRuntimeTelemetryStatus = "available" | "stale" | "unavailable";
 
+export interface BlockingExecutorTelemetry {
+  acceptingWorkers: number;
+  refusingWorkers: number;
+  unknownWorkers: number;
+  unfinishedRetiredGenerations: number;
+  unfinishedRetiredCalls: number;
+  controlAcceptingWorkers: number;
+  controlRefusingWorkers: number;
+  controlUnknownWorkers: number;
+  controlUnfinishedCalls: number;
+}
+
 export interface WorkerRuntimeTelemetrySnapshot {
   status: WorkerRuntimeTelemetryStatus;
   reason: "current" | "database_missing" | "heartbeat_missing" | "telemetry_stale" | "invalid_capacity";
@@ -101,11 +113,12 @@ export interface WorkerRuntimeTelemetrySnapshot {
   staleWorkerCount: number;
   invalidWorkerCount: number;
   configuredSlots: number;
-  /** Exact occupied remote slots; local lifecycle writes use a separate pool. */
+  /** Exact occupied remote slots among fresh workers; stale workers are unconfirmed. */
   activeSlots: number;
   availableSlots: number;
   executorThreads: number;
   slotSaturation: number | null;
+  blockingExecutor: BlockingExecutorTelemetry | null;
   activeCountsByType: Partial<Record<OperationalActivityType, number>>;
   activeDetails: ActiveActivityTelemetryDetail[];
   /** Exact active count for the allowlisted detail/type subset only. */
@@ -145,6 +158,13 @@ interface ParsedWorkerTelemetry {
   configuredSlots: number;
   activeSlots: number;
   executorThreads: number;
+  blockingExecutor: {
+    nextSubmission: "accepting" | "refusing" | "draining" | "unmanaged";
+    unfinishedRetiredGenerations: number;
+    unfinishedRetiredCalls: number;
+    controlNextSubmission: "accepting" | "refusing" | "draining" | null;
+    controlUnfinishedCalls: number | null;
+  } | null;
   activeCountsByType: Partial<Record<OperationalActivityType, number>>;
   activeDetails: ActiveActivityTelemetryDetail[];
   activeDetailsTotal: number;
@@ -263,6 +283,7 @@ export function readWorkerRuntimeTelemetry(
       availableSlots: configuredSlots - activeSlots,
       executorThreads: sum(validRows.map((row) => row.executorThreads)),
       slotSaturation: configuredSlots > 0 ? activeSlots / configuredSlots : null,
+      blockingExecutor: summarizeBlockingExecutors(validRows),
       activeCountsByType: mergeActivityCounts(validRows),
       activeDetails: details,
       activeDetailsTotal,
@@ -310,6 +331,7 @@ function emptySnapshot(input: {
     availableSlots: 0,
     executorThreads: 0,
     slotSaturation: null,
+    blockingExecutor: null,
     activeCountsByType: {},
     activeDetails: [],
     activeDetailsTotal: 0,
@@ -342,6 +364,7 @@ function parseWorkerTelemetry(row: HeartbeatRow): ParsedWorkerTelemetry {
     configuredSlots,
     activeSlots,
     executorThreads,
+    blockingExecutor: parseBlockingExecutor(row.task_queue_observation_json),
     activeCountsByType,
     activeDetails,
     activeDetailsTotal: reportedDetailsTotal,
@@ -349,6 +372,51 @@ function parseWorkerTelemetry(row: HeartbeatRow): ParsedWorkerTelemetry {
       reportedDetailsTotal > activeDetails.length ||
       Boolean(row.active_activity_details_truncated),
     activityDurationsByType: parseActivityDurations(row.activity_duration_summary_json),
+  };
+}
+
+function parseBlockingExecutor(raw: string | null | undefined): ParsedWorkerTelemetry["blockingExecutor"] {
+  const value = parseJsonObject(raw)?.blockingExecutor;
+  if (
+    !isRecord(value) || value.version !== 1 ||
+    !isPositiveInteger(value.generationLimit) ||
+    !isNonnegativeInteger(value.unfinishedRetiredGenerations) ||
+    value.unfinishedRetiredGenerations > value.generationLimit ||
+    !isNonnegativeInteger(value.unfinishedRetiredCalls) ||
+    (value.nextSubmission !== "accepting" && value.nextSubmission !== "refusing" &&
+      value.nextSubmission !== "draining" && value.nextSubmission !== "unmanaged")
+  ) return null;
+  return {
+    nextSubmission: value.nextSubmission,
+    unfinishedRetiredGenerations: value.unfinishedRetiredGenerations,
+    unfinishedRetiredCalls: value.unfinishedRetiredCalls,
+    controlNextSubmission: (
+      value.controlNextSubmission === "accepting" || value.controlNextSubmission === "refusing" ||
+      value.controlNextSubmission === "draining"
+    ) && isNonnegativeInteger(value.controlUnfinishedCalls) ? value.controlNextSubmission : null,
+    controlUnfinishedCalls: (
+      value.controlNextSubmission === "accepting" || value.controlNextSubmission === "refusing" ||
+      value.controlNextSubmission === "draining"
+    ) && isNonnegativeInteger(value.controlUnfinishedCalls) ? value.controlUnfinishedCalls : null,
+  };
+}
+
+function summarizeBlockingExecutors(rows: ParsedWorkerTelemetry[]): BlockingExecutorTelemetry {
+  const snapshots = rows.map((row) => row.blockingExecutor);
+  return {
+    acceptingWorkers: snapshots.filter((value) => value?.nextSubmission === "accepting").length,
+    refusingWorkers: snapshots.filter((value) =>
+      value?.nextSubmission === "refusing" || value?.nextSubmission === "draining"
+    ).length,
+    unknownWorkers: snapshots.filter((value) => value === null || value.nextSubmission === "unmanaged").length,
+    unfinishedRetiredGenerations: sum(snapshots.map((value) => value?.unfinishedRetiredGenerations ?? 0)),
+    unfinishedRetiredCalls: sum(snapshots.map((value) => value?.unfinishedRetiredCalls ?? 0)),
+    controlAcceptingWorkers: snapshots.filter((value) => value?.controlNextSubmission === "accepting").length,
+    controlRefusingWorkers: snapshots.filter((value) =>
+      value?.controlNextSubmission === "refusing" || value?.controlNextSubmission === "draining"
+    ).length,
+    controlUnknownWorkers: snapshots.filter((value) => !value?.controlNextSubmission).length,
+    controlUnfinishedCalls: sum(snapshots.map((value) => value?.controlUnfinishedCalls ?? 0)),
   };
 }
 

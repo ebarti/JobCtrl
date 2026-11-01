@@ -55,6 +55,7 @@ from jobctrl.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
 )
 from jobctrl.infrastructure.workflow_run_context import current_workflow_id
+from jobctrl.infrastructure.preparation_recovery import MaterialActivityAttempt, PreparationReservationLost
 from jobctrl.infrastructure.discovery.production_wiring import (
     enqueue_manual_action_for_sources,
     run_scheduled_ats_sources,
@@ -1103,43 +1104,6 @@ def _record_discovery_run_event(
     conn.commit()
 
 
-def _pipeline_job_count() -> int:
-    try:
-        conn = get_connection()
-        row = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()
-        return int(row[0] or 0) if row else 0
-    except Exception:
-        log.debug("Failed to count jobs for bounded discover limit", exc_info=True)
-        return 0
-
-
-def _discover_limit_reached(start_count: int, limit: int) -> bool:
-    return limit > 0 and _pipeline_job_count() - start_count >= limit
-
-
-def _discovery_new_result_count(result: Any) -> int:
-    if not isinstance(result, dict):
-        return 0
-    count = 0
-    for key in ("new", "total_new", "new_jobs"):
-        count += int(result.get(key) or 0)
-    return count
-
-
-def _discover_limit_consumed(start_count: int, limit: int, source_result: Any = None) -> bool:
-    if limit <= 0:
-        return False
-    if _discovery_new_result_count(source_result) >= limit:
-        return True
-    return _discover_limit_reached(start_count, limit)
-
-
-def _discover_remaining_limit(start_count: int, limit: int) -> int:
-    if limit <= 0:
-        return 0
-    return max(limit - (_pipeline_job_count() - start_count), 0)
-
-
 def _load_source_quality_snapshots() -> tuple[SourceQualitySnapshot, ...]:
     try:
         conn = get_connection()
@@ -1270,6 +1234,7 @@ def _smart_extract_sites(sources: tuple[ScheduledSource, ...]) -> list[dict]:
             {
                 "name": str(source.adapter_config.get("name") or source.display_name),
                 "url": url,
+                "source_id": source.source_id,
                 "type": _smart_extract_site_type(source.adapter_config, url),
                 "query_mode": _smart_extract_query_mode(source.adapter_config, url),
             }
@@ -1345,15 +1310,42 @@ DISCOVERY_SOURCE_FAMILIES: tuple[str, ...] = (
 )
 
 
+def require_discovery_result_plan(
+    *,
+    limit: int,
+    discovery_execution: DiscoveryExecutionRef | None,
+    use_source_result_budget: bool,
+    source_result_limits: dict[str, int] | None = None,
+    planning: bool = False,
+) -> None:
+    """Refuse an old pending bounded activity before storage/provider effects."""
+    if limit > 0 and (
+        use_source_result_budget is not True or discovery_execution is None
+        or (not planning and source_result_limits is None)
+    ):
+        raise ConfigurationError(
+            "Bounded Discovery requires its frozen execution-scoped result plan. "
+            "Restart Discovery after upgrading; existing jobs, captures and checkpoints are preserved."
+        )
+
+
 def plan_discovery_source_families(
     *,
     limit: int = 0,
     source_ids: tuple[str, ...] = (),
     discovery_execution: DiscoveryExecutionRef | None = None,
-    use_source_result_budget: bool = False,
+    use_source_result_budget: bool = True,
 ) -> dict[str, Any]:
     """Plan the runnable discovery source families in legacy order."""
+    require_discovery_result_plan(
+        limit=limit, discovery_execution=discovery_execution,
+        use_source_result_budget=use_source_result_budget, planning=True,
+    )
     conn = init_db()
+    if discovery_execution is not None:
+        from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan_start
+
+        check_result_plan_start(conn, discovery_execution, limit=limit, bounded=limit > 0)
     search_cfg = config.load_search_config()
     try:
         seed_discovery_control_queues(conn, config.load_source_registry(search_cfg=search_cfg))
@@ -1390,10 +1382,10 @@ def plan_discovery_source_families(
 
     active_activity_slots = latest_active_max_concurrent_activities() or resolve_max_concurrent_activities().value
 
-    return {
+    plan = {
         "families": families,
         "progress_total": len(families) + 2,
-        "start_count": _pipeline_job_count() if limit > 0 else 0,
+        "start_count": 0,
         "max_parallel_families": resolved_max_parallel_discovery_families(
             search_cfg,
             active_activity_slots,
@@ -1404,6 +1396,14 @@ def plan_discovery_source_families(
             source.source_id: source.crawl_budget for source in schedule.sources if source.should_run
         } if use_source_result_budget and limit > 0 else {},
     }
+    if discovery_execution is not None:
+        from jobctrl.infrastructure.discovery.execution_result_plan import freeze_result_plan
+
+        recorded = freeze_result_plan(
+            conn, discovery_execution, limit=limit, source_limits=plan["source_result_limits"], bounded=limit > 0,
+        )
+        plan["source_result_limits"] = recorded["source_result_limits"]
+    return plan
 
 
 def run_discovery_source_family(
@@ -1420,10 +1420,22 @@ def run_discovery_source_family(
     discovery_execution: DiscoveryExecutionRef | None = None,
     activity_attempt: int | None = None,
     activity_owner_token: str | None = None,
-    use_source_result_budget: bool = False,
+    use_source_result_budget: bool = True,
     source_result_limits: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Run one discovery source family and persist its lifecycle events."""
+    require_discovery_result_plan(
+        limit=limit, discovery_execution=discovery_execution,
+        use_source_result_budget=use_source_result_budget, source_result_limits=source_result_limits,
+    )
+    conn = get_connection()
+    if discovery_execution is not None:
+        from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan
+
+        check_result_plan(
+            conn, discovery_execution, limit=limit, source_limits=source_result_limits or {},
+            bounded=limit > 0, required=limit > 0,
+        )
     selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
     source_filter_active = bool(selected_source_ids)
     search_cfg = _apply_discovery_next_run_settings(
@@ -1433,7 +1445,6 @@ def run_discovery_source_family(
     bounded_workers = max(1, workers)
     provided_cancel_event = cancel_event
     cancel_event = cancel_event or threading.Event()
-    conn = get_connection()
     schedule = _plan_discovery_schedule(
         limit,
         source_ids=selected_source_ids,
@@ -1445,38 +1456,19 @@ def run_discovery_source_family(
     )
     workday_sources = schedule.for_prefix("workday")
     smart_extract_sources = _smart_extract_sources(schedule)
-    if limit > 0 and family != "jobspy" and _discover_limit_consumed(start_count, limit):
-        sources = _sources_for_discovery_family(
-            family,
-            jobspy_sources=jobspy_sources,
-            ats_sources=ats_sources,
-            workday_sources=workday_sources,
-            smart_extract_sources=smart_extract_sources,
-        )
-        status = _skip_discovery_source(
-            family,
-            _discovery_family_label(family),
-            "limit reached",
-            progress_completed=progress_completed,
-            progress_total=progress_total,
-        )
-        return {"family": family, "status": status, "result": {}, "source_ids": [s.source_id for s in sources]}
-
     result_budget = None
-    if family == "jobspy" and use_source_result_budget:
+    if limit > 0:
         from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultBudget
 
-        if discovery_execution is None or limit <= 0:
-            raise ConfigurationError("Source result budgets require a bounded discovery execution")
-        frozen_limits = {
-            source_id: cap for source_id, cap in (source_result_limits or {}).items()
-            if source_id.startswith("jobspy:")
-        }
-        current_sources = {source.source_id: source for source in jobspy_sources}
-        if any(source.should_run and source.source_id not in frozen_limits for source in jobspy_sources):
-            raise ConfigurationError("A runnable broad board is outside the recorded source result plan")
+        assert discovery_execution is not None
+        # Every family reads the complete frozen plan: filtering receipts by a
+        # family's prefix would give each concurrent producer its own run cap.
+        frozen_limits = dict(source_result_limits or {})
+        current_sources = {source.source_id: source for source in schedule.sources}
+        if any(source.should_run and source.source_id not in frozen_limits for source in schedule.sources):
+            raise ConfigurationError("A runnable source is outside the recorded source result plan")
         if any(type(cap) is not int or cap <= 0 for cap in frozen_limits.values()):
-            raise ConfigurationError("Recorded broad-board result budgets must be positive integers")
+            raise ConfigurationError("Recorded source result budgets must be positive integers")
         effective_limits = {
             source_id: min(cap, current_sources[source_id].crawl_budget)
             if source_id in current_sources and current_sources[source_id].should_run else 0
@@ -1484,44 +1476,54 @@ def run_discovery_source_family(
         }
         result_budget = DiscoveryResultBudget(
             conn, discovery_execution, limit=limit, start_count=start_count, source_limits=effective_limits,
+            frozen_source_limits=frozen_limits, cancel_event=cancel_event,
         )
 
+    def available_sources(sources: tuple[ScheduledSource, ...]) -> tuple[ScheduledSource, ...]:
+        if result_budget is None:
+            return sources
+        counts = result_budget.counts()
+        return tuple(source for source in sources if source.should_run
+                     and counts[source.source_id] < result_budget.source_limits[source.source_id])
+
+    def fetch_allowance(sources: tuple[ScheduledSource, ...]) -> int:
+        if result_budget is None:
+            return limit
+        return result_budget.remaining(tuple(source.source_id for source in sources if source.should_run))
+
     def fetch_with_limits(fetch, sources, run_id):
-        if cancel_event.is_set() or (result_budget is None and limit > 0 and _discover_limit_consumed(start_count, limit)):
+        if cancel_event.is_set():
             return {"new": 0, "existing": 0}
         from jobctrl.infrastructure.discovery.capture_recovery import recover_captured_postings
 
         source_ids = tuple(item.source_id for item in sources if item.should_run)
         if family == "jobspy" and search_cfg.get("disable_jobspy", False):
             source_ids = ()
-        recovered = {"new": 0, "existing": 0, "recovered_captures": 0, "recovered_exclusions": 0,
-                     "recovered_capture_failures": 0}
-        if not (limit > 0 and _discover_limit_consumed(start_count, limit)) and (
-            result_budget is None or not result_budget.run_exhausted()
-        ):
-            recovered = recover_captured_postings(
-                conn,
-                tenant_id=LOCAL_TENANT,
-                source_ids=source_ids,
-                source_family=family,
-                search_cfg=search_cfg,
-                run_id=run_id,
-                discovery_execution=discovery_execution,
-                limit=_discover_remaining_limit(start_count, limit),
-                cancel_event=cancel_event,
-                **({"result_budget": result_budget} if result_budget is not None else {}),
-            )
+        recovered = recover_captured_postings(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            source_ids=source_ids,
+            source_family=family,
+            search_cfg=search_cfg,
+            run_id=run_id,
+            discovery_execution=discovery_execution,
+            limit=limit,
+            cancel_event=cancel_event,
+            **({"result_budget": result_budget} if result_budget is not None else {}),
+            **({"activity_attempt": activity_attempt, "activity_owner_token": activity_owner_token}
+               if activity_attempt is not None else {}),
+        )
         result = {"new": 0, "existing": 0}
         # A bounded resumable consumer must also settle its recorded units when
         # a prior attempt reached the cap immediately before it disappeared.
-        if not cancel_event.is_set() and (result_budget is not None or not (
-            limit > 0 and _discover_limit_consumed(start_count, limit)
-        )):
+        can_fetch = result_budget is None or family == "jobspy" or fetch_allowance(sources) > 0
+        if not cancel_event.is_set() and can_fetch:
             result.update(fetch(run_id) or {})
         result["existing"] = int(result.get("existing") or 0) + recovered["existing"]
         if result_budget is not None:
             # Includes archived captures and prior attempts exactly once.
-            result["new"] = sum(result_budget.counts().values())
+            family_sources = {source.source_id for source in sources}
+            result["new"] = sum(count for source, count in result_budget.counts().items() if source in family_sources)
         else:
             result["new"] = int(result.get("new") or 0) + recovered["new"]
         if recovered["recovered_captures"] or recovered["recovered_capture_failures"]:
@@ -1548,7 +1550,7 @@ def run_discovery_source_family(
                 return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             run_kwargs: dict[str, Any] = {
                 "cfg": jobspy_cfg,
-                "limit": _scheduled_limit(schedule, "jobspy", _discover_remaining_limit(start_count, limit)),
+                "limit": _scheduled_limit(schedule, "jobspy", limit),
             }
             if result_budget is not None:
                 # The consumer compares cumulative receipts with an absolute
@@ -1613,17 +1615,22 @@ def run_discovery_source_family(
             return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
 
         def run_ats(run_id: str | None = None) -> dict:
+            allowance = fetch_allowance(ats_sources)
+            if result_budget is not None and allowance == 0:
+                return {"new": 0, "existing": 0}
+            runnable = available_sources(ats_sources)
             console.print("  [cyan]Canonical ATS APIs...[/cyan]")
             result = run_scheduled_ats_sources(
                 conn,
-                ats_sources,
+                runnable,
                 search_cfg=search_cfg,
                 run_id=run_id or f"discovery:ats_api:{uuid.uuid4().hex}",
                 limit=_scheduled_limit_for_sources(
-                    ats_sources,
-                    _discover_remaining_limit(start_count, limit),
+                    runnable,
+                    allowance,
                 ),
                 **({"discovery_execution": discovery_execution} if discovery_execution is not None else {}),
+                **({"result_budget": result_budget} if result_budget is not None else {}),
                 **({"cancel_event": cancel_event} if provided_cancel_event is not None else {}),
             )
             return result
@@ -1654,20 +1661,22 @@ def run_discovery_source_family(
             return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
 
         def run_workday(run_id: str | None = None) -> dict:
+            allowance = fetch_allowance(workday_sources)
+            if result_budget is not None and allowance == 0:
+                return {"new": 0, "existing": 0}
+            runnable = available_sources(workday_sources)
             console.print("  [cyan]Workday corporate scraper...[/cyan]")
             from jobctrl.discovery.workday import run_workday_discovery
 
             workday_kwargs: dict[str, Any] = {
-                "employers": _workday_employers_for_sources(workday_sources),
+                "employers": _workday_employers_for_sources(runnable),
                 "workers": bounded_workers,
-                "limit": _scheduled_limit(
-                    schedule,
-                    "workday",
-                    _discover_remaining_limit(start_count, limit),
-                ),
+                "limit": _scheduled_limit_for_sources(runnable, allowance),
                 "run_id": run_id,
                 "search_cfg": search_cfg,
             }
+            if result_budget is not None:
+                workday_kwargs["result_budget"] = result_budget
             if discovery_execution is not None:
                 workday_kwargs["discovery_execution"] = discovery_execution
             if provided_cancel_event is not None:
@@ -1700,20 +1709,29 @@ def run_discovery_source_family(
             return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
 
         def run_smart_extract_source(run_id: str | None = None) -> dict:
+            allowance = fetch_allowance(smart_extract_sources)
+            if result_budget is not None and allowance == 0:
+                return {"new": 0, "existing": 0}
+            runnable = available_sources(smart_extract_sources)
             console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
-            enqueue_manual_action_for_sources(conn, smart_extract_sources)
+            enqueue_manual_action_for_sources(conn, runnable)
             from jobctrl.discovery.smartextract import run_smart_extract
 
             smart_kwargs: dict[str, Any] = {
-                "sites": _smart_extract_sites(smart_extract_sources),
+                "sites": _smart_extract_sites(runnable),
                 "workers": bounded_workers,
                 "limit": _scheduled_limit_for_sources(
-                    smart_extract_sources,
-                    _discover_remaining_limit(start_count, limit),
+                    runnable,
+                    allowance,
                 ),
                 "run_id": run_id,
                 "search_cfg": search_cfg,
             }
+            if result_budget is not None:
+                smart_kwargs["result_budget"] = result_budget
+            if activity_attempt is not None:
+                smart_kwargs["activity_attempt"] = activity_attempt
+                smart_kwargs["activity_owner_token"] = activity_owner_token
             if discovery_execution is not None:
                 smart_kwargs["discovery_execution"] = discovery_execution
             if provided_cancel_event is not None:
@@ -1749,9 +1767,9 @@ def _snapshot_discovery_next_run_settings(search_cfg: dict[str, Any]) -> dict[st
 
     defaults = search_cfg.get("defaults")
     defaults = defaults if isinstance(defaults, dict) else {}
-    boards = search_cfg.get("boards")
+    boards = config.resolve_jobspy_boards(search_cfg, warn=False)
     return {
-        "boards": [str(board) for board in boards] if isinstance(boards, list) else [],
+        "boards": boards,
         "results_per_site": int(defaults.get("results_per_site") or 50),
         "hours_old": int(defaults.get("hours_old") or 72),
         **{
@@ -1920,34 +1938,6 @@ def run_discovery_enrichment_stage(
             )
 
     return final
-
-
-def _sources_for_discovery_family(
-    family: str,
-    *,
-    jobspy_sources: tuple[ScheduledSource, ...],
-    ats_sources: tuple[ScheduledSource, ...],
-    workday_sources: tuple[ScheduledSource, ...],
-    smart_extract_sources: tuple[ScheduledSource, ...],
-) -> tuple[ScheduledSource, ...]:
-    if family == "jobspy":
-        return jobspy_sources
-    if family == "ats_api":
-        return ats_sources
-    if family == "workday":
-        return workday_sources
-    if family == "smartextract":
-        return smart_extract_sources
-    return ()
-
-
-def _discovery_family_label(family: str) -> str:
-    return {
-        "jobspy": "Broad boards",
-        "ats_api": "Canonical ATS APIs",
-        "workday": "Workday scraper",
-        "smartextract": "Smart extract",
-    }.get(family, family)
 
 
 def _add_supported_discovery_kwargs(
@@ -2175,6 +2165,7 @@ def _run_tailor(
     tenant_id: str = "local",
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict:
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2195,6 +2186,7 @@ def _run_tailor(
         tailor_judge_model=tailor_judge_model,
         llm_model=llm_model,
         workflow_id=workflow_id,
+        **({"temporal_attempt": temporal_attempt} if temporal_attempt is not None else {}),
     )
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("tailoring canceled")
@@ -2218,6 +2210,8 @@ def _run_cover(
     cancel_event: threading.Event | None = None,
     workflow_id: str | None = None,
     allow_low_fit_override: bool = False,
+    tenant_id: str = "local",
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict:
     """Stage: Cover letter generation."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2229,8 +2223,11 @@ def _run_cover(
         conn=get_connection(),
         stage="pending_cover",
         min_score=0 if allow_low_fit_override else min_score,
-        limit=limit,
+        limit=0,
     )
+    jobs = [job for job in jobs if str(job.get("tenant_id") or "local") == tenant_id]
+    if limit > 0:
+        jobs = jobs[:limit]
     generated = 0
     skipped = 0
     errors = 0
@@ -2238,14 +2235,21 @@ def _run_cover(
     for job in jobs:
         if cancel_event is not None and cancel_event.is_set():
             raise LlmTransientError("cover letter generation canceled")
-        result = cover_letter_by_url(
-            str(job["url"]),
-            min_score=min_score,
-            validation_mode=validation_mode,
-            llm_model=llm_model,
-            workflow_id=workflow_id,
-            allow_low_fit_override=allow_low_fit_override,
-        )
+        try:
+            result = cover_letter_by_url(
+                str(job["url"]),
+                min_score=min_score,
+                validation_mode=validation_mode,
+                llm_model=llm_model,
+                workflow_id=workflow_id,
+                allow_low_fit_override=allow_low_fit_override,
+                tenant_id=TenantId(tenant_id),
+                cancel_event=cancel_event,
+                **({"temporal_attempt": temporal_attempt} if temporal_attempt is not None else {}),
+            )
+        except PreparationReservationLost:
+            skipped += 1
+            continue
         status = str(result.get("status") or "error")
         if status in {"ok", "already_done"}:
             generated += int(result.get("generated") or 0)

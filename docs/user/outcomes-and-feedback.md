@@ -8,6 +8,28 @@ changing scoring, ranking, thresholds, or Apply eligibility on its own. An
 owning policy changes only through an explicit score correction, approved role
 rule, or accepted learning recommendation.
 
+## Retrying A Manual Record
+
+If saving an outcome or post-interview reflection fails to acknowledge, use the
+same form's **Record outcome** or **Record reflection** button again. The form
+keeps the original submitted values and request identity while the app is open.
+A retry returns the original record, including its timestamps, without another
+timeline entry or event, even after the local API restarts.
+
+The attempted input stays visible and locked during this uncertainty. **Start a
+new action** unlocks it and creates a distinct request identity; the earlier action
+may already have been recorded. Successful acknowledgement also prepares a new
+action. Submitted private notes are held in memory for retry, not copied into
+browser storage. While the app is open, drafts and retry identities are kept
+separately for each tenant and job; switching back restores that tenant's own
+input, including after visiting another section. Reloading discards the
+in-memory state; inspect the timeline before deliberately recording another
+observation.
+
+Reusing a request identity with different values is a conflict and applies no
+change. A new reflection still requires an accepted or superseded prep generation
+for the same job. Adding another observation does not retract an earlier fact.
+
 ## How Email Becomes An Outcome Suggestion
 
 1. **A user-started scan bounds application anchors.** Message count and date
@@ -104,9 +126,13 @@ Both may appear in the same job audit timeline without sharing ownership.
 - **Suggestions** remain separate in `application_outcome_suggestions` until you
   decide them. A pending Gmail suggestion is never treated as a confirmed
   application; suggestion accuracy is derived from later decisions.
-- **Linked Gmail evidence** stays local. A bounded scan starts from known
-  application anchors and reads body content only after a valid linking determination accepts the bounded metadata. Raw mail bodies never enter broad projections, events,
-  logs, telemetry, or scan responses.
+- **Linked Gmail evidence** stays local. A scan starts from known application
+  anchors and searches a bounded recipient and date window with a limit on the
+  messages returned. A source-bound model determination decides whether the
+  metadata links to an application; the body is read only after a valid link.
+  A bounded search can miss messages, and no anchors means no Gmail search.
+  Previously stored evidence remains available after a failed scan. Raw mail
+  bodies never enter broad projections, events, logs, telemetry, or scan responses.
 - **Local notes** stay in the canonical outcome table. Events carry safe IDs,
   kinds, timestamps, confidence/link markers, and presence flags rather than
   note text.
@@ -176,7 +202,10 @@ Saving the first terms records one offer milestone if no reviewed offer mileston
 require a reason and preserve the earlier source and values. **Record offer
 decision** stores your accepted or declined attestation against the exact
 current terms. A later decision requires a correction reason and the current
-decision ID; conflicting saves ask you to reload. Offer history retains both
+decision ID. If a save or another update changes the current offer while your
+form is open, your draft stays visible. Review the latest offer and choose to
+keep or discard your draft before trying again; keeping it requires a fresh
+confirmation or attestation. Offer history retains both
 records. When terms change after a decision, the old decision stays visible
 with an explanation that it refers to earlier terms. Review the new terms
 before reconfirming. These actions need no interview-prep session and never

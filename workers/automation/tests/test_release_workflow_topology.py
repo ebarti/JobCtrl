@@ -19,6 +19,7 @@ def test_release_workflow_has_one_deployment_after_one_signing_approval() -> Non
     jobs = yaml.safe_load(RELEASE_WORKFLOW.read_text())["jobs"]
     expected_environment_jobs = {
         "resolve",
+        "resume-pypi-authority",
         "sign",
         "publish-immutable",
         "publish-homebrew",
@@ -60,8 +61,17 @@ def test_release_workflow_has_one_deployment_after_one_signing_approval() -> Non
             pending.extend(_needs(jobs[dependency]))
         return found
 
-    for job_name in expected_environment_jobs - {"resolve", "sign"}:
+    for job_name in expected_environment_jobs - {"resolve", "sign", "resume-pypi-authority"}:
         assert "sign" in ancestors(job_name), job_name
+
+    recovery = jobs["resume-pypi-authority"]
+    assert recovery["if"] == "${{ inputs.resume_pypi && inputs.channel == 'stable' }}"
+    assert recovery["environment"] == {"name": "release-verification", "deployment": False}
+    assert recovery["permissions"] == {"actions": "read", "contents": "read"}
+    pypi_gate = jobs["pypi-resolve"]
+    assert {"resolve", "publish-github-release", "resume-pypi-authority"} == _needs(pypi_gate)
+    assert "needs['resume-pypi-authority'].result == 'success'" in pypi_gate["if"]
+    assert "needs['publish-github-release'].result == 'success'" in pypi_gate["if"]
 
 
 def test_immutable_publication_requires_real_released_upgrade_proof() -> None:
@@ -69,7 +79,8 @@ def test_immutable_publication_requires_real_released_upgrade_proof() -> None:
     gate = jobs["verify-released-upgrades"]
     assert _needs(gate) == {"resolve", "sign", "package-signed-candidate"}
     assert gate["runs-on"] == "macos-15"
-    assert gate["timeout-minutes"] == 20
+    # Nine signed interruption boundaries need a larger, still bounded window.
+    assert gate["timeout-minutes"] == 40
     assert "strategy" not in gate
     assert gate["permissions"] == {"actions": "read", "contents": "read"}
     assert "environment" not in gate
@@ -78,6 +89,7 @@ def test_immutable_publication_requires_real_released_upgrade_proof() -> None:
     assert proof["if"] == "${{ inputs.channel == 'stable' }}"
     assert proof["env"]["JOBCTRL_RELEASE_PUBLIC_KEY"] == "${{ needs.resolve.outputs.release_public_key }}"
     assert proof["env"]["JOBCTRL_RELEASE_KEY_ID"] == "${{ needs.resolve.outputs.release_key_id }}"
+    assert proof["env"]["JOBCTRL_RELEASE_METADATA_TOKEN"] == "${{ github.token }}"
     assert "--case" not in proof["run"]
     assert '--output "$RUNNER_TEMP/released-upgrade-smoke.json"' in proof["run"]
     assert all("pnpm install" not in step.get("run", "") for step in gate["steps"])

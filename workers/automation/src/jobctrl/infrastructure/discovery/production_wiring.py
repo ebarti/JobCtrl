@@ -92,6 +92,7 @@ from jobctrl.infrastructure.network import (
     PolitenessSourceContext,
 )
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultBudget, DiscoveryResultLimitReached
 from jobctrl.infrastructure.enrichment import (
     SqliteEnrichmentRepository,
     SqlitePostingSnapshotSetRepository,
@@ -560,6 +561,7 @@ def run_scheduled_ats_sources(
     limit: int = 0,
     cancel_event: threading.Event | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
 ) -> dict[str, Any]:
     """Run Greenhouse, Lever, and Ashby through the Discovery use case.
 
@@ -618,6 +620,20 @@ def run_scheduled_ats_sources(
             raise TransientNetworkError("ATS discovery canceled")
         if remaining_new is not None and remaining_new <= 0:
             break
+        if result_budget is not None:
+            if result_budget.run_exhausted():
+                break
+            if result_budget.source_exhausted(adapter.source_id):
+                continue
+            job_repository = SqliteJobRepository(
+                conn, discovery_execution=discovery_execution, source_family="ats_api",
+                result_budget=result_budget, result_budget_source_id=adapter.source_id,
+            )
+            use_case = DiscoverJobsUseCase(
+                exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
+                repository=job_repository,
+                publisher=DurableJobEventPublisher(conn, stage="discover"),
+            )
         source_processed = False
         seen_postings: set[tuple[str, str, str]] = set()
         try:
@@ -634,6 +650,10 @@ def run_scheduled_ats_sources(
                     if cancel_event is not None and cancel_event.is_set():
                         raise TransientNetworkError("ATS discovery canceled")
                     if remaining_new is not None and remaining_new <= 0:
+                        break
+                    if result_budget is not None and (
+                        result_budget.run_exhausted() or result_budget.source_exhausted(adapter.source_id)
+                    ):
                         break
                     posting_key = _scraped_posting_key(posting)
                     if posting_key in seen_postings:
@@ -660,6 +680,10 @@ def run_scheduled_ats_sources(
                     source_processed = True
                     if remaining_new is not None and summary.new_jobs > 0:
                         remaining_new -= summary.new_jobs
+        except DiscoveryResultLimitReached:
+            # A competing writer consumed the allowance; its canonical claim
+            # committed and ours rolled back. This is a limit, not a source error.
+            pass
         except (ConfigurationError, TransientNetworkError, DeterminationFailure):
             raise
         except Exception as exc:

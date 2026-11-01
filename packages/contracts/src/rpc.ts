@@ -1,3 +1,4 @@
+import { OutreachPublicationConflictSchema } from "./outreach-publication.js";
 import { DeterminationCitationSchema, DeterminationEnvelopeSchema, FormSnapshotSchema, FormMappingResponseSchema, ResumeEditReviewSchema, ResumeEditIntentReviewSchema } from "./semantic-determinations.js";
 import { CoverLetterSettingsSchema, COVER_LETTER_RENDERER_VERSION } from "./cover-letter.js";
 /**
@@ -24,6 +25,7 @@ import {
   MANUAL_CAPTURE_MODE_VALUES,
   STAGES,
   TailoringPolicyLearnedRuleSchema,
+  TailoringPolicyRestoreCommandIdSchema,
   MaterialLocaleHistorySchema,
   TargetRoleSuggestionResultSchema,
 } from "./schemas.js";
@@ -546,18 +548,19 @@ export const GenerateOutreachDraftParamsSchema = z
   });
 export type GenerateOutreachDraftParams = z.infer<typeof GenerateOutreachDraftParamsSchema>;
 
-export const GenerateOutreachDraftResultSchema = z
+const PublishedOutreachDraftResultSchema = z
   .object({
     threadId: z.string(),
     contactId: z.string(),
     jobId: z.string().nullable(),
     draftId: z.string(),
     generation: z.number().int().nonnegative(),
-    kind: z.enum(["intro_request", "follow_up"]),
+    kind: z.enum(["intro_request", "follow_up", "offer_negotiation", "offer_clarification", "offer_acceptance", "offer_decline"]),
     status: z.enum(["candidate", "approved", "rejected", "superseded"]),
     gatePassed: z.boolean(),
   })
   .strict();
+export const GenerateOutreachDraftResultSchema = z.union([PublishedOutreachDraftResultSchema, OutreachPublicationConflictSchema]);
 export type GenerateOutreachDraftResult = z.infer<typeof GenerateOutreachDraftResultSchema>;
 
 export const RetailorJobParamsSchema = z
@@ -764,10 +767,13 @@ export type ReviewLearningRecommendationResult = z.infer<
 
 export const RollbackTailoringPolicyParamsSchema = z
   .object({
-    tenantId: TenantParam,
+    tenantId: z.string().min(1).refine((value) => value.trim() === value),
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
     targetVersion: z.number().int().positive(),
+    expectedCurrentVersion: z.number().int().positive(),
+    commandId: TailoringPolicyRestoreCommandIdSchema,
+    reasonCode: z.literal("user_requested"),
   })
   .strict();
 export type RollbackTailoringPolicyParams = z.infer<
@@ -780,6 +786,10 @@ export const RollbackTailoringPolicyResultSchema = z
     context: z.literal("materials"),
     policyKind: z.literal("tailoring_rule"),
     policyVersion: z.number().int().positive(),
+    currentVersion: z.number().int().positive(),
+    replayed: z.boolean(),
+    expectedCurrentVersion: z.number().int().positive(),
+    commandId: TailoringPolicyRestoreCommandIdSchema,
     rollbackOfVersion: z.number().int().positive(),
     rollbackReasonCode: z.literal("user_requested"),
     learnedRules: z.array(TailoringPolicyLearnedRuleSchema).max(5),
@@ -825,9 +835,7 @@ export const GmailFeedbackScanParamsSchema = z
 export type GmailFeedbackScanParams = z.infer<typeof GmailFeedbackScanParamsSchema>;
 
 // The scan result deliberately passes through: the TS caller sanitizes the
-// payload field-by-field, and auth failures travel as { ok: false, message }
-// so the route's status mapping stays behavior-identical to the old
-// subprocess protocol.
+// payload field-by-field and maps safe failure codes to the HTTP response.
 export const GmailFeedbackScanResultSchema = z.object({ ok: z.boolean() }).passthrough();
 export type GmailFeedbackScanResult = z.infer<typeof GmailFeedbackScanResultSchema>;
 

@@ -152,7 +152,7 @@ export function DataTable<TData>({
                               ? "table-row-activation-button row-activation-focus-only"
                               : "table-row-activation-button"
                           }
-                          aria-label={activationLabel}
+                          aria-label={`${activationLabel}: View details`}
                           onClick={(event) => {
                             event.stopPropagation();
                             onRowActivate?.(row.original);

@@ -70,10 +70,10 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   await writeFile(formulaPath, rendered.formula);
   assert.equal(validateRenderedHomebrewFormula({ formula: rendered.formula, descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }), true);
   assert.match(rendered.formula, /url "https:\/\/releases\.jobctrl\.dev\/v1\/artifacts\/stable-build-0000042\/jobctrl-2\.0\.0-darwin-arm64\.zip"/);
-  assert.match(rendered.formula, /^\s*version_scheme 1$/m);
+  assert.match(rendered.formula, /^\s*version_scheme 2$/m);
   assert.match(
     rendered.formula,
-    /  version "2\.0\.0"\n  sha256 "a{64}"\n  license "AGPL-3\.0-only"\n  version_scheme 1/,
+    /  version "2\.0\.0"\n  sha256 "a{64}"\n  license "AGPL-3\.0-only"\n  version_scheme 2/,
     "the canonical formula header must follow Homebrew's audited stanza order",
   );
   assert.match(rendered.formula, /JOBCTRL_MANIFEST_SHA256 = "b{64}"/);
@@ -101,6 +101,17 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   );
   assert.deepEqual(rendered.publicationInputs, releasePublicationInputs({ descriptorRaw, descriptorUrl }));
   await execFileAsync("/usr/bin/ruby", ["-c", formulaPath]);
+  const caveatsDriver = `class Formula
+    def self.method_missing(*); end
+    def self.test; end
+    def version; ENV.fetch("JOBCTRL_TEST_VERSION"); end
+  end
+  load ARGV.fetch(0)
+  print Jobctrl.new.caveats`;
+  const caveatsFor = async (version) => (await execFileAsync("/usr/bin/ruby", ["-e", caveatsDriver, formulaPath], { env: { ...process.env, JOBCTRL_TEST_VERSION: version } })).stdout;
+  assert.match(await caveatsFor("0.4.0"), /Upgrades from normally used JobCtrl 0\.3\.1 workspaces are currently\s+blocked/);
+  assert.match(await caveatsFor("0.4.1"), /Upgrades from normally used JobCtrl 0\.3\.1 workspaces are currently\s+blocked/);
+  assert.doesNotMatch(await caveatsFor("0.4.3"), /Upgrades from normally used JobCtrl 0\.3\.1/);
 });
 
 test("Homebrew promotion verification fails closed without P6 signature and published-asset smoke evidence", async () => {
@@ -221,8 +232,8 @@ test("Homebrew formula validation rejects a render that omits strict Developer I
   const descriptorUrl = stableDescriptorUrl();
   const rendered = await renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl, trust: signed.trust });
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace("  version_scheme 1\n", ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
-    /version_scheme 1/,
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace("  version_scheme 2\n", ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    /version_scheme 2/,
   );
   assert.throws(
     () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('verify_developer_id_executable!(buildpath/"launcher/jobctrl")', ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),

@@ -18,6 +18,14 @@ recorded as skipped because the setting is off; existing accepted letters and
 work already generating are preserved. New direct cover-only requests also
 require the setting to be enabled.
 
+Concurrent preparation attempts keep their files separate. If saved materials
+change before an older attempt finishes, that attempt cannot replace the newer
+accepted material; JobCtrl marks it stale when it still owns the work so it can
+be retried with the current sources. A PDF whose save acknowledgement is
+uncertain is kept for inspection rather than deleted.
+If another preparation is still running, reusing the earlier approved material
+leaves that work running and able to save its replacement.
+
 Tailoring keeps as many applicable baseline accomplishments as possible in each
 selected role, up to **Max bullets per role**. The configured maximum is a hard
 cap even when your baseline has more bullets. Tailoring can reorder or rewrite
@@ -62,8 +70,9 @@ for that job, including preparation chained from URL imports and Discover. The
 current Skip is checked again before each new material stage starts. An explicit
 Tailor or Re-tailor action can request materials while Apply remains skipped;
 all score, eligibility, source and review prerequisites still apply.
-Use **Cancel** to stop work already in progress. Resetting the Apply outcome
-allows normal automatic eligibility again. A minimum-score policy skip remains
+Use **Cancel** to stop work already in progress. A safe pre-submission Apply reset
+allows normal automatic eligibility again. Recorded submit intent cannot be
+cleared by reset; see [Skip and safe reset](apply.md#skip-and-safe-reset). A minimum-score policy skip remains
 a separate decision controlled by the score and materials threshold.
 
 A cover letter's factual and quality reviews can run together because they inspect
@@ -214,7 +223,16 @@ The user-visible surfaces divide the work:
   the current document, including unsaved edits, directly to a PDF download.
 - `/preferences` owns tailoring permissions, writing style, resume templates,
   and the default template; Apply Review can override the template for one job.
-  Template payloads hold style/layout only, not candidate or job facts.
+  Template payloads hold style/layout only, not candidate or job facts. An
+  unsaved template draft remains available when saved templates refresh or you
+  switch between templates during the same session. Template settings show the
+  selected saved version and the exact version currently used as the default.
+  Saving a new version does not change the default until you choose **set
+  default** or **save default**. If saving succeeds but the default change is
+  not confirmed, the saved version remains available. Check the current default
+  before retrying **set default**. If templates cannot refresh, the panel labels
+  the last read default and offers a retry before changing the default. A later
+  successful read that shows the requested version clears the unconfirmed notice.
 - `/settings/models` owns the generator/judge execution policy used by newly
   started work. The current fields and fallback rules belong to
   [Configuration](configuration.md), not this page.
@@ -361,6 +379,11 @@ Older accepted and superseded prep remains inspectable. A pending or failed
 refresh, including provider or gate rejection, leaves the last accepted prep
 visible.
 
+If preparation history or saved note revision history cannot be loaded, use
+the corresponding **Retry loading** button to retry that page. Your selected
+questions, context, unsaved note and last accepted preparation remain available;
+loading history does not generate new preparation.
+
 Save your editable notes/outlines separately for each job and question. A note
 keeps an independent revision, optional source generation, and its own factual
 support label. New recollections default to unverified user statements, and a
@@ -404,11 +427,23 @@ rejecting it leaves the current revision unchanged. Recommendations whose
 source evidence was tombstoned are inactive and cannot be accepted until they
 are deterministically re-derived.
 
+The recommendation list and each recommendation's evidence have separate page
+controls. They show the current page, the number displayed, and the total
+recorded items. Open evidence to see its source identifiers, revisions, jobs,
+and roles. If another page cannot be read, the last displayed page remains
+available and its failed read can be retried. Reviewing a recommendation does
+not regenerate the recorded list or its evidence.
+
 **Tailoring policy history** lists every current and superseded revision,
 allowlisted learned rule, safe recommendation/review reference, restore
-provenance, and creation time. Restoring a superseded version appends the next
-version with `user_requested` provenance; it never edits or deletes the target
-or current row. Acceptance and restore affect future tailoring-policy
+provenance, and creation time. Choose a superseded version to review the
+transition from the displayed current version, then confirm the user-requested
+restore. It appends a revision without editing or deleting earlier history. If
+another session changes the policy before confirmation, the restore is refused;
+review the refreshed history and start a new restore. Retrying an unconfirmed
+request uses the same command and returns its recorded revision if it already
+committed. A later revision can be current even when the receipt reports an
+earlier successful restore. Acceptance and restore affect future tailoring-policy
 resolution only. They do not re-score jobs, re-tailor existing materials,
 replace accepted artifacts, alter the Candidate Profile, or change Apply
 decisions. Use the normal explicit re-tailor action when you want existing work

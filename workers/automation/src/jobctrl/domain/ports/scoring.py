@@ -140,7 +140,3 @@ class ScoreStalenessRepository(Protocol):
     ) -> list[ScoreStaleMarker]:
         """Mark latest uncorrected scores with older policy traces stale."""
         ...
-
-    def resolve_for_score(self, score: JobScore) -> int:
-        """Resolve active stale markers satisfied by a new persisted score."""
-        ...

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -659,7 +663,6 @@ def test_save_rejects_version_skip_and_replay(conn: sqlite3.Connection) -> None:
 
 def test_save_rolls_back_score_and_keyword_rows_after_downstream_failure(
     conn: sqlite3.Connection,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job_id = _seed_job(
         conn,
@@ -668,12 +671,10 @@ def test_save_rolls_back_score_and_keyword_rows_after_downstream_failure(
     )
     repo = SqliteScoreRepository(conn)
 
-    def fail_after_score_write(_: JobScore, *, commit: bool) -> int:
-        raise RuntimeError("forced score downstream failure")
-
-    monkeypatch.setattr(repo._staleness, "resolve_for_score", fail_after_score_write)
-
-    with pytest.raises(RuntimeError, match="forced score downstream failure"):
+    conn.execute("CREATE TRIGGER fail_second_keyword BEFORE INSERT ON job_score_keywords "
+                 "WHEN NEW.position=1 BEGIN SELECT RAISE(ABORT, 'forced keyword failure'); END")
+    conn.commit()
+    with pytest.raises(sqlite3.IntegrityError, match="forced keyword failure"):
         repo.save(_build_score(job_id))
 
     assert conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0] == 0
@@ -833,7 +834,19 @@ def test_score_correction_marks_and_resolves_only_tenant_scoped_staleness(
     ).fetchone()
     assert stale_event["event_type"] == "ScoreMarkedStale"
 
-    repo.save(_build_score(comparable_job_id, version=2, fit=8, trace=policy_v2))
+    conn.execute(
+        "INSERT INTO job_score_staleness (tenant_id, job_id, stale_reason, old_policy_id, "
+        "old_policy_version, new_policy_id, new_policy_version, marked_at, resolved) "
+        "VALUES ('other', ?, 'scoring_policy_changed', 'other:scoring-policy-v1', 1, "
+        "'other:scoring-policy-v2', 2, '2026-07-31T00:00:00Z', 0)",
+        (str(comparable_job_id),),
+    )
+    conn.commit()
+    snapshot = repo.capture_staleness_for_score(LOCAL_TENANT, comparable_job_id)
+    replacement = _build_score(comparable_job_id, version=2, fit=8, trace=policy_v2)
+    with repo.publication(LOCAL_TENANT, comparable_job_id):
+        repo.save(replacement)
+        repo.resolve_staleness_for_score(replacement, snapshot)
 
     resolved = conn.execute(
         """
@@ -844,3 +857,205 @@ def test_score_correction_marks_and_resolves_only_tenant_scoped_staleness(
         (str(LOCAL_TENANT), str(comparable_job_id)),
     ).fetchone()
     assert tuple(resolved) == (1, 2)
+    foreign_marker = conn.execute(
+        "SELECT resolved, resolved_by_score_version FROM job_score_staleness "
+        "WHERE tenant_id='other' AND job_id=?", (str(comparable_job_id),),
+    ).fetchone()
+    assert tuple(foreign_marker) == (0, None)
+
+
+def test_stale_reset_limits_distinct_jobs_without_disturbing_active_owners(conn: sqlite3.Connection) -> None:
+    import json
+
+    from jobctrl.state import set_stage_state
+
+    jobs = [_seed_job(conn, job_id=_job_id(n), url=f"https://example.test/reset/{n}") for n in range(100, 105)]
+    ready_a, ready_b, running, queued, owned_pending = jobs
+    for job_id, state, metadata in (
+        (ready_a, "stale", {"activityOwner": "old-owner", "audit": "preserve"}), (ready_b, "failed", None),
+        (running, "running", {"activityOwner": "running-owner"}),
+        (queued, "queued", {"automaticPreparation": {"workflowId": "queued-owner"}}),
+        (owned_pending, "pending", {"activityOwner": "pending-owner"}),
+    ):
+        set_stage_state(conn, job_id, "score", state, tenant_id=LOCAL_TENANT,
+                        metadata=metadata, attempt_count=3, validate_transition=False)
+    for job_id, reason, marked in (
+        (running, "running", "2026-01-01T00:00:00Z"),
+        (queued, "queued", "2026-01-01T00:00:01Z"),
+        (owned_pending, "pending", "2026-01-01T00:00:02Z"),
+        (ready_a, "first", "2026-01-01T00:00:03Z"),
+        (ready_a, "second", "2026-01-01T00:00:04Z"),
+        (ready_b, "next", "2026-01-01T00:00:05Z"),
+    ):
+        conn.execute(
+            "INSERT INTO job_score_staleness (tenant_id,job_id,stale_reason,old_policy_version,"
+            "new_policy_version,marked_at,resolved) VALUES ('local',?,?,1,2,?,0)",
+            (str(job_id), reason, marked),
+        )
+    conn.commit()
+    active_before = [tuple(row) for row in conn.execute(
+        "SELECT * FROM job_stage_states WHERE job_id IN (?,?,?) ORDER BY job_id",
+        (str(running), str(queued), str(owned_pending)),
+    )]
+    markers_before = [tuple(row) for row in conn.execute("SELECT * FROM job_score_staleness ORDER BY rowid")]
+    repository = SqliteScoreStalenessRepository(conn)
+    assert [marker.job_id for marker in repository.reset_for_rescore(LOCAL_TENANT, limit=1)] == [ready_a]
+    assert [marker.job_id for marker in repository.reset_for_rescore(LOCAL_TENANT, limit=1)] == [ready_b]
+    assert repository.reset_for_rescore(LOCAL_TENANT, limit=1) == []
+    metadata = json.loads(conn.execute("SELECT metadata_json FROM job_stage_states WHERE job_id=? AND stage='score'",
+                                       (str(ready_a),)).fetchone()[0])
+    assert metadata["audit"] == "preserve" and "activityOwner" not in metadata
+    assert [tuple(row) for row in conn.execute(
+        "SELECT * FROM job_stage_states WHERE job_id IN (?,?,?) ORDER BY job_id",
+        (str(running), str(queued), str(owned_pending)),
+    )] == active_before
+    assert [tuple(row) for row in conn.execute("SELECT * FROM job_score_staleness ORDER BY rowid")] == markers_before
+    events = conn.execute("SELECT job_id, payload_json FROM job_events WHERE event_type='ScoreRescoreRequested'").fetchall()
+    assert [row["job_id"] for row in events] == [str(ready_a), str(ready_b)]
+    assert all(json.loads(row["payload_json"])["jobId"] == row["job_id"] for row in events)
+
+
+def test_stale_reset_excludes_inactive_lifecycle_before_limit(conn: sqlite3.Connection) -> None:
+    from jobctrl.state import set_stage_state
+
+    jobs = [_seed_job(conn, job_id=_job_id(n), url=f"https://example.test/lifecycle/{n}") for n in range(120, 129)]
+    hidden, deleted, closed, expired, removed, incompatible, hidden_owner, active_a, active_b = jobs
+    score_repo = SqliteScoreRepository(conn)
+    for index, job_id in enumerate(jobs):
+        score_repo.save(_build_score(job_id))
+        set_stage_state(conn, job_id, "score", "running" if job_id == hidden_owner else "stale",
+                        tenant_id=LOCAL_TENANT, metadata={"activityOwner": "keep"}, validate_transition=False)
+        conn.execute(
+            "INSERT INTO job_score_staleness (tenant_id,job_id,stale_reason,old_policy_version,"
+            "new_policy_version,marked_at,resolved) VALUES ('local',?,'synthetic',1,2,?,0)",
+            (str(job_id), f"2026-01-01T00:00:{index:02}Z"),
+        )
+    conn.executemany("INSERT INTO jobctrl_hidden_jobs (tenant_id,job_id,hidden_at) VALUES ('local',?,'2026-01-01T00:00:00Z')",
+                     [(str(hidden),), (str(hidden_owner),)])
+    conn.execute("INSERT INTO jobctrl_deleted_jobs (tenant_id,job_id,deleted_at,restored_at) "
+                 "VALUES ('local',?,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')", (str(deleted),))
+    conn.executemany(
+        "INSERT INTO posting_snapshot_sets (tenant_id,job_id,snapshot_set_json,latest_active_state,updated_at) "
+        "VALUES ('local',?,'{}',?,'2026-01-01T00:00:00Z')",
+        [(str(job_id), state) for job_id, state in zip(
+            (closed, expired, removed, incompatible), ("closed", "expired", "removed", "location_incompatible"), strict=True
+        )],
+    )
+    conn.commit()
+    inactive = tuple(map(str, jobs[:7]))
+    placeholders = ",".join("?" for _ in inactive)
+
+    def evidence() -> tuple[list[tuple], list[tuple], list[tuple]]:
+        return tuple([tuple(row) for row in conn.execute(
+            f"SELECT * FROM {table} WHERE tenant_id='local' AND job_id IN ({placeholders}) ORDER BY job_id", inactive
+        )] for table in ("job_stage_states", "job_score_staleness", "job_scores"))
+
+    before = evidence()
+    repo = SqliteScoreStalenessRepository(conn)
+    assert [marker.job_id for marker in repo.reset_for_rescore(LOCAL_TENANT, limit=1)] == [active_a]
+    assert [marker.job_id for marker in repo.reset_for_rescore(LOCAL_TENANT, limit=1)] == [active_b]
+    assert repo.reset_for_rescore(LOCAL_TENANT, limit=1) == []
+    assert evidence() == before
+    assert [row[0] for row in conn.execute(
+        "SELECT job_id FROM job_events WHERE event_type='ScoreRescoreRequested' ORDER BY event_id"
+    )] == [str(active_a), str(active_b)]
+
+    conn.execute("UPDATE jobctrl_hidden_jobs SET unhidden_at='2026-01-02T00:00:00Z' WHERE job_id=?", (str(hidden),))
+    conn.execute("UPDATE jobctrl_deleted_jobs SET restored_at='2026-01-02T00:00:00Z' WHERE job_id=?", (str(deleted),))
+    conn.commit()
+    assert [marker.job_id for marker in repo.reset_for_rescore(LOCAL_TENANT, limit=1)] == [hidden]
+    assert [marker.job_id for marker in repo.reset_for_rescore(LOCAL_TENANT, limit=1)] == [deleted]
+
+
+def test_stale_reset_rolls_back_and_respects_caller_transaction(conn: sqlite3.Connection) -> None:
+    from jobctrl.infrastructure.events import get_default_publisher
+    from jobctrl.state import set_stage_state
+
+    jobs = [_seed_job(conn, job_id=_job_id(n), url=f"https://example.test/transaction/{n}") for n in (111, 112)]
+    for job_id in jobs:
+        set_stage_state(conn, job_id, "score", "stale", tenant_id=LOCAL_TENANT, validate_transition=False)
+        conn.execute(
+            "INSERT INTO job_score_staleness (tenant_id,job_id,stale_reason,old_policy_version,"
+            "new_policy_version,marked_at,resolved) VALUES ('local',?,'synthetic',1,2,'2026-01-01T00:00:00Z',0)",
+            (str(job_id),),
+        )
+    conn.execute(
+        "CREATE TRIGGER fail_second_reset BEFORE INSERT ON job_events "
+        f"WHEN NEW.event_type='ScoreRescoreRequested' AND NEW.job_id='{jobs[1]}' "
+        "BEGIN SELECT RAISE(ABORT, 'synthetic reset failure'); END"
+    )
+    conn.commit()
+    before = [tuple(row) for row in conn.execute("SELECT * FROM job_stage_states ORDER BY job_id")]
+    notifications = []
+    subscription = get_default_publisher().subscribe("ScoreRescoreRequested", notifications.append)
+    try:
+        repo = SqliteScoreStalenessRepository(conn)
+        with pytest.raises(sqlite3.IntegrityError, match="synthetic reset failure"):
+            repo.reset_for_rescore(LOCAL_TENANT)
+        assert not conn.in_transaction
+        assert [tuple(row) for row in conn.execute("SELECT * FROM job_stage_states ORDER BY job_id")] == before
+        assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ScoreRescoreRequested'").fetchone()[0] == 0
+        assert notifications == []
+
+        conn.execute("DROP TRIGGER fail_second_reset")
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("UPDATE jobs SET title='caller-owned' WHERE job_id=?", (str(jobs[0]),))
+        assert len(repo.reset_for_rescore(LOCAL_TENANT, limit=1)) == 1
+        assert conn.in_transaction and notifications == []
+        db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+        with sqlite3.connect(db_path) as observer:
+            assert observer.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='score'",
+                                    (str(jobs[0]),)).fetchone()[0] == "stale"
+        conn.rollback()
+        assert [tuple(row) for row in conn.execute("SELECT * FROM job_stage_states ORDER BY job_id")] == before
+        assert notifications == []
+    finally:
+        subscription.unsubscribe()
+
+
+def test_stale_score_reset_advice_reaches_registered_rescore_without_spend(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    job_id = _seed_job(conn, job_id=_job_id(21), url="https://example.com/jobs/reset-advice")
+    SqliteScoreRepository(conn).save(_build_score(job_id))
+    accepted = tuple(conn.execute("SELECT * FROM job_scores WHERE job_id = ?", (str(job_id),)).fetchone())
+    conn.execute(
+        """
+        INSERT INTO job_score_staleness (
+            tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
+            new_policy_id, new_policy_version, marked_at, resolved
+        ) VALUES (?, ?, 'scoring_policy_changed', 'policy-1', 1, 'policy-2', 2, '2026-01-01', 0)
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    )
+    conn.commit()
+
+    SqliteScoreStalenessRepository(conn).reset_for_rescore(LOCAL_TENANT)
+
+    stage = conn.execute(
+        "SELECT state, next_action FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    event = conn.execute(
+        "SELECT payload_json FROM job_events WHERE tenant_id = ? AND job_id = ? AND event_type = 'ScoreRescoreRequested'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert stage["state"] == "pending"
+    assert tuple(conn.execute("SELECT * FROM job_scores WHERE job_id = ?", (str(job_id),)).fetchone()) == accepted
+    marker = conn.execute(
+        "SELECT resolved, resolved_at FROM job_score_staleness WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert tuple(marker) == (0, None)
+    probe = subprocess.run(
+        [sys.executable, str(Path(__file__).parent / "fixtures" / "rescore_advice_probe.py")],
+        input=json.dumps([stage["next_action"], json.loads(event["payload_json"])["nextAction"]]),
+        text=True,
+        capture_output=True,
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path), "JOBCTRL_DIR": str(tmp_path)},
+        timeout=30,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr

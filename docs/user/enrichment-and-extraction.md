@@ -282,8 +282,11 @@ a page that remains inaccessible stays on the manual path.
 
 The Jobs page's **Import job** action applies the same boundary to one explicit
 public URL. It acknowledges the import promptly and follows its progress without
-holding one browser request open until all interpretation work finishes. You can
-close the dialog while it runs and follow it through **View import run**. If a
+holding one browser request open until all interpretation work finishes. Once
+an import is accepted, you can enter another URL in the same dialog; each import
+continues independently and has its own **View import run** link. A finished
+import offers **View job** without interrupting another entry. You can also
+close the dialog while imports run and find their progress in **Runs**. If a
 progress check is temporarily unavailable, the dialog keeps the accepted import
 pending and checks again; it does not submit another import or claim the work
 failed because the browser request timed out. A readable page is ingested immediately with its extracted title,
@@ -433,3 +436,5 @@ See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determ
 ### Arbitrary-site discovery captures
 
 Smart Extract resolves listing cards through the same rendered and structured posting-source preparation as direct URL imports. Card titles, employer guesses and blank places are not canonical posting facts. Its full-posting qualification checks the extracted specific role, description and saved location/work-model scope before creating a Job, as described in [Discovery](discovery.md#how-target-search-controls-are-used). The accepted posting snapshot records the page, extraction and qualification determination IDs. That exact capture seeds enrichment; failed or uncertain qualification preserves existing accepted job content and creates no replacement job.
+
+For archived Smart Extract recovery, interrupted snapshot publication retains the exact qualified capture and determination references. Retry completes that capture without another page fetch or model call, while preserving newer accepted snapshots, enrichment and owner deletion. A publication failure leaves the archived item available for retry; canonical Job existence alone does not acknowledge it.

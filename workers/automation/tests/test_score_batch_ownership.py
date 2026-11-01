@@ -86,6 +86,24 @@ def _run(conn, monkeypatch, profile_snapshot, llm, **kwargs):
     )
 
 
+def test_batch_rescore_resolves_only_its_captured_stale_marker(conn, monkeypatch, profile_snapshot):
+    from jobctrl.infrastructure.scoring import SqliteScoreStalenessRepository
+    from .test_score_atomic_publication import _mark_policy_change
+
+    _seed(conn, _FOREIGN)
+    assert _run(conn, monkeypatch, profile_snapshot, _ScriptedLlm(_GOOD))["scored"] == 1
+    _mark_policy_change(conn, _job_id(_FOREIGN))
+    SqliteScoreStalenessRepository(conn).reset_for_rescore(LOCAL_TENANT)
+
+    result = _run(conn, monkeypatch, profile_snapshot, _ScriptedLlm(_GOOD), rescore=True)
+    assert result["scored"] == 1 and result["errors"] == 0
+    marker = conn.execute(
+        "SELECT resolved, resolved_by_score_version FROM job_score_staleness WHERE tenant_id='local' AND job_id=?",
+        (str(_job_id(_FOREIGN)),),
+    ).fetchone()
+    assert tuple(marker) == (1, 2)
+
+
 @pytest.mark.parametrize(
     "state,reserved", [("pending", False), ("queued", False), ("queued", True), ("running", False), ("canceled", False)]
 )

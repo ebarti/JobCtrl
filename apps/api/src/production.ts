@@ -1,6 +1,7 @@
 import { resolveProductionApiConfig } from "./config.js";
 import { createBundledPythonRuntime } from "./python-runtime.js";
 import { buildApp } from "./server.js";
+import { installApiShutdown } from "./shutdown.js";
 
 const config = resolveProductionApiConfig();
 // In bundled mode the first-party web origin is the API origin itself. Keep the
@@ -18,6 +19,7 @@ const app = buildApp({
   pythonRuntime,
   webAssetsDir: config.webAssetsDir,
 });
+installApiShutdown(app);
 
 try {
   await app.listen({ host: config.host, port: config.port });

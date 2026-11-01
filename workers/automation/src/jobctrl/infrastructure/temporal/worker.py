@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import signal
 from collections.abc import Sequence
 from typing import Any
 
@@ -108,3 +110,41 @@ def build_worker(
 
 def _max_concurrent_activities() -> int:
     return resolve_max_concurrent_activities().value
+
+
+async def run_worker_until_sigterm(worker: Worker) -> None:
+    """Request SDK shutdown on SIGTERM rather than killing the worker loop."""
+    loop = asyncio.get_running_loop()
+    previous = signal.getsignal(signal.SIGTERM)
+    shutdown_task: asyncio.Task[None] | None = None
+
+    def request_shutdown() -> None:
+        nonlocal shutdown_task
+        if shutdown_task is None:
+            shutdown_task = asyncio.create_task(worker.shutdown())
+
+    installed = False
+    try:
+        try:
+            loop.add_signal_handler(signal.SIGTERM, request_shutdown)
+            installed = True
+        except (NotImplementedError, RuntimeError):
+            # Preserve the platform's existing signal behavior when the loop
+            # cannot install a Unix signal handler.
+            pass
+        try:
+            await worker.run()
+        except BaseException:
+            # SDK startup validation can fail before it creates the shutdown
+            # completion event. Do not hide that error behind a shutdown wait
+            # which can never complete.
+            if shutdown_task is not None:
+                shutdown_task.cancel()
+                await asyncio.gather(shutdown_task, return_exceptions=True)
+            raise
+    finally:
+        if installed:
+            loop.remove_signal_handler(signal.SIGTERM)
+            signal.signal(signal.SIGTERM, previous)
+    if shutdown_task is not None:
+        await shutdown_task

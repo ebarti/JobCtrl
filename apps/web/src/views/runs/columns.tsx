@@ -41,7 +41,7 @@ function TemporalRunLink({ row }: { readonly row: WorkflowRunSummary }) {
       href={temporalWebUiWorkflowUrl(row.workflowId)}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`Open workflow ${row.workflowId} in Temporal Web UI`}
+      aria-label={`Open in Temporal: workflow ${row.workflowId}`}
       onClick={(event) => event.stopPropagation()}
     >
       Open in Temporal

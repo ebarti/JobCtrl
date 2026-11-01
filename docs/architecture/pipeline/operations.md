@@ -201,6 +201,15 @@ same place as manually-started runs.
 
 ## Discovery Schedule
 
+Discovery planning and each source family distinguish missing first-use rows
+from unreadable or invalid saved settings and profile targets. Read failures
+remain retryable; invalid saved inputs require recovery. Both stop before source
+acquisition and leave the stored inputs intact. If schedule settings cannot be
+read during worker startup, reconciliation leaves the existing schedule alone;
+the worker starts and any scheduled Discovery still goes through the same
+planning guard. Unrelated network operations read only their crawler identity;
+they do not need the profile's saved Discovery targets.
+
 Scheduled discovery is **off by default**. A single Temporal Schedule,
 `jobctrl-discovery-local`, can run `DiscoverWorkflow` on a cron expression, but
 it is reconciled from settings only at **worker startup**
@@ -338,12 +347,23 @@ stop request cannot leave the live workspace stale. A closed workflow whose
 durable phase still says `draining` is not cancelable.
 
 A failed execution is never treated as proof that the runtime is idle. The UI
-uses `activeItemsTotal` as a three-state recovery gate: a positive value reports
-remaining work, `null` reports that the inventory is unavailable, and exactly
-zero permits **Set up a new Discover run**. That action only selects and focuses
-the Discover launch controls; it never dispatches work implicitly. The same
-fresh zero-active-slot guard disables direct Discover submission for failed,
-completed-with-issues, closed-draining, and incomplete-history replacement
+uses fresh `capacity.activeSlots` to report remaining worker activity, including
+activities whose details are intentionally omitted. A failed operations refresh
+keeps the cached snapshot but marks its runtime facts unavailable and blocks
+Discover until a read succeeds. It marks cached overall, stage, and source-family
+estimates stale as well. A zero allowlisted `activeItemsTotal` alone cannot
+establish idle. If a heartbeat is stale, fresh-worker counts are only a lower
+bound and global occupancy remains unknown; the old row is not proof of worker
+exit. To avoid trapping normal restart on historical heartbeat rows, fresh zero
+slots and a complete empty fresh-worker inventory still permit the user to
+review and explicitly start Discover while that uncertainty is stated. Temporal
+reuses an already-running `discover-{tenant}` execution, preventing a second
+concurrent Discover workflow. That identity fence does not establish cleanup of
+detached activity from a closed execution or unrelated background work.
+**Set up a new Discover run** only selects and focuses the Discover launch
+controls; it never dispatches work implicitly. Fresh observed activity, failed
+refreshes, and unavailable or inconsistent fresh inventory disable direct
+Discover submission for failed, completed-with-issues, closed-draining, and incomplete-history replacement
 runs, so selecting the action tab cannot bypass recovery safety.
 
 `reconciled_not_found` is a provisional verdict: the worker could not find the
@@ -592,6 +612,8 @@ being restored, and hides selected-run counts, percentages, and ETAs. Recovery
 is an automatic transition state, not an accepted tracking mode. For selected
 scopes, `no_work` is valid only after coverage is `ready`, execution membership
 is closed, and projected demand is exactly zero.
+Positive-demand stage and source-family ranges may remain available before
+closure; their scope does not turn an open membership into proof of zero work.
 
 `incomplete` is a terminal audit state, not a degraded operating mode. Pipelines
 shows the exact partial evidence and bounded reason, withholds claims about the
@@ -607,6 +629,17 @@ Temporal task-queue observations. The operations reader derives the expected
 app directory from the configured database path, filters heartbeats to that
 resolved database/app-dir identity, selects the task queue named by the newest
 matching heartbeat, and aggregates fresh schema-valid workers from that queue.
+The heartbeat's backward-compatible queue-observation JSON also carries a
+separate blocking-executor status for the same worker. Operations totals
+accepting, refusing, and unknown workers and unfinished retired generations and
+calls, separately from short-control admission and unfinished control calls.
+Old or malformed status from a fresh worker remains unknown; a stale peer is
+excluded from these counts and its admission remains unconfirmed. Free Temporal
+slots do not guarantee that a stage call can be admitted, and unfinished retired calls
+may still run; they disappear from the count only after their futures return.
+Any refusal or unknown blocking admission makes contention unbounded for ETA.
+A stale peer on the selected task queue also makes contention unbounded because
+its activity and admission are not confirmed by the fresh-worker aggregate.
 Active slots count every activity; active-item detail is a separate
 oldest-first list capped at 20 with an exact allowlisted total and truncation
 marker. This global runtime inventory remains available when no Discover

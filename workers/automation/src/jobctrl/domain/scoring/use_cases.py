@@ -24,6 +24,7 @@ import logging
 import hashlib
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from contextlib import nullcontext
 from typing import Any
 
 from opentelemetry import trace as otel_trace
@@ -238,10 +239,8 @@ class ScoreJobOutcome:
 class ScoreJobUseCase:
     """Score one job and persist the result through ``ScoreRepository``.
 
-    The use case owns the transaction boundary: it reads the previous
-    ``JobScore`` (if any), constructs the next version, persists it, then
-    publishes ``JobScored``. The repository commits eagerly; the event
-    publisher is called after the commit so subscribers see the new row.
+    The use case publishes the score, determination binding and report in
+    one repository transaction, then emits ``JobScored`` after publication.
     """
 
     def __init__(
@@ -302,6 +301,12 @@ class ScoreJobUseCase:
         """
         if _job_tenant_id(job) != tenant_id or profile_snapshot.tenant_id != tenant_id:
             raise ValueError("Scoring input tenant_id does not match the requested tenant")
+        connection = getattr(self._repository, "connection", None)
+        if connection is not None and connection.in_transaction and self._publisher is not None:
+            raise RuntimeError("Cannot publish a score event inside a caller-owned transaction")
+        capture_staleness = getattr(self._repository, "capture_staleness_for_score", None)
+        if "_score_staleness_snapshot" not in job and callable(capture_staleness):
+            job = {**job, "_score_staleness_snapshot": capture_staleness(tenant_id, _job_id(job))}
         parse_result = self.compute(
             job=job,
             profile_snapshot=profile_snapshot,
@@ -404,59 +409,103 @@ class ScoreJobUseCase:
         version conflict or a real persistence failure and the caller
         wants both surfaced.
         """
-        retained = None
-        if parse.profile_review:
-            retained = self._repository.load(tenant_id, _job_id(job))
-            if retained is None or str(retained.version) != parse.profile_review["score_version"]:
-                raise DeterminationFailure("score_profile_binding_invalid")
-            self._repository.record_profile_review(retained,
-                entity_version=parse.profile_review["entity_version"],
-                determination_id=parse.profile_review["determination_id"])
-        if parse.retained_score_version is not None:
-            if retained is None or retained.version != parse.retained_score_version:
-                raise DeterminationFailure("score_profile_binding_invalid")
-            return ScoreJobOutcome(ok=True, score=retained, retained=True)
-
+        # A publisher cannot be notified truthfully while an outer caller
+        # still controls the commit, and policy lookup may initialise data.
+        connection = getattr(self._repository, "connection", None)
+        if connection is not None and connection.in_transaction and self._publisher is not None:
+            raise RuntimeError("Cannot publish a score event inside a caller-owned transaction")
         if not parse.ok or parse.fit_score is None:
+            # A completed profile-impact review is separately useful evidence
+            # even when the replacement scoring request failed. Its own writer
+            # fence ensures that it still belongs to the accepted score.
+            if parse.profile_review:
+                retained = self._repository.load(tenant_id, _job_id(job))
+                if retained is None or str(retained.version) != parse.profile_review["score_version"]:
+                    raise DeterminationFailure("score_profile_binding_invalid")
+                self._repository.record_profile_review(retained,
+                    entity_version=parse.profile_review["entity_version"],
+                    determination_id=parse.profile_review["determination_id"])
             return ScoreJobOutcome(
                 ok=False,
                 score=None,
                 error=parse.error or "Unknown parse error",
             )
-
         if _job_tenant_id(job) != tenant_id:
             raise ValueError("Scoring input tenant_id does not match the requested tenant")
         job_id = _job_id(job)
+
+        # Resolve scoring policy before taking a writer lock: its first read can
+        # initialise the default policy. No model or external I/O belongs inside
+        # the score publication transaction.
         resolved_parse = (
-            self._resolve_with_requirement_fit(
-                parse=parse,
-                tenant_id=tenant_id,
-                job_id=job_id,
-            )
+            self._resolve_with_requirement_fit(parse=parse, tenant_id=tenant_id, job_id=job_id)
             if _has_requirement_fit(parse)
             else self._resolve_with_policy(parse=parse, tenant_id=tenant_id)
-        )
-        scored_at = _utc_now()
-        new_score = self._build_aggregate(
-            tenant_id=tenant_id,
-            job=job,
-            parse=resolved_parse,
-            scored_at=scored_at,
-        )
-        self._repository.save(new_score)
-        self._determination_dependencies["repository"].bind(
-            tenant_id=str(tenant_id),
-            entity_kind="score",
-            entity_id=str(job_id),
-            entity_version=str(new_score.version),
-            determination_kind="scoring",
-            determination_id=resolved_parse.trace.determination_id,
-        )
-        self._persist_requirement_fit_report(
-            tenant_id=tenant_id,
-            score=new_score,
-            parse=resolved_parse,
-        )
+        ) if parse.retained_score_version is None else parse
+        if not resolved_parse.ok or resolved_parse.fit_score is None:
+            return ScoreJobOutcome(ok=False, score=None, error=resolved_parse.error or "Unknown parse error")
+
+        publication = getattr(self._repository, "publication", None)
+        scope = publication(tenant_id, job_id) if callable(publication) else nullcontext()
+        # SQLite publication participants must use the same connection; a
+        # second connection would commit separately or deadlock under our lock.
+        determination_repository = self._determination_dependencies["repository"]
+        for participant in (self._requirement_fit_repository,):
+            if participant is None or connection is None:
+                continue
+            participant_connection = getattr(participant, "connection", None)
+            if participant_connection is None:
+                participant_connection = getattr(participant, "_connection", getattr(participant, "_conn", None))
+            if participant_connection is not None and participant_connection is not connection:
+                raise RuntimeError("Score publication repositories must share one SQLite connection")
+
+        with scope:
+            validate_inputs = getattr(self._repository, "validate_scoring_inputs", None)
+            if callable(validate_inputs):
+                validate_inputs(job, resolved_parse)
+            retained = None
+            if parse.profile_review:
+                retained = self._repository.load(tenant_id, job_id)
+                if retained is None or str(retained.version) != parse.profile_review["score_version"]:
+                    raise DeterminationFailure("score_profile_binding_invalid")
+                self._repository.record_profile_review(retained,
+                    entity_version=parse.profile_review["entity_version"],
+                    determination_id=parse.profile_review["determination_id"])
+            if parse.retained_score_version is not None:
+                if retained is None or retained.version != parse.retained_score_version:
+                    raise DeterminationFailure("score_profile_binding_invalid")
+                return ScoreJobOutcome(ok=True, score=retained, retained=True)
+
+            new_score = self._build_aggregate(
+                tenant_id=tenant_id,
+                job=job,
+                parse=resolved_parse,
+                scored_at=_utc_now(),
+            )
+            self._repository.save(new_score)
+            # A real SQLite determination repository may have used another
+            # connection during model work; bind its persisted receipt on the
+            # score writer. Pure in-memory test/domain ports keep their own
+            # binding behavior rather than writing nonexistent SQLite receipts.
+            determination_connection = getattr(determination_repository, "connection", None)
+            if determination_connection is None:
+                determination_connection = getattr(determination_repository, "_connection", None)
+            bind_score = (getattr(self._repository, "bind_score_determination", None)
+                          if determination_connection is not None else None)
+            if not callable(bind_score):
+                bind_score = determination_repository.bind
+            bind_score(
+                tenant_id=str(tenant_id),
+                entity_kind="score",
+                entity_id=str(job_id),
+                entity_version=str(new_score.version),
+                determination_kind="scoring",
+                determination_id=resolved_parse.trace.determination_id,
+            )
+            self._persist_requirement_fit_report(tenant_id=tenant_id, score=new_score, parse=resolved_parse)
+            resolve_staleness = getattr(self._repository, "resolve_staleness_for_score", None)
+            if callable(resolve_staleness):
+                resolve_staleness(new_score, job.get("_score_staleness_snapshot"))
         self._publish_scored(new_score)
         return ScoreJobOutcome(ok=True, score=new_score)
 

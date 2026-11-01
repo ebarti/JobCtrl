@@ -1,3 +1,11 @@
+import type { OutreachPublicationConflict } from "@jobctrl/contracts";
+
+export class OutreachPublicationConflictError extends Error {
+  constructor(readonly conflict: OutreachPublicationConflict) {
+    super("Outreach changed while this draft was being verified. Your edits and completed checks are retained. Compare the current thread before deliberately retrying.");
+  }
+}
+
 /** Safe worker error protocol; never forward source/model/provider prose. */
 export class OutreachGenerationError extends Error {
   constructor(readonly code: string) {

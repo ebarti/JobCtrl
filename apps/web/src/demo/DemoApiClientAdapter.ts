@@ -1,4 +1,5 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
+import { demoContactFingerprint } from "./contact-fingerprint.js";
 import {
   ActivityListQuerySchema,
   InterviewCatalogSchema,
@@ -104,7 +105,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
   }
 
   dispose(): void {
-
+    this.localCommands.dispose();
   }
 
   health() {
@@ -285,6 +286,30 @@ export class DemoApiClientAdapter implements ApiClientPort {
   ): Promise<ApiClientResponse<"jobs">> {
     const normalized = JobListQuerySchema.parse(query);
     const source = await this.read((model) => model.jobs.list.items);
+    return this.projectJobs(source, normalized);
+  }
+
+  async reviewableJobs(
+    query: Parameters<ApiClientPort["reviewableJobs"]>[0] = {},
+  ): ReturnType<ApiClientPort["reviewableJobs"]> {
+    const normalized = JobListQuerySchema.parse(query);
+    const snapshot = await this.workspace.snapshot();
+    const source = structuredClone(snapshot.state.readModel.jobs.list.items);
+    const page = this.projectJobs(source, normalized);
+    const q = normalized.q.toLowerCase();
+    const matching = source.filter((job) => filterDemoJob(job, normalized, q) && (job.deletedAt || job.hiddenAt));
+    const observationId = this.localCommands.observePermanentDeleteSelection(
+      snapshot,
+      matching.map((job) => job.jobKey),
+      page.items.filter((job) => job.deletedAt || job.hiddenAt).map((job) => job.jobKey),
+    );
+    return { ...page, observationId };
+  }
+
+  private projectJobs(
+    source: JobSummary[],
+    normalized: ReturnType<typeof JobListQuerySchema.parse>,
+  ): ApiClientResponse<"jobs"> {
     const q = normalized.q.toLowerCase();
     const items = source.filter((job) => filterDemoJob(job, normalized, q));
     items.sort((left, right) =>
@@ -641,12 +666,14 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return response;
   }
 
-  contact(contactId: string) {
-    return this.detail(
+  async contact(contactId: string) {
+    const detail = await this.detail(
       (model) => model.contacts.details,
       contactId,
       "contact_not_found",
     );
+    detail.contact.fingerprint = await demoContactFingerprint(detail.contact);
+    return detail;
   }
 
   async researchTasks(
@@ -735,6 +762,11 @@ export class DemoApiClientAdapter implements ApiClientPort {
   deleteJobs = this.local("deleteJobs");
   permanentlyDeleteJob = this.local("permanentlyDeleteJob");
   permanentlyDeleteJobs = this.local("permanentlyDeleteJobs");
+  preparePermanentDeleteSelection(
+    request: Parameters<ApiClientPort["preparePermanentDeleteSelection"]>[0],
+  ): ReturnType<ApiClientPort["preparePermanentDeleteSelection"]> {
+    return this.localCommands.preparePermanentDeleteSelection(request);
+  }
   restoreJob = this.local("restoreJob");
   restoreJobs = this.local("restoreJobs");
   hideJob = this.local("hideJob");

@@ -197,12 +197,20 @@ cooperative cancellation and exact live lease renewal.
 Bounded Discover result handling is versioned by
 `discover-source-result-budget-v1`. The planning activity records the absolute
 new-job limit's per-source allowances; source activities retain that plan while
-current disabled/quarantine controls may only reduce it. Legacy histories retain
-their original consumer behavior. Supported built-in JobStreaming boards load as
+current disabled/quarantine controls may only reduce it. Completed legacy
+histories replay unchanged; pending bounded activities without the current
+all-family plan marker refuse with restart guidance. Supported built-in JobStreaming boards load as
 active, including retained rows with the retired experimental default.
 
-New canonical JobStreaming admissions append `DiscoveryNewJobAdmitted` to the
+New canonical admissions from every source family append `DiscoveryNewJobAdmitted` to the
 existing `job_events` ledger under the exact tenant/workflow/run/source identity.
+The current planner freezes `DiscoveryResultPlanFrozen` with operational caps,
+source IDs and an integrity digest. The canonical writer rechecks this marker
+under its transaction. Admission receipts use a null Job foreign key and an
+explicit canonical JobId plus source-observation/run IDs, so permanent Job
+deletion cannot replenish the same execution's allowance. Exact captured-posting
+admissions can finish acknowledgement at the cap without reingestion or recreating
+a deleted owner.
 The writer transaction includes the job, locator, canonical identity, source
 observation, acceptance receipt and execution membership. The receipt and both
 lineage adapters join the caller's transaction or savepoint; none may commit it

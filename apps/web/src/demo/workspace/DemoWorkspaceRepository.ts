@@ -35,6 +35,7 @@ import {
   type DemoWorkspaceStore,
   type DemoWorkspaceTransaction,
 } from "./storage.js";
+import { advanceLifecycleRevisions } from "./lifecycleRevisions.js";
 
 const KNOWN_DOMAIN_EVENT_TYPES = new Set<string>(DOMAIN_EVENT_TYPES);
 
@@ -293,6 +294,7 @@ export class DemoWorkspaceRepository {
         const next: DemoWorkspaceSnapshot = {
           ...draft,
           revision,
+          ...advanceLifecycleRevisions(current, draft, appendedEvents, revision),
           lastEventSequence: current.lastEventSequence + appendedEvents.length,
           eventLog: nextEventLog,
           updatedAt: this.clock.now().toISOString(),

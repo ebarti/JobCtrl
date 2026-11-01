@@ -24,9 +24,39 @@ class SavedSearchSettingsError(ConfigurationError):
         super().__init__("Saved work-model selections are invalid. Update Target search and retry Discovery.")
 
 
+class SavedSearchReadError(JobCtrlError):
+    """A transient read failure must not be interpreted as first-use absence."""
+
+    code = "saved_search_unavailable"
+
+    def __init__(self, component: str) -> None:
+        super().__init__(
+            f"{component} could not be read. Check workspace access and retry. "
+            "If damaged, preserve the workspace and restore a verified backup."
+        )
+
+
+class InvalidSavedSearchError(ConfigurationError):
+    """Persisted search inputs exist but cannot be interpreted safely."""
+
+    code = "invalid_saved_search"
+
+    def __init__(self, component: str) -> None:
+        super().__init__(
+            f"{component} are invalid. Preserve the workspace and restore a verified backup, "
+            "then retry."
+        )
+
+
 class MissingInputError(JobCtrlError):
     retryable = False
     code = "missing_input"
+
+
+class ApplyStoppedLocally(MissingInputError):
+    """The exact Apply owner observed the user's local stop before intent."""
+
+    code = "apply_stopped_locally"
 
 
 class TransientNetworkError(JobCtrlError):
@@ -84,16 +114,19 @@ def to_application_error(exc: Exception) -> ApplicationError:
 
 
 __all__ = [
+    "ApplyStoppedLocally",
     "AttemptBudgetExhaustedError",
     "BudgetExceededError",
     "ConfigurationError",
     "EnrichmentCanceledError",
     "JobCtrlError",
+    "InvalidSavedSearchError",
     "LlmTransientError",
     "MATERIAL_REJECTION_STATUSES",
     "MaterialRejectedError",
     "MissingInputError",
     "SavedSearchSettingsError",
+    "SavedSearchReadError",
     "SourceUnavailableError",
     "TransientNetworkError",
     "to_application_error",

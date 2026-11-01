@@ -2,6 +2,7 @@ import { applyD1Migrations, env } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { migrations } from "virtual:demo-edge-migrations";
 
+import consentedFunnel from "../reports/consented-funnel.sql?raw";
 import { classifyDemoApiRoute, dispatchDemoApi, ingressRateLimitKey } from "../workers/api.js";
 import {
   CONSENT_MAX_AGE_SECONDS,
@@ -22,6 +23,7 @@ import {
   activateTelemetryIdentity,
   hashTelemetryIds,
   insertTelemetryEvent,
+  isOperationalRequestAllowed,
   isTelemetryRequestAllowed,
   recordOperationalCounter,
 } from "../src/database.js";
@@ -31,10 +33,11 @@ import {
   handleHealthPost,
   handleTelemetryPost,
 } from "../src/handlers.js";
+import { readDemoCookies } from "../src/cookies.js";
 import { readStrictJson } from "../src/http.js";
 import { parseTelemetryEvent } from "../src/schema.js";
 import type { DemoRequestContext } from "../src/context.js";
-import { runRetention } from "../workers/retention.js";
+import retentionWorker, { runRetention } from "../workers/retention.js";
 
 const origin = "https://demo.jobctrl.dev";
 const visitorId = "v".repeat(32);
@@ -156,6 +159,135 @@ async function seedCookieDerivedState(visitor = visitorId, session = sessionId):
   return ids;
 }
 
+const injectedError = "private_exception_sentinel";
+const rawCookie = "private_cookie_sentinel";
+const rawUrl = "private_url_sentinel";
+const rawAgent = "private_agent_sentinel";
+const rawReferrer = "private_referrer_sentinel";
+const rawIp = "192.0.2.254";
+const rawBody = operationKey("private_body_sentinel");
+const privacySentinels = [injectedError, rawCookie, rawUrl, rawAgent, rawReferrer, rawIp, rawBody, visitorId, sessionId];
+
+function syntheticContext(path: string, body: unknown, cookies?: string, targetEnv = testEnv): DemoRequestContext {
+  const fullCookies = [cookies, `synthetic_cookie=${rawCookie}`].filter(Boolean).join("; ");
+  const result = jsonContext(`${path}?${rawUrl}=1`, body, fullCookies, "POST", targetEnv);
+  result.request.headers.set("cf-connecting-ip", rawIp);
+  result.request.headers.set("user-agent", rawAgent);
+  result.request.headers.set("referer", `https://example.invalid/${rawReferrer}`);
+  return result;
+}
+
+function captureConsole() {
+  const channels = [
+    "log", "info", "warn", "error", "debug", "trace", "dir", "dirxml", "table", "assert",
+    "group", "groupCollapsed", "groupEnd", "count", "countReset", "time", "timeLog", "timeEnd", "clear",
+  ] as const;
+  const spies = channels.filter((channel) => typeof console[channel] === "function")
+    .map((channel) => ({ channel, spy: vi.spyOn(console, channel) }));
+  return {
+    calls: () => spies.flatMap(({ channel, spy }) => spy.mock.calls.map((args) => ({ channel, args }))),
+    clear: () => spies.forEach(({ spy }) => spy.mockClear()),
+    restore: () => spies.forEach(({ spy }) => spy.mockRestore()),
+  };
+}
+
+function expectClosedLogs(capture: ReturnType<typeof captureConsole>, expected: unknown[], extraSentinels: string[] = []): void {
+  const calls = capture.calls();
+  expect(calls.map(({ channel }) => channel)).toEqual(expected.map(() => "log"));
+  const lines = calls.map(({ args }) => {
+    expect(args).toHaveLength(1);
+    expect(typeof args[0]).toBe("string");
+    return args[0] as string;
+  });
+  for (const line of lines) {
+    for (const sentinel of [...privacySentinels, ...extraSentinels]) expect(line).not.toContain(sentinel);
+  }
+  expect(lines.map((line) => JSON.parse(line) as unknown)).toEqual(expected);
+}
+
+function edgeLog(event: string, outcome: string, endpoint?: string): Record<string, string> {
+  return { component: "jobctrl-demo-edge", event, ...(endpoint === undefined ? {} : { endpoint }), outcome };
+}
+
+async function acceptedState(): Promise<{ identities: Record<string, unknown>[]; events: Record<string, unknown>[] }> {
+  const [identities, events] = await Promise.all([
+    testEnv.DEMO_TELEMETRY_DB.prepare("SELECT * FROM active_demo_identities ORDER BY visitor_hash, session_hash")
+      .all<Record<string, unknown>>(),
+    testEnv.DEMO_TELEMETRY_DB.prepare("SELECT * FROM consented_product_events ORDER BY id")
+      .all<Record<string, unknown>>(),
+  ]);
+  return { identities: identities.results, events: events.results };
+}
+
+async function clearInjectedFault(): Promise<void> {
+  await testEnv.DEMO_TELEMETRY_DB.prepare("DROP TRIGGER IF EXISTS inject_reliability_failure").run();
+}
+
+const retentionTables = [
+  "daily_operational_counters",
+  "operational_retry_digests",
+  "consented_product_events",
+  "telemetry_rate_windows",
+  "telemetry_global_rate_windows",
+  "operational_rate_windows",
+  "active_demo_identities",
+] as const;
+const expiredPerTable = [2, 3, 4, 5, 6, 7, 8] as const;
+
+async function seedRetentionControls(): Promise<void> {
+  const db = testEnv.DEMO_TELEMETRY_DB;
+  for (let index = 0; index <= 8; index += 1) {
+    const future = index === 8;
+    const row = {
+      name: future ? "future" : `expired-${index}`,
+      day: `2026-07-${String(index + 1).padStart(2, "0")}`,
+      window: `2026-07-11T11:${String(index).padStart(2, "0")}`,
+      expiry: future ? "2026-07-11T12:00:00.001Z"
+        : index === 1 ? fixedNow.toISOString() : "2026-07-11T11:59:59.999Z",
+    };
+    const statements = [
+      db.prepare(`INSERT INTO daily_operational_counters
+        (day_utc, release, consent_contract_version, metric, consent_choice, initialization_result, storage_mode, count, expires_at)
+        VALUES (?, 'test-release', 'v2', 'consent_choice', 'denied', 'not_applicable', 'not_applicable', 1, ?)`)
+        .bind(row.day, row.expiry),
+      db.prepare("INSERT INTO operational_retry_digests VALUES (?, ?)").bind(`digest-${row.name}`, row.expiry),
+      db.prepare(`INSERT INTO consented_product_events
+        (id, occurred_at, expires_at, visitor_hash, session_hash, release, consent_contract_version, event_name)
+        VALUES (?, '2026-07-01T00:00:00.000Z', ?, ?, ?, 'test-release', 'v2', 'demo_route_viewed')`)
+        .bind(`event-${row.name}`, row.expiry, `visitor-${row.name}`, `session-${row.name}`),
+      db.prepare("INSERT INTO telemetry_rate_windows VALUES (?, ?, 1, ?)")
+        .bind(`session-${row.name}`, row.window, row.expiry),
+      db.prepare("INSERT INTO telemetry_global_rate_windows VALUES (?, 1, ?)").bind(row.window, row.expiry),
+      db.prepare("INSERT INTO operational_rate_windows VALUES ('consent', ?, 1, ?)").bind(row.window, row.expiry),
+      db.prepare("INSERT INTO active_demo_identities VALUES (?, ?, ?)")
+        .bind(`visitor-${row.name}`, `session-${row.name}`, row.expiry),
+    ];
+    await db.batch(statements.filter((_, tableIndex) => future || index < expiredPerTable[tableIndex]!));
+  }
+}
+
+async function retentionState(): Promise<Record<string, unknown>[][]> {
+  return Promise.all(retentionTables.map(async (table) => (
+    await testEnv.DEMO_TELEMETRY_DB.prepare(`SELECT * FROM ${table} ORDER BY expires_at`)
+      .all<Record<string, unknown>>()
+  ).results));
+}
+
+function retentionLog(counts: readonly number[]): Record<string, string | number> {
+  return {
+    component: "jobctrl-demo-edge",
+    event: "retention",
+    outcome: "completed",
+    operationalCounters: counts[0]!,
+    retryDigests: counts[1]!,
+    productEvents: counts[2]!,
+    sessionRates: counts[3]!,
+    globalTelemetryRates: counts[4]!,
+    operationalRates: counts[5]!,
+    activeIdentities: counts[6]!,
+  };
+}
+
 beforeAll(async () => {
   await applyD1Migrations(testEnv.DEMO_TELEMETRY_DB, migrations);
 });
@@ -170,6 +302,104 @@ beforeEach(async () => {
     testEnv.DEMO_TELEMETRY_DB.prepare("DELETE FROM operational_rate_windows"),
     testEnv.DEMO_TELEMETRY_DB.prepare("DELETE FROM active_demo_identities"),
   ]);
+});
+
+describe("consented funnel report", () => {
+  it("classifies install clicks by event across every accepted route without mixing populations or releases", async () => {
+    const now = new Date();
+    const secondSession = "t".repeat(32);
+    const otherVisitor = "w".repeat(32);
+    const otherSession = "u".repeat(32);
+    const otherRelease = "synthetic-other-release";
+    const acceptedEnv = envWithLimiters(async () => ({ success: true }));
+    const otherReleaseEnv = { ...acceptedEnv, DEMO_RELEASE: otherRelease } as DemoEdgeEnv;
+
+    await activateTelemetryIdentity(acceptedEnv, visitorId, sessionId, now);
+    await activateTelemetryIdentity(acceptedEnv, visitorId, secondSession, now);
+    await activateTelemetryIdentity(otherReleaseEnv, otherVisitor, otherSession, now);
+
+    async function send(
+      targetEnv: DemoEdgeEnv,
+      visitor: string,
+      session: string,
+      name: string,
+      attributes: Record<string, string>,
+      choice: "granted" | "denied" = "granted",
+    ): Promise<void> {
+      const response = await handleTelemetryPost(jsonContext(
+        "/api/demo-telemetry", { name, attributes }, cookieHeader(choice, visitor, session), "POST", targetEnv,
+      ), now);
+      expect(response.status, `${name} ${attributes.route ?? "no route"}`).toBe(204);
+    }
+
+    await send(acceptedEnv, visitorId, sessionId, "demo_session_started", { route: "job_detail" });
+    for (const route of routeNames) {
+      await send(acceptedEnv, visitorId, sessionId, "demo_install_cta_clicked", { route });
+    }
+    await send(acceptedEnv, visitorId, sessionId, "demo_install_cta_clicked", {});
+    for (const route of ["job_detail", "evidence", "tailor", "apply_review", "apply_dry_run"]) {
+      await send(acceptedEnv, visitorId, sessionId, "demo_route_viewed", { route });
+    }
+    await send(acceptedEnv, visitorId, sessionId, "demo_route_viewed", { route: "jobs" });
+    await send(acceptedEnv, visitorId, sessionId, "demo_docs_cta_clicked", { route: "job_detail" });
+
+    await send(acceptedEnv, visitorId, secondSession, "demo_session_started", { route: "evidence" });
+    await send(acceptedEnv, visitorId, secondSession, "demo_install_cta_clicked", { route: "job_detail" });
+    await send(acceptedEnv, visitorId, secondSession, "demo_route_viewed", { route: "job_detail" });
+    await send(acceptedEnv, otherVisitor, otherSession, "demo_install_cta_clicked", { route: "evidence" });
+    await send(acceptedEnv, otherVisitor, otherSession, "demo_route_viewed", { route: "job_detail" });
+    await send(otherReleaseEnv, otherVisitor, otherSession, "demo_session_started", { route: "tailor" });
+    await send(otherReleaseEnv, otherVisitor, otherSession, "demo_install_cta_clicked", { route: "tailor" });
+    await send(otherReleaseEnv, otherVisitor, otherSession, "demo_route_viewed", { route: "evidence" });
+    await send(acceptedEnv, visitorId, sessionId, "demo_install_cta_clicked", { route: "job_detail" }, "denied");
+
+    await recordOperationalCounter(acceptedEnv, operationKey("funnel-denied"), {
+      metric: "consent_choice", consentChoice: "denied", initializationResult: "not_applicable", storageMode: "not_applicable",
+    }, now);
+    await testEnv.DEMO_TELEMETRY_DB.batch([
+      testEnv.DEMO_TELEMETRY_DB.prepare(
+        `INSERT INTO consented_product_events
+         (id, occurred_at, expires_at, visitor_hash, session_hash, release, consent_contract_version, event_name, route_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind("expired-install", "2000-01-01T00:00:00.000Z", "2000-01-02T00:00:00.000Z", "expired-visitor", "expired-session", testEnv.DEMO_RELEASE, CONSENT_CONTRACT_VERSION, "demo_install_cta_clicked", "job_detail"),
+      testEnv.DEMO_TELEMETRY_DB.prepare(
+        `INSERT INTO consented_product_events
+         (id, occurred_at, expires_at, visitor_hash, session_hash, release, consent_contract_version, event_name, route_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind("expired-release", "2000-01-01T00:00:00.000Z", "2000-01-02T00:00:00.000Z", "expired-visitor", "expired-session", "expired-only-release", CONSENT_CONTRACT_VERSION, "demo_session_started", "job_detail"),
+    ]);
+
+    // Successful telemetry responses can also mean a safe drop; inspect persisted rows.
+    expect(await eventCount()).toBe(routeNames.length + 19);
+    expect(await operationalStateCounts()).toMatchObject({ counters: 1 });
+
+    const report = await testEnv.DEMO_TELEMETRY_DB.prepare(consentedFunnel).all<{
+      population: string;
+      release: string;
+      metric: string;
+      dimension_1: string;
+      dimension_2: string;
+      events: number;
+      unique_visitors: number;
+      unique_sessions: number;
+    }>();
+    const row = (release: string, dimension: string, events: number, visitors: number, sessions: number) => ({
+      population: "consented traffic", release, metric: "core_funnel", dimension_1: dimension, dimension_2: "",
+      events, unique_visitors: visitors, unique_sessions: sessions,
+    });
+    expect(report.results).toEqual([
+      row(otherRelease, "01_session", 1, 1, 1),
+      row(otherRelease, "03_evidence", 1, 1, 1),
+      row(otherRelease, "07_install_cta", 1, 1, 1),
+      row(testEnv.DEMO_RELEASE, "01_session", 2, 1, 2),
+      row(testEnv.DEMO_RELEASE, "02_job_detail", 3, 2, 3),
+      row(testEnv.DEMO_RELEASE, "03_evidence", 1, 1, 1),
+      row(testEnv.DEMO_RELEASE, "04_tailor", 1, 1, 1),
+      row(testEnv.DEMO_RELEASE, "05_apply_review", 1, 1, 1),
+      row(testEnv.DEMO_RELEASE, "06_apply_dry_run", 1, 1, 1),
+      row(testEnv.DEMO_RELEASE, "07_install_cta", routeNames.length + 3, 2, 3),
+    ]);
+  });
 });
 
 describe("API Worker consent and telemetry boundaries", () => {
@@ -361,6 +591,151 @@ describe("API Worker consent and telemetry boundaries", () => {
     ]);
     expect(await activeIdentityCount()).toBe(0);
   });
+
+  it.each([
+    {
+      stage: "active-pair refresh",
+      trigger: "BEFORE UPDATE ON active_demo_identities",
+      cookies: cookieHeader("granted"),
+      failureOutcome: undefined,
+      successOutcome: "granted_idempotent",
+      newIdentities: 0,
+      countersBeforeRetry: 0,
+    },
+    {
+      stage: "new-session activation",
+      trigger: "BEFORE INSERT ON active_demo_identities",
+      cookies: `__Host-jobctrl_demo_consent=${CONSENT_CONTRACT_VERSION}.granted; __Host-jobctrl_demo_vid=${visitorId}`,
+      failureOutcome: undefined,
+      successOutcome: "new_session",
+      newIdentities: 1,
+      countersBeforeRetry: 0,
+    },
+    {
+      stage: "fresh-grant operational batch",
+      trigger: "BEFORE INSERT ON daily_operational_counters",
+      cookies: undefined,
+      failureOutcome: "database_unavailable",
+      successOutcome: "granted",
+      newIdentities: 1,
+      countersBeforeRetry: 0,
+    },
+    {
+      stage: "fresh-grant final identity activation",
+      trigger: "BEFORE INSERT ON active_demo_identities",
+      cookies: undefined,
+      failureOutcome: undefined,
+      successOutcome: "granted",
+      newIdentities: 1,
+      countersBeforeRetry: 1,
+    },
+    {
+      stage: "rotated-grant final identity activation",
+      trigger: "BEFORE INSERT ON active_demo_identities",
+      cookies: `__Host-jobctrl_demo_consent=v1.granted; __Host-jobctrl_demo_vid=${visitorId}; __Host-jobctrl_demo_session=${sessionId}`,
+      failureOutcome: undefined,
+      successOutcome: "granted",
+      newIdentities: 1,
+      countersBeforeRetry: 1,
+    },
+  ])("fails safely at $stage and preserves accepted history on retry", async (testCase) => {
+    await seedCookieDerivedState();
+    const before = await acceptedState();
+    const payload = { choice: "granted", operationKey: rawBody };
+    const captured = captureConsole();
+    try {
+      await testEnv.DEMO_TELEMETRY_DB.prepare(
+        `CREATE TRIGGER inject_reliability_failure ${testCase.trigger} BEGIN SELECT RAISE(ABORT, '${injectedError}'); END`,
+      ).run();
+      const failed = await handleConsentPost(syntheticContext("/api/demo-consent", payload, testCase.cookies), fixedNow);
+      expect(failed.status).toBe(503);
+      expect(await failed.json()).toEqual({ error: "temporarily_unavailable" });
+      expect(failed.headers.get("set-cookie")).toBeNull();
+      expect(await acceptedState()).toEqual(before);
+      const afterFailure = await operationalStateCounts();
+      expect(afterFailure.counters).toBe(testCase.countersBeforeRetry);
+      expect(afterFailure.retries).toBe(testCase.countersBeforeRetry);
+      expectClosedLogs(captured, testCase.failureOutcome === undefined
+        ? []
+        : [edgeLog("consent_write", testCase.failureOutcome, "consent")]);
+
+      await clearInjectedFault();
+      captured.clear();
+      const retried = await handleConsentPost(syntheticContext("/api/demo-consent", payload, testCase.cookies), fixedNow);
+      expect(retried.status).toBe(200);
+      expect(await retried.json()).toEqual({ choice: "granted", version: CONSENT_CONTRACT_VERSION });
+      expect(setCookies(retried)).toHaveLength(testCase.newIdentities === 0 ? 2 : 3);
+      if (testCase.stage === "rotated-grant final identity activation") {
+        expect(setCookies(retried).join(";")).not.toContain(visitorId);
+        expect(setCookies(retried).join(";")).not.toContain(sessionId);
+      }
+      const afterRetry = await acceptedState();
+      expect(afterRetry.identities).toHaveLength(before.identities.length + testCase.newIdentities);
+      expect(afterRetry.identities).toEqual(expect.arrayContaining(before.identities));
+      expect(afterRetry.events).toEqual(before.events);
+      if (testCase.newIdentities === 1) {
+        const cookieJar = setCookies(retried).map((cookie) => cookie.split(";", 1)[0]).join("; ");
+        const parsed = readDemoCookies(new Request(origin, { headers: { cookie: cookieJar } }));
+        expect(parsed.consent).toBe("granted");
+        expect(parsed.visitorId).toBeDefined();
+        expect(parsed.sessionId).toBeDefined();
+        const ids = await hashTelemetryIds(parsed.visitorId!, parsed.sessionId!);
+        const persisted = await testEnv.DEMO_TELEMETRY_DB.prepare(
+          "SELECT visitor_hash, session_hash, expires_at FROM active_demo_identities WHERE visitor_hash = ? AND session_hash = ?",
+        ).bind(ids.visitorHash, ids.sessionHash).first();
+        expect(persisted).toEqual({
+          visitor_hash: ids.visitorHash,
+          session_hash: ids.sessionHash,
+          expires_at: new Date(fixedNow.getTime() + PERSISTENT_COOKIE_MAX_AGE_SECONDS * 1_000).toISOString(),
+        });
+        const consentRead = await handleConsentGet(context("/api/demo-consent", {
+          method: "GET", headers: { cookie: cookieJar },
+        }), fixedNow);
+        expect(consentRead.status).toBe(200);
+        expect(await consentRead.json()).toEqual({ choice: "granted", version: CONSENT_CONTRACT_VERSION });
+      }
+      if (testCase.successOutcome === "granted") {
+        const counter = await testEnv.DEMO_TELEMETRY_DB.prepare(
+          "SELECT count FROM daily_operational_counters WHERE metric = 'consent_choice' AND consent_choice = 'granted'",
+        ).first<{ count: number }>();
+        expect(counter?.count).toBe(1);
+        expect((await operationalStateCounts()).retries).toBe(1);
+      }
+      expectClosedLogs(captured, [edgeLog("consent_write", testCase.successOutcome, "consent")]);
+    } finally {
+      await clearInjectedFault();
+      captured.restore();
+    }
+  }, 30_000);
+
+  it("distinguishes a lost initial grant response from a cookie-bearing repeat", async () => {
+    const payload = { choice: "granted", operationKey: rawBody };
+    const first = await handleConsentPost(syntheticContext("/api/demo-consent", payload), fixedNow);
+    expect(first.status).toBe(200);
+    const firstCookies = setCookies(first).map((cookie) => cookie.split(";", 1)[0]).join("; ");
+    const afterFirst = await acceptedState();
+    expect(afterFirst.identities).toHaveLength(1);
+
+    // The client did not receive the first response, so the same operation has no cookies.
+    const retried = await handleConsentPost(syntheticContext("/api/demo-consent", payload), fixedNow);
+    expect(retried.status).toBe(200);
+    const retryCookies = setCookies(retried).map((cookie) => cookie.split(";", 1)[0]).join("; ");
+    expect(retryCookies).not.toBe(firstCookies);
+    const afterRetry = await acceptedState();
+    expect(afterRetry.identities).toHaveLength(2);
+    expect(afterRetry.identities).toEqual(expect.arrayContaining(afterFirst.identities));
+    const counter = await testEnv.DEMO_TELEMETRY_DB.prepare(
+      "SELECT count FROM daily_operational_counters WHERE metric = 'consent_choice' AND consent_choice = 'granted'",
+    ).first<{ count: number }>();
+    expect(counter?.count).toBe(1);
+    expect((await operationalStateCounts()).retries).toBe(1);
+
+    const repeat = await handleConsentPost(syntheticContext("/api/demo-consent", payload, retryCookies), fixedNow);
+    expect(repeat.status).toBe(200);
+    expect(setCookies(repeat)).toHaveLength(2);
+    expect(await acceptedState()).toEqual(afterRetry);
+    expect((await operationalStateCounts()).retries).toBe(1);
+  }, 30_000);
 
   it("deduplicates a committed operation when the response is lost", async () => {
     const payload = { choice: "denied", operationKey: operationKey("lost-response") };
@@ -610,7 +985,7 @@ describe("API Worker consent and telemetry boundaries", () => {
         return { success: false };
       },
     );
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const captured = captureConsole();
     try {
       const response = await dispatchDemoApi(jsonContext("/api/demo-consent", {
         choice: "denied", operationKey: operationKey("limited-identity-denial"),
@@ -618,10 +993,10 @@ describe("API Worker consent and telemetry boundaries", () => {
       expect(response.status).toBe(409);
       expect(response.headers.get("set-cookie")).toBeNull();
       expect(ingressCalls).toBe(1);
-      expect(logSpy).not.toHaveBeenCalled();
+      expectClosedLogs(captured, []);
       expect(await operationalStateCounts()).toEqual({ counters: 0, retries: 0, rates: 0 });
     } finally {
-      logSpy.mockRestore();
+      captured.restore();
     }
   });
 
@@ -695,6 +1070,62 @@ describe("API Worker consent and telemetry boundaries", () => {
     expect(row?.visitor_hash).not.toContain(visitorId);
     expect(row?.session_hash).not.toContain(sessionId);
   });
+
+  it.each([
+    { stage: "session admission", trigger: "BEFORE INSERT ON telemetry_rate_windows", sessionCount: 1, globalCount: 0, edgeCalls: 0 },
+    { stage: "global admission", trigger: "BEFORE INSERT ON telemetry_global_rate_windows", sessionCount: 2, globalCount: 0, edgeCalls: 0 },
+    { stage: "edge limiter", trigger: undefined, sessionCount: 2, globalCount: 1, edgeCalls: 1 },
+    { stage: "event insertion", trigger: "BEFORE INSERT ON consented_product_events", sessionCount: 2, globalCount: 1, edgeCalls: 1 },
+  ])("drops optional telemetry on $stage failure and retains accepted state", async (testCase) => {
+    await seedCookieDerivedState();
+    const before = await acceptedState();
+    let edgeCalls = 0;
+    let failLimiter = testCase.stage === "edge limiter";
+    const targetEnv = envWithLimiters(async () => {
+      edgeCalls += 1;
+      if (failLimiter) throw new Error(injectedError);
+      return { success: true };
+    });
+    const payload = { name: "demo_route_viewed", attributes: { route: "jobs" } };
+    const captured = captureConsole();
+    try {
+      if (testCase.trigger !== undefined) {
+        await testEnv.DEMO_TELEMETRY_DB.prepare(
+          `CREATE TRIGGER inject_reliability_failure ${testCase.trigger} BEGIN SELECT RAISE(ABORT, '${injectedError}'); END`,
+        ).run();
+      }
+      const failed = await handleTelemetryPost(
+        syntheticContext("/api/demo-telemetry", payload, cookieHeader("granted"), targetEnv), fixedNow,
+      );
+      expect(failed.status).toBe(204);
+      expect(await failed.text()).toBe("");
+      expect(failed.headers.get("set-cookie")).toBeNull();
+      expect(await acceptedState()).toEqual(before);
+      const session = await testEnv.DEMO_TELEMETRY_DB.prepare(
+        "SELECT COALESCE(SUM(count), 0) AS count FROM telemetry_rate_windows",
+      ).first<{ count: number }>();
+      expect(session?.count).toBe(testCase.sessionCount);
+      expect(await globalRateCount()).toBe(testCase.globalCount);
+      expect(edgeCalls).toBe(testCase.edgeCalls);
+      expectClosedLogs(captured, [edgeLog("telemetry_write", "dropped", "telemetry")]);
+
+      await clearInjectedFault();
+      failLimiter = false;
+      captured.clear();
+      const retried = await handleTelemetryPost(
+        syntheticContext("/api/demo-telemetry", payload, cookieHeader("granted"), targetEnv), fixedNow,
+      );
+      expect(retried.status).toBe(204);
+      const afterRetry = await acceptedState();
+      expect(afterRetry.identities).toEqual(before.identities);
+      expect(afterRetry.events).toHaveLength(before.events.length + 1);
+      expect(afterRetry.events).toEqual(expect.arrayContaining(before.events));
+      expectClosedLogs(captured, [edgeLog("telemetry_write", "recorded", "telemetry")]);
+    } finally {
+      await clearInjectedFault();
+      captured.restore();
+    }
+  }, 30_000);
 
   it("accepts only closed timing metrics and non-duration metric buckets", async () => {
     await activateTelemetryIdentity(testEnv, visitorId, sessionId, fixedNow);
@@ -809,30 +1240,224 @@ describe("API Worker consent and telemetry boundaries", () => {
     expect(await operationalStateCounts()).toEqual({ counters: 0, retries: 0, rates: 0 });
   });
 
-  it("runs duplicate UTC retention safely", async () => {
-    await testEnv.DEMO_TELEMETRY_DB.batch([
-      testEnv.DEMO_TELEMETRY_DB.prepare(
-        "INSERT INTO daily_operational_counters VALUES ('2026-04-01', 'test-release', 'v1', 'consent_choice', 'denied', 'not_applicable', 'not_applicable', 1, '2026-07-10T12:00:00.000Z')",
-      ),
-      testEnv.DEMO_TELEMETRY_DB.prepare(
-        "INSERT INTO operational_retry_digests VALUES ('expired-digest', '2026-07-10T12:00:00.000Z')",
-      ),
-      testEnv.DEMO_TELEMETRY_DB.prepare(
-        "INSERT INTO consented_product_events (id, occurred_at, expires_at, visitor_hash, session_hash, release, consent_contract_version, event_name) VALUES ('expired-event', '2026-04-01T00:00:00.000Z', '2026-07-10T12:00:00.000Z', 'a', 'b', 'test-release', 'v1', 'demo_timing')",
-      ),
-      testEnv.DEMO_TELEMETRY_DB.prepare(
-        "INSERT INTO telemetry_global_rate_windows VALUES ('2026-07-10T12:00', 1, '2026-07-10T12:00:00.000Z')",
-      ),
-      testEnv.DEMO_TELEMETRY_DB.prepare(
-        "INSERT INTO active_demo_identities VALUES ('expired-visitor', 'expired-session', '2026-07-11T12:00:00.000Z')",
-      ),
-    ]);
-    await runRetention(testEnv, fixedNow);
-    await runRetention(testEnv, fixedNow);
-    expect(await eventCount()).toBe(0);
-    expect(await globalRateCount()).toBe(0);
-    expect(await activeIdentityCount()).toBe(0);
-  });
+  it("emits closed denial and health outcomes and suppresses ingress-limited denial logs", async () => {
+    await seedCookieDerivedState();
+    const before = await acceptedState();
+    const denial = { choice: "denied", operationKey: rawBody };
+    const health = { choice: "granted", result: "success", storageMode: "memory", operationKey: rawBody };
+    const captured = captureConsole();
+    try {
+      const rejected = await handleConsentPost(
+        syntheticContext("/api/demo-consent", denial, cookieHeader("granted")), fixedNow,
+      );
+      expect(rejected.status).toBe(409);
+      expect(rejected.headers.get("set-cookie")).toBeNull();
+      const limitedContext = syntheticContext("/api/demo-consent", denial, cookieHeader("granted"));
+      limitedContext.ingressAllowed = false;
+      expect((await handleConsentPost(limitedContext, fixedNow)).status).toBe(409);
+      expectClosedLogs(captured, [edgeLog("consent_write", "identity_bearing_denial_rejected", "consent")]);
+
+      captured.clear();
+      const recorded = await handleHealthPost(
+        syntheticContext("/api/demo-health", health, cookieHeader("granted")), fixedNow,
+      );
+      expect(recorded.status).toBe(204);
+      expectClosedLogs(captured, [edgeLog("health_write", "recorded", "health")]);
+
+      await testEnv.DEMO_TELEMETRY_DB.prepare(
+        `CREATE TRIGGER inject_reliability_failure BEFORE INSERT ON operational_rate_windows BEGIN SELECT RAISE(ABORT, '${injectedError}'); END`,
+      ).run();
+      captured.clear();
+      const failed = await handleHealthPost(
+        syntheticContext("/api/demo-health", health, cookieHeader("granted")), fixedNow,
+      );
+      expect(failed.status).toBe(503);
+      expect(await failed.json()).toEqual({ error: "temporarily_unavailable" });
+      expect(failed.headers.get("set-cookie")).toBeNull();
+      expect(await acceptedState()).toEqual(before);
+      expectClosedLogs(captured, [edgeLog("health_write", "database_unavailable", "health")]);
+    } finally {
+      await clearInjectedFault();
+      captured.restore();
+    }
+  }, 30_000);
+
+  it("keeps routed success and failure logs closed across every console channel", async () => {
+    const routePaths = ["/api/demo-consent", "/api/demo-health", "/api/demo-telemetry"] as const;
+    const keys = await Promise.all(routePaths.map((path) => ingressRateLimitKey(rawIp, path)));
+    const receivedKeys: string[] = [];
+    let failTelemetryLimiter = false;
+    const routedEnv = envWithLimiters(
+      async () => {
+        if (failTelemetryLimiter) throw new Error(injectedError);
+        return { success: true };
+      },
+      async ({ key }) => {
+        receivedKeys.push(key);
+        return { success: true };
+      },
+    );
+    const healthKey = operationKey("private_health_body_sentinel");
+    const failedGrantKey = operationKey("private_failed_grant_body_sentinel");
+    const sentinels = [...keys, healthKey, failedGrantKey];
+    const captured = captureConsole();
+    try {
+      const grant = await dispatchDemoApi(syntheticContext("/api/demo-consent", {
+        choice: "granted", operationKey: rawBody,
+      }, undefined, routedEnv).request, routedEnv);
+      expect(grant.status).toBe(200);
+      const cookies = setCookies(grant).map((cookie) => cookie.split(";", 1)[0]).join("; ");
+      const parsed = readDemoCookies(new Request(origin, { headers: { cookie: cookies } }));
+      expect(parsed.visitorId).toBeDefined();
+      expect(parsed.sessionId).toBeDefined();
+      sentinels.push(parsed.visitorId!, parsed.sessionId!);
+      expectClosedLogs(captured, [edgeLog("consent_write", "granted", "consent")], sentinels);
+
+      const health = { choice: "granted", result: "success", storageMode: "memory", operationKey: healthKey };
+      captured.clear();
+      const healthy = await dispatchDemoApi(
+        syntheticContext("/api/demo-health", health, cookies, routedEnv).request, routedEnv,
+      );
+      expect(healthy.status).toBe(204);
+      expectClosedLogs(captured, [edgeLog("health_write", "recorded", "health")], sentinels);
+
+      const event = { name: "demo_route_viewed", attributes: { route: "jobs" } };
+      captured.clear();
+      const recorded = await dispatchDemoApi(
+        syntheticContext("/api/demo-telemetry", event, cookies, routedEnv).request, routedEnv,
+      );
+      expect(recorded.status).toBe(204);
+      expect(await eventCount()).toBe(1);
+      expectClosedLogs(captured, [edgeLog("telemetry_write", "recorded", "telemetry")], sentinels);
+      const accepted = await acceptedState();
+
+      await testEnv.DEMO_TELEMETRY_DB.prepare(
+        `CREATE TRIGGER inject_reliability_failure BEFORE INSERT ON daily_operational_counters BEGIN SELECT RAISE(ABORT, '${injectedError}'); END`,
+      ).run();
+      captured.clear();
+      const failedGrant = await dispatchDemoApi(syntheticContext("/api/demo-consent", {
+        choice: "granted", operationKey: failedGrantKey,
+      }, undefined, routedEnv).request, routedEnv);
+      expect(failedGrant.status).toBe(503);
+      expect(await failedGrant.json()).toEqual({ error: "temporarily_unavailable" });
+      expect(failedGrant.headers.get("set-cookie")).toBeNull();
+      expect(await acceptedState()).toEqual(accepted);
+      expectClosedLogs(captured, [edgeLog("consent_write", "database_unavailable", "consent")], sentinels);
+      await clearInjectedFault();
+
+      await testEnv.DEMO_TELEMETRY_DB.prepare(
+        `CREATE TRIGGER inject_reliability_failure BEFORE INSERT ON operational_rate_windows BEGIN SELECT RAISE(ABORT, '${injectedError}'); END`,
+      ).run();
+      captured.clear();
+      const failedHealth = await dispatchDemoApi(
+        syntheticContext("/api/demo-health", health, cookies, routedEnv).request, routedEnv,
+      );
+      expect(failedHealth.status).toBe(503);
+      expect(await failedHealth.json()).toEqual({ error: "temporarily_unavailable" });
+      expect(await acceptedState()).toEqual(accepted);
+      expectClosedLogs(captured, [edgeLog("health_write", "database_unavailable", "health")], sentinels);
+      await clearInjectedFault();
+
+      failTelemetryLimiter = true;
+      captured.clear();
+      const dropped = await dispatchDemoApi(
+        syntheticContext("/api/demo-telemetry", event, cookies, routedEnv).request, routedEnv,
+      );
+      expect(dropped.status).toBe(204);
+      expect(await dropped.text()).toBe("");
+      expect(await acceptedState()).toEqual(accepted);
+      expectClosedLogs(captured, [edgeLog("telemetry_write", "dropped", "telemetry")], sentinels);
+      expect(receivedKeys).toEqual([keys[0], keys[1], keys[2], keys[0], keys[1], keys[2]]);
+    } finally {
+      await clearInjectedFault();
+      captured.restore();
+    }
+  }, 30_000);
+
+  it("emits closed rate-drop and inactive-drop telemetry outcomes", async () => {
+    await seedCookieDerivedState();
+    const before = await acceptedState();
+    const payload = { name: "demo_route_viewed", attributes: { route: "jobs" } };
+    const captured = captureConsole();
+    try {
+      const limitedEnv = envWithLimiters(async () => ({ success: false }));
+      const limited = await handleTelemetryPost(
+        syntheticContext("/api/demo-telemetry", payload, cookieHeader("granted"), limitedEnv), fixedNow,
+      );
+      expect(limited.status).toBe(204);
+      expect(await acceptedState()).toEqual(before);
+      expectClosedLogs(captured, [edgeLog("telemetry_write", "rate_dropped", "telemetry")]);
+
+      // Expire the pair between admission and insertion to exercise the second fence.
+      const expiringEnv = envWithLimiters(async () => {
+        await testEnv.DEMO_TELEMETRY_DB.prepare("UPDATE active_demo_identities SET expires_at = ?")
+          .bind(fixedNow.toISOString()).run();
+        return { success: true };
+      });
+      captured.clear();
+      const inactive = await handleTelemetryPost(
+        syntheticContext("/api/demo-telemetry", payload, cookieHeader("granted"), expiringEnv), fixedNow,
+      );
+      expect(inactive.status).toBe(204);
+      expect((await acceptedState()).events).toEqual(before.events);
+      expectClosedLogs(captured, [edgeLog("telemetry_write", "inactive_dropped", "telemetry")]);
+    } finally {
+      captured.restore();
+    }
+  }, 30_000);
+
+  it("removes expired and exactly expired rows from all seven tables while preserving future rows", async () => {
+    await seedRetentionControls();
+    const before = await retentionState();
+    expect(before.map((rows) => rows.length)).toEqual(expiredPerTable.map((count) => count + 1));
+    const captured = captureConsole();
+    try {
+      await retentionWorker.scheduled({ scheduledTime: fixedNow.getTime() }, testEnv);
+      const after = await retentionState();
+      for (let index = 0; index < retentionTables.length; index += 1) {
+        const expired = before[index]!.filter((row) => row.expires_at === "2026-07-11T11:59:59.999Z");
+        const exact = before[index]!.filter((row) => row.expires_at === fixedNow.toISOString());
+        const future = before[index]!.filter((row) => row.expires_at === "2026-07-11T12:00:00.001Z");
+        expect(expired, retentionTables[index]).toHaveLength(expiredPerTable[index]! - 1);
+        expect(exact, retentionTables[index]).toHaveLength(1);
+        expect(future, retentionTables[index]).toHaveLength(1);
+        expect(after[index], retentionTables[index]).toEqual(future);
+      }
+      expectClosedLogs(captured, [retentionLog(expiredPerTable)]);
+
+      captured.clear();
+      await retentionWorker.scheduled({ scheduledTime: fixedNow.getTime() }, testEnv);
+      expect(await retentionState()).toEqual(after);
+      expectClosedLogs(captured, [retentionLog(retentionTables.map(() => 0))]);
+    } finally {
+      captured.restore();
+    }
+  }, 30_000);
+
+  it("rolls back a failed retention batch and exposes only the scheduled failure", async () => {
+    await seedRetentionControls();
+    const before = await retentionState();
+    const captured = captureConsole();
+    try {
+      await testEnv.DEMO_TELEMETRY_DB.prepare(
+        `CREATE TRIGGER inject_reliability_failure BEFORE DELETE ON consented_product_events BEGIN SELECT RAISE(ABORT, '${injectedError}'); END`,
+      ).run();
+      let failure: unknown;
+      try {
+        await retentionWorker.scheduled({ scheduledTime: fixedNow.getTime() }, testEnv);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toBe("retention_failed");
+      // The trigger fires on the third delete, after the first two statements have run.
+      expect(await retentionState()).toEqual(before);
+      expectClosedLogs(captured, [edgeLog("retention", "failed")]);
+    } finally {
+      await clearInjectedFault();
+      captured.restore();
+    }
+  }, 30_000);
 
   it("assigns conservative exact expiries below every physical retention maximum", async () => {
     await recordOperationalCounter(testEnv, operationKey("expiry-counter"), {
@@ -847,6 +1472,8 @@ describe("API Worker consent and telemetry boundaries", () => {
       name: "demo_route_viewed",
       attributes: { route: "jobs" },
     }, fixedNow);
+    expect(await isOperationalRequestAllowed(testEnv, "health", fixedNow)).toBe(true);
+    expect(await isTelemetryRequestAllowed(envWithLimiters(async () => ({ success: true })), ids.visitorHash, ids.sessionHash, fixedNow)).toBe(true);
 
     const retry = await testEnv.DEMO_TELEMETRY_DB.prepare(
       "SELECT expires_at FROM operational_retry_digests",
@@ -860,6 +1487,11 @@ describe("API Worker consent and telemetry boundaries", () => {
     const identity = await testEnv.DEMO_TELEMETRY_DB.prepare(
       "SELECT expires_at FROM active_demo_identities",
     ).first<{ expires_at: string }>();
+    const rateRows = await Promise.all([
+      "telemetry_rate_windows",
+      "telemetry_global_rate_windows",
+      "operational_rate_windows",
+    ].map((table) => testEnv.DEMO_TELEMETRY_DB.prepare(`SELECT expires_at FROM ${table}`).first<{ expires_at: string }>()));
 
     expect(Date.parse(retry!.expires_at) - fixedNow.getTime()).toBe(
       (OPERATION_DIGEST_MAX_AGE_SECONDS - RETENTION_SAFETY_MARGIN_SECONDS) * 1_000,
@@ -870,11 +1502,16 @@ describe("API Worker consent and telemetry boundaries", () => {
     expect(Date.parse(identity!.expires_at) - fixedNow.getTime()).toBe(
       PERSISTENT_COOKIE_MAX_AGE_SECONDS * 1_000,
     );
+    for (const rate of rateRows) {
+      expect(Date.parse(rate!.expires_at) - fixedNow.getTime()).toBe(
+        (OPERATION_DIGEST_MAX_AGE_SECONDS - RETENTION_SAFETY_MARGIN_SECONDS) * 1_000,
+      );
+    }
     const dayStart = new Date("2026-07-11T00:00:00.000Z");
     expect(Date.parse(counter!.expires_at) - dayStart.getTime()).toBe(
       (PRODUCT_DATA_MAX_AGE_SECONDS - RETENTION_SAFETY_MARGIN_SECONDS) * 1_000,
     );
-  });
+  }, 30_000);
 
   it("upgrades an applied original 0001 and fresh-installs the complete schema", async () => {
     expect(migrations.map((migration) => migration.name)).toEqual([

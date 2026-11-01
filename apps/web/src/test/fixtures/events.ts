@@ -98,6 +98,7 @@ import {
   createContactResearchTaskNeedsReview,
   createContactResearchTaskCompleted,
   createContactResearchTaskFailed,
+  createContactResearchSourceAttemptFailed,
   createOutreachDraftGenerated,
   createOutreachDraftRevised,
   createOutreachDraftApproved,
@@ -329,7 +330,7 @@ export const eventByType = {
     staleReason: "scoring_policy_changed",
     oldPolicyVersion: 1,
     newPolicyVersion: 2,
-    nextAction: "jobctrl run score --rescore",
+    nextAction: "jobctrl score --rescore",
   }),
   ResumeApproved: createResumeApproved(LOCAL_TENANT, {
     jobId: JOB_ID,
@@ -829,6 +830,9 @@ export const eventByType = {
     errorClass: "SourceNotAllowedError",
     retryable: false,
     failedAt: NOW,
+  }),
+  ContactResearchSourceAttemptFailed: createContactResearchSourceAttemptFailed(LOCAL_TENANT, {
+    taskId: "research-1", outcome: "provider_unavailable", attemptedAt: NOW,
   }),
   OutreachDraftGenerated: createOutreachDraftGenerated(LOCAL_TENANT, {
     threadId: "thread-1",

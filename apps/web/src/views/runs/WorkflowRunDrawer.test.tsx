@@ -114,7 +114,7 @@ describe("<WorkflowRunDrawer>", () => {
 
     expect(
       within(workspace).getByRole("link", {
-        name: "Open workflow run-pipeline-1 in Temporal Web UI",
+        name: "View in Temporal: workflow run-pipeline-1",
       }),
     ).toHaveAttribute(
       "href",

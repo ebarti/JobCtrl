@@ -51,6 +51,42 @@ overrides into the frozen `TailoringLlmPolicy` before constructing
 configuration. Saved profile controls and versioned policy history remain
 canonical inputs, with the existing profile/policy fence at generation commit.
 
+Each resume attempt writes its own text, PDF and diagnostic paths, even when
+two attempts allocated the same generation. Tailor and Cover re-read the
+captured material snapshot in their SQLite writer transaction before publishing;
+a stale result cannot replace a newer accepted row. A cover generation also
+checks that its accepted resume source still has the bytes it read. A stale
+attempt marks its own stage stale only if its exact start event still owns that
+running stage; a successor's state and attempt count remain untouched. Direct
+and workflow-owned calls require their own start event to remain current for
+publication and terminal stage writes. Direct callers receive the existing
+stale/skipped result if another attempt takes ownership. Before claiming, a
+direct call also checks that the latest start has not changed since its initial
+database observation. Approved-artifact recovery checks the current running
+owner and recorded activity identity under the same SQLite writer lock as its
+stage transition. Reusing an approved artifact leaves another execution's
+running stage, start token and publication authority intact, including a direct
+attempt with its own start token. Once a higher numbered attempt of the same
+workflow activity records its
+start, a delayed retry cannot recover or claim over it. The same ownership
+check fences the PDF produced by Cover. Selected, current-policy and unscoped
+material batches carry the activity's Temporal run and attempt separately from
+their workflow owner. Batch retry recovery is job-scoped and skips newer or
+other-activity starts when their activity identity is recorded. Legacy starts
+without that identity retain workflow-owner recovery behavior.
+
+Policy restore is a separate reviewed command. Its tenant, target, expected
+current version, UUIDv4 command identity and user-requested reason bind the
+intent. The SQLite writer checks for a matching receipt before comparing the
+current head under `BEGIN IMMEDIATE`. A stale new intent refuses; an identical
+accepted command returns its original revision and the head observed on retry.
+The new revision stores its versioned command receipt in its rollback provenance
+field together with the selected target and reviewed predecessor. This keeps
+receipt and revision atomic within the existing exact-v15 manifest and leaves
+historical rows and configuration copies intact. History readers decode only
+recognized structured receipts and preserve legacy provenance. A different
+payload for the same tenant and command ID is a conflict.
+
 An explicit manual materials request carries its existing low-fit exception
 through both Tailor and Cover activity payloads to their canonical per-job
 admission checks. Default and legacy payloads keep the ordinary score floor.
@@ -392,9 +428,65 @@ Update the owning schemas/prompts and source contracts together. Prove the model
 
 Outreach calls claim verification through a port, using confirmed contact facts and canonical profile sources. An independent quality judge assesses tone. User edits receive the same model checks before approval. The user confirms a draft and records sending separately; generation never sends a message.
 
+### Outreach Publication Boundary
+
+`SqliteOutreachThreadRepository.load` reads the complete tenant/thread row,
+all draft generations and all send logs in one SQLite snapshot. An immutable,
+exact canonical-state tuple accompanies the aggregate through its replacements;
+expected absence is distinct from overwrite authority. Generation captures this
+base before synthesis, and revision before verification. Read transactions end
+before model calls; model authority, lane/spend preflight and offer/profile
+source fences keep their existing owners.
+
+At save, SQLite writer ownership precedes comparison. A changed or deleted base,
+or competing first creation for the same tenant/contact/job, raises
+`OutreachPublicationConflict` before canonical mutation. This migration-free
+comparison uses full canonical rows, not timestamp equality or a process-local
+counter. Unrelated tenants and threads do not invalidate the base. Concurrent
+revisions from one base can publish at most one next generation.
+
+Persistence inserts new draft and send-log identities, updates existing draft
+lifecycle columns explicitly, and never deletes/recreates accepted history.
+Bodies, gate/provenance records and prior review evidence remain immutable.
+Canonical changes, new determination anchors and durable lifecycle events commit
+as one transaction; subscriber fanout runs best effort after commit. A failed
+publication rolls them all back. Completed model determinations have their own
+persistence lifecycle and can survive a conflict without becoming draft authority.
+
+TypeScript approval/rejection, send logging and reminder transitions acquire
+writer ownership before loading or validating the current state, including offer
+bindings and approved-draft requirements. Their fact and event writes share the
+same transaction. The Python RPC transports a stale proposal as a separate result
+variant; the API maps it to HTTP 409. No accepted ID or generation is assigned to
+the returned private proposal. The web editor is mounted independently of the
+current review card, retaining text and completed results across refetch/SSE,
+and asks for deliberate reconciliation before another verification attempt.
+When a revision succeeds, the editor closes only if its current input still
+matches the submitted input snapshot. Newer typing stays available and unverified;
+the completed request never submits those later edits automatically.
+Open-page sessions partition the mounted review/editor state by tenant, contact
+and optional job. Inactive recipient/job sessions remain hidden and inert,
+including their reconciliation controls; returning to the original target resumes
+its work. Pending callbacks retain that target's own mutation context. Tenant
+changes reset these sessions. Generation also partitions by purpose and offer
+revision, retains its private conflict separately from the mutation error and
+presents the completed body, checks and provenance. Another generation requires
+explicit comparison, and a failed deliberate retry preserves the last proposal.
+Neither generation nor conflict recovery automatically retries a model call.
+This retention ends when the panel unmounts or the page reloads. The protocol does not add contact
+edit CAS, command replay identities or any send transport.
+
 ## Key Code Pointers
 
 - `domain/materials/claim_verification.py` and `domain/ports/claim_verification.py`.
 - `domain/materials/artifact_quality.py`, `generation.py`, `provenance_builder.py` and `claim_grounding.py`.
 - `domain/enrichment/interpretation.py`, `domain/profile/canonical_sources.py`.
 - `infrastructure/determinations.py`, Materials repositories and `apps/api/src/semantic-determinations.ts`.
+
+
+Legacy confirmed achievement rows retain saved cells and confirmation history,
+but an unresolved `confirmation_review_required` marker fails canonical source
+construction with `legacy_evidence_review_required`. A refresh cannot silently
+substitute an empty evidence inventory or replace accepted material IDs, bytes
+or anchors. Only a current-state-bound explicit human review resolves this
+structural authority; see [Storage](storage.md#legacy-achievement-confirmation-history).

@@ -3,8 +3,10 @@ import {
   LOCAL_INSTALL_GUIDE_URL,
 } from "../../../shared/lib/apiCapabilityAvailability.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { useId, useState } from "react";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import { useEffect, useId, useState } from "react";
 import { useForm } from "@tanstack/react-form";
+import { JobCtrlApiError } from "@jobctrl/api-client";
 import {
   OFFER_CASH_COMPONENTS,
   OFFER_PERIODS,
@@ -141,41 +143,50 @@ function SourceText({ source }: { source: OfferTerms["source"] }) {
   );
 }
 
+function termsValues(current: OfferTermsRevision | null) {
+  const existing = current?.terms;
+  return {
+    cash: existing?.cash.map((cash) => ({
+      component: cash.component,
+      amount: String(cash.amount),
+      currency: cash.currency ?? "",
+      period: cash.period,
+    })) ?? [{
+      component: "base_salary" as (typeof OFFER_CASH_COMPONENTS)[number],
+      amount: "",
+      currency: "",
+      period: "unknown" as (typeof OFFER_PERIODS)[number],
+    }],
+    equity: existing?.equity?.value ?? "",
+    benefits: existing?.benefits?.value ?? "",
+    deadline: localInput(existing?.decisionDeadline?.value),
+    reference: "",
+    quote: "",
+    confirmed: false,
+    correctionReason: "",
+  };
+}
+
 function OfferTermsForm({
   jobId,
   current,
+  refreshLatest,
 }: {
   jobId: JobId;
   current: OfferTermsRevision | null;
+  refreshLatest: () => Promise<OfferReadResponse | null>;
 }) {
   const id = useId();
   const mutation = useOfferMutations(jobId).terms;
   const [message, setMessage] = useState("");
-  const existing = current?.terms;
+  const [baseRevision, setBaseRevision] = useState(current?.revisionId ?? null);
+  const [reviewRequired, setReviewRequired] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const needsReview = reviewRequired || baseRevision !== (current?.revisionId ?? null);
   const form = useForm({
-    defaultValues: {
-      cash: existing?.cash.map((cash) => ({
-        component: cash.component,
-        amount: String(cash.amount),
-        currency: cash.currency ?? "",
-        period: cash.period,
-      })) ?? [
-        {
-          component: "base_salary" as (typeof OFFER_CASH_COMPONENTS)[number],
-          amount: "",
-          currency: "",
-          period: "unknown" as (typeof OFFER_PERIODS)[number],
-        },
-      ],
-      equity: existing?.equity?.value ?? "",
-      benefits: existing?.benefits?.value ?? "",
-      deadline: localInput(existing?.decisionDeadline?.value),
-      reference: "",
-      quote: "",
-      confirmed: false,
-      correctionReason: "",
-    },
+    defaultValues: termsValues(current),
     onSubmit: async ({ value }) => {
+      if (needsReview || reviewing || mutation.isPending) return;
       setMessage("");
       const source = {
         reference: value.reference,
@@ -191,7 +202,7 @@ function OfferTermsForm({
         return;
       }
       const parsed = SaveOfferTermsSchema.safeParse({
-        expectedRevisionId: current?.revisionId ?? null,
+        expectedRevisionId: baseRevision,
         terms: {
           source,
           cash: value.cash
@@ -219,11 +230,41 @@ function OfferTermsForm({
       try {
         await mutation.mutateAsync(parsed.data);
         setMessage("Offer terms recorded.");
-      } catch {
+        setReviewRequired(true);
+      } catch (error) {
+        if (error instanceof JobCtrlApiError && error.status === 409) setReviewRequired(true);
         /* mutation renders the actionable server error */
       }
     },
   });
+  const reconcile = async (keepDraft: boolean) => {
+    const beforeRead = JSON.stringify(form.state.values);
+    setReviewing(true);
+    const latest = await refreshLatest();
+    if (!latest) {
+      setMessage("Could not load the latest offer. Your draft is retained; try again.");
+      setReviewing(false);
+      return;
+    }
+    if ((latest.currentTerms?.revisionId ?? null) !== (current?.revisionId ?? null)) {
+      setReviewRequired(true);
+      setMessage("The offer changed again. Review the latest terms above before continuing.");
+      setReviewing(false);
+      return;
+    }
+    if (!keepDraft && JSON.stringify(form.state.values) !== beforeRead) {
+      setMessage("Your draft changed while the latest offer was loading. It has been retained; review it before discarding.");
+      setReviewing(false);
+      return;
+    }
+    if (keepDraft) form.setFieldValue("confirmed", false);
+    else form.reset(termsValues(latest.currentTerms));
+    setBaseRevision(latest.currentTerms?.revisionId ?? null);
+    setReviewRequired(false);
+    setMessage(keepDraft ? "Review your retained draft against the latest terms and confirm it again." : "Draft discarded; latest terms loaded.");
+    mutation.reset();
+    setReviewing(false);
+  };
   return (
     <details>
       <summary>
@@ -437,9 +478,16 @@ function OfferTermsForm({
             )}
           </form.Field>
         </FieldGroup>
+        {needsReview ? (
+          <div role="group" aria-label="Review changed offer terms">
+            <p role="status">The offer terms changed or were saved. Your draft is retained. Review the latest terms above before continuing.</p>
+            <Button type="button" variant="outline" disabled={mutation.isPending || reviewing} onClick={() => void reconcile(true)}>Keep draft and review latest terms</Button>
+            <Button type="button" variant="outline" disabled={mutation.isPending || reviewing} onClick={() => void reconcile(false)}>Discard draft and load latest terms</Button>
+          </div>
+        ) : null}
         {message ? <p role="status">{message}</p> : null}
         {mutation.error ? <p role="alert">{mutation.error.message}</p> : null}
-        <Button type="submit" disabled={mutation.isPending}>
+        <Button type="submit" disabled={mutation.isPending || needsReview || reviewing}>
           {mutation.isPending ? "Saving terms…" : "Save confirmed offer terms"}
         </Button>
       </form>
@@ -450,13 +498,19 @@ function OfferTermsForm({
 function OfferDecisionForm({
   jobId,
   data,
+  refreshLatest,
 }: {
   jobId: JobId;
   data: OfferReadResponse;
+  refreshLatest: () => Promise<OfferReadResponse | null>;
 }) {
   const id = useId();
   const mutation = useOfferMutations(jobId).decision;
   const [message, setMessage] = useState("");
+  const [base, setBase] = useState({ terms: data.currentTerms?.revisionId ?? null, decision: data.currentDecision?.decisionId ?? null });
+  const [reviewRequired, setReviewRequired] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const needsReview = reviewRequired || base.terms !== (data.currentTerms?.revisionId ?? null) || base.decision !== (data.currentDecision?.decisionId ?? null);
   const form = useForm({
     defaultValues: {
       decision: "accepted" as "accepted" | "declined",
@@ -467,9 +521,10 @@ function OfferDecisionForm({
       confirmed: false,
     },
     onSubmit: async ({ value }) => {
+      if (needsReview || reviewing || mutation.isPending || !base.terms) return;
       const parsed = RecordOfferDecisionSchema.safeParse({
-        expectedDecisionId: data.currentDecision?.decisionId ?? null,
-        termsRevisionId: data.currentTerms?.revisionId,
+        expectedDecisionId: base.decision,
+        termsRevisionId: base.terms,
         decision: value.decision,
         occurredAt: value.occurredAt
           ? localTimestamp(value.occurredAt)
@@ -491,11 +546,48 @@ function OfferDecisionForm({
       try {
         await mutation.mutateAsync(parsed.data);
         setMessage("Offer decision recorded. No message was sent.");
-      } catch {
+        setReviewRequired(true);
+      } catch (error) {
+        if (error instanceof JobCtrlApiError && error.status === 409) setReviewRequired(true);
         /* preserve form for retry */
       }
     },
   });
+  useEffect(() => {
+    if (base.terms === null && data.currentTerms && !reviewRequired && !form.state.isDirty) {
+      setBase({ terms: data.currentTerms.revisionId, decision: data.currentDecision?.decisionId ?? null });
+    }
+  }, [base.terms, data.currentDecision?.decisionId, data.currentTerms, form, reviewRequired]);
+  const reconcile = async (keepDraft: boolean) => {
+    const beforeRead = JSON.stringify(form.state.values);
+    setReviewing(true);
+    const latest = await refreshLatest();
+    if (!latest) {
+      setMessage("Could not load the latest offer. Your draft is retained; try again.");
+      setReviewing(false);
+      return;
+    }
+    if ((latest.currentTerms?.revisionId ?? null) !== (data.currentTerms?.revisionId ?? null)
+      || (latest.currentDecision?.decisionId ?? null) !== (data.currentDecision?.decisionId ?? null)) {
+      setReviewRequired(true);
+      setMessage("The offer changed again. Review the latest offer above before continuing.");
+      setReviewing(false);
+      return;
+    }
+    if (!keepDraft && JSON.stringify(form.state.values) !== beforeRead) {
+      setMessage("Your draft changed while the latest offer was loading. It has been retained; review it before discarding.");
+      setReviewing(false);
+      return;
+    }
+    if (keepDraft) form.setFieldValue("confirmed", false);
+    else form.reset();
+    setBase({ terms: latest.currentTerms?.revisionId ?? null, decision: latest.currentDecision?.decisionId ?? null });
+    setReviewRequired(false);
+    setMessage(keepDraft ? "Review your retained draft against the latest offer and attest again." : "Decision draft discarded; latest offer loaded.");
+    mutation.reset();
+    setReviewing(false);
+  };
+  if (!data.currentTerms && !base.terms) return null;
   return (
     <details>
       <summary>
@@ -601,9 +693,16 @@ function OfferDecisionForm({
             )}
           </form.Field>
         </FieldGroup>
+        {needsReview ? (
+          <div role="group" aria-label="Review changed offer decision">
+            <p role="status">The offer or decision changed or was saved. Your draft is retained. Review the latest offer above before continuing.</p>
+            <Button type="button" variant="outline" disabled={mutation.isPending || reviewing} onClick={() => void reconcile(true)}>Keep draft and review latest offer</Button>
+            <Button type="button" variant="outline" disabled={mutation.isPending || reviewing} onClick={() => void reconcile(false)}>Discard decision draft</Button>
+          </div>
+        ) : null}
         {message ? <p role="status">{message}</p> : null}
         {mutation.error ? <p role="alert">{mutation.error.message}</p> : null}
-        <Button type="submit" disabled={mutation.isPending}>
+        <Button type="submit" disabled={mutation.isPending || needsReview || reviewing || !base.terms}>
           {mutation.isPending ? "Recording decision…" : "Save offer decision"}
         </Button>
       </form>
@@ -673,7 +772,16 @@ function OfferComparison({ jobId }: { jobId: JobId }) {
 
 export function OfferPanel({ jobId }: { jobId: JobId }) {
   const query = useOfferQuery(jobId);
+  const tenantId = useTenantId();
   const data = query.data;
+  const refreshLatest = async () => {
+    try {
+      const result = await query.refetch();
+      return result.isSuccess && !result.error ? result.data : null;
+    } catch {
+      return null;
+    }
+  };
   const { featureFlags } = usePorts();
   const available = getApiCapabilityAvailability(
     featureFlags,
@@ -713,17 +821,17 @@ export function OfferPanel({ jobId }: { jobId: JobId }) {
             </p>
           ) : null}
           <OfferTermsForm
-            key={data.currentTerms?.revisionId ?? "new"}
+            key={`${tenantId}:${jobId}:terms`}
             jobId={jobId}
             current={data.currentTerms}
+            refreshLatest={refreshLatest}
           />
-          {data.currentTerms ? (
-            <OfferDecisionForm
-              key={`${data.currentTerms.revisionId}:${data.currentDecision?.decisionId ?? "new"}`}
-              jobId={jobId}
-              data={data}
-            />
-          ) : null}
+          <OfferDecisionForm
+            key={`${tenantId}:${jobId}:decision`}
+            jobId={jobId}
+            data={data}
+            refreshLatest={refreshLatest}
+          />
           {data.currentTerms ? <OfferComparison jobId={jobId} /> : null}
           {data.termsHistory.length || data.decisions.length ? (
             <details>

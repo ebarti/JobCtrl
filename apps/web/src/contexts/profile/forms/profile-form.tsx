@@ -1489,6 +1489,13 @@ export function ProfileForm({
           {statusMessage}
         </div>
       ) : null}
+      {isProfileSection && initial.legacyEvidenceReview ? <Alert role="status">
+        <AlertDescription>
+          {initial.legacyEvidenceReview.count} saved achievement records need confirmation review because their legacy provenance is unknown.
+          Your original text and saved confirmations are retained. New evidence-based preparation waits for this review;
+          accepted materials remain available. Review these records with the local <code>jobctrl legacy-evidence</code> command.
+        </AlertDescription>
+      </Alert> : null}
       {isProfileSection && initial.candidateInterpretation ? <div className="status-line candidate-interpretation-status" data-typography="metadata" role="status">
         {initial.candidateInterpretation.determination ? <>Candidate interpretation {initial.candidateInterpretation.status === "confirmed" ? "confirmed" : "awaits your confirmation"}. Model {initial.candidateInterpretation.determination.model}; prompt {initial.candidateInterpretation.determination.prompt_version}; input {initial.candidateInterpretation.determination.input_fingerprint}. Review the target-role suggestions before saving them.</> : <>Candidate interpretation unavailable{initial.candidateInterpretation.failureCode ? `: ${initial.candidateInterpretation.failureCode}` : " until a model determination is recorded"}. Request target-role suggestions in Discovery when you want them.</>}
       </div> : null}

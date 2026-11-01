@@ -118,6 +118,22 @@ printing secrets. **Status unknown** (`inspection_failed`) is distinct from
 **not configured**: it means JobCtrl could not inspect the native store. Provider-mode
 replacement is all-or-nothing from the web contract; a failed change preserves
 the previous configuration or reports an explicit sanitized recovery failure.
+If credential inspection fails during an open provider edit, JobCtrl keeps the
+unsaved form and its save or removal result visible. Guided changes stay paused
+until credential inspection succeeds again.
+If you enter a newer CapSolver value while a save or removal is pending, it
+remains in the form as an unsaved edit.
+Credential updates from JobCtrl API processes for the same OS user are
+serialized. If another update or its native helper is still active, retry
+after it finishes. A timed-out update whose helper has not stopped reports an
+incomplete recovery; inspect the credential status before retrying.
+If JobCtrl cannot verify a previous helper's process identity, it reports
+`ownership_unverified` and preserves its coordination record. Restore the
+packaged Python runtime, or the prepared worker virtual environment in a source
+checkout, and retry. If inspection remains unavailable, stop all JobCtrl API
+processes, verify that the recorded helper has exited, and only then remove
+the `.jobctrl-credential-mutations.sqlite3.inflight` record in the OS user's
+home. Do not signal a process solely because its PID matches the record.
 
 Linux requires `/usr/bin/secret-tool` and an accessible Secret Service in the
 current user's D-Bus session, with its collection unlocked. Windows requires
@@ -235,6 +251,15 @@ from that catalog is explained beside the control and is never added to its
 options. A pinned provider client can expose a different catalog from a newer
 installed client using the same account; check the active JobCtrl runtime before
 concluding the account lacks a model.
+
+Model preference and AI execution-policy controls pause editing while their
+save is pending. After a failed save, the chosen values remain available to
+review and retry.
+
+Provider setup forms let you continue editing during a save. A later key,
+service-account path, or mode choice remains in the form for a separate save;
+an acknowledged key or path is cleared only if it still matches the submitted
+value. A provider-status change does not replace a form with unsaved edits.
 
 A saved preference is scoped to its provider and cannot change which provider
 JobCtrl selects. Newly constructed adapters use this precedence:
@@ -400,6 +425,11 @@ artifact reviews can still take time even when the SDK process is already warm.
 Settings separates pipeline parallelism from the worker capacity that executes
 it. Increasing either value does not create provider quota or bypass the daily
 budget.
+
+In **Settings → General → Cost and capacity**, an edited draft is autosaved
+after five seconds without an edit. If saving fails, the unsaved values and
+error remain visible. JobCtrl does not automatically repeat the unchanged
+draft; choose **Save changes** to retry, or edit it to schedule another attempt.
 
 ### Concurrent applications {#runtime-setting-concurrent-applications}
 

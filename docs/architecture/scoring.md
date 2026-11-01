@@ -38,6 +38,17 @@ back as a new score version and a calibration anchor on the scoring policy.
 
 ## Posting Freshness Before An Attempt
 
+New scoring work captures literal exact-title exclusions from the saved
+Discovery row before availability checks, stage admission, or provider work.
+It validates the row and those exclusions without requiring unrelated Discovery controls; an
+unreadable row or malformed exclusions stops the attempt, while an absent row
+uses first-use defaults. The captured exclusions remain the source for that
+attempt even if settings change during analysis. The accepted score, report,
+binding, stale markers and stage ownership remain unchanged on refusal.
+Reusing a saved score does not read those controls. It still checks availability
+and ownership; if the score disappears before reuse, the caller must retry rather
+than start unvalidated scoring.
+
 Single-job and batch scoring require successfully verified active posting
 evidence no more than six hours old. Acquisition occurs outside the writer.
 The short stage claim checks the original canonical URL and freshness again
@@ -55,14 +66,29 @@ and queued automatic reservations before acquisition, then recheck under the
 writer lock before claiming work. Score publication and terminal stage writes
 also check the current owner. A revoked job records a skipped result without
 replacing its successor, accepted score or attempt count; independent jobs keep
-running. If a duplicate's shared donor is revoked, the independently owned
-posting uses normal per-job scoring instead of publishing an uncommitted donor.
+running. Distinct canonical Job IDs each use a source-bound scoring decision;
+similar posting content does not authorize copying another job's score,
+determination, or requirement report. A repeated unchanged request for the
+same job may reuse its existing determination receipt.
 
 Selected batches handle only the typed reservation-loss signal as a skip and
 report its job IDs and count. Other exceptions and failed determinations remain
 failures. The global stage wrapper propagates its failed-job count and safe
 semantic failure codes through the normal activity error boundary; accepted
 peer results stay saved when that activity fails.
+
+Resetting stale score work changes only eligible, distinct jobs to pending under
+a writer transaction without resolving any marker. Already-pending, queued and
+running stages retain their owners; responses identify work already pending and
+active work to retry after completion. Before inference, scoring captures the accepted score identity and
+unresolved marker identities. The score, determination binding, requirement-fit
+report and resolution of captured, source-matching policy markers commit in one
+transaction. A changed policy or ownership fails the publication fence. A
+marker introduced after capture is left unresolved for a later replacement,
+even when it targets the policy used by the in-flight assessment. Reused scores,
+failed or canceled work, and uncommitted publications resolve no markers. A
+still-stale score does not reconcile downstream eligibility or threshold states,
+and preparation does not suppress an accepted artifact based on that score.
 
 ## Profile Edits And Explicit Refresh
 

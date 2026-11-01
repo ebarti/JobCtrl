@@ -48,6 +48,12 @@ func TestShippedRuntimeContractsSupportCompiledLauncherProtocol(t *testing.T) {
 		t.Fatal("shipped platform contracts are empty")
 	}
 	for _, platform := range platformContracts.Platforms {
+		// Schema v15 must not be promoted by the historical protocol-1
+		// controller: its rollback can overwrite a concurrent source commit.
+		// A compatible bridge must precede installed upgrades.
+		if platform.LauncherCompatibility.Minimum < 2 {
+			t.Errorf("platform %q permits the unsafe protocol-1 controller", platform.ID)
+		}
 		if platform.LauncherCompatibility.Minimum > launcherProtocol ||
 			platform.LauncherCompatibility.Maximum < launcherProtocol {
 			t.Errorf(

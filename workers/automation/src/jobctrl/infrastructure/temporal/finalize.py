@@ -97,6 +97,7 @@ async def record_workflow_started(payload: WorkflowStartedInput) -> None:
     await run_blocking_with_heartbeat(
         lambda: _emit(payload.expected_app_dir, payload.expected_db_path, event),
         starting_message="recording workflow start",
+        control=True,
     )
 
 
@@ -106,6 +107,7 @@ async def record_workflow_outcome(payload: WorkflowOutcomeInput) -> None:
     await run_blocking_with_heartbeat(
         lambda: _emit(payload.expected_app_dir, payload.expected_db_path, event),
         starting_message="recording workflow outcome",
+        control=True,
     )
 
 

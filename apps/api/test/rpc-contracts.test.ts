@@ -20,6 +20,7 @@ import {
   AvailabilityWorkflowStartSchema,
   CancelRunParamsSchema,
   CancelRunResultSchema,
+  CareerLearningResponseSchema,
   DEFAULT_PIPELINE_LLM_MODEL,
   ENDPOINTS,
   endpointSpecJsonSchemaFixture,
@@ -290,6 +291,16 @@ describe("endpoint spec fixture", () => {
     expect(Object.fromEntries(Object.entries(current.endpoints).filter(([name]) => careerNames.includes(name)).map(([name, schema]) => [name, createHash("sha256").update(JSON.stringify(schema)).digest("hex")]))).toEqual(careerLearningSchemaHashes);
   });
 
+  it("requires qualified career timestamps with RFC 3339 seconds", () => {
+    const timestamp = CareerLearningResponseSchema.shape.cohorts.element.shape.comparedAt;
+    for (const value of ["2026-01-01T12:30:00Z", "2026-01-01T12:30:00.123+01:00"]) {
+      expect(timestamp.safeParse(value).success).toBe(true);
+    }
+    for (const value of ["2026-01-01T12:30Z", "2026-01-01T12:30:00", "2026-02-30T12:30:00Z"]) {
+      expect(timestamp.safeParse(value).success).toBe(false);
+    }
+  });
+
   it("records the indirect worker RPCs used by merged endpoint handlers", () => {
     expect(ENDPOINTS.providerStatus.rpcDependencies).toEqual([RpcMethods.ProviderStatus]);
     expect(ENDPOINTS.providerModels.rpcDependencies).toEqual([RpcMethods.ProviderModels]);
@@ -427,7 +438,7 @@ describe("learning recommendation review RPC contract", () => {
 describe("tailoring policy rollback RPC contract", () => {
   it("registers a runtime-scoped rollback with closed policy metadata", () => {
     const endpoint = ENDPOINTS.rollbackTailoringPolicy;
-    const request = endpoint.request.parse({ targetVersion: 1 });
+    const request = endpoint.request.parse({ targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" });
     const params = endpoint.dispatch.params(
       { request, pathParam: undefined },
       ENDPOINT_DISPATCH_CONTEXT,
@@ -442,6 +453,7 @@ describe("tailoring policy rollback RPC contract", () => {
       context: "materials",
       policyKind: "tailoring_rule",
       policyVersion: 3,
+      currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111",
       rollbackOfVersion: 1,
       rollbackReasonCode: "user_requested",
       learnedRules: [],
@@ -460,9 +472,18 @@ describe("tailoring policy rollback RPC contract", () => {
       rollbackOfVersion: 1,
       createdAt: "2026-08-01T12:34:56.000Z",
     });
-    expect(() =>
-      endpoint.request.parse({ targetVersion: 0 }),
-    ).toThrow();
+    for (const invalid of [
+      { targetVersion: 1 },
+      { ...request, targetVersion: 0 },
+      { ...request, expectedCurrentVersion: 0 },
+      { ...request, commandId: "not-a-command-id" },
+      { ...request, reasonCode: "other" },
+    ]) {
+      expect(endpoint.request.safeParse(invalid).success).toBe(false);
+    }
+    expect(endpoint.dispatch.response({ request, pathParam: undefined, result: {
+      ...result, commandId: "22222222-2222-4222-8222-222222222222",
+    } })).toBeNull();
     expect(() =>
       endpoint.dispatch.result.parse({
         status: "succeeded",

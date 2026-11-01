@@ -32,6 +32,7 @@ import type {
 import { CONTACT_ROLES } from "@jobctrl/domain-types";
 import { getContactDetail } from "./contacts.js";
 import { allRows, getRow, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { readDetermination } from "./semantic-determinations.js";
 
 const TENANT_ID = "local";
 const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -97,7 +98,7 @@ export function getResearchTaskDetail(
   const candidates = loadCandidates(db, taskId);
   return {
     ...taskSummaryFromCanonical(task, candidates),
-    sourceAttempts: parseSourceAttempts(task.source_attempts_json),
+    sourceAttempts: parseSourceAttempts(db, taskId, task.source_attempts_json),
     candidates,
   };
 }
@@ -509,17 +510,57 @@ function taskSummaryFromCanonical(
   };
 }
 
-function parseSourceAttempts(raw: string | null): ContactResearchSourceAttempt[] {
+function parseSourceAttempts(db: SqliteDatabase, taskId: string, raw: string | null): ContactResearchSourceAttempt[] {
   const parsed = parseJsonArray(raw);
   return parsed
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-    .map((item) => ({
+    .map((item): ContactResearchSourceAttempt => ({
       sourceKind: String(item.sourceKind ?? ""),
       sourceRef: String(item.sourceRef ?? ""),
       outcome: String(item.outcome ?? ""),
       attemptedAt: String(item.attemptedAt ?? ""),
       detail: String(item.detail ?? ""),
-    }));
+      ...(typeof item.determinationId === "string" ? { determinationId: item.determinationId } : {}),
+    }))
+    .map((attempt) => {
+      if (attempt.outcome !== "no_candidates" && attempt.outcome !== "allowed") return attempt;
+      // Historical fetched proposals remain reviewable. An old empty result
+      // without a receipt cannot establish that a model accepted the absence.
+      if (!attempt.determinationId && attempt.outcome === "allowed") return attempt;
+      try {
+        const receipt = attempt.determinationId
+          ? readDetermination(db, TENANT_ID, attempt.determinationId)
+          : null;
+        const candidates = receipt?.result.candidates;
+        const sourceId = `public_page:${crypto.createHash("sha256").update(attempt.sourceRef, "utf8").digest("hex")}`;
+        const spansAreBound = Array.isArray(candidates) && candidates.every((candidate) => {
+          if (!candidate || typeof candidate !== "object") return false;
+          const item = candidate as Record<string, unknown>;
+          return ["name", "title", "email", "profileUrl"].every((field) => {
+            const value = item[field];
+            if (value === null || value === undefined) return field !== "name";
+            if (typeof value !== "object") return false;
+            const span = value as Record<string, unknown>;
+            return span.source_id === sourceId && typeof span.start === "number" &&
+              typeof span.end === "number" && Number.isInteger(span.start) && Number.isInteger(span.end) &&
+              span.start >= 0 && span.end > span.start && span.end <= 12000;
+          });
+        });
+        if (
+          receipt?.kind === "contact_research_extraction" && receipt.entity_id === taskId &&
+          receipt.lane === "contact" && receipt.result.source_id === sourceId && spansAreBound &&
+          Array.isArray(candidates) &&
+          (attempt.outcome === "no_candidates" ? candidates.length === 0 : candidates.length > 0)
+        ) return attempt;
+      } catch {
+        // Damaged or foreign receipts are an unavailable authority, not prose.
+      }
+      return {
+        ...attempt,
+        outcome: "extraction_failed",
+        detail: "The recorded model decision is unavailable; check the data or run research again.",
+      };
+    });
 }
 
 function parseCandidateAttributes(raw: string | null): ContactAttributeDto[] {

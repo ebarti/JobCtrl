@@ -22,6 +22,7 @@ from rich.text import Text
 
 from jobctrl import __version__
 from jobctrl.company_briefing_cli import app as company_briefing_app
+from jobctrl.legacy_evidence_cli import app as legacy_evidence_app
 from jobctrl.pipeline import SUPPORTED_STAGE_ORDER, run_single_job
 from jobctrl.source_proposals_cli import app as source_proposals_app
 from jobctrl.workflow_specs import (
@@ -49,6 +50,7 @@ credentials_app = typer.Typer(help="Manage provider credentials in the operating
 app.add_typer(credentials_app, name="credentials")
 app.add_typer(company_briefing_app, name="company-briefing")
 app.add_typer(source_proposals_app, name="source-proposals")
+app.add_typer(legacy_evidence_app, name="legacy-evidence")
 console = Console()
 log = logging.getLogger(__name__)
 
@@ -122,7 +124,7 @@ def migrate_credentials(
 _projection_subscription = None
 
 
-def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
+def _bootstrap(*, reconcile_posted_compensation: bool = False, strict_projection_refresh: bool = False) -> None:
     """Common setup: load env, create dirs, init DB, refresh projections.
 
     Phase 9 (S-32): the ``ProjectionBuilder`` runs an initial backfill on
@@ -130,6 +132,9 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
     current canonical state before any stage logic runs.  This is
     cheap (incremental from the watermark) and ensures the dashboards
     don't go blank after a fresh DB or a schema migration.
+
+    Digest reads opt into an error if this refresh fails; other commands can
+    continue using their existing projections while a later refresh retries.
 
     The same builder also subscribes (idempotently) to the process-wide
     ``InProcessEventBus`` so events emitted later in the worker run
@@ -158,7 +163,11 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
         # event — including ``ThreadPoolExecutor`` worker threads in
         # ``apply --workers > 1``) opens a connection on its own
         # thread instead of reusing the bootstrap-thread handle.
-        builder = ProjectionBuilder(conn_factory=get_connection)
+        builder = (
+            ProjectionBuilder(conn_factory=get_connection, strict_reads=True)
+            if strict_projection_refresh
+            else ProjectionBuilder(conn_factory=get_connection)
+        )
         builder.refresh()
         if _projection_subscription is None:
             from jobctrl.infrastructure.events import get_default_publisher
@@ -175,6 +184,8 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
         except Exception:  # noqa: BLE001 - preserve the original failure
             log.exception("ProjectionBuilder bootstrap rollback failed")
         log.exception("ProjectionBuilder backfill on bootstrap failed")
+        if strict_projection_refresh:
+            raise
 
 
 def _check_tier2_stage(stage: str) -> None:
@@ -1561,7 +1572,7 @@ def compensation_refresh(
 @app.command()
 def apply(
     limit: Optional[int] = typer.Option(
-        None, "--limit", "-l", help="Max applications to submit (default: all ready jobs)."
+        None, "--limit", "-l", help="Maximum jobs to claim, including skipped jobs (default: all ready jobs)."
     ),
     workers: int = typer.Option(1, "--workers", "-w", help="Number of parallel browser workers."),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for job selection."),
@@ -1579,6 +1590,7 @@ def apply(
     ),
     fail_reason: Optional[str] = typer.Option(None, "--fail-reason", help="Reason for --mark-failed."),
     reset_failed: bool = typer.Option(False, "--reset-failed", help="Reset all failed jobs for retry."),
+    recover_stopped: bool = typer.Option(False, "--recover-stopped", help="Recover verifiably ended Apply custody; retain Skip and submission evidence. No application is started."),
 ) -> None:
     """Launch auto-apply to submit job applications."""
     _bootstrap()
@@ -1592,6 +1604,13 @@ def apply(
     from jobctrl.infrastructure.profile import get_profile_repository
 
     # --- Utility modes (no Chrome/Claude needed) ---
+
+    if recover_stopped:
+        from jobctrl.apply.launcher import recover_ambiguous_running_apply
+
+        count = recover_ambiguous_running_apply(only_stopped=True)
+        console.print(f"Recovered {count} Apply custody record(s). Skip and submission evidence retained; reset separately when safe.")
+        return
 
     def resolve_job_id(posting_url: str) -> JobId:
         identity = SqliteJobIdentityResolver(get_connection()).resolve_current_by_posting_url(
@@ -1615,12 +1634,15 @@ def apply(
     if mark_failed:
         from jobctrl.apply.launcher import mark_job
 
-        mark_job(
-            resolve_job_id(mark_failed),
-            "failed",
-            reason=fail_reason,
-            tenant_id=LOCAL_TENANT,
-        )
+        try:
+            mark_job(
+                resolve_job_id(mark_failed),
+                "failed",
+                reason=fail_reason,
+                tenant_id=LOCAL_TENANT,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--mark-failed") from exc
         console.print(f"[yellow]Marked as failed:[/yellow] {mark_failed} ({fail_reason or 'manual'})")
         return
 
@@ -1840,7 +1862,7 @@ def digest(
     ),
 ) -> None:
     """Show the local daily digest."""
-    _bootstrap()
+    _bootstrap(strict_projection_refresh=True)
 
     from jobctrl.database import get_connection
     from jobctrl.digest import acknowledge_digest, build_digest
@@ -2255,9 +2277,16 @@ async def _reconcile_discovery_schedule(client: Any, task_queue: str) -> None:
         DiscoverWorkflowInput,
         discover_workflow_id,
     )
+    from jobctrl.domain.errors import InvalidSavedSearchError, SavedSearchReadError
     from jobctrl.domain.tenant import LOCAL_TENANT
 
-    enabled, cron = load_discovery_schedule_settings()
+    try:
+        enabled, cron = load_discovery_schedule_settings()
+    except (InvalidSavedSearchError, SavedSearchReadError) as exc:
+        # Do not delete or replace an existing schedule when its authority is
+        # unavailable. Discovery planning will refuse to use the same inputs.
+        log.warning("Discovery schedule reconciliation skipped: %s", exc)
+        return
     schedule_id = f"jobctrl-discovery-{LOCAL_TENANT}"
     handle = client.get_schedule_handle(schedule_id)
     if not enabled:
@@ -2419,16 +2448,18 @@ def worker(
                 f"[yellow]Auto-apply loop {startup_auto_apply.action}: {startup_auto_apply.workflow_id}.[/yellow]"
             )
         try:
-            await worker.run()
+            from jobctrl.infrastructure.temporal.worker import run_worker_until_sigterm
+
+            await run_worker_until_sigterm(worker)
         finally:
             from jobctrl.infrastructure.temporal.run_in_activity import (
-                shutdown_activity_executors,
+                drain_activity_executors,
             )
 
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
-            shutdown_activity_executors()
+            await drain_activity_executors()
 
     from jobctrl.infrastructure.observability import shutdown_otel
 
@@ -3232,11 +3263,11 @@ def backup(
     Nothing is ever deleted. To restore, stop the app and copy a backup file
     over ~/.jobctrl/jobctrl.db.
     """
-    from jobctrl.database import backup_database
+    from jobctrl.database import UnresolvedDatabaseInitializationError, backup_database
 
     try:
         destination = backup_database(output)
-    except (FileNotFoundError, FileExistsError, OSError, sqlite3.Error) as exc:
+    except (FileNotFoundError, FileExistsError, OSError, sqlite3.Error, UnresolvedDatabaseInitializationError) as exc:
         console.print(f"[red]Backup failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
 
@@ -3675,11 +3706,11 @@ def doctor() -> None:
 
     # --- Crawl politeness disclosure (R10) ---
     try:
-        from jobctrl.config import load_saved_search_settings
+        from jobctrl.config import load_discovery_crawler_settings
         from jobctrl.database import get_connection as _get_connection
 
         try:
-            politeness_cfg = load_saved_search_settings()
+            politeness_cfg = load_discovery_crawler_settings()
         except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
             politeness_cfg = {}
         try:

@@ -1688,6 +1688,128 @@
     },
     "schemaVersion": "1"
   },
+  "contact_research_extraction": {
+    "promptVersion": "contact-research-extraction-v1",
+    "schema": {
+      "$defs": {
+        "_ExtractedContact": {
+          "additionalProperties": false,
+          "properties": {
+            "confidence": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Confidence",
+              "type": "number"
+            },
+            "email": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/_PageSpan"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "name": {
+              "$ref": "#/$defs/_PageSpan"
+            },
+            "profileUrl": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/_PageSpan"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "role": {
+              "enum": [
+                "recruiter",
+                "hiring_manager",
+                "referrer",
+                "other"
+              ],
+              "title": "Role",
+              "type": "string"
+            },
+            "title": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/_PageSpan"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "name",
+            "role",
+            "confidence"
+          ],
+          "title": "_ExtractedContact",
+          "type": "object"
+        },
+        "_PageSpan": {
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "minimum": 0,
+              "title": "End",
+              "type": "integer"
+            },
+            "source_id": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            },
+            "start": {
+              "minimum": 0,
+              "title": "Start",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "source_id",
+            "start",
+            "end"
+          ],
+          "title": "_PageSpan",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/_ExtractedContact"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "source_id": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Source Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "candidates"
+      ],
+      "title": "_ExtractionResult",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
   "description_quality": {
     "promptVersion": "description-quality-v1",
     "schema": {

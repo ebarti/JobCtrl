@@ -88,6 +88,17 @@ async function renderSkillProjection(items: string[]) {
 }
 
 describe("<ProfileForm>", () => {
+  it("shows legacy confirmation uncertainty without editing saved evidence", async () => {
+    const initial = { ...structuredClone(sampleProfileResponse), legacyEvidenceReview: { status: "review_required" as const, count: 3 } };
+    const updateProfile = vi.fn();
+    renderWithProviders(<ProfileForm initial={initial} />, {
+      ports: buildTestPorts({ api: { updateProfile } }), withRouter: true,
+    });
+    expect(await screen.findByText(/3 saved achievement records need confirmation review/)).toBeInTheDocument();
+    expect(screen.getByText(/original text and saved confirmations are retained/)).toBeInTheDocument();
+    expect(screen.getByText("jobctrl legacy-evidence")).toBeInTheDocument();
+    expect(updateProfile).not.toHaveBeenCalled();
+  });
   it("saves newly added skill categories with stable IDs and unchanged unrelated profile fields", async () => {
     const user = userEvent.setup();
     const initial = structuredClone(sampleProfileResponse);
@@ -864,6 +875,85 @@ describe("<ProfileForm>", () => {
     expect(updateProfile).toHaveBeenCalledTimes(1);
     const request = updateProfile.mock.calls[0]?.[0];
     expect(JSON.parse(request.profileText).experience.target_role).toBe("Director of Engineering");
+  });
+
+  it("retains a failed autosave without resubmitting it and permits a versioned manual retry", async () => {
+    vi.useFakeTimers();
+    let fail = true;
+    let savedVersion = 3;
+    const updateProfile = vi.fn(async (request: ProfileUpdateRequest): Promise<typeof sampleProfileResponse> => {
+      if (fail) throw new Error("Synthetic profile save failed");
+      return {
+        ...sampleProfileResponse,
+        profileVersion: ++savedVersion,
+        profile: JSON.parse(request.profileText!),
+      };
+    });
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    const targetRole = screen.getByLabelText("Target roles 1");
+    fireEvent.change(targetRole, { target: { value: "Synthetic Director" } });
+    for (let period = 0; period < 4; period++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    }
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    expect(updateProfile.mock.calls[0]![0].expectedProfileVersion).toBe(3);
+    expect(targetRole).toHaveValue("Synthetic Director");
+    expect(screen.getByText("Synthetic profile save failed")).toBeInTheDocument();
+
+    fail = false;
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(updateProfile).toHaveBeenCalledTimes(2);
+    expect(updateProfile.mock.calls[1]![0].expectedProfileVersion).toBe(3);
+    expect(targetRole).toHaveValue("Synthetic Director");
+
+    fireEvent.change(targetRole, { target: { value: "Synthetic VP" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(updateProfile).toHaveBeenCalledTimes(3);
+    expect(updateProfile.mock.calls[2]![0].expectedProfileVersion).toBe(4);
+    expect(JSON.parse(updateProfile.mock.calls[2]![0].profileText!).experience.target_role).toBe("Synthetic VP");
+  });
+
+  it("does not overlap a delayed failed autosave and saves the newer profile draft", async () => {
+    vi.useFakeTimers();
+    let rejectFirst: ((error: Error) => void) | undefined;
+    const updateProfile = vi.fn()
+      .mockImplementationOnce(() => new Promise<typeof sampleProfileResponse>((_resolve, reject) => {
+        rejectFirst = reject;
+      }))
+      .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+        ...sampleProfileResponse,
+        profileVersion: 4,
+        profile: JSON.parse(request.profileText!),
+      }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    const targetRole = screen.getByLabelText("Target roles 1");
+    fireEvent.change(targetRole, { target: { value: "Synthetic Director" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    fireEvent.change(targetRole, { target: { value: "Synthetic VP" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    expect(targetRole).toHaveValue("Synthetic VP");
+
+    await act(async () => {
+      rejectFirst?.(new Error("Synthetic delayed profile failure"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(targetRole).toHaveValue("Synthetic VP");
+    expect(screen.getByText("Synthetic delayed profile failure")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(updateProfile).toHaveBeenCalledTimes(2);
+    expect(updateProfile.mock.calls[1]![0].expectedProfileVersion).toBe(3);
+    expect(JSON.parse(updateProfile.mock.calls[1]![0].profileText!).experience.target_role).toBe("Synthetic VP");
   });
 
   it("keeps newer edits on a late autosave response and discards them to the persisted snapshot", async () => {

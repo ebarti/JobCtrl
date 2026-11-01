@@ -9,7 +9,7 @@ export function ThemeToggle() {
   return (
     <Button
       className="topbar__theme-toggle"
-      aria-label={`Switch to ${next} theme`}
+      aria-label={`${theme === "dark" ? "Dark" : "Light"} theme: Switch to ${next} theme`}
       onClick={() => setTheme(next)}
       size="sm"
       type="button"

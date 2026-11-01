@@ -44,6 +44,7 @@ from jobctrl.domain.discovery.identity import (
 )
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.events import (
+    DomainEvent,
     CanonicalJobIdentityResolvedPayload,
     DuplicateJobLinkedPayload,
     DuplicateJobLinkRejectedPayload,
@@ -131,6 +132,27 @@ def default_canonical_identity(posting: ScrapedJobPosting) -> CanonicalJobIdenti
         ats_kind=posting.ats_kind if isinstance(posting.ats_kind, AtsKind) else AtsKind.OTHER,
         source_native_id=source_native_id,
         confidence=float(confidence),
+    )
+
+
+def new_job_discovery_events(
+    job: Job, identity: CanonicalJobIdentity, observation: JobSourceObservation,
+) -> tuple[DomainEvent, DomainEvent, DomainEvent]:
+    """Original canonical insert facts, shared with durable publication recovery."""
+    return (
+        create_job_discovered(job.tenant_id, JobDiscoveredPayload(
+            job_id=str(job.job_id), posting_url=job.posting_url.value, source=job.source.board,
+            employer=job.employer.name, metadata=job.metadata.to_dict(), discovered_at=job.discovered_at,
+        )),
+        create_canonical_job_identity_resolved(job.tenant_id, CanonicalJobIdentityResolvedPayload(
+            job_id=str(job.job_id), canonical_url=identity.canonical_url, ats_kind=identity.ats_kind.value,
+            source_native_id=identity.source_native_id, confidence=identity.confidence,
+        )),
+        create_job_source_observed(job.tenant_id, JobSourceObservedPayload(
+            job_id=str(job.job_id), source_observation_id=observation.source_observation_id,
+            source_id=observation.source_id, source_native_id=observation.source_native_id,
+            observed_url=observation.observed_url, run_id=observation.run_id, observed_at=observation.observed_at,
+        )),
     )
 
 
@@ -331,6 +353,11 @@ class DiscoverJobsUseCase:
             metadata=posting.metadata,
             discovered_at=observed_at,
         )
+        observation = JobSourceObservation(
+            source_observation_id=observation_id, source_id=posting.source_id,
+            source_native_id=identity.source_native_id, observed_url=identity.canonical_url,
+            run_id=run_id, observed_at=observed_at,
+        )
         with dedupe_span(
             tenant_id=str(tenant_id),
             job_id=str(job_id),
@@ -341,14 +368,7 @@ class DiscoverJobsUseCase:
             owner_match = self._repository.claim_new_job(
                 job,
                 identity,
-                JobSourceObservation(
-                    source_observation_id=observation_id,
-                    source_id=posting.source_id,
-                    source_native_id=identity.source_native_id,
-                    observed_url=identity.canonical_url,
-                    run_id=run_id,
-                    observed_at=observed_at,
-                ),
+                observation,
             )
             if owner_match is not None:
                 return self._observe_existing_job(
@@ -361,45 +381,8 @@ class DiscoverJobsUseCase:
                     observation_id=observation_id,
                     observed_at=observed_at,
                 )
-        self._publisher.publish(
-            create_job_discovered(
-                tenant_id,
-                JobDiscoveredPayload(
-                    job_id=str(job_id),
-                    posting_url=canonical_posting_url.value,
-                    source=posting.source.board,
-                    employer=posting.employer.name,
-                    metadata=posting.metadata.to_dict(),
-                    discovered_at=observed_at,
-                ),
-            )
-        )
-        self._publisher.publish(
-            create_canonical_job_identity_resolved(
-                tenant_id,
-                CanonicalJobIdentityResolvedPayload(
-                    job_id=str(job_id),
-                    canonical_url=identity.canonical_url,
-                    ats_kind=identity.ats_kind.value,
-                    source_native_id=identity.source_native_id,
-                    confidence=identity.confidence,
-                ),
-            )
-        )
-        self._publisher.publish(
-            create_job_source_observed(
-                tenant_id,
-                JobSourceObservedPayload(
-                    job_id=str(job_id),
-                    source_observation_id=observation_id,
-                    source_id=posting.source_id,
-                    source_native_id=identity.source_native_id,
-                    observed_url=identity.canonical_url,
-                    run_id=run_id,
-                    observed_at=observed_at,
-                ),
-            )
-        )
+        for event in new_job_discovery_events(job, identity, observation):
+            self._publisher.publish(event)
         return DiscoveryDecision(
             job_id=job_id,
             is_new_job=True,

@@ -1133,6 +1133,35 @@ describe("<ApplyReviewView>", () => {
     expect(onTargetJobKeyChange).not.toHaveBeenCalled();
   });
 
+  it("retries saving the same review findings without starting a new review", async () => {
+    const user = userEvent.setup();
+    const thread = makeResumeCommentThread();
+    const draft = { ...makeResumeReviewDraft(), commentThreads: [thread] };
+    const seed = vi.fn<ReturnType<typeof buildTestPorts>["api"]["seedResumeReviewCommentThreads"]>()
+      .mockRejectedValueOnce(new Error("Comment storage unavailable"))
+      .mockResolvedValueOnce({ ok: true, draft, commentThreads: [thread], seededCount: 0, updatedCount: 1 });
+    const generateMaterials = vi.fn();
+    const tailorJob = vi.fn();
+    const renderResumeReviewDraft = vi.fn();
+    renderWithProviders(<ApplyReviewView />, { ports: buildTestPorts({ api: {
+      applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+      createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+      seedResumeReviewCommentThreads: seed, generateMaterials, tailorJob, renderResumeReviewDraft,
+    } }) });
+
+    const retry = await screen.findByRole("button", { name: "Retry saving review comments" });
+    expect(screen.getByText(/Retry saving the existing review findings; this does not run a new review/)).toBeInTheDocument();
+    expect(seed).toHaveBeenCalledTimes(1);
+    expect(seed.mock.calls[0]?.[1].threads.length).toBeGreaterThan(0);
+    await user.click(retry);
+    await waitFor(() => expect(seed).toHaveBeenCalledTimes(2));
+    expect(seed.mock.calls[1]).toEqual(seed.mock.calls[0]);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry saving review comments" })).not.toBeInTheDocument());
+    expect(generateMaterials).not.toHaveBeenCalled();
+    expect(tailorJob).not.toHaveBeenCalled();
+    expect(renderResumeReviewDraft).not.toHaveBeenCalled();
+  });
+
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
 
@@ -2016,7 +2045,7 @@ describe("<ApplyReviewView>", () => {
     });
     const render = vi.fn<ReturnType<typeof buildTestPorts>["api"]["renderResumeReviewDraft"]>();
     const applyJob = vi.fn();
-    renderWithProviders(<ApplyReviewView />, { ports: buildTestPorts({ api: {
+    const { rerender } = renderWithProviders(<ApplyReviewView />, { ports: buildTestPorts({ api: {
       applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
       createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
       saveResumeReviewDraftRevision: save, renderResumeReviewDraft: render, applyJob,
@@ -2058,7 +2087,11 @@ describe("<ApplyReviewView>", () => {
     caret.collapse(true);
     window.getSelection()!.removeAllRanges();
     window.getSelection()!.addRange(caret);
+    // JSDOM does not position the caret on pointer input. Publish the range
+    // through the editor's pointer boundary before a rerender or save settles.
+    fireEvent.pointerUp(pastedLeaf, { button: 0, pointerType: "mouse" });
     fireEvent(document, new Event("selectionchange"));
+    rerender(<ApplyReviewView />);
     await act(async () => new Promise((resolve) => setTimeout(resolve, 150)));
     const selection = window.getSelection();
     const anchor = selection?.anchorNode;

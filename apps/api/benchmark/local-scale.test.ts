@@ -48,7 +48,7 @@ describe("local scale benchmark support", () => {
     expect(fs.existsSync(directory)).toBe(false);
   });
 
-  it.runIf(uvAvailable)("seeds the smallest declared exact-v14 dataset with fixed totals", async () => {
+  it.runIf(uvAvailable)("seeds the smallest declared exact-v15 dataset with fixed totals", async () => {
     await withOwnedWorkspace((workspace) => {
       const db = new Database(workspace.dbPath, { readonly: true });
       const template = db.prepare("SELECT * FROM resume_templates WHERE tenant_id = 'local' AND template_id = 'built_in:modern-html'").get();

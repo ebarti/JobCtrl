@@ -23,6 +23,17 @@ Profile writes are explicit saves/autosaves of canonical candidate data. A job
 tailoring run consumes a versioned snapshot; it does not silently mutate the
 profile to fit a posting.
 
+`GET /v1/profile` may include `legacyEvidenceReview: { status:
+"review_required", count }`. Affected achievement entries retain their original
+`user_confirmed` value and expose computed `confirmation_review_required: true`.
+Clients cannot clear that authority marker by saving a false flag. The bounded
+local [legacy review commands](../user/candidate-profile.md#review-legacy-confirmations)
+record explicit human decisions; this adds no browser mutation endpoint. Evidence
+Map freshness exposes `confirmationReviewRequired` and interview choices exclude
+pending rows. Private inventory and review payloads never enter generic SSE.
+Unresolved canonical authority reports `legacy_evidence_review_required` before
+new evidence-based generation, preserving accepted artifacts.
+
 `GET /v1/profile` includes `profileVersion` (`null` before initialization, then
 a positive monotonic integer). The API remains backward-compatible with
 callers that omit `expectedProfileVersion`, but the web form includes its saved
@@ -143,6 +154,16 @@ enter the system. They do not hold provider credentials or raw feed contents.
 | `POST /v1/browser-capabilities/:capabilityId/enable` | Explicitly adopt exactly one transient `detectedBrowserId` or one write-only `executablePath` for an optional capability. |
 | `POST /v1/browser-capabilities/:capabilityId/disable` | Disable an optional capability immediately. |
 | `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Backward-compatible operator API for copying one explicitly selected detected profile by opaque browser/profile IDs, retaining the legacy browser-only Default arm, or accepting one write-only manual source path; every arm requires explicit consent. It is not exposed by current Settings and is never used by integrated Discovery or Enrich. |
+
+Credential mutations are serialized across JobCtrl API processes for the same
+OS user. A bounded wait returns a sanitized `busy` response; uncertain helper
+completion reports incomplete recovery and fences later mutations until exit.
+An unreadable process identity returns `ownership_unverified` and preserves the
+coordination record.
+
+Discovery settings reads and writes reject an invalid saved row with
+`invalid_saved_search`; an absent row retains first-use defaults. See
+[Discovery controls](complete-contract.md#discovery-controls).
 
 Credential responses expose enough state for the UI to show whether a provider
 is configured, but do not return stored secret material. Guided provider

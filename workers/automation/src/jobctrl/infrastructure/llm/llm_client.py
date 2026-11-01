@@ -24,7 +24,7 @@ from typing import Any, Protocol
 from jobctrl.domain.ports.llm import LlmFailure, LlmMessage
 from jobctrl.infrastructure.llm.provider_availability import provider_route_available, record_provider_failure
 from jobctrl.infrastructure.llm.provider_errors import (
-    ProviderCallError, provider_exception_error, raise_on_claude_execution_failure,
+    ProviderCallError, provider_exception_error, raise_on_claude_failure,
 )
 
 _DEFAULT_MODEL_SENTINELS = {"", "default"}
@@ -396,10 +396,11 @@ class ClaudeSdkBackend:
             sdk_messages = await _collect_sdk_messages(
                 query_fn, prompt=prompt, options=options_factory(**kwargs), model=self.model,
                 operation="chat_json" if response_schema else "chat",
+                record_cancelled_usage=record,
             )
             input_tokens, output_tokens = _usage_from_messages(sdk_messages)
             record("", input_tokens=input_tokens, output_tokens=output_tokens)
-            raise_on_claude_execution_failure(
+            raise_on_claude_failure(
                 sdk_messages, model=self.model, operation="chat_json" if response_schema else "chat",
             )
             value: str | dict

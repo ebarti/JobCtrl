@@ -105,6 +105,54 @@ def test_invalid_metadata_cannot_authorize_retention(tmp_path, monkeypatch, meta
         assert _stored_resume(conn)["status"] == "suppressed"
 
 
+@pytest.mark.parametrize("state,marker", [
+    ("pending", True), ("failed", True), ("succeeded", True), ("running", False), ("stale", False),
+])
+@pytest.mark.parametrize("condition", ["low_fit", "hard_blocker", "missing_score"])
+def test_sweep_preserves_accepted_materials_without_current_score_authority(tmp_path, monkeypatch, state, marker, condition):
+    from jobctrl.infrastructure.materials.sqlite_repository import SqliteMaterialsRepository
+    from jobctrl.state import set_stage_state
+
+    with connection() as conn:
+        inputs = request(tmp_path)
+        inputs["job"] = canonical_scored_target(conn, 6 if condition == "low_fit" else 9)
+        result = resume_case(conn, ResumeModel()).execute(**inputs)
+        assert result.status == "approved"
+        if condition == "hard_blocker":
+            conn.execute("UPDATE job_scores SET breakdown_json=? WHERE version=2",
+                         ('{"eligibility":{"status":"blocked","hard_blockers":["Synthetic blocker"]}}',))
+        elif condition == "missing_score":
+            conn.execute("DELETE FROM job_scores")
+        artifact_path = Path(result.text_path)
+        accepted_bytes = artifact_path.read_bytes()
+        accepted_row = tuple(_stored_resume(conn))
+        accepted_scores = [tuple(row) for row in conn.execute("SELECT * FROM job_scores ORDER BY version")]
+        set_stage_state(conn, JOB_ID, "score", state, tenant_id=LOCAL_TENANT, validate_transition=False)
+        if marker:
+            conn.execute(
+                "INSERT INTO job_score_staleness (tenant_id,job_id,stale_reason,old_policy_id,old_policy_version,"
+                "new_policy_id,new_policy_version,marked_at,resolved) VALUES "
+                "('local',?,'scoring_policy_changed','local:scoring-policy-v1',1,"
+                "'local:scoring-policy-v2',2,'2026-01-01T00:00:00Z',0)", (str(JOB_ID),),
+            )
+        conn.commit()
+
+        for _ in range(2):
+            _sweep(conn, monkeypatch)
+            current = SqliteMaterialsRepository(conn).load_current_approved(LOCAL_TENANT, JOB_ID)
+            assert current is not None and current.generation == result.materials.generation
+            assert tuple(_stored_resume(conn)) == accepted_row
+            assert artifact_path.read_bytes() == accepted_bytes
+            assert [tuple(row) for row in conn.execute("SELECT * FROM job_scores ORDER BY version")] == accepted_scores
+
+        if marker:
+            conn.execute("UPDATE job_score_staleness SET resolved=1 WHERE tenant_id='local' AND job_id=?", (str(JOB_ID),))
+        set_stage_state(conn, JOB_ID, "score", "succeeded", tenant_id=LOCAL_TENANT, validate_transition=False)
+        conn.commit()
+        _sweep(conn, monkeypatch)
+        assert _stored_resume(conn)["status"] == "suppressed"
+
+
 @pytest.mark.parametrize("replacement_quality", ["pass", "fail"])
 def test_replacement_only_changes_the_accepted_generations_own_exception(tmp_path, monkeypatch, replacement_quality):
     from jobctrl.infrastructure.materials.sqlite_repository import SqliteMaterialsRepository

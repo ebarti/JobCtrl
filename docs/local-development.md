@@ -19,7 +19,7 @@ scripts/install
 
 `scripts/install` is the first-run path for new contributors. It checks for
 Node.js 22.13 or newer, Corepack, uv (the Python worker needs Python 3.11 or
-newer), and the Temporal CLI, offers
+newer), the Temporal CLI, and Go 1.24 or newer on macOS, offers
 Homebrew installs for missing machine-level tools when available, then runs the
 repository dependency setup: frozen corepack pnpm install, uv sync, and Playwright
 Chromium installs for both the web package and the Python worker. This direct
@@ -116,10 +116,12 @@ corepack pnpm dev
 `corepack pnpm dev` is the source-development counterpart of installed
 `jobctrl start`. It first builds the browser extension, then starts the full
 local fleet in dependency order: Temporal dev server, TypeScript API, Vite web
-app, and the Python worker. Before each
-component starts, the launcher stops the existing tracked JobCtrl process
-tree for that component, so rerunning `corepack pnpm dev` starts from a clean owned
-stack. It runs in the foreground so supervised terminals keep the child
+app, and the Python worker. On macOS, the fleet uses the same workspace lock
+and process ownership as a compatible installed application. Starting a source fleet
+stops the previously owned source or installed fleet for that workspace first.
+Older untracked processes cannot provide this ownership proof merely by stopping.
+The command runs
+in the foreground so supervised terminals keep the child
 processes alive; keep the terminal open and stop the stack with Ctrl-C. The
 launcher tracks PIDs under `.dev/pids/`, writes logs under `.dev/logs/`, and
 defaults to:
@@ -129,7 +131,7 @@ defaults to:
   `JOBCTRL_API_PORT=8766`
 - Web API base URL: `VITE_JOBCTRL_API_BASE_URL=http://127.0.0.1:8766`
 - Web port: `5173` (`JOBCTRL_WEB_PORT` can override it)
-- Temporal persistence: `$JOBCTRL_DIR/temporal/temporal.db`
+- Temporal persistence for a new workspace: `$JOBCTRL_DIR/temporal.db`
   (`JOBCTRL_TEMPORAL_DB` can override it)
 
 `jobctrl.db` and the Temporal history store form one runtime identity. Keeping
@@ -137,6 +139,91 @@ both under `JOBCTRL_DIR` lets an interrupted workflow reconnect to the same
 history when the source stack is restarted from another Git worktree. To run a
 fully isolated stack, give it a separate `JOBCTRL_DIR`; do not point a shared
 `jobctrl.db` at a worktree-local Temporal database.
+
+If another API responds on the configured port and is not tracked by this
+checkout, source startup refuses before replacing processes or starting a web
+app against that API. Stop the other runtime or choose separate bindings. This
+probe only detects a responding API; it does not establish that all writers or
+detached descendants have stopped and is not migration authority.
+
+The current source and compatible installed launchers retain the earlier
+`$JOBCTRL_DIR/temporal/temporal.db` location if that is the only existing
+history. New workspaces use `$JOBCTRL_DIR/temporal.db`. If both locations or
+orphaned SQLite companions exist, startup refuses to choose between them.
+Preserve the application database, both histories and their companions; do
+not copy, replace or delete either history to make startup succeed. On macOS,
+`JOBCTRL_DB_PATH` and `JOBCTRL_TEMPORAL_DB` must identify the database and
+history in `JOBCTRL_DIR`. Set a separate `JOBCTRL_DIR` for an isolated stack.
+A compatible installed launcher only accepts a legacy source history once a
+healthy source fleet has established its shared ownership; an older untracked
+source runtime cannot supply that proof. In particular, v0.3.1 expects the root
+`temporal.db` and does not support the earlier source-only location. The macOS
+source fleet uses the local Temporal server at `localhost:7233` and its `default`
+namespace, as the installed app does.
+
+### Schema migrations and source updates
+
+The source checkout and the installed application are separate versions. To
+update a clean source checkout, first stop its attached stack with Ctrl-C. Then
+fast-forward its intended branch, refresh its dependencies and restart it:
+
+```bash
+git status --short --branch
+git pull --ff-only
+corepack pnpm dev:setup
+corepack pnpm dev
+```
+
+Preserve or commit any unrelated local changes before pulling. Pulling source
+does not update the installed application. For an installed release, use
+`jobctrl update` when a compatible release is available; the installed updater
+owns the stopped-runtime migration and paired backup. The schema-14 to 15
+protocol change specifically requires the trusted new installer described in
+[Getting Started](user/getting-started.md#update-roll-back-or-remove-jobctrl),
+not the older installed updater. Updating a database makes it unavailable to
+older builds that require an earlier schema. Source and installed builds use
+the same profile and resume in the shared workspace; they cannot run different
+schema versions against it at the same time.
+
+While the checkout owns the workspace, `jobctrl status` identifies its source
+supervisor. Use `corepack pnpm dev:status` in that checkout for individual
+component health. Stop the source fleet before using the installed `jobctrl
+backup` command; it will not replace a running source fleet with an installed
+one.
+
+On macOS, starting this checkout automatically upgrades an owned schema-14
+workspace to schema 15. It stops the owned runtime, backs up the application
+database and its matching Temporal history under
+`$JOBCTRL_DIR/backups/source-pair-<id>/`, and validates the upgrade before
+starting. No separate migration command is needed. If the upgrade is
+interrupted, restart the same checkout to retry; each attempt backs up the
+current pair and does not restore an older backup over later writes. Keep the
+recovery journal and all databases and SQLite companions in place.
+
+If the earlier runtime's ownership cannot be verified, the automatic upgrade
+does not modify the workspace. With an untracked legacy registry, the source
+command can stop before opening the diagnostic interface and report the
+ownership problem in the terminal instead. If a diagnostic API does start for
+an incompatible schema, it reports that an upgrade is needed without starting
+the worker or Temporal. If a legacy runtime lacks complete ownership records,
+there is currently no documented self-service recovery.
+Preserve the registry, workspace and journal and seek support; a computer
+restart alone does not clear the refusal. Schemas older than 14, newer than this
+build, ambiguous histories, and non-macOS source starts do not take this
+automatic path. Do not invoke the private migration modules directly on a live
+workspace: they do not establish process ownership or a paired backup.
+
+For development that does not need personal data, a new isolated workspace
+uses the checkout's current schema on first start. This isolates the databases,
+not inherited provider credentials or environment files; use the synthetic QA
+rules in [Reliability & QA](local-reliability-qa.md#safe-qa-data) when testing:
+
+```bash
+JOBCTRL_DIR="$(mktemp -d)" corepack pnpm dev
+```
+
+Use a deliberately retained path instead of `mktemp` if the workspace must
+survive the session. Keep the application and Temporal databases together.
 
 Whenever `scripts/dev run`, `start`, or `restart` selects the product `web`
 component (including the default fleet), it runs `corepack pnpm extension:build`
@@ -166,9 +253,9 @@ launcher defaults above.
 | `JOBCTRL_DEMO_API_PORT`         | `8787`                      | Local Wrangler port for the demo consent and telemetry API.                                                                                                                                                            |
 | `JOBCTRL_DEMO_STATE_DIR`        | `.dev/demo/wrangler`        | Local Wrangler/D1 persistence shared by demo migrations and the demo API process.                                                                                                                                      |
 | `VITE_JOBCTRL_API_BASE_URL`     | proxied `/v1`               | Browser API origin when not using the default Vite proxy.                                                                                                                                                              |
-| `JOBCTRL_TEMPORAL_DB`           | `$JOBCTRL_DIR/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. Override it only together with an isolated `JOBCTRL_DIR`; sharing JobCtrl projections while switching Temporal history stores breaks workflow recovery. |
-| `TEMPORAL_ADDRESS`              | `localhost:7233`            | Temporal server address used by the worker, CLI, and workflow-starting RPC.                                                                                                                                            |
-| `TEMPORAL_NAMESPACE`            | `default`                   | Temporal namespace.                                                                                                                                                                                                    |
+| `JOBCTRL_TEMPORAL_DB`           | `$JOBCTRL_DIR/temporal.db`, or the sole existing legacy `$JOBCTRL_DIR/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. On macOS this must be the history selected for `JOBCTRL_DIR`; sharing JobCtrl projections while switching histories breaks workflow recovery. |
+| `TEMPORAL_ADDRESS`              | `localhost:7233`            | Temporal server address used by the worker, CLI, and workflow-starting RPC. The macOS shared-workspace fleet requires this local server. |
+| `TEMPORAL_NAMESPACE`            | `default`                   | Temporal namespace. The macOS shared-workspace fleet requires `default`. |
 | `JOBCTRL_API_SSE_POLL_MS`       | `250`                       | API event-stream database poll interval in milliseconds.                                                                                                                                                               |
 | `VITE_DEV_API_PROXY_TARGET`     | `http://127.0.0.1:8766`     | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks.                                                                                                                                 |
 | `VITE_DEMO_API_PROXY_TARGET`    | launcher-managed            | Vite dev-server `/api` proxy target for demo mode. The launcher sets it to the tracked local Wrangler process so consent stays same-origin.                                                                            |
@@ -184,9 +271,11 @@ corepack pnpm dev:logs worker
 scripts/dev list
 ```
 
-`corepack pnpm dev:status` combines PID liveness with the API worker heartbeat health
-classification. When the worker process is alive but its heartbeat is stale,
-the worker row reports `stale` so operator status matches the dashboard.
+`corepack pnpm dev:status` reports tracked PID liveness separately from health.
+The API row can show `migration`, `incompatible`, `healthy`, or `unknown` when
+its watcher is alive. `unknown` means the health probe did not establish a
+result; it does not prove the process is down. When the worker process is alive
+but its heartbeat is stale, the worker row reports `stale`.
 
 For a detached background stack in a normal shell, use the explicit daemon mode:
 
@@ -291,14 +380,15 @@ unreachable execution finished, and it must not be used during normal operation.
 Run individual components only when troubleshooting a specific process:
 
 ```bash
-temporal server start-dev --db-filename "$JOBCTRL_DIR/temporal/temporal.db"
+temporal server start-dev --db-filename "$JOBCTRL_TEMPORAL_DB"
 corepack pnpm api:dev
 corepack pnpm web:dev
 uv --project workers/automation run jobctrl worker
 uv --project workers/automation run jobctrl doctor
 ```
 
-The Temporal dev server binds the frontend gRPC service on `127.0.0.1:7233` and
+Set `JOBCTRL_TEMPORAL_DB` to the existing workspace history before starting
+Temporal directly; the source launcher normally selects it for you. The Temporal dev server binds the frontend gRPC service on `127.0.0.1:7233` and
 the Web UI on `http://127.0.0.1:8233`. The launcher passes
 `--db-filename "$JOBCTRL_TEMPORAL_DB"` so workflow history persists across
 launcher and worktree restarts instead of disappearing when the process exits.
@@ -407,7 +497,12 @@ The production Wrangler configs bind the EU-scoped
 intentionally ignored—the checked-in environment contract contains only the
 four bindings used by this package.
 
-`.github/workflows/demo-site.yml` always builds and verifies the demo. Same-repo
+On pull requests, the shared CI frontend workflow builds the browser-local
+demo for shared web and dependency changes. The shared backend worker
+checks and dry-runs both edge Workers only for
+edge-package, shared TypeScript configuration, dependency or edge-workflow
+changes. The site workflow also verifies the Workers on `main` pushes and manual
+runs before any production deployment. Same-repo
 pull requests publish a static Pages preview only when
 `DEMO_PREVIEW_DEPLOY_ENABLED=true`. Production runs only from `main` when
 `DEMO_DEPLOY_ENABLED=true`, applies D1 migrations, deploys both Workers, and
@@ -427,13 +522,21 @@ consent read, and exact denied/granted cookie boundary.
 
 ## Verify
 
-Schema v14 migrations must run with JobCtrl stopped and must write a separate
-candidate. For a synthetic exact-v13 source, exercise the private boundary with
-`python -m jobctrl.infrastructure.migrations.v13_to_v14_execute --source
+Schema v15 migrations require verified instance cleanup and a separate sealed
+candidate. For a synthetic exact-v14 source, exercise the private boundary with
+`python -m jobctrl.infrastructure.migrations.v14_to_v15_execute --source
 <source.db> --candidate <candidate.db>`. The command never installs the
-candidate. Normal installations use `jobctrl update`, whose native lifecycle
-owns quiescence, paired backup, candidate activation, readiness, and rollback.
-Never run a migration executor against the live path as its candidate.
+candidate. The authenticated new installer owns stopped-runtime paired backup,
+exact-v14 in-place activation, readiness and forward recovery. Historical
+protocol-1 controllers refuse the protocol-2 target before backup; run the new
+installer against the original authenticated installation instead. Before
+selector replacement, retry that trusted installer; the old public binary
+cannot decode the new journal. After replacement, ordinary `jobctrl update`
+resumes through the new controller. Each retry preserves newer live app/Temporal writes and takes a current WAL-aware backup.
+A cross-protocol rollback is refused. Never run a migration executor against
+the live path as its candidate. See
+[the distribution contract](../packaging/distribution/README.md) and
+[release qualification](developer/releasing.md#schema-15-installed-upgrade-qualification).
 
 Choose the touched-surface recipe and required gates through
 [Reliability & QA](local-reliability-qa.md). The root aggregates do not include
@@ -450,23 +553,113 @@ The repository requires maintainer approval for workflow runs from all external
 fork contributors. Review the proposed changes before approving a run. Issue
 labels and Project status do not approve code execution.
 
-CI is plain path-filtered GitHub Actions with no routing layer: each workflow
-under `.github/workflows/` declares the paths it owns and runs whole when a
-pull request or a `main` push touches them. `typescript.yml` runs the API, web,
-Storybook, web E2E, and extension suites, including `web:lint` frontend boundary
-checks; `python.yml` lints and
-runs the full pytest suite on each supported Python version; `launcher.yml`
-runs the native launcher race suite together with the cross-runtime migration
-boundary (Go opens the candidate with the locked Python migration runtime,
-then the TypeScript API reopens it); `distribution.yml` audits the fail-closed
-release contracts when dependency locks or packaging inputs change — the
-surface Dependabot PRs touch; `docs-site.yml` builds and verifies its rendered
-site in Chromium, and `demo-site.yml` builds its site. Both deploy on `main`.
-Two workflows deliberately take no paths
-filter: `release-check.yml` (any file can leak PII) and `repo-scripts.yml`,
-whose `scripts:test` suite asserts contracts across inputs that sprawl the
-repository (docs launch copy, version parity into `launcher.go` and the
-release workflows, demo composition, dev supervisor lifecycle).
+Pull requests and pushes to `main` use `.github/workflows/ci.yml`. The entry
+contains triggers and reusable-workflow calls; each child job still receives
+its own runner. An ordinary API or site-documentation PR uses three allocations.
+Web PRs use five, preserving separate web, supporting UI and E2E machines after
+combined runners caused contention and timeouts in hosted trials:
+
+- **Admission / Release check**, in `ci-admission.yml`, scans the actual
+  candidate with accepted default-branch privacy code, validates source and run
+  identities, and classifies the complete Git diff. It executes no candidate
+  code or candidate dependency installation.
+- **Backend / Core checks**, in `ci-backend.yml`, installs Node once and runs
+  repository contracts for every verified change. Selected API, Python,
+  distribution and edge checks reuse that runner and its locked dependencies.
+- **Frontend / UI checks**, in `ci-frontend.yml`, installs Node once and runs web
+  lint, types, unit tests and build. It allocates no
+  runner when web checks are excluded.
+- **Support / UI checks** runs boundary, Storybook, extension and site checks
+  sequentially on another VM, with shared browser setup. It allocates no
+  runner when none is selected.
+- **Browser / UI checks** calls the same frontend recipe with only E2E enabled,
+  retaining isolated and real-RPC modes on a separate VM.
+
+Missing policy at first adoption, unknown paths, shared dependencies, CI or
+privacy inputs, and uncertain scope select full coverage or block verification.
+Forks, stacked bases outside the default branch and moving policy bases use
+full coverage. A suite runs unless trusted admission explicitly excludes it;
+missing outputs cannot silently omit one. The scope notice records the source,
+policy, run and selected checks. Required contexts belong to the actual worker
+jobs, including literal skipped platform jobs; there is no final summary runner.
+
+| Changed surface | Product checks, in addition to privacy and repository contracts |
+| --- | --- |
+| Published site documentation | Docs build, emitted links/redirects and rendered Chromium checks |
+| Documentation outside the built site | No unrelated product suite |
+| Web source | Web lint/types/unit/build, Storybook/browser controls and both web E2E modes |
+| API source | API checks/tests and web E2E, including real worker RPC |
+| Worker source | API/RPC integration, the full worker suite on Python 3.12 and two native launcher shards |
+| Shared contracts, locks, toolchains, CI, privacy or unknown inputs | Full validation, including platform-specific proof |
+
+Each frontend worker runs one profile at a time. Web checks, supporting UI
+checks and E2E have separate VMs; compiler, accessibility and browser-heavy
+work no longer compete inside one runner. Within a profile, commands keep their
+original order and failure behavior, while independent suites finish their
+diagnostics after a failure. The role-named `frontend-lanes` artifacts retain
+logs and per-command outcomes. Both E2E modes retain separate JUnit and
+screenshot evidence. Resource logs record available CPUs and memory for timing
+comparisons.
+
+The web profile keeps the original lint, types, unit, public-type and production
+build sequence. Browser installation is selected only for profiles that need it
+and has an eight-minute bound. Hosted Ubuntu package transport uses bounded
+retries and timeouts without changing repositories or signature checks.
+
+The complete primary Python recipe lives in
+`.github/actions/worker-checks/action.yml`; the backend and standalone manual
+`python.yml` both call it after locked setup. The installed app bundles CPython
+3.12, so the full suite, including migration and security cases, runs once on
+3.12. This removes complete 3.11 and 3.13 repetitions without changing package
+interpreter metadata or certifying those source interpreters.
+
+The three-runner target applies when one frontend worker is sufficient. Web
+source needs all three; broader safety inputs can need additional platform
+proof. Selected native launcher proof retains two isolated macOS shards because
+its tests own fixed ports.
+Native credential checks retain macOS, Windows and Linux jobs; synthetic Gmail
+ACL checks retain Windows. Full scope therefore needs eleven allocations. These
+platform boundaries are preserved rather than replaced with Linux substitutes.
+
+The entry also owns affected checks on `main` pushes. It verifies the exact
+before/after diff; absent or forced history and moving policy use full core
+coverage. Documentation and demo publication remain in `docs-site.yml` and
+`demo-site.yml`, with their existing main input filters, environments and
+credentials. Their builds are not repeated by the core main workflow. Other standalone suite workflows remain available for manual diagnostics; the
+TypeScript entry uses the same three isolated frontend profiles.
+
+PR demo previews additionally require affected-only admission, the original
+Demo Site input paths, the same repository and the existing explicit preview
+setting. Bootstrap, full, shared, CI, security and uncertain admissions verify
+selected surfaces without publishing a preview. When changing required context
+names, verify every replacement job before migrating the ruleset; preserve
+strict up-to-date enforcement, app identity and all other protections.
+
+For the elapsed-time study, retain the workflow, all-attempt job metadata and
+trusted scope notice while the PR association is available. GitHub's REST API
+provides the workflow and job timestamps:
+
+```bash
+gh api repos/ebarti/JobCtrl/actions/runs/RUN_ID
+gh api --paginate 'repos/ebarti/JobCtrl/actions/runs/RUN_ID/jobs?filter=all&per_page=100'
+```
+
+Measure total candidate elapsed time from the earliest attributable
+workflow creation, including prerequisites and retries, alongside the original
+required-job span. Separate pre-start delay from execution, runner allocations
+from materialized job records, and executed checks from intentional exclusions.
+Full-workflow completion stays unavailable while a workflow can still create
+later jobs. Required-context rules are recorded at collection time.
+Incomplete, failed or unattributed proof cannot enter a successful sample;
+missing historical PR or tested-base identity remains unknown. Compare similar
+changes, test coverage, runner load and toolchains before claiming a speedup.
+
+Dependabot automatic rebases are disabled to keep parked dependency PRs from
+restarting CI after unrelated merges. Refresh the PR selected for its next
+merge, then verify that candidate. Update schedules and dependency groups still
+apply. GitHub may continue automatically rebasing PRs opened before this policy
+change until they are 30 days old; see the
+[Dependabot rebase policy](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#rebase-strategy).
 
 Python CI syncs `workers/automation/uv.lock` with `--locked --all-extras`; it
 must never resolve the floating ranges in `pyproject.toml` in place of the
@@ -488,6 +681,12 @@ signal cannot unwind a blocked worker-pool thread), with a 45-minute job
 ceiling behind it. CI points `TMPDIR` at `/dev/shm` when available so
 hosted-runner disk latency cannot amplify the SQLite migration tests; the
 macOS launcher workflow still proves the migration boundary on real disk.
+Python CI installs the checksum-verified Temporal CLI and the separately pinned
+Temporal time-skipping test server before the suite. Their paths are passed to
+the corresponding tests, so neither depends on an SDK download during a test.
+The test-server archive and its SHA-256 are pinned to the official Temporal
+Java SDK release in `scripts/install-temporal-test-server.sh`; review that pin
+when changing the locked Python SDK.
 If the SDK's automatic test-server download is unavailable locally, point
 `JOBCTRL_TEMPORAL_TEST_SERVER_PATH` at an existing Temporal time-skipping test
 server executable and `JOBCTRL_TEMPORAL_CLI_PATH` at an installed Temporal CLI.
@@ -502,6 +701,16 @@ version updates: advancing them requires a reviewed cutoff change and coupled
 lockfile maintenance. These type-only exclusions preserve security update
 attempts. A security fix published after a cutoff still requires that deliberate
 cutoff and lockfile update before resolution can succeed.
+For the Claude SDK argument-injection fix, the reviewed cutoff advances only
+to 2026-07-18 and both provider groups pin `claude-agent-sdk==0.2.121`.
+The worker and separately shipped provider-pack lock must advance together.
+Node security backports use version-bounded overrides and exact-release
+exceptions to the existing eight-day package age gate; the global gate remains
+in force. Prefer a patched supported major line over an unrelated major
+migration, such as Vite 7.3.7 for the app and Vite 6.4.4 for VitePress.
+The repository-root Ruff configuration and the worker project both select the
+existing `E4`, `E7`, `E9`, and `F` rule groups explicitly so tool upgrades do not
+silently expand the contributor lint policy.
 
 ## Test And Documentation Workspaces
 
@@ -574,8 +783,11 @@ and records each canonical `JOBCTRL_DIR` under
 `~/Library/Application Support/JobCtrl/instances/<sha256>` (override with
 `JOBCTRL_RUNTIME_HOME`). This is an artifact smoke/development surface only;
 `scripts/dev` remains the source-contributor launcher until the installer and
-signing phases land. Use the much smaller contract fixture while changing the
-builder itself:
+signing phases land. Signed protocol-2 upgrades use the authenticated installer
+and signed schema declaration, with normal cleanup and forward recovery. Synthetic local
+artifacts do not qualify the actual signed/notarized installed upgrade; follow
+[the release contract](developer/releasing.md#schema-15-installed-upgrade-qualification).
+Use the much smaller contract fixture while changing the builder itself:
 
 ```bash
 corepack pnpm distribution:build:fixture
@@ -1041,3 +1253,13 @@ No asset regenerates from a real workspace.
 ## Screening CLI
 
 The installed CLI supports `jobctrl screening read JOB_ID` and `jobctrl screening write JOB_ID command.json`. From source use the prepared locked interpreter with `PYTHONPATH=workers/automation/src workers/automation/.venv/bin/python -m jobctrl.cli screening read JOB_ID`. The [user reference](user/screening-answers.md#cli-and-local-api) defines command fields and source/privacy boundaries.
+
+Native launcher tests use temporary same-user launchd jobs and private ownership
+receipts. They need access to the per-user launchd domain and native process
+inspection; an outer tool sandbox can deny those probes without proving a
+service is absent. Keep HOME, JOBCTRL_DIR and runtime paths synthetic. The
+bundled smoke applies its fixed loopback restriction inside the job helper via
+`JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1`; unknown selector values fail.
+The actual native CPython network test and independent direct-runtime sandbox
+checks must both execute. No arbitrary sandbox profile or ownership bypass is
+accepted from the environment.

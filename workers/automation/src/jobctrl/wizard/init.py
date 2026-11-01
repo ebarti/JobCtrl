@@ -9,10 +9,8 @@ Interactive flow that creates ~/.jobctrl/ with:
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
-from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
@@ -25,7 +23,9 @@ from jobctrl.config import (
     ENV_PATH,
     RESUME_PATH,
     RESUME_PDF_PATH,
+    _save_discovery_search_config_to_db,
     ensure_dirs,
+    load_saved_search_settings,
     save_discovery_automation_settings,
 )
 from jobctrl.database import init_db
@@ -371,20 +371,8 @@ def _setup_searches() -> None:
         ],
         "queries": [{"query": role, "tier": min(index + 1, 3)} for index, role in enumerate(roles)],
     }
-    conn = init_db(DB_PATH)
-    now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        """
-        INSERT INTO discovery_settings (
-            tenant_id, search_config_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?)
-        ON CONFLICT(tenant_id) DO UPDATE SET
-            search_config_json = excluded.search_config_json,
-            updated_at = excluded.updated_at
-        """,
-        (str(LOCAL_TENANT), json.dumps(search_cfg, sort_keys=True), now, now),
-    )
-    conn.commit()
+    init_db(DB_PATH)
+    _save_discovery_search_config_to_db(search_cfg)
     console.print(f"[green]Discovery settings saved to SQLite at {DB_PATH}[/green]")
 
 
@@ -513,6 +501,9 @@ def _setup_auto_apply() -> None:
 
 def run_wizard() -> None:
     """Run the full interactive setup wizard."""
+    # Re-running setup must not modify profile or search data before the
+    # existing search authority has been checked.
+    load_saved_search_settings()
     console.print()
     console.print(
         Panel.fit(

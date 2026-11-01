@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from jobctrl.digest import acknowledge_digest, build_digest, read_digest_state
 from jobctrl.llm import SpendBudgetStatus
 
@@ -26,6 +28,15 @@ def test_build_digest_matches_shared_fixture_without_acknowledging(tmp_path: Pat
     conn.row_factory = sqlite3.Row
     _create_schema(conn)
     _seed_fixture(conn, fixture)
+    ready_job = next(job["jobId"] for job in fixture["jobs"] if job["title"] == "Post Watermark Ready")
+    conn.execute(
+        """
+        INSERT INTO apply_run_projections (run_id, tenant_id, job_id, status, result, started_at)
+        VALUES ('foreign-run', 'other', ?, 'failed', 'captcha_failed', ?)
+        """,
+        (ready_job, fixture["now"]),
+    )
+    conn.commit()
 
     before = read_digest_state(conn)
     digest = build_digest(
@@ -191,16 +202,17 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (tenant_id, source_id, window_start, window_end)
         );
         CREATE TABLE job_stage_states (
-            job_url             TEXT NOT NULL,
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            job_id              TEXT NOT NULL,
             stage               TEXT NOT NULL,
             state               TEXT NOT NULL DEFAULT 'pending',
             updated_at          TEXT NOT NULL DEFAULT '',
-            PRIMARY KEY (job_url, stage)
+            PRIMARY KEY (tenant_id, job_id, stage)
         );
         CREATE TABLE application_review_decisions (
             tenant_id    TEXT NOT NULL DEFAULT 'local',
             decision_id  TEXT NOT NULL,
-            job_key      TEXT NOT NULL,
+            job_id       TEXT NOT NULL,
             decision     TEXT NOT NULL,
             reason       TEXT,
             decided_by   TEXT NOT NULL DEFAULT 'user',
@@ -210,7 +222,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE application_outcomes (
             tenant_id     TEXT NOT NULL DEFAULT 'local',
             outcome_id    TEXT NOT NULL,
-            job_key       TEXT NOT NULL,
+            job_id        TEXT NOT NULL,
             kind          TEXT NOT NULL,
             source        TEXT NOT NULL,
             note          TEXT,
@@ -219,7 +231,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (tenant_id, outcome_id)
         );
         CREATE TABLE job_scores (
-            job_url TEXT NOT NULL,
+            job_id TEXT NOT NULL,
             version INTEGER NOT NULL,
             tenant_id TEXT NOT NULL DEFAULT 'local',
             fit_score INTEGER NOT NULL,
@@ -229,11 +241,11 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             correction_json TEXT,
             criteria_json TEXT NOT NULL DEFAULT '{}',
             trace_json TEXT NOT NULL DEFAULT '{}',
-            PRIMARY KEY (job_url, version)
+            PRIMARY KEY (tenant_id, job_id, version)
         );
         CREATE TABLE job_score_staleness (
             tenant_id TEXT NOT NULL DEFAULT 'local',
-            job_url TEXT NOT NULL,
+            job_id TEXT NOT NULL,
             stale_reason TEXT NOT NULL,
             old_policy_id TEXT NOT NULL DEFAULT '',
             old_policy_version INTEGER NOT NULL,
@@ -244,7 +256,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             resolved_at TEXT,
             resolved_by_score_version INTEGER,
             PRIMARY KEY (
-                tenant_id, job_url, stale_reason,
+                tenant_id, job_id, stale_reason,
                 old_policy_version, new_policy_version
             )
         );
@@ -266,18 +278,17 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         );
         CREATE TABLE jobctrl_deleted_jobs (tenant_id TEXT, job_id TEXT, deleted_at TEXT, restored_at TEXT);
         CREATE TABLE jobctrl_hidden_jobs (
-            job_id TEXT,
+            job_id TEXT NOT NULL,
             tenant_id TEXT NOT NULL DEFAULT 'local',
-            job_url TEXT NOT NULL,
             hidden_at TEXT NOT NULL,
             unhidden_at TEXT
         );
         CREATE TABLE posting_snapshot_sets (
             tenant_id TEXT NOT NULL DEFAULT 'local',
-            job_url TEXT NOT NULL,
+            job_id TEXT NOT NULL,
             latest_active_state TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            PRIMARY KEY (tenant_id, job_url)
+            PRIMARY KEY (tenant_id, job_id)
         );
         CREATE TABLE operational_attempt_metrics (
             metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -300,9 +311,9 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             error_class TEXT
         );
         CREATE TABLE job_events (
-            tenant_id TEXT NOT NULL DEFAULT 'local', job_id TEXT, entity_kind TEXT, entity_ref TEXT,
+            tenant_id TEXT NOT NULL, job_id TEXT, identity_version INTEGER NOT NULL,
+            entity_kind TEXT, entity_ref TEXT, idempotency_key TEXT,
             event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_url TEXT,
             stage TEXT,
             event_type TEXT NOT NULL DEFAULT '',
             level TEXT NOT NULL DEFAULT 'info',
@@ -321,6 +332,10 @@ def _seed_fixture(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     )
     for job in fixture["jobs"]:
         score_breakdown = _score_breakdown_for_job(job)
+        conn.execute(
+            "INSERT INTO jobs (tenant_id, job_id, company) VALUES ('local', ?, ?)",
+            (job["jobId"], job["employer"]),
+        )
         conn.execute(
             """
             INSERT INTO job_list_projections (
@@ -358,7 +373,7 @@ def _seed_fixture(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_scores (
-                job_url, version, tenant_id, fit_score, breakdown_json,
+                job_id, version, tenant_id, fit_score, breakdown_json,
                 keywords_json, scored_at, correction_json, criteria_json, trace_json
             ) VALUES (?, 1, 'local', ?, ?, '["typescript"]', ?, NULL, '{}', '{}')
             """,
@@ -366,17 +381,17 @@ def _seed_fixture(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         )
         if job.get("hidden"):
             conn.execute(
-                "INSERT INTO jobctrl_hidden_jobs (tenant_id, job_url, hidden_at, unhidden_at) VALUES ('local', ?, ?, NULL)",
+                "INSERT INTO jobctrl_hidden_jobs (tenant_id, job_id, hidden_at, unhidden_at) VALUES ('local', ?, ?, NULL)",
                 (job["jobId"], fixture["now"]),
             )
         if job.get("activeState"):
             conn.execute(
-                "INSERT INTO posting_snapshot_sets (tenant_id, job_url, latest_active_state, updated_at) VALUES ('local', ?, ?, ?)",
+                "INSERT INTO posting_snapshot_sets (tenant_id, job_id, latest_active_state, updated_at) VALUES ('local', ?, ?, ?)",
                 (job["jobId"], job["activeState"], fixture["now"]),
             )
         if job["currentStage"] == "apply":
             conn.execute(
-                "INSERT INTO job_stage_states (job_url, stage, state, updated_at) VALUES (?, 'apply', ?, ?)",
+                "INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at) VALUES ('local', ?, 'apply', ?, ?)",
                 (job["jobId"], job["currentState"], fixture["now"]),
             )
 
@@ -431,7 +446,7 @@ def _seed_fixture(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO application_review_decisions (
-                tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at
+                tenant_id, decision_id, job_id, decision, reason, decided_by, decided_at
             ) VALUES ('local', ?, ?, ?, NULL, 'user', ?)
             """,
             (
@@ -465,7 +480,7 @@ def _seed_fixture(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_score_staleness (
-                tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+                tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
                 new_policy_id, new_policy_version, marked_at, resolved
             ) VALUES (
                 'local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', ?,
@@ -484,7 +499,7 @@ def _seed_fixture(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO application_outcomes (
-                tenant_id, outcome_id, job_key, kind, source, note, occurred_at, recorded_at
+                tenant_id, outcome_id, job_id, kind, source, note, occurred_at, recorded_at
             ) VALUES ('local', ?, ?, ?, 'manual', NULL, ?, ?)
             """,
             (
@@ -526,3 +541,39 @@ def _score_breakdown_for_job(job: dict[str, Any]) -> dict[str, Any]:
 
 def _parse_utc(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+@pytest.mark.parametrize("decision_id", ["0-revoked", "z-revoked"])
+@pytest.mark.parametrize("decision", ["defer", "reset"])
+def test_digest_review_ties_never_restore_submit_authority(tmp_path, decision_id, decision):
+    from jobctrl.database import close_connection, init_db
+    from jobctrl.digest import _latest_decision_cte
+
+    db_path = tmp_path / "digest-ties.db"
+    conn = init_db(db_path)
+    try:
+        job_id = "30000000-0000-4000-8000-000000000001"
+        other_job_id = "30000000-0000-4000-8000-000000000002"
+        conn.executemany("INSERT INTO jobs (tenant_id,job_id,url) VALUES (?,?,?)", [
+            ("local", job_id, "https://example.test/first"),
+            ("local", other_job_id, "https://example.test/second"),
+            ("other", job_id, "https://example.test/foreign"),
+        ])
+        conn.executemany("INSERT INTO application_review_decisions (tenant_id,job_id,decision_id,decision,decided_at) VALUES ('local',?,?,?,?)", [
+            (job_id, "a-approved", "approve_submit", "2026-10-24T10:00:00Z"),
+            (job_id, decision_id, decision, "2026-10-24T10:00:00Z"),
+            (job_id, "zz-later-approval", "approve_submit", "2026-10-24T10:00:00Z"),
+            (other_job_id, "other-job-approval", "approve_submit", "2026-10-24T10:00:01Z"),
+        ])
+        conn.execute("INSERT INTO application_review_decisions (tenant_id,job_id,decision_id,decision,decided_at) VALUES ('other',?,'foreign-approval','approve_submit','2026-10-24T10:00:02Z')", (job_id,))
+        cte, parameters = _latest_decision_cte()
+        query = cte + " SELECT job_id, decision FROM latest_digest_decision ORDER BY job_id"
+        assert [tuple(row) for row in conn.execute(query, parameters)] == [
+            (job_id, decision), (other_job_id, "approve_submit"),
+        ]
+        conn.execute("INSERT INTO application_review_decisions (tenant_id,job_id,decision_id,decision,decided_at) VALUES ('local',?,'fresh-approval','approve_submit','2026-10-24T10:00:01Z')", (job_id,))
+        assert [tuple(row) for row in conn.execute(query, parameters)] == [
+            (job_id, "approve_submit"), (other_job_id, "approve_submit"),
+        ]
+    finally:
+        close_connection(db_path)

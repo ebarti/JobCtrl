@@ -19,6 +19,34 @@ from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultLimitR
 _CAPTURE_FAILURE_CODES = ("captured_posting_invalid", "captured_posting_source_mismatch")
 
 
+def acknowledge_admitted_capture(
+    conn, result_budget, *, tenant_id, listing_id, snapshot, target, source_id, capture_key, write_fence=None,
+):
+    """Finish an exact prior admission, even at zero capacity or after Job deletion."""
+    owns = not conn.in_transaction
+    conn.execute("BEGIN IMMEDIATE" if owns else "SAVEPOINT acknowledge_admitted_capture")
+    try:
+        result_budget.fence_write()
+        if write_fence is not None:
+            write_fence()
+        admitted = result_budget.admitted_job_for_observation(source_id, f"capture:{capture_key}")
+        if admitted is not None:
+            conn.execute(
+                "UPDATE posting_triage SET consumed_at=? WHERE tenant_id=? AND listing_id=? "
+                "AND snapshot_fingerprint=? AND target_fingerprint=? AND source_id=? AND consumed_at IS NULL",
+                (datetime.now(timezone.utc).isoformat(), str(tenant_id), listing_id, snapshot, target, source_id),
+            )
+        conn.commit() if owns else conn.execute("RELEASE SAVEPOINT acknowledge_admitted_capture")
+        return admitted is not None
+    except BaseException:
+        if owns:
+            conn.rollback()
+        else:
+            conn.execute("ROLLBACK TO SAVEPOINT acknowledge_admitted_capture")
+            conn.execute("RELEASE SAVEPOINT acknowledge_admitted_capture")
+        raise
+
+
 def recover_captured_postings(
     conn,
     *,
@@ -31,6 +59,8 @@ def recover_captured_postings(
     limit=0,
     cancel_event=None,
     result_budget=None,
+    activity_attempt=None,
+    activity_owner_token=None,
 ):
     """Consume at most 100 archived captures, counting only new jobs toward limit."""
     from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
@@ -52,19 +82,32 @@ def recover_captured_postings(
         discovery_execution=discovery_execution,
         source_family=source_family if discovery_execution is not None else None,
     )
+    from jobctrl.infrastructure.discovery.archived_smart_posting import claim_recovery_owner
+    write_fence = claim_recovery_owner(
+        conn, execution=discovery_execution, family=source_family, attempt=activity_attempt,
+        owner_token=activity_owner_token, cancel_event=cancel_event,
+    )
     smart_clients = {}
     for listing_id, snapshot, target, source_id, payload in rows:
         if cancel_event is not None and cancel_event.is_set():
             break
         if limit > 0 and result["new"] >= limit:
             break
-        if result_budget is not None and (
-            result_budget.run_exhausted() or result_budget.source_exhausted(source_id)
-        ):
-            continue
         capture_key = hashlib.sha256(
             json.dumps([str(tenant_id), listing_id, snapshot, target]).encode()
         ).hexdigest()
+        if source_family != "smartextract" and result_budget is not None:
+            if acknowledge_admitted_capture(
+                conn, result_budget, tenant_id=tenant_id, listing_id=listing_id, snapshot=snapshot,
+                target=target, source_id=source_id, capture_key=capture_key, write_fence=write_fence,
+            ):
+                result["existing"] += 1
+                result["recovered_captures"] += 1
+                continue
+        if source_family != "smartextract" and result_budget is not None and (
+            result_budget.run_exhausted() or result_budget.source_exhausted(source_id)
+        ):
+            continue
         failure = None
         try:
             posting = TypeAdapter(ScrapedJobPosting).validate_json(payload)
@@ -97,12 +140,23 @@ def recover_captured_postings(
             result["recovered_capture_failures"] += 1
             continue
         if source_family == "smartextract":
+            from jobctrl.infrastructure.discovery.archived_smart_posting import CapturePublication, OriginalCaptureUnavailable
             from jobctrl.discovery.smartextract import _smart_extract_session, _store_jobs
             from jobctrl.infrastructure.discovery.live_browser import (
                 LiveChromeDiscoveryClient, PoliteLiveChromeHttpClient, prefer_live_browser,
             )
 
-            if source_id not in smart_clients:
+            publication = CapturePublication(
+                conn, tenant_id=TenantId(str(tenant_id)), capture_id=f"capture:{capture_key}", source_id=source_id,
+            )
+            resumed = publication.prepared() is not None
+            if not resumed and publication.requires_missing_receipt():
+                raise OriginalCaptureUnavailable()
+            if not resumed and result_budget is not None and (
+                result_budget.run_exhausted() or result_budget.source_exhausted(source_id)
+            ):
+                continue
+            if source_id not in smart_clients and not resumed:
                 selected = None
                 if discovery_execution is not None:
                     client = LiveChromeDiscoveryClient(
@@ -113,16 +167,21 @@ def recover_captured_postings(
                             _smart_extract_session(source_id=source_id, run_id=run_id, browser=client), client,
                         )
                 smart_clients[source_id] = selected
-            new, existing = _store_jobs(
-                conn, [{"url": posting.posting_url.value, "title": posting.metadata.title,
-                        "company": posting.employer.name, "description": posting.metadata.description,
-                        "location": posting.metadata.location}], posting.source.board, posting.strategy.value,
-                search_cfg=search_cfg, limit=max(limit - result["new"], 0) if limit > 0 else 0, run_id=run_id,
-                discovery_execution=discovery_execution, cancel_event=cancel_event, source_id=source_id,
-                source_native_id=posting.source_native_id, tenant_id=TenantId(str(tenant_id)),
-                refresh_existing_job=False, observation_id_factory=lambda key=capture_key: f"capture:{key}",
-                idempotency_prefix=f"capture:{capture_key}", browser_client=smart_clients[source_id],
-            )
+            try:
+                new, existing = _store_jobs(
+                    conn, [{"url": posting.posting_url.value, "title": posting.metadata.title,
+                            "company": posting.employer.name, "description": posting.metadata.description,
+                            "location": posting.metadata.location}], posting.source.board, posting.strategy.value,
+                    search_cfg=search_cfg, limit=max(limit - result["new"], 0) if limit > 0 else 0, run_id=run_id,
+                    discovery_execution=discovery_execution, cancel_event=cancel_event, source_id=source_id,
+                    source_native_id=posting.source_native_id, tenant_id=TenantId(str(tenant_id)),
+                    refresh_existing_job=False, observation_id_factory=lambda key=capture_key: f"capture:{key}",
+                    idempotency_prefix=f"capture:{capture_key}", browser_client=smart_clients.get(source_id),
+                    result_budget=result_budget,
+                    write_fence=write_fence,
+                )
+            except DiscoveryResultLimitReached:
+                continue
             excluded = not (new or existing)
         else:
             if result_budget is not None:
@@ -143,12 +202,24 @@ def recover_captured_postings(
                 # used the allowance. Leave this archived capture unconsumed.
                 continue
             new, existing, excluded = summary.new_jobs, summary.observed, not summary.total
-        conn.execute(
-            "UPDATE posting_triage SET consumed_at=? WHERE tenant_id=? AND listing_id=? "
-            "AND snapshot_fingerprint=? AND target_fingerprint=? AND consumed_at IS NULL",
-            (datetime.now(timezone.utc).isoformat(), str(tenant_id), listing_id, snapshot, target),
-        )
-        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            write_fence()
+            if source_family == "smartextract":
+                publication = CapturePublication(
+                    conn, tenant_id=TenantId(str(tenant_id)), capture_id=f"capture:{capture_key}", source_id=source_id,
+                )
+                if publication.prepared() is not None and not publication.completed():
+                    raise RuntimeError("Archived posting publication is incomplete; capture retained for recovery")
+            conn.execute(
+                "UPDATE posting_triage SET consumed_at=? WHERE tenant_id=? AND listing_id=? "
+                "AND snapshot_fingerprint=? AND target_fingerprint=? AND consumed_at IS NULL",
+                (datetime.now(timezone.utc).isoformat(), str(tenant_id), listing_id, snapshot, target),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
         result["new"] += new
         result["existing"] += existing
         result["recovered_captures"] += 1

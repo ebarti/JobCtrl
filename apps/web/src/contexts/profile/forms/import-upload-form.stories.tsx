@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect } from "react";
 
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useProfileImportStore } from "../stores/profile-import-store.js";
 import { ImportUploadForm } from "./import-upload-form.js";
 
@@ -16,17 +17,29 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-function StoreSeed({ filename, pdfBase64 }: { filename: string; pdfBase64: string }) {
+function StoreSeed({
+  filename,
+  pdfBase64,
+}: {
+  filename: string;
+  pdfBase64: string;
+}) {
+  const { storage } = usePorts();
   const setUpload = useProfileImportStore((state) => state.setUpload);
   const reset = useProfileImportStore((state) => state.reset);
   useEffect(() => {
-    if (filename || pdfBase64) {
-      setUpload(filename, pdfBase64);
-    } else {
-      reset();
-    }
-    return () => reset();
-  }, [filename, pdfBase64, setUpload, reset]);
+    let active = true;
+    void (async () => {
+      await useProfileImportStore.getState().hydrate(storage);
+      if (!active) return;
+      if (filename || pdfBase64)
+        await setUpload(filename, pdfBase64, storage, () => active);
+      else await reset(storage, () => active);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [filename, pdfBase64, setUpload, reset, storage]);
   return null;
 }
 

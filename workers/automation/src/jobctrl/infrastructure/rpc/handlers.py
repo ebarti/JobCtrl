@@ -38,6 +38,8 @@ from jobctrl.infrastructure.materials import (
     SqliteLearningRecommendationReviewRepository,
     SqliteTailoringPolicyRepository,
     TailoringPolicyRevisionError,
+    TailoringPolicyStaleReviewError,
+    TailoringPolicyCommandConflictError,
 )
 from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobctrl.infrastructure.rpc.enrichment_retry import reset_enrichment
@@ -895,7 +897,7 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
     import uuid
 
     from jobctrl.database import get_connection, load_job_with_enrichment
-    from jobctrl.domain.contact.outreach import OutreachDraftKind
+    from jobctrl.domain.contact.outreach import OutreachDraftKind, OutreachPublicationConflict
     from jobctrl.domain.contact.outreach_use_cases import (
         GenerateOutreachDraftUseCase,
         OutreachDraftInputError,
@@ -1016,6 +1018,18 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
                 application_role=application_role,
                 model=model,
             )
+    except OutreachPublicationConflict as exc:
+        draft = exc.proposal.latest_draft
+        return {
+            "outcome": "conflict",
+            "threadId": thread_id,
+            "unpublishedDraft": {
+                "bodyText": draft.body_text,
+                "kind": draft.kind.value,
+                "gateResults": draft.gate_results.to_read_model(),
+                "provenance": [claim.to_read_model() for claim in draft.provenance],
+            },
+        }
     except OutreachDraftInputError as exc:
         raise invalid_params(str(exc)) from exc
 
@@ -1163,19 +1177,21 @@ def render_resume_pdf(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def gmail_feedback_scan(params: dict[str, Any]) -> dict[str, Any]:
-    """Run the bounded Gmail outcome scan for the TS API.
+    """Run the bounded scan and return safe, typed failures to the TS API."""
 
-    The result dict passes through verbatim - auth failures travel as
-    ``{"ok": False, "message": ...}`` so the API's status mapping keeps the
-    same behavior it had over the old one-shot subprocess protocol.
-    """
+    import httpx
 
     assert_expected_runtime(
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
     )
     from jobctrl.config import DB_PATH
-    from jobctrl.infrastructure.gmail.feedback import scan_gmail_feedback
+    from jobctrl.infrastructure.gmail.auth import GmailAuthError
+    from jobctrl.infrastructure.gmail.client import GmailFeedbackInputError
+    from jobctrl.infrastructure.gmail.feedback import GmailFeedbackRecipientError, scan_gmail_feedback
+
+    def failure(code: str, status: str, message: str) -> dict[str, Any]:
+        return {"ok": False, "status": status, "failureCode": code, "message": message}
 
     kwargs: dict[str, Any] = {}
     recipient = str(params.get("recipientEmail") or "").strip()
@@ -1188,15 +1204,43 @@ def gmail_feedback_scan(params: dict[str, Any]) -> dict[str, Any]:
     ):
         value = params.get(param_name)
         if value is not None:
-            kwargs[kwarg_name] = int(value)
+            try:
+                if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+                    raise ValueError
+                kwargs[kwarg_name] = int(value)
+            except (TypeError, ValueError, OverflowError):
+                return failure("invalid_scan_options", "invalid", "Gmail feedback scan options must be integers.")
     try:
         return scan_gmail_feedback(db_path=DB_PATH, **kwargs)
-    except Exception as exc:  # noqa: BLE001 - protocol boundary, see docstring
-        # scan_gmail_feedback raises on failure; only the deleted CLI main()
-        # converted exceptions into the ok:false envelope. Without this the
-        # RPC server flattens every failure to a generic "Internal error"
-        # and the API's message-based 400/503 mapping goes dead.
-        return {"ok": False, "message": str(exc)}
+    except GmailFeedbackRecipientError:
+        return failure(
+            "invalid_recipient", "invalid", "Gmail feedback scan requires a recipient email or candidate profile email."
+        )
+    except GmailFeedbackInputError:
+        return failure("invalid_search", "invalid", "Gmail feedback search parameters are invalid.")
+    except GmailAuthError:
+        return failure(
+            "gmail_auth_required", "unavailable", "Gmail authentication is required; reconnect Gmail and retry."
+        )
+    except httpx.TimeoutException:
+        return failure("gmail_timeout", "unavailable", "The Gmail feedback request timed out.")
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        if status_code == 401:
+            code = "gmail_auth_required"
+        elif status_code == 429:
+            code = "gmail_rate_limited"
+        elif status_code >= 500:
+            code = "gmail_provider_unavailable"
+        else:
+            code = "gmail_provider_error"
+        return failure(code, "unavailable", "The Gmail feedback request was rejected by the provider.")
+    except httpx.RequestError:
+        return failure(
+            "gmail_transport_error", "unavailable", "The Gmail feedback request could not reach the provider."
+        )
+    except Exception:  # noqa: BLE001 - do not expose provider or message contents over RPC
+        return failure("gmail_scan_failed", "blocked", "Gmail feedback scan failed.")
 
 
 def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:
@@ -1254,30 +1298,47 @@ def review_learning_recommendation(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
-    """Append a Materials policy revision that restores a prior version."""
+    """Append a reviewed restore or return the same command's receipt."""
 
-    tenant_id = TenantId(_tenant_id(params))
+    if set(params) - {"tenantId", "targetVersion", "expectedCurrentVersion", "commandId", "reasonCode", "expectedAppDir", "expectedDbPath"}:
+        raise invalid_params("unsupported tailoring policy restore parameter")
+    raw_tenant = _require(params, "tenantId")
+    if not isinstance(raw_tenant, str) or not raw_tenant.strip() or raw_tenant != raw_tenant.strip():
+        raise invalid_params("invalid tenantId")
+    tenant_id = TenantId(raw_tenant)
     target_version = _require(params, "targetVersion")
-    if not isinstance(target_version, int) or isinstance(target_version, bool) or target_version < 1:
-        raise invalid_params("targetVersion must be a positive integer")
+    expected_current_version = _require(params, "expectedCurrentVersion")
+    command_id = _require(params, "commandId")
+    reason = _require(params, "reasonCode")
     assert_expected_runtime(
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
     )
     try:
-        policy = SqliteTailoringPolicyRepository(get_connection()).rollback_to(
+        result = SqliteTailoringPolicyRepository(get_connection()).rollback_to(
             tenant_id,
             target_version=target_version,
-            reason="user_requested",
+            expected_current_version=expected_current_version,
+            command_id=command_id,
+            reason=reason,
             rolled_back_at=datetime.now(UTC).isoformat(),
         )
+    except TailoringPolicyStaleReviewError as exc:
+        raise invalid_params("tailoring_policy_stale_review") from exc
+    except TailoringPolicyCommandConflictError as exc:
+        raise invalid_params("tailoring_policy_command_conflict") from exc
     except TailoringPolicyRevisionError as exc:
         raise invalid_params(str(exc)) from exc
+    policy = result.policy
     return {
         "status": "succeeded",
         "context": "materials",
         "policyKind": "tailoring_rule",
         "policyVersion": policy.version,
+        "currentVersion": result.current_version,
+        "replayed": result.replayed,
+        "expectedCurrentVersion": expected_current_version,
+        "commandId": command_id,
         "rollbackOfVersion": policy.rollback_of_version,
         "rollbackReasonCode": policy.rollback_reason,
         "learnedRules": [

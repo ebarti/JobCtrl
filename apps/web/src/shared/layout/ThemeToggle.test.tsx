@@ -17,7 +17,7 @@ describe("<ThemeToggle>", () => {
     const user = userEvent.setup();
     renderWithProviders(<ThemeToggle />);
 
-    const toggle = await screen.findByRole("button", { name: "Switch to dark theme" });
+    const toggle = await screen.findByRole("button", { name: "Light theme: Switch to dark theme" });
     expect(toggle).toHaveAttribute("data-slot", "button");
     expect(toggle).toHaveAttribute("data-typography", "control");
     expect(screen.getByText("Light")).toBeInTheDocument();
@@ -26,7 +26,7 @@ describe("<ThemeToggle>", () => {
     await user.click(toggle);
 
     expect(useUiPreferencesStore.getState().theme).toBe("dark");
-    expect(screen.getByRole("button", { name: "Switch to light theme" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dark theme: Switch to light theme" })).toBeInTheDocument();
     expect(screen.getByText("Dark")).toBeInTheDocument();
     await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", "dark"));
   });

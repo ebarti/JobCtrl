@@ -1073,11 +1073,11 @@ test("compact, regular, and comfortable modes preserve typography metrics", asyn
 test("stale score status keeps the shared transparent status treatment", async ({
   page,
 }) => {
-  await page.route(/\/v1\/jobs(?:\?.*)?$/, async (route) => {
+  await page.route(/\/v1\/jobs\/reviewable-list(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(
-        makeJobsPage([
+      body: JSON.stringify({
+        ...makeJobsPage([
           {
             ...sampleJob,
             scoreStaleness: {
@@ -1090,7 +1090,8 @@ test("stale score status keeps the shared transparent status treatment", async (
             },
           },
         ]),
-      ),
+        observationId: null,
+      }),
     });
   });
 
@@ -1840,7 +1841,7 @@ test("warning actions use the contrasting focus token in both themes", async ({ 
   for (const theme of ["light", "dark"] as const) {
     await page.goto("/jobs");
     if (theme === "dark") {
-      await page.getByRole("button", { name: "Switch to dark theme" }).click();
+      await page.getByRole("button", { name: "Light theme: Switch to dark theme" }).click();
     }
     await page
       .getByRole("button", { name: /^Open job Senior Engineering Manager - Risk/ })
@@ -2555,7 +2556,7 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
     drawerRequirement.locator('[data-slot="requirement-profile-evidence"]'),
   ).toBeVisible();
   await expect(
-    drawerRequirement.getByRole("button", { name: "Additional audit details" }),
+    drawerRequirement.getByRole("button", { name: /^Additional audit details \d+ signals?$/ }),
   ).toHaveAttribute("aria-expanded", "false");
   await expectVisualSnapshot(
     drawerRequirement,

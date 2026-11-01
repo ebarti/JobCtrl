@@ -30,6 +30,21 @@ named table views and presentation preferences live locally in this browser.
 | Runtime and schedule | `discovery_settings` | Next run or source family; schedule changes require a worker restart |
 | Sources, locator candidates, quarantine, and manual capture | Discovery context tables | Immediately for review state; next use for source execution |
 
+Target search and Automation settings attempt to autosave an edited draft after
+five seconds without an edit. A failed save keeps the draft and error visible,
+without repeatedly submitting the unchanged draft. Choose **Save changes** to
+retry, or edit the draft to schedule another attempt.
+
+When no settings or profile targets have been saved, Discovery uses its normal
+first-use defaults. If saved Discovery settings or target-search inputs cannot
+be read or are invalid, Discovery stops before acquisition instead of using
+those defaults. A settings read or save also reports invalid saved settings
+without replacing them. Check workspace access and retry. If data is damaged,
+preserve the workspace and its database companions, then consult
+[Back Up And Restore](data-and-safety.md#back-up-and-restore) for a verified,
+compatible backup. A backup may predate newer changes; inspect it before any
+restore. The installed launcher does not provide a general pair-restore command.
+
 ## Saved Source Review Views
 
 In **Source controls → Source registry**, use **Save as view** to name the
@@ -53,6 +68,10 @@ schedule, bounded source-family parallelism, and the
 optional browser request headers. Every saved value goes to SQLite. Schedule
 changes need a worker restart; boards, limits, and parallelism apply on the
 next run; user-agent changes apply to the next source family.
+
+If you edit runtime settings while a save is in progress, newer values that
+differ from the saved response remain unsaved. Save again to apply them, or
+discard them to return to the last saved values.
 
 Parallel families are capped at four and should not exceed the worker's active
 activity slots. See
@@ -391,13 +410,30 @@ before acknowledgement. Accepted new/existing counts, filtered counts, and the
 run-wide new-job limit are therefore read from durable receipts, so a retry
 cannot lose progress or start the limit over. New bounded workflows freeze each
 source's result allowance in their plan and compare cumulative admissions with
-the absolute run limit. Canonical insertion, its admission receipt, search-unit
-acceptance and execution membership commit atomically. Archived captures use the
-same allowance; existing jobs consume none. Reaching one board's allowance closes
+the absolute run limit. Broad boards, canonical ATS APIs, Workday, Smart Extract
+and archived capture recovery share this allowance for the exact tenant and
+Discover execution, including when families run concurrently. Jobs inserted by
+other executions or outside Discovery do not consume it. Canonical insertion,
+its admission receipt, search-unit acceptance when applicable, and execution
+membership commit atomically. Archived captures use the same allowance; existing
+jobs consume none. An exhausted allowance stops new admission; it never becomes
+an unbounded request. An explicitly unbounded run retains its normal behavior.
+Reaching one board's allowance closes
 only that board's remaining units, allowing other selected boards to continue.
 Disabling a board before a retry closes its frozen units without another provider
 request. This intake admission remains separate from the later score and
 relevance decision.
+
+Current runs record their result cap and source allowances locally before
+sources start, then retain that authority across retries. Cancellation after a
+source fetch stops the next admission while keeping jobs already accepted.
+
+After an upgrade, an unfinished older bounded run may lack the current frozen
+execution authority, including runs whose old plan budgeted only broad boards.
+Its next activity refuses with a
+restart message before acquiring or acknowledging more postings. Start a new
+Discover run to continue; existing jobs, retained captures and checkpoints stay
+preserved. Completed workflow history remains replayable.
 
 Temporal retries reclaim only unfinished units with a newer activity-attempt
 fence. Retryable board errors resume from their checkpoint; an expired board
@@ -436,7 +472,11 @@ JobStreaming executes the saved title, location, remote and lookback parameters 
 
 Smart Extract treats arbitrary-site cards as links to investigate. Before a link can create a Job, JobCtrl captures the individual posting and records model determinations for page identity, source-bound field extraction, the actual specific role title, description completeness, and compatibility with the saved location/work-model rows. A hiring announcement cannot become a role title merely because it appeared in a feed. The employer comes from the posting, never the source name or URL. Confirmed location mismatches stay outside Jobs with a recorded reason; uncertain identity, missing employer, incomplete content or unknown location compatibility stays in Manual Capture with its original card and determination references. The accepted full capture seeds the posting snapshot and enrichment without a second fetch. Model, spend or validation failures create no unverified Job. Explicit manual URL imports retain their separate user-requested intake behavior.
 
-Broad-board captures are durable before checkpoint acknowledgement and canonical ingestion is idempotent across retry. Limits, leases, source listing flags and literal exact-title exclusions remain mechanical. Historical intake captures and model receipts remain preserved. Each runnable source family recovers up to 100 unconsumed raw posting captures before fetching, using canonical ingestion, current literal exclusions and the remaining new-job limit. Successful ingestion marks a capture consumed; interruption retains it for an idempotent retry. The retired model status, preferences and envelope are never read. Archived Smart Extract cards go through the same current full-posting qualification before consumption; their old verdict cannot admit them. Recovery preserves newer accepted job content and deleted-job state.
+Broad-board captures are durable before checkpoint acknowledgement and canonical ingestion is idempotent across retry. Limits, leases, source listing flags and literal exact-title exclusions remain mechanical. Historical intake captures and model receipts remain preserved. Each runnable source family recovers up to 100 unconsumed raw posting captures before fetching, using canonical ingestion, current literal exclusions and the remaining new-job limit. Successful ingestion marks a capture consumed; interruption retains it for an idempotent retry. The retired model status, preferences and envelope are never read. Archived Smart Extract cards go through the same current full-posting qualification before consumption; their old verdict cannot admit them. Recovery preserves newer accepted job content and deleted-job state. If an archived Smart Extract capture creates its canonical Job but snapshot publication is interrupted, retry resumes the recorded qualified capture and its model receipts without fetching another page. The capture is consumed only after its snapshot, enrichment and completion receipt commit, or after a newer/deleted owner makes that publication obsolete. Completing an already-admitted capture does not spend another new-job allowance. An older interrupted capture whose original publication evidence is unavailable stays unconsumed with `archived_posting_original_capture_unavailable`; no replacement page is fetched. Use the existing Job's Enrich action for a deliberate current-page refresh, then retry Discovery.
+
+After the run reaches its new-job limit, recovery can finish a previously
+qualified capture. Other archived captures remain pending without opening a
+browser or making another model call.
 
 A structurally invalid archived capture stays stored with its safe failure code
 and a warning in Activity. It is excluded from automatic recovery so valid

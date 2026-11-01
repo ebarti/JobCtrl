@@ -70,7 +70,7 @@ Google's handling of that data is described in
 
 The data controller for this documentation measurement is Eloi Barti, acting as
 an individual. For privacy questions, contact
-[me@eloibarti.com](mailto:me@eloibarti.com). This hosted documentation
+me[at]eloibarti.com (replace [at] with @). This hosted documentation
 measurement is separate from JobCtrl's local product telemetry and from the
 public demo measurement described below.
 
@@ -85,7 +85,7 @@ the consent service confirms acceptance. The `v2` consent contract replaces the
 earlier first-party-only choice, so existing visitors are asked again once.
 
 The data controller for the public demo is Eloi Barti, acting as an individual.
-For privacy questions, contact [me@eloibarti.com](mailto:me@eloibarti.com).
+For privacy questions, contact me[at]eloibarti.com (replace [at] with @).
 
 After acceptance, Cloudflare sets a versioned consent cookie plus random
 HttpOnly visitor and session identifiers. JobCtrl's persistent cookies expire
@@ -120,6 +120,8 @@ tailored-material review, Apply Review/dry-run, and run history. Every shortcut
 and action is simulated; it does not contact employers, send messages, or make
 external changes. **Reset synthetic demo data** asks for confirmation, then
 replaces the browser-local workspace with the original examples.
+Stage retry and rescoring are unavailable in the demo, including for retained
+synthetic histories that recorded a retryable failure.
 When a deployment changes the versioned synthetic seed, the next demo load
 performs the same replacement automatically: it rotates the workspace identity,
 clears pending simulated actions, and deletes generated demo blobs. This seed
@@ -140,7 +142,7 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | Path | Contents |
 | --- | --- |
 | `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, review drafts, contacts, private offer terms/decisions and sources, and workflows. Treat all three files as one database. |
-| `temporal.db` plus `-wal` / `-shm` | Bundled-runtime Temporal state. During a native bundled update or rollback, it is hash-snapshotted and restored only together with `jobctrl.db`; never restore just one member of that pair. |
+| `temporal.db` plus `-wal` / `-shm` | Shared Temporal history for new workspaces; earlier source workspaces may retain `temporal/temporal.db`. Treat the history and `jobctrl.db` as one pair. |
 | `config.json` | Non-secret Settings values: general controls, provider configuration metadata, preferred model IDs, compensation source policy, and browser-adoption metadata. No API keys or feed contents. |
 | `.env` | Legacy/plaintext provider credentials used by remaining compatibility paths. Not encrypted at rest. |
 | `codex_home/` | Stable JobCtrl-owned Codex CLI state. `auth.json` is outside the prompt-readable `workspace/` subtree. |
@@ -149,9 +151,14 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state, including CAPTCHA usage metadata when applicable. |
 | `browser-profiles/` | Consented copied profiles retained for separate compatibility capabilities. Integrated `DiscoverWorkflow` never reads or launches them. Non-secret adoption metadata lives in `config.json`. |
 | `extension-capability-token`, `extension-discovery-installation-id` | Private local browser-extension pairing secret and the extension installation selected for Discovery. Discovery bridge task bodies and results are memory-only and are not stored beside them. |
-| `backups/` | Database snapshots: `pair-<id>/` directories written by the installed launcher's `backup`, `update`, and `rollback`; `jobctrl-<timestamp>.db` files from a source checkout's `backup`; and job-data purge recovery bundles. See [Back Up And Restore](#back-up-and-restore). |
+| `backups/` | Database snapshots: `pair-<id>/` from installed operations; `source-pair-<id>/` from automatic source upgrades; application-only `jobctrl-<timestamp>.db` snapshots; and job-data purge recovery bundles. See [Back Up And Restore](#back-up-and-restore). |
 | `gmail/` | Gmail OAuth client and token files. |
 | Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
+
+The resume-import wizard also keeps its selected PDF and filename in the web
+app's browser-local storage, outside `JOBCTRL_DIR`. Cancel keeps that selection;
+earlier-version import data remains separately stored even after current cleanup.
+removal and failure recovery are described in [Candidate Profile](candidate-profile.md#current-import-limitation).
 
 PDFs created with a Plate editor's **Export PDF** control are ordinary browser
 downloads, so their destination is the download location selected by the
@@ -163,39 +170,109 @@ directory; treat those logs as sensitive too.
 
 ### Back Up And Restore
 
+Legacy achievement recovery uses only a trustworthy pre-cutover native paired
+backup with `pair.json` and both database files. Independently captured app,
+Temporal and file copies do not establish a stopped pair. The local
+[legacy confirmation review](candidate-profile.md#review-legacy-confirmations)
+command validates backup bytes, inventories original/current evidence for
+explicit review and never restores databases or overwrites newer edits. If a
+trustworthy pair is unavailable, record that uncertainty explicitly and review
+current cells; no record is automatically reconfirmed.
+
+
 ```bash
 jobctrl backup
 ```
 
 The installed command snapshots `jobctrl.db` and `temporal.db` together into a
 new `backups/pair-<id>/` directory. If JobCtrl is running, it stops for the
-snapshot and starts again afterward. `--output` takes an absolute directory.
+snapshot and starts again afterward. If a source development fleet is running,
+stop it first; the installed backup command does not replace it with the
+installed app. `--output` takes an absolute directory.
 The two files are one restore unit: never restore just one of them. The
 launcher has no restore command for these pairs; updates and rollbacks write and
 restore their own, as described in
 [Update, Roll Back, Or Remove JobCtrl](getting-started.md#update-roll-back-or-remove-jobctrl).
 
+When a release promotion performs automatic release cleanup, JobCtrl keeps
+releases referenced by paired backups in the current workspace `backups/` and
+other workspaces recorded by the runtime, including a custom `JOBCTRL_DIR`.
+A source workspace is included when its checkout and runtime ownership can be
+verified; otherwise cleanup stops and preserves releases. Cleanup also preserves
+releases if an independent Apply run lacks verified completion, even after its
+launcher exits. It does not stop the run or prevent an ordinary restart.
+Paired backup metadata in differently named folders is still considered;
+unrelated folders without `pair.json` are left alone. If workspace ownership,
+pair metadata, or the release store's directory identity
+cannot be verified before cleanup, cleanup stops before deleting releases. A
+release is eligible for cleanup only if its sequence and identity are recorded
+in channel state and its signed payload and expected metadata can be verified;
+releases without that recorded history, modified payload files, and extra files
+and directories are preserved. Generated receipt and policy files are not
+independently signed, so a valid edit to those files cannot always be
+distinguished from the original metadata. A release claimed for cleanup that
+cannot be safely returned is
+preserved under a `.retention-*` directory for inspection. An interruption during
+cleanup may leave a partially removed owned release there. An actively
+concurrent writer with access inside that claimed directory can race the last
+check before an individual file is removed. Writers that change backup
+authorities outside JobCtrl's runtime transition lock can also race cleanup's
+reference checks. The message identifies when the new release is already active.
+Backups placed elsewhere with `--output` are outside this automatic discovery.
+Retention alone does not make a rollback eligible: the release must also pass
+its safety policy and the paired files must pass verification.
+
 In a source checkout, `uv --project workers/automation run jobctrl backup`
 writes one consistent copy of `jobctrl.db` to `backups/jobctrl-<timestamp>.db`
 with SQLite `VACUUM INTO`. It is safe while the app runs and never deletes
-anything; `--output` takes a file or directory. To restore it, stop
-`corepack pnpm dev`, clear the stale WAL sidecars, and copy the backup over the
-live database:
+anything; `--output` takes a file or directory. This is an application-database
+snapshot, not a stopped and verified application/Temporal backup pair. It is
+not sufficient to restore a workspace with workflow history. Preserve the live
+databases and their WAL/SHM companions; do not delete companions or replace one
+database in isolation. The source checkout does not currently offer a paired
+restore command. See [Local Development](../local-development.md#schema-migrations-and-source-updates)
+for automatic source upgrades and recovery limitations.
 
-```bash
-rm -f ~/.jobctrl/jobctrl.db-wal ~/.jobctrl/jobctrl.db-shm
-cp ~/.jobctrl/backups/jobctrl-<timestamp>.db ~/.jobctrl/jobctrl.db
-```
+After restoring or replacing a database, restart JobCtrl (or rerun
+`corepack pnpm dev` in a source checkout) and reload any open JobCtrl browser
+tabs to create fresh event subscriptions. API callers that supplied an explicit
+`?since` cursor must discard it and start a fresh subscription too.
 
-Always restore the whole file; never hand-import individual tables. Read-model
-projection watermarks only move forward, so if a database is ever rebuilt
-piecemeal, delete the Python and TypeScript operations-projection watermarks to
-rebuild projections:
+Never hand-import individual tables or reset projection watermarks as a
+substitute for a verified workspace recovery.
 
-```bash
-sqlite3 ~/.jobctrl/jobctrl.db \
-  "DELETE FROM event_watermarks WHERE projection_name LIKE '%operations_projections%';"
-```
+#### Interrupted first database creation
+
+If startup reports an unresolved database publication, do not delete or open
+`jobctrl.db` or its `-wal`, `-shm`, or `-journal` companions while JobCtrl is
+running. Stop every JobCtrl process and independently confirm that no process
+has the workspace database open. Keep a private copy of the database, all
+companions, and the `.jobctrl-init-*` staging directories before changing any
+of them. The workspace defaults to `~/.jobctrl/`; use the configured
+`JOBCTRL_DIR` instead when it is set.
+
+If no companions exist, identify the retained staging directory whose regular
+`candidate.db` is the **same device and inode** as the regular `jobctrl.db`.
+Only when that directory contains exactly that one file, and the database has
+been independently verified as a readable exact-schema database, removing the
+staged hard link and its now-empty directory permits startup to retry. Do not
+remove `jobctrl.db`. If any companion exists, the files are not the same inode,
+the directory has other contents, or process ownership or database integrity is
+uncertain, preserve everything and seek help or use a verified backup. Native
+backups restore the JobCtrl and Temporal databases as a pair.
+
+#### Runtime cleanup failures
+
+A native paired backup, update or rollback must pass the complete process-cleanup
+gate. `jobctrl stop` requests clean shutdown, kills verified timed-out leftovers,
+and waits for their exit. Successful cleanup permits normal restart. A missing
+or unfamiliar ownership record is a failure, including legacy records that
+cannot identify detached children; JobCtrl preserves the registry and live data
+instead of claiming they are stopped. Inspect the reported process/permission
+problem and preserve the reported evidence. For a legacy runtime without
+complete ownership records, there is currently no documented self-service
+recovery; seek support. Restarting the computer alone does not clear this
+refusal. Do not delete ownership metadata or restore an older pair to bypass it.
 
 ### Credentials Outside The Workspace
 

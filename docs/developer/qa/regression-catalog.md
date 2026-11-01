@@ -20,6 +20,19 @@ individual regression to exact test files.
 | Provider/browser setup | Environment ownership and passive detection cannot silently become credential or browser adoption. Extension pairing-token presence remains distinct from one explicitly selected installation's fresh live heartbeat; another Chrome profile with the token cannot lease. Integrated Discovery and Enrich prefer the selected connected extension or choose guarded public HTTP/anonymous Playwright before acquisition. Offline status must not block eligible dispatch. Neither mode reads a copied profile; acquisition errors and cancellation never trigger a second transport. Anonymous provider initial/redirect/recreated/detail requests retain public URL/DNS/socket checks and reject proxy routing. Connected worker tasks must not carry browser-owned cookie/user-agent headers. Hanging/canceled tasks close their tabs, active leases remain live past 45 seconds, four-way admission uses backpressure, cross-origin redirects are blocked before dispatch, and UTF-8 byte bounds stop streaming early. | Worker/API bridge tests, two-installation contention and lease-liveness tests, extension persistent-context timeout/redirect E2E, Settings/Pipelines components, and a bounded live Discovery smoke. |
 | Retry preflight | Starting a retry cannot erase failure evidence before worker readiness is known. | API state-before/state-after regression plus route smoke. |
 
+For Gmail token replacement, run `test_gmail_token_atomic.py` with the connector
+tests using only synthetic files and fake HTTP. Exercise authentication and
+refresh, retained refresh tokens, invalid responses, each staging failure,
+permission-before-write, atomic publication and hard interruption on either
+side of replacement. Test first authorization and reauthorization with missing,
+invalid and newly issued refresh tokens without assuming account identity.
+Inspect logs for synthetic secret canaries and preserve
+the last accepted bytes. POSIX mode tests do not prove a native Windows DACL.
+The `Gmail token Windows privacy` workflow exercises a broad synthetic parent,
+checks the stage DACL before the first byte and verifies the published token's
+DACL for first save and replacement; only a completed Windows job is native
+evidence.
+
 Provider recovery regressions exercise an actual adapter over explicit fake SDK
 boundaries: a rejected route is excluded from the next automatic acquisition,
 the replacement carries its own provider/model, and the failed adapter is never
@@ -87,6 +100,48 @@ postings, literal exclusions, limits and interruption before consumption. No
 alias table or geography sentence corpus decides suitability.
 These fixtures contact no live board and use no real user data. Local fixture
 proof does not replace the product QA or CI gates.
+
+## Archived Smart Extract Snapshot Recovery
+
+Run locked `pytest tests/test_captured_posting_recovery.py tests/test_archived_smart_posting_temporal.py`
+with the Smart Extract, limits and source-activity reliability suites. In an
+owned exact-schema SQLite workspace, fail actual snapshot persistence after
+canonical insertion. Retry the real source activity and replay its Temporal
+history: the original qualified bytes and three canonical determination IDs
+must converge to one snapshot and enrichment before acknowledgement, with one
+observation and no second admission. A last-slot insertion must still finish
+when its remaining execution/source allowance is zero; another new capture
+remains pending.
+
+Interrupt before each original discovery event, then after each recovered
+discovery event; retry must recover all three original event facts without
+changing the canonical observation or acquiring another posting. With no legacy
+journal and no first event, the capture-bound original owner observation must
+refuse before provider setup. A normal observation of a preexisting bare owner
+must retain its separate behavior. Seed multiple content-duplicate candidates
+and require one idempotent event per candidate across recovery. Change original
+event URLs, native/source/run IDs, confidence, extra fields and event/observation
+clocks while keeping the qualified capture and canonical rows unchanged; require
+refusal before public event publication or acknowledgement. Also alter a frozen
+context and its event consistently: the unchanged original canonical observation
+must still reject that forged operational claim.
+
+Interrupt after snapshot/enrichment/event/accepted-progress/completion writes
+and require atomic publication rollback plus retained capture evidence. Repeat
+a completed recovery without duplicate events or snapshots and without page,
+browser or provider setup. Use independent writers for changed metadata, later
+observations, accepted enrichment/snapshots, stage ownership and owner deletion,
+including permanent removal; stale recovery must preserve all their bytes and
+never recreate the owner. An unfinished enrichment/snapshot aggregate or stage
+owner must retain the capture rather than consume it as an accepted replacement.
+Cancellation and superseded source attempt tokens
+must retain retry evidence. Corrupt captured publication bytes or a canonical
+model receipt and require refusal without a replacement. The private prepared-capture body stays out of bus/log publication, generic
+Activity payloads and SSE, while completion/owner events contain references
+only. Pre-upgrade partial inserts without their original full-capture receipt
+must remain unconsumed and actionable rather than replacing missing history
+with newly fetched bytes. These are structural persistence and model-authority
+checks, not a semantic evaluation corpus or a live ATS reliability claim.
 
 ## Temporal Fault Injection
 
@@ -545,7 +600,449 @@ then prove unchanged approvals and no extra export rows. Inspect desktop/mobile
 screenshots, page identity, console health, overflow and critical/serious axe
 results. Skipping this production gate is not passing browser evidence.
 
+## Contact Replacement Edit Bases
+
+Use `apps/api/test/contacts.test.ts` and `contact-projection-parity.test.ts` for
+canonical detail reads and stale role/link/whole-fact replacements. Run two real
+SQLite handles and independently started production writers: one shared base
+admits exactly one update, and a barrier after comparison must still exclude a
+second writer before replacement. Count canonical facts and events exactly;
+rejected saves append no success events. Change provenance alone and facts at an
+unchanged contact timestamp; refresh projections without invalidating the base.
+Inject attribute and event insert failures and require complete rollback.
+Discard a committed HTTP acknowledgement, restart the owned API, reject the old
+base again and recover deliberately through a fresh typed-client read.
+
+Preserve imported fact IDs and every provenance column, plus accepted outreach
+drafts/reviews/send logs. Pair these tests with the focused worker repository,
+provenance, projection-parity and offer/outreach tests. The editor/mutation,
+demo and `apps/web/e2e/tests/outreach.spec.ts` regressions cover pinned bases,
+rollback/refetch, retained fields, repeated conflict, explicit reconciliation,
+keyboard recovery and a 390px viewport. Exercise two editors where one changes
+only an employer while the other changes the role and adds a sourced fact: the
+reconciled save must retain the newer role, fact identity and provenance. Require
+explicit choices for competing field edits and edited-versus-deleted facts;
+when changed originals disappear and new fact IDs appear, require choices for
+each new fact without inferring identity. Changing the draft invalidates pending
+choices. Preserve unsupported or overlong saved facts during other edits; reject
+implicit unsupported-kind changes and overlong new values. Round-trip id-less
+raw whitespace without losing identity or provenance, and accept a new value
+whose trimmed length is exactly 2,000. A fixture or type check alone does not
+prove the real API/browser journey. With duplicate kind/value facts and distinct
+provenance, delete the old identity and retain the newer identity exactly; reject
+foreign and repeated IDs without writes and retain value-only caller behavior.
+Interleave a score reset and lost outcome/send-log acknowledgements with contact
+updates, then verify action replay, score retention and fact provenance. Type a
+newer contact edit during a pending save; success, failure and conflict must
+retain it without automatic resubmission. Closing and reopening the editor must
+fence the earlier completion from the new session.
+Use only owned exact-schema synthetic data
+and retain reports under the QA evidence owner.
+
+## Manual Outcome And Send-Log Retry Identity
+
+Run API `test/action-retry.test.ts` with `application-feedback.test.ts`,
+`application-feedback-v7.test.ts`, `outreach.test.ts`, `offers.test.ts` and
+`outreach-projection-parity.test.ts`. The retry harness starts two independent
+loopback API processes over an owned exact-v15 database. It uses the normal
+`JobCtrlApiClient`, discards a completed HTTP acknowledgement, restarts the API,
+and compares the full original result. Hold an independent writer while equal
+and conflicting requests arrive, then require one fact/event per accepted
+identity and an explicit 409 for the conflicting loser. Inspect exact IDs,
+timestamps, counts and private-text exclusion; a sequential handler-only race
+is insufficient.
+
+Cover ordinary outcomes, prep-linked reflections and send logs, including omitted
+`occurredAt`, canonical job aliases, foreign tenant/operation/target bindings,
+malformed identities, missing receipt facts, receipt IDs redirected to another
+equal-payload action, missing or different event fact references, changed accepted
+facts and event fields, malformed or duplicate internal prefixes, changed draft/prep bindings, event
+failure, deferred commit failure and outer-transaction rollback. Replay after a
+later deliberate action, changed draft review or reminder must preserve that
+newer state. Fresh requests retain approved-draft, offer-source and
+accepted/superseded prep-generation checks. The sealed schema remains exact v15.
+For a retained full identity prefix, corrupt its separator to punctuation on
+either side of `:` and to Unicode; equal retries, including independent writers,
+must refuse without creating another fact or event.
+Attempt an offline dictionary guess against the persisted and SSE event payloads
+for a short synthetic private note. Neither the note nor its private SQLite
+binding may be exposed there. The binding itself remains inside the private
+database, which also holds the original note.
+
+Web outcome/reflection/send-log form and mutation tests cover frozen payloads,
+identity retention, explicit new actions, accessible errors, input retention and
+optimistic reconciliation without overwriting later thread state. With warm
+outcome caches and colliding job IDs, switch tenants before and after an
+unacknowledged manual outcome or reflection and restore each owner's draft and
+exact retry identity. Exercise the real Jobs routes with keyed drawers and cold
+tenant reads, including A-B-A job navigation, top-level navigation and nested
+run detail; deliver an old acknowledgement after the original form is replaced.
+Neither another owner's draft nor a newer action may be cleared. Defer send-log
+query cancellation, replace the contact's cached thread, and then settle the
+original request with success and failure separately: neither the optimistic
+patch nor settlement may change the replacement's drafts, logs, sent status or
+reminder. The existing
+Interview Prep and Outreach browser paths discard an acknowledgement only after
+`route.fetch()` completes the real mutation, retry through the rendered form,
+and inspect canonical fact/event counts. Keep offer production API/RPC and
+worker preservation checks alongside these scenarios. Retain owned JUnit and
+observed product-path evidence; fixture coverage is not independent runtime QA.
+
 ## Auditability Checks
+
+For Skip during Apply custody, run `test_apply_stopped_owner_recovery.py` and
+`test_apply_crash_custody.py`, with the existing Apply claim, workflow, reset
+and projection selections. A real owned source process and retained child must
+show that root exit alone is not a native completion proof. The source lifetime
+recovery is explicitly best effort, preserves Skip and records its exact claim;
+only a separate safe reset releases the stop. Unknown or untracked custody stays
+blocked. Installed mode requires the actual native completion proof described in
+[Apply Launcher Ownership](../../local-reliability-qa.md#apply-launcher-ownership).
+Exercise native retirement after a saved Skip and stale running relabel using
+the real claim, custody journal and reset writer with synthetic native proof.
+The exact retired owner may restore the stopped stage; unverified custody,
+intent and a successor claim must still refuse reset.
+Current/older intent and prior Needs verification still refuse reset. Preserve
+accepted artifact fingerprints, counts and event/run identity. The
+`apply --recover-stopped` CLI must never launch Apply or reset running work.
+Use actual HTTP Skip/reset readback; fixture-only events do not establish cleanup.
+
+For durable Apply Skip and submit-intent recovery, run locked
+`pytest tests/test_exact_v7_apply_acquire_job_identity.py tests/test_apply_queue_selectors.py tests/test_enrichment_retry.py tests/test_exact_v7_state_reset.py`.
+Use exact-schema synthetic jobs and actual claims, final-intent writer, saga and
+SQLite event persistence with fake sender/browser/agent transports. Cover manual
+Skip from pending/failed/needs_verification across targeted/batch polling,
+approval settings and dry runs; retain an eligible peer and retryable DRY_RUN.
+An independent writer commits Skip during availability refresh and before final
+intent. Post-intent Skip and lost acknowledgement permit at most one fake send;
+restart/stage relabel/reset cannot authorize another. Repeat Needs verification
+without an intent receipt, retaining its prior state through repeated Skip and
+later stage labels. Assert exact intent/sender
+counts, original run identity, preserved artifact fingerprints and late-result
+ownership. Seed an inherited running attempt with an earlier same-job intent,
+including an independent-writer intent committed during agent execution: final
+admission must create no second intent/send, while foreign tenant/job evidence
+cannot block an unchanged safe submission. Compare the real Apply Review and
+Job Detail readers after relabel/restart. Exercise the real CLI manual-failure
+command: active ownership, Skip and uncertainty must produce a nonzero refusal,
+while safe local failure preserves attempts/materials. Settlement must retain
+the claimed attempt count for success, rehearsal, failure and uncertainty.
+Also cover both restart recovery branches and real CLI Mark Applied with an
+existing budget. Run `test_apply_runs_projection_from_events.py` and
+`test/apply-late-settlement.test.ts` for actual claim/saga/fake-sender/Skip/late
+settlement through the Python projector and HTTP readers. Successful original-run
+history must not become a fabricated submit failure; lost acknowledgement stays
+uncertain, Skip and intent still block retry, and accepted artifacts remain
+unchanged. Distinguish confirmed late receipts from lost acknowledgements in the
+real HTTP audit while retaining the same stop and retry fence. Exercise repeated
+Skip after Applied, Needs verification, queued and policy-owned states through
+HTTP and both reset owners; reconstruct identifiable legacy authority and verify
+that a cleared score policy and ordinary safe Skip remain resettable. Also dispatch
+through registered RPC before starting a controlled Temporal worker,
+then Skip and reset. The prior workflow cannot claim, a distinct post-reset
+request can, and a standing loop renews only between completed polls. Include
+legacy histories, independent writer ordering and replay; record loopback listener
+ownership and reap the exact synthetic Temporal child.
+Check already-cached fallback repair without new events, rollback and caller
+transaction ownership, prior terminal outcomes and foreign send evidence.
+For each conflicting late status, intent remains Needs verification unless the
+exact email operation has its validated receipt and subsequent submitted fact;
+unbound, altered, foreign-job/tenant/stage and empty receipts cannot settle it.
+Confirm a matching receipt recorded before the unique intent cannot create a
+submitted fact or repeat-application evidence, including when a pre-intent row
+collides with a later receipt's idempotency key. A valid later receipt settles;
+duplicate intents remain uncertain. Exercise the real writer under its lock and
+repeat the readback after reopening storage.
+The real worker/saga must persist the original owner's private AssistantText,
+ToolUse and terminal determination after pre-intent Skip without recording a
+failure, claiming a peer or admitting a send. A stopped rehearsal with no intent
+retains its actual dry-run result. Repeat after reopening storage and verify that
+private observation text is absent from projected timelines.
+Regress an automatic score-threshold reset after a relabeled manual Skip: no claim
+is admitted until a validated explicit release. Refuse canceled/failed/pending
+resets without the exact original owner settlement, including mixed-cohort RPC
+rollback. Run `test_workflow_apply.py` through registered RPC, Temporal, real
+launcher/use-case/saga and settlement with fake external transports: unchanged
+authority, pre-intent Skip, post-intent Skip and lost acknowledgement, followed by
+connection restart and repeated RPC. Retain exact event/send counts and artifact
+hashes. Open More job actions, activate Skip on running and Needs verification
+jobs, and inspect retained run/intent evidence on desktop/mobile after reload
+and a refused reset. Exercise CLI/registered RPC mixed-cohort rollback and caller-owned
+transactions. API HTTP Skip/reload/reset and focused UI mutation/rollback tests
+must preserve visible active-run and verification evidence. These regressions
+do not establish live-provider or installed-runtime behavior.
+
+For stale score reset and replacement (#1189), run the focused score
+staleness, score atomic-publication and repository tests with the API reset and
+web mutation tests. Use owned synthetic SQLite and fake model authority. Reset
+and read the prior score through list and detail; retain its stale marker during
+pending, failure, cancellation and reuse. Exercise publication and commit
+failure, source/tenant mismatches and unrelated markers. Add a marker through an
+independent writer during inference: the earlier completion must not resolve
+it or reconcile downstream eligibility, while a later matching replacement can.
+A newer policy during inference
+must preserve the accepted score, report and both invalidations.
+Exercise correction of an already-stale score in the API, dashboard, CLI and
+browser-local demo. Repeat bounded resets with duplicate markers, an already
+pending job and independent queued/running owners; limits apply to distinct
+eligible jobs, skipped work is reported, and an event or competing-writer
+failure cannot partially reset the cohort. Repeated preparation sweeps preserve
+approved artifact identity, status and bytes while score authority is stale.
+
+For current approval at owned email intent, run locked
+`pytest tests/test_apply_regressions.py -k owned_email -s` with an owned JUnit path,
+alongside the Apply saga/use-case, approval vocabulary, cover review, posting
+availability and repeat-application regressions. The fixture retains production
+`acquire_job` → `run_job` → use case → saga → final authorizer → SQLite intent →
+settlement/recovery; only external browser, agent, DNS and sender transports are
+synthetic. It does not replace API/RPC/Temporal dispatch or rendered review QA.
+
+Commit independent defer/reset, profile, application/posting URL, material
+generation, same-generation artifact/byte, cover binding and email candidate
+changes after claim. Repeat with claim-time approval waiting enabled and disabled,
+including changed inputs followed by a new approval, tied decision clocks, missing
+authority and read failure. Require zero intent/send on refusal, stable reasons,
+unchanged post-edit review/material history and accepted bytes. An enabled claim
+gate must reject stale complete email bindings across repeated targeted and
+standing polls without consuming attempts. For refusals after claim, require
+owner-scoped, idempotent attempt restoration at settlement and after interrupted
+settlement, including with claim-time approval disabled. Preserve browser claims,
+reject agent-reported or historical unkeyed refund lookalikes, and never refund
+after submit intent. The unchanged control requires one committed intent
+before one fake send, with decision/source/candidate provenance on the intent.
+With approval waiting disabled, exercise real continuous worker and bounded
+managed/continuous workflow batches: one refusal parks unchanged authority with
+no repeated agent, browser, intent or sender work, while another job progresses.
+Change the authority or explicitly request a single-job retry and verify the
+job can run again. Start with no candidate or review at all and verify the
+normal caller requires a dry run for discovery and blocks live browser entry;
+the directly invoked locked saga's refusal still refunds and parks its owner.
+Carry a stale approved candidate through an actual continuous Temporal
+execution: retain its failed batch count, continue only after the same owner's
+refund and settlement, admit a reviewed peer and wake the original job after
+its authority changes. Replay the history;
+mixed failures, missing proof, worker crashes and cleanup failures must still
+end the workflow as failures. Cover authority changed during the earlier run,
+interrupted settlement, and a first newly discovered email candidate. Exercise both ended
+source-lifetime and verified native-custody recovery: the park, owner-checked
+refund and stage transition commit together; intent and successor claims remain
+protected. After a saved refusal, make score stale, close the posting or make
+materials unavailable before Skip; settlement must still read the exact owner's
+authority and restore its attempt without admitting a send. Preserve the changed
+sources and decisions. Use synthetic native proof at the custody seam.
+On Darwin, carry the email-refusal case through the real source-controller
+scope, with real boot/coalition checks and synthetic Apply ports. Repeated
+unchanged polls must stay parked; a peer and changed authority can proceed.
+Retain exact child birth/session evidence and the owned workspace when the
+separate source cleanup probe cannot verify exit; never infer completion from
+the source fleet receipt.
+Direct saga calls without a final email authority, with availability-only or
+malformed authority, or without the same candidate's pinned bytes must refuse
+before intent and sender admission.
+Run the API approval test with `JOBCTRL_MIGRATION_TEST_PYTHON` set to the locked
+worker Python: its synthetic cross-runtime control records a worker-generated
+preview through the actual API and carries that approval through worker claim
+and intent, with unchanged and late-defer cases and a fake sender.
+Run locked `pytest tests/test_material_render_publication.py
+tests/test_tailoring_ownership_race.py tests/test_tailoring_artifact_boundary.py
+tests/test_material_batch_attempt_fencing.py tests/test_direct_material_attempt_fencing.py
+tests/test_approved_material_recovery_ownership.py`.
+Drive competing PDF and Cover activity paths and overlapping tailoring activities
+against one synthetic SQLite workspace. Require distinct attempt paths, preserved
+accepted bytes and source IDs, a writer lock through revalidation/publication,
+no stale aggregate overwrite, and owner-specific stale settlement without an
+extra attempt. Cover changed source bytes/path/generation, render failure, and
+an acknowledgement lost after commit; retain the referenced PDF in that case.
+Run overlapping attempts of the same Temporal activity and workflow run in both
+completion orders. Once the successor starts, require the older attempt to leave
+its publication and terminal stage state untouched. Also recover a committed
+cover while its prior PDF render is paused, preserving the accepted text. Delay
+an older attempt before stage claim and before retry recovery; neither may claim
+or settle the successor's stage, and recovery must stay scoped to its job.
+Repeat with selected and unscoped Tailor and Cover batches, and current-policy
+Tailor, including distinct Temporal and workflow-owner IDs. Require sibling
+jobs and other tenants to retain their work when one attempt is superseded.
+Overlap direct and Temporal material calls in both orders, including failures;
+the displaced direct call returns its stale/skipped result and cannot settle
+or publish over the successor. Also delay direct calls before their stage claim
+and request already-approved artifacts while a workflow-owned stage is running.
+Also reuse approved material through the direct entry points while another
+direct start token is running; preserve its complete stage/event rows, accepted
+bytes and ability to pass the real publication guard.
+Replay an older workflow's Tailor and Cover activity against approved materials
+while a different workflow, another activity of the same run, or a direct
+attempt owns the running replacement. Preserve the complete stage row, start
+events, accepted files, material rows and provenance, and verify the current
+owner still passes the real publication guard. Retain current-owner recovery as
+a positive control.
+Use a second real SQLite connection before and after repository save to prove
+neither writer admission nor intent visibility can cross validation-to-commit.
+Pause repository save containing intent after final authorization, both before
+and after insertion. Overwrite or atomically replace the attachment using an
+independent writer while its metadata update is SQLite-locked: source changes
+must roll back the intent with zero sender/HTTP calls under either approval-wait
+setting. Also replace the file between hash validation and byte capture. Retain
+the production Gmail adapter and MIME encoder with fake HTTP, decode the outgoing
+attachment and compare its hash with the approval. After admission, replacing or
+deleting the source path must not alter those bytes or force a path fallback.
+The last hash read does not lock an independent filesystem writer through the
+SQLite commit. A replacement in that interval can go undetected, although the
+sender still receives the pinned approved bytes; these tests do not prove a
+filesystem-wide atomic current-source check.
+Missing/mutable byte inputs refuse before Gmail access. Repeat acknowledgement
+loss and restart through this byte-bound real adapter with no resend.
+Also gate the first source-binding read during claim: the running stage must
+remain uncommitted and another writer must be excluded. Replace attachment
+bytes/metadata or the accepted tailored-resume identity before claim and after
+claim separately; neither a new snapshot nor an unchanged generation may adopt
+the replacement under older approval. Approve candidate A, change the job title,
+and run another production rehearsal to produce B with the same recipient and
+attachment but different subject/body. A's recorded fingerprint must refuse B
+under both approval-wait settings. The API approval tests also require complete
+fingerprint persistence and atomic refusal when accepted file bytes are unavailable.
+Repeat tied-clock defer/reset using decision IDs both below and above the prior
+approval ID, with approval waiting on and off. API, worker and digest must agree
+on the conservative non-submit precedence. Inject a canonical review-reader
+failure at each preliminary final-intent read, including the read used by
+availability transport: require `approval_authority_unavailable`, zero intent/send
+and no extra attempt. Capture preview A, create rehearsal B, then submit A's full
+preview identity with unchanged recipient/attachment IDs. Require an atomic API
+refusal, preserved decision history and no send; an explicitly reviewed B can
+subsequently be approved and sent through the owned path.
+At the review-session hook, retain the clicked preview across asynchronous
+preparation. Independently replace recipient, subject, body, attachment ID/name,
+rehearsal run or timestamp, including an in-place cache update while refreshing:
+no approval request may adopt the unseen preview. The unchanged control sends
+the complete caller-bound preview, permitting only the exact accepted resume
+render's attachment promotion. An API stale-preview refusal preserves the saved
+draft and accepted render without dispatching automation.
+Fail intent insertion to prove rollback, then exercise lost acknowledgement and
+crash after intent through restart and repeated targeted/standing polls: uncertainty
+stays `needs_verification` with no resend. Emit scenario identities, exact event
+and sender counts, artifact/source hashes and writer ordering for retained QA.
+
+The owning boundaries are
+[`_authorize_posting_before_submit` and `SqliteApplyRunRepository.save`](../../../workers/automation/src/jobctrl/apply/launcher.py),
+[`_handle_email_only_result`](../../../workers/automation/src/jobctrl/domain/apply/process_manager.py)
+and [`_email_application_context`](../../../workers/automation/src/jobctrl/domain/apply/use_cases.py).
+Browser final submit remains manual; Gmail verification, provider receipt
+validation and manual Skip semantics retain their separate contracts.
+
+For interview-history and Apply Review comment recovery, run the focused
+Interviews view, note-form, interview-query and Apply Review session/view tests.
+In an owned synthetic workspace, fail preparation and note history reads,
+including a later page, and retry the same job, question and page after editing
+context, question selection and a note. Repeated failures must retain the last
+accepted preparation and leave retry available; successful reads must preserve
+the edits without generating preparation. Fail comment persistence after findings
+exist, then use the visible recovery action and verify that it replays those
+findings without starting a model review or replacing existing comments and edits.
+Verify the visible flow in a Linux-isolated browser.
+
+For learning recommendation pagination (#1198), run the focused
+`LearningRecommendationReviewPanel.test.tsx` and the isolated
+`learning-pagination.spec.ts` browser test against its owned synthetic database.
+Reach every recommendation and evidence link over the real API, including a
+signal linked to multiple jobs. Fail and retry each later-page read while the
+previous page remains visible. Verify the accepted review and policy revision,
+terminal exclusion, and tombstoned source authority remain unchanged; no
+recommendation or evidence is regenerated by navigation.
+
+For reviewed tailoring-policy restore, run locked
+`pytest tests/test_tailoring_policy_revisions.py tests/test_rpc_learning_recommendations.py tests/test_sqlite_learning_recommendations.py`
+with the API contract and history-panel tests. Use independent connections in an
+owned synthetic SQLite workspace. Race distinct commands and copies of one
+command against the same reviewed version; require a stale refusal or one
+receipt, respectively. Preserve intervening user and recommendation revisions,
+and retry after a lost response, restart, and later accepted change. Check exact
+history counts and original receipt, tenant isolation with matching IDs and
+versions, malformed and conflicting payloads, and commit-failure rollback. The
+actual API and rendered history must show the reviewed transition, stale review,
+fresh review, and the difference between a receipt and the current policy; no
+restore may start material or application work.
+
+For posted compensation source fencing, run locked
+`pytest tests/test_posted_compensation_source_fence.py tests/test_compensation_v7_job_id.py tests/test_posted_compensation_repository.py`.
+Use owned synthetic SQLite and fake model ports. Hold extraction while an
+independent writer adds or removes salary, changes the selected text, or adds,
+removes, or changes the status of an enrichment. Reject a changed preferred
+source and preserve the accepted fact, determination binding, and event; permit
+one publication when only lower-priority or another tenant's data changes.
+Exercise both discovery producers and the per-job refresh core, and confirm
+the writer can commit while inference is active. These are source and
+transaction checks, not semantic evaluation or live-provider tests.
+
+For contact research acquisition, run locked
+`pytest tests/test_contact_research_workflow.py tests/test_company_briefings.py`
+with the politeness and public-destination suites. Use only fake transports and
+owned synthetic SQLite. Exercise declared and streamed size limits, slowly
+progressing headers and chunked bodies, redirects sharing one deadline,
+admission and active cancellation, cancellation during page parsing and while
+waiting for the result writer, closure, DNS timeouts versus other DNS failures,
+stalled DNS and public-address rebinding.
+Prove failures remain distinguishable from no-candidate results through the
+activity and stored task, do not reach the model, and cannot erase accepted
+proposals. Race two SQLite-backed attempts in both completion orders and confirm
+a candidate while a failed attempt is still in flight. After a rate-limited
+source, allow an independent writer during the next fetch and model call;
+reject an already-open caller transaction, and preserve the shared gateway's
+explicit commit ownership. Inject event-publication failure and verify its
+writer lock is released. Queue a same-host request behind 429 and 503 responses
+for both contact research and company briefings, and prove it cannot start before
+or during the installed `Retry-After` cooldown, but resumes after it expires.
+Verify the contact source outcome labels in the web component.
+In the isolated hosted Linux browser gate, run the oversized-page case in
+`e2e/tests/outreach.spec.ts`. Its owned synthetic fixture executes the actual
+activity in memory with a fake transport and no model call. Its exact persisted
+task row is copied into the browser workspace by a Node seeder that checks the
+independent E2E capability and the actual opened SQLite descriptor. Run
+`test_contact_research_e2e_fixture.py` and `scripts/owned-research-db.test.mjs`
+for missing, mismatched and replaced ownership refusals. The real API must return
+the handed-off failure, and the opened source disclosure must show the actionable
+guidance while the existing proposal remains visible. This handoff is not proof
+that the worker itself wrote the browser workspace database.
+
+For contact research inference, run locked
+`pytest tests/test_contact_research_inference.py tests/test_contact_research_workflow.py`
+plus the contact API and source-outcome component tests. Use only synthetic
+pages, fake model authorities and owned SQLite. Opposite valid results for the
+same page must yield proposals or an accepted empty decision. Verify receipt
+identity, source spans, contact-lane preflight and cache reuse; reject provider,
+spend, JSON, schema, enum, source and span failures without a lexical substitute.
+An empty fetch is not an empty model decision. An in-flight failure must preserve
+the winning review, record its safe failure and event atomically, refresh an open
+review and report the failing attempt in workflow output. A successful retry
+must clear current failure metadata while retaining prior source attempts. Race
+both completion orders with independent writers. No raw prompts, page text or
+candidate values enter events or determination receipts. Exercise the actual
+activity with Temporal heartbeats, dispatch and replay, including old-format
+activity output and both preflight histories, then inspect the API and UI.
+
+For legacy evidence preservation (#1281), run locked
+`pytest tests/test_legacy_evidence_preservation.py tests/test_legacy_evidence_recovery.py tests/test_semantic_storage.py tests/test_v12_activation.py`
+and the full worker and native launcher suites with this checkout's locked
+migration Python and Node explicitly bound. Exercise every applicable exact-v6
+through v12 source to current schema, an independently authored collision, a
+known historical system-writer record, nonmatching and unconfirmed controls.
+Keep every original text/scope/metric/ID/confirmation cell, deterministic private
+inventory history, canonical review-required failure, explicit human source
+visibility and unchanged accepted material IDs/bytes/anchors. Repeat inventory
+and decisions; stale tokens, current edits/deletions, duplicates, independent
+writers and malformed/unpaired/changed/symlink backups must refuse safely.
+Inject inventory interruption and cutover failure, preserving current/source/
+paired-backup/file bytes. Use only owned synthetic workspaces. The recovery path
+must not treat independently captured app/Temporal/files as a native pair or
+infer authorship from values. Verify the Python-written private journal through
+real Profile HTTP, the Profile/Evidence Map warning, excluded interview choices
+and the SSE private-source canary. Include confidence `0`, `1e-7`, `1e-6`, a
+fraction, `1` and a subnormal value through actual Python review publication and
+TypeScript reads; unchanged binary64 values must agree and changed values must
+invalidate that binding. Nonfinite values refuse without replacing cells or
+history. An original-zero inventory must not authorize a later current one,
+malformed flag or duplicate; prove canonical-source refusal, visible pending
+state, stale-token refusal and a new explicit human decision, including
+backup-zero/current-one recovery. No semantic eval corpus or real user backup
+belongs in these checks.
 
 For availability model/network budgets, run locked
 `pytest tests/test_availability_model_budget.py tests/test_saved_posting_availability.py tests/test_saved_posting_availability_runtime.py tests/test_posting_availability_rereview.py`
@@ -686,6 +1183,30 @@ direct fallback evidence. Record each protocol reason in the bounded target
 receipt without retaining response bodies, headers or exception messages. Verify
 the actual Temporal activity result and fresh-history replay for each cause.
 
+For occupied-slot recovery guidance (#1184), exercise a registered synthetic
+Apply activity through the worker inventory and heartbeat, the pipeline
+operations API and the failed-run view. A fresh occupied slot with no
+allowlisted details must remain active without exposing the Apply identity or
+payload. Check mixed allowlisted and omitted activity, bounded/truncated detail,
+unavailable inventory, and the transition to fresh exact zero. Only the last
+state may be called idle. After a failed refetch, retain the cached snapshot but
+do not use its idle values to enable Discover; test recovery on a later read.
+A stale peer makes global occupancy unknown even when a fresh worker is idle.
+Prove that an explicit user start remains available in that case without
+claiming global idle, that an active Discover is reused, and that a fresh
+positive activity blocks replacement. No test may retire a peer by age or PID.
+For a projection-ready selected run with sufficient duration samples, verify
+same-queue stale-peer contention withholds overall, stage, and source-family
+numeric ETAs; fresh-peer recovery restores them. A failed operations refresh
+must also mark a previously available source-family estimate stale without
+mutating the cached snapshot, then show the new estimate after a successful read.
+Run `test/pipeline-eta.test.ts` and `test/pipeline-operations.test.ts` for zero
+selected-stage and source-family demand while Discover membership remains open.
+Require `membership_open` rather than `no_work`, retain positive-demand current,
+sweep and source ranges with sufficient evidence, and permit `no_work` after
+closure. Empty global backlog remains independently scoped. Preserve stale
+telemetry and unbounded-contention refusals.
+
 For completed eligibility holds in pipeline operations, run
 `corepack pnpm --filter @jobctrl/api exec vitest run test/pipeline-operations.test.ts`
 and the API type/full-test gates. In owned exact-schema storage, reproduce a
@@ -712,6 +1233,85 @@ Exercise both cold admission and accepted-score reuse after cancellation or a
 newer owner, including unchanged cache attempt counts and valid explicit
 rescores. A nullable/unknown SDK status must preserve ownership; same-owner rows
 outside a single-job preparation's canonical job must remain unchanged.
+
+For owned email confirmation, run locked pytest on `tests/test_gmail_connector.py`,
+`tests/test_apply_saga.py`, `tests/test_apply_use_cases.py`,
+`tests/test_apply_regressions.py`, `tests/test_apply_runs_projection_from_events.py`,
+`tests/test_repeat_application_prevention.py`, `tests/test_workflow_apply.py`,
+`tests/test_activity_apply.py` and `tests/test_rpc_handlers_apply_workflow.py`.
+The receipt cases in `test_apply_regressions.py` traverse production acquisition,
+use case, saga, Gmail client/sender, SQLite persistence, settlement and recovery
+with synthetic storage and fake external transports. Exercise empty/204,
+malformed/nonobject JSON, strict required/optional IDs, provider/transport
+failures, forged operation bindings, independent concurrent settlement writers,
+late receipts and interruption before/after confirmation persistence. Cover
+nonstandard JSON constants inside ignored response fields, missing/foreign
+settlement identities and ownership resolution under the writer lock, including
+caller-owned commit/rollback and repeated settlement after a valid receipt.
+Exercise a caller-owned transaction with both the no-op availability seam and
+the production publisher: no send or caller commit may occur before a durable
+intent. An independent connection must see the committed intent at transport
+admission. After valid settlement, verify every owned event wrapper is published
+and reject forged, foreign or successor-owned wrappers.
+Inspect exact transport/intent/confirmation/submitted-fact counts and unchanged
+accepted bytes. The bounded Temporal activity cases use the production use case and
+writer behind a launcher-main seam, avoiding browser/process lifecycle effects.
+They do not qualify a real browser or remote Gmail delivery.
+Use the production in-process bus and projection subscriber to count success
+notifications alongside durable rows. Inject terminal-artifact and submitted-fact
+write failures; rollback must publish neither success event and a permitted
+settlement retry must publish each once. Exercise inherited commit, rollback,
+savepoint rollback and close, with an independent connection observing durable
+facts at notification time. Race recovery against confirmation in both writer
+orders. Pause the original sender after transport success, run a duplicate on an
+independent connection and release the original receipt: one intent, confirmation
+and submitted fact must survive, with no competing failure or second send. Also
+cover malformed/lost-ack originals, exact replay, changed child identities and
+legacy rows without a fingerprint.
+Replay direct and wrapped `AgentResult`, `AssistantText`, `ToolUse` and
+`ApplyTerminalDetermination` private-content canaries as well as email events.
+Exercise historical `ApplicationFailed` ambiguity reasons/results with raw
+exception suffixes. The production CLI-adapter regression uses synthetic stream
+messages and fake subprocess/Gmail transports. The worker-to-API fixture
+`tests/apply_receipt_privacy_fixture.py` feeds actual canonical writes into API
+summary/activity/detail, SSE replay and Apply Review reads; broad delivery must
+be safe while canonical review and determination provenance retain their source.
+
+Run `corepack pnpm --filter @jobctrl/api exec vitest run test/server.test.ts test/application-feedback.test.ts`
+for SSE replay filtering and canonical preview retention. Keep direct and wrapped
+publisher canaries, worker-built Apply projections, legacy replay and canonical
+Apply Review distinct. Reopening an ambiguous attempt must make no new transport
+call; a persisted valid confirmation may settle only its own current operation.
+
+For Outreach publication, run locked pytest for
+`workers/automation/tests/test_outreach_repository_v7.py`,
+`test_outreach_draft_gates.py`, `test_offer_outreach.py` and the existing Outreach
+no-send/projection/follow-up suites. Run API `test/outreach.test.ts` with the
+controller-prepared Python `.venv` available: its owned synthetic model ports
+exercise real registered RPC, independent SQLite connections and normal HTTP.
+Hold revision inside verification, separately commit send/approve/reject/newer
+draft/schedule/reschedule/complete/dismiss, then require an explicit conflict
+and exact preservation of canonical rows, anchors and lifecycle event counts.
+Race revisions, first creation and deleted bases; freeze timestamps, interleave
+snapshot reads, retain unrelated tenant/thread controls, inject row/anchor/event
+failures, lose an HTTP acknowledgement and reopen the runtime/database. Require
+one winner generation/event and no automatic regeneration or send replay.
+
+Frontend form/hook/panel regressions and `e2e/tests/outreach.spec.ts` cover visible
+conflict recovery, retained edits/checks after card replacement/removal and
+deliberate retry. Type a newer edit while a revision is pending and verify it
+survives success, failure and conflict; it must never be resubmitted automatically,
+and both deliberate submission and discard must work. Include the real Offer recipient selector with a cached second
+recipient: an earlier recipient's edit, completion and comparison controls must
+remain suspended until returning to that recipient. Repeat for another job and
+for generation's purpose/offer-revision scope, including a completion arriving
+while another target is displayed. Exercise delayed generation and competing
+first creation through the normal generation caller, preserving completed body,
+checks and provenance across refetch and a failed deliberate retry. Global
+mutation retry defaults must never cause automatic generation or revision. Browser presentation fixtures are separate from HTTP/RPC
+persistence proof. See the [publication design](../../architecture/tailoring.md#outreach-publication-boundary)
+and [user recovery](../../user/contacts-and-outreach.md#when-outreach-changes-during-verification).
+
 
 For interpretation metadata citation sources, run locked
 `pytest tests/test_interpretation_citable_fields.py tests/test_remaining_determinations.py tests/test_binding_repair_feedback.py tests/test_analysis_retry_boundaries.py`.
@@ -1063,6 +1663,48 @@ sentence punctuation or separated by commas.
 
 For Discovery, save literal target settings and plan a run without an interpretation receipt or second approval. Inspect the actual JobStreaming query/location/remote parameters and each provider’s supported filters; capability warnings are not currently displayed in JobCtrl. Structurally valid fetched results must ingest without an extra model gate, even when they do not lexically resemble the query. Exact user-authored title exclusions retain durable filtered receipts. Exercise capture/ack interruption, lease fencing, retry idempotency and limits. Full-posting interpretation/scoring retain model authority and source provenance. Historical native cutovers preserve authored cells, canonical jobs, accepted files and raw captures.
 
+For execution result limits, run locked
+`pytest tests/test_discovery_execution_result_plan.py tests/test_discovery_result_budget.py tests/test_discovery_family_result_budget.py tests/test_jobstreaming_source_result_budget.py`
+and `discovery-transactions`. Exercise actual family orchestration and real
+Temporal plan/source activities plus replay with controlled provider seams in
+owned file-backed SQLite workspaces. Race ATS and Workday through independent
+connections for the final slot; repeat attempts and verify exactly one canonical
+insert, receipt and execution membership. Cover each family's exact/under limit,
+archived recovery using the last slot before fresh fetch, per-source cap handoff,
+foreign tenant/run and unrelated-job controls, literal exhausted zero, deliberate
+unbounded requests, canonical deduplication, receipt/lineage rollback and
+search-unit checkpoint interruption. Counts must come from the exact execution's
+durable admission receipts; a global Jobs delta is never evidence of exhaustion.
+Old bounded payloads missing the frozen plan/execution or explicitly disabling
+its authority must refuse before source planning, writes or acknowledgement,
+while current direct bounded calls default to the safe authority and completed
+workflow histories still replay.
+Also reproduce an old `true` plan with a same-execution unreceipted ATS admission:
+neither source execution nor reinvoking the planner may create fresh authority.
+Verify immutable plan fingerprints, cap/source/mode mismatches from independent
+canonical writers, plan disappearance/damage, transaction rollback and the absence
+of queries/private settings from the operational marker. Cancel Workday immediately
+after acquisition, after its first accepted commit and inside the next canonical
+claim: no later job/receipt/membership may commit, and the accepted prefix remains.
+Permanently delete an admitted Job and prove its operational receipt still
+exhausts the run. Interrupt generic capture recovery after canonical commit but
+before acknowledgement, then retry at zero allowance with both retained and
+deleted owners: acknowledgement finishes with no new admission, observation or
+Job recreation. The separate explicit full job/Discovery purge backs up and
+clears these null-Job execution records while preserving source-control state.
+An execution-scoped canonical writer that omits its optional budget must refuse
+under the transaction when a bounded marker exists, including at an exhausted
+cap. Preserve caller savepoints and pending writes, and retain unbounded controls
+with no marker or an explicitly unbounded marker.
+
+Compose the frozen result plan with archived Smart Extract recovery through the
+production Temporal workflow: limit one, canonical admission, snapshot failure,
+then retry with zero remaining allowance. Require one admission, observation
+and snapshot, all three original discovery events exactly once, three total
+intake model calls, no fresh fetch, and successful history replay. Add a second
+unprepared capture: it stays pending without browser/provider setup, while the
+prepared first capture completes and is acknowledged.
+
 For actual offers, drive the per-job offer HTTP/client entry and rendered
 Application outcomes panel without interview prep. Verify null equity,
 benefits/deadlines and explicit unknown currency/time base, source confirmation,
@@ -1220,6 +1862,60 @@ inactive until environment removal plus restart.
 For retry with `runAfter: true`, worker readiness precedes reset. A readiness
 failure leaves state, attempts, error details, retryability, and audit evidence
 unchanged and dispatches no work.
+
+For retry presentation and stale-score advice, hold both the retry response and
+the subsequent Job Detail read. Exercise the real Job actions caller: Discover
+sends `runAfter: false` and remains pending, while a dispatched preparation
+retry retains running feedback. If a response reports a reset without dispatch,
+the stage and workflow summary both settle to the returned state before the
+next read completes. Also return a failed or unsupported dispatch after the
+reset: both views retain the returned pending stage through a held and failed
+readback, and the dispatch failure remains visible. Check rollback on request
+failure. While an earlier retry response is held, publish a newer StageStarted
+detail through the event stream; then release the earlier reset, dispatch-failure,
+or request-failure response and fail the next read. The newer running stage and
+workflow summary must survive. Also cover a newer publication whose projection
+is structurally equal to the optimistic data. Publish the old failed stage in
+a read before the reset commits, including after query recreation: a delayed
+reset response followed by a failed read must leave an explicit uncertainty
+notice visible. Hold a pre-commit read across the response and ensure its success
+does not clear the notice or substitute for a distinct confirmation read. A
+successful post-response read clears that notice. Fail a confirmation and retry
+it through Job Detail, reopen an inactive job, and switch jobs and tenants; each
+notice must remain scoped to its owner until that owner's confirmation succeeds.
+While a confirmation waits, complete a matching post-response read and ensure
+no unnecessary second read starts. Close the drawer while its earlier read is
+held and another component still subscribes to the query; the closed drawer's
+operation must not start a later read, and reopening must still confirm it.
+Open Job Detail by a URL alias and retry the canonical Job while response and
+readback are held; the mounted alias detail must show the reset without changing
+another Job's cache. Navigate both from alias to canonical and from canonical
+to alias with a previously cached alternate: it must be stale and refetch on
+mount. Its retained state must show its own uncertainty notice through held or
+failed readback and clear only after that locator confirms the same canonical
+job. Preserve unrelated and other-tenant entries and newer cached values. If an
+alternate read was already in flight, including an initially empty cache entry,
+recheck the same query instance and returned job key after it completes, then
+invalidate the matching entry again; an active alternate must fetch again. A
+recreated query or a different canonical job must not be claimed.
+Open Screening Answers in an alias detail so it subscribes to the canonical
+detail query. A matching post-response read through that subscriber clears the
+canonical locator's notice even before its drawer is opened; a pre-response
+read cannot clear it. Overlap two retries while that subscriber's initially
+empty read is held and confirm both with one subsequent read. Repeat with the
+second retry settling during the first confirmation: that earlier confirmation
+must not clear the second retry's notice. Reject an application-target refresh
+with 409 and ensure no stage-retry uncertainty notice is created for an
+alternate locator.
+Feed both the API
+response and recorded event advice through the registered Python CLI with an
+owned no-spend seam; the resulting score workflow input must set `rescore`.
+Check Python's stage and event advice the same way and preserve the accepted
+score. These checks do not establish stale-marker resolution timing.
+For demo mode, use a retained synthetic workspace with a previously retryable
+failure: retry controls and diagnostics must reflect the unavailable demo
+capability without rewriting the saved record. Local retry behavior remains
+covered independently.
 
 ## Live Profile Discovery And Automatic Recovery
 
@@ -1638,6 +2334,13 @@ the production-mode browser lane. Verify direct SPA deep links, Pages security
 headers, the same-origin `/api/*` route, D1 migration state, and one Pages
 rollback before calling the public deployment healthy.
 
+The consented funnel report regression executes the checked-in SQL against
+migrated synthetic D1 data produced by the telemetry handler. Every accepted
+route must count an install click as an install, while session starts and the
+five route views keep their own stages. Require correct release grouping,
+distinct visitor/session counts, expired-event exclusion and separation from
+denied and operational traffic.
+
 ### Provider setup gate
 
 For the isolated Codex SDK environment, merge hostile ambient credential and
@@ -1736,6 +2439,21 @@ name, or host path.
 <a id="saved-views-smoke"></a>
 <a id="daily-digest-smoke"></a>
 <a id="resume-tailoring-quality-eval-gate"></a>
+
+### Daily digest
+
+Run the digest CLI against an owned synthetic workspace admitted to the current
+schema, both empty and populated. Check canonical job and tenant joins, one
+count per job with multiple snapshots, hidden/closed/deleted and active jobs,
+score corrections, approvals, follow-ups, threshold and watermark filters, and
+deep links. Exercise offsets and fractional precision against instant cutoffs.
+A foreign tenant's rows must not change local counts. A failed or
+unavailable read or projection refresh must fail instead of returning zeros.
+Passive reads preserve the review watermark; explicit acknowledgement records
+the canonical review event and watermark together, or leaves both unchanged if
+the event write fails. Interleave independent Python and API writers with the
+newer acknowledgement committing first; retry a lost response and preserve a
+caller-owned transaction on success and failure.
 
 ### Saved posting availability
 

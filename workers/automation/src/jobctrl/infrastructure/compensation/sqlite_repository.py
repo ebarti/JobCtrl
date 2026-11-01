@@ -175,20 +175,22 @@ class SqlitePostedCompensationRepository:
                 event_write_fence()
             if not self._conn.in_transaction:
                 self._conn.execute("BEGIN IMMEDIATE")
-            source_locations = {
-                "jobs.salary": ("jobs", "salary"),
-                "jobs.full_description": ("jobs", "full_description"),
-                "jobs.description": ("jobs", "description"),
-                "job_enrichments.full_description": ("job_enrichments", "full_description"),
-            }
-            if source_field in source_locations:
-                table, column = source_locations[source_field]
-                current = self._conn.execute(
-                    f"SELECT {column} FROM {table} WHERE tenant_id=? AND job_id=?",
-                    (tenant_id, str(job_id)),
-                ).fetchone()
-                if current is None or _nonempty_text(current[0]) != _nonempty_text(salary):
-                    raise DeterminationFailure("posted_compensation_source_changed")
+            current = self._conn.execute(
+                """
+                SELECT jobs.job_id, jobs.salary,
+                       enrichments.full_description AS enrichment_description,
+                       jobs.full_description, jobs.description
+                FROM jobs
+                LEFT JOIN job_enrichments AS enrichments
+                  ON enrichments.tenant_id = jobs.tenant_id
+                 AND enrichments.job_id = jobs.job_id
+                 AND enrichments.current_status = 'enriched'
+                WHERE jobs.tenant_id = ? AND jobs.job_id = ?
+                """,
+                (tenant_id, str(job_id)),
+            ).fetchone()
+            if current is None or posted_compensation_source_from_job(current) != (_nonempty_text(salary), source_field):
+                raise DeterminationFailure("posted_compensation_source_changed")
             self._save_fact_row(fact)
             SqliteDeterminationRepository(self._conn).bind(
                 tenant_id=tenant_id,

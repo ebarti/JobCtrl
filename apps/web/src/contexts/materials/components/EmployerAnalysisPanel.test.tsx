@@ -173,7 +173,7 @@ describe("<EmployerAnalysisPanel>", () => {
     );
 
     await user.click(
-      within(matched).getByRole("button", { name: "Additional audit details" }),
+      within(matched).getByRole("button", { name: /^Additional audit details \d+ signals?$/ }),
     );
 
     expect(
@@ -197,7 +197,7 @@ describe("<EmployerAnalysisPanel>", () => {
 
     await user.click(
       within(transferable).getByRole("button", {
-        name: "Additional audit details",
+        name: /^Additional audit details \d+ signals?$/,
       }),
     );
 
@@ -254,7 +254,7 @@ describe("<EmployerAnalysisPanel>", () => {
     ).not.toBeInTheDocument();
     expect(
       within(matched).getAllByRole("button", {
-        name: "Additional audit details",
+        name: /^Additional audit details \d+ signals?$/,
       }),
     ).toHaveLength(1);
     expect(
@@ -347,7 +347,7 @@ describe("<EmployerAnalysisPanel>", () => {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
     await user.click(
-      within(matched).getByRole("button", { name: "Additional audit details" }),
+      within(matched).getByRole("button", { name: /^Additional audit details \d+ signals?$/ }),
     );
     expect(
       within(matched).getByText("missing from tailored resume · 0 bullets"),
@@ -358,7 +358,7 @@ describe("<EmployerAnalysisPanel>", () => {
     });
     await user.click(
       within(transferable).getByRole("button", {
-        name: "Additional audit details",
+        name: /^Additional audit details \d+ signals?$/,
       }),
     );
     expect(
@@ -421,7 +421,7 @@ describe("<EmployerAnalysisPanel>", () => {
 
     await user.click(
       within(transferable).getByRole("button", {
-        name: "Additional audit details",
+        name: /^Additional audit details \d+ signals?$/,
       }),
     );
 

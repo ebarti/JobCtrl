@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -182,6 +183,77 @@ async def test_async_cancellation_settles_cleanup_before_the_next_call():
         assert len(made) == 2
     finally:
         await asyncio.to_thread(service.close)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cancellations', [0, 1, 2])
+@pytest.mark.parametrize('cleanup_fails', [False, True])
+@pytest.mark.parametrize('primary_fails', [False, True])
+async def test_pool_settles_cleanup_without_reporting_its_exception(
+    cancellations, cleanup_fails, primary_fails, caplog,
+):
+    pool = AgentRuntimePool(1)
+    closing = asyncio.Event()
+    release = asyncio.Event()
+    private_marker = uuid.uuid4().hex
+    cleanup_error = OSError(private_marker)
+    primary_error = ValueError('owned primary failure')
+    result = AgentResult(output='', finish_reason='failed', error='safe error')
+
+    class ClosingRuntime(Runtime):
+        async def run(self, _task):
+            if primary_fails:
+                raise primary_error
+            return result
+
+        async def aclose(self):
+            closing.set()
+            await release.wait()
+            self.closed = True
+            if cleanup_fails:
+                raise cleanup_error
+
+    runtime = ClosingRuntime()
+    running = asyncio.create_task(pool.run('config', lambda: runtime, AgentTask(goal='synthetic')))
+    try:
+        await asyncio.wait_for(closing.wait(), 2)
+        for _ in range(cancellations):
+            running.cancel()
+            # Let the waiter process each cancellation while cleanup remains blocked.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert not running.done()
+        release.set()
+        if primary_fails:
+            with pytest.raises(ValueError) as caught:
+                await asyncio.wait_for(running, 2)
+            assert caught.value is primary_error
+            if cleanup_fails:
+                assert 'Agent runtime cleanup also failed.' in caught.value.__notes__
+        elif cleanup_fails:
+            with pytest.raises(OSError) as caught:
+                await asyncio.wait_for(running, 2)
+            assert caught.value is cleanup_error
+        elif cancellations:
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(running, 2)
+        else:
+            assert await asyncio.wait_for(running, 2) is result
+        assert runtime.closed
+        # asyncio may schedule exception reporting after the cleanup task completes.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert ('Agent runtime cleanup failed during cancellation.' in caplog.text) is (
+            cleanup_fails and bool(cancellations)
+        )
+        assert not [record for record in caplog.records if record.name == 'asyncio']
+        assert private_marker not in caplog.text
+    finally:
+        release.set()
+        if not running.done():
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+        await pool.aclose()
 
 
 @pytest.mark.asyncio

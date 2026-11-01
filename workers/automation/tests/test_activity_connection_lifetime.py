@@ -4,7 +4,6 @@ import asyncio
 import sqlite3
 import threading
 from types import SimpleNamespace
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -205,15 +204,20 @@ async def test_short_controls_offload_and_release_their_database(monkeypatch, tm
         setup.execute("CREATE TABLE proof (value TEXT)")
         setup.execute("INSERT INTO proof VALUES ('accepted artifact')")
     monkeypatch.setattr("jobctrl.database.DB_PATH", path)
-    executor = ThreadPoolExecutor(max_workers=1)
+    # Install the same class used by the short-control lane. A single worker
+    # lets the post-call probe run on the exact thread that opened the handle.
+    executor = ActivityThreadPoolExecutor(max_workers=1)
     request.addfinalizer(lambda: executor.shutdown(wait=True, cancel_futures=True))
-    monkeypatch.setattr(run_in_activity, "_ACTIVITY_EXECUTOR", executor)
+    monkeypatch.setattr(run_in_activity, "_CONTROL_EXECUTOR", executor)
+    monkeypatch.setattr(run_in_activity, "_CONTROL_EXECUTOR_RETIRING", False)
     started, release = threading.Event(), threading.Event()
     main_thread = threading.get_ident()
     connections = []
+    control_threads = []
 
     def blocking_control(*_args):
         assert threading.get_ident() != main_thread
+        control_threads.append(threading.get_ident())
         conn = get_connection(path)
         connections.append(conn)
         conn.execute("INSERT INTO proof VALUES ('attempt')")
@@ -251,8 +255,10 @@ async def test_short_controls_offload_and_release_their_database(monkeypatch, tm
         message = "synthetic control failure" if outcome == "failure" else "activity_transaction_unfinished"
         with pytest.raises(RuntimeError, match=message):
             await pending
-    assert connections
+    assert len(connections) == 1
+    assert run_in_activity._CONTROL_EXECUTOR is executor
     def assert_closed_on_owning_thread():
+        assert threading.get_ident() == control_threads[0]
         with pytest.raises(sqlite3.ProgrammingError, match="closed"):
             connections[0].execute("SELECT 1")
     await asyncio.get_running_loop().run_in_executor(executor, assert_closed_on_owning_thread)

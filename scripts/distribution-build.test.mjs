@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, copyFile, lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -12,11 +14,14 @@ import {
   assertNodeAttributionClosure,
   assertHeadlessChromiumPayload,
   buildFixturePayload,
+  collectMcpNodeContributors,
   collectNodeLicenseInventory,
   collectPayloadNpmContributors,
   compareMacOsVersions,
   compareSizeReports,
+  copySchemaTransitionContract,
   createNativeLauncherBuildPlan,
+  createNativeLauncherSmokePlan,
   createExtractedRuntimeStackPlan,
   createDeterministicZip,
   createDeterministicTarGz,
@@ -48,6 +53,7 @@ import {
 } from "./distribution-archive.mjs";
 import { buildFileInventory } from "./distribution-manifest.mjs";
 import { parseExportedRequirements } from "./distribution-provider-lock.mjs";
+import { signReleaseBytes, verifyReleaseBytes } from "./distribution-release.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -61,6 +67,7 @@ const FIXTURE_BUILD_ROOT_FILES = [
   "workers/automation/pyproject.toml",
   "workers/automation/uv.lock",
   "launcher/GO-LICENSE",
+  "launcher/schema-transition.json",
   "launcher/toolchain.json",
   "packaging/distribution/capability-policy.json",
   "packaging/distribution/component-inventory.json",
@@ -163,6 +170,50 @@ test("pre-sign network candidates defer only the unavailable native lifecycle sm
     releaseChannel: "prerelease",
   });
   assert.throws(() => nativeLauncherLifecycleSmokeRequirement("preview"), /release channel is invalid/);
+});
+
+test("native smoke controller runs directly and requires the fixed helper sandbox", () => {
+  const stockEnvironment = {
+    HOME: "/tmp/owned-native-smoke/home",
+    JOBCTRL_DIR: "/tmp/owned-native-smoke/home/.jobctrl",
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+  };
+  const plan = createNativeLauncherSmokePlan({
+    payloadRoot: "/tmp/owned-native-smoke/payload",
+    extractedRoot: "/tmp/owned-native-smoke",
+    stockEnvironment,
+  });
+  assert.equal(plan.command, "/tmp/owned-native-smoke/payload/launcher/jobctrl");
+  assert.equal(plan.options.cwd, "/tmp/owned-native-smoke");
+  assert.deepEqual(plan.options.env, {
+    ...stockEnvironment,
+    JOBCTRL_RUNTIME_HOME: "/tmp/owned-native-smoke/runtime",
+    JOBCTRL_EXECUTION_QA_SANDBOX: "loopback-only-v1",
+  });
+  assert.equal(stockEnvironment.JOBCTRL_EXECUTION_QA_SANDBOX, undefined);
+  assert.equal(plan.executionSandbox.controller, "outside-seatbelt");
+  assert.equal(plan.executionSandbox.runtimeHelper, "macos-sandbox-exec");
+  assert.equal(plan.executionSandbox.selector, plan.options.env.JOBCTRL_EXECUTION_QA_SANDBOX);
+  for (const requested of ["", "off", "allow-all", "/tmp/profile.sb", null]) {
+    assert.throws(() => createNativeLauncherSmokePlan({
+      payloadRoot: "/tmp/owned-native-smoke/payload",
+      extractedRoot: "/tmp/owned-native-smoke",
+      stockEnvironment: { ...stockEnvironment, JOBCTRL_EXECUTION_QA_SANDBOX: requested },
+    }), /fixed loopback-only sandbox selector/);
+  }
+});
+
+test("native smoke sandbox selector and profile bytes match the builtin Go contract", async () => {
+  const source = await readFile(new URL("../launcher/internal/launcher/owned_execution_darwin.go", import.meta.url), "utf8");
+  const profile = source.match(/const executionQASandboxProfile = `([^`]+)`/);
+  const selector = source.match(/const executionQASandboxSelector = "([^"]+)"/);
+  const variable = source.match(/const executionQASandboxVariable = "([^"]+)"/);
+  assert.ok(profile, "native builtin QA sandbox profile literal is missing");
+  assert.ok(selector, "native builtin QA sandbox selector literal is missing");
+  assert.ok(variable, "native builtin QA sandbox variable literal is missing");
+  const plan = createNativeLauncherSmokePlan({ payloadRoot: "/tmp/owned-smoke/payload", extractedRoot: "/tmp/owned-smoke" });
+  assert.equal(plan.options.env[variable[1]], selector[1]);
+  assert.equal(plan.executionSandbox.profileSha256, createHash("sha256").update(profile[1]).digest("hex"));
 });
 
 function tarField(value, width) {
@@ -482,6 +533,44 @@ test("physical npm payload traversal rejects pnpm virtual-store content", async 
   );
 });
 
+test("Playwright MCP attribution follows its exact core dependency and rejects closure drift", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-mcp-closure-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const modules = path.join(root, "playwright-mcp", "node_modules");
+  const mcp = path.join(modules, "@playwright", "mcp");
+  const core = path.join(modules, "playwright-core");
+  await mkdir(mcp, { recursive: true });
+  await mkdir(core, { recursive: true });
+  const contracts = {
+    componentPaths: new Map([["playwright-mcp", "playwright-mcp"]]),
+    versions: { "playwright-mcp": "0.0.83" },
+  };
+  const writeMcp = (dependency) => writeFile(path.join(mcp, "package.json"), JSON.stringify({
+    name: "@playwright/mcp", version: "0.0.83", license: "Apache-2.0",
+    dependencies: { "playwright-core": dependency },
+  }));
+  const writeCore = (version) => writeFile(path.join(core, "package.json"), JSON.stringify({
+    name: "playwright-core", version, license: "Apache-2.0",
+  }));
+
+  await writeMcp("1.64.0-alpha-1790635538000");
+  await writeCore("1.64.0-alpha-1790635538000");
+  assert.deepEqual((await collectMcpNodeContributors(root, contracts)).map((entry) => entry.key), [
+    "@playwright/mcp@0.0.83", "playwright-core@1.64.0-alpha-1790635538000",
+  ]);
+  await writeCore("1.65.0");
+  await assert.rejects(collectMcpNodeContributors(root, contracts), /payload npm package closure drifted/);
+  await writeMcp("1.65.0");
+  assert.equal((await collectMcpNodeContributors(root, contracts)).length, 2);
+  await writeMcp("^1.65.0");
+  await assert.rejects(collectMcpNodeContributors(root, contracts), /exact.*playwright-core/i);
+  await writeMcp("1.65.0");
+  const unexpected = path.join(modules, "unexpected");
+  await mkdir(unexpected);
+  await writeFile(path.join(unexpected, "package.json"), JSON.stringify({ name: "unexpected", version: "1.0.0", license: "MIT" }));
+  await assert.rejects(collectMcpNodeContributors(root, contracts), /payload npm package closure drifted/);
+});
+
 test("child termination retains one exit promise across timeout and stale exitCode observation", async () => {
   class RacingChild extends EventEmitter {
     exitCode = null;
@@ -583,7 +672,7 @@ test("successful distribution CLI invocation accepts the option separator and al
 test("the bundled Playwright headless-shell revision is preseeded with immutable first-launch markers", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-browser-markers-"));
   context.after(async () => rm(root, { recursive: true, force: true }));
-  for (const revision of ["chromium_headless_shell-1208"]) {
+  for (const revision of ["chromium_headless_shell-1248"]) {
     const revisionRoot = path.join(root, revision);
     await mkdir(revisionRoot, { recursive: true });
     await writePlaywrightRevisionMarkers(revisionRoot);
@@ -614,7 +703,7 @@ test("fixture builds are bytewise reproducible in different directories", async 
     measurementStatus: "unavailable-fixture",
     packCount: 3,
     wheelCount: 36,
-    downloadBytes: 237859146,
+    downloadBytes: 238154551,
     installedBytes: null,
     fileCount: null,
     treeSha256: null,
@@ -679,6 +768,48 @@ test("fixture manifest covers the exact payload tree", async (context) => {
   await assert.rejects(verifyExactPayloadTree(build.payloadRoot, build.manifest), /does not exactly match/);
 });
 
+test("the v14-to-v15 declaration is bound to the signed payload inventory", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-schema-transition-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const build = await buildFixturePayload({ outputDirectory: path.join(root, "fixture") });
+  const declarationPath = path.join(build.payloadRoot, "launcher", "schema-transition.json");
+  const declaration = await readFile(declarationPath);
+  assert.equal(declaration.toString("utf8"), '{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":15}\n');
+  const entry = build.manifest.files.find((file) => file.path === "launcher/schema-transition.json");
+  assert.deepEqual(entry, {
+    path: "launcher/schema-transition.json",
+    type: "file",
+    sha256: await sha256File(declarationPath),
+    sizeBytes: declaration.length,
+    mode: "0644",
+  });
+  const raw = await readFile(path.join(build.payloadRoot, "manifest.json"), "utf8");
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const signing = { domain: "jobctrl:manifest:v1\0", raw, keyId: "synthetic", kind: "manifest" };
+  const signature = signReleaseBytes({ ...signing, privateKey });
+  verifyReleaseBytes({ ...signing, signature, publicKey });
+  await writeFile(declarationPath, '{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":16}\n');
+  await assert.rejects(verifyExactPayloadTree(build.payloadRoot, build.manifest), /does not exactly match/);
+  assert.throws(() => verifyReleaseBytes({ ...signing, raw: `${raw} `, signature, publicKey }), /verification failed/);
+});
+
+test("packaging refuses a missing, altered or linked schema transition declaration", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-schema-declaration-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const source = path.join(root, "source", "launcher");
+  const target = path.join(root, "target");
+  await mkdir(source, { recursive: true });
+  await mkdir(target);
+  await assert.rejects(copySchemaTransitionContract(path.join(root, "source"), target), /ENOENT/);
+  await writeFile(path.join(source, "schema-transition.json"), '{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":16}\n');
+  await assert.rejects(copySchemaTransitionContract(path.join(root, "source"), target), /does not match v14-to-v15 contract/);
+  await rm(path.join(source, "schema-transition.json"));
+  await writeFile(path.join(root, "declaration.json"), '{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":15}\n');
+  await symlink(path.join(root, "declaration.json"), path.join(source, "schema-transition.json"));
+  await assert.rejects(copySchemaTransitionContract(path.join(root, "source"), target), /must be a regular file/);
+  assert.deepEqual(await readdir(target), []);
+});
+
 test("smoke extraction keeps generated state outside the exact immutable payload tree", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-payload-smoke-layout-"));
   context.after(async () => rm(root, { recursive: true, force: true }));
@@ -718,6 +849,11 @@ test("installed Python pruning removes proven build sources, docs, examples, and
     ["google/protobuf/testdata/__init__.py", ""],
     ["numpy/random/_examples/example.pyx", "source\n"],
     ["playwright/driver/README.md", "docs\n"],
+    ["playwright/driver/package/lib/tools/skills/playwright-cli/SKILL.md", "developer instructions\n"],
+    ["playwright/driver/package/lib/tools/skills/playwright-cli/references/tracing.md", "developer reference\n"],
+    ["playwright/driver/package/lib/tools/cli-client/program.js", "runtime\n"],
+    [["typer", ".agents", "skills", "typer", "SKILL.md"].join("/"), "developer instructions\n"],
+    ["typer/main.py", "runtime\n"],
     ["temporalio/contrib/openai_agents/README.md", "docs\n"],
     ["runtime-package/.gitattributes", "*.py text\n"],
     ["runtime-package/.gitmodules", "[submodule]\n"],
@@ -740,8 +876,25 @@ test("installed Python pruning removes proven build sources, docs, examples, and
   ]);
   assert.deepEqual((await buildFileInventory(root)).map((file) => file.path), [
     "httpx-1.0.dist-info/licenses/LICENSE.md",
+    "playwright/driver/package/lib/tools/cli-client/program.js",
     "temporalio/bridge/temporal_sdk_bridge.abi3.so",
+    "typer/main.py",
   ]);
+});
+
+test("forbidden scan rejects shipped Python developer-skill assets", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-python-skill-scan-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  for (const relativePath of [
+    "playwright-python/site-packages/playwright/driver/package/lib/tools/skills/playwright-cli/asset.txt",
+    ["worker", "site-packages", "typer", ".agents", "skills", "typer", "asset.txt"].join("/"),
+  ]) {
+    const target = path.join(root, ...relativePath.split("/"));
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, "developer asset\n");
+    await assert.rejects(scanForbiddenPayload(root), /known non-runtime Python source\/docs\/fixture closure/);
+    await rm(path.join(root, relativePath.split("/")[0]), { recursive: true, force: true });
+  }
 });
 
 test("forbidden scan rejects provider packs, dev tools, caches, and build-path leaks", async (context) => {
@@ -824,12 +977,12 @@ test("forbidden payload scan blocks Widevine from the redistributable Chromium c
 test("headless Chromium topology rejects a full browser path even without Widevine", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-headless-topology-"));
   context.after(async () => rm(root, { recursive: true, force: true }));
-  const shell = path.join(root, "chromium", "chromium_headless_shell-1208", "chrome-headless-shell-mac-arm64", "chrome-headless-shell");
+  const shell = path.join(root, "chromium", "chromium_headless_shell-1248", "chrome-headless-shell-mac-arm64", "chrome-headless-shell");
   await mkdir(path.dirname(shell), { recursive: true });
   await writeFile(shell, "headless", { mode: 0o755 });
   const contracts = { componentPaths: new Map([["chromium-core", "chromium"]]) };
   assert.match((await assertHeadlessChromiumPayload(root, contracts)).executable, /chrome-headless-shell$/);
-  const fullBrowser = path.join(root, "chromium", "chromium-1208", "chrome-mac-arm64", "browser");
+  const fullBrowser = path.join(root, "chromium", "chromium-1248", "chrome-mac-arm64", "browser");
   await mkdir(path.dirname(fullBrowser), { recursive: true });
   await writeFile(fullBrowser, "not-widevine", { mode: 0o755 });
   await assert.rejects(assertHeadlessChromiumPayload(root, contracts), /unexpected browser revisions|full browser topology/);

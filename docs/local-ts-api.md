@@ -48,14 +48,30 @@ Dashboard source-health and digest blocked-source entries retain stable
 `sourceId` values and may include `displayName` from the source registry.
 Clients prefer that name, including current JobStreaming board labels for
 historical source keys. Names do not change source-health or quarantine facts.
+Digest job counts require the local tenant's canonical JobId, and date filters
+compare instants at millisecond precision. The explicit acknowledgement route
+serializes with Python writers and commits the watermark and review event
+together; passive digest reads do not acknowledge.
 
 ## Profile And Preferences
+
+Profile reads expose a bounded legacy-confirmation review notice and computed
+evidence authority flags. The private original/review history stays out of SSE;
+review decisions use the stopped-runtime local command. See the
+[Profile & Settings contract](api/profile-and-settings.md#candidate-profile).
 
 Profile data, preferences, discovery controls, settings, and credentials have
 different owners even though the UI presents them together. See
 [Profile & Settings](api/profile-and-settings.md) for that ownership map and the
 routes used by autosave, resume preview, source administration, and native-store-backed
 credentials.
+
+Existing resume-template updates carry an expected active version and fail
+closed on a stale or missing precondition; see [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates).
+
+Discovery settings reads and updates report invalid persisted search settings
+instead of replacing them with defaults; see the
+[Discovery controls contract](api/complete-contract.md#discovery-controls).
 
 Target Search can request role suggestions through
 `POST /v1/profile/target-role-suggestions`. The web sends only the last saved
@@ -95,6 +111,9 @@ scalar `stage`. The shared API client serializes arrays as comma-separated query
 values, including an empty array as `stages=`. Membership, precedence, metadata,
 and bulk-selection semantics are owned by [Jobs & Materials](api/jobs-and-materials.md)
 and the [complete contract](api/complete-contract.md).
+The Jobs removed-selection action uses `GET /v1/jobs/reviewable-list` and
+`POST /v1/jobs/permanent-delete-selection` to bind the confirmed cohort to its
+observed lifecycle state before permanent deletion.
 The Operations browser adapter validates the raw stage array with the shared
 schema before merging stage-local pages. It preserves explicit empty arrays,
 scalar fallback for invalid or oversized arrays, and the requested scalar in
@@ -127,7 +146,8 @@ and the [field contract](api/complete-contract.md#saved-posting-availability).
 
 The jobs list and detail routes read stable projections. Lifecycle changes—hide,
 restore, delete, score correction, stage retry, and per-job actions—are explicit
-commands. See [Jobs & Materials](api/jobs-and-materials.md).
+commands. A stale-score reset leaves the accepted score visibly stale while
+replacement work is pending. See [Jobs & Materials](api/jobs-and-materials.md).
 
 On job detail, Enrich stage summaries can carry a separate, allow-listed
 `applyUrlOutcome` (`code`, `message`, `retryable`, and `method`). It reports
@@ -168,7 +188,8 @@ privacy-safe derived evidence. The review route requires an explicit accepted
 or rejected decision. Acceptance creates a versioned Materials policy revision;
 rejection changes no policy. `GET /v1/learning/policies/materials` exposes the
 allowlisted current/superseded history, while the rollback route appends a new
-user-requested revision that restores an earlier version. These routes never
+user-requested revision only against the reviewed current version and returns
+the recorded receipt on a matching retry, even after later changes. These routes never
 start scoring, tailoring, Apply, or artifact work. See
 [Jobs & Materials](api/jobs-and-materials.md#feedback-learning-and-materials-policy).
 
@@ -183,7 +204,8 @@ It selects the active or draining Discover execution, falling back to the
 latest terminal execution, and combines immutable execution membership,
 pipeline-step and per-job stage projections, fresh worker capacity, approximate
 Temporal task-queue statistics, bounded active-work detail, and a conservative
-typed ETA. It is a current snapshot, not a historical reconstruction endpoint.
+typed ETA. A stale same-queue worker leaves ETA contention unbounded. It is a
+current snapshot, not a historical reconstruction endpoint.
 See [Operations & Events](api/operations-and-events.md#pipeline-operations-snapshot).
 
 ## Discovery Controls
@@ -308,7 +330,12 @@ review queue, editable resume-review drafts, approval decisions, outcomes, and
 bounded Gmail suggestion flow are summarized in
 [Jobs & Materials](api/jobs-and-materials.md#apply-review-and-outcomes). Gmail scan summaries
 and feedback events carry canonical `jobId` values; the wire fields are defined
-in the [complete contract](api/complete-contract.md).
+in the [complete contract](api/complete-contract.md). Gmail scan worker failures
+carry a safe `failureCode` through the HTTP route without returning mail text.
+
+Manual outcomes, interview reflections and user-attested send logs use a
+client-provided request identity to return the original result after a retry.
+See the [manual action retry contract](api/complete-contract.md#manual-action-retry-contract).
 
 The queue and job-detail read models include `repeatApplication`: its current
 status, summary, evaluation time, evidence fingerprint, related confirmed prior
@@ -326,6 +353,13 @@ dispatch does not require this confirmation because it cannot submit.
 Contact facts, reviewed CSV/vCard import, supervised research, candidate
 confirmation, outreach drafts, send logs, and follow-ups share one route family. See
 [Jobs & Materials](api/jobs-and-materials.md#contacts-and-outreach).
+Contact edits require the fingerprint from the detail read; a stale base returns
+409 without replacing newer facts. See the [contact contract](api/complete-contract.md#contacts).
+Research source attempts distinguish acquisition failures from a successful page
+with no candidates; their detailed outcomes and recovery text are returned on
+the research task detail read. Model, spend and structural failures are distinct
+from an accepted empty decision. An overlapping failed attempt refreshes the
+open review without replacing its accepted proposals.
 
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>
@@ -335,6 +369,27 @@ confirmation, outreach drafts, send logs, and follow-ups share one route family.
 Global and per-job stage runs, rescore/re-tailor, retry, mark-applied, and
 mark-skipped commands are summarized in
 [Operations & Events](api/operations-and-events.md#starting-work).
+Stale-score reset advice is returned and recorded as an executable explicit
+rescore command; the reset itself does not dispatch scoring.
+
+Apply resets refuse recorded intent, Applied and unresolved verification evidence,
+retained policy skips, and unsettled admitted or skipped-queued work independently
+of the current local stage label. A successful explicit reset records its validated
+Skip-history release frontier; automatic `StageReset` events carry no such authority.
+Verified native retirement may restore the stopped stage from a stale running
+label only for the same claim and run with no conflicting outcome or intent.
+That recovery preserves Skip; a separate safe reset releases it.
+Apply dispatch binds a writer-serialized event frontier, and the claim writer
+rejects a job with a later manual Skip or its later authorized reset. A targeted
+request after reset has a distinct workflow generation; an older workflow cannot
+reuse its request authority. Legacy workflows without a frontier remain eligible
+only for jobs without retained manual Skip history. Standing workflows renew the
+frontier between completed polls. Historical local API skips are identified only
+by their exact machine-authored message on an Apply `StageSkipped` event; the
+user-provided reason in the event payload is not interpreted as a marker.
+Historical score-policy skips are recognized from the producer's structured
+score fields and exact generated event message, not a user-provided reason.
+
 Enrichment resets use the synchronous Python application service through
 `reset_enrichment`; its transaction and preservation rules are defined in
 [Enrichment Retry Ownership](architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
@@ -355,6 +410,9 @@ for the readiness boundary.
 
 Ordinary settings and secrets deliberately use separate routes and storage.
 See [Profile & Settings](api/profile-and-settings.md#settings-and-credentials).
+Credential mutation ownership is shared across local API processes and can
+return a bounded `busy` response while another update is active. Unverified
+process identity fails closed as `ownership_unverified`.
 `GET /v1/providers/models` returns sanitized ready-provider catalogs through
 the Python JSON-RPC boundary. `PATCH /v1/settings` accepts `preferredModels`,
 validates every non-null choice against that current catalog, and persists only
@@ -399,10 +457,21 @@ verification sequence is in [Local Development](local-development.md).
 ## Server-Sent Events — `GET /v1/events/stream`
 
 The endpoint tails tenant-scoped `job_events`, emits typed SSE frames, and uses
-event IDs for replay. The browser invalidation router maps each event type to the
-smallest safe query-key set. See
+event IDs for replay. If the event database cannot be opened or read, the stream
+signals that it is unavailable and retains each subscriber's cursor. It retries
+without terminating the API; a detected database change sends a cursor-reset
+signal and stays degraded until stopped-runtime recovery and a fresh UI
+subscription. The browser shows the recovery steps. Path checks cannot identify
+an A → B → A replacement during initial SQLite open; stop JobCtrl before any
+database restore or replacement. The invalidation router
+maps each event type to the smallest safe query-key set. See
 [Operations & Events](api/operations-and-events.md#server-sent-events) and the
 [frontend realtime architecture](architecture/frontend/realtime.md).
+
+Internal `ArchivedSmartPostingPrepared` receipts retain private captured posting
+bytes for recovery and are excluded entirely from SSE. Capture completion and
+source-owner notifications contain references only; they do not expose that
+private journal body.
 
 ### Request
 
@@ -437,6 +506,10 @@ bounded cadences so quiet connections remain observable.
 Native `EventSource` reconnect plus durable event IDs is the normal recovery
 path. Projection refetches remain the correctness backstop if a client misses an
 invalidation.
+
+Workflow-run detail also returns the selected Apply run's durable event
+summaries separately from workflow lifecycle events. Their identities and
+privacy boundary are documented in [Operations & Events](api/operations-and-events.md#workflow-runs).
 
 ### Required-Bullet Coaching
 

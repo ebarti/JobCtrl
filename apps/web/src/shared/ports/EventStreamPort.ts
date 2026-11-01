@@ -1,6 +1,6 @@
 import type { TenantId } from "@jobctrl/domain-types";
 
-export type EventStreamStatus = "connecting" | "open" | "closed";
+export type EventStreamStatus = "connecting" | "open" | "closed" | "workspace_changed";
 
 export interface DomainEventEnvelope {
   readonly eventType: string;

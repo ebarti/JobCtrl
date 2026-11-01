@@ -6,7 +6,7 @@
   "packs": [
     {
       "id": "claude-agent-sdk",
-      "version": "0.2.115",
+      "version": "0.2.121",
       "owner": "Anthropic PBC",
       "source": "https://pypi.org/project/claude-agent-sdk/",
       "license": "MIT AND LicenseRef-Anthropic-Commercial-Terms",
@@ -37,17 +37,17 @@
         },
         {
           "package": "claude-agent-sdk",
-          "version": "0.2.115",
-          "url": "https://files.pythonhosted.org/packages/a4/43/609755e7ec7c8031c05f89442154d86f55856a64d234f90845b8035c7ffb/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_arm64.whl",
-          "sha256": "8ca9eea21ed6b1b7d6b35c5bac368210214b36028c68046231ca4ea545854e80",
-          "sizeBytes": 71306972
+          "version": "0.2.121",
+          "url": "https://files.pythonhosted.org/packages/ca/3b/16325094d09ca5fbfb92cab11c6f01ff072f4077879ecfcf0004464da3c5/claude_agent_sdk-0.2.121-py3-none-macosx_11_0_arm64.whl",
+          "sha256": "6d4707c4626434e75c35f350e66312d8447221c97208f1775d4b4c6542b8d2f2",
+          "sizeBytes": 71735241
         },
         {
           "package": "cryptography",
-          "version": "50.0.1",
-          "url": "https://files.pythonhosted.org/packages/84/a9/ee16a903f13755e914d1eecc482fe64d1f10761c3960e5d8fa6837377aff/cryptography-50.0.1-cp39-abi3-macosx_11_0_arm64.whl",
-          "sha256": "ca83d00d9e69cd5eb63f2e69c3a5a59e0cecae5ae14c6ae0b35830fe3b37bad0",
-          "sizeBytes": 4035307
+          "version": "50.0.2",
+          "url": "https://files.pythonhosted.org/packages/23/ad/ac987755d00e1e64273760228d2635ae38dae2be83e3c6e0d3289d91dec3/cryptography-50.0.2-cp39-abi3-macosx_11_0_arm64.whl",
+          "sha256": "0ec5f09541743261e66e291b4a0cbf0fb2997aeaab6d9e9c740b9dba1b58d1c2",
+          "sizeBytes": 3943588
         },
         {
           "package": "httpx-sse",
@@ -58,10 +58,10 @@
         },
         {
           "package": "mcp",
-          "version": "1.28.1",
-          "url": "https://files.pythonhosted.org/packages/e2/5e/d118fce19f87a2e7d8101c35c8ae0ec289098a4df0ff244cec23e415aca0/mcp-1.28.1-py3-none-any.whl",
-          "sha256": "2726bca5e7193f61c5dde8b12500a6de2d9acf6d1a1c0be9e8c2e706437991df",
-          "sizeBytes": 222620
+          "version": "1.30.0",
+          "url": "https://files.pythonhosted.org/packages/f5/f4/e58bc33317c92a0203664daaf00bf6f41166cc0149e5d6870a03f7cd004a/mcp-1.30.0-py3-none-any.whl",
+          "sha256": "666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0",
+          "sizeBytes": 234581
         },
         {
           "package": "pycparser",
@@ -79,10 +79,10 @@
         },
         {
           "package": "pyjwt",
-          "version": "2.13.0",
-          "url": "https://files.pythonhosted.org/packages/a3/5e/ecf12fdb62546d64385c158514e9b2b671f7832108ef2ecd2020ce0af2d1/pyjwt-2.13.0-py3-none-any.whl",
-          "sha256": "66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728",
-          "sizeBytes": 31274
+          "version": "2.15.0",
+          "url": "https://files.pythonhosted.org/packages/e8/55/40e45bf052ee8ee12a4dfd785519660f8effa7b065442b91646ec6828619/pyjwt-2.15.0-py3-none-any.whl",
+          "sha256": "7a3742debf6b879e912dbb9819ceec1594be812452b78c5f2e2dfc56564954f8",
+          "sizeBytes": 33680
         },
         {
           "package": "python-multipart",
@@ -198,10 +198,10 @@
         },
         {
           "package": "cryptography",
-          "version": "50.0.1",
-          "url": "https://files.pythonhosted.org/packages/84/a9/ee16a903f13755e914d1eecc482fe64d1f10761c3960e5d8fa6837377aff/cryptography-50.0.1-cp39-abi3-macosx_11_0_arm64.whl",
-          "sha256": "ca83d00d9e69cd5eb63f2e69c3a5a59e0cecae5ae14c6ae0b35830fe3b37bad0",
-          "sizeBytes": 4035307
+          "version": "50.0.2",
+          "url": "https://files.pythonhosted.org/packages/23/ad/ac987755d00e1e64273760228d2635ae38dae2be83e3c6e0d3289d91dec3/cryptography-50.0.2-cp39-abi3-macosx_11_0_arm64.whl",
+          "sha256": "0ec5f09541743261e66e291b4a0cbf0fb2997aeaab6d9e9c740b9dba1b58d1c2",
+          "sizeBytes": 3943588
         },
         {
           "package": "distro",
@@ -219,10 +219,10 @@
         },
         {
           "package": "google-auth",
-          "version": "2.53.0",
-          "url": "https://files.pythonhosted.org/packages/4a/c9/db44165ba7c581268c6d46017ef63339110378305062830104fc7fa144cb/google_auth-2.53.0-py3-none-any.whl",
-          "sha256": "6e7449917c599b35126a99ec268ec6880301f2fea41dce198fe8fd83ff642b68",
-          "sizeBytes": 246071
+          "version": "2.62.0",
+          "url": "https://files.pythonhosted.org/packages/eb/a3/87fe9b7203ec2e56ea6a57c75e6d632eaf9487c7f7978cdad1d801bee0af/google_auth-2.62.0-py3-none-any.whl",
+          "sha256": "4ff4319aeb4ad128409759d397a9fcafad126d0031d241cc0dd6b9a00b43e3f3",
+          "sizeBytes": 267911
         },
         {
           "package": "google-genai",
@@ -240,10 +240,10 @@
         },
         {
           "package": "mcp",
-          "version": "1.28.1",
-          "url": "https://files.pythonhosted.org/packages/e2/5e/d118fce19f87a2e7d8101c35c8ae0ec289098a4df0ff244cec23e415aca0/mcp-1.28.1-py3-none-any.whl",
-          "sha256": "2726bca5e7193f61c5dde8b12500a6de2d9acf6d1a1c0be9e8c2e706437991df",
-          "sizeBytes": 222620
+          "version": "1.30.0",
+          "url": "https://files.pythonhosted.org/packages/f5/f4/e58bc33317c92a0203664daaf00bf6f41166cc0149e5d6870a03f7cd004a/mcp-1.30.0-py3-none-any.whl",
+          "sha256": "666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0",
+          "sizeBytes": 234581
         },
         {
           "package": "pyasn1",
@@ -275,10 +275,10 @@
         },
         {
           "package": "pyjwt",
-          "version": "2.13.0",
-          "url": "https://files.pythonhosted.org/packages/a3/5e/ecf12fdb62546d64385c158514e9b2b671f7832108ef2ecd2020ce0af2d1/pyjwt-2.13.0-py3-none-any.whl",
-          "sha256": "66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728",
-          "sizeBytes": 31274
+          "version": "2.15.0",
+          "url": "https://files.pythonhosted.org/packages/e8/55/40e45bf052ee8ee12a4dfd785519660f8effa7b065442b91646ec6828619/pyjwt-2.15.0-py3-none-any.whl",
+          "sha256": "7a3742debf6b879e912dbb9819ceec1594be812452b78c5f2e2dfc56564954f8",
+          "sizeBytes": 33680
         },
         {
           "package": "python-multipart",
