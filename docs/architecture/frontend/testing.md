@@ -99,12 +99,16 @@ default API handlers and interview fixtures. Teardown unmounts React before
 resetting handlers and fixture state. The upstream axe assertion remains
 synchronous and loads its implementation when used.
 
-The boundary regression suite runs two files through Node's test runner with
-`--test-concurrency=2`: module ownership/generated-route controls and capability
-handoff/flow controls. Each process uses independent in-memory fixtures and
-fresh TypeScript programs; every real-program case still requests semantic
-diagnostics for the complete graph. The standalone production boundary check
-remains an independent cold run.
+The boundary regression suite runs module/generated-route, capability-flow and
+compiler-invalidation controls through Node's test runner with
+`--test-concurrency=2`. Each process owns its fixture compiler state; source-byte
+versions and resolution invalidation keep reused syntax bound to the current
+inputs. Every real-program case still requests semantic diagnostics for the
+complete graph. The positive generated-route control checks the actual Dashboard
+and Activity detail loaders against the real configuration rather than repeating
+the whole production scan. `corepack pnpm web:lint` remains the independent full
+production boundary gate in the Frontend job, alongside the Support job's
+regression controls.
 
 ## 10.3 Component & Hook Tests (Vitest + React Testing Library + MSW)
 
