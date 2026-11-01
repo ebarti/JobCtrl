@@ -1700,13 +1700,13 @@ func verifyMacOSPayloadTrust(payloadRoot string, runner func(string, ...string) 
 		return err
 	}
 	for _, target := range targets.machO {
-		if _, err := runner("/usr/bin/codesign", "--verify", "--strict", "--verbose=4", target); err != nil {
-			return fmt.Errorf("code signature verification failed for %s: %w", filepath.Base(target), err)
+		if output, err := runner("/usr/bin/codesign", "--verify", "--strict", "--verbose=4", target); err != nil {
+			return macOSPayloadTrustError("code signature verification failed", target, output, err)
 		}
 	}
 	for _, bundle := range targets.codeBundles {
-		if _, err := runner("/usr/bin/codesign", "--verify", "--strict", "--verbose=4", bundle); err != nil {
-			return fmt.Errorf("nested code-bundle signature verification failed for %s: %w", filepath.Base(bundle), err)
+		if output, err := runner("/usr/bin/codesign", "--verify", "--strict", "--verbose=4", bundle); err != nil {
+			return macOSPayloadTrustError("nested code-bundle signature verification failed", bundle, output, err)
 		}
 	}
 	// Gatekeeper assesses application bundles, not arbitrary signed command-line
@@ -1718,26 +1718,35 @@ func verifyMacOSPayloadTrust(payloadRoot string, runner func(string, ...string) 
 		// `--check-notarization` by itself accepts an ad-hoc raw executable on
 		// current macOS. Require the notarized designated requirement for this
 		// non-app shape; Gatekeeper remains reserved for outer app bundles.
-		if _, err := runner("/usr/bin/codesign", "--verify", "--strict", "--check-notarization", "-R=notarized", "--verbose=4", target); err != nil {
-			return fmt.Errorf("Developer ID/notarization verification failed for %s: %w", filepath.Base(target), err)
+		if output, err := runner("/usr/bin/codesign", "--verify", "--strict", "--check-notarization", "-R=notarized", "--verbose=4", target); err != nil {
+			return macOSPayloadTrustError("Developer ID/notarization verification failed", target, output, err)
 		}
 	}
 	for _, bundle := range targets.outermostAppBundles {
 		// --deep is verification-only. Every nested bundle and Mach-O was
 		// independently verified above, so a nested helper cannot hide behind
 		// the outer bundle's assessment.
-		if _, err := runner("/usr/bin/codesign", "--verify", "--deep", "--strict", "--check-notarization", "-R=notarized", "--verbose=4", bundle); err != nil {
-			return fmt.Errorf("Developer ID/notarization verification failed for %s: %w", filepath.Base(bundle), err)
+		if output, err := runner("/usr/bin/codesign", "--verify", "--deep", "--strict", "--check-notarization", "-R=notarized", "--verbose=4", bundle); err != nil {
+			return macOSPayloadTrustError("Developer ID/notarization verification failed", bundle, output, err)
 		}
 		output, err := runner("/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", bundle)
 		if err != nil {
-			return fmt.Errorf("Gatekeeper assessment failed for %s: %w", filepath.Base(bundle), err)
+			return macOSPayloadTrustError("Gatekeeper assessment failed", bundle, output, err)
 		}
 		if !strings.Contains(output, "source=Notarized Developer ID") {
 			return fmt.Errorf("Gatekeeper did not report Notarized Developer ID source for %s", filepath.Base(bundle))
 		}
 	}
 	return nil
+}
+
+// Preserve the verifier's reason without changing any trust decision. This is
+// particularly useful when Apple's online notarization check is unavailable.
+func macOSPayloadTrustError(message, target, output string, err error) error {
+	if detail := strings.TrimSpace(output); detail != "" {
+		return fmt.Errorf("%s for %s: %w: %s", message, filepath.Base(target), err, detail)
+	}
+	return fmt.Errorf("%s for %s: %w", message, filepath.Base(target), err)
 }
 
 type macOSPayloadTrustTargets struct {

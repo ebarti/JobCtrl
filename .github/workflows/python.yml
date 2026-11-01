@@ -1,125 +1,34 @@
 name: Python CI
-
-on:
-  push:
-    branches: ["main"]
-    paths:
-      - "workers/**"
-      - "scripts/**"
-      - "packages/**"
-      - "packaging/**"
-      - "apps/web/src/contexts/outreach/**"
-      - "apps/web/src/views/outreach/**"
-      - "apps/api/src/outreach.ts"
-      - "package.json"
-      - "README.md"
-      - "LICENSE"
-      - "NOTICE"
-      - ".github/workflows/python.yml"
-  # Required branch checks must exist for every PR, including docs-only changes.
-  pull_request:
+'on':
   workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: python-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-
 jobs:
   python:
-    name: Python ${{ matrix.python-version }}
+    name: Python 3.12
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
     env:
-      PYTHONFAULTHANDLER: "1"
-
+      PYTHON_VERSION: '3.12'
+      UV_PYTHON: '3.12'
+      PYTHONFAULTHANDLER: '1'
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Set up pinned uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: 0.11.7
-          enable-cache: true
-          cache-dependency-glob: workers/automation/uv.lock
-          cache-suffix: py${{ matrix.python-version }}
-      - name: Sync the locked dependency graph
-        run: uv --project workers/automation sync --locked --all-extras
-      - name: Lint
-        run: uv --project workers/automation run --locked --all-extras ruff check workers/automation/src workers/automation/tests
-      - name: Check generated semantic result contracts
-        run: uv --project workers/automation run --locked --all-extras python scripts/generate-semantic-result-schemas.py --check
-      - name: Enable Linux user namespaces for Bubblewrap
-        if: ${{ runner.os == 'Linux' && runner.environment == 'github-hosted' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Bubblewrap needs unprivileged user namespaces on GitHub-hosted
-          # Linux runners for the sandboxed Codex SDK regression test.
-          current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
-          if [[ -n "$current_userns" && "$current_userns" != "1" ]]; then
-            sudo sysctl -w kernel.unprivileged_userns_clone=1
-          fi
-          current_apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
-          if [[ -n "$current_apparmor" && "$current_apparmor" != "0" ]]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-      - name: Use memory-backed temp storage when available
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Hosted-runner disk latency once stretched the SQLite migration
-          # tests from ~50s to ~620s in one lane; tmpfs removes that
-          # amplification. The macOS launcher workflow still exercises the
-          # migration boundary on real disk.
-          if [[ -d /dev/shm && -w /dev/shm ]]; then
-            tmpdir="/dev/shm/jobctrl-${GITHUB_RUN_ID}-py${{ matrix.python-version }}"
-            mkdir -p "$tmpdir"
-            echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
-          fi
-      - name: Install verified Temporal CLI for integration tests
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Pin the Linux archive for the same CLI version used by the
-          # packaged runtime. Avoid SDK downloads during individual tests.
-          if [[ "$RUNNER_OS" != "Linux" || "$RUNNER_ARCH" != "X64" ]]; then
-            echo "No verified Temporal CLI for $RUNNER_OS/$RUNNER_ARCH" >&2
-            exit 1
-          fi
-          archive="$RUNNER_TEMP/jobctrl-temporal-linux-amd64.tar.gz"
-          executable_dir="$RUNNER_TEMP/jobctrl-temporal-linux-amd64"
-          curl --fail --location --silent --show-error --retry 4 --retry-all-errors \
-            --retry-delay 2 --connect-timeout 15 --max-time 120 \
-            --output "$archive" \
-            https://github.com/temporalio/cli/releases/download/v1.7.3/temporal_cli_1.7.3_linux_amd64.tar.gz
-          printf '%s  %s\n' '32a4320080342bccab37633b8777f548aa0b413c3d37fdbc7cb9d861c5fa11d0' "$archive" | sha256sum --check
-          mkdir -p "$executable_dir"
-          tar -xOf "$archive" temporal > "$executable_dir/temporal"
-          chmod 700 "$executable_dir/temporal"
-          "$executable_dir/temporal" --version
-          echo "JOBCTRL_TEMPORAL_CLI_PATH=$executable_dir/temporal" >> "$GITHUB_ENV"
-      - name: Install verified Temporal time-skipping test server
-        shell: bash
-        run: bash scripts/install-temporal-test-server.sh
-      - name: Install Chromium for guarded availability regression
-        run: uv --project workers/automation run --locked --all-extras playwright install --with-deps chromium
-      - name: Test
-        run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25
-      - name: Build package
-        run: uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: "${{ env.PYTHON_VERSION }}"
+    - name: Set up pinned uv
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+      with:
+        version: 0.11.7
+        enable-cache: true
+        cache-dependency-glob: workers/automation/uv.lock
+        cache-suffix: py${{ env.PYTHON_VERSION }}
+    - name: Sync the locked dependency graph
+      run: uv --project workers/automation sync --locked --all-extras
+    - name: Run the complete primary worker recipe
+      uses: "./.github/actions/worker-checks"
