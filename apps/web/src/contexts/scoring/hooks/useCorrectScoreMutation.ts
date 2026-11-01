@@ -26,17 +26,20 @@ export function useCorrectScoreMutation(): UseMutationResult<
     createOptimisticMutation<CorrectScoreResponse, CorrectScoreVariables>(queryClient, {
       mutationFn: ({ jobId, correctedScore, reason }) =>
         api.correctScore(jobId, { correctedScore, reason }),
-      optimisticUpdates: ({ jobId }) => [
-        {
-          queryKey: jobsKeys.detail(tenantId, jobId),
-          patch: patchDetailScore,
-        },
-        {
-          queryKey: jobsKeys.lists(tenantId),
-          exact: false,
-          patch: patchListScore,
-        },
-      ],
+      optimisticUpdates: ({ jobId }) => {
+        const correctedAt = new Date().toISOString();
+        return [
+          {
+            queryKey: jobsKeys.detail(tenantId, jobId),
+            patch: (current, variables) => patchDetailScore(current, variables, correctedAt),
+          },
+          {
+            queryKey: jobsKeys.lists(tenantId),
+            exact: false,
+            patch: (current, variables) => patchListScore(current, variables, correctedAt),
+          },
+        ];
+      },
       settle: ({ jobId }) => [
         jobsKeys.detail(tenantId, jobId),
         jobsKeys.lists(tenantId),
@@ -46,25 +49,25 @@ export function useCorrectScoreMutation(): UseMutationResult<
   );
 }
 
-function patchDetailScore(current: unknown, variables: CorrectScoreVariables): unknown {
+function patchDetailScore(current: unknown, variables: CorrectScoreVariables, correctedAt: string): unknown {
   if (!isJobDetail(current)) return current;
   return {
     ...current,
-    job: patchJobSummary(current.job, variables),
+    job: patchJobSummary(current.job, variables, correctedAt),
   };
 }
 
-function patchListScore(current: unknown, variables: CorrectScoreVariables): unknown {
+function patchListScore(current: unknown, variables: CorrectScoreVariables, correctedAt: string): unknown {
   if (!isJobsPage(current)) return current;
   return {
     ...current,
     items: current.items.map((job) =>
-      job.jobKey === variables.jobId ? patchJobSummary(job, variables) : job,
+      job.jobKey === variables.jobId ? patchJobSummary(job, variables, correctedAt) : job,
     ),
   };
 }
 
-function patchJobSummary(job: JobSummary, variables: CorrectScoreVariables): JobSummary {
+function patchJobSummary(job: JobSummary, variables: CorrectScoreVariables, correctedAt: string): JobSummary {
   return {
     ...job,
     fitScore: variables.correctedScore,
@@ -72,7 +75,7 @@ function patchJobSummary(job: JobSummary, variables: CorrectScoreVariables): Job
       correctedScore: variables.correctedScore,
       rationale: variables.reason,
       correctedBy: "local",
-      correctedAt: new Date().toISOString(),
+      correctedAt,
     },
   };
 }

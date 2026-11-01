@@ -7,6 +7,7 @@ import { ContextHelp } from "../../../shared/ui/context-help.js";
 import { useContactDetailQuery } from "../hooks/useContactDetailQuery.js";
 import { useContactsListQuery } from "../hooks/useContactsListQuery.js";
 import { ContactCreateButton } from "./ContactCreateButton.js";
+import { ContactRefreshNotice } from "./ContactRefreshNotice.js";
 import { ContactProvenanceList } from "./ContactProvenanceList.js";
 import { ContactProvenanceSummary } from "./ContactProvenanceSummary.js";
 import { ContactRoleBadge } from "./ContactRoleBadge.js";
@@ -19,13 +20,19 @@ export interface JobContactsPanelProps {
 
 function JobContactProvenance({ contactId }: { contactId: string }) {
   const detailQuery = useContactDetailQuery(contactId);
-  if (detailQuery.error instanceof Error) {
-    return <div className="banner inline">{detailQuery.error.message}</div>;
+  if (detailQuery.error instanceof Error && !detailQuery.data) {
+    return <>
+      <div className="banner inline">{detailQuery.error.message}</div>
+      <ContactRefreshNotice detail initial retry={() => { void detailQuery.refetch(); }} />
+    </>;
   }
   if (!detailQuery.data) {
     return <Empty title="Loading provenance." />;
   }
-  return <ContactProvenanceList attributes={detailQuery.data.contact.attributes} />;
+  return <>
+    {detailQuery.isRefetchError ? <ContactRefreshNotice detail retry={() => { void detailQuery.refetch(); }} /> : null}
+    <ContactProvenanceList attributes={detailQuery.data.contact.attributes} />
+  </>;
 }
 
 function JobContactCard({ contact }: { contact: ContactSummary }) {
@@ -54,7 +61,7 @@ function JobContactCard({ contact }: { contact: ContactSummary }) {
 export function JobContactsPanel({ jobId, employer }: JobContactsPanelProps) {
   const contactsQuery = useContactsListQuery({ jobId });
   const contacts = contactsQuery.data?.items ?? [];
-  const errorMessage = contactsQuery.error instanceof Error ? contactsQuery.error.message : "";
+  const errorMessage = !contactsQuery.isRefetchError && contactsQuery.error instanceof Error ? contactsQuery.error.message : "";
 
   return (
     <section className="section job-contacts-section" aria-label="Contacts">
@@ -63,7 +70,11 @@ export function JobContactsPanel({ jobId, employer }: JobContactsPanelProps) {
         <ContactCreateButton jobId={jobId} {...(employer ? { employer } : {})} label="Add contact" />
       </div>
       {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
-      {contacts.length === 0 && !errorMessage ? (
+      {errorMessage && !contactsQuery.data ? <ContactRefreshNotice initial retry={() => { void contactsQuery.refetch(); }} /> : null}
+      {contactsQuery.isRefetchError ? <ContactRefreshNotice retry={() => { void contactsQuery.refetch(); }} /> : null}
+      {!contactsQuery.data && contactsQuery.isPending ? (
+        <Empty title="Loading contacts." />
+      ) : contacts.length === 0 && !errorMessage && !contactsQuery.isRefetchError && !contactsQuery.isFetching ? (
         <Empty title="No contacts linked to this job yet." />
       ) : (
         <ul className="job-contacts-list">
