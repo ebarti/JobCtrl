@@ -76,6 +76,8 @@ import {
   TabsTrigger,
 } from "../../../shared/ui/tabs.js";
 import {
+  type CaptureDraftEdits,
+  type CaptureImportState,
   useDiscoveryFeedbackMutation,
   useDiscoveryQuarantineDecisionMutation,
   useManualCaptureDismissMutation,
@@ -441,7 +443,7 @@ export function DiscoveryProductControls({
               loading={roleMatchFeedback.isLoading}
             />
           </TabsContent>
-          <TabsContent value="manual" className="discovery-tab-panel">
+          <TabsContent value="manual" className="discovery-tab-panel" keepMounted>
             <ManualCapturePanel
               items={manualCapture.data?.items ?? []}
               loading={manualCapture.isLoading}
@@ -1399,11 +1401,17 @@ function ManualCapturePanel({
   items: ManualCaptureItem[];
   loading: boolean;
 }) {
-  const importCapture = useManualCaptureImportMutation();
-  const dismiss = useManualCaptureDismissMutation();
+  const importCapture = useManualCaptureImportMutation(items);
+  // A reopened capture can have the same ID even if no queue read saw it absent.
+  const [dismissalVersions, setDismissalVersions] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const dismiss = useManualCaptureDismissMutation((itemId) => setDismissalVersions((current) => {
+    const next = new Map(current);
+    next.set(itemId, (current.get(itemId) ?? 0) + 1);
+    return next;
+  }));
 
-  const importItem = (itemId: string, body: ManualCaptureImportRequest) => {
-    importCapture.mutate({ itemId, body });
+  const importItem = (itemId: string, body: ManualCaptureImportRequest, edits: CaptureDraftEdits, submittedDraft: CaptureDraftEdits, lifecycleId: string | null) => {
+    importCapture.mutate({ itemId, body: { ...body, ...(lifecycleId ? { expectedLifecycleId: lifecycleId } : {}) }, edits, submittedDraft, lifecycleId });
   };
 
   return (
@@ -1411,20 +1419,63 @@ function ManualCapturePanel({
       <div className="discovery-panel-head">
         <h3 data-typography="component-title">Manual capture</h3>
         <span className="meta" data-typography="metadata">
-          {items.length} pending
+          {items.length} to review
         </span>
       </div>
+      {[...importCapture.states].filter(([itemId, state]) =>
+        state.status === "refresh_failed" && !items.some((item) => item.itemId === itemId),
+      ).map(([itemId]) => (
+        <div key={itemId}>
+          <span role="status">The capture queue could not refresh for {itemId}.</span>
+          <Button type="button" size="sm" onClick={() => importCapture.retryReconciliation(itemId)}>Retry queue refresh</Button>
+        </div>
+      ))}
       <div className="rows compact">
-        {items.map((item) => (
-          <ManualCaptureRow
-            key={item.itemId}
+        {[...importCapture.states].filter(([, state]) => ["local_copy", "unconfirmed", "in_progress", "needs_fence", "refresh_failed", "recovery_failed"].includes(state.status)).map(([itemId, state]) => (
+          <div key={`saved-${itemId}`} className="discovery-review-row">
+            <div className="title-stack">
+              <span role="status">{state.outcome === "unsubmitted" ? "Your unsubmitted edits are available below." : state.outcome === "confirmed" ? "Your submission completed. Its local copy is available below." : state.outcome === "in_progress" ? "Your submission did not start. Its local copy is available below." : state.outcome === "rejected" ? "Your submission failed. Its local copy is available below." : "The submission's outcome is unconfirmed. Its local copy is available below."}</span>
+              <span>Capture mode: {state.submittedDraft.captureMode}</span>
+              <span>Captured URL: {state.submittedDraft.capturedUrl}</span>
+              <FieldLabel htmlFor={`${itemId}-unsubmitted-content`}>Saved submission content</FieldLabel>
+              <Textarea id={`${itemId}-unsubmitted-content`} readOnly value={state.submittedDraft.content ?? ""} rows={3} />
+              <FieldLabel htmlFor={`${itemId}-unsubmitted-note`}>Saved submission note</FieldLabel>
+              <Input id={`${itemId}-unsubmitted-note`} readOnly value={state.submittedDraft.note ?? ""} />
+              <span>Manual follow-up: {state.submittedDraft.futureManualActionRequired ? "Yes" : "No"}</span>
+              {state.status === "local_copy" ? <Button type="button" size="sm" onClick={() => importCapture.discardLocalCopy(itemId)}>Discard local copy</Button> : null}
+            </div>
+          </div>
+        ))}
+        {items.map((item) => {
+          const cached = importCapture.states.get(item.itemId);
+          const state = cached?.lifecycleId === (item.lifecycleId ?? null) ? cached : undefined;
+          const durableUnresolved = item.retryContext.manual_capture_import_unresolved === true;
+          const dismissing = dismiss.isPending && dismiss.variables?.itemId === item.itemId;
+          const savedCopy = cached?.status === "local_copy"
+            || (cached !== undefined && cached.lifecycleId !== (item.lifecycleId ?? null)
+              && (cached.status === "submitting" || cached.status === "recovering" || cached.outcome !== "confirmed"));
+          const fenced = item.lifecycleId == null || dismissing || savedCopy || durableUnresolved || (state !== undefined && !["editing", "rejected", "confirmed"].includes(state.status));
+          return <ManualCaptureRow
+            key={JSON.stringify([item.itemId, item.lifecycleId ?? null, dismissalVersions.get(item.itemId) ?? 0])}
             item={item}
-            importing={importCapture.isPending}
+            importing={fenced}
+            editingDisabled={fenced}
+            reconciliation={state ?? null}
+            durableUnresolved={durableUnresolved && !savedCopy}
+            importError={state?.status === "rejected" || state?.status === "needs_fence"
+              ? state.outcome === "in_progress" ? "Your submission did not start. Review it and try again."
+                : state.outcome === "unknown" ? "The previous outcome is unconfirmed. Review the retained capture before retrying."
+                  : "Import failed. Review the retained capture and try again."
+              : null}
             dismissing={dismiss.isPending}
             onImport={importItem}
-            onDismiss={(itemId) => dismiss.mutate(itemId)}
-          />
-        ))}
+            onDismiss={(itemId) => dismiss.mutate({ itemId, lifecycleId: item.lifecycleId ?? null })}
+            onRetryRefresh={() => importCapture.retryReconciliation(item.itemId)}
+            onSupersede={() => importCapture.supersede(item.itemId, item.lifecycleId ?? null)}
+            onEdit={(changes, snapshot) => importCapture.updateEdits(item.itemId, item.lifecycleId ?? null, changes, snapshot)}
+            onDiscardContent={(snapshot) => importCapture.updateEdits(item.itemId, item.lifecycleId ?? null, { content: manualCaptureDraft(item).content }, snapshot, true)}
+          />;
+        })}
         {!items.length ? (
           <Empty
             title={loading ? "Loading manual queue." : "No manual captures."}
@@ -1438,30 +1489,56 @@ function ManualCapturePanel({
 function ManualCaptureRow({
   item,
   importing,
+  editingDisabled,
+  reconciliation,
+  durableUnresolved,
+  importError,
   dismissing,
   onImport,
   onDismiss,
+  onRetryRefresh,
+  onSupersede,
+  onEdit,
+  onDiscardContent,
 }: {
   item: ManualCaptureItem;
   importing: boolean;
+  editingDisabled: boolean;
+  reconciliation: CaptureImportState | null;
+  durableUnresolved: boolean;
+  importError: string | null;
   dismissing: boolean;
-  onImport: (itemId: string, body: ManualCaptureImportRequest) => void;
+  onImport: (itemId: string, body: ManualCaptureImportRequest, edits: CaptureDraftEdits, submittedDraft: CaptureDraftEdits, lifecycleId: string | null) => void;
   onDismiss: (itemId: string) => void;
+  onRetryRefresh: () => void;
+  onSupersede: () => void;
+  onEdit: (changes: CaptureDraftEdits, snapshot: CaptureDraftEdits) => void;
+  onDiscardContent: (snapshot: CaptureDraftEdits) => void;
 }) {
-  const [captureMode, setCaptureMode] =
-    useState<ManualCaptureImportRequest["captureMode"]>("copied_url");
-  const [capturedUrl, setCapturedUrl] = useState(item.originatingUrl);
-  const [content, setContent] = useState("");
-  const [note, setNote] = useState("");
-  const [futureManualActionRequired, setFutureManualActionRequired] =
-    useState(false);
+  const savedDraft = manualCaptureDraft(item);
+  const [editedDraft, setEditedDraft] = useState<Partial<typeof savedDraft>>(() => reconciliation?.edits ?? {});
+  const draft = { ...savedDraft, ...editedDraft };
+  const { captureMode, capturedUrl, content, note, futureManualActionRequired } = draft;
+  const updateDraft = (changes: Partial<typeof draft>) => {
+    setEditedDraft((current) => ({ ...current, ...changes }));
+    onEdit(changes, { ...draft, ...changes });
+  };
+  const decisionMatchesDraft = captureMode === savedDraft.captureMode
+    && capturedUrl === savedDraft.capturedUrl
+    && content === savedDraft.content;
+  const editedContentWouldBeOmitted = captureMode === "copied_url"
+    && editedDraft.content !== undefined
+    && editedDraft.content !== savedDraft.content;
   const contentRequired = requiresContent(captureMode);
   const urlRequired =
     captureMode === "copied_url" || captureMode === "current_page";
-  const contentLabel = manualCaptureContentLabel(captureMode);
+  const contentLabel = editedContentWouldBeOmitted ? "Edited content" : manualCaptureContentLabel(captureMode);
+  const needsRecapture = item.retryContext.manual_capture_recovery_unverified === true;
   const canImport =
+    !editedContentWouldBeOmitted &&
     (!urlRequired || capturedUrl.trim().length > 0) &&
-    (!contentRequired || content.trim().length > 0);
+    (!contentRequired || content.trim().length > 0) &&
+    (!needsRecapture || (captureMode !== "copied_url" && content.trim().length > 0));
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1475,6 +1552,9 @@ function ManualCaptureRow({
         note,
         futureManualActionRequired,
       }),
+      editedDraft,
+      draft,
+      item.lifecycleId ?? null,
     );
   };
 
@@ -1494,6 +1574,26 @@ function ManualCaptureRow({
         <span className="manual-capture-reason">
           {manualActionDetail(item.reason)}
         </span>
+        {needsRecapture ? <span>Previous import has no matching saved snapshot. Its outcome is unverified; select saved HTML or pasted text and provide the page again.</span> : null}
+        {item.lifecycleId == null ? <span>This capture's review lifetime could not be verified. Refresh the queue or update JobCtrl before editing or dismissing it.</span> : null}
+        {decisionMatchesDraft && item.retryContext.manual_capture_page_decision === "access_blocked" ? <span>The captured page was identified as a login or access challenge.</span> : null}
+        {decisionMatchesDraft && item.retryContext.manual_capture_page_decision === "posting_unverified" ? <span>The captured page was not identified as one job posting.</span> : null}
+        {editedContentWouldBeOmitted ? <span>Choose a content capture mode to include your edited content, or discard it.</span> : null}
+        {reconciliation?.status === "submitting" ? <span role="status">Importing capture. Editing resumes if it needs review.</span> : null}
+        {reconciliation?.status === "checking" ? <span role="status">Checking the capture queue.</span> : null}
+        {reconciliation?.status === "refresh_failed" ? <span role="status">{reconciliation.outcome === "confirmed" ? "Import completed, but the capture queue could not refresh." : reconciliation.outcome === "rejected" ? "Import failed, but the capture queue could not refresh." : reconciliation.outcome === "in_progress" ? "Your submission did not start. The capture queue could not refresh." : "Import outcome is unconfirmed. The capture queue could not refresh."}</span> : null}
+        {reconciliation?.status === "recovery_failed" ? <span role="status">Could not prepare this capture for review. Its local copy is still available.</span> : null}
+        {reconciliation?.status === "unconfirmed" ? <span role="status">Import outcome is unconfirmed and the capture remains in the queue. Check again before editing.</span> : null}
+        {durableUnresolved && (!reconciliation || reconciliation.status === "editing") ? <span role="status">An earlier import may still finish. Review the retained capture before retrying.</span> : null}
+        {reconciliation?.status === "in_progress" ? <span role="status">Your submission did not start because another import was running.</span> : null}
+        {reconciliation?.status === "recovering" ? <span role="status">Preparing the capture for review.</span> : null}
+        {reconciliation?.status === "confirmed" ? <span role="status">Import completed, but this capture remains in the queue. Review it before another import.</span> : null}
+        {reconciliation?.status === "refresh_failed" || reconciliation?.status === "recovery_failed" || reconciliation?.status === "unconfirmed" || reconciliation?.status === "in_progress" ? <Button type="button" size="sm" onClick={onRetryRefresh}>Retry queue refresh</Button> : null}
+        {(durableUnresolved && (!reconciliation || reconciliation.status === "editing")) || (reconciliation && ["refresh_failed", "recovery_failed", "unconfirmed", "in_progress", "needs_fence"].includes(reconciliation.status)) ? <>
+          <span>Prevent earlier imports for this capture from saving before you review and retry.</span>
+          <Button type="button" size="sm" onClick={onSupersede}>Prevent earlier imports from saving</Button>
+        </> : null}
+        {importError ? <span role="alert">{importError}</span> : null}
         <form className="manual-capture-form" onSubmit={submit}>
           <Field className="field">
             <FieldLabel htmlFor={`${item.itemId}-capture-mode`}>
@@ -1502,11 +1602,10 @@ function ManualCaptureRow({
             <Select
               items={CAPTURE_MODES}
               value={captureMode}
+              disabled={editingDisabled}
               onValueChange={(value) => {
                 if (value !== null) {
-                  setCaptureMode(
-                    value as ManualCaptureImportRequest["captureMode"],
-                  );
+                  updateDraft({ captureMode: value as ManualCaptureImportRequest["captureMode"] });
                 }
               }}
             >
@@ -1536,11 +1635,12 @@ function ManualCaptureRow({
               id={`${item.itemId}-captured-url`}
               type="url"
               value={capturedUrl}
-              onChange={(event) => setCapturedUrl(event.target.value)}
+              disabled={editingDisabled}
+              onChange={(event) => updateDraft({ capturedUrl: event.target.value })}
               required={urlRequired}
             />
           </Field>
-          {contentRequired ? (
+          {contentRequired || (captureMode === "current_page" && draft.content) || editedContentWouldBeOmitted ? (
             <Field className="field wide">
               <FieldLabel htmlFor={`${item.itemId}-captured-content`}>
                 {contentLabel}
@@ -1548,11 +1648,25 @@ function ManualCaptureRow({
               <Textarea
                 id={`${item.itemId}-captured-content`}
                 value={content}
-                onChange={(event) => setContent(event.target.value)}
-                required
+                disabled={editingDisabled}
+                onChange={(event) => updateDraft({ content: event.target.value })}
+                required={contentRequired}
                 rows={3}
               />
             </Field>
+          ) : null}
+          {editedContentWouldBeOmitted ? (
+            <Button type="button" size="sm" disabled={editingDisabled} onClick={() => {
+              const { content: _content, ...remaining } = editedDraft;
+              setEditedDraft((current) => {
+                const remaining = { ...current };
+                delete remaining.content;
+                return remaining;
+              });
+              onDiscardContent({ ...savedDraft, ...remaining });
+            }}>
+              Discard edited content
+            </Button>
           ) : null}
           <Field className="field wide">
             <FieldLabel htmlFor={`${item.itemId}-capture-note`}>
@@ -1561,14 +1675,16 @@ function ManualCaptureRow({
             <Input
               id={`${item.itemId}-capture-note`}
               value={note}
-              onChange={(event) => setNote(event.target.value)}
+              disabled={editingDisabled}
+              onChange={(event) => updateDraft({ note: event.target.value })}
             />
           </Field>
           <Field className="checkline wide" orientation="horizontal">
             <Checkbox
               id={`${item.itemId}-manual-follow-up`}
               checked={futureManualActionRequired}
-              onCheckedChange={setFutureManualActionRequired}
+              disabled={editingDisabled}
+              onCheckedChange={(checked) => updateDraft({ futureManualActionRequired: checked })}
             />
             <FieldLabel htmlFor={`${item.itemId}-manual-follow-up`}>
               Needs manual follow-up
@@ -1609,7 +1725,7 @@ function ManualCaptureRow({
           variant="ghost"
           aria-label={`Dismiss ${item.originatingUrl}`}
           title="Dismiss"
-          disabled={dismissing}
+          disabled={dismissing || editingDisabled}
           onClick={() => onDismiss(item.itemId)}
         >
           <IconX size={14} aria-hidden="true" />
@@ -1629,10 +1745,32 @@ function requiresContent(
   );
 }
 
+function manualCaptureDraft(item: ManualCaptureItem): {
+  captureMode: ManualCaptureImportRequest["captureMode"];
+  capturedUrl: string;
+  content: string;
+  note: string;
+  futureManualActionRequired: boolean;
+} {
+  const value = item.retryContext.manual_capture_draft;
+  const draft = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const captureMode = CAPTURE_MODES.find((mode) => mode.value === draft.capture_mode)?.value ?? "copied_url";
+  return {
+    captureMode,
+    capturedUrl: typeof draft.captured_url === "string" ? draft.captured_url : item.originatingUrl,
+    content: typeof draft.content === "string" ? draft.content : "",
+    note: typeof draft.note === "string" ? draft.note : "",
+    futureManualActionRequired: draft.future_manual_action_required === true,
+  };
+}
+
 function manualCaptureContentLabel(
   captureMode: ManualCaptureImportRequest["captureMode"],
 ): string {
   if (captureMode === "saved_html") return "Saved HTML";
+  if (captureMode === "current_page") return "Captured page content";
   if (captureMode === "email_import") return "Email content";
   return "Pasted text";
 }
@@ -1653,7 +1791,7 @@ function buildManualCapturePayload(input: {
   const note = input.note.trim();
   if (capturedUrl) payload.capturedUrl = capturedUrl;
   if (note) payload.note = note;
-  if (input.captureMode === "saved_html") {
+  if (input.captureMode === "saved_html" || (input.captureMode === "current_page" && content)) {
     payload.contentHtmlBase64 = encodeUtf8Base64(content);
   } else if (requiresContent(input.captureMode)) {
     payload.contentText = content;

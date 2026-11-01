@@ -379,6 +379,47 @@ tests cover immediate optimistic feedback and rollback on failure.
 
 ## Discovery Transaction Recovery
 
+For Manual Capture recovery, run `tests/test_manual_capture_recovery.py` with
+the manual-capture workflow and discovery wiring tests. Use owned synthetic
+workspaces and controlled model/provider ports. Exercise failed extraction,
+model and database failures, cancellation, concurrent attempts, older accepted
+content and deletion; require no duplicate capture observation and a successful
+snapshot before acknowledgement. Run and replay the real Temporal failure and retry,
+and verify local API and rendered retry controls. Opposing cited page-kind and
+access verdicts must control admission; source selection must exclude an unrelated
+posting without a lexical fallback. Historical review requires the exact original
+tenant/source observation and explicit page resubmission; unmatched old failure
+events remain unverified, and deleted owners must remain untouched.
+Exercise two different submissions against the same active Temporal workflow,
+and a timed-out older attempt that resumes before and after its first queue read.
+Neither may acknowledge the wrong input or replace a newer retained draft, even
+after dismissal and explicit reopening. A retry of the same historical recovery
+workflow must retain its own admission after a retryable provider failure.
+Verify delayed import and dismissal from a stale client cannot change a
+reopened same-ID capture, including the case where the old client never saw the
+row absent. Preserve the legitimate historical recovery's review lifetime and
+fail closed on malformed lifecycle data. Completed provider and database failures
+and unconfirmed outcomes remain fenced until the user explicitly advances the
+reviewed lifecycle. Verify that a late page-decision receipt cannot modify the
+recovered draft or interrupt a fresh attempt. Verify that a timed-out old thread released after that action
+and before a new claim cannot publish. A concurrent writer that committed first
+must remain intact, and historical owner and retained draft must survive recovery.
+Reload after a lost preparation or import acknowledgement. The queue must retain
+the submitted draft and restore the unresolved fence before editing. Delay an
+old preparation before API admission and an old import after preparation but
+before worker admission; a newer reviewed lifetime must reject both old requests.
+Exercise identical extension replay and changed-content conflicts while the
+extension's first worker admission is delayed.
+When an earlier preparation arrives after reload while the user has unsent
+edits, change and remove the reviewed lifetime separately. Keep those edits as
+a labelled local copy without automatically superseding or importing them.
+If the item leaves the queue, unadmitted or unconfirmed input remains available
+as a labelled in-memory copy. Exercise both HTTP import routes, the recovery action,
+and a delayed extension replay plus a new extension capture ID using synthetic data.
+Verify that a superseded extension entry stays labelled across a restart, does
+not block newer captures, and can be inspected and discarded individually from
+a full queue without changing the other entries.
+
 Run the `discovery-transactions` recipe for preparation or enrichment transaction
 changes. Seed failed and exhausted Tailor rows whose downstream stages are already
 reconciled, with a scoring policy already present. Repeat the empty preparation

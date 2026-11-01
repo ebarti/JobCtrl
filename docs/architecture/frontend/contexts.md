@@ -93,6 +93,15 @@ quarantine, the manual-capture queue, and discovery feedback.
   manual-capture import/dismiss, discovery feedback, role-match feedback).
 - Own the discovery UI panels `<DiscoveryProductControls>` and
   `<DiscoveryRuntimeSettingsPanel>` (composed by `views/discovery/`).
+- Keep a tenant-scoped, in-memory fence for each submitted manual capture until
+  a fresh queue read resolves its outcome. Before dispatch, reserve its reviewed
+  lifetime and retain the draft through the API. The queue's durable unresolved
+  flag restores the fence after a full reload. An unconfirmed write remains fenced
+  while its item is pending; other captures remain independently editable.
+  Bind local state and mutations to the opaque reviewed lifetime. For a
+  conflicting or unconfirmed import, let the user explicitly advance the reviewed
+  capture generation before releasing the row; preserve an unadmitted or
+  unconfirmed submission as an in-memory local copy if the row leaves the queue.
 - Own the small inline UI affordances unique to discovery actions
   (delete-confirmation copy, restore toast).
 

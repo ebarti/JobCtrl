@@ -972,6 +972,13 @@ Exercise both discovery producers and the per-job refresh core, and confirm
 the writer can commit while inference is active. These are source and
 transaction checks, not semantic evaluation or live-provider tests.
 
+For Manual Capture extraction recovery, use the synthetic recipe in
+[Discovery Transaction Recovery](../../local-reliability-qa.md#discovery-transaction-recovery).
+Join the successful snapshot and model determinations to the same tenant,
+source and captured page; a failed refresh preserves accepted evidence and a
+pending draft. Historical imports without a matching snapshot remain unverified;
+an exact original observation and new user submission are required for recapture.
+
 For contact research acquisition, run locked
 `pytest tests/test_contact_research_workflow.py tests/test_company_briefings.py`
 with the politeness and public-destination suites. Use only fake transports and

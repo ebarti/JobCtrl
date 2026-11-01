@@ -250,6 +250,7 @@ export const ManualCaptureImportParamsSchema = z
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
     itemId: z.string().trim().min(1),
+    expectedCaptureGeneration: z.string().min(1).nullable(),
     captureMode: z.enum(MANUAL_CAPTURE_MODE_VALUES),
     contentText: z.string().trim().max(200_000).optional(),
     contentHtmlBase64: z.string().trim().max(8_000_000).optional(),
@@ -272,6 +273,7 @@ export const ManualCaptureImportParamsSchema = z
     { message: "provide capturedUrl, contentText, or contentHtmlBase64" },
   );
 export type ManualCaptureImportParams = z.infer<typeof ManualCaptureImportParamsSchema>;
+
 
 export const JobUrlImportParamsSchema = z
   .object({

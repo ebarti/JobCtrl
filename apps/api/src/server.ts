@@ -77,6 +77,7 @@ import {
   MarkJobActionRequestSchema,
   ManualApplicationOutcomeRequestSchema,
   ManualCaptureDismissSchema,
+  ManualCaptureSupersedeSchema,
   ManualCaptureImportSchema,
   OutcomeSuggestionDecisionRequestSchema,
   ExtensionCaptureIngestSchema,
@@ -215,6 +216,13 @@ import { getPostedCompensationFact } from "./posted-compensation-facts.js";
 import {
   decideQuarantineEntry,
   dismissManualCapture,
+  supersedeManualCapture,
+  prepareManualCapture,
+  prepareExtensionManualCapture,
+  preparedManualCaptureGeneration,
+  ManualCaptureLifecycleConflict,
+  ExtensionCaptureSuperseded,
+  isExtensionCaptureSuperseded,
   decideRoleMatchFeedbackSuggestion,
   listManualCaptureQueue,
   listQuarantine,
@@ -935,7 +943,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(503);
       return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${options.dbPath}` };
     }
-    const seeded = await withWritableDb(reply, options.dbPath, (db) => seedExtensionManualCapture(db, body));
+    const seeded = await withWritableDb(reply, options.dbPath, (db) => db.transaction(() => {
+      const result = seedExtensionManualCapture(db, body);
+      if ("ok" in result) return result;
+      const generation = prepareExtensionManualCapture(db, result.itemId, body, extensionCaptureToManualCapture(body));
+      return { ...result, expectedCaptureGeneration: generation };
+    }).immediate());
     if (!seeded || "ok" in seeded) {
       return seeded;
     }
@@ -943,14 +956,27 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return await manualCaptureImporter(seeded.itemId, extensionCaptureToManualCapture(body), {
         appDir,
         dbPath: options.dbPath,
+        expectedCaptureGeneration: seeded.expectedCaptureGeneration,
       });
     } catch (error) {
+      // This request may have seeded before the user superseded it. The
+      // durable marker also identifies that case when the old import fails.
+      let superseded = false;
+      try {
+        const db = openReadOnlyDatabase(options.dbPath);
+        try { superseded = isExtensionCaptureSuperseded(db, seeded.itemId); } finally { db.close(); }
+      } catch { /* Preserve the original failure when the marker is unavailable. */ }
+      if (superseded) {
+        void reply.code(409);
+        return { ok: false, error: "extension_capture_superseded", message: new ExtensionCaptureSuperseded().message };
+      }
       if (error instanceof ManualCaptureImportError) {
         void reply.code(error.statusCode);
         return {
           ok: false,
           error: error.statusCode === 404 ? "not_found" : "manual_capture_import_failed",
           message: error.message,
+          ...(error.reason ? { reason: error.reason } : {}),
         };
       }
       throw error;
@@ -1390,6 +1416,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   );
 
   app.post<{ Params: { itemId: string } }>(
+    "/v1/discovery/manual-capture/:itemId/prepare",
+    async (request, reply) => {
+      const body = parseBody(reply, ManualCaptureImportSchema, request.body ?? {});
+      if (!body) return undefined;
+      return withWritableDb(reply, options.dbPath, (db) =>
+        prepareManualCapture(db, decodeRouteParam(request.params.itemId), body));
+    },
+  );
+
+  app.post<{ Params: { itemId: string } }>(
     "/v1/discovery/manual-capture/:itemId/import",
     async (request, reply) => {
       const body = parseBody(reply, ManualCaptureImportSchema, request.body ?? {});
@@ -1400,10 +1436,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         void reply.code(503);
         return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${options.dbPath}` };
       }
+      const itemId = decodeRouteParam(request.params.itemId);
+      const generation = withReadOnlyDb(reply, options.dbPath, (db) => preparedManualCaptureGeneration(db, itemId, body));
+      if (generation && typeof generation === "object") return generation;
+      if (generation === undefined) {
+        void reply.code(409);
+        return { ok: false, error: "manual_capture_import_failed", reason: "manual_capture_state_changed",
+          message: "This capture changed. Refresh the queue and review it again." };
+      }
+      const { expectedLifecycleId: _expectedLifecycleId, ...capture } = body;
       try {
-        return await manualCaptureImporter(decodeRouteParam(request.params.itemId), body, {
+        return await manualCaptureImporter(itemId, capture, {
           appDir,
           dbPath: options.dbPath,
+          expectedCaptureGeneration: generation,
         });
       } catch (error) {
         if (error instanceof ManualCaptureImportError) {
@@ -1412,10 +1458,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             ok: false,
             error: error.statusCode === 404 ? "not_found" : "manual_capture_import_failed",
             message: error.message,
+            ...(error.reason ? { reason: error.reason } : {}),
           };
         }
         throw error;
       }
+    },
+  );
+
+  app.post<{ Params: { itemId: string } }>(
+    "/v1/discovery/manual-capture/:itemId/supersede",
+    async (request, reply) => {
+      const body = parseBody(reply, ManualCaptureSupersedeSchema, request.body ?? {});
+      if (!body) return undefined;
+      return withWritableDb(reply, options.dbPath, (db) =>
+        supersedeManualCapture(db, decodeRouteParam(request.params.itemId), body.expectedLifecycleId));
     },
   );
 
@@ -1426,8 +1483,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
+      if (!body.expectedLifecycleId) {
+        void reply.code(409);
+        return { ok: false, error: "manual_capture_state_changed", message: "Refresh the queue and review this capture again." };
+      }
       return withWritableDb(reply, options.dbPath, (db) =>
-        dismissManualCapture(db, decodeRouteParam(request.params.itemId), body.reason),
+        dismissManualCapture(db, decodeRouteParam(request.params.itemId), body.reason, body.expectedLifecycleId),
       );
     },
   );
@@ -5294,6 +5355,14 @@ async function withWritableDb<T>(
     if (error instanceof InvalidSavedDiscoverySettingsError) {
       void reply.code(409);
       return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
+    if (error instanceof ExtensionCaptureSuperseded) {
+      void reply.code(409);
+      return { ok: false, error: "extension_capture_superseded", message: error.message };
+    }
+    if (error instanceof ManualCaptureLifecycleConflict) {
+      void reply.code(409);
+      return { ok: false, error: "manual_capture_state_changed", message: error.message };
     }
     if (error instanceof PermanentDeleteSelectionConflict) {
       void reply.code(409);

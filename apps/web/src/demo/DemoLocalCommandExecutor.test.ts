@@ -181,7 +181,7 @@ const LOCAL_CASES = [
   ["promoteSourceLocatorCandidate", (api) => api.promoteSourceLocatorCandidate("locator-demo-northwind", { reason: "Demo promotion" })],
   ["rejectSourceLocatorCandidate", (api) => api.rejectSourceLocatorCandidate("locator-demo-northwind", { reason: "Demo rejection" })],
   ["decideDiscoveryQuarantine", (api) => api.decideDiscoveryQuarantine("job-quarantine-demo", { decision: "approve", reason: "Reviewed" })],
-  ["dismissManualCapture", (api) => api.dismissManualCapture("capture-demo-browser", { reason: "Dismissed" })],
+  ["dismissManualCapture", (api) => api.dismissManualCapture("capture-demo-browser", { reason: "Dismissed", expectedLifecycleId: "0".repeat(64) })],
   ["recordDiscoveryFeedback", (api) => api.recordDiscoveryFeedback({ jobKey: JOB, sourceId: "demo-source:northwind", kind: "saved", note: "Useful" })],
   ["decideRoleMatchFeedbackSuggestion", (api) => api.decideRoleMatchFeedbackSuggestion("role-feedback-demo", { decision: "approve", reason: "Confirmed" })],
   ["decideApplyReview", (api) => api.decideApplyReview(JOB, { decision: "approve_dry_run", decidedBy: "demo-user" })],
@@ -246,6 +246,88 @@ const LOCAL_CASES = [
 ] as const satisfies readonly LocalCase[];
 
 describe("DemoLocalCommandExecutor", () => {
+  it("reopens an older demo capture without resetting saved work and dismisses only its reviewed lifetime", async () => {
+    const original = await harness();
+    await original.adapter.updateDiscoverySettings({ resultsPerSite: 37 });
+    await original.repository.putBlob("retained-demo-blob", new Blob(["retained synthetic edit"]));
+    const saved = await original.repository.snapshot();
+    const legacyCapture = saved.state.readModel.discovery.manualCapture.items[0]!;
+    delete legacyCapture.lifecycleId;
+    legacyCapture.retryContext = { ...legacyCapture.retryContext, note: "Retained synthetic note" };
+    const store = new InMemoryDemoWorkspaceStore(saved);
+    await store.transact((_current, transaction) => {
+      transaction.putBlob("retained-demo-blob", new Blob(["retained synthetic edit"]));
+    });
+    original.adapter.dispose();
+    original.repository.dispose();
+
+    const { adapter, repository } = await harness(store);
+    const before = await store.readSnapshot();
+    const capture = (await adapter.manualCaptureQueue()).items[0]!;
+    expect(capture).toMatchObject({
+      itemId: "capture-demo-browser",
+      lifecycleId: "0".repeat(64),
+      retryContext: { note: "Retained synthetic note" },
+    });
+    expect(await store.readSnapshot()).toEqual(before);
+    expect(await repository.blob("retained-demo-blob")).toEqual(expect.objectContaining({ size: 23 }));
+    await adapter.updateDiscoverySettings({ resultsPerSite: 38 });
+    const afterEdit = await store.readSnapshot();
+    expect(Object.hasOwn(afterEdit!.state.readModel.discovery.manualCapture.items[0]!, "lifecycleId")).toBe(false);
+
+    await expect(adapter.dismissManualCapture(capture.itemId, {})).rejects.toMatchObject({
+      status: 409,
+      responseBody: { ok: false, error: "manual_capture_state_changed", message: "Refresh the queue and review this capture again." },
+    });
+    await expect(adapter.dismissManualCapture(capture.itemId, { expectedLifecycleId: "1".repeat(64) })).rejects.toMatchObject({
+      status: 409,
+      responseBody: { ok: false, error: "manual_capture_state_changed", message: "This capture changed. Refresh the queue and review it again." },
+    });
+    await expect(adapter.dismissManualCapture(capture.itemId, { expectedLifecycleId: "invalid" })).rejects.toMatchObject({ status: 400 });
+    expect(await store.readSnapshot()).toEqual(afterEdit);
+
+    await expect(adapter.dismissManualCapture(capture.itemId, { expectedLifecycleId: capture.lifecycleId! }))
+      .resolves.toMatchObject({ ok: true, status: "dismissed", itemId: capture.itemId });
+    expect((await adapter.manualCaptureQueue()).items).toHaveLength(0);
+    expect((await adapter.discoverySettings()).settings.resultsPerSite).toBe(38);
+    expect((await repository.snapshot()).workspaceId).toBe(saved.workspaceId);
+    expect(await repository.blob("retained-demo-blob")).toEqual(expect.objectContaining({ size: 23 }));
+    adapter.dispose();
+    repository.dispose();
+  });
+
+  it.each(["null", "malformed", "newer", "unrelated", "different-origin"] as const)(
+    "does not invent a lifecycle for a %s capture",
+    async (kind) => {
+      const { adapter, repository } = await harness();
+      await repository.mutate((draft) => {
+        const item = draft.state.readModel.discovery.manualCapture.items[0]!;
+        if (kind === "unrelated" || kind === "different-origin") {
+          if (kind === "unrelated") item.itemId = "another-capture";
+          else item.originatingUrl = "https://other.invalid/posting";
+          delete item.lifecycleId;
+        } else {
+          item.lifecycleId = kind === "null" ? null : kind === "malformed" ? "invalid" : "1".repeat(64);
+        }
+      });
+      const before = await repository.snapshot();
+      const item = (await adapter.manualCaptureQueue()).items[0]!;
+      if (kind === "unrelated" || kind === "different-origin") expect(Object.hasOwn(item, "lifecycleId")).toBe(false);
+      else expect(item.lifecycleId).toBe(kind === "null" ? null : kind === "malformed" ? "invalid" : "1".repeat(64));
+      await expect(adapter.dismissManualCapture(item.itemId, { expectedLifecycleId: "0".repeat(64) })).rejects.toMatchObject({
+        status: 409,
+        responseBody: { ok: false, error: "manual_capture_state_changed" },
+      });
+      expect(await repository.snapshot()).toEqual(before);
+      if (kind === "newer") {
+        await expect(adapter.dismissManualCapture(item.itemId, { expectedLifecycleId: "1".repeat(64) }))
+          .resolves.toMatchObject({ ok: true, status: "dismissed" });
+      }
+      adapter.dispose();
+      repository.dispose();
+    },
+  );
+
   it("retains manual action receipts across demo reopen, conflicts on changed payload, and permits a new identity", async () => {
     const store = new InMemoryDemoWorkspaceStore();
     const first = await harness(store);

@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 
 import { buildApp } from "../src/server.js";
 import type { JsonRpcResponse, ManualCaptureImportRequest, RpcMethod } from "../src/contracts.js";
@@ -51,6 +52,15 @@ function insertExactV7Job(
     `INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at)
      VALUES ('local', ?, ?, ?, ?, '2026-05-12T10:00:00+00:00')`,
   ).run(jobId, url, title, site);
+}
+
+function seedPendingManualCapture(dbPath: string, itemId: string): void {
+  const db = new Database(dbPath);
+  try {
+    db.prepare(`INSERT INTO manual_capture_queue
+      (tenant_id,item_id,originating_url,source_id,reason,retry_context_json,required_at,status)
+      VALUES ('local',?,'https://example.com/protected/job','manual:test','login_required','{}','2026-05-12','pending')`).run(itemId);
+  } finally { db.close(); }
 }
 
 function manualCaptureHtml(): string {
@@ -894,15 +904,17 @@ describe("discovery product controls API", () => {
       );
       db.close();
 
+      const queue = await app.inject({ method: "GET", url: "/v1/discovery/manual-capture" });
+      const expectedLifecycleId = queue.json().items.find((item: { itemId: string }) => item.itemId === "manual-1").lifecycleId;
+      const payload = { captureMode: "pasted_text", expectedLifecycleId,
+        capturedUrl: "https://example.com/protected/job", contentText: "Visible user-provided posting text.",
+        futureManualActionRequired: true };
+      const prepared = await app.inject({ method: "POST", url: "/v1/discovery/manual-capture/manual-1/prepare", payload });
+      expect(prepared.statusCode).toBe(200);
       const response = await app.inject({
         method: "POST",
         url: "/v1/discovery/manual-capture/manual-1/import",
-        payload: {
-          captureMode: "pasted_text",
-          capturedUrl: "https://example.com/protected/job",
-          contentText: "Visible user-provided posting text.",
-          futureManualActionRequired: true,
-        },
+        payload: { ...payload, expectedLifecycleId: prepared.json().lifecycleId },
       });
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json()).toMatchObject({
@@ -923,7 +935,7 @@ describe("discovery product controls API", () => {
             contentText: "Visible user-provided posting text.",
             futureManualActionRequired: true,
           },
-          context: { appDir: dir, dbPath },
+          context: { appDir: dir, dbPath, expectedCaptureGeneration: expect.stringMatching(/^[0-9a-f]{32}$/) },
         },
       ]);
 
@@ -1085,6 +1097,81 @@ describe("discovery product controls API", () => {
     }
   });
 
+  it("reports a seeded in-flight extension request as superseded after recovery", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    let entered!: (itemId: string) => void;
+    let release!: () => void;
+    const started = new Promise<string>((resolve) => { entered = resolve; });
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const importer: ManualCaptureImporter = async (itemId) => {
+      entered(itemId);
+      await pending;
+      throw new ManualCaptureImportError("synthetic state change", 409, "manual_capture_state_changed");
+    };
+    const app = buildApp({ ...options(dbPath, dir), manualCaptureImporter: importer });
+    try {
+      const token = (await app.inject({ method: "GET", url: "/v1/extension/pairing-token" })).json().token as string;
+      const request = app.inject({ method: "POST", url: "/v1/extension/captures",
+        headers: { origin: CHROME_EXTENSION_ORIGIN, authorization: `Bearer ${token}`, "sec-fetch-site": "cross-site" },
+        payload: { captureId: "synthetic-in-flight", originatingUrl: "https://example.test/job/in-flight",
+          captureMode: "current_page", capturedUrl: "https://example.test/job/in-flight",
+          contentText: "old extension submission", extensionVersion: "0.3.0" } });
+      const itemId = await started;
+      const queue = (await app.inject({ method: "GET", url: "/v1/discovery/manual-capture" })).json();
+      const lifecycleId = queue.items.find((item: { itemId: string }) => item.itemId === itemId).lifecycleId;
+      expect((await app.inject({ method: "POST", url: `/v1/discovery/manual-capture/${itemId}/supersede`,
+        payload: { expectedLifecycleId: lifecycleId } })).statusCode).toBe(200);
+      release();
+      const response = await request;
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ ok: false, error: "extension_capture_superseded" });
+    } finally { release(); await app.close(); cleanup(); }
+  });
+
+  it("rejects a delayed extension replay after recovery while accepting a new capture ID", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const itemIds: string[] = [];
+    const manualCaptureImporter: ManualCaptureImporter = async (itemId) => {
+      itemIds.push(itemId);
+      throw new ManualCaptureImportError("synthetic failure", 500);
+    };
+    const app = buildApp({ ...options(dbPath, dir), manualCaptureImporter });
+    try {
+      const token = (await app.inject({ method: "GET", url: "/v1/extension/pairing-token" })).json().token as string;
+      const request = {
+        method: "POST" as const, url: "/v1/extension/captures",
+        headers: { origin: CHROME_EXTENSION_ORIGIN, authorization: `Bearer ${token}`, "sec-fetch-site": "cross-site" },
+        payload: { captureId: "synthetic-old", originatingUrl: "https://example.test/job/recovery",
+          captureMode: "current_page", capturedUrl: "https://example.test/job/recovery",
+          contentText: "old extension submission", extensionVersion: "0.3.0" },
+      };
+      expect((await app.inject(request)).statusCode).toBe(500);
+      const itemId = itemIds[0]!;
+      const queue = (await app.inject({ method: "GET", url: "/v1/discovery/manual-capture" })).json();
+      const lifecycleId = queue.items.find((item: { itemId: string }) => item.itemId === itemId).lifecycleId;
+      const db = new Database(dbPath);
+      try {
+        db.prepare("UPDATE manual_capture_queue SET retry_context_json=json_set(retry_context_json, '$.manual_capture_draft', json(?)) WHERE item_id=?")
+          .run(JSON.stringify({ content: "newer retained review" }), itemId);
+        const recovery = await app.inject({ method: "POST", url: `/v1/discovery/manual-capture/${itemId}/supersede`,
+          payload: { expectedLifecycleId: lifecycleId } });
+        expect(recovery.statusCode, recovery.body).toBe(200);
+        const before = db.prepare("SELECT retry_context_json FROM manual_capture_queue WHERE item_id=?").get(itemId);
+        const delayed = await app.inject(request);
+        expect(delayed.statusCode, delayed.body).toBe(409);
+        expect(delayed.json()).toMatchObject({ ok: false, error: "extension_capture_superseded" });
+        expect(itemIds).toHaveLength(1);
+        expect(db.prepare("SELECT retry_context_json FROM manual_capture_queue WHERE item_id=?").get(itemId)).toEqual(before);
+        expect(JSON.parse((before as { retry_context_json: string }).retry_context_json).manual_capture_draft.content)
+          .toBe("newer retained review");
+        const fresh = await app.inject({ ...request, payload: { ...request.payload, captureId: "synthetic-new" } });
+        expect(fresh.statusCode, fresh.body).toBe(500);
+        expect(itemIds).toHaveLength(2);
+        expect(itemIds[1]).not.toBe(itemId);
+      } finally { db.close(); }
+    } finally { await app.close(); cleanup(); }
+  });
+
   it("keeps extension capture retries idempotent when import fails after seeding", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
     const itemIds: string[] = [];
@@ -1190,7 +1277,7 @@ describe("discovery product controls API", () => {
         importedAt,
         input.captureMode,
         input.capturedUrl,
-        "a".repeat(64),
+        crypto.createHash("sha256").update(input.contentText ?? "").digest("hex"),
         input.contentText?.length ?? 0,
         input.futureManualActionRequired ? 1 : 0,
         JSON.stringify(retryContext),
@@ -1198,6 +1285,13 @@ describe("discovery product controls API", () => {
         "local",
         itemId,
       );
+      db.prepare(`INSERT INTO posting_snapshot_sets
+        (tenant_id,job_id,snapshot_set_json,latest_snapshot_version,latest_active_state,updated_at)
+        VALUES ('local',?,?,1,'active',?)`).run(
+          REPLAY_JOB_ID,
+          JSON.stringify({ snapshots: [{ source_id: 'manual_capture:extension', snapshot_version: 1, raw_text_hash: crypto.createHash('sha256').update(input.contentText ?? '').digest('hex') }] }),
+          importedAt,
+        );
       db.close();
       return {
         ok: true,
@@ -1308,6 +1402,66 @@ describe("discovery product controls API", () => {
     }
   });
 
+  it.each([
+    { reason: "manual_capture_state_changed", code: "manual_capture_state_changed", status: 409 },
+    { reason: "capture_replay_mismatch", code: "capture_replay_mismatch", status: 409 },
+    { reason: "manual_capture_in_progress", code: "manual_capture_in_progress", status: 409 },
+    { reason: "manual_capture_provider_failed", code: "semantic_determination_provider_error", status: 503 },
+    { reason: "manual_capture_database_failed", code: "manual_capture_database_error", status: 500 },
+  ] as const)(
+    "returns a structured $reason response from the real import adapter",
+    async ({ reason, code, status }) => {
+      const { dbPath, dir, cleanup } = withTempDb();
+      const manualCaptureImporter = createWorkerManualCaptureImporter({
+        dispatcherFactory: () => ({
+          async call(): Promise<JsonRpcResponse> {
+            if (reason === "manual_capture_in_progress") {
+              return { jsonrpc: "2.0", id: 1, error: { code: -32009, message: reason } };
+            }
+            return { jsonrpc: "2.0", id: 1, result: {
+              runId: "synthetic-run", workflowId: "synthetic-workflow", firstExecutionRunId: "synthetic-execution",
+              result: { status: "failed", item_id: null, job_id: null, imported_at: null,
+                retry_context: {}, error: "synthetic worker detail", error_code: code },
+            } };
+          },
+          async close(): Promise<void> {},
+        }),
+      });
+      const app = buildApp({ ...options(dbPath, dir), manualCaptureImporter });
+      try {
+        seedPendingManualCapture(dbPath, "manual-2");
+        const queue = await app.inject({ method: "GET", url: "/v1/discovery/manual-capture" });
+        const expectedLifecycleId = queue.json().items[0].lifecycleId;
+        const payload = { captureMode: "copied_url", capturedUrl: "https://example.test/jobs/2", futureManualActionRequired: false, expectedLifecycleId };
+        const prepared = await app.inject({ method: "POST", url: "/v1/discovery/manual-capture/manual-2/prepare", payload });
+        expect(prepared.statusCode).toBe(200);
+        const response = await app.inject({
+          method: "POST", url: "/v1/discovery/manual-capture/manual-2/import",
+          payload: { ...payload, expectedLifecycleId: prepared.json().lifecycleId },
+        });
+        expect(response.statusCode).toBe(status);
+        expect(response.json()).toMatchObject({ ok: false, error: "manual_capture_import_failed", reason });
+
+        const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+        const token = (tokenResponse.json() as { token: string }).token;
+        const extensionResponse = await app.inject({
+          method: "POST", url: "/v1/extension/captures",
+          headers: { origin: CHROME_EXTENSION_ORIGIN, authorization: `Bearer ${token}`, "sec-fetch-site": "cross-site" },
+          payload: {
+            captureId: `synthetic-${reason}`, originatingUrl: "https://example.test/jobs/conflict",
+            captureMode: "current_page", capturedUrl: "https://example.test/jobs/conflict",
+            contentText: "Synthetic capture", extensionVersion: "0.3.0",
+          },
+        });
+        expect(extensionResponse.statusCode).toBe(status);
+        expect(extensionResponse.json()).toMatchObject({ ok: false, error: "manual_capture_import_failed", reason });
+      } finally {
+        await app.close();
+        cleanup();
+      }
+    },
+  );
+
   it("keeps the manual-capture route response unchanged when importing through JSON-RPC", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
     const calls: Array<{ method: RpcMethod; params: Record<string, unknown> }> = [];
@@ -1330,6 +1484,8 @@ describe("discovery product controls API", () => {
                 retry_context: {
                   manual_capture_provenance: {
                     originating_url: "https://example.com/protected/job",
+                    capture_mode: "saved_html",
+                    future_manual_action_required: true,
                   },
                 },
                 error: null,
@@ -1345,16 +1501,18 @@ describe("discovery product controls API", () => {
     });
     const app = buildApp({ ...options(dbPath, dir), manualCaptureImporter });
     try {
+      seedPendingManualCapture(dbPath, "manual-2");
+      const queue = await app.inject({ method: "GET", url: "/v1/discovery/manual-capture" });
+      const expectedLifecycleId = queue.json().items[0].lifecycleId;
       const contentText = manualCaptureHtml().trim();
+      const payload = { captureMode: "saved_html", expectedLifecycleId,
+        capturedUrl: "https://example.com/protected/job", contentText, futureManualActionRequired: true };
+      const prepared = await app.inject({ method: "POST", url: "/v1/discovery/manual-capture/manual-2/prepare", payload });
+      expect(prepared.statusCode).toBe(200);
       const response = await app.inject({
         method: "POST",
         url: "/v1/discovery/manual-capture/manual-2/import",
-        payload: {
-          captureMode: "saved_html",
-          capturedUrl: "https://example.com/protected/job",
-          contentText,
-          futureManualActionRequired: true,
-        },
+        payload: { ...payload, expectedLifecycleId: prepared.json().lifecycleId },
       });
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json()).toEqual({

@@ -48,6 +48,13 @@ export const frontendRecipes = {
       }
     },
     {
+      "name": "Test isolated manual-capture recovery",
+      "env": {
+        "JOBCTRL_E2E_ISOLATED": "1"
+      },
+      "run": "node --test apps/web/e2e/fixtures/manual-capture-recovery-guard.test.cjs\ncorepack pnpm --filter @jobctrl/web exec playwright test --config e2e/manual-capture-recovery.playwright.config.ts\n"
+    },
+    {
       "name": "Test real API and worker RPC boundaries",
       "run": "mkdir -p \"$JOBCTRL_E2E_APP_DIR\"\ncorepack pnpm --filter @jobctrl/web exec playwright test --config e2e/playwright.config.ts \\\n  e2e/tests/discovery-saved-views.spec.ts e2e/tests/repeat-application.spec.ts \\\n  e2e/tests/dry-run-completed.spec.ts e2e/tests/event-stream-first-open.spec.ts e2e/tests/accepted-material-exports.spec.ts \\\n  e2e/tests/offer-outcomes.spec.ts\n",
       "env": {

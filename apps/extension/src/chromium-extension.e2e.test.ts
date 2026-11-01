@@ -190,7 +190,7 @@ describe("Chromium loaded extension privacy boundary", () => {
       expect(await sendExtensionMessage(controller, { type: "getStatus" })).toMatchObject({
         ok: true,
         status: "ready",
-        protocolVersion: 3,
+        protocolVersion: 4,
         paired: true,
         apiReady: true,
         discoverySelected: true,
