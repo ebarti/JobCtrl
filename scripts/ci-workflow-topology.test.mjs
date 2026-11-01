@@ -23,11 +23,11 @@ const expression = value => "$" + "{{ " + value + " }}";
 const command = (job, text) => job.steps.find(step => step.run === text);
 test("one shared entry budgets affected runners and preserves literal skipped native contexts", () => {
   assert.deepEqual(events(pr), { pull_request:{ types:["opened","synchronize","reopened","edited"] }, push:{ branches:["main"] } });
-  assert.deepEqual(Object.keys(pr.jobs).sort(), ["admission","backend","frontend","browser","native","credentials","gmail","preview"].sort());
+  assert.deepEqual(Object.keys(pr.jobs).sort(), ["admission","backend","frontend","support","browser","native","credentials","gmail","preview"].sort());
   assert.deepEqual(pr.permissions, { contents:"read" });
   assert.equal(pr.concurrency["cancel-in-progress"], expression("github.event_name == 'pull_request'"));
   const expanded=[];
-  for (const id of ["admission","backend","frontend","browser","native","credentials","gmail"]) {
+  for (const id of ["admission","backend","frontend","support","browser","native","credentials","gmail"]) {
     const call=pr.jobs[id];
     assert.equal(call.if, undefined, "skipped child contexts must remain materialized");
     assert.equal(call["runs-on"], undefined);
@@ -50,11 +50,11 @@ test("one shared entry budgets affected runners and preserves literal skipped na
       assert.equal(value,expression("needs.admission.outputs."+output+" != 'false'"));
     }
   }
-  assert.equal(expanded.length,10,"four core and six platform-specific allocations at full scope");
+  assert.equal(expanded.length,11,"five core and six platform-specific allocations at full scope");
   assert.equal(new Set(expanded).size,expanded.length);
   assert.deepEqual(expanded.sort(), [...new Set(["Admission / Release check","Backend / Core checks",...Object.values(SUITE_CONTEXTS).flat()])].sort());
   const owners={api:["backend","api"],python:["backend","python"],distribution:["backend","distribution"],edge:["backend","edge"],
-    web:["frontend","web"],storybook:["frontend","storybook"],extension:["frontend","extension"],docs:["frontend","docs"],demo:["frontend","demo"],
+    web:["frontend","web"],storybook:["support","storybook"],extension:["support","extension"],docs:["support","docs"],demo:["support","demo"],
     e2e:["browser","e2e"],launcher:["native","enabled"],credentials:["credentials","enabled"],gmail:["gmail","enabled"]};
   assert.deepEqual(Object.keys(owners).sort(),[...SURFACES].sort());
   for(const [surface,[owner,input]] of Object.entries(owners))
@@ -156,17 +156,20 @@ test("pristine candidate privacy precedes installation; independent diagnostics 
   assert.deepEqual(frontendLanes.core,["web"]);
   assert.deepEqual(frontendLanes.browsers,["e2e"]);
   assert.deepEqual(frontendLanes.support,["boundary","storybook","extension","docs","demo"]);
-  const parallel=command(frontend,"node scripts/ci-frontend.mjs");
-  assert.equal(parallel.if,expression("!cancelled() && steps.dependencies.outcome == 'success'"));
-  const build=command(frontend,"corepack pnpm web:build");
-  assert.equal(build.if,expression("inputs.web"));
-  assert.ok(frontend.steps.indexOf(build)<frontend.steps.indexOf(parallel));
-  assert.equal(parallel.env.CI_ROUTES_READY,expression("steps.production.outcome == 'success'"));
-  const laneArtifact=frontend.steps.find(step=>step.name==="Retain the independent frontend lane logs and outcomes");
-  assert.equal(laneArtifact.with.name,"frontend-lanes-${{ inputs.e2e && 'browser' || 'frontend' }}-${{ github.run_attempt }}",
-    "the two reusable calls must retain distinct immutable artifacts");
+  const profile=command(frontend,"node scripts/ci-frontend.mjs");
+  assert.equal(profile.if,expression("!cancelled() && steps.dependencies.outcome == 'success'"));
+  assert.equal(command(frontend,"corepack pnpm web:build"),undefined,"the web build belongs to its original ordered recipe");
+  assert.equal(frontendRecipes.web.at(-1).run,"corepack pnpm web:build");
+  for(const id of ["frontend","support","browser"]) {
+    const flags=pr.jobs[id].with;
+    const profiles=[flags.web!==false,flags.e2e!==false,["storybook","extension","docs","demo"].some(key=>flags[key]!==false)];
+    assert.equal(profiles.filter(Boolean).length,1,id+" must select only its own resource profile");
+  }
+  const laneArtifact=frontend.steps.find(step=>step.name==="Retain frontend profile logs and outcomes");
+  assert.equal(laneArtifact.with.name,"frontend-lanes-${{ inputs.e2e && 'browser' || inputs.web && 'web' || 'support' }}-${{ github.run_attempt }}");
   assert.equal(frontend.steps.filter(step=>step.run?.includes("pnpm install")).length,1);
-  assert.equal(frontend.steps.filter(step=>step.run?.includes("playwright install --with-deps chromium")).length,1);
+  const chromium=frontend.steps.find(step=>step.run?.includes("playwright install --with-deps chromium"));
+  assert.equal(chromium.if,expression("inputs.storybook || inputs.e2e || inputs.extension || inputs.docs"),"web-only verification must not install browser dependencies");
 });
 
 test("backend and manual Python share the complete primary locked recipe", () => {
@@ -215,7 +218,7 @@ test("main has one core owner and retains separately gated site publications and
     assert.equal(on.pull_request,undefined,name);
     assert.deepEqual(on.push.branches,["main"]);
   }
-  assert.deepEqual(pr.jobs.preview.needs,["admission","frontend"]);
+  assert.deepEqual(pr.jobs.preview.needs,["admission","frontend","support"]);
   assert.match(pr.jobs.preview.if,/needs\.admission\.outputs\.preview == 'true'/);
   assert.match(pr.jobs.preview.if,/head\.repo\.full_name == github\.repository/);
   assert.match(pr.jobs.preview.if,/vars\.DEMO_PREVIEW_DEPLOY_ENABLED == 'true'/);

@@ -44,6 +44,15 @@ jobs:
       with:
         node-version: 22.21.1
         cache: pnpm
+    - name: Record the hosted frontend resource budget
+      env:
+        CI_PROFILE: "${{ inputs.e2e && 'browser' || inputs.web && 'web' || 'support'
+          }}"
+      run: |
+        node --input-type=module <<'NODE'
+        import os from 'node:os';
+        console.log(JSON.stringify({profile: process.env.CI_PROFILE, cpuCount: os.availableParallelism(), totalMemoryMiB: Math.round(os.totalmem() / 1024 / 1024)}));
+        NODE
     - name: Set up Python
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
       with:
@@ -64,10 +73,12 @@ jobs:
       run: uv --project workers/automation sync --locked --all-extras
     - name: Bound hosted Ubuntu package transport
       run: bash scripts/ci-apt-timeouts.sh
+      if: "${{ inputs.storybook || inputs.e2e || inputs.extension || inputs.docs }}"
     - name: Install shared pinned Node Chromium and its system dependencies
       timeout-minutes: 8
       run: corepack pnpm --filter @jobctrl/web exec playwright install --with-deps
         chromium
+      if: "${{ inputs.storybook || inputs.e2e || inputs.extension || inputs.docs }}"
     - name: Install the separate locked Python Chromium
       timeout-minutes: 8
       if: "${{ inputs.e2e }}"
@@ -80,11 +91,7 @@ jobs:
         sudo apt-get install --yes poppler-utils
         corepack pnpm --filter @jobctrl/web e2e:check-pdf-tools
       if: "${{ inputs.e2e }}"
-    - name: Build and validate the production web bundle before parallel consumers
-      id: production
-      if: "${{ inputs.web }}"
-      run: corepack pnpm web:build
-    - name: Run the selected frontend suites in three owned lanes
+    - name: Run the selected frontend profile
       if: "${{ !cancelled() && steps.dependencies.outcome == 'success' }}"
       timeout-minutes: 35
       env:
@@ -94,7 +101,6 @@ jobs:
         CI_EXTENSION: "${{ inputs.extension }}"
         CI_DOCS: "${{ inputs.docs }}"
         CI_DEMO: "${{ inputs.demo }}"
-        CI_ROUTES_READY: "${{ steps.production.outcome == 'success' }}"
       run: node scripts/ci-frontend.mjs
     - name: Upload synthetic first-connection screenshots
       if: "${{ always() && inputs.e2e }}"
@@ -129,11 +135,12 @@ jobs:
         path: dist/web
         retention-days: 7
       if: "${{ success() && inputs.demo }}"
-    - name: Retain the independent frontend lane logs and outcomes
+    - name: Retain frontend profile logs and outcomes
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
-        name: frontend-lanes-${{ inputs.e2e && 'browser' || 'frontend' }}-${{ github.run_attempt }}
+        name: frontend-lanes-${{ inputs.e2e && 'browser' || inputs.web && 'web' ||
+          'support' }}-${{ github.run_attempt }}
         path: "${{ runner.temp }}/ci-frontend-logs"
         retention-days: 7
         if-no-files-found: warn

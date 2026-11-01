@@ -34,6 +34,17 @@ jobs:
     uses: "./.github/workflows/ci-frontend.yml"
     with:
       web: "${{ needs.admission.outputs.web != 'false' }}"
+      storybook: false
+      e2e: false
+      extension: false
+      docs: false
+      demo: false
+  support:
+    name: Support
+    needs: admission
+    uses: "./.github/workflows/ci-frontend.yml"
+    with:
+      web: false
       storybook: "${{ needs.admission.outputs.storybook != 'false' }}"
       e2e: false
       extension: "${{ needs.admission.outputs.extension != 'false' }}"
@@ -73,6 +84,7 @@ jobs:
     needs:
     - admission
     - frontend
+    - support
     if: needs.admission.outputs.preview == 'true' && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository && vars.DEMO_PREVIEW_DEPLOY_ENABLED
       == 'true'
