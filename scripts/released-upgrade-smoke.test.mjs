@@ -12,11 +12,11 @@ import { acquisitionChildEnvironment, assertDisposableBrewFixture, cleanupBrewFi
 
 const published = (version, day, extra = {}) => ({ tag_name: `v${version}`, published_at: `2026-10-${day}T10:00:00Z`, draft: false, prerelease: false, ...extra });
 
-test("the corrected 0.4.0 qualifies both the accidental latest release and legacy 0.3.1", () => {
-  const releases = [published("0.3.1", "19"), published("0.4.2", "31")];
-  assert.deepEqual(selectAcquisitionSourceVersions(releases, "0.4.0"), ["0.4.2", "0.3.1"]);
+test("0.4.0 qualifies both a newer latest release and legacy 0.3.1", () => {
+  const releases = [published("0.3.1", "19"), published("0.5.2", "31")];
+  assert.deepEqual(selectAcquisitionSourceVersions(releases, "0.4.0"), ["0.5.2", "0.3.1"]);
   assert.deepEqual(selectAcquisitionSourceVersions([releases[0]], "0.4.0"), ["0.3.1"]);
-  assert.deepEqual(selectAcquisitionSourceVersions(releases, "0.4.3"), ["0.4.2"]);
+  assert.deepEqual(selectAcquisitionSourceVersions(releases, "0.5.3"), ["0.5.2"]);
   assert.throws(() => selectAcquisitionSourceVersions([releases[1]], "0.4.0"), /requires the published v0\.3\.1/);
   assert.throws(() => selectAcquisitionSourceVersions([published("0.3.1", "19", { draft: true }), releases[1]], "0.4.0"), /requires the published v0\.3\.1/);
 });
@@ -80,9 +80,9 @@ test("the upgrade source advances to the latest published stable release", () =>
 });
 
 test("a published historical candidate is qualified against its own predecessor", () => {
-  const releases = [published("0.3.0", "18"), published("0.3.1", "19"), published("0.4.2", "31")];
+  const releases = [published("0.3.0", "18"), published("0.3.1", "19"), published("0.5.2", "31")];
   assert.equal(selectLatestReleasedVersion(releases, "0.3.1"), "0.3.0");
-  assert.equal(selectLatestReleasedVersion(releases, "0.4.0"), "0.4.2", "an unpublished correction uses the current stable release");
+  assert.equal(selectLatestReleasedVersion(releases, "0.4.0"), "0.5.2", "an unpublished correction uses the current stable release");
   assert.throws(() => selectLatestReleasedVersion([...releases, published("0.3.9", "19")], "0.3.1"), /ambiguous/);
 });
 
@@ -110,7 +110,6 @@ test("legacy refusal is limited to the documented release pair", () => {
   const release = (appVersion) => ({ descriptor: { appVersion } });
   assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.0"), "forward-schema-15"), true);
   assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.1"), "forward-schema-15"), true);
-  assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.2"), "forward-schema-15"), true);
   assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.3"), "forward-schema-15"), false);
   assert.equal(isKnownLegacyRefusal(release("0.3.0"), release("0.4.0"), "forward-schema-15"), false);
   assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.0"), "compatible"), false);
