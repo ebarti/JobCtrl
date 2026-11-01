@@ -9,19 +9,18 @@ const yamlReader = "require 'yaml'; require 'json'; puts JSON.generate(YAML.safe
 
 test("native credential CI builds only the required native dependency and exercises fake batch ownership", () => {
   const workflow = JSON.parse(execFileSync("ruby", ["-e", yamlReader, workflowPath], { encoding: "utf8" }));
-  const prPath = fileURLToPath(new URL("../.github/workflows/pr-ci.yml", import.meta.url));
-  const pr = JSON.parse(execFileSync("ruby", ["-e", yamlReader, prPath], { encoding: "utf8" }));
   for (const source of ["credential-mutation-lock.ts", "credential-process-identity.ts"]) {
     assert.equal(selectSurfaces([{ status: "M", path: "apps/api/src/" + source }]).selected.credentials, true, source + " must select native host proof");
   }
-  assert.deepEqual(pr.jobs["credentials-macos"].steps, workflow.jobs.native.steps, "PR and manual host proofs must match");
-  for (const host of ["macos", "windows", "ubuntu"]) {
-    assert.deepEqual(pr.jobs["credentials-" + host].steps, workflow.jobs.native.steps);
-    assert.equal(pr.jobs["credentials-" + host]["runs-on"], host + "-latest");
+  const job=workflow.jobs["credentials-macos"];
+  assert.equal(Object.keys(workflow.jobs).length,3);
+  for(const host of ["macos","windows","ubuntu"]) {
+    const child=workflow.jobs["credentials-"+host];
+    assert.deepEqual(child.steps,job.steps);
+    assert.equal(child["runs-on"],host+"-latest");
+    assert.equal(child.strategy,undefined);
+    assert.equal(child.if,"${{ github.event_name == 'workflow_dispatch' || inputs.enabled }}");
   }
-  const job = pr.jobs["credentials-macos"];
-  assert.deepEqual(workflow.jobs.native.strategy.matrix.os, ["macos-latest", "windows-latest", "ubuntu-latest"]);
-  assert.equal(job.strategy, undefined);
   const steps = job.steps;
   const commands = steps.flatMap((step) => typeof step.run === "string" ? step.run.split("\n").map((line) => line.trim()) : []);
   const installs = commands.filter((line) => /^corepack pnpm\b.*\binstall\b/.test(line));

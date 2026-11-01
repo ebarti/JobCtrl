@@ -497,9 +497,9 @@ The production Wrangler configs bind the EU-scoped
 intentionally ignored—the checked-in environment contract contains only the
 four bindings used by this package.
 
-On pull requests, `.github/workflows/demo-site.yml` builds the browser-local
-demo for shared web and dependency changes. The separate
-`.github/workflows/demo-edge.yml` checks and dry-runs both Workers only for
+On pull requests, the shared CI frontend workflow builds the browser-local
+demo for shared web and dependency changes. The shared backend worker
+checks and dry-runs both edge Workers only for
 edge-package, shared TypeScript configuration, dependency or edge-workflow
 changes. The site workflow also verifies the Workers on `main` pushes and manual
 runs before any production deployment. Same-repo
@@ -553,61 +553,87 @@ The repository requires maintainer approval for workflow runs from all external
 fork contributors. Review the proposed changes before approving a run. Issue
 labels and Project status do not approve code execution.
 
-Pull requests use `.github/workflows/pr-ci.yml`. It retains the required safety
-and product checks while admitting suites according to the changed surfaces.
-`Release check` scans the actual candidate with accepted base-owned privacy code,
-verifies the base, head and tested merge identities, and classifies the complete
-Git diff with the accepted `scripts/pr-ci-routing.mjs` policy. The preflight
-executes no candidate code or candidate dependency installation. Its scope
-notice records the identities, policy and selected checks.
+Pull requests and pushes to `main` use `.github/workflows/ci.yml`. The entry
+contains triggers and reusable-workflow calls; each child job still receives
+its own runner. An ordinary API or site-documentation PR uses three allocations.
+Web PRs use five, preserving separate web, supporting UI and E2E machines after
+combined runners caused contention and timeouts in hosted trials:
+
+- **Admission / Release check**, in `ci-admission.yml`, scans the actual
+  candidate with accepted default-branch privacy code, validates source and run
+  identities, and classifies the complete Git diff. It executes no candidate
+  code or candidate dependency installation.
+- **Backend / Core checks**, in `ci-backend.yml`, installs Node once and runs
+  repository contracts for every verified change. Selected API, Python,
+  distribution and edge checks reuse that runner and its locked dependencies.
+- **Frontend / UI checks**, in `ci-frontend.yml`, installs Node once and runs web
+  lint, types, unit tests and build. It allocates no
+  runner when web checks are excluded.
+- **Support / UI checks** runs boundary, Storybook, extension and site checks
+  sequentially on another VM, with shared browser setup. It allocates no
+  runner when none is selected.
+- **Browser / UI checks** calls the same frontend recipe with only E2E enabled,
+  retaining isolated and real-RPC modes on a separate VM.
 
 Missing policy at first adoption, unknown paths, shared dependencies, CI or
 privacy inputs, and uncertain scope select full coverage or block verification.
 Forks, stacked bases outside the default branch and moving policy bases use
-full coverage. A leaf runs unless the trusted decision explicitly excludes it;
-missing outputs cannot silently omit a suite. Each selected suite's own required
-check reports failure and cancellation. There is no final aggregation runner.
+full coverage. A suite runs unless trusted admission explicitly excludes it;
+missing outputs cannot silently omit one. The scope notice records the source,
+policy, run and selected checks. Required contexts belong to the actual worker
+jobs, including literal skipped platform jobs; there is no final summary runner.
 
-| Changed surface | Required product checks, in addition to privacy and repository scripts |
+| Changed surface | Product checks, in addition to privacy and repository contracts |
 | --- | --- |
 | Published site documentation | Docs build, emitted links/redirects and rendered Chromium checks |
 | Documentation outside the built site | No unrelated product suite |
-| Web source | Web lint/types/unit/build, Storybook/browser controls and web E2E |
+| Web source | Web lint/types/unit/build, Storybook/browser controls and both web E2E modes |
 | API source | API checks/tests and web E2E, including real worker RPC |
-| Worker source | API/RPC integration and the full worker suite on primary Python 3.12 |
-| Shared contracts, locks, toolchains, CI, privacy or unknown inputs | Full PR validation |
+| Worker source | API/RPC integration, the full worker suite on Python 3.12 and two native launcher shards |
+| Shared contracts, locks, toolchains, CI, privacy or unknown inputs | Full validation, including platform-specific proof |
 
-The Python suite has one canonical recipe in `.github/workflows/python.yml`.
-PR admission calls that reusable workflow; main-push and manual runs execute the
-same job. The installed app bundles CPython 3.12, so the complete locked suite,
-including migration and security cases, runs once on 3.12. This removes the
-complete 3.11 and 3.13 executions; it does not certify those source interpreters
-as having passed the full suite. Package interpreter metadata is unchanged.
-The required replacement context is `Python / Python 3.12` for the PR call;
-retire the old three Python contexts only after the replacement has passed.
+Each frontend worker runs one profile at a time. Web checks, supporting UI
+checks and E2E have separate VMs; compiler, accessibility and browser-heavy
+work no longer compete inside one runner. Within a profile, commands keep their
+original order and failure behavior, while independent suites finish their
+diagnostics after a failure. The role-named `frontend-lanes` artifacts retain
+logs and per-command outcomes. Both E2E modes retain separate JUnit and
+screenshot evidence. Resource logs record available CPUs and memory for timing
+comparisons.
 
-The native launcher still exercises race checks and the cross-runtime migration
-boundary: Go opens the candidate with the locked Python migration runtime, then
-the TypeScript API reopens it. Native credentials, distribution, Gmail and demo
-checks retain their affected inputs and execution recipes. Timing reports
-identify these checks separately from the required contexts.
+The web profile keeps the original lint, types, unit, public-type and production
+build sequence. Browser installation is selected only for profiles that need it
+and has an eight-minute bound. Hosted Ubuntu package transport uses bounded
+retries and timeouts without changing repositories or signature checks.
 
-`Script unit tests` runs the full cross-repository contract suite for every
-verified PR, including docs launch copy, version parity, release workflows,
-demo composition and supervisor lifecycle. When privacy policy inputs change,
-it also scans the pristine candidate with that candidate's privacy policy
-before candidate installation or tests can modify the workspace. This
-complements the trusted base-policy scan. Frontend boundary regression tests
-run on the selected Storybook runner alongside the web job; `web:lint` remains
-in the web job. Push and manual TypeScript runs keep the boundary regression
-tests in the web job.
+The complete primary Python recipe lives in
+`.github/actions/worker-checks/action.yml`; the backend and standalone manual
+`python.yml` both call it after locked setup. The installed app bundles CPython
+3.12, so the full suite, including migration and security cases, runs once on
+3.12. This removes complete 3.11 and 3.13 repetitions without changing package
+interpreter metadata or certifying those source interpreters.
 
-The owning TypeScript, Python, documentation, scripts, privacy and native
-workflows retain their main-push and manual behavior. Docs and demo site
-workflows retain their gated deployments on `main`.
-PR demo previews additionally require affected-only admission and the original
-Demo Site input paths. Bootstrap, full, shared, CI, security and uncertain
-admissions build and verify their selected surfaces without publishing a preview.
+The three-runner target applies when one frontend worker is sufficient. Web
+source needs all three; broader safety inputs can need additional platform
+proof. Selected native launcher proof retains two isolated macOS shards because
+its tests own fixed ports.
+Native credential checks retain macOS, Windows and Linux jobs; synthetic Gmail
+ACL checks retain Windows. Full scope therefore needs eleven allocations. These
+platform boundaries are preserved rather than replaced with Linux substitutes.
+
+The entry also owns affected checks on `main` pushes. It verifies the exact
+before/after diff; absent or forced history and moving policy use full core
+coverage. Documentation and demo publication remain in `docs-site.yml` and
+`demo-site.yml`, with their existing main input filters, environments and
+credentials. Their builds are not repeated by the core main workflow. Other standalone suite workflows remain available for manual diagnostics; the
+TypeScript entry uses the same three isolated frontend profiles.
+
+PR demo previews additionally require affected-only admission, the original
+Demo Site input paths, the same repository and the existing explicit preview
+setting. Bootstrap, full, shared, CI, security and uncertain admissions verify
+selected surfaces without publishing a preview. When changing required context
+names, verify every replacement job before migrating the ruleset; preserve
+strict up-to-date enforcement, app identity and all other protections.
 
 For the elapsed-time study, retain the workflow, all-attempt job metadata and
 trusted scope notice while the PR association is available. GitHub's REST API
