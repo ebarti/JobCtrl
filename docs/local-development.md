@@ -575,8 +575,13 @@ combined runners caused contention and timeouts in hosted trials:
 - **Browser / UI checks** calls the same frontend recipe with only E2E enabled,
   retaining isolated and real-RPC modes on a separate VM.
 
-Missing policy at first adoption, unknown paths, shared dependencies, CI or
-privacy inputs, and uncertain scope select full coverage or block verification.
+Missing policy at first adoption, unknown paths, shared contracts and toolchains,
+central CI/privacy inputs, and uncertain scope select full coverage or block verification.
+Exact owned Python dependencies, native Go implementation files, and individual
+platform/frontend/backend recipes select all their consumers. New scripts and
+workflows remain full until their ownership is explicitly reviewed. Root Markdown
+guides select documentation checks; the accepted whole-candidate privacy scan
+still runs before any candidate code.
 Forks, stacked bases outside the default branch and moving policy bases use
 full coverage. A suite runs unless trusted admission explicitly excludes it;
 missing outputs cannot silently omit one. The scope notice records the source,
@@ -590,7 +595,11 @@ jobs, including literal skipped platform jobs; there is no final summary runner.
 | Web source | Web lint/types/unit/build, Storybook/browser controls and both web E2E modes |
 | API source | API checks/tests and web E2E, including real worker RPC |
 | Worker source | API/RPC integration, the full worker suite on Python 3.12 and two native launcher shards |
-| Shared contracts, locks, toolchains, CI, privacy or unknown inputs | Full validation, including platform-specific proof |
+| Python manifest/lock | API/RPC, full worker, native shards, three credential platforms, Windows Gmail ACL and distribution contracts; no unrelated web/Storybook/site/extension checks |
+| Native Go implementation | API/RPC, full worker, both native shards and distribution contracts |
+| Native credential recipe/harness | API, full worker and all three native credential platforms |
+| Individual shared backend/frontend recipe | Every consumer profile of that recipe |
+| Shared contracts, Node/Go locks and toolchains, central CI/privacy or unknown inputs | Full validation, including platform-specific proof |
 
 Each frontend worker runs one profile at a time. Web checks, supporting UI
 checks and E2E have separate VMs; compiler, accessibility and browser-heavy
