@@ -98,7 +98,14 @@ stable releases, then verify the oldest referenced release is eligible for an
 explicit rollback and that the restored database pair matches its recorded
 backup identity and bytes. Check active, controller, journal, prior, live-instance,
 non-stable and foreign preservation while an unreferenced owned stable release
-is pruned. Exercise an independent installed Apply through the owned selector,
+is pruned. For a schema-15 forward update, verify that the initial pair is bound
+to a signed compatible predecessor and that a recovery pair containing later
+candidate writes remains bound to the candidate. Exercise explicit rollback
+from an older controller's candidate-labeled original pair, then refuse a
+missing schema declaration, changed backup, wrong or unfinished journal,
+recovery pair, unsafe path, and cross-schema source before changing live data.
+The protected release gate must also exercise the actual published predecessor.
+Exercise an independent installed Apply through the owned selector,
 then verify the selection lock is released after the controller and helper exit.
 If its exact completion is unavailable, a separate workspace's promotion must
 preserve every candidate release. An exact completed receipt permits ordinary
@@ -329,7 +336,12 @@ start, fail readiness, and retry repeatedly. Check current paired snapshots,
 original/recovery backup IDs, exact selection and policy, preserved app inode,
 protected rows and external config/resume bytes. Finalization after the active
 selection write must complete without restarting a healthy candidate. Cover
-same-schema updates and rollback target-start failure separately. Revoke a
+same-schema updates and rollback target-start failure separately. After a
+compatible rollback, re-update to both the same and a later release using the
+retained selector; preserve subsequent application and Temporal writes across
+interruptions before and after selector handoff. Refuse tampered, mismatched, revoked,
+incompatible, or newer-than-target selectors before changing the pair or journal.
+Revoke a
 candidate with live owned writers: pure cleanup must stop them without executing
 the payload or changing the journal/selection, while update and startup still
 refuse the revoked target. Initial
