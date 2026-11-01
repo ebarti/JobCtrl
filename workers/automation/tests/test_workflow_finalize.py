@@ -21,13 +21,16 @@ from unittest.mock import patch
 import pytest
 from temporalio import activity
 from temporalio.client import WorkflowFailureError
-from temporalio.exceptions import ApplicationError
-from .temporal_env import time_skipping_env
+from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
+from .temporal_env import local_env, time_skipping_env
 from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.database import get_connection
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
+from jobctrl.domain.events.workflow import WorkflowCompletedPayload, create_workflow_completed
+from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.temporal.finalize import (
+    _emit,
     record_workflow_outcome,
     record_workflow_started,
 )
@@ -35,6 +38,10 @@ from jobctrl.infrastructure.preparation_recovery import recover_preparation_stat
 from jobctrl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 from jobctrl.scoring.activities import score_activity
 from jobctrl.llm import SpendBudgetStatus
+from jobctrl.discovery.job_url_import_workflow import JobUrlImportWorkflow, JobUrlImportWorkflowInput
+from jobctrl.infrastructure.temporal.activity_runtime_telemetry import ActiveActivityInventory
+from jobctrl.infrastructure.temporal.worker import build_worker
+from jobctrl.infrastructure.temporal.run_in_activity import shutdown_activity_executors
 
 _OK_OBSERVED = ({"status": "ok"}, 0.0, "ok")
 
@@ -84,6 +91,105 @@ def _row_value(row, key):
         return None
 
 
+def test_repeated_lifecycle_write_is_idempotent_only_for_the_exact_execution() -> None:
+    workflow_id, first_run, second_run = f"run-{uuid.uuid4().hex}", str(uuid.uuid4()), str(uuid.uuid4())
+
+    def emit(run_id):
+        _emit(None, None, create_workflow_completed(LOCAL_TENANT, WorkflowCompletedPayload(
+            workflow_id=workflow_id, workflow_type="JobPipelineWorkflow", temporal_run_id=run_id,
+        )))
+
+    emit(first_run)
+    emit(first_run)
+    def count():
+        return get_connection().execute(
+            "SELECT COUNT(*) FROM job_events WHERE event_type='WorkflowCompleted' AND json_extract(payload_json, '$.workflowId')=?",
+            (workflow_id,),
+        ).fetchone()[0]
+    assert count() == 1
+    emit(second_run)
+    emit(second_run)
+    assert count() == 2
+
+
+@pytest.mark.asyncio
+async def test_canceling_url_import_records_canceled_instead_of_failed() -> None:
+    queue, workflow_id = f"import-cancel-{uuid.uuid4()}", f"import-cancel-{uuid.uuid4()}"
+    started = asyncio.Event()
+
+    @activity.defn(name="job_url_import")
+    async def pending_import(_payload):
+        started.set()
+        await asyncio.Event().wait()
+
+    async with time_skipping_env() as env:
+        async with Worker(
+            env.client, task_queue=queue, workflows=[JobUrlImportWorkflow],
+            activities=[pending_import, record_workflow_started, record_workflow_outcome],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                JobUrlImportWorkflow.run, JobUrlImportWorkflowInput(tenant_id="local", url="https://example.com/jobs/owned"),
+                id=workflow_id, task_queue=queue,
+            )
+            await asyncio.wait_for(started.wait(), timeout=5)
+            await handle.cancel()
+            with pytest.raises(WorkflowFailureError) as failed:
+                await handle.result()
+            assert isinstance(failed.value.cause, CancelledError)
+    row = _workflow_run_row(workflow_id)
+    assert _row_value(row, "status") == "canceled"
+    assert _row_value(row, "error_code") == "workflow_canceled"
+    assert "WorkflowFailed" not in _row_value(row, "events_json")
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_records_complete_while_all_remote_activity_slots_are_occupied() -> None:
+    queue = f"finalize-capacity-{uuid.uuid4()}"
+    busy_id, control_id = f"run-{uuid.uuid4().hex}", f"run-{uuid.uuid4().hex}"
+    started, release = asyncio.Event(), asyncio.Event()
+    inventory = ActiveActivityInventory()
+
+    @activity.defn(name="score")
+    async def busy_score(_payload):
+        started.set()
+        await release.wait()
+        return {"status": "ok", "elapsed": 0.0}
+
+    async with local_env() as env:
+        worker = build_worker(
+            env.client, task_queue=queue, workflows=[JobPipelineWorkflow],
+            activities=[busy_score, _check_spend_budget, record_workflow_started, record_workflow_outcome],
+            max_concurrent_activities=1, activity_inventory=inventory,
+        )
+        try:
+            async with worker:
+                busy = await env.client.start_workflow(
+                    JobPipelineWorkflow.run, JobPipelineWorkflowInput(tenant_id="local", stages=["score"]),
+                    id=busy_id, task_queue=queue,
+                )
+                await asyncio.wait_for(started.wait(), timeout=5)
+                control = await env.client.start_workflow(
+                    JobPipelineWorkflow.run, JobPipelineWorkflowInput(tenant_id="local", stages=[]),
+                    id=control_id, task_queue=queue,
+                )
+                try:
+                    await asyncio.wait_for(control.result(), timeout=3)
+                    assert _row_value(_workflow_run_row(control_id), "status") == "succeeded"
+                    assert inventory.snapshot().active_activity_count == 1
+                    assert not release.is_set()
+                finally:
+                    release.set()
+                    await asyncio.wait_for(busy.result(), timeout=5)
+                    await asyncio.wait_for(control.result(), timeout=5)
+            history = await env.client.get_workflow_handle(control_id).fetch_history()
+            await Replayer(
+                workflows=[JobPipelineWorkflow], workflow_runner=UnsandboxedWorkflowRunner(),
+            ).replay_workflow(history)
+        finally:
+            shutdown_activity_executors()
+
+
 @activity.defn(name="record_workflow_started")
 async def _fail_start_marker(_payload) -> None:
     raise ApplicationError("Synthetic lifecycle-start failure", type="configuration", non_retryable=True)
@@ -102,13 +208,14 @@ async def test_finalize_records_failure_when_start_marker_activity_fails() -> No
             activities=[*activities, _fail_start_marker],
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
-            with pytest.raises(WorkflowFailureError):
+            with pytest.raises(WorkflowFailureError) as failed:
                 await env.client.execute_workflow(
                     JobPipelineWorkflow.run,
                     JobPipelineWorkflowInput(tenant_id="local", stages=["score"]),
                     id=workflow_id,
                     task_queue=queue,
                 )
+            assert isinstance(failed.value.cause, (ActivityError, ApplicationError))
         history = await env.client.get_workflow_handle(workflow_id).fetch_history()
         await Replayer(
             workflows=[JobPipelineWorkflow], workflow_runner=UnsandboxedWorkflowRunner()

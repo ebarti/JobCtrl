@@ -31,10 +31,12 @@ import {
   createContext,
   useContext,
   type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   createElement,
   useEffect,
   useMemo,
+  useRef,
 } from "react";
 import { formatToken } from "../lib/audit-format.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
@@ -583,6 +585,10 @@ const RESUME_PLATE_COMPONENTS = {
   resume_inline: ResumeInlineElement,
 };
 
+const NATIVE_SELECTION_KEYS = new Set([
+  "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown",
+]);
+
 function shouldKeepResumeLineSelection(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
@@ -741,6 +747,20 @@ export function ResumePlateDocument({
     return () => onFormattingApiChange?.(null);
   }, [editor, onFormattingApiChange, selectedLine]);
 
+  // Native pointer/keyboard selection can precede Slate's throttled
+  // selectionchange handler. A key handled by Slate stays model-owned: the
+  // DOM can lag it during rapid typing, navigation, and composition.
+  const lastNavigationKeyDown = useRef<KeyboardEvent | null>(null);
+  const syncNativeSelection = (element: HTMLElement, target: EventTarget | null) => {
+    if (editor.api.isComposing()) return;
+    if (target instanceof Element && target.closest('[contenteditable="false"]')) return;
+    const selection = element.ownerDocument.getSelection();
+    if (!selection?.anchorNode || !selection.focusNode
+      || !element.contains(selection.anchorNode) || !element.contains(selection.focusNode)) return;
+    const range = editor.api.toSlateRange(selection, { exactMatch: false, suppressThrow: true });
+    if (range) editor.tf.select(range);
+  };
+
   return (
     <ResumePlateRenderContext.Provider value={renderContext}>
       <Plate
@@ -758,19 +778,30 @@ export function ResumePlateDocument({
           data-rendered-line-count={lines.length}
           role="textbox"
           spellCheck={false}
+          onPointerUpCapture={(event: ReactPointerEvent<HTMLDivElement>) => {
+            if (!event.defaultPrevented && event.button === 0) {
+              syncNativeSelection(event.currentTarget, event.target);
+            }
+          }}
+          onKeyUpCapture={(event: ReactKeyboardEvent<HTMLDivElement>) => {
+            const keyDown = lastNavigationKeyDown.current;
+            if (!keyDown || keyDown.key !== event.key) return;
+            lastNavigationKeyDown.current = null;
+            if (!keyDown.defaultPrevented && !keyDown.isComposing
+              && !event.defaultPrevented && !event.nativeEvent.isComposing) {
+              syncNativeSelection(event.currentTarget, event.target);
+            }
+          }}
           onKeyDownCapture={(event: ReactKeyboardEvent<HTMLDivElement>) => {
+            if (NATIVE_SELECTION_KEYS.has(event.key)) {
+              lastNavigationKeyDown.current = event.nativeEvent;
+            }
             // Deletion can run before Slate's throttled selectionchange.
             // Sync its range now, but leave text insertion to Slate: its
             // native caret may lag the model while typing or composing.
             if (event.key !== "Backspace" && event.key !== "Delete") return;
             if (event.defaultPrevented || event.nativeEvent.isComposing || editor.api.isComposing()) return;
-            if (event.target instanceof Element && event.target.closest('[contenteditable="false"]')) return;
-            const selection = event.currentTarget.ownerDocument.getSelection();
-            if (!selection?.anchorNode || !selection.focusNode
-              || !event.currentTarget.contains(selection.anchorNode)
-              || !event.currentTarget.contains(selection.focusNode)) return;
-            const range = editor.api.toSlateRange(selection, { exactMatch: false, suppressThrow: true });
-            if (range) editor.tf.select(range);
+            syncNativeSelection(event.currentTarget, event.target);
           }}
         />
       </Plate>

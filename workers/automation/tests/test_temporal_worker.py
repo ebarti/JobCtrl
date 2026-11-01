@@ -47,6 +47,8 @@ def test_build_worker_separates_temporal_and_blocking_activity_executors(
     assert worker.activity_executor is executors[0]
     assert blocking == [executors[1]]
     assert worker.activity_executor is not blocking[0]
+    assert worker.max_concurrent_activities == 4
+    assert worker.max_concurrent_local_activities == 2
     assert executors[0].kwargs["thread_name_prefix"] == ("jobctrl-temporal-sync-activity")
     assert executors[1].kwargs["thread_name_prefix"] == ("jobctrl-blocking-activity")
 

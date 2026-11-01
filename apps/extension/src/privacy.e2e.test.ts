@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -81,13 +82,13 @@ describe("built extension privacy boundary", () => {
     });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         requests.push(url);
         if (url.endsWith("/v1/extension/captures")) {
           return jsonResponse({
             ok: true,
-            itemId: "extension-1",
+            itemId: `extension:${createHash("sha256").update((JSON.parse(String(init?.body)) as { captureId: string }).captureId).digest("hex").slice(0, 32)}`,
             jobKey: "https://careers.example.com/acme/senior-platform-engineer",
             importedAt: "2026-07-05T10:00:00Z",
             provenance: {

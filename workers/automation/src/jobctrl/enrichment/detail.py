@@ -35,6 +35,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -72,7 +73,7 @@ from jobctrl.domain.enrichment.value_objects import (
     FullDescription,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
-from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
+from jobctrl.domain.errors import ConfigurationError, EnrichmentCanceledError, TransientNetworkError
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
@@ -91,16 +92,20 @@ from jobctrl.infrastructure.enrichment.sqlite_repository import (
     SqlitePostingSnapshotSetRepository,
 )
 from jobctrl.infrastructure.enrichment.playwright_fetcher import (
+    _assert_capture_url,
     _clean_content_html,
     _collect_json_ld,
     _collect_main_content,
     _collect_status_html,
+    _dismiss_optional_linkedin_dialog,
+    _partial_resource_failure,
 )
 from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     LinkedInApplyResolution,
     LinkedInApplyUrlResolver,
     linkedin_apply_resolver_enabled,
 )
+from jobctrl.infrastructure.network.http_client import record_rate_limited_response
 from jobctrl.infrastructure.network.proxy import ProxyConfig, parse_proxy
 from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
 from jobctrl.infrastructure.llm import get_llm_adapter
@@ -340,8 +345,8 @@ def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
             return 0
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            # Present the gateway-resolved honest UA, never an import-time constant.
-            page = browser.new_page(user_agent=decision.user_agent)
+            # Present the gateway session identity, including optional client hints.
+            page = browser.new_page(user_agent=decision.user_agent, extra_http_headers=dict(decision.request_headers))
             page.on("response", capture_algolia)
             page.goto(listing_url, timeout=60000)
             page.wait_for_load_state("networkidle")
@@ -408,6 +413,7 @@ def _page_to_detail_page(page, url: str, status: int | None = None) -> DetailPag
     the fields the extractors need so the cascade can run as pure
     functions over the value object.
     """
+    _dismiss_optional_linkedin_dialog(page)
     fetched_at = datetime.now(timezone.utc).isoformat()
     final_url = page.url
     page_title = ""
@@ -419,6 +425,7 @@ def _page_to_detail_page(page, url: str, status: int | None = None) -> DetailPag
     html = _collect_main_content(page)
     visibility = []
     status_html, status_complete, raw_hash = _collect_status_html(page, visibility_out=visibility)
+    _assert_capture_url(page, final_url)
     return DetailPage(
         url=url,
         final_url=final_url,
@@ -475,6 +482,20 @@ def _live_result_to_detail_page(result: LiveBrowserResult, url: str) -> DetailPa
 _RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 
 
+def _mark_server_rate_limit(result: dict, status: int, retry_after: float, t0: float) -> dict:
+    result.update(
+        status="blocked",
+        politeness_outcome=PolitenessOutcome.RATE_LIMITED.value,
+        http_status=status,
+        retry_after_seconds=retry_after,
+        active_state=ActiveState.UNKNOWN.value,
+        verification_method="http_error",
+        error=f"HTTP {status}: the server deferred this request; enrichment will retry after the host cooldown.",
+        elapsed=time.time() - t0,
+    )
+    return result
+
+
 def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = None, page_interpreter=None) -> dict:
     """Run the three-tier cascade on one Playwright page.
 
@@ -516,7 +537,7 @@ def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = No
             result["error"] = decision.reason
             result["elapsed"] = time.time() - t0
             return result
-        return _scrape_detail_page_body(page, url, result, t0, page_interpreter=page_interpreter)
+        return _scrape_detail_page_body(page, url, result, t0, session=session, page_interpreter=page_interpreter)
 
 
 def scrape_detail_page_via_live_chrome(
@@ -552,14 +573,17 @@ def scrape_detail_page_via_live_chrome(
             result["elapsed"] = time.time() - t0
             return result
         live_result = browser.rendered_page(url, timeout_seconds=60.0)
-    final_safety = validate_public_http_url(live_result.final_url)
-    if not final_safety.allowed:
-        return _mark_public_fetch_failure(
-            result,
-            final_safety,
-            blocked_url=live_result.final_url or url,
-            t0=t0,
-        )
+        final_safety = validate_public_http_url(live_result.final_url)
+        if not final_safety.allowed:
+            return _mark_public_fetch_failure(
+                result,
+                final_safety,
+                blocked_url=live_result.final_url or url,
+                t0=t0,
+            )
+        retry_after = record_rate_limited_response(session, live_result.final_url, live_result.status_code)
+        if retry_after is not None:
+            return _mark_server_rate_limit(result, live_result.status_code, retry_after, t0)
     detail_page = _live_result_to_detail_page(live_result, url)
     return _extract_detail_page(
         detail_page,
@@ -570,13 +594,16 @@ def scrape_detail_page_via_live_chrome(
     )
 
 
-def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_interpreter=None) -> dict:
+def _scrape_detail_page_body(
+    page, url: str, result: dict, t0: float, *, session: PolitenessSession, page_interpreter=None
+) -> dict:
     """Navigate + run the three-tier cascade inside the held politeness slot."""
     route_guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True).install()
     status_code: int | None = None
+    resp = None
     try:
         try:
-            resp = page.goto(url, timeout=45000)
+            resp = page.goto(url, wait_until="domcontentloaded", timeout=45000)
             if resp is not None:
                 status_code = resp.status
             page.wait_for_load_state("domcontentloaded", timeout=15000)
@@ -585,7 +612,7 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
             except Exception:
                 pass
         except Exception as exc:
-            if route_guard.blocked:
+            if route_guard.blocked and not _partial_resource_failure(route_guard):
                 decision = _route_failure_decision(route_guard)
                 return _mark_public_fetch_failure(
                     result,
@@ -593,12 +620,13 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
                     blocked_url=route_guard.blocked_url or url,
                     t0=t0,
                 )
-            err_str = str(exc)
-            result["error"] = "timeout" if "timeout" in err_str.lower() else err_str[:200]
-            result["elapsed"] = time.time() - t0
-            return result
+            if not _partial_resource_failure(route_guard):
+                err_str = str(exc)
+                result["error"] = "timeout" if "timeout" in err_str.lower() else err_str[:200]
+                result["elapsed"] = time.time() - t0
+                return result
 
-        if route_guard.blocked:
+        if route_guard.blocked and not _partial_resource_failure(route_guard):
             decision = _route_failure_decision(route_guard)
             return _mark_public_fetch_failure(
                 result,
@@ -616,14 +644,23 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
                 t0=t0,
             )
 
+        retry_after = record_rate_limited_response(session, str(page.url), status_code, getattr(resp, "headers", None))
+        if retry_after is not None:
+            return _mark_server_rate_limit(result, status_code, retry_after, t0)
         detail_page = _page_to_detail_page(page, url, status=status_code)
-        if route_guard.blocked:
+        if route_guard.blocked and not _partial_resource_failure(route_guard):
             decision = _route_failure_decision(route_guard)
             return _mark_public_fetch_failure(
                 result,
                 decision,
                 blocked_url=route_guard.blocked_url or url,
                 t0=t0,
+            )
+        if _partial_resource_failure(route_guard):
+            detail_page = replace(
+                detail_page,
+                status_evidence_complete=False,
+                status_evidence_reason=f"public_resource_{route_guard.failure_kind.value}",
             )
     finally:
         route_guard.close()
@@ -1307,13 +1344,11 @@ def _record_enrich_politeness_deferral(
     activity_lease: EnrichmentExecutionLease | None = None,
     claim_version: int | None = None,
 ) -> None:
-    """Fold a mid-flight budget block (peek allowed, guard denied) as a deferral.
+    """Preserve a started job as retryable after a budget or server deferral.
 
-    Only reachable in the rare parallel race where the shared run budget drains
-    between the pre-navigation peek and the guard. The politeness *outcome* was
-    already recorded by the guard (non-error); here we close the started attempt
-    as a retryable failure (``Running -> Failed`` is valid) so the job is retried
-    on the next run rather than counted as a scrape failure.
+    The guard or response handler has already recorded the acquisition outcome.
+    Close this attempt without replacing accepted posting content; the existing
+    recovery path can retry after host pacing admits another request.
     """
     from jobctrl.state import record_job_event, set_stage_state, utc_now
 
@@ -1358,6 +1393,8 @@ def _record_enrich_politeness_deferral(
             "errorCode": error.code,
             "retryable": True,
             "politenessOutcome": cascade_result.get("politeness_outcome"),
+            "httpStatus": cascade_result.get("http_status"),
+            "retryAfterSeconds": cascade_result.get("retry_after_seconds"),
         },
         tenant_id=tenant_id,
     )
@@ -1600,7 +1637,7 @@ def scrape_site_batch(
                 if _PROXY_CONFIG is not None:
                     launch_opts["proxy"] = _PROXY_CONFIG.playwright
                 browser = p.chromium.launch(**launch_opts)
-                context = browser.new_context(user_agent=base_gateway.user_agent)
+                context = browser.new_context(user_agent=base_gateway.user_agent, extra_http_headers=dict(base_gateway.request_headers))
                 anonymous_page = context.new_page()
                 return anonymous_page
 
@@ -1652,7 +1689,7 @@ def scrape_site_batch(
             for i, (job_id, title) in enumerate(targets):
                 claim_version: int | None = None
                 if cancel_event is not None and cancel_event.is_set():
-                    raise TransientNetworkError("enrichment canceled")
+                    raise EnrichmentCanceledError("enrichment canceled")
                 log.info(
                     "[%d/%d] %s",
                     i + 1,
@@ -1799,7 +1836,7 @@ def scrape_site_batch(
                         cascade_result.get("status") == "blocked"
                         and cascade_result.get("security_outcome") != _SECURITY_OUTCOME_UNSAFE_URL
                     ):
-                        # Rare parallel race: budget drained between peek + guard.
+                        # Budget exhaustion or a server response deferred this host.
                         _record_enrich_politeness_deferral(
                             conn,
                             repo,
@@ -1813,6 +1850,10 @@ def scrape_site_batch(
                             claim_version=claim_version,
                         )
                         conn.commit()
+                        if cascade_result.get("politeness_outcome") == PolitenessOutcome.RATE_LIMITED.value:
+                            stats["processed"] += 1
+                            stats["blocked"] += 1
+                            continue
                         break
                     cascade_result = _apply_authenticated_linkedin_apply_url(
                         site=site,
@@ -1822,7 +1863,7 @@ def scrape_site_batch(
                         page=page,
                     )
                     if cancel_event is not None and cancel_event.is_set():
-                        raise TransientNetworkError("enrichment canceled")
+                        raise EnrichmentCanceledError("enrichment canceled")
                     stats["processed"] += 1
 
                     tier = cascade_result.get("tier_used")
@@ -2931,7 +2972,7 @@ def _refresh_selected_apply_targets(
         if not _is_linkedin_job("linkedin", identity.posting_url.value):
             continue
         if cancel_event is not None and cancel_event.is_set():
-            raise TransientNetworkError("enrichment canceled")
+            raise EnrichmentCanceledError("enrichment canceled")
         started_at = utc_now()
         method = "navigation_error"
         target: str | None = None
@@ -2966,7 +3007,7 @@ def _refresh_selected_apply_targets(
         except Exception:  # noqa: BLE001 - persist a code-owned, non-sensitive failure
             method = "navigation_error"
         if cancel_event is not None and cancel_event.is_set():
-            raise TransientNetworkError("enrichment canceled")
+            raise EnrichmentCanceledError("enrichment canceled")
         recovered_url = ApplicationUrl(value=target) if target is not None else None
         result = (
             recovered_url
@@ -3270,7 +3311,7 @@ def _repair_legacy_missing_apply_url_content_trust_candidates(
     for row in rows:
         try:
             if cancel_event is not None and cancel_event.is_set():
-                raise TransientNetworkError("enrichment canceled")
+                raise EnrichmentCanceledError("enrichment canceled")
             tenant_id = TenantId(str(row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0]))
             job_id = canonical_job_id(str(row["job_id"] if isinstance(row, sqlite3.Row) else row[1]))
             aggregate = repo.load(tenant_id, job_id)
@@ -3415,7 +3456,7 @@ def _reset_authenticated_linkedin_retry_candidates(
         for row in rows:
             try:
                 if cancel_event is not None and cancel_event.is_set():
-                    raise TransientNetworkError("enrichment canceled")
+                    raise EnrichmentCanceledError("enrichment canceled")
                 attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[5]
                 current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[3]
                 attempt_count = (
@@ -3444,7 +3485,7 @@ def _reset_authenticated_linkedin_retry_candidates(
                     if not _last_authenticated_apply_url_recovery_retryable(attempts_json):
                         continue
                     if cancel_event is not None and cancel_event.is_set():
-                        raise TransientNetworkError("enrichment canceled")
+                        raise EnrichmentCanceledError("enrichment canceled")
                     if resolver is None and resolver_factory is not None:
                         try:
                             resolver = resolver_factory()
@@ -3476,7 +3517,7 @@ def _reset_authenticated_linkedin_retry_candidates(
                         # gate already recorded the budget/rate outcome.
                         continue
                     if cancel_event is not None and cancel_event.is_set():
-                        raise TransientNetworkError("enrichment canceled")
+                        raise EnrichmentCanceledError("enrichment canceled")
                     apply_url_value = resolved.get("application_url")
                     recovered = ApplicationUrl(value=str(apply_url_value)) if apply_url_value else None
                     # Every authenticated pass records an attempt so a
@@ -4499,7 +4540,7 @@ def _run_detail_scraper(
 
         def _scrape_site(site: str) -> dict:
             if cancel_event is not None and cancel_event.is_set():
-                raise TransientNetworkError("enrichment canceled")
+                raise EnrichmentCanceledError("enrichment canceled")
             thread_conn = db_module.get_connection(database_path)
             try:
                 jobs = planned_site_jobs[site]
@@ -4577,7 +4618,7 @@ def _run_detail_scraper(
                     cancel_event=cancel_event,
                     activity_lease=activity_lease,
                 )
-                raise TransientNetworkError("enrichment canceled")
+                raise EnrichmentCanceledError("enrichment canceled")
             _release_unstarted_enrichment_cohort(
                 conn,
                 owned_job_ids,
@@ -4600,7 +4641,7 @@ def _run_detail_scraper(
                     cancel_event=cancel_event,
                     activity_lease=activity_lease,
                 )
-                raise TransientNetworkError("enrichment canceled")
+                raise EnrichmentCanceledError("enrichment canceled")
             jobs = planned_site_jobs[site]
             log.info("%s -- %d jobs", site, len(jobs))
             try:

@@ -53,6 +53,16 @@ class _InMemoryApplyRunRepository:
     def __init__(self) -> None:
         self._store: dict[tuple[str, str], ApplyRun] = {}
 
+    def admit_email_intent(self, run: ApplyRun) -> None:
+        self.save(run)
+
+    def email_intent_matches(self, run: ApplyRun) -> bool:
+        stored = self.load(run.tenant_id, run.run_id)
+        return bool(stored and any(event.event_type == "ApplySubmitIntended" for event in stored.events))
+
+    def email_intent_durable(self, run: ApplyRun) -> bool:
+        return self.email_intent_matches(run)
+
     def save(self, run: ApplyRun) -> None:
         self._store[(str(run.tenant_id), str(run.run_id))] = run
 
@@ -111,11 +121,12 @@ class _FakeEmailSender:
     def __init__(self):
         self.sent = []
 
-    def send_email_application(self, candidate):
+    def send_email_application(self, candidate, *, operation):
         self.sent.append(candidate)
         return EmailApplicationSendResult(
             provider="gmail",
             message_id="message-1",
+            operation=operation,
             thread_id="thread-1",
         )
 
@@ -247,6 +258,10 @@ def test_approved_email_uses_transport_locked_agent_and_owned_sender(
     monkeypatch,
     repo,
 ):
+    from contextlib import nullcontext
+    from dataclasses import replace
+    from jobctrl.domain.ports.apply import EmailApplicationAuthorization
+
     _stub_legacy_prompt(monkeypatch)
     browser = _FakeBrowser()
     agent = _FakeAgent(
@@ -263,6 +278,9 @@ def test_approved_email_uses_transport_locked_agent_and_owned_sender(
         agent_port=agent,
         repository=repo,
         email_sender=sender,
+        email_intent_authorizer=lambda _tenant, _job, _posting, _run, candidate, _context: nullcontext(
+            EmailApplicationAuthorization(candidate=replace(candidate, attachment_bytes=b"synthetic attachment"), evidence={})
+        ),
     )
     use_case = SubmitApplicationUseCase(
         repository=repo,
@@ -453,12 +471,15 @@ def test_execute_keeps_reviewed_materials_outside_agent_worker(
         approved_application_url="": FakeChromeProc(),
     )
 
+    monkeypatch.setattr(chrome_mod, "get_worker_endpoint", lambda _worker, _process: (46817, "ws://127.0.0.1:46817/devtools/browser/synthetic"), raising=False)
+
     class PathCheckingAgent:
         def submit_application(self, *, prompt, **_kwargs):
             upload_path = Path(worker_dir) / "Test_Applicant_Resume.pdf"
             assert not upload_path.exists()
             assert str(upload_path) not in prompt.text
             assert "upload_artifact" not in prompt.text
+            assert prompt.mcp_config["port"] == 46817
             return AgentResult(
                 submission_result=DryRunComplete(
                     navigated_to="https://example.com/apply",

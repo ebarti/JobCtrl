@@ -118,6 +118,22 @@ printing secrets. **Status unknown** (`inspection_failed`) is distinct from
 **not configured**: it means JobCtrl could not inspect the native store. Provider-mode
 replacement is all-or-nothing from the web contract; a failed change preserves
 the previous configuration or reports an explicit sanitized recovery failure.
+If credential inspection fails during an open provider edit, JobCtrl keeps the
+unsaved form and its save or removal result visible. Guided changes stay paused
+until credential inspection succeeds again.
+If you enter a newer CapSolver value while a save or removal is pending, it
+remains in the form as an unsaved edit.
+Credential updates from JobCtrl API processes for the same OS user are
+serialized. If another update or its native helper is still active, retry
+after it finishes. A timed-out update whose helper has not stopped reports an
+incomplete recovery; inspect the credential status before retrying.
+If JobCtrl cannot verify a previous helper's process identity, it reports
+`ownership_unverified` and preserves its coordination record. Restore the
+packaged Python runtime, or the prepared worker virtual environment in a source
+checkout, and retry. If inspection remains unavailable, stop all JobCtrl API
+processes, verify that the recorded helper has exited, and only then remove
+the `.jobctrl-credential-mutations.sqlite3.inflight` record in the OS user's
+home. Do not signal a process solely because its PID matches the record.
 
 Linux requires `/usr/bin/secret-tool` and an accessible Secret Service in the
 current user's D-Bus session, with its collection unlocked. Windows requires
@@ -195,6 +211,11 @@ settings, API/Vite proxy targets, or isolated stacks should use
 
 ## LLM Providers
 
+**Generate cover letters** in Settings → Model selection is off by default.
+Enable it to include new letters in material preparation. With it off, JobCtrl
+prepares the reviewed résumé and PDF; accepted letters remain available.
+See [Materials & Tailoring](materials-and-tailoring.md) for generation behavior.
+
 Local/custom endpoints are not currently supported or configurable. The
 [design-only local/custom provider contract](../plans/local-custom-provider-contract.md)
 defines the containment, capability, accounting, and product proof required
@@ -225,23 +246,88 @@ runtime model ID alongside a friendly name when they differ. Only provider and
 model IDs are written to `config.json`; credentials remain on the credential
 boundary. A model absent from the active runtime catalog is intentionally not
 selectable, even if that model exists in the provider's broader product lineup.
+The pickers refresh the catalog every minute while visible. A saved ID missing
+from that catalog is explained beside the control and is never added to its
+options. A pinned provider client can expose a different catalog from a newer
+installed client using the same account; check the active JobCtrl runtime before
+concluding the account lacks a model.
+
+Model preference and AI execution-policy controls pause editing while their
+save is pending. After a failed save, the chosen values remain available to
+review and retry.
+
+Provider setup forms let you continue editing during a save. A later key,
+service-account path, or mode choice remains in the form for a separate save;
+an acknowledged key or path is cleared only if it still matches the submitted
+value. A provider-status change does not replace a form with unsaved edits.
 
 A saved preference is scoped to its provider and cannot change which provider
 JobCtrl selects. Newly constructed adapters use this precedence:
 
 1. explicit non-default workflow model;
-2. saved preference for the selected ready provider;
-3. that provider's default.
+2. **Default model** saved under Settings → Model selection;
+3. saved preference for the selected ready provider;
+4. that provider's default.
 
-Provider selection itself keeps the default readiness order Claude, then
+The saved default is a provider-qualified route such as `codex:gpt-6.1-sol`.
+It also selects the optional writing pass's provider and model. Clear it to
+restore automatic provider selection. Employer-analysis perspectives and
+explicit generator/judge choices remain separate overrides; to use one model
+throughout analysis and materials, select only its provider perspective and set
+those roles to the same model. A pinned default fails visibly on provider
+failure rather than silently selecting a different model.
+
+**Extra résumé polish** is off by default under Settings → Model selection.
+A résumé is saved once its required factual, quality and applicable persona
+reviews approve it. Enable the option for an additional wording pass; any
+changed text receives fresh reviews, so this takes more time. The setting
+is read when each résumé generation starts. An already-started résumé generation
+keeps its choice; queued or later Tailor steps use the newly saved value, even
+within an existing workflow. Accepted materials are not rewritten. Saving this
+option alone does not require a live model catalog or change your model choices.
+
+**Reasoning effort** appears for each selected Codex model whose live catalog
+reports supported efforts. Options come from that model's
+`supportedReasoningEfforts`; JobCtrl does not invent options from another model.
+The selected effort applies to every new call using that model, including
+analysis, generation, review and the writing pass. Higher efforts may take more
+time and tokens. The provider's option description is shown beside the choice.
+
+**Existing call settings** clears the override and preserves the earlier policy:
+High for Codex analysis and ordinary model calls, and Low for tailoring drafts
+whose generation policy supplies a zero thinking budget. A selected effort
+overrides that numeric-budget mapping. Existing adapters retain their captured
+effort; newly acquired adapters use the saved choice without a worker restart.
+Determinations record an explicit effort and bind their cache identity to it;
+changing effort never relabels or erases an accepted result. Other providers
+retain their existing SDK controls.
+
+Without a saved default, provider selection keeps the readiness order Claude, then
 Codex, then Google. Explicit `provider:model` workflow values select the named
 provider. Existing adapters and in-flight work keep their resolved model. Newly
 started work rechecks the effective selection when it acquires the shared
 adapter and receives a new adapter object when the saved preference changed; no worker
 restart is required for a preferred-model edit. The initially selected ready
 provider stays process-stable on warm acquisitions so status checks do not rerun
-for every workflow. Provider credential/readiness changes retain their existing
-restart requirement (or require an explicit adapter reset).
+for every workflow until a real SDK call reports an availability failure.
+Authentication rejection excludes that provider from subsequent automatic
+attempts in the same process. An explicit exhausted usage allowance or an
+unavailable SDK execution excludes the failed model route. Temporary rate
+limits, overloads, server errors and connection failures do not exclude it:
+the failed call stays visible and existing bounded retries may use the same
+provider/model again. This also preserves concurrent jobs and explicit model
+pins after a temporary failure. When a route is unavailable, an automatic
+durable retry can acquire another ready route. Claude SDK query and
+message-collection
+exceptions are classified at that execution boundary, including otherwise
+untyped SDK exceptions; the current analysis leg stops after that failure.
+Parsing and reviewing returned content remain outside this boundary. The
+retry's recorded provider/model identify the call that actually ran. Existing
+adapters and accepted determinations are never relabeled. Explicit model pins
+remain bound and fail visibly when their
+route is unavailable. Response/schema/citation failures and spend denial do
+not discard a provider. Restart or an explicit adapter reset clears observed
+availability failures; credential changes retain their restart requirement.
 
 The **Employer analysis perspectives** selection is also saved here. Its
 execution behavior belongs to the Discover preparation workflow and is
@@ -265,6 +351,9 @@ revoked credentials.
 
 Advanced operators can set `JOBCTRL_CODEX_BIN` to override the Codex runtime.
 By default, JobCtrl uses its pinned, bundled `openai-codex-cli-bin` binary.
+Authentication reuse copies only `auth.json`. Generation chats are ephemeral;
+provider databases and logs use private temporary storage removed when the
+client closes, while authentication remains in the stable JobCtrl home.
 
 ### Claude
 
@@ -320,11 +409,27 @@ token cost for an in-flight call. The limit is not a reservation or strict
 in-flight cap. `GET /v1/health` and `jobctrl doctor` report the global USD total
 and each lane's observed tokens, configured threshold, and status.
 
+## Provider sessions
+
+JobCtrl uses agent-runtime-kit to execute provider requests. Codex can keep its
+SDK process warm while each request starts a fresh conversation. This preserves
+independent generation and review. Saved models, reasoning effort, budgets and
+provider availability still determine which requests run.
+
+The runtime keeps a bounded number of idle clients. It does not add another
+queue below the pipeline's configured concurrency. Model reasoning and required
+artifact reviews can still take time even when the SDK process is already warm.
+
 ## Execution Concurrency
 
 Settings separates pipeline parallelism from the worker capacity that executes
 it. Increasing either value does not create provider quota or bypass the daily
 budget.
+
+In **Settings → General → Cost and capacity**, an edited draft is autosaved
+after five seconds without an edit. If saving fails, the unsaved values and
+error remain visible. JobCtrl does not automatically repeat the unchanged
+draft; choose **Save changes** to retry, or edit it to schedule another attempt.
 
 ### Concurrent applications {#runtime-setting-concurrent-applications}
 
@@ -336,15 +441,17 @@ Score, Tailor, Cover, or the number of Temporal activities the worker can run.
 ### Pipeline internal concurrency {#runtime-setting-pipeline-internal-concurrency}
 
 **Pipeline internal concurrency** (`pipelineInternalConcurrency`, default `1`)
-is one saved value shared by manual Pipeline actions and automatic Score →
-Tailor → Cover preparation after a profile update. Changing the field on the
-Pipelines page saves the same `config.json` value shown under **Settings →
-General**; newly started batches use it. Existing in-flight workflows keep the
-value they started with.
+is one saved value used by manual Pipeline actions and automatic preparation
+recovery. Changing it on the Pipelines page saves the same `config.json` value
+shown under **Settings → General**. Existing workflows keep their original input.
+Profile edits themselves do not start scoring or material preparation.
 
-This setting controls parallel work inside a pipeline batch. It does not create
-Temporal activity slots, and effective execution remains bounded by the active
-worker capacity.
+Manual batches use it to bound parallel work within the batch. Concurrent
+automatic recovery batches share that budget: newly dispatched work receives
+only the parallelism left by other active automatic cohorts. This lets unrelated
+jobs recover while preparation continues without multiplying model parallelism
+for each recovery batch. Worker activity slots and source politeness still
+apply independently. See [Automatic preparation recovery](../architecture/pipeline/operations.md#automatic-preparation-recovery).
 
 ### Worker activity slots {#runtime-setting-worker-activity-slots}
 
@@ -376,9 +483,12 @@ not general settings and must never be committed.
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Enable OpenTelemetry export of LLM, workflow, and JSON-RPC spans to Langfuse. |
 | `LANGFUSE_DISABLE=1` | Disable export even when credentials are present. |
 | `LANGFUSE_OTEL_TIMEOUT_SECONDS` | OTLP/HTTP export timeout, default `5.0`. |
+| `JOBCTRL_TRACE_CONTENT=1` | Explicit debugging opt-in to capture LLM messages, returned output and adapter-supplied schema/runtime instructions at the configured tracing destination. Off by default; may contain private profile/job/material text. |
 | `JOBCTRL_ENV` | Environment attribute stamped on exported traces, default `local`. |
 
-When enabled, export is metadata-only: provider/model identifiers, operation or
-stage, success/failure, token counts, and safe size metrics. Raw prompts,
-messages, job text, profiles, generated materials, completions, credentials,
-local paths, logs, and database content are not span attributes.
+When enabled, export defaults to provider/model identifiers, operation or stage,
+success/failure, token counts and safe size metrics. Prompt/completion capture
+requires the separate `JOBCTRL_TRACE_CONTENT` opt-in above. Credentials, arbitrary
+parameters, runtime paths, logs, database content and exception messages remain
+excluded; captured input/output text can itself contain private user data. See
+[Telemetry](data-and-safety.md#telemetry) for the destination and retention boundary.

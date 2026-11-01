@@ -2,27 +2,60 @@ import {
   ProfileImportRequestSchema,
   type ProfileImportRequest,
 } from "@jobctrl/contracts";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useForm } from "@tanstack/react-form";
 import { IconCheck, IconFileTypePdf, IconMinus } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { useImportResumeMutation } from "../hooks/useImportResumeMutation.js";
-import { useProfileImportStore } from "../stores/profile-import-store.js";
+import {
+  hasCompletedImport,
+  hasPendingImport,
+  useProfileImportStore,
+} from "../stores/profile-import-store.js";
 
 export function ImportConfirmForm() {
   const navigate = useNavigate();
+  const router = useRouter();
+  const { storage } = usePorts();
   const filename = useProfileImportStore((state) => state.filename);
   const pdfBase64 = useProfileImportStore((state) => state.pdfBase64);
   const importProfile = useProfileImportStore((state) => state.importProfile);
   const importStyle = useProfileImportStore((state) => state.importStyle);
   const reset = useProfileImportStore((state) => state.reset);
+  const storageFailure = useProfileImportStore((state) => state.storageFailure);
+  const completedImport = useProfileImportStore(hasCompletedImport);
+  const importPending = useProfileImportStore(hasPendingImport);
+  const beginImport = useProfileImportStore((state) => state.beginImport);
+  const finishImport = useProfileImportStore((state) => state.finishImport);
+  const navigationGeneration = useRef(0);
+  const navigationAbort = useRef(new AbortController());
 
   const importResume = useImportResumeMutation();
   const [statusMessage, setStatusMessage] = useState("");
+
+  useEffect(() => {
+    navigationAbort.current = new AbortController();
+    const unsubscribe = router.subscribe(
+      "onBeforeNavigate",
+      ({ pathChanged }) => {
+        if (pathChanged) {
+          navigationGeneration.current += 1;
+          navigationAbort.current.abort();
+          navigationAbort.current = new AbortController();
+        }
+      },
+    );
+    return () => {
+      unsubscribe();
+      navigationGeneration.current += 1;
+      navigationAbort.current.abort();
+    };
+  }, [router]);
 
   const form = useForm({
     defaultValues: {
@@ -40,10 +73,73 @@ export function ImportConfirmForm() {
       },
     },
     onSubmit: async ({ value }) => {
+      const current = useProfileImportStore.getState();
+      const revision = current.selectionRevision;
+      const generation = navigationGeneration.current;
+      const pathname = router.history.location.pathname;
+      if (
+        value.filename !== current.filename ||
+        value.pdfBase64 !== current.pdfBase64 ||
+        value.importProfile !== current.importProfile ||
+        value.importStyle !== current.importStyle
+      )
+        return;
+      if (!(await beginImport(revision, storage))) return;
+      if (
+        generation !== navigationGeneration.current ||
+        pathname !== router.history.location.pathname
+      ) {
+        finishImport(revision);
+        return;
+      }
       setStatusMessage("");
-      const response = await importResume.mutateAsync(value);
+      let response;
+      try {
+        response = await importResume.mutateAsync(value);
+      } catch (error) {
+        finishImport(revision);
+        throw error;
+      }
+      finishImport(revision, response);
+      const latest = useProfileImportStore.getState();
+      if (
+        generation !== navigationGeneration.current ||
+        pathname !== router.history.location.pathname
+      )
+        return;
+      if (latest.selectionRevision !== revision || latest.selectionPending) {
+        setStatusMessage(
+          "The import request for the previous PDF completed. Your newer selection was kept.",
+        );
+        return;
+      }
       setStatusMessage(`import draft ${response.action?.status ?? "ready"}`);
-      reset();
+      if (
+        !(await reset(
+          storage,
+          () =>
+            generation === navigationGeneration.current &&
+            pathname === router.history.location.pathname,
+          navigationAbort.current.signal,
+        ))
+      ) {
+        if (
+          generation !== navigationGeneration.current ||
+          pathname !== router.history.location.pathname
+        )
+          return;
+        setStatusMessage(
+          useProfileImportStore.getState().storageFailure === "conflict"
+            ? "The import request completed. Another tab changed the saved PDF, so its newer selection was kept. Return to upload and load the latest saved PDF."
+            : "The import request completed, but the PDF is still saved in this browser. Retry removing it or return to Profile; you do not need to submit the import again.",
+        );
+        return;
+      }
+      if (
+        generation !== navigationGeneration.current ||
+        pathname !== router.history.location.pathname
+      )
+        return;
       await navigate({ to: "/profile" });
     },
   });
@@ -100,9 +196,27 @@ export function ImportConfirmForm() {
           <AlertDescription>{errorMessage}</AlertDescription>
         </Alert>
       ) : null}
-      {statusMessage ? (
+      {storageFailure === "conflict" || storageFailure === "read" ? (
+        <Alert className="resume-import-alert" variant="destructive">
+          <AlertDescription>
+            {storageFailure === "conflict"
+              ? "Another tab changed the saved PDF. Return to upload and load the latest saved PDF."
+              : "The saved PDF could not be read. Return to upload and retry browser storage."}
+          </AlertDescription>
+          <Link
+            className={buttonVariants({ variant: "outline" })}
+            to="/profile/import/upload"
+          >
+            Return to upload
+          </Link>
+        </Alert>
+      ) : null}
+      {statusMessage || completedImport ? (
         <Alert className="resume-import-status" role="status">
-          <AlertDescription>{statusMessage}</AlertDescription>
+          <AlertDescription>
+            {statusMessage ||
+              "The import request completed. The PDF is still saved in this browser. Remove it or return to Profile; you do not need to submit the import again."}
+          </AlertDescription>
         </Alert>
       ) : null}
 
@@ -169,26 +283,85 @@ export function ImportConfirmForm() {
         </div>
       </div>
 
-      <form.Subscribe
-        selector={(state) => ({
-          canSubmit: state.canSubmit,
-          isSubmitting: state.isSubmitting,
-        })}
-      >
-        {({ canSubmit, isSubmitting }) => (
-          <div className="form-actions resume-import-actions">
-            <Button type="submit" disabled={!canSubmit || isSubmitting}>
-              {isSubmitting ? "Importing…" : "Confirm import"}
-            </Button>
-            <Link
-              className={buttonVariants({ variant: "outline" })}
-              to="/profile/import/preview"
-            >
-              Back
-            </Link>
-          </div>
-        )}
-      </form.Subscribe>
+      {completedImport ? (
+        <div className="form-actions resume-import-actions">
+          <Button
+            type="button"
+            onClick={() => {
+              const generation = navigationGeneration.current;
+              const pathname = router.history.location.pathname;
+              void (async () => {
+                if (
+                  await reset(
+                    storage,
+                    () =>
+                      generation === navigationGeneration.current &&
+                      pathname === router.history.location.pathname,
+                    navigationAbort.current.signal,
+                  )
+                ) {
+                  if (
+                    generation === navigationGeneration.current &&
+                    pathname === router.history.location.pathname
+                  )
+                    await navigate({ to: "/profile" });
+                } else if (
+                  generation === navigationGeneration.current &&
+                  pathname === router.history.location.pathname
+                )
+                  setStatusMessage(
+                    useProfileImportStore.getState().storageFailure ===
+                      "conflict"
+                      ? "The import request completed. Another tab changed the saved PDF, so its newer selection was kept. Return to upload and load the latest saved PDF."
+                      : "The import request completed, but the PDF could not be removed. Check browser site data permissions and retry, or return to Profile without resubmitting.",
+                  );
+              })();
+            }}
+          >
+            {storageFailure === "remove"
+              ? "Retry removing saved PDF"
+              : "Remove saved PDF"}
+          </Button>
+          <Link
+            className={buttonVariants({ variant: "outline" })}
+            to="/profile"
+          >
+            Return to profile
+          </Link>
+        </div>
+      ) : (
+        <form.Subscribe
+          selector={(state) => ({
+            canSubmit: state.canSubmit,
+            isSubmitting: state.isSubmitting,
+          })}
+        >
+          {({ canSubmit, isSubmitting }) => (
+            <div className="form-actions resume-import-actions">
+              <Button
+                type="submit"
+                disabled={
+                  !canSubmit ||
+                  isSubmitting ||
+                  importPending ||
+                  storageFailure === "conflict" ||
+                  storageFailure === "read"
+                }
+              >
+                {isSubmitting || importPending
+                  ? "Importing…"
+                  : "Confirm import"}
+              </Button>
+              <Link
+                className={buttonVariants({ variant: "outline" })}
+                to="/profile/import/preview"
+              >
+                Back
+              </Link>
+            </div>
+          )}
+        </form.Subscribe>
+      )}
     </form>
   );
 }

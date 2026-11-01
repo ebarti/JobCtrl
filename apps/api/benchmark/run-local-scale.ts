@@ -16,7 +16,7 @@ import { jobQueryMetrics } from "../src/job-list-query.js";
 import { listJobs } from "../src/read-model.js";
 import { AUTOMATION_PROJECT_DIR, createSourcePythonRuntime } from "../src/python-runtime.js";
 import { buildApp } from "../src/server.js";
-import { EXACT_V14_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
+import { EXACT_V15_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
 import {
   assertAscending,
   assertHash,
@@ -272,9 +272,9 @@ export async function runBenchmark(
     seed: BENCHMARK_SEED,
     candidate: gitCandidate(options.dirtyExclusion),
     schema: {
-      version: EXACT_V14_SCHEMA_MANIFEST.version,
-      initializer: "jobctrl.infrastructure.migrations.schema_v14.create_exact_v14_schema via uv --frozen",
-      manifestSha256: createHash("sha256").update(JSON.stringify(EXACT_V14_SCHEMA_MANIFEST)).digest("hex"),
+      version: EXACT_V15_SCHEMA_MANIFEST.version,
+      initializer: "jobctrl.infrastructure.migrations.schema_v15.create_exact_v15_schema via uv --frozen",
+      manifestSha256: createHash("sha256").update(JSON.stringify(EXACT_V15_SCHEMA_MANIFEST)).digest("hex"),
     },
     method: {
       datasetSizes: DATASET_SIZES,
@@ -845,7 +845,7 @@ async function measureSustained(baseUrl: string, workspace: BenchmarkWorkspace):
     workflowContext: context,
     providerCalls: 0,
     llmSpend,
-    llmSpendScope: "Current exact-v14 canonical llm_spend aggregate summed across lanes. No provider call is made by this benchmark.",
+    llmSpendScope: "Current exact-v15 canonical llm_spend aggregate summed across lanes. No provider call is made by this benchmark.",
     tokenEvidence: "The production RPC dispatcher entered its instrumented rpc.provider_models path, but LANGFUSE_DISABLE=1 intentionally prevented span export. No LLM method ran, so there are no LLM span token attributes or provider usage observations for this benchmark; llm_spend stayed zero, which does not imply complete usage telemetry for unrelated workflows.",
   };
 }

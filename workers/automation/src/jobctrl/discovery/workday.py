@@ -38,6 +38,7 @@ from jobctrl.infrastructure.network import (
     build_opener,
 )
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultBudget, DiscoveryResultLimitReached
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveChromeDiscoveryClient,
     PoliteLiveChromeHttpClient,
@@ -496,10 +497,14 @@ def store_results(
     run_id: str | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
     search_cfg: dict | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[int, int]:
     """Store corporate jobs through the Discovery write boundary."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("Workday discovery canceled")
     now = datetime.now(timezone.utc).isoformat()
-    active_cfg = search_cfg if search_cfg is not None else config.load_saved_search_settings()
+    active_cfg = search_cfg if search_cfg is not None else config.load_discovery_control_settings()
     use_case = DiscoverJobsUseCase(
         exact_title_exclusions=tuple(active_cfg.get("exact_title_exclusions") or ()),
         repository=SqliteJobRepository(
@@ -509,20 +514,42 @@ def store_results(
         ),
         publisher=_DiscoveryEventPublisher(conn),
     )
-    if limit > 0:
+    if limit > 0 or result_budget is not None or cancel_event is not None:
         new_jobs = 0
         observed_jobs = 0
         for job in jobs:
-            if new_jobs >= limit:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("Workday discovery canceled")
+            if limit > 0 and new_jobs >= limit:
                 break
             posting = _posting_from_job(job, employers)
             if posting is None:
                 continue
-            summary = use_case.execute(
-                tenant_id=LOCAL_TENANT,
-                postings=[posting],
-                run_id=run_id,
-            )
+            if result_budget is not None:
+                if result_budget.run_exhausted():
+                    break
+                if result_budget.source_exhausted(posting.source_id):
+                    continue
+                use_case = DiscoverJobsUseCase(
+                    exact_title_exclusions=tuple(active_cfg.get("exact_title_exclusions") or ()),
+                    repository=SqliteJobRepository(
+                        conn, discovery_execution=discovery_execution, source_family="workday",
+                        result_budget=result_budget, result_budget_source_id=posting.source_id,
+                    ),
+                    publisher=_DiscoveryEventPublisher(conn),
+                )
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("Workday discovery canceled")
+            try:
+                summary = use_case.execute(
+                    tenant_id=LOCAL_TENANT,
+                    postings=[posting],
+                    run_id=run_id,
+                )
+            except DiscoveryResultLimitReached:
+                # A concurrent family won the final slot. The atomic canonical
+                # claim rolled back; do not update detail state for this card.
+                continue
             new_jobs += summary.new_jobs
             observed_jobs += summary.observed
             _update_detail_columns(conn, job, posting.posting_url.value, now)
@@ -565,6 +592,7 @@ def _process_one(
     cancel_event: threading.Event | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
     search_cfg: dict | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
 ) -> dict:
     """Search one employer, fetch details, store results."""
     result = _search_and_fetch_one(
@@ -576,6 +604,8 @@ def _process_one(
         cancel_event=cancel_event,
         search_cfg=search_cfg,
     )
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("Workday discovery canceled")
     jobs = result.pop("jobs", [])
     if not jobs:
         return result
@@ -583,6 +613,8 @@ def _process_one(
     (new, existing) = store_results(
         conn, jobs, employers, limit=limit, run_id=run_id, discovery_execution=discovery_execution,
         search_cfg=search_cfg,
+        **({"result_budget": result_budget} if result_budget is not None else {}),
+        **({"cancel_event": cancel_event} if cancel_event is not None else {}),
     )
     log.info("%s: %d new, %d already in DB", result["employer"], new, existing)
     return {**result, "new": new, "existing": existing}
@@ -639,6 +671,7 @@ def scrape_employers(
     cancel_event: threading.Event | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
     search_cfg: dict | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
 
@@ -709,6 +742,8 @@ def scrape_employers(
                             run_id=run_id,
                             discovery_execution=discovery_execution,
                             search_cfg=search_cfg,
+                            **({"result_budget": result_budget} if result_budget is not None else {}),
+                            **({"cancel_event": cancel_event} if cancel_event is not None else {}),
                         )
                         result = {**result, "found": len(jobs), "new": new, "existing": existing}
                 total_new += result["new"]
@@ -750,6 +785,7 @@ def scrape_employers(
                 run_id,
                 discovery_execution=discovery_execution,
                 search_cfg=search_cfg,
+                **({"result_budget": result_budget} if result_budget is not None else {}),
                 **cancel_kwargs,
             )
             completed += 1
@@ -788,6 +824,7 @@ def run_workday_discovery(
     cancel_event: threading.Event | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
     search_cfg: dict | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
 ) -> dict:
     """Main entry point for Workday-based corporate job discovery.
 
@@ -830,6 +867,7 @@ def run_workday_discovery(
         discovery_execution=discovery_execution,
         cancel_event=cancel_event,
         search_cfg=search_cfg,
+        **({"result_budget": result_budget} if result_budget is not None else {}),
     )
     grand_new += result["new"]
     grand_existing += result["existing"]

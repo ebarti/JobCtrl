@@ -20,6 +20,16 @@ export const RESEARCH_SOURCE_OUTCOME_LABELS: Record<string, string> = {
   manual_capture_required: "Manual capture required",
   rejected: "Not permitted",
   extraction_failed: "Extraction failed",
+  provider_unavailable: "Model provider unavailable",
+  provider_failed: "Model provider failed",
+  spend_denied: "Model spending limit reached",
+  invalid_output: "Model response could not be verified",
+  empty_content: "Page contained no readable text",
+  response_too_large: "Page too large",
+  acquisition_timeout: "Page timed out",
+  redirect_failed: "Redirect failed",
+  transport_failed: "Page could not be reached",
+  http_error: "Page returned an HTTP error",
 };
 
 export function researchTaskStatusLabel(status: ResearchTaskStatus | string): string {

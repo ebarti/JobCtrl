@@ -4,6 +4,7 @@ import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import type { ApiHealthResponse } from "../../../shared/ports/ApiClientPort.js";
 import { healthKeys } from "../healthKeys.js";
+import { databaseStartupProblem } from "../../../shared/lib/databaseStartupProblem.js";
 const HEALTH_POLL_INTERVAL_MS = 30_000;
 
 export function useHealthQuery(): UseQueryResult<ApiHealthResponse> {
@@ -14,5 +15,6 @@ export function useHealthQuery(): UseQueryResult<ApiHealthResponse> {
     queryFn: () => api.health(),
     refetchInterval: HEALTH_POLL_INTERVAL_MS,
     staleTime: 10_000,
+    retry: (count, error) => !databaseStartupProblem(error) && count < 1,
   });
 }

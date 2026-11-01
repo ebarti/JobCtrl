@@ -20,6 +20,7 @@ import type {
   EvidenceUsageRef,
 } from "@jobctrl/contracts";
 import type { EvidenceMapSearch } from "../../routes/-evidence-map.search.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
 import {
@@ -332,6 +333,7 @@ function EvidenceEntryButton({
           </span>
         </span>
         <span className="evidence-entry-meta">
+          {entry.freshness.confirmationReviewRequired ? <StatusBadge tone="warn">Review required</StatusBadge> : null}
           <EvidenceStatusBadge
             type="strength"
             value={entry.freshness.evidenceStrength}
@@ -437,10 +439,10 @@ function EvidenceDetail({
             type="strength"
             value={freshness.evidenceStrength}
           />
-          <EvidenceStatusBadge
+          {freshness.confirmationReviewRequired ? <StatusBadge tone="warn">Confirmation review required</StatusBadge> : <EvidenceStatusBadge
             type="confirmation"
             value={freshness.userConfirmed}
-          />
+          />}
           <span className="evidence-meta-label" data-typography="metadata">
             <IconCalendar aria-hidden="true" />
             {compactDate(freshness.evidenceDateRange)}

@@ -84,7 +84,7 @@ Generated-route composition tests exercise loader-to-API/cache handoff, tenant
 separation, warm/cold caches, dependency changes and failed reads/recovery.
 Hook tests retain enabled/select/refetch policy; shell navigation scenarios
 cover passive reads, reload/Back and transport failure recovery against the owned
-synthetic API. Browser execution and independent QA remain separate gates.
+synthetic API. Browser execution and product QA remain required checks.
 Type-level read-hook tests compare
 inferred results to canonical DTOs; readonly Jobs stage input remains a frontend
 refinement rather than a duplicate schema.

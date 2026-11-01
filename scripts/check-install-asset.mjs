@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// The hosted installer is a static docs-site asset. Keep it byte-for-byte equal
-// to the repository bootstrap script so jobctrl.dev/install.sh is not a fork.
+// Keep the local fallback and release-script template byte-for-byte equal.
+// Cloudflare Pages redirects the public path to the latest stable release asset.
 import { readFileSync } from "node:fs";
 
 const sourcePath = "scripts/get";

@@ -572,7 +572,9 @@ def interview_prep_workflow_id(tenant_id: str, job_id: str) -> str:
 
 async def start_workflow_spec_and_wait(spec: WorkflowStartSpec) -> StartedWorkflowResult:
     from jobctrl.infrastructure.rpc.workflow_starter import default_workflow_starter
+    from jobctrl.apply.dispatch import bind_apply_dispatch_spec
 
+    spec = bind_apply_dispatch_spec(spec)
     handle = await default_workflow_starter(spec)
     workflow_id = spec.workflow_id or getattr(handle, "id", None) or getattr(handle, "workflow_id", "")
     if not workflow_id:

@@ -40,28 +40,39 @@ _JOB_ID = canonical_job_id("30000000-0000-4000-8000-000000000001")
 
 
 @pytest.fixture()
-def batch_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Real activity/selector/state with a separate connection per worker."""
+def batch_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog):
+    """Real activity/selector/state using the production thread-local connection."""
     from jobctrl import config, database
+    from jobctrl.infrastructure.events import get_default_publisher
+    from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
     from jobctrl.pipeline import runner
+    from jobctrl.scoring import cover_letter
 
     db_path = tmp_path / "batch.db"
     database.init_db(db_path)
-    database.close_connection()
-    local = threading.local()
-    connections = []
+    database.close_connection(db_path)
+    production_get_connection = database.get_connection
+    monkeypatch.setattr(database, "DB_PATH", db_path)
 
-    def connect():
-        if not hasattr(local, "connection"):
-            local.connection = sqlite3.connect(db_path, check_same_thread=False)
-            local.connection.row_factory = sqlite3.Row
-            connections.append(local.connection)
-        return local.connection
+    def connect(*args, **kwargs):
+        return production_get_connection(*args, **kwargs)
 
     monkeypatch.setattr(config, "APP_DIR", tmp_path)
     monkeypatch.setattr(config, "DB_PATH", db_path)
-    for module in (database, runner, tailor_module):
+    for module in (database, runner, tailor_module, cover_letter):
         monkeypatch.setattr(module, "get_connection", connect)
+    bus = get_default_publisher()
+    subscriptions = [
+        ProjectionBuilder(conn_factory=production_get_connection, tenant_id=tenant).subscribe_to(bus)
+        for tenant in (LOCAL_TENANT, _TENANT_A)
+    ]
+    projection_events = []
+
+    def observe(event):
+        conn = production_get_connection()
+        projection_events.append((str(event.tenant_id), event.event_type, conn is connect(), conn.in_transaction))
+
+    subscriptions.append(bus.subscribe(None, observe))
     monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
     monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
     snapshot = _snapshot(_TENANT_A)
@@ -81,9 +92,26 @@ def batch_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         snapshot=snapshot,
         app_dir=str(tmp_path),
         db_path=str(db_path),
+        projection_events=projection_events,
     )
-    for connection in connections:
-        connection.close()
+    for subscription in subscriptions:
+        subscription.unsubscribe()
+    database.close_connection(db_path)
+    assert not [
+        record
+        for phase in ("setup", "call")
+        for record in caplog.get_records(phase)
+        if "ProjectionBuilder failed to refresh" in record.getMessage()
+    ]
+
+
+def _direct_with_connection_cleanup(fn, *args, **kwargs):
+    from jobctrl.database import close_thread_connections
+
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        close_thread_connections()
 
 
 @pytest.mark.asyncio
@@ -798,11 +826,16 @@ def test_tailor_job_by_id_is_tenant_scoped_and_writes_canonical_state(
     }
 
 
+@pytest.mark.parametrize("cover_enabled", [False, True])
 def test_tailor_job_by_id_resets_tailor_owned_cover_block_exactly_once(
     conn: sqlite3.Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    cover_enabled: bool,
 ) -> None:
+    setting = tmp_path / "config.json"
+    setting.write_text(json.dumps({"cover_letter_generation": cover_enabled}))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(setting))
     _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/recovered-tailor")
     tailor_module.set_stage_state(
         conn,
@@ -844,7 +877,8 @@ def test_tailor_job_by_id_resets_tailor_owned_cover_block_exactly_once(
         "SELECT state, error_code FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
         (str(_TENANT_A), str(_JOB_ID)),
     ).fetchone()
-    assert tuple(cover_state) == ("pending", None)
+    assert tuple(cover_state) == (("pending", None) if cover_enabled else
+                                  ("skipped", "COVER_LETTER_GENERATION_DISABLED"))
     reset_events = conn.execute(
         """
         SELECT payload_json FROM job_events
@@ -1097,11 +1131,16 @@ def test_retailor_job_replay_reuses_generation_committed_by_same_activity_owner(
     )
 
 
+@pytest.mark.parametrize("cover_enabled", [False, True])
 def test_tailor_job_by_id_enforces_score_boundary_before_generation(
     conn: sqlite3.Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    cover_enabled: bool,
 ) -> None:
+    setting = tmp_path / "config.json"
+    setting.write_text(json.dumps({"cover_letter_generation": cover_enabled}))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(setting))
     _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/low-fit", fit_score=6)
     calls: list[str] = []
 
@@ -1161,10 +1200,12 @@ def test_tailor_job_by_id_enforces_score_boundary_before_generation(
     ).fetchall()
     assert {row["stage"]: row["state"] for row in restored_rows} == {
         "apply": "pending",
-        "cover": "pending",
+        "cover": "pending" if cover_enabled else "skipped",
         "tailor": "succeeded",
     }
-    assert {row["error_code"] for row in restored_rows} == {None}
+    assert {row["error_code"] for row in restored_rows} == (
+        {None} if cover_enabled else {None, "COVER_LETTER_GENERATION_DISABLED"}
+    )
 
 
 def test_tailor_job_by_id_skips_blocked_scores_without_generation(
@@ -1253,6 +1294,37 @@ def test_tailor_job_by_id_generates_for_model_advisory_eligibility(
 
     assert result["status"] == "approved"
     assert calls == [str(_JOB_ID)]
+
+
+@pytest.mark.parametrize("grade,manual_override", [(8, False), (6, True)])
+def test_per_job_tailor_hands_canonical_grade_to_resume_review(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    grade: int,
+    manual_override: bool,
+) -> None:
+    from jobctrl.domain.materials.adversarial import should_run_adversarial_review
+
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.test/current-grade", fit_score=grade)
+    _seed_job(conn, tenant_id=_TENANT_B, url="https://example.test/other-grade", fit_score=10)
+    conn.execute("UPDATE jobs SET fit_score = 1")
+    conn.commit()
+    calls = []
+
+    def generate(job, *_args, **_kwargs):
+        calls.append((job["fit_score"], job["score_version"], should_run_adversarial_review(job)))
+        return _fake_approved_result(job)
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", generate)
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID, tenant_id=_TENANT_A, snapshot=_snapshot(_TENANT_A),
+        llm_model=None, pdf_renderer=object(), allow_low_fit_override=manual_override,
+    )
+    assert result["status"] == "approved"
+    assert calls == [(grade, 1, grade >= 8)]
 
 
 @pytest.mark.parametrize(
@@ -1485,7 +1557,7 @@ def test_tailor_job_by_id_allows_temporal_retry_to_reenter_generation(
     assert tuple(state) == ("succeeded", 2)
 
 
-def test_tailor_job_by_id_keeps_inner_retry_exhaustion_outer_retryable(
+def test_tailor_job_by_id_keeps_inner_content_exhaustion_terminal_but_explicitly_retryable(
     conn: sqlite3.Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1524,7 +1596,7 @@ def test_tailor_job_by_id_keeps_inner_retry_exhaustion_outer_retryable(
     assert tuple(state) == (
         "failed",
         1,
-        1,
+        0,
         "jobctrl retry tailor https://example.com/inner-retries",
     )
     event_payload = json.loads(
@@ -1547,7 +1619,7 @@ def test_tailor_job_by_id_keeps_inner_retry_exhaustion_outer_retryable(
         "attempts": 1,
         "generationAttempts": 4,
         "generationStatus": "exhausted_retries",
-        "retryable": True,
+        "retryable": False,
     }
 
 
@@ -1756,7 +1828,7 @@ def test_legacy_tailor_batch_counts_all_failures_and_exhausts_durable_budget(
             "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
-    ) == ("failed", 1, 1)
+    ) == ("failed", 1, 0)
 
     conn.execute(
         "UPDATE job_stage_states SET state = 'failed', attempt_count = 4, retryable = 1 "
@@ -1917,7 +1989,8 @@ def test_tailor_job_activity_wires_canonical_job_id_to_runtime(
     assert captured["retailor"] is True
 
 
-def test_tailor_one_job_passes_canonical_id_to_materials_use_case() -> None:
+@pytest.mark.parametrize("allow_override", [False, True])
+def test_tailor_one_job_passes_canonical_id_to_materials_use_case(allow_override) -> None:
     captured: dict[str, object] = {}
 
     class FakeUseCase:
@@ -1943,8 +2016,48 @@ def test_tailor_one_job_passes_canonical_id_to_materials_use_case() -> None:
         "normal",
         use_case=FakeUseCase(),
         audit_execution_id="temporal-run-owned",
+        allow_low_fit_override=allow_override,
     )
 
     assert result["status"] == "approved"
     assert captured["job_id"] == _JOB_ID
     assert captured["audit_execution_id"] == "temporal-run-owned"
+    assert captured["allow_low_fit_override"] is allow_override
+
+
+@pytest.mark.parametrize("code,retryable", [("provider_error", 1), ("provider_non_retryable", 0)])
+def test_tailor_persists_semantic_failure_retry_authority(conn, tmp_path, monkeypatch, code, retryable):
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.test/provider-failure")
+
+    def fail(*_args, **_kwargs):
+        raise DeterminationFailure(code)
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", fail)
+    result = tailor_module.tailor_job_by_id(_JOB_ID, tenant_id=_TENANT_A, snapshot=SimpleNamespace(), llm_model=None)
+    assert result["status"] == "error"
+    state = conn.execute(
+        "SELECT state,error_code,retryable,attempt_count FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(state) == ("failed", code.upper(), retryable, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["tailor", "cover"])
+async def test_material_activity_does_not_retry_a_terminal_semantic_provider_error(monkeypatch, stage):
+    from jobctrl.materials.activities import CoverLetterActivityInput
+
+    monkeypatch.setattr(activities_module, "_tailor_one_job" if stage == "tailor" else "_cover_one_job", lambda *a, **k: {
+        "status": "error", "error": "semantic_determination:provider_non_retryable",
+    })
+    function = activities_module.tailor_job_activity if stage == "tailor" else activities_module.cover_letter_activity
+    payload = TailorJobActivityInput(tenant_id="local", job_id=_JOB_ID) if stage == "tailor" else CoverLetterActivityInput(tenant_id="local", job_id=_JOB_ID)
+    with pytest.raises(ApplicationError) as raised:
+        await ActivityEnvironment().run(function, payload)
+    assert raised.value.non_retryable
+    assert raised.value.type == "provider_non_retryable"

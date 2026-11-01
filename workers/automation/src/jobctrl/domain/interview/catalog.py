@@ -33,6 +33,7 @@ InterviewSelectionErrorCode = Literal[
     "catalog_mismatch",
     "invalid_selection",
     "evidence_profile_changed",
+    "legacy_evidence_review_required",
     "invalid_evidence_selection",
 ]
 INTERVIEW_SELECTION_ERROR_CODES = (
@@ -43,6 +44,7 @@ INTERVIEW_SELECTION_ERROR_CODES = (
     "catalog_mismatch",
     "invalid_selection",
     "evidence_profile_changed",
+    "legacy_evidence_review_required",
     "invalid_evidence_selection",
 )
 INTERVIEW_ANSWER_FORMATS = ("historical", "situational", "principle", "negotiation", "narrative", "preference")

@@ -22,7 +22,7 @@ from jobctrl.domain.materials.editable_export import ExportFailure
 from jobctrl.domain.materials.services import ResumeAssembler
 from jobctrl.infrastructure.materials import accepted_export as export
 from jobctrl.infrastructure.materials.docx_export import CP, VT
-from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+from jobctrl.infrastructure.migrations.schema_v15 import create_exact_v15_schema
 from tests.test_resume_assembler import _payload, _profile
 
 JOB = "90000000-0000-4000-8000-000000001030"
@@ -42,7 +42,7 @@ def owned(tmp_path):
     root = tmp_path / "owned-workspace"
     root.mkdir()
     connection = sqlite3.connect(root / "jobctrl.db")
-    create_exact_v14_schema(connection)
+    create_exact_v15_schema(connection)
     connection.execute("INSERT INTO jobs(tenant_id,job_id,url,title,company,apply_status,applied_at) "
                        "VALUES('local',?,'https://example.test/job','Owned job','Synthetic Employer','applied','2026-10-01')", (JOB,))
     connection.execute("INSERT INTO candidate_profiles(tenant_id,profile_id,version,personal_full_name,updated_at) "

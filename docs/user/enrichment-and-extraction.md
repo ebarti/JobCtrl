@@ -59,15 +59,65 @@ is retained unless you request a reset or its budget was exhausted. Saved
 scores, approved materials and approvals remain intact; downstream preparation
 waits for enrichment to succeed again.
 
+On a public LinkedIn job-view page, anonymous acquisition can close the site's
+optional contextual sign-in dialog through its offered dismiss button before
+capturing. This is scoped to that known control and route. It does not sign in
+or submit a form; a required wall without that control remains captured as-is.
+Only an enabled, rendered control that cannot submit or reset a form is admitted.
+An unexpected navigation during dismissal or the remaining capture reads fails
+acquisition instead of retaining the original posting identity.
+
 LinkedIn's public guest description and authenticated job-detail layouts both
 have deterministic extraction rules. When the public description is present in
 the captured content, anonymous enrichment can save it without an LLM or an
 external application URL. Guest extraction selects the description's nested
 text block, excluding unrelated expandable content and show-more controls.
-Anonymous page collection removes page chrome and noisy attributes before
-applying its 50,000-character HTML limit, so removable markup does not crowd out
-posting text or application links. JSON-LD is collected separately; meaningful
-content beyond the HTML limit remains outside CSS and LLM extraction input.
+Anonymous page collection removes page chrome, comments, noisy attributes and
+non-visible DOM subtrees before applying its 50,000-character HTML limit. Hidden
+sign-in dialogs therefore cannot crowd out a readable posting or its application
+links. Computed visibility comes from a copied DOM; collection does not change
+the page. Visible descendants that override an ancestor's `visibility: hidden`
+and visible inert content remain readable. JSON-LD and the full status evidence
+are collected separately; meaningful content beyond the HTML limit remains
+outside CSS and LLM extraction input.
+
+Anonymous browser acquisition bounds each public document or data response to
+2 MB. Browser-identified JavaScript and stylesheet dependencies have a separate
+16 MB limit so large career-site bundles can render. Public-address pinning,
+redirect validation, credential stripping, timeouts and read-only request
+restrictions apply to both limits. An oversized resource remains an acquisition
+failure and cannot establish a posting or availability verdict.
+
+Direct URL imports interpret the complete visible page capture, including
+posting details and current controls outside its main-content panel. For the
+description, the model selects a recorded source and contiguous line range;
+the application copies that span exactly and saves the selection, copied text
+and citation in the extraction receipt. Declared rich-text descriptions are
+normalized before selection, including an extra escaping layer. Literal technical
+angle brackets and code examples remain text; the original structured capture
+and source URL remain available as provenance. Capture includes up to eight visible
+public embedded pages, such as an employer's hosted application frame. Each
+source keeps its observed URL in the receipt, and relative links resolve against
+that source. Short fields retain verbatim-value and citation validation.
+
+A retryable subresource timeout or DNS failure can retain readable posting
+content for interpretation and quality review in both manual intake and
+anonymous batch enrichment. Both wait for the document's DOM content rather
+than the full asset load. Its availability evidence is
+explicitly incomplete, so the saved availability remains **unknown** with the
+acquisition reason. Main-document failures, unsafe destinations and resource
+size violations still prevent this partial capture from being accepted.
+Missing or incomplete embedded-page evidence also keeps availability unknown.
+Public structured posting data can also feed extraction and quality review
+when the model identifies the individual posting but cannot verify visual
+access. Its unknown access and availability remain in the audit. Explicit
+login/challenge pages and unidentified postings continue to require capture.
+
+A posting server's HTTP 429 or 503 response is recorded as a retryable
+acquisition deferral, including its HTTP status and cooldown, instead of an empty
+posting or extraction error. The batch continues with other targets under shared
+host pacing; a failed refresh preserves previously accepted content. The
+[crawl policy](discovery.md#crawl-politeness) defines server-directed waits.
 
 While the worker is running, unfinished enrichment and retryable failures are
 picked up automatically without a new discovery search. Recovery waits for
@@ -146,7 +196,12 @@ ordinary Discovery/Enrich extension selection keeps its own behavior.
 CSS-dependent status must be verified by the guarded renderer; hidden templates
 cannot close a posting. Blocked subresources and incomplete rendering remain
 unknown. Each outbound request has a 20-second total deadline and a full check
-has a 120-second acquisition budget, below crash-lease expiry.
+has a cumulative 120-second posting-acquisition budget. Time spent in the
+independent page-interpretation model does not consume that network/browser
+budget. The original five-minute crash lease still caps the remaining deadline;
+model work cannot extend ownership, and cancellation or a changed posting stops
+fallback before a browser starts. Browser cleanup and all resource limits remain
+inside the acquisition deadline.
 
 The anonymous fallback checks popup and frame requests through the same host
 limits and URL checks. It blocks service workers and unsupported socket or
@@ -157,9 +212,19 @@ refusals without invalidating the status capture.
 Each check permits 12 posting/API requests and 64 browser resources, at most one
 million bytes per response and 12 million bytes in total.
 
-Scoring, tailoring and cover generation attempt a check when active evidence
-is older than six hours, and can proceed with usable content while availability
-stays unknown. Unknown is shown honestly and remains retryable; confirmed
+Scoring, tailoring and cover generation reuse a posting observation from the
+preceding six hours. They also reuse a trustworthy canonical posting capture
+from that window when its saved page interpretation and description-quality
+judgments match the current tenant, job, posting URL and exact description.
+This avoids fetching and interpreting the same posting again immediately after
+enrichment. Stale, quarantined, changed or unbound captures use the normal check;
+known closure and deletion still prevent preparation. Capture freshness uses its
+actual capture time, never a later metadata update.
+An unknown observation or captured availability verdict can be reused for
+preparation without another foreground request; it stays unknown, and its
+background retry schedule remains unchanged. Capture reuse creates no new
+availability observation and does not satisfy unattended Apply's separate gate.
+Preparation can proceed with usable content while availability stays unknown. Unknown is shown honestly and remains retryable; confirmed
 unavailable postings stop preparation. Dry-run rehearsals and human-reviewed
 Apply can also proceed when availability stays unknown, using the existing exact
 approval, material, profile, application-URL and rehearsal bindings, with the
@@ -216,7 +281,15 @@ Without it, acquisition uses anonymous access. Neither mode consults robots.txt;
 a page that remains inaccessible stays on the manual path.
 
 The Jobs page's **Import job** action applies the same boundary to one explicit
-public URL. A readable page is ingested immediately with its extracted title,
+public URL. It acknowledges the import promptly and follows its progress without
+holding one browser request open until all interpretation work finishes. Once
+an import is accepted, you can enter another URL in the same dialog; each import
+continues independently and has its own **View import run** link. A finished
+import offers **View job** without interrupting another entry. You can also
+close the dialog while imports run and find their progress in **Runs**. If a
+progress check is temporarily unavailable, the dialog keeps the accepted import
+pending and checks again; it does not submit another import or claim the work
+failed because the browser request timed out. A readable page is ingested immediately with its extracted title,
 employer, description, location, and posted salary evidence. A blocked or
 ambiguous page creates a pending Manual Capture item and never a fabricated
 "imported" job. Credential-bearing, private, loopback, and otherwise
@@ -359,3 +432,9 @@ user. The exact selector rules are owned by the
 Page availability, individual-posting state and description quality use cited model determinations over the bound rendered page. HTTP status, exact ATS identity, URL safety and DOM visibility remain code. Automatic duplicate identity uses exact keys/full-content fingerprints; no token-Jaccard threshold merges jobs. Failed semantic checks preserve accepted snapshots and materials.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+### Arbitrary-site discovery captures
+
+Smart Extract resolves listing cards through the same rendered and structured posting-source preparation as direct URL imports. Card titles, employer guesses and blank places are not canonical posting facts. Its full-posting qualification checks the extracted specific role, description and saved location/work-model scope before creating a Job, as described in [Discovery](discovery.md#how-target-search-controls-are-used). The accepted posting snapshot records the page, extraction and qualification determination IDs. That exact capture seeds enrichment; failed or uncertain qualification preserves existing accepted job content and creates no replacement job.
+
+For archived Smart Extract recovery, interrupted snapshot publication retains the exact qualified capture and determination references. Retry completes that capture without another page fetch or model call, while preserving newer accepted snapshots, enrichment and owner deletion. A publication failure leaves the archived item available for retry; canonical Job existence alone does not acknowledge it.

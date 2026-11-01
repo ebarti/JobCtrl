@@ -6,6 +6,8 @@ the underlying stage runners stubbed so the test stays fast and hermetic.
 
 from __future__ import annotations
 
+from jobctrl.domain.scoring.use_cases import ScoreJobOutcome
+
 import asyncio
 import threading
 import uuid
@@ -13,6 +15,8 @@ from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+
+from .apply_execution_fixture import in_process_apply_execution as in_process_apply_execution
 
 import pytest
 from temporalio import activity, workflow
@@ -135,6 +139,32 @@ def test_selected_batch_timeout_scales_by_worker_waves_and_is_capped() -> None:
     ) as patched:
         assert _activity_timeout(selected_payload) == timedelta(minutes=90)
         patched.assert_called_once_with(_SELECTED_BATCH_TIMEOUT_PATCH)
+
+
+@pytest.mark.parametrize("stage", ["score", "tailor", "cover"])
+def test_model_stage_deadline_covers_full_model_sequence(stage: str) -> None:
+    payload = JobPipelineWorkflowInput(tenant_id="local", stages=[stage])
+    assert _activity_timeout(payload, stage=stage) == timedelta(hours=6)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allow_override", [False, True])
+async def test_pipeline_cover_preserves_the_explicit_low_fit_policy(allow_override: bool) -> None:
+    from jobctrl.pipeline.workflow import _execute_stage
+
+    with (
+        patch("jobctrl.pipeline.workflow.workflow.info", return_value=SimpleNamespace(workflow_id="synthetic", run_id="synthetic-run")),
+        patch("jobctrl.pipeline.workflow.workflow.execute_activity", new_callable=AsyncMock) as execute,
+    ):
+        await _execute_stage(
+            "cover", JobPipelineWorkflowInput(
+                tenant_id="local", stages=["tailor", "cover"], min_score=7,
+                allow_low_fit_override=allow_override,
+            ),
+        )
+    payload = execute.call_args.args[1]
+    assert payload.min_score == 7
+    assert payload.allow_low_fit_override is allow_override
 
 
 @pytest.mark.parametrize(
@@ -502,13 +532,15 @@ async def test_pipeline_material_cancel_activity_retries_are_bounded() -> None:
             return_value=SimpleNamespace(run_id="run-cancel"),
         ),
         patch(
-            "jobctrl.pipeline.workflow.workflow.execute_activity",
+            "jobctrl.pipeline.workflow.workflow.execute_local_activity",
             new=AsyncMock(),
         ) as execute_activity,
     ):
         await _cancel_material_stage_state("tailor", payload)
     assert execute_activity.await_count == 1
     assert execute_activity.call_args.kwargs["retry_policy"].maximum_attempts == 5
+    assert execute_activity.call_args.kwargs["start_to_close_timeout"] == timedelta(seconds=30)
+    assert execute_activity.call_args.kwargs["schedule_to_close_timeout"] == timedelta(minutes=3)
 
 
 def _all_activities():
@@ -636,7 +668,7 @@ async def test_selected_pipeline_scores_only_canonically_enriched_subset():
 
     def fake_score_job_by_id(job_id: JobId, **_kwargs):
         score_calls.append(job_id)
-        return SimpleNamespace(ok=True, error=None)
+        return ScoreJobOutcome(ok=True, score=None)
 
     with (
         patch(
@@ -736,7 +768,14 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
 
     assert result.stages_completed == ["apply"]
     assert result.stages_failed == []
-    assert apply_mock.call_args.kwargs == {
+    from jobctrl.apply.ownership import ApplyLauncherRun
+
+    launcher_kwargs = dict(apply_mock.call_args.kwargs)
+    launcher_run = launcher_kwargs.pop("launcher_run")
+    assert isinstance(launcher_run, ApplyLauncherRun)
+    assert not launcher_run.stop_event.is_set()
+    assert launcher_run.worker_ids == ()  # the mocked launcher has not admitted resources
+    assert launcher_kwargs == {
         "limit": 2,
         "target_job_id": None,
         "tenant_id": "local",
@@ -744,9 +783,12 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
         "headless": True,
         "model": "sonnet",
         "dry_run": True,
+        "continuous": False,
         "workers": 3,
         "approval_required": True,
         "workflow_id": f"{workflow_id}-apply",
+        "standing_refusal_poll": False,
+        "dispatch_frontier": None,
         "install_signal_handlers": False,
     }
 

@@ -81,7 +81,7 @@ for (const width of [1280, 1705]) {
     await page.goto("/interviews?mode=graph");
     await expect(map.locator("[data-graph-question-id]")).toHaveCount(121);
     await page.getByRole("button", { name: "Comfortable", exact: true }).click();
-    await map.getByRole("button", { name: "Behavioral: 11 questions", exact: true }).locator(".interview-atlas__mark").click();
+    await map.getByRole("button", { name: "Behavioral 11 questions", exact: true }).locator(".interview-atlas__mark").click();
     await expect(page).toHaveURL(/topic=behavioral/);
     await expect(map.locator(".interview-atlas__named-node")).toHaveCount(11);
     await expect(map.locator(".interview-atlas__named-node").first()).toHaveCSS("min-height", "84px");
@@ -89,11 +89,11 @@ for (const width of [1280, 1705]) {
     await map.getByRole("button", { name: "Sources", exact: true }).click();
     await expect(map.locator("[data-graph-source-id]")).toHaveCount(57);
     await expectUnobstructedGraph(map);
-    await map.getByRole("button", { name: "Will Larson: 21 sources", exact: true }).click();
+    await map.getByRole("button", { name: "Will Larson 21 sources", exact: true }).click();
     await expect(map.locator(".interview-atlas__named-node")).toHaveCount(21);
     await expect(page).not.toHaveURL(/source=L21/);
     await map.getByRole("button", { name: "Overview", exact: true }).click();
-    await map.getByRole("button", { name: "Will Larson: 21 sources", exact: true }).focus();
+    await map.getByRole("button", { name: "Will Larson 21 sources", exact: true }).focus();
     await page.keyboard.press("Enter");
     await expect(map.locator(".interview-atlas__named-node")).toHaveCount(21);
     await map.locator(".interview-atlas__named-node").filter({ hasText: "Managing technical quality in a codebase" }).click();
@@ -125,7 +125,7 @@ test("Interview atlas overview, topics, sources, history navigation and inspecto
   await page.getByRole("tab", { name: "Sources", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Sources and reading limits" })).toBeVisible();
   const topic = catalog.topics[0]!;
-  await map.getByRole("button", { name: `${topic.name}: ${topic.questionIds.length} questions` }).click();
+  await map.getByRole("button", { name: `${topic.name} ${topic.questionIds.length} questions` }).click();
   await expect(page).toHaveURL(new RegExp(`topic=${topic.id}`));
   await expect(map.locator(".interview-atlas__named-node")).toHaveCount(topic.questionIds.length);
   await page.goBack(); await expect(map.locator("[data-graph-question-id]")).toHaveCount(121);
@@ -158,7 +158,7 @@ test("@mobile Interview atlas topic drill-down and readable inspector without ov
   await expect(map.locator(".interview-atlas__hub").first()).toHaveCSS("height", "96px");
   await page.screenshot({ path: "/tmp/jobctrl-993-ui-repair-mobile.png" });
   const topic = catalog.topics[0]!;
-  await map.getByRole("button", { name: `${topic.name}: ${topic.questionIds.length} questions` }).click();
+  await map.getByRole("button", { name: `${topic.name} ${topic.questionIds.length} questions` }).click();
   await expect(map.locator(".interview-atlas__named-node")).toHaveCount(topic.questionIds.length);
   await map.locator(".interview-atlas__named-node").filter({ hasText: "C07" }).click();
   await expect(page).toHaveURL(/card=C07/);

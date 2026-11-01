@@ -38,7 +38,7 @@ export function RescoreJobButton({
       disabled={blocked}
       type="button"
       onClick={() => {
-        if (blocked || !window.confirm("Rescore this job with the current scoring policy?")) return;
+        if (blocked || !window.confirm("Update this job’s score? If the profile changed, JobCtrl first asks your model whether those edits affect this job and keeps the saved score when they do not. Changed scoring policy or posting inputs still require a new assessment.")) return;
         mutation.mutate({ jobId });
       }}
     >

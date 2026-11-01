@@ -4,11 +4,13 @@ import CandidateProfileFlow from "../.vitepress/theme/CandidateProfileFlow.vue";
 
 # Candidate Profile
 
-Native schema 13 removes old system-inferred seniority signals and resets
-system-generated achievement confirmations to draft. Their source text is
-preserved. Review and confirm those evidence cards in Profile before interview
-preparation can cite them again. Independently authored confirmations and the
-last accepted material files are preserved.
+Legacy migrations preserve achievement text, scope, metrics, identifiers and
+saved confirmations. Older records do not say whether a person or a historical
+system writer supplied their confirmation. Profile and Evidence Map show when
+that provenance needs review. New evidence-based preparation reports
+`legacy_evidence_review_required` until the review is resolved; existing accepted
+materials remain available. Matching wording or field values never establishes
+authorship. See [Review legacy confirmations](#review-legacy-confirmations).
 
 A Candidate Profile is JobCtrl's canonical, local record of facts about you:
 your experience, education, skills, evidence, application answers, resume
@@ -23,13 +25,15 @@ this record; they do not rewrite it to suit a job.
 JobCtrl does not let a generated resume or an import silently become truth. The
 profile boundary works in this order:
 
-1. **Import creates a draft.** Resume-PDF import returns extracted profile data
-   and inferred style for review. It does not change the saved profile until you
-   explicitly save the draft.
+1. **Import creates a draft.** Resume-PDF import returns extracted
+   profile data and inferred style without changing saved facts. The current
+   browser confirmation returns to the saved Profile without staging that
+   returned draft into the editor; see the import limitation below.
 2. **Save validates and normalizes.** The API parses the submitted profile
    through the Candidate Profile domain rules, validates target places when
    present, and replaces the normalized profile rows in one database
-   transaction. Every accepted save advances the local profile version.
+   transaction, with an expected-version check for existing browser profiles.
+   A content change advances the local profile version; unchanged saves do not.
 3. **Work receives an immutable snapshot.** Scoring, Materials, interview prep,
    and Apply read a deep-copied `ProfileSnapshot`. Derived compatibility fields are regenerated
    from the canonical rows, and changing a returned object cannot mutate the
@@ -40,12 +44,54 @@ profile boundary works in this order:
 5. **Propagation remains explicit and recoverable.** A profile-content change
    may queue replacement tailoring when eligible accepted resumes exist and the
    worker is healthy. The save itself does not depend on that follow-up, and a
-   failed replacement does not remove the last accepted material. An Apply
+   failed replacement does not remove the last accepted material. A completed
+   failed continuation remains visible as a failure, while newer profile
+   revisions can proceed; restarting does not retry that completed workflow.
+   Uncertain dispatches reattach to their existing workflow. An Apply
    approval bound to an older profile version becomes stale rather than being
    reused against changed evidence.
 
 This version boundary is what lets JobCtrl prove which candidate facts a score,
 resume, or application decision actually used.
+
+## Current Import Limitation
+
+The web import flow previews your PDF and asks whether to extract profile data,
+style, or both. Its confirmation currently receives an API draft, removes the
+upload state and returns to `/profile`, which loads the saved profile. It does
+not populate the editor with that extracted draft or save imported facts. Review
+and save deliberate changes through Profile; completing import alone does not
+establish a saved change.
+
+The selected PDF and its filename are stored in this browser so the wizard can
+survive navigation and refresh. Leaving the wizard or choosing **Cancel** keeps
+the saved PDF. **Remove saved PDF** clears the current selection, as does
+successful import cleanup. An earlier version's separate saved copy is retained:
+the upload step identifies it and offers a download when it can be read.
+Removing the current selection does not erase that earlier copy; clearing this
+site's browser data removes both copies. If the browser
+cannot read, save, or remove its data, the wizard explains the failure and lets
+you retry. A failed replacement leaves the previously saved selection unchanged.
+If import succeeds but removing the PDF fails, retrying removal does not repeat
+the import request. Once removal succeeds, you can choose the same PDF again
+and start a new import; an identical request already running must first finish.
+The request's PDF, filename and options and the returned draft stay in memory
+for the current app session, even after the stored upload is removed. The draft
+is not staged in the Profile editor; reloading the app clears these in-memory
+copies. If cleanup failed before a reload, the app no longer knows the earlier
+request completed, so submitting again can repeat it.
+
+The current version coordinates saves and removal between open tabs. If another
+tab changes the selection, return to upload and choose **Load latest saved
+PDF** before continuing. If browser storage is unavailable, enable site data and retry in a current browser. Reload or close
+older JobCtrl tabs: older versions cannot coordinate with each other and may
+still change the earlier copy. They cannot erase the current version's record.
+
+Reviewed multi-source intake, duplicate/conflict reconciliation and item-level
+fact promotion are **proposed, not implemented**. The [owning intake design and
+current-path assessment](../plans/2026-09-21-profile-evidence-selective-tailoring.md#2-current-foundations-and-acceptance-map)
+preserve explicit acceptance, unknown facts and canonical ownership. They do
+not change the current import flow or authorize generated facts.
 
 ## What You Can See And Control
 
@@ -64,6 +110,23 @@ side only while both remain readable; at narrower working widths the preview
 moves below the editor and the resize handle disappears. Evidence Map follows
 the same rule: its entry list, selected evidence, and gaps/reusable-stories
 inspector stack instead of compressing the three-pane desktop workspace.
+
+Saving your edits does not call a model. Choose **Get suggestions for target
+roles** in Discovery when you want evidence-backed suggestions.
+
+Experience inclusion defaults to every role, matching the tailoring backend.
+The checkboxes show that effective default, and newly added experiences start
+included. You can explicitly uncheck optional roles while keeping at least one
+role required. Existing saved subsets remain intact. This controls whether a
+whole role may be omitted; the per-role bullet ceiling still controls detail.
+Removing a role also removes its required-role and required-bullet references,
+without changing the remaining roles or their pins.
+A role with Required bullets also stays included, even outside an explicit role
+selection. Unpin those bullets first to make that role optional.
+
+Adding an experience, education entry or skill category creates its internal
+identity immediately. You edit its descriptive fields; changing a title or label
+keeps its identity and any **Must appear in final resume** selection intact.
 
 Target Search can propose a small set of evidence-backed role titles and
 historical location/work-model rows. JobCtrl generates them from the saved
@@ -110,10 +173,19 @@ invisible text layer keeps the PDF searchable and extractable. The **Export
 PDF** action itself does not save a profile or template, register the download
 as a JobCtrl artifact, or change Apply approval state.
 
-Profile and preference forms validate before saving. Their autosave and explicit
-Save buttons use the same mutation path; the exact delay and field contract are
-owned by the [Profile & Settings API](../api/profile-and-settings.md), not by
-this lifecycle overview.
+Template editing retains your draft when a newer version appears. Review the
+latest settings and choose whether to keep your changes or discard them before
+saving. Keeping changes applies your edited settings over the latest version;
+if both changed one setting, your value is kept. If saving a version succeeds
+but setting it as the default fails, the saved version remains selectable.
+
+Profile and preference forms validate before saving. After five seconds without
+an edit, they attempt to autosave the current draft; the explicit **Save
+changes** button uses the same mutation path. If a save fails, the draft and
+error remain visible. An unchanged draft is not automatically submitted again;
+choose **Save changes** to retry, or edit the draft to schedule another attempt.
+The [Profile & Settings API](../api/profile-and-settings.md) owns the field and
+version contract.
 
 Legal or screening attestations are never inferred. Leave an answer unknown if
 you cannot attest to it; Apply fails closed on required missing profile data.
@@ -172,8 +244,9 @@ bounded excerpts. Sparse storage keys remain available only from each row's
 
 ## Lifecycle
 
-1. **Create or import.** First-run setup creates the local profile; the web
-   import flow can extract a draft from a resume PDF for review.
+1. **Create or request an import draft.** First-run setup creates the local
+   profile. Resume import extracts a draft through the API; the current browser
+   handoff limitation above prevents it from populating the canonical editor.
 2. **Validate and save.** The API normalizes the accepted data into profile and
    child rows, records the update, and refreshes profile reads.
 3. **Snapshot for work.** A scoring, tailoring, or Apply run receives an
@@ -182,12 +255,15 @@ bounded excerpts. Sparse storage keys remain available only from each row's
 4. **Generate without mutation.** Scoring writes a score; Materials writes a new
    artifact generation; Apply reads approved application fields. None changes
    the underlying profile as a side effect.
-5. **Propagate deliberate edits.** A later profile save records a new version.
-   For profile-content changes with eligible existing materials and a healthy
-   worker, the API can start replacement tailoring in the background; the save
-   still succeeds when that follow-up is not eligible or cannot be dispatched.
-   Older generations remain available. A prior Apply approval becomes stale
-   when its bound profile version no longer matches.
+5. **Keep edits explicit.** A later profile save records a new version without
+   starting Score, Tailor or Cover. Jobs show **Profile updated since scoring**
+   when a saved score used an older profile. Existing scores and materials stay
+   available with their original dates and source versions. Request **Update
+   score** to have the configured scoring model compare the saved scoring inputs
+   with the current profile for that job. An insignificant-change verdict retains
+   the score and records the review; a significant-change verdict runs a new
+   assessment. A prior Apply approval still becomes stale when its bound profile
+   version no longer matches.
 
 This separation is why profile correction, score correction, resume editing,
 and application approval are different actions: each updates the record owned
@@ -241,7 +317,11 @@ saved version remains the same. An edit made afterward keeps a unique Required
 pin with its bullet; ambiguous duplicate text must be resolved before saving.
 If a newer saved profile arrives while you have a draft, use
 **Rebase edits onto saved profile** to carry non-overlapping edits forward;
-resolve overlapping fields manually before saving.
+resolve overlapping fields manually before saving. In Discovery Target search,
+this action is labeled **Update draft with saved changes**. A normal save can
+update the form and its saved-profile query in either order. That brief delay
+shows saving or refresh status, rather than asking you to combine your own save
+with itself. Suggestions stay bound to a matching saved profile version.
 
 While an accepted cleanup is saving, another Save waits. If you edit that same
 bullet, its Required pin follows a unique edited text; duplicate text must be
@@ -272,3 +352,59 @@ promotion, or selection-policy migrations in the proposed
 Import is a model extraction with verbatim field spans. Track, seniority, functions and historical target preferences are model interpretations of the saved version. They remain pending suggestions until you select values and save with their version fence. Inferred seniority and canned evidence strength are not written into authored achievement rows. Provider/spend/validation failure preserves saved facts and records an actionable interpretation status.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+
+## Review legacy confirmations
+
+This bounded local review is separate from the future evidence-state editor.
+Stop JobCtrl and verify that no API, worker or other process still uses this
+workspace before recovery or a decision. In an installed app, run `jobctrl stop`.
+Keep a fresh native `jobctrl backup` of the current stopped database pair before
+reviewing; never substitute independently captured application, Temporal and
+file backups for a native pair.
+
+```bash
+jobctrl legacy-evidence list
+```
+
+This prints pending original/current evidence cells, conflict status and a
+current review token locally. The output contains private profile information;
+do not share it or put it in an issue or log.
+
+For a user already migrated by an earlier build, inventory the retained original
+from a trustworthy pre-schema-13 native paired backup:
+
+```bash
+jobctrl legacy-evidence recover --paired-backup /path/to/pair-ID --stopped-runtime
+```
+
+Recovery checks `pair.json`, both database hashes, sizes, versions and integrity.
+It records original cells and backup provenance for review, while preserving the
+current databases and all material files. It does not restore either database,
+replace current edits or infer who confirmed a record. An edited, duplicate or
+deleted current record is shown as a conflict and cannot be overwritten through
+this command. Keep the original and reconcile the conflict deliberately.
+
+If no trustworthy paired original is available:
+
+```bash
+jobctrl legacy-evidence recover --authority-unavailable --stopped-runtime
+```
+
+This records the exact current cells as uncertain, including any draft whose
+previous confirmation history cannot be recovered. Missing authority stays
+unknown. Review each current record independently before deciding:
+
+```bash
+jobctrl legacy-evidence decide --entry-id ROLE_ID --evidence-id EVIDENCE_ID \
+  --token TOKEN_FROM_CURRENT_LIST --decision confirm --stopped-runtime
+```
+
+`confirm` explicitly confirms the displayed current evidence; `reject` removes
+its current confirmation. Neither decision changes text, scope, metrics,
+strength or confidence. Original cells and every decision remain in private
+history. Each decision advances the profile version and consumes that token;
+run `list` again before the next decision. A changed profile, evidence row,
+concurrent writer or conflicting original refuses safely. Resume the runtime
+only after reviewing the remaining uncertainty. No review submits applications
+or refreshes accepted materials automatically.

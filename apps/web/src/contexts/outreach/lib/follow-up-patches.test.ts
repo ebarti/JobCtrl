@@ -23,7 +23,7 @@ describe("markThreadSentInThread", () => {
       draftId: "draft-2",
       channel: "email",
       sentAt: "2026-07-07",
-    });
+    }, "thread-1");
     const thread = threadOf(next);
     expect(thread?.sendLogs).toHaveLength(1);
     expect(thread?.sendLogs[0]?.channel).toBe("email");
@@ -33,15 +33,26 @@ describe("markThreadSentInThread", () => {
 
   it("ignores non-thread cache values", () => {
     expect(
-      markThreadSentInThread(undefined, { draftId: "d", channel: "email", sentAt: "2026-07-07" }),
+      markThreadSentInThread(undefined, { draftId: "d", channel: "email", sentAt: "2026-07-07" }, "thread-1"),
     ).toBeUndefined();
     expect(
       markThreadSentInThread(makeOutreachThreadResponse(null), {
         draftId: "d",
         channel: "email",
         sentAt: "2026-07-07",
-      }),
+      }, "thread-1"),
     ).toEqual(makeOutreachThreadResponse(null));
+  });
+
+  it("leaves a different thread unchanged instead of attaching a foreign draft", () => {
+    const current = makeOutreachThreadResponse();
+    expect(markThreadSentInThread(current, {
+      draftId: "foreign-draft",
+      channel: "email",
+      sentAt: "2026-07-07",
+    }, "another-thread")).toBe(current);
+    expect(current.thread?.sendLogs).toEqual([]);
+    expect(current.thread?.isSent).toBe(false);
   });
 });
 

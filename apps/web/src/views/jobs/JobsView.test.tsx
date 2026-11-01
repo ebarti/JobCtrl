@@ -210,6 +210,7 @@ describe("<JobsView> realtime UI state", () => {
       events: [],
     });
     const unrelatedKey = ["tenant", LOCAL_TENANT, "unrelated", "realtime"];
+    const otherTenantKey = ["tenant", "synthetic-other-tenant", "unrelated", "realtime"];
 
     harness.queryClient.setQueryData(
       jobsKeys.detail(LOCAL_TENANT, initialJob.jobKey),
@@ -231,11 +232,18 @@ describe("<JobsView> realtime UI state", () => {
       workflowDetail,
     );
     harness.queryClient.setQueryData(unrelatedKey, { retained: true });
+    harness.queryClient.setQueryData(otherTenantKey, { retained: true });
 
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText(initialJob.title)).toBeInTheDocument();
     await waitFor(() => expect(eventStream.subscriptions).toHaveLength(1));
+    // This port is already open when subscribed, so first-open reconciliation
+    // marks the current tenant's inactive reads stale before any domain event.
+    expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(true);
+    expect(harness.queryClient.getQueryState(otherTenantKey)?.isInvalidated).toBe(false);
+    // Establish a fresh baseline so the assertions below isolate event routing.
+    harness.queryClient.setQueryData(unrelatedKey, { retained: true });
     await user.click(
       screen.getByRole("checkbox", { name: `Select ${initialJob.title}` }),
     );
@@ -313,6 +321,7 @@ describe("<JobsView> realtime UI state", () => {
     expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(
       false,
     );
+    expect(harness.queryClient.getQueryState(otherTenantKey)?.isInvalidated).toBe(false);
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     expect(
       screen.getByRole("checkbox", { name: `Select ${latestJob.title}` }),
@@ -1725,7 +1734,7 @@ describe("<JobsView> bulk delete integration", () => {
       hiddenAt: "2026-09-19T10:00:00.000Z",
     };
     server.use(
-      http.get("*/v1/jobs", () => HttpResponse.json(makeJobsPage([hiddenJob]))),
+      http.get("*/v1/jobs/reviewable-list", () => HttpResponse.json(makeJobsPage([hiddenJob]))),
       http.post("*/v1/jobs/bulk-unhide", async ({ request }) => {
         const body = (await request.json()) as { jobKeys?: string[] };
         calls.push(body);
@@ -1774,15 +1783,20 @@ describe("<JobsView> bulk delete integration", () => {
 
   it("posts selected deleted jobs to /v1/jobs/bulk-delete-permanent", async () => {
     const user = userEvent.setup();
-    const calls: Array<{ jobKeys?: string[] }> = [];
+    const calls: Array<{ jobKeys?: string[]; selectionId?: string }> = [];
+    const preparations: unknown[] = [];
     const deletedJob: JobSummary = {
       ...sampleJob,
       deletedAt: "2026-09-19T10:00:00.000Z",
     };
     server.use(
-      http.get("*/v1/jobs", () => HttpResponse.json(makeJobsPage([deletedJob]))),
+      http.get("*/v1/jobs/reviewable-list", () => HttpResponse.json({ ...makeJobsPage([deletedJob]), observationId: "00000000-0000-4000-8000-000000000001" })),
+      http.post("*/v1/jobs/permanent-delete-selection", async ({ request }) => {
+        preparations.push(await request.json());
+        return HttpResponse.json({ ok: true, selectionId: "reviewed-1", jobKeys: [deletedJob.jobKey] });
+      }),
       http.post("*/v1/jobs/bulk-delete-permanent", async ({ request }) => {
-        const body = (await request.json()) as { jobKeys?: string[] };
+        const body = (await request.json()) as { jobKeys?: string[]; selectionId?: string };
         calls.push(body);
         return HttpResponse.json({
           ok: true,
@@ -1828,7 +1842,69 @@ describe("<JobsView> bulk delete integration", () => {
     );
 
     await waitFor(() => expect(calls.length).toBe(1));
-    expect(calls[0]?.jobKeys?.length).toBe(1);
+    expect(preparations).toEqual([{ observationId: "00000000-0000-4000-8000-000000000001", selections: [{ allMatching: false, jobKeys: [deletedJob.jobKey] }], expected: [{ jobKey: deletedJob.jobKey, deletedAt: deletedJob.deletedAt, hiddenAt: deletedJob.hiddenAt }] }]);
+    expect(calls[0]).toMatchObject({ allMatching: false, jobKeys: [deletedJob.jobKey], selectionId: "reviewed-1" });
+  });
+
+  it("reports a stale removed selection and refreshes instead of claiming success", async () => {
+    const user = userEvent.setup();
+    const deletedJob = { ...sampleJob, deletedAt: "2026-09-19T10:00:00.000Z" };
+    let reads = 0;
+    server.use(
+      http.get("*/v1/jobs/reviewable-list", () => { reads++; return HttpResponse.json({ ...makeJobsPage([deletedJob]), observationId: "00000000-0000-4000-8000-000000000001" }); }),
+      http.post("*/v1/jobs/permanent-delete-selection", () => HttpResponse.json({ ok: true, selectionId: "stale", jobKeys: [deletedJob.jobKey] })),
+      http.post("*/v1/jobs/bulk-delete-permanent", () => HttpResponse.json({ ok: false, error: "permanent_delete_selection_conflict", message: "The selected jobs changed. Refresh and select them again.", deletedJobKeys: [], conflictingJobKeys: [deletedJob.jobKey], unprocessedJobKeys: ["synthetic-other"] }, { status: 409 })),
+    );
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness, SEARCH.replace("deleted=active", "deleted=deleted"));
+    const { container } = render(<RouterProvider router={router} />, { wrapper: Wrapper });
+    await screen.findByText(/Acme Corp/i);
+    const checkboxes = container.querySelectorAll<HTMLInputElement>("input[type='checkbox']");
+    const rowCheckbox = Array.from(checkboxes)
+      .find((input) => input.getAttribute("aria-label")?.includes("Select row")) ?? checkboxes[1];
+    expect(rowCheckbox).toBeDefined();
+    await user.click(rowCheckbox!);
+    await user.click(within(await openJobOperationsMenu(user)).getByRole("menuitem", { name: /permanently delete selected/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/selected jobs changed/i);
+    expect(screen.getByText(/No jobs were deleted\. 1 changed; 1 were not processed/i)).toBeInTheDocument();
+    expect(screen.getByText(/synthetic-other/)).toBeInTheDocument();
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    expect(screen.queryByText(/1 selected/i)).not.toBeInTheDocument();
+  });
+
+  it("refreshes a consumed observation after confirmation is canceled", async () => {
+    const user = userEvent.setup();
+    const deletedJob = { ...sampleJob, deletedAt: "2026-09-19T10:00:00.000Z" };
+    let reads = 0;
+    let deletions = 0;
+    const confirmations = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    window.confirm = confirmations;
+    server.use(
+      http.get("*/v1/jobs/reviewable-list", () => {
+        reads++;
+        return HttpResponse.json({ ...makeJobsPage([deletedJob]), observationId: `00000000-0000-4000-8000-${String(reads).padStart(12, "0")}` });
+      }),
+      http.post("*/v1/jobs/permanent-delete-selection", () => HttpResponse.json({ ok: true, selectionId: "reviewed", jobKeys: [deletedJob.jobKey] })),
+      http.post("*/v1/jobs/bulk-delete-permanent", () => { deletions++; return HttpResponse.json({ ok: true, count: 1, jobKeys: [deletedJob.jobKey] }); }),
+    );
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness, SEARCH.replace("deleted=active", "deleted=deleted"));
+    const { container } = render(<RouterProvider router={router} />, { wrapper: Wrapper });
+    await screen.findByText(/Acme Corp/i);
+    const selectRow = async () => {
+      const boxes = container.querySelectorAll<HTMLInputElement>("input[type='checkbox']");
+      const row = Array.from(boxes).find((input) => input.getAttribute("aria-label")?.includes("Select row")) ?? boxes[1];
+      await user.click(row!);
+    };
+    const invoke = async () => user.click(within(await openJobOperationsMenu(user)).getByRole("menuitem", { name: /permanently delete selected/i }));
+    await selectRow();
+    await invoke();
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    expect(deletions).toBe(0);
+    await selectRow();
+    await invoke();
+    await waitFor(() => expect(deletions).toBe(1));
+    expect(confirmations).toHaveBeenCalledTimes(2);
   });
 
   it("shows stale score state and posts selected stale scores for rescore reset", async () => {
@@ -1849,7 +1925,7 @@ describe("<JobsView> bulk delete integration", () => {
     };
     const calls: Array<{ jobKeys?: string[] }> = [];
     server.use(
-      http.get("*/v1/jobs", () => HttpResponse.json(makeJobsPage([staleJob]))),
+      http.get("*/v1/jobs/reviewable-list", () => HttpResponse.json(makeJobsPage([staleJob]))),
       http.post(
         "*/v1/scoring/stale-scores/actions/reset-for-rescore",
         async ({ request }) => {
@@ -1859,7 +1935,7 @@ describe("<JobsView> bulk delete integration", () => {
             ok: true,
             count: body.jobKeys?.length ?? 0,
             jobKeys: body.jobKeys ?? [],
-            nextAction: "jobctrl run score --rescore",
+            nextAction: "jobctrl score --rescore",
           });
         },
       ),

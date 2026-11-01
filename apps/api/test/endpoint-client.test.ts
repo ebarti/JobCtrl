@@ -64,6 +64,7 @@ describe("endpoint client factory", () => {
         policyKind: "tailoring_rule",
         version: 3,
         status: "current",
+        currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111",
         learnedRules: [],
         sourceReviewId: null,
         sourceRecommendationId: null,
@@ -78,7 +79,7 @@ describe("endpoint client factory", () => {
     await client.reviewLearningRecommendation(RECOMMENDATION_ID, {
       decision: "accepted",
     });
-    await client.rollbackTailoringPolicy({ targetVersion: 1 });
+    await client.rollbackTailoringPolicy({ targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" });
 
     expect(transport.mock.calls).toEqual([
       ["GET", "/v1/learning/recommendations", { page: 2, pageSize: 5 }],
@@ -87,7 +88,7 @@ describe("endpoint client factory", () => {
         `/v1/learning/recommendations/${encodeURIComponent(RECOMMENDATION_ID)}/reviews`,
         { decision: "accepted" },
       ],
-      ["POST", "/v1/learning/policies/materials/rollbacks", { targetVersion: 1 }],
+      ["POST", "/v1/learning/policies/materials/rollbacks", { targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" }],
     ]);
     expect(Object.keys(client).toSorted()).toEqual(
       Object.values(ENDPOINTS)
@@ -99,7 +100,7 @@ describe("endpoint client factory", () => {
   it("rejects a response that violates the endpoint response schema", async () => {
     const client = createEndpointMethods(async () => ({ ok: true }));
 
-    await expect(client.rollbackTailoringPolicy({ targetVersion: 1 })).rejects.toThrow();
+    await expect(client.rollbackTailoringPolicy({ targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" })).rejects.toThrow();
   });
 
   it("preserves empty-object bodies for optional write requests", async () => {

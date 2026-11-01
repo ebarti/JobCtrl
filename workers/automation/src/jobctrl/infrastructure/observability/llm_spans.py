@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
@@ -50,6 +52,10 @@ def llm_generation_span(
     params: dict,
     scope_name: str = "jobctrl.llm",
     schema_fingerprint: str | None = None,
+    instruction_profile: str | None = None,
+    response_schema: dict | None = None,
+    runtime_instructions: str | None = None,
+    runtime_prompt: str | None = None,
 ) -> Iterator[RecordResponse]:
     """Open a ``langfuse.observation.type=generation`` span around an LLM call.
 
@@ -57,10 +63,15 @@ def llm_generation_span(
     so the caller can attach content-free response size + token counts after
     the LLM returns. Exceptions raised inside the ``with`` block mark the span
     failed without exporting their potentially private messages, then re-raise.
+    JOBCTRL_TRACE_CONTENT explicitly opts into request/response bodies on recording
+    spans; credentials, arbitrary parameters and exception text remain excluded.
     """
     from jobctrl.llm import enforce_spend_budget
     from jobctrl.llm_lanes import current_llm_lane
 
+    from jobctrl.infrastructure.llm.attempt_admission import check_model_attempt_admission
+
+    check_model_attempt_admission()
     lane = current_llm_lane()
     enforce_spend_budget(lane)
     tracer = trace.get_tracer(scope_name)
@@ -72,6 +83,9 @@ def llm_generation_span(
         span.set_attribute("langfuse.observation.type", "generation")
         span.set_attribute("langfuse.observation.model.name", model)
         span.set_attribute("gen_ai.request.model", model)
+        effort = params.get("effort")
+        if isinstance(effort, str) and effort in {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}:
+            span.set_attribute("gen_ai.request.reasoning_effort", effort)
         operation = "chat_json" if params.get("structured") is True else "chat"
         span.set_attribute("gen_ai.operation.name", operation)
         span.set_attribute("jobctrl.llm.operation", operation)
@@ -79,6 +93,15 @@ def llm_generation_span(
         span.set_attribute("jobctrl.llm.lane", lane)
         if schema_fingerprint is not None:
             span.set_attribute("jobctrl.llm.schema_fingerprint", schema_fingerprint)
+        if isinstance(instruction_profile, str) and re.fullmatch(r"[a-f0-9]{64}", instruction_profile):
+            span.set_attribute("jobctrl.llm.instruction_profile", instruction_profile)
+        from jobctrl.llm_request_context import current_determination_request
+
+        request = current_determination_request()
+        if request is not None and re.fullmatch(r"[a-f0-9]{64}", request.fingerprint):
+            span.set_attribute("jobctrl.llm.determination_id", request.fingerprint)
+            if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", request.kind):
+                span.set_attribute("jobctrl.llm.determination_kind", request.kind)
         span.set_attribute("jobctrl.llm.input.message_count", len(messages))
         span.set_attribute(
             "jobctrl.llm.input.character_count",
@@ -89,17 +112,50 @@ def llm_generation_span(
         if provider is not None:
             span.set_attribute("gen_ai.provider.name", provider)
 
+        capture_content = (
+            os.environ.get("JOBCTRL_TRACE_CONTENT", "").strip().lower() in {"1", "true", "yes"}
+            and span.is_recording()
+            and (request is None or request.kind not in {"message_link", "message_outcome"})
+        )
+        if capture_content:
+            request_body = {"messages": messages}
+            for name, value in (
+                ("response_schema", response_schema),
+                ("runtime_instructions", runtime_instructions),
+                ("runtime_prompt", runtime_prompt),
+            ):
+                if value is not None:
+                    request_body[name] = value
+            try:
+                encoded = json.dumps(request_body, ensure_ascii=False, separators=(",", ":"))
+            except (TypeError, ValueError):
+                # Diagnostic serialization must not change a provider call.
+                span.set_attribute("jobctrl.llm.content_capture", "input_serialization_failed")
+            else:
+                span.set_attribute("langfuse.observation.input", encoded)
+                span.set_attribute("jobctrl.llm.content_capture", "enabled")
+
         usage_recorded = False
+        response_recorded = False
 
         def record(
             text: str,
             *,
             input_tokens: int | None = None,
             output_tokens: int | None = None,
+            cached_input_tokens: int | None = None,
+            reasoning_output_tokens: int | None = None,
+            runtime_metadata: dict | None = None,
         ) -> None:
-            nonlocal usage_recorded
+            nonlocal usage_recorded, response_recorded
             span.set_attribute("gen_ai.response.model", model)
-            span.set_attribute("jobctrl.llm.output.character_count", len(text))
+            if text or not response_recorded:
+                span.set_attribute("jobctrl.llm.output.character_count", len(text))
+            response_recorded = response_recorded or bool(text)
+            # SDK usage callbacks pass empty text. They must not overwrite the
+            # final response, including when accounting arrives after it.
+            if capture_content and text:
+                span.set_attribute("langfuse.observation.output", text)
             if input_tokens is not None and output_tokens is not None:
                 span.set_attribute(
                     "langfuse.observation.usage_details",
@@ -115,6 +171,22 @@ def llm_generation_span(
                 span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
             if output_tokens is not None:
                 span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
+            # These are subsets of the existing totals, never extra billable
+            # categories. Unknown counters stay absent rather than becoming zero.
+            for name, value in (
+                ("cached_input_tokens", cached_input_tokens),
+                ("reasoning_output_tokens", reasoning_output_tokens),
+            ):
+                if type(value) is int and value >= 0:
+                    span.set_attribute("jobctrl.llm.usage." + name, value)
+            if runtime_metadata is not None:
+                reused = runtime_metadata.get("sdk_process_reused")
+                if type(reused) is bool:
+                    span.set_attribute("jobctrl.llm.runtime.sdk_process_reused", reused)
+                for name in ("sdk_process_start_count", "sdk_process_reuse_count"):
+                    value = runtime_metadata.get(name)
+                    if type(value) is int and value >= 0:
+                        span.set_attribute("jobctrl.llm.runtime." + name, value)
             if usage_recorded or (input_tokens is None and output_tokens is None):
                 return
             from jobctrl.llm import record_llm_spend

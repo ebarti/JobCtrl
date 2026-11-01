@@ -1,6 +1,9 @@
+import { isPrivateApplyEvent } from "@jobctrl/domain-types";
+import { readApplyAuditControls } from "./apply-controls.js";
 import { companyBriefingSummaries } from "./company-briefings.js";
 import { resolveJobLocator } from "./job-locators.js";
 import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "./contracts.js";
+import { scoreProfileFreshness } from "./score-profile-freshness.js";
 import { readDetermination, readArtifactLineAnchors, determinationOwnsArtifact } from "./semantic-determinations.js";
 /**
  * TS read-model — projection-backed (Phase 9 / S-33).
@@ -538,32 +541,32 @@ export function acknowledgeDigest(
   options: AcknowledgeDigestOptions = {},
 ): DigestAcknowledgeResponse {
   ensureDigestStateTable(db);
-  const previous = readDigestState(db).lastAcknowledgedAt;
-  const now = options.now ?? new Date();
-  const nowIso = now.toISOString();
-  const requestedAcknowledgedAt = options.acknowledgedAt ?? nowIso;
-  const acknowledgedAt = boundedAcknowledgeTimestamp(requestedAcknowledgedAt, nowIso);
-  const nextAcknowledgedAt =
-    previous && Date.parse(previous) > Date.parse(acknowledgedAt) ? previous : acknowledgedAt;
+  return db.transaction((): DigestAcknowledgeResponse => {
+    const previous = readDigestState(db).lastAcknowledgedAt;
+    const now = options.now ?? new Date();
+    const nowIso = now.toISOString();
+    const requestedAcknowledgedAt = options.acknowledgedAt ?? nowIso;
+    const acknowledgedAt = boundedAcknowledgeTimestamp(requestedAcknowledgedAt, nowIso);
+    const comparison = previous ? compareDigestTimestamps(previous, acknowledgedAt) : 0;
+    if (comparison === null) throw new Error("digest watermark is not a valid timestamp");
+    const nextAcknowledgedAt = previous && comparison > 0 ? previous : acknowledgedAt;
 
-  db.prepare(
-    `INSERT INTO digest_state (tenant_id, last_acknowledged_at, updated_at)
-     VALUES (?, ?, ?)
-     ON CONFLICT(tenant_id) DO UPDATE SET
-       last_acknowledged_at = excluded.last_acknowledged_at,
-       updated_at = excluded.updated_at`,
-  ).run(DEFAULT_TENANT, nextAcknowledgedAt, nowIso);
+    db.prepare(
+      `INSERT INTO digest_state (tenant_id, last_acknowledged_at, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(tenant_id) DO UPDATE SET
+         last_acknowledged_at = excluded.last_acknowledged_at,
+         updated_at = excluded.updated_at`,
+    ).run(DEFAULT_TENANT, nextAcknowledgedAt, nowIso);
 
-  recordDigestReviewedEvent(db, {
-    acknowledgedAt: nextAcknowledgedAt,
-    previousAcknowledgedAt: previous,
-    reviewedAt: nowIso,
-  });
+    recordDigestReviewedEvent(db, {
+      acknowledgedAt: nextAcknowledgedAt,
+      previousAcknowledgedAt: previous,
+      reviewedAt: nowIso,
+    });
 
-  return {
-    ok: true,
-    state: readDigestState(db),
-  };
+    return { ok: true, state: readDigestState(db) };
+  }).immediate();
 }
 
 export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}): DailyDigest {
@@ -572,7 +575,11 @@ export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}
   const generatedAt = now.toISOString();
   const since = readDigestState(db).lastAcknowledgedAt;
   const highFitThreshold = normalizeDigestThreshold(options.minFitScore);
-  const queueItems = options.applyReviewQueue?.items ?? [];
+  const queue = options.applyReviewQueue?.items ?? [];
+  const canonicalJobs = queue.length
+    ? new Set(allRows<{ job_id: string }>(db, "SELECT job_id FROM jobs WHERE tenant_id = ?", [DEFAULT_TENANT]).map((row) => row.job_id))
+    : null;
+  const queueItems = canonicalJobs ? queue.filter((item) => canonicalJobs.has(item.jobKey)) : queue;
   const preparation = buildPreparationSummary(db, DEFAULT_TENANT);
   return {
     ok: true,
@@ -603,11 +610,26 @@ export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}
 }
 
 function boundedAcknowledgeTimestamp(candidate: string, nowIso: string): string {
-  const candidateTime = Date.parse(candidate);
-  const nowTime = Date.parse(nowIso);
-  if (!Number.isFinite(candidateTime)) return nowIso;
-  if (candidateTime > nowTime) return nowIso;
+  const comparison = compareDigestTimestamps(candidate, nowIso);
+  if (comparison === null || comparison > 0) return nowIso;
   return candidate;
+}
+
+function compareDigestTimestamps(left: string, right: string): number | null {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  if (!Number.isFinite(leftMs) || !Number.isFinite(rightMs)) return null;
+  if (leftMs !== rightMs) return leftMs < rightMs ? -1 : 1;
+  // Date.parse truncates after milliseconds. Retain later fractional digits
+  // when protecting a historical watermark that was stored more precisely.
+  const tail = (value: string): string =>
+    (value.trim().match(/[T ]\d{2}:\d{2}:\d{2}\.(\d+)(?=Z|[+-]\d{2}:?\d{2}$|$)/i)?.[1] ?? "").slice(3);
+  const leftTail = tail(left);
+  const rightTail = tail(right);
+  const length = Math.max(leftTail.length, rightTail.length);
+  const a = leftTail.padEnd(length, "0");
+  const b = rightTail.padEnd(length, "0");
+  return a === b ? 0 : a < b ? -1 : 1;
 }
 
 function recordDigestReviewedEvent(
@@ -713,10 +735,27 @@ function countDigestNewMatches(
   highFitThreshold: number,
 ): DailyDigest["newMatches"] {
   const activeFilter = jobSqlFilter(digestBaseJobQuery());
-  const sinceClause = since ? " AND (discovered_at >= ? OR scored_at >= ?)" : "";
-  const sinceParams: SqliteValue[] = since ? [since, since] : [];
-  const where = `${activeFilter.where}${sinceClause}`;
-  const params = [...activeFilter.params, ...sinceParams];
+  const where = `${activeFilter.where} AND EXISTS (
+    SELECT 1 FROM jobs j
+    WHERE j.tenant_id = job_list_projections.tenant_id AND j.job_id = job_list_projections.job_id
+  )`;
+  const params = activeFilter.params;
+  if (since) {
+    const watermark = Date.parse(since);
+    if (!Number.isFinite(watermark)) throw new Error("digest watermark is not a valid timestamp");
+    let count = 0;
+    let highFitCount = 0;
+    const rows = db.prepare(`SELECT discovered_at, scored_at, fit_score FROM job_list_projections${where}`)
+      .iterate(...params) as Iterable<{ discovered_at: string | null; scored_at: string | null; fit_score: number | null }>;
+    for (const row of rows) {
+      const discovered = Date.parse(row.discovered_at ?? "");
+      const scored = Date.parse(row.scored_at ?? "");
+      if (!(Number.isFinite(discovered) && discovered >= watermark) && !(Number.isFinite(scored) && scored >= watermark)) continue;
+      count++;
+      if (row.fit_score !== null && row.fit_score >= highFitThreshold) highFitCount++;
+    }
+    return { count, highFitCount };
+  }
   return {
     count: countRows(db, `SELECT COUNT(*) AS count FROM job_list_projections${where}`, params),
     highFitCount: countRows(
@@ -754,7 +793,7 @@ const FOLLOW_UP_STOP_OUTCOMES = new Set([
 ]);
 
 function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
-  const cutoff = new Date(now.getTime() - DIGEST_FOLLOW_UP_THRESHOLD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const cutoff = now.getTime() - DIGEST_FOLLOW_UP_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
   const rows = allRows<{
     job_id: string;
     kind: string;
@@ -762,32 +801,38 @@ function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
     recorded_at: string | null;
   }>(
     db,
-    `SELECT job_id, kind, occurred_at, recorded_at
-       FROM application_outcomes
-      WHERE tenant_id = ?
-      ORDER BY job_id ASC, occurred_at ASC, recorded_at ASC`,
+    `SELECT o.job_id, o.kind, o.occurred_at, o.recorded_at
+       FROM application_outcomes o
+      WHERE o.tenant_id = ?
+        AND EXISTS (SELECT 1 FROM jobs j WHERE j.tenant_id = o.tenant_id AND j.job_id = o.job_id)`,
     [DEFAULT_TENANT],
   );
-  const byJob = new Map<string, { appliedAt: string | null; lastActivityAt: string | null; stopped: boolean }>();
-  for (const row of rows) {
+  const events = rows.map((row) => ({
+    ...row,
+    occurredMs: Date.parse(row.occurred_at || row.recorded_at || ""),
+    recordedMs: Date.parse(row.recorded_at || row.occurred_at || ""),
+  })).filter((row) => Number.isFinite(row.occurredMs));
+  events.sort((a, b) => a.job_id.localeCompare(b.job_id) || a.occurredMs - b.occurredMs
+    || (Number.isFinite(a.recordedMs) ? a.recordedMs : a.occurredMs) - (Number.isFinite(b.recordedMs) ? b.recordedMs : b.occurredMs));
+  const byJob = new Map<string, { appliedAt: number | null; lastActivityAt: number | null; stopped: boolean }>();
+  for (const row of events) {
     const jobKey = row.job_id;
     const current = byJob.get(jobKey) ?? {
       appliedAt: null,
       lastActivityAt: null,
       stopped: false,
     };
-    const occurredAt = row.occurred_at || row.recorded_at || "";
-    if (!occurredAt) continue;
-    if (!current.lastActivityAt || occurredAt > current.lastActivityAt) {
+    const occurredAt = row.occurredMs;
+    if (current.lastActivityAt === null || occurredAt > current.lastActivityAt) {
       current.lastActivityAt = occurredAt;
     }
     if (row.kind === "applied_confirmation") {
-      if (!current.appliedAt || occurredAt > current.appliedAt) {
+      if (current.appliedAt === null || occurredAt > current.appliedAt) {
         current.appliedAt = occurredAt;
         current.stopped = false;
       }
     } else if (
-      current.appliedAt &&
+      current.appliedAt !== null &&
       occurredAt > current.appliedAt &&
       FOLLOW_UP_STOP_OUTCOMES.has(row.kind)
     ) {
@@ -797,7 +842,7 @@ function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
   }
   let count = 0;
   for (const item of byJob.values()) {
-    if (item.appliedAt && !item.stopped && item.lastActivityAt && item.lastActivityAt <= cutoff) {
+    if (item.appliedAt !== null && !item.stopped && item.lastActivityAt !== null && item.lastActivityAt <= cutoff) {
       count += 1;
     }
   }
@@ -888,8 +933,7 @@ function countOutdatedScores(
         AND s.job_id = stale.job_id
         AND s.version = latest.max_version
       WHERE stale.tenant_id = ?
-        AND stale.resolved = 0
-        AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')`,
+        AND stale.resolved = 0`,
     [tenantId, tenantId],
   );
   return rows.filter((row) => activeJobs.has(row.job_id)).length;
@@ -971,7 +1015,8 @@ function activeJobIdSet(db: SqliteDatabase): Set<string> {
   });
   const rows = allRows<{ job_id: string }>(
     db,
-    `SELECT job_id FROM job_list_projections${filter.where}`,
+    `SELECT job_id FROM job_list_projections${filter.where}
+      AND EXISTS (SELECT 1 FROM jobs j WHERE j.tenant_id = job_list_projections.tenant_id AND j.job_id = job_list_projections.job_id)`,
     filter.params,
   );
   return new Set(rows.map((row) => row.job_id).filter(Boolean));
@@ -1014,14 +1059,35 @@ function withJobQuerySnapshot<T>(db: SqliteDatabase, read: () => T): T {
   })();
 }
 
+function listJobsInSnapshot(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
+  const { ids, total, page } = selectJobPage(db, query, jobSqlFilter(query));
+  // Hydrate only selected IDs, in selection order. Auxiliary availability and
+  // template reads are deliberately absent from index construction.
+  const statement = db.prepare(`SELECT ${jobProjectionSelect()} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`);
+  const summaries = ids.map((id) => rowToJobSummary(statement.get(DEFAULT_TENANT, id) as JobListProjectionRow, db));
+  return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+}
+
 export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
+  return withJobQuerySnapshot(db, () => listJobsInSnapshot(db, query));
+}
+
+/** Read a visible page, a bounded matching cohort and caller data in one snapshot. */
+export function withJobsSelectionSnapshot<T>(
+  db: SqliteDatabase,
+  query: JobListQuery,
+  filter: Partial<BulkJobMutationFilter>,
+  limit: number,
+  read: (page: PaginatedResponse<JobSummary>, ids: string[]) => T,
+): T {
   return withJobQuerySnapshot(db, () => {
-    const { ids, total, page } = selectJobPage(db, query, jobSqlFilter(query));
-    // Hydrate only selected IDs, in selection order. Auxiliary availability and
-    // template reads are deliberately absent from index construction.
-    const statement = db.prepare(`SELECT ${jobProjectionSelect()} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`);
-    const summaries = ids.map((id) => rowToJobSummary(statement.get(DEFAULT_TENANT, id) as JobListProjectionRow, db));
-    return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+    const page = listJobsInSnapshot(db, query);
+    const normalized = normalizeMutationFilter(filter);
+    const selection = jobQuerySelection(normalized, jobSqlFilter(normalized));
+    const ids = allRows<{ job_id: string }>(db,
+      `SELECT qi.job_id FROM ${selection.from}${selection.where} LIMIT ?`, [...selection.params, limit])
+      .map((row) => row.job_id);
+    return read(page, ids);
   });
 }
 
@@ -1064,12 +1130,36 @@ export function listScoringKeywords(db: SqliteDatabase): ScoringKeywordAggregati
   };
 }
 
-export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}): string[] {
+export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}, limit?: number): string[] {
   const query = normalizeMutationFilter(filter);
   return withJobQuerySnapshot(db, () => {
     const selection = jobQuerySelection(query, jobSqlFilter(query));
+    const limitSql = limit === undefined ? "" : " LIMIT ?";
+    const params = limit === undefined ? selection.params : [...selection.params, limit];
     return allRows<{ job_id: string }>(db,
-      `SELECT qi.job_id FROM ${selection.from}${selection.where}`, selection.params).map((row) => row.job_id);
+      `SELECT qi.job_id FROM ${selection.from}${selection.where}${limitSql}`, params).map((row) => row.job_id);
+  });
+}
+
+/** Check filter membership only within a reviewed canonical cohort. */
+export function matchingJobKeysWithin(
+  db: SqliteDatabase,
+  filter: Partial<BulkJobMutationFilter>,
+  jobKeys: readonly string[],
+): string[] {
+  if (!jobKeys.length) return [];
+  const query = normalizeMutationFilter(filter);
+  return withJobQuerySnapshot(db, () => {
+    const selection = jobQuerySelection(query, jobSqlFilter(query));
+    const matching: string[] = [];
+    for (let offset = 0; offset < jobKeys.length; offset += 250) {
+      const batch = jobKeys.slice(offset, offset + 250);
+      const ids = allRows<{ job_id: string }>(db,
+        `SELECT qi.job_id FROM ${selection.from}${selection.where} AND qi.job_id IN (${batch.map(() => "?").join(", ")})`,
+        [...selection.params, ...batch]);
+      matching.push(...ids.map((row) => row.job_id));
+    }
+    return matching;
   });
 }
 
@@ -1133,6 +1223,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   const latestApplyRun = latestApplyRunForJob(db, jobId);
   const activeApplyRun = activeApplyRunForJob(db, jobId);
   const employerAnalysis = parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null);
+  const projectedFitReport = parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null);
   if (employerAnalysis) {
     const refs = allRows<{determination_id: string}>(db,
       "SELECT determination_id FROM semantic_entity_bindings WHERE tenant_id=? AND entity_kind='employer_analysis' AND entity_id=? AND entity_version=? ORDER BY determination_kind",
@@ -1158,6 +1249,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
       currentErrorCode: jobSummary.errorCode,
       currentErrorMessage: jobSummary.errorMessage,
       latestApplyRun,
+      ...readApplyAuditControls(db, DEFAULT_TENANT, jobId),
       scoreBreakdown: jobSummary.scoreBreakdown,
       reviewEvidenceAvailable: Boolean(
         jobSummary.scoreBreakdown ||
@@ -1173,8 +1265,9 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     auditHistory,
     employerAnalysis,
     requirementFitReport: jobSummary.scoreAnalysisFreshness?.status === "current"
+      && projectedFitReport?.scoreVersion === jobSummary.scoreVersion
       ? requirementFitForCurrentAnalysis(
-        db, jobId, employerAnalysis, parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
+        db, jobId, employerAnalysis, projectedFitReport,
       )
       : null,
     interviewPrep: parseInterviewPrep(detailRow?.interview_prep_json ?? null),
@@ -2665,6 +2758,7 @@ function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSum
     scoreCorrection: parseScoreCorrection(row.score_correction_json),
     scoreStaleness: parseScoreStaleness(row),
     scoreAnalysisFreshness: parseScoreAnalysisFreshness(row),
+    ...(db ? { scoreProfileFreshness: scoreProfileFreshness(db, jobKey, nullableNumber(row.score_version), row.score_trace_json) } : {}),
     artifactCount: Number(row.artifact_count ?? 0),
     applyStatus: row.apply_status,
     appliedAt: row.applied_at,
@@ -5110,12 +5204,17 @@ function listActivityFromEvents(
   }
   const normalizedQuery = query.q.trim();
   if (normalizedQuery) {
+    // Search the same public message presented by activity, never raw
+    // historical Apply messages or payloads that the response redacts.
+    db.function("jobctrl_public_activity_message", { deterministic: true },
+      (eventType: string | null, payload: string | null, message: string | null) =>
+        publicActivityMessage(eventType, payload, message));
     const search = `%${normalizedQuery.toLowerCase()}%`;
     activityClauses.push(`(
       LOWER(COALESCE(e.level, '')) LIKE ?
       OR LOWER(COALESCE(e.stage, '')) LIKE ?
       OR LOWER(${eventTypePredicate}) LIKE ?
-      OR LOWER(COALESCE(e.message, '')) LIKE ?
+      OR LOWER(jobctrl_public_activity_message(e.event_type, e.payload_json, e.message)) LIKE ?
       OR LOWER(COALESCE(jp.title, '')) LIKE ?
       OR LOWER(COALESCE(jp.employer, '')) LIKE ?
       OR LOWER(COALESCE(e.job_id, '')) LIKE ?
@@ -5165,6 +5264,7 @@ function listActivityFromEvents(
       e.stage,
       e.level,
       e.message,
+      e.payload_json,
       e.occurred_at,
       jp.title    AS title,
       jp.employer AS employer
@@ -5206,6 +5306,7 @@ function getActivityEventFromEvents(db: SqliteDatabase, eventId: string): Activi
        e.stage,
        e.level,
        e.message,
+      e.payload_json,
        e.occurred_at,
        jp.title    AS title,
        jp.employer AS employer
@@ -5246,9 +5347,15 @@ function activityRowToSummary(row: Record<string, unknown>): ActivityEventSummar
     company: nullableString(row.employer),
     stage: stringField(row.stage) || "system",
     level: stringField(row.level) || "info",
-    message: stringField(row.message) || "event",
+    message: publicActivityMessage(row.event_type, row.payload_json, row.message),
     at: nullableString(row.occurred_at),
   };
+}
+
+function publicActivityMessage(eventType: unknown, payload: unknown, message: unknown): string {
+  return isPrivateApplyEvent(eventType, parseJsonRecord(nullableString(payload)) ?? {}) || eventType === "ApplyRunEventRecorded"
+    ? "Apply status changed"
+    : stringField(message) || "event";
 }
 
 /**
@@ -5576,6 +5683,7 @@ function workflowRunsFilterPayload(query: WorkflowRunsListQuery): Record<string,
 export function getWorkflowRunDetail(
   db: SqliteDatabase,
   runId: string,
+  requestedJobId?: string,
 ): WorkflowRunDetail | null {
   refreshProjections(db, DEFAULT_TENANT);
   const applyJoin = ` LEFT JOIN apply_run_projections arp
@@ -5643,7 +5751,69 @@ export function getWorkflowRunDetail(
     finishedAt: summary.finishedAt,
     durationMs: summary.durationMs,
     events: parseWorkflowRunTimeline(row.events_json),
+    applyEvents: summary.workflowType === "ApplyWorkflow" || (!summary.workflowType && row.apply_job_id)
+      ? readWorkflowApplyTimeline(db, runId, nullableString(row.apply_job_id), inputSummary, requestedJobId)
+      : [],
   };
+}
+
+function readWorkflowApplyTimeline(
+  db: SqliteDatabase,
+  runId: string,
+  projectedJobId: string | null,
+  inputSummary: Record<string, unknown>,
+  requestedJobId?: string,
+): NonNullable<WorkflowRunDetail["applyEvents"]> {
+  const inputJobId = nullableString(inputSummary.jobId);
+  const legacyInputJobId = nullableString(inputSummary.job_id);
+  const candidate = inputJobId && legacyInputJobId && inputJobId !== legacyInputJobId
+    ? null : inputJobId ?? legacyInputJobId;
+  if (requestedJobId && projectedJobId && requestedJobId !== projectedJobId) return [];
+  const jobId = projectedJobId ?? requestedJobId ?? candidate;
+  if (!jobId) return [];
+  const rows = allRows<{
+    event_id: number | string;
+    job_id: string | null;
+    event_type: string | null;
+    level: string | null;
+    message: string | null;
+    occurred_at: string | null;
+    payload_json: string | null;
+  }>(db, `SELECT event_id, job_id, event_type, level, message, occurred_at, payload_json
+    FROM job_events INDEXED BY idx_job_events_job_time
+    WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'
+      AND CASE WHEN json_valid(payload_json)
+        THEN COALESCE(json_extract(payload_json, '$.run_id'), json_extract(payload_json, '$.runId')) = ?
+        ELSE 0 END
+    ORDER BY event_id`, [DEFAULT_TENANT, jobId, runId]);
+
+  // A workflow input alone is not evidence that the run acquired this job.
+  // While its projection lags, require a matching durable start at this job.
+  if (!projectedJobId && !rows.some((row) => {
+    if (row.event_type !== "ApplyRunStarted") return false;
+    try {
+      const payload: unknown = JSON.parse(row.payload_json ?? "{}");
+      return isRecord(payload) && !(typeof payload.run_id === "string" && typeof payload.runId === "string" && payload.run_id !== payload.runId);
+    } catch { return false; }
+  })) return [];
+  return rows.flatMap((row) => {
+    if (row.job_id !== jobId) return [];
+    let payload: unknown;
+    try { payload = JSON.parse(row.payload_json ?? "{}"); } catch { return []; }
+    if (!isRecord(payload)) return [];
+    if (typeof payload.run_id === "string" && typeof payload.runId === "string" && payload.run_id !== payload.runId) return [];
+    const nested = row.event_type === "ApplyRunEventRecorded" && isRecord(payload.event) ? payload.event : null;
+    const event = nested ?? payload;
+    const runEventId = event.event_id ?? event.eventId;
+    return [{
+      sourceEventId: String(row.event_id),
+      runEventId: typeof runEventId === "number" && Number.isSafeInteger(runEventId) && runEventId > 0 ? runEventId : null,
+      at: nested ? nullableString(nested.occurred_at ?? nested.occurredAt ?? nested.at) ?? row.occurred_at : row.occurred_at,
+      type: nested ? stringField(nested.event_type ?? nested.eventType ?? nested.type) || "event" : stringField(row.event_type) || "event",
+      level: nested ? stringField(nested.level) || "info" : stringField(row.level) || "info",
+      message: nested ? nullableString(nested.message) : row.message,
+    }];
+  });
 }
 
 const PROVIDER_FAILURE_MAX_TOTAL = 100;
@@ -5931,7 +6101,7 @@ function parseWorkflowRunTimeline(value: unknown): WorkflowRunTimelineEvent[] {
     eventType: stringField(event.eventType ?? event.event_type) || "event",
     occurredAt: nullableString(event.occurredAt ?? event.occurred_at),
     status: nullableString(event.status),
-    message: nullableString(event.message),
+    message: (isPrivateApplyEvent(event.eventType ?? event.event_type, isRecord(event.payload) ? event.payload : event) || (event.eventType ?? event.event_type) === "ApplyRunEventRecorded") ? null : nullableString(event.message),
   }));
 }
 
@@ -6066,7 +6236,7 @@ function parseApplyRunTimelineEvents(value: string | null): DashboardSummary["ap
     const type = stringField(event.event_type ?? event.eventType ?? event.type) || "event";
     const at = nullableString(event.occurred_at ?? event.occurredAt ?? event.at);
     const level = stringField(event.level) || "info";
-    const message = nullableString(event.message);
+    const message = (isPrivateApplyEvent(type, isRecord(event.payload) ? event.payload : event) || type === "ApplyRunEventRecorded") ? null : nullableString(event.message);
     return { at, type, level, message };
   });
 }
@@ -6125,6 +6295,9 @@ function publicStagePresentation(
   nextAction: string | null;
   retryable: boolean;
 } {
+  if (errorCode === "APPLY_NEEDS_VERIFICATION") {
+    errorMessage = "Apply reached submit intent; verify the employer site or confirmation email before retrying.";
+  }
   if (rawState === "exhausted") {
     return {
       state: "failed",

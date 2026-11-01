@@ -12,6 +12,7 @@ Gemini-serialised (no ``additionalProperties``).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -102,15 +103,24 @@ class _FakeAgent:
 class _FakeBuiltinTools:
     FINISH = "FINISH"
 
+    @classmethod
+    def read_only(cls):
+        return [cls.FINISH]
+
 
 class _FakeCapabilitiesConfig:
-    def __init__(self, *, enabled_tools: list[Any]) -> None:
+    def __init__(self, *, enabled_tools: list[Any], enable_subagents: bool = False) -> None:
         self.enabled_tools = enabled_tools
+        self.enable_subagents = enable_subagents
 
 
 class _FakeTypes:
     BuiltinTools = _FakeBuiltinTools
     CapabilitiesConfig = _FakeCapabilitiesConfig
+    Text = type("Text", (), {})
+    Thought = type("Thought", (), {})
+    ToolCall = type("ToolCall", (), {})
+    ToolResult = type("ToolResult", (), {})
     DEFAULT_MODEL = "gemini-3.5-flash"
 
 
@@ -127,7 +137,7 @@ def _make_adapter(
     def config_factory(**kwargs: Any) -> dict[str, Any]:
         calls["config_kwargs"] = kwargs
         calls["response"] = response
-        return {"config": kwargs}
+        return SimpleNamespace(**kwargs)
 
     def agent_factory(config: Any) -> _FakeAgent:
         calls["config_arg"] = config
@@ -151,9 +161,13 @@ async def test_draft_returns_tagged_draft(monkeypatch: pytest.MonkeyPatch) -> No
     assert draft.model_id == ANTIGRAVITY_ANALYSIS_MODEL == "gemini-3.5-flash"
     assert draft.requirements[0].text == "6+ years of Python"
     assert draft.keywords[0].keyword == "Python"
-    # The agent was entered, chat called with the JD, the context exited.
+    # The kit owns the idle process until explicit service shutdown.
     assert calls["entered"] is True
     assert calls["chat_prompt"] == "6+ years of Python required."
+    assert "exited" not in calls
+    from jobctrl.infrastructure.llm.agent_runtime_pool import close_agent_runtimes
+
+    await asyncio.to_thread(close_agent_runtimes)
     assert calls["exited"] is True
     # The chunk stream was drained before structured_output() resolved.
     assert calls["response"].drained is True

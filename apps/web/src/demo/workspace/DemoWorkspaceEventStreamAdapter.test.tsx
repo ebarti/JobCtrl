@@ -168,11 +168,13 @@ describe("DemoWorkspaceEventStreamAdapter", () => {
     observer.on((envelope) => observedEvents.push(envelope.eventType));
     const ports = buildTestPorts({ eventStream });
     const harness = buildProviderHarness({ ports });
-    const unrelatedKey = ["unrelated-demo-query"] as const;
+    const unrelatedKey = ["tenant", LOCAL_TENANT, "unrelated-demo-query"] as const;
+    const otherTenantKey = ["tenant", "other-tenant", "unrelated-demo-query"] as const;
     harness.queryClient.setQueryData(jobsKeys.lists(LOCAL_TENANT), {
       items: [],
     });
     harness.queryClient.setQueryData(unrelatedKey, { retained: true });
+    harness.queryClient.setQueryData(otherTenantKey, { retained: true });
     render(
       <EventStreamProvider>
         <span>child</span>
@@ -191,6 +193,7 @@ describe("DemoWorkspaceEventStreamAdapter", () => {
         true,
       ),
     );
+    expect(harness.queryClient.getQueryState(otherTenantKey)?.isInvalidated).toBe(false);
     expect(observedEvents).toEqual([]);
 
     harness.queryClient.setQueryData(jobsKeys.lists(LOCAL_TENANT), {
@@ -222,6 +225,7 @@ describe("DemoWorkspaceEventStreamAdapter", () => {
         harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated,
       ).toBe(true),
     );
+    expect(harness.queryClient.getQueryState(otherTenantKey)?.isInvalidated).toBe(false);
     observer.close();
   });
 });

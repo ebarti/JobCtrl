@@ -8,8 +8,10 @@ package launcher
 import (
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,12 +20,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/ebarti/jobctrl/launcher/internal/release"
+	"github.com/ebarti/jobctrl/launcher/internal/retentionfs"
 )
 
 const removeDataPhrase = "REMOVE JOBCTRL DATA"
@@ -106,12 +110,34 @@ func releaseStore(ctx launchContext) (*release.Store, error) {
 	return release.Open(ctx.Instance.RuntimeHome)
 }
 
-// recoverRevokedTransitionBeforePrepare is the one path deliberately placed
-// before normal selector preparation. After policy finalization a revoked old
-// active release correctly fails Permit(), which otherwise prevents even the
-// `rollback` command from reaching recovery. This path never starts old code:
-// it restores the durable pre-candidate pair and resumes only the authenticated
-// candidate recorded in the journal.
+// refuseUncertainTransitionRollback preserves both live databases after a
+// candidate may have run. Candidate-ready is included because migration
+// activation can commit before the next journal write. A paired snapshot alone
+// cannot prove that no independent writer committed after it was taken.
+func refuseUncertainTransitionRollback(journal release.Journal, pair *databasePair) error {
+	switch journal.State {
+	case release.PairBackedUp, release.PolicyPending,
+		release.MigrationCandidateReady, release.MigrationActivated,
+		release.CandidateStarting, release.CandidateHealthy,
+		release.PolicyFinalized, release.RollbackRestoring:
+	default:
+		return nil
+	}
+	if pair == nil {
+		// An update may restart its predecessor before taking any pair. The
+		// state machine persists BackupID before activation or candidate start,
+		// and only explicit rollback records a target backup.
+		if journal.Operation == "update" && journal.State == release.RollbackRestoring && journal.BackupID == "" && journal.TargetBackupID == "" && !journal.PreserveLiveOnFailure {
+			return nil
+		}
+		return errors.New("transition may have activated a migration without a verified database pair; automatic recovery is unavailable; retain the live databases and journal")
+	}
+	return errors.New("transition may have activated or started a candidate; automatic recovery is unavailable; retain the live databases and journal")
+}
+
+// recoverRevokedTransitionBeforePrepare handles an interrupted security
+// transition before normal selector preparation. A preservation fence always
+// takes priority over automatically restoring the paired backup.
 func recoverRevokedTransitionBeforePrepare(env []string, output io.Writer) (bool, error) {
 	home, err := runtimeHomeFromEnv(env)
 	if err != nil {
@@ -144,19 +170,34 @@ func recoverRevokedTransitionBeforePrepare(env []string, output io.Writer) (bool
 		return true, err
 	}
 	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return true, err
+	}
 	// Re-read while holding both locks so a concurrent acquisition cannot alter
 	// the candidate/policy decision after our preflight.
 	journal, err = store.ReadJournal()
 	if err != nil || journal.Candidate == nil || journal.Old == nil || store.Permit(*journal.Old) == nil {
 		return true, errors.New("security transition changed while recovery was acquiring locks")
 	}
+	if journal.PreserveLiveOnFailure {
+		return true, errors.New("transition requires live database preservation; automatic recovery is unavailable; retain the live databases and journal")
+	}
 	ctx, err := transitionContextForReceipt(env, store, *journal.Candidate)
 	if err != nil {
 		return true, err
 	}
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return true, err
+	}
+	if !protocolSupports(ctx.Distribution, launcherProtocol) {
+		return true, fmt.Errorf("security recovery target does not support launcher protocol %d; retain the transition for a compatible recovery controller", launcherProtocol)
+	}
 	var pair databasePair
 	if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil || pair.ReleaseReceipt != *journal.Old {
 		return true, errors.New("security transition recovery has no verified predecessor database pair")
+	}
+	if err := refuseUncertainTransitionRollback(journal, &pair); err != nil {
+		return true, err
 	}
 	if err := store.Advance(&journal, release.RollbackRestoring, nil); err != nil {
 		return true, err
@@ -314,6 +355,11 @@ type verifiedRelease struct {
 // substitute for re-checking it when another process may have modified it
 // since staging or since the initial candidate validation.
 func verifyInstalledReleaseForExecution(store *release.Store, receipt release.Receipt) (verifiedRelease, error) {
+	return verifyInstalledReleaseEvidence(store, receipt, true)
+}
+
+// Retired code is authenticated historical evidence only; it is never executed.
+func verifyInstalledReleaseEvidence(store *release.Store, receipt release.Receipt, forExecution bool) (verifiedRelease, error) {
 	installed, err := readInstalledReceipt(store.Home, receipt.BuildID)
 	if err != nil {
 		return verifiedRelease{}, err
@@ -326,8 +372,10 @@ func verifyInstalledReleaseForExecution(store *release.Store, receipt release.Re
 			return verifiedRelease{}, fmt.Errorf("verify immutable release policy: %w", err)
 		}
 	}
-	if err := store.Permit(receipt); err != nil {
-		return verifiedRelease{}, fmt.Errorf("release is not permitted by authenticated channel policy: %w", err)
+	if forExecution {
+		if err := store.Permit(receipt); err != nil {
+			return verifiedRelease{}, fmt.Errorf("release is not permitted by authenticated channel policy: %w", err)
+		}
 	}
 	payloadRoot := filepath.Join(store.Home, "releases", receipt.BuildID, "payload")
 	distribution, err := loadAndVerifyDistributionManifest(payloadRoot)
@@ -458,12 +506,15 @@ func advance(store *release.Store, journal *release.Journal, state release.State
 	if err := store.Advance(journal, state, nil); err != nil {
 		return err
 	}
+	if err := releaseQACheckpoint(store, state); err != nil {
+		return err
+	}
 	if transitionFailure != nil {
 		if err := transitionFailure(state); err != nil {
 			// An abrupt interruption models SIGKILL/power loss after the journal
 			// fsync. Do not relabel it failed: the next lifecycle invocation must
 			// see the durable milestone and recover from it.
-			if errors.Is(err, errTransitionInterrupted) {
+			if errors.Is(err, errTransitionInterrupted) || journal.PreserveLiveOnFailure {
 				return err
 			}
 			_ = store.Advance(journal, release.Failed, err)
@@ -477,6 +528,9 @@ func update(ctx launchContext, args []string, output io.Writer) error {
 	releaseSelection(&ctx)
 	if len(args) == 1 && args[0] == "--help" {
 		_, err := io.WriteString(output, "usage: jobctrl update [--to BUILD_ID]\n")
+		return err
+	}
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
 		return err
 	}
 	build, err := parseBuildTarget(args, "update")
@@ -699,6 +753,9 @@ func readHomebrewFormulaAssets(prefix string) (homebrewFormulaAssets, error) {
 
 func rollback(ctx launchContext, args []string, output io.Writer) error {
 	releaseSelection(&ctx)
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	build, err := parseBuildTarget(args, "rollback")
 	if err != nil {
 		return err
@@ -740,6 +797,29 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 		return err
 	}
 	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return err
+	}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
+	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
+	if err != nil {
+		return err
+	}
+	if temporal != filepath.Join(ctx.Instance.StateDir, "temporal.db") {
+		return errors.New("paired rollback is unavailable for a legacy source Temporal history; preserve the workspace and backup")
+	}
+	// A transition can be created while this rollback waits for the locks.
+	// Never replace a live preservation fence with a new rollback journal.
+	if existing, journalErr := store.ReadJournal(); journalErr == nil && existing.Resumable() {
+		return fmt.Errorf("unfinished %s transition at %s must be recovered before another rollback", existing.Operation, existing.State)
+	} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
+		return fmt.Errorf("read existing release transition journal: %w", journalErr)
+	}
 	active, err = store.ReadActive()
 	if err != nil {
 		return err
@@ -753,10 +833,6 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	}
 	if err := store.Permit(target); err != nil {
 		return fmt.Errorf("rollback target is not safe: %w", err)
-	}
-	targetPair, err := retainedPairForReceipt(ctx.Instance.StateDir, target)
-	if err != nil {
-		return fmt.Errorf("rollback requires a verified paired backup for %s: %w", target.BuildID, err)
 	}
 	ctx, err = rebindActiveContext(ctx, active.Receipt.BuildID)
 	if err != nil {
@@ -772,7 +848,22 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 		return err
 	}
 	if !protocolSupports(activeVerified.distribution, launcherProtocol) || !protocolSupports(targetVerified.distribution, launcherProtocol) {
-		return fmt.Errorf("current launcher protocol %d cannot supervise both active and rollback payloads; choose a retained compatible bridge release", launcherProtocol)
+		return fmt.Errorf("current launcher protocol %d cannot supervise both active and rollback payloads; keep the current release; cross-schema rollback is unavailable", launcherProtocol)
+	}
+	targetPair, err := retainedPairForReceipt(ctx.Instance.StateDir, target)
+	if err != nil {
+		// Older forward controllers labeled their first schema-15 snapshot
+		// with the candidate receipt. Only the completed transition's original
+		// journal and both signed schema contracts can establish its source.
+		journal, journalErr := store.ReadJournal()
+		if journalErr != nil {
+			return fmt.Errorf("rollback requires a verified paired backup for %s: %w", target.BuildID, err)
+		}
+		compatible, compatibilityErr := compatibleForwardRollbackPair(ctx, journal, active, activeVerified, targetVerified)
+		if compatibilityErr != nil {
+			return fmt.Errorf("rollback requires a verified paired backup for %s: %w", target.BuildID, err)
+		}
+		targetPair = compatible
 	}
 	journal, err := store.Begin("rollback", &active.Receipt, &target, target.DescriptorSHA256)
 	if err != nil {
@@ -797,32 +888,14 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 		return err
 	}
 	journal.BackupID = currentPair.ID
+	// A failed target start must not restore this snapshot over later writes.
+	// The user's requested target restore is still performed below.
+	journal.PreserveLiveOnFailure = true
 	if err := advance(store, &journal, release.PairBackedUp); err != nil {
 		return err
 	}
 	fail := func(cause error) error {
-		_ = store.Advance(&journal, release.RollbackRestoring, cause)
-		if stopErr := stop(ctx); stopErr != nil {
-			return fmt.Errorf("%v; refusing to restore the current database pair while the rollback target could not be quiesced: %w", cause, stopErr)
-		}
-		if restoreErr := restorePair(ctx, currentPair); restoreErr != nil {
-			return fmt.Errorf("%v; restore current pair: %w", cause, restoreErr)
-		}
-		if _, pointerErr := store.WriteSelectedActive(active.Receipt, active.Generation, active.SelectorBuildID, active.Acquisition); pointerErr != nil {
-			return fmt.Errorf("%v; restore current active record: %w", cause, pointerErr)
-		}
-		if err := writeLegacyCurrent(store.Home, active.Receipt); err != nil {
-			return err
-		}
-		if permitErr := store.Permit(active.Receipt); permitErr != nil {
-			_ = store.Advance(&journal, release.Failed, permitErr)
-			return fmt.Errorf("%v; restored database pair but refused to restart revoked active release: %w", cause, permitErr)
-		}
-		if err := startReleaseCommand(ctx, active.Receipt, journal.ID); err != nil {
-			return fmt.Errorf("%v; restart current release: %w", cause, err)
-		}
-		_ = store.Advance(&journal, release.RolledBack, cause)
-		return cause
+		return fmt.Errorf("%w; rollback may have changed the live pair or received later commits; automatic recovery is unavailable; retain the live databases and transition journal", cause)
 	}
 	if err := store.Advance(&journal, release.RollbackRestoring, nil); err != nil {
 		return fail(err)
@@ -888,6 +961,9 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		return false, err
 	}
 	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return false, err
+	}
 	journal, err := store.ReadJournal()
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -898,8 +974,36 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	if !journal.Resumable() {
 		return false, nil
 	}
+	// Never advance the journal, restore a pair, or restart an older release
+	// while a fresh database publication remains unresolved.
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return false, err
+	}
+	if journal.PreserveLiveOnFailure {
+		return false, errors.New("transition requires live database preservation; automatic recovery is unavailable; retain the live databases and journal")
+	}
 	if journal.Old == nil {
 		return false, errors.New("unfinished transition has no prior release receipt")
+	}
+	// Recovery must not restore over an unresolved publication or restart a
+	// predecessor that may not implement the initialization admission check.
+	// The check itself does not open SQLite or alter any companions.
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return false, fmt.Errorf("inspect database before transition recovery: %w", err)
+	}
+	// Check the durable milestone before mutating the journal, even if policy
+	// now revokes the predecessor. Activation can complete before its next
+	// milestone is persisted, so candidate-ready is already ambiguous.
+	var recoveryAdmissionPair *databasePair
+	if journal.BackupID != "" {
+		var pair databasePair
+		if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil || pair.ReleaseReceipt != *journal.Old {
+			return false, errors.New("interrupted transition has no verified predecessor database pair")
+		}
+		recoveryAdmissionPair = &pair
+	}
+	if err := refuseUncertainTransitionRollback(journal, recoveryAdmissionPair); err != nil {
+		return false, err
 	}
 	if err := store.Permit(*journal.Old); err != nil {
 		// A revocation/floor raise may have been finalized after the paired
@@ -909,6 +1013,16 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		// fail-closed status instead of a revoked runtime.
 		_ = store.Advance(&journal, release.Failed, err)
 		return false, fmt.Errorf("interrupted transition cannot restore revoked prior release: %w; verified candidate %q remains staged for explicit recovery", err, receiptBuild(journal.Candidate))
+	}
+	// Before changing the journal or restoring either database, establish that
+	// this controller can start the historical target after recovery. A target's
+	// own launcher protocol is insufficient: this process writes v2 journals.
+	target, err := verifyInstalledReleaseForExecution(store, *journal.Old)
+	if err != nil {
+		return false, fmt.Errorf("verify interrupted transition recovery target: %w", err)
+	}
+	if !protocolSupports(target.distribution, launcherProtocol) {
+		return false, fmt.Errorf("interrupted transition recovery target does not support launcher protocol %d; retain the transition for a compatible recovery controller", launcherProtocol)
 	}
 	var recoveryPair *databasePair
 	preserveUnactivatedSource := false
@@ -921,11 +1035,11 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 			return false, errors.New("interrupted transition backup does not bind the prior release")
 		}
 		recoveryPair = &pair
-		intent, err := readV14SourcePreservation(ctx.Instance.StateDir, journal.ID)
+		intent, legacyIntent, err := readMigrationSourcePreservation(ctx.Instance.StateDir, journal.ID)
 		if err != nil {
 			return false, err
 		}
-		sourceVersion, sourceErr := pairedV14SourceSchemaVersion(pair)
+		sourceVersion, sourceErr := pairedV15SourceSchemaVersion(pair)
 		if intent != nil && (sourceErr != nil || intent.BackupID != pair.ID || intent.SourceVersion != sourceVersion) {
 			return false, errors.New("v12 source preservation intent does not bind the paired backup")
 		}
@@ -934,12 +1048,15 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		if sourceErr == nil && (preactivation || intent != nil) {
 			python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
 			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
+			if errors.Is(liveErr, errUnresolvedDatabasePublication) {
+				return false, liveErr
+			}
 			preserveUnactivatedSource = liveErr == nil && liveVersion == sourceVersion
 			if intent != nil && !preserveUnactivatedSource {
-				return false, errV14SourceChanged
+				return false, errV15SourceChanged
 			}
-			if preserveUnactivatedSource {
-				if err := writeV14SourcePreservation(ctx.Instance.StateDir, journal.ID, pair.ID, sourceVersion); err != nil {
+			if preserveUnactivatedSource && !legacyIntent {
+				if err := writeV15SourcePreservation(ctx.Instance.StateDir, journal.ID, pair.ID, sourceVersion); err != nil {
 					return false, err
 				}
 			}
@@ -958,6 +1075,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	cleanupV10Candidate(ctx.Instance.StateDir, journal.ID)
 	cleanupV11Candidate(ctx.Instance.StateDir, journal.ID)
 	cleanupV14Candidate(ctx.Instance.StateDir, journal.ID)
+	cleanupV15Candidate(ctx.Instance.StateDir, journal.ID)
 	if recoveryPair != nil && !preserveUnactivatedSource {
 		if err := restorePair(ctx, *recoveryPair); err != nil {
 			return false, err
@@ -1001,6 +1119,9 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	if err := clearV14SourcePreservation(ctx.Instance.StateDir, journal.ID); err != nil {
 		return true, err
 	}
+	if err := clearV15SourcePreservation(ctx.Instance.StateDir, journal.ID); err != nil {
+		return true, err
+	}
 	return true, nil
 }
 
@@ -1025,6 +1146,14 @@ func parseBuildTarget(args []string, command string) (string, error) {
 // rollback. Candidate code starts while active.json still names old, then the
 // only selection pointer changes after the real launcher readiness probe.
 func promoteExisting(ctx launchContext, store *release.Store, active release.Active, build, operation string, output io.Writer) (result error) {
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
+	if operation == "update" {
+		if handled, err := promoteForwardUpdate(ctx, build, environmentMap(ctx.Environment)["JOBCTRL_ACQUISITION_SOURCE"], output); handled {
+			return err
+		}
+	}
 	transition, err := store.TransitionLock()
 	if err != nil {
 		return fmt.Errorf("acquire lifecycle transition lock: %w", err)
@@ -1035,6 +1164,22 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		return fmt.Errorf("acquire exclusive release selection lock: %w", err)
 	}
 	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return err
+	}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
+	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
+	if err != nil {
+		return err
+	}
+	if temporal != filepath.Join(ctx.Instance.StateDir, "temporal.db") {
+		return errors.New("legacy source history requires an authenticated forward update; paired rollback is unavailable")
+	}
 	if existing, journalErr := store.ReadJournal(); journalErr == nil && existing.Resumable() {
 		return fmt.Errorf("unfinished %s transition at %s must be recovered before another promotion", existing.Operation, existing.State)
 	} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
@@ -1084,7 +1229,7 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	if active.SelectorBuildID != candidate.BuildID {
 		candidateProtocol := candidateVerified.runtime.LauncherProtocol
 		if !protocolSupports(activeVerified.distribution, candidateProtocol) || !protocolSupports(candidateVerified.distribution, candidateProtocol) {
-			return fmt.Errorf("candidate launcher protocol %d cannot supervise both active and candidate payloads; stage an explicit compatible bridge release", candidateProtocol)
+			return fmt.Errorf("candidate launcher protocol %d cannot supervise both active and candidate payloads; use the new authenticated installer", candidateProtocol)
 		}
 	}
 	unused, err := unusedDatabasePair(ctx.Instance.StateDir)
@@ -1125,6 +1270,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		return fmt.Errorf("quiesce active release: %w", err)
 	}
 	restartBeforeBackup := func(cause error) error {
+		if errors.Is(cause, errInitializationNotAdmitted) {
+			return cause
+		}
 		_ = store.Advance(&journal, release.RollbackRestoring, cause)
 		if stopErr := stop(ctx); stopErr != nil {
 			return fmt.Errorf("%v; old runtime could not be made safe to restart: %w", cause, stopErr)
@@ -1157,6 +1305,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	}
 	databaseVersion, err := jobCtrlSchemaVersion(activeRuntime)
 	if err != nil {
+		if errors.Is(err, errUnresolvedDatabasePublication) {
+			return err
+		}
 		return restartBeforeBackup(fmt.Errorf("read stopped JobCtrl schema before update: %w", err))
 	}
 	switch databaseVersion {
@@ -1178,13 +1329,18 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		// Exact v12 is migrated to cited semantic determinations.
 	case v13JobCtrlSchemaVersion:
 		// Exact v13 requires the saved-settings authority cutover.
+	case v14JobCtrlSchemaVersion:
+		// Exact v14 receives the lifecycle-generation migration after backup.
 	case currentJobCtrlSchemaVersion:
-		// Ordinary exact-v14 release promotion uses the paired lifecycle unchanged.
+		// Ordinary exact-v15 release promotion uses the paired lifecycle unchanged.
 	default:
 		return restartBeforeBackup(fmt.Errorf("unsupported stopped JobCtrl schema version %d", databaseVersion))
 	}
 	pair, err := snapshotPair(ctx, active.Receipt)
 	if err != nil {
+		if errors.Is(err, errUnresolvedDatabasePublication) {
+			return err
+		}
 		if databaseVersion != currentJobCtrlSchemaVersion {
 			return restartBeforeBackup(fmt.Errorf("create paired pre-upgrade backup: %w", err))
 		}
@@ -1192,6 +1348,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		return err
 	}
 	journal.BackupID = pair.ID
+	// Once a snapshot exists, independent commits may make it stale. Persist
+	// this fence before any later milestone can activate or start a candidate.
+	journal.PreserveLiveOnFailure = true
 	if err := advance(store, &journal, release.PairBackedUp); err != nil {
 		return err
 	}
@@ -1204,58 +1363,19 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		return err
 	}
 
-	migrationActivationStarted := false
 	rollbackFailure := func(cause error) error {
-		preserveLiveSource := (databaseVersion != currentJobCtrlSchemaVersion && !migrationActivationStarted) || errors.Is(cause, errV14SourceChanged)
-		if preserveLiveSource {
-			if err := writeV14SourcePreservation(ctx.Instance.StateDir, journal.ID, pair.ID, databaseVersion); err != nil {
-				return fmt.Errorf("%v; persist source preservation intent: %w", cause, err)
-			}
-		}
-		if err := store.Advance(&journal, release.RollbackRestoring, cause); err != nil {
-			return fmt.Errorf("%v; persist rollback intent: %w", cause, err)
-		}
-		cleanupV7Candidate(ctx.Instance.StateDir, journal.ID)
-		cleanupV9Candidate(ctx.Instance.StateDir, journal.ID)
-		cleanupV10Candidate(ctx.Instance.StateDir, journal.ID)
-		cleanupV11Candidate(ctx.Instance.StateDir, journal.ID)
-		cleanupV14Candidate(ctx.Instance.StateDir, journal.ID)
-		if stopErr := stop(ctx); stopErr != nil { // Candidate records share the canonical state identity.
-			return fmt.Errorf("%v; refusing paired rollback restore while the candidate could not be quiesced: %w", cause, stopErr)
-		}
-		if !preserveLiveSource {
-			if restoreErr := restorePair(ctx, pair); restoreErr != nil {
-				return fmt.Errorf("%v; paired rollback restore failed: %w", cause, restoreErr)
-			}
-		}
-		if _, activateErr := store.WriteSelectedActive(active.Receipt, active.Generation, active.SelectorBuildID, active.Acquisition); activateErr != nil {
-			return fmt.Errorf("%v; restore active release pointer: %w", cause, activateErr)
-		}
-		if legacyErr := writeLegacyCurrent(store.Home, active.Receipt); legacyErr != nil {
-			return fmt.Errorf("%v; restore legacy receipt: %w", cause, legacyErr)
-		}
-		if restartErr := startReleaseCommand(ctx, active.Receipt, journal.ID); restartErr != nil {
-			return fmt.Errorf("%v; old release restart failed: %w", cause, restartErr)
-		}
-		if err := store.Advance(&journal, release.RolledBack, cause); err != nil {
-			return fmt.Errorf("%v; finish rollback journal: %w", cause, err)
-		}
-		if err := clearV14SourcePreservation(ctx.Instance.StateDir, journal.ID); err != nil {
-			return fmt.Errorf("%v; remove source preservation intent: %w", cause, err)
-		}
-		return cause
+		return fmt.Errorf("%w; a paired backup may no longer include later commits; automatic recovery is unavailable; retain the live databases and transition journal", cause)
 	}
 	if databaseVersion != currentJobCtrlSchemaVersion {
 		candidatePath, err := sealedV7CandidateBuilder(candidateRuntime, pair, journal.ID)
 		if err != nil {
-			return rollbackFailure(fmt.Errorf("build exact-v14 migration candidate: %w", err))
+			return rollbackFailure(fmt.Errorf("build exact-v15 migration candidate: %w", err))
 		}
 		if err := advance(store, &journal, release.MigrationCandidateReady); err != nil {
 			return rollbackFailure(err)
 		}
-		migrationActivationStarted = true
 		if err := sealedV7CandidateInstaller(candidateRuntime, candidatePath); err != nil {
-			return rollbackFailure(fmt.Errorf("activate exact-v14 database: %w", err))
+			return rollbackFailure(fmt.Errorf("activate exact-v15 database: %w", err))
 		}
 		if err := advance(store, &journal, release.MigrationActivated); err != nil {
 			return rollbackFailure(err)
@@ -1271,8 +1391,8 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		return rollbackFailure(err)
 	}
 	// The authenticated candidate policy may raise the safety floor or revoke
-	// the predecessor. Commit it only after real readiness succeeds so every
-	// earlier interruption can still restore and execute the prior release.
+	// the predecessor. Commit it only after real readiness succeeds. Earlier
+	// failures retain the live pair and journal for explicit recovery.
 	if err := store.CommitMetadata(channelState); err != nil {
 		if permitErr := store.Permit(active.Receipt); permitErr != nil {
 			return fmt.Errorf("finalize authenticated policy after candidate readiness: %w; predecessor is no longer permitted, preserve the journal for explicit safe recovery: %v", err, permitErr)
@@ -1295,14 +1415,17 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	if err := advance(store, &journal, release.Promoted); err != nil {
 		return err
 	}
-	if err := retainReleases(store, ctx.Instance.RuntimeHome); err != nil {
-		return err
+	if err := retainReleases(store, ctx.Instance.StateDir); err != nil {
+		return fmt.Errorf("JobCtrl %s is active, but release retention did not complete: %w", candidate.BuildID, err)
 	}
 	_, err = fmt.Fprintf(output, "JobCtrl %s is active.\n", candidate.BuildID)
 	return err
 }
 
 func startRelease(ctx launchContext, receipt release.Receipt, journalID string) error {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return fmt.Errorf("refuse release startup: %w", err)
+	}
 	store, err := releaseStore(ctx)
 	if err != nil {
 		return err
@@ -1337,6 +1460,9 @@ func startRelease(ctx launchContext, receipt release.Receipt, journalID string) 
 }
 
 func backup(ctx launchContext, args []string, output io.Writer) error {
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
 	releaseSelection(&ctx)
 	directory := ""
 	if len(args) == 2 && args[0] == "--output" {
@@ -1350,7 +1476,7 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 	if !filepath.IsAbs(directory) {
 		return errors.New("backup output must be an absolute directory")
 	}
-	if err := ensureSafeDirectory(directory); err != nil {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
 		return err
 	}
 	store, err := releaseStore(ctx)
@@ -1367,12 +1493,32 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 		return err
 	}
 	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return err
+	}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
+	if err := refuseBackupOfRunningSource(ctx); err != nil {
+		return err
+	}
+	if existing, journalErr := store.ReadJournal(); journalErr == nil && existing.Resumable() {
+		return fmt.Errorf("unfinished %s transition at %s must be recovered before backup", existing.Operation, existing.State)
+	} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
+		return fmt.Errorf("read existing release transition journal: %w", journalErr)
+	}
+	if err := ensureSafeDirectory(directory); err != nil {
+		return err
+	}
 	active, err := store.ReadActive()
 	if err != nil {
 		return err
 	}
 	ctx, err = rebindActiveContext(ctx, active.Receipt.BuildID)
 	if err != nil {
+		return err
+	}
+	if err := requireLegacySourceOwnership(ctx); err != nil {
 		return err
 	}
 	defer func() { _ = ctx.selection.Close() }()
@@ -1382,12 +1528,13 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 	} else if !errors.Is(stateErr, os.ErrNotExist) {
 		return stateErr
 	}
-	if wasRunning {
-		if err := stop(ctx); err != nil {
-			return fmt.Errorf("quiesce runtime for coherent paired backup: %w", err)
-		}
+	if err := stop(ctx); err != nil {
+		return fmt.Errorf("quiesce runtime for coherent paired backup: %w", err)
 	}
 	pair, err := snapshotPairTo(ctx, active.Receipt, directory)
+	if errors.Is(err, errUnresolvedDatabasePublication) {
+		return err
+	}
 	if wasRunning {
 		// A stable selector takes a shared selection lock through readiness, so
 		// restart only after releasing our exclusive selection lock. We retain
@@ -1411,6 +1558,9 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 }
 
 func startSelectedRelease(ctx launchContext) error {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	selector := filepath.Join(ctx.Instance.RuntimeHome, "bin", "jobctrl")
 	if err := VerifyPublicSelectorForExecution(ctx.Instance.RuntimeHome); err != nil {
 		return fmt.Errorf("verify public selector before restart: %w", err)
@@ -1428,6 +1578,16 @@ func snapshotPair(ctx launchContext, receipt release.Receipt) (databasePair, err
 	return snapshotPairTo(ctx, receipt, filepath.Join(ctx.Instance.StateDir, "backups"))
 }
 func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (databasePair, error) {
+	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
+	if err != nil {
+		return databasePair{}, err
+	}
+	if err := requireLegacySourceOwnership(ctx); err != nil {
+		return databasePair{}, err
+	}
+	if err := refuseOpenWorkspaceDatabases(filepath.Join(ctx.Instance.StateDir, "jobctrl.db"), temporal); err != nil {
+		return databasePair{}, err
+	}
 	if err := ensureSafeDirectory(parent); err != nil {
 		return databasePair{}, err
 	}
@@ -1443,6 +1603,9 @@ func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (
 	pair := databasePair{SchemaVersion: 1, ID: id, ReleaseReceipt: receipt, CreatedAt: time.Now().UTC()}
 	for _, name := range []string{"jobctrl.db", "temporal.db"} {
 		source := filepath.Join(ctx.Instance.StateDir, name)
+		if name == "temporal.db" {
+			source = temporal
+		}
 		destination := filepath.Join(dir, name)
 		version, err := sqliteOnlineBackup(filepath.Join(ctx.PayloadRoot, "python", "bin", "python3"), source, destination)
 		if err != nil {
@@ -1453,6 +1616,9 @@ func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (
 			return databasePair{}, err
 		}
 		pair.Files = append(pair.Files, file)
+	}
+	if selected, err := temporalHistoryPath(ctx.Instance.StateDir); err != nil || selected != temporal {
+		return databasePair{}, errors.New("Temporal history identity changed during backup; preserve the workspace")
 	}
 	if err := writeJSONAtomic(filepath.Join(dir, "pair.json"), pair); err != nil {
 		return databasePair{}, err
@@ -1470,6 +1636,9 @@ func sqliteOnlineBackup(python, source, destination string) (int64, error) {
 	info, err := os.Lstat(source)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return 0, errors.New("source database is not a regular file")
+	}
+	if err := checkDatabasePublication(source); err != nil {
+		return 0, err
 	}
 	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
 		return 0, errors.New("backup destination already exists")
@@ -1529,6 +1698,19 @@ func describeDatabase(path, name string, version int64) (databaseFile, error) {
 }
 
 func restorePair(ctx launchContext, pair databasePair) error {
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return fmt.Errorf("refuse paired restore: %w", err)
+	}
+	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
+	if err != nil {
+		return err
+	}
+	if temporal != filepath.Join(ctx.Instance.StateDir, "temporal.db") {
+		return errors.New("automatic paired restore is unavailable for a legacy source Temporal history; preserve the workspace and backup")
+	}
 	if pair.SchemaVersion != 1 || !pair.ReleaseReceipt.Valid() || len(pair.Files) != 2 {
 		return errors.New("backup is not a complete database pair")
 	}
@@ -1562,6 +1744,9 @@ func restorePair(ctx launchContext, pair databasePair) error {
 	}
 	// No runtime is live (quiescing happened first). The journal makes a crash
 	// between the two renames recoverable; never restore a single DB by itself.
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	for _, name := range []string{"jobctrl.db", "temporal.db"} {
 		if err := os.Rename(filepath.Join(staging, name), filepath.Join(ctx.Instance.StateDir, name)); err != nil {
 			return err
@@ -1674,6 +1859,10 @@ func readInstalledReceipt(home, build string) (release.Receipt, error) {
 	if err := decodeStrictRegular(filepath.Join(home, "releases", build, "receipt.json"), &receipt); err != nil {
 		return release.Receipt{}, fmt.Errorf("read candidate release receipt: %w", err)
 	}
+	return releaseFromSelectorReceipt(receipt)
+}
+
+func releaseFromSelectorReceipt(receipt selectorReceipt) (release.Receipt, error) {
 	r := release.Receipt{SchemaVersion: receipt.SchemaVersion, BuildID: receipt.BuildID, Channel: receipt.Channel, Sequence: uint64(receipt.Sequence), ArtifactSHA256: receipt.ArtifactSHA256, ManifestSHA256: receipt.ManifestSHA256, DescriptorSHA256: receipt.DescriptorSHA256, PolicySHA256: receipt.PolicySHA256, DescriptorURL: receipt.DescriptorURL, InstalledAt: receipt.InstalledAt}
 	if !r.Valid() {
 		return release.Receipt{}, errors.New("candidate release receipt is invalid")
@@ -1734,7 +1923,7 @@ func previousRelease(store *release.Store, active release.Receipt) (string, erro
 			continue
 		}
 		r, err := readInstalledReceipt(store.Home, entry.Name())
-		if err == nil && r.Channel == active.Channel && r.BuildID != active.BuildID && r.Sequence <= active.Sequence && store.Permit(r) == nil {
+		if err == nil && r.BuildID == entry.Name() && r.Channel == active.Channel && r.BuildID != active.BuildID && r.Sequence <= active.Sequence && store.Permit(r) == nil {
 			candidates = append(candidates, r)
 		}
 	}
@@ -1745,62 +1934,480 @@ func previousRelease(store *release.Store, active release.Receipt) (string, erro
 	return candidates[0].BuildID, nil
 }
 
-func retainReleases(store *release.Store, runtimeHome string) error {
+// retainReleases runs under the lifecycle transition and exclusive selection
+// locks. Collect every reference before deleting any owned stable release.
+func retainReleases(store *release.Store, stateDir string) error {
+	homeIdentity, releasesIdentity := store.RetentionIdentities()
+	root, err := retentionfs.Open(store.Home, homeIdentity, releasesIdentity)
+	if err != nil {
+		return fmt.Errorf("open release retention authority: %w", err)
+	}
+	defer root.Close()
+	references := &retentionReferenceAuthority{}
+	defer references.close()
+	runtimeRoot, err := references.open(store.Home)
+	if err != nil {
+		return fmt.Errorf("open runtime authority for release retention: %w", err)
+	}
+	var observedActive release.Active
+	if err := references.readRootJSON(runtimeRoot, release.ActiveFile, &observedActive); err != nil {
+		return fmt.Errorf("read active authority for release retention: %w", err)
+	}
 	active, err := store.ReadActive()
 	if err != nil {
 		return err
+	}
+	if active != observedActive {
+		return errors.New("active release authority changed during retention")
+	}
+	if !buildIDPattern.MatchString(active.Receipt.BuildID) || !buildIDPattern.MatchString(active.SelectorBuildID) {
+		return errors.New("invalid active release or controller identity")
 	}
 	keep := map[string]bool{active.Receipt.BuildID: true}
 	if active.SelectorBuildID != "" {
 		keep[active.SelectorBuildID] = true
 	}
+	var observedJournal release.Journal
+	journalErr := references.readRootJSON(runtimeRoot, release.JournalFile, &observedJournal)
+	if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
+		return fmt.Errorf("read transition journal for release retention: %w", journalErr)
+	}
 	if journal, err := store.ReadJournal(); err == nil {
+		if journalErr != nil || !reflect.DeepEqual(journal, observedJournal) {
+			return errors.New("transition journal authority changed during retention")
+		}
 		if journal.Old != nil {
+			if !journal.Old.Valid() || !buildIDPattern.MatchString(journal.Old.BuildID) {
+				return errors.New("invalid prior release in transition journal")
+			}
 			keep[journal.Old.BuildID] = true
 		}
 		if journal.Candidate != nil {
+			if !journal.Candidate.Valid() || !buildIDPattern.MatchString(journal.Candidate.BuildID) {
+				return errors.New("invalid candidate release in transition journal")
+			}
 			keep[journal.Candidate.BuildID] = true
 		}
+	} else if !errors.Is(err, os.ErrNotExist) || journalErr == nil {
+		return fmt.Errorf("read transition journal for release retention: %w", err)
 	}
-	if prior, err := previousRelease(store, active.Receipt); err == nil {
-		keep[prior] = true
+	var observedPolicy release.ChannelState
+	policyPath := filepath.Join(store.Home, "channel-"+active.Receipt.Channel+".json")
+	policyErr := references.readRootJSON(runtimeRoot, "channel-"+active.Receipt.Channel+".json", &observedPolicy)
+	if policyErr != nil && !errors.Is(policyErr, os.ErrNotExist) {
+		return fmt.Errorf("read channel policy for release retention: %w", policyErr)
 	}
-	instances, _ := os.ReadDir(filepath.Join(runtimeHome, "instances"))
-	for _, instance := range instances {
-		backups, _ := os.ReadDir(filepath.Join(runtimeHome, "instances", instance.Name(), "backups"))
-		for _, backup := range backups {
-			var pair databasePair
-			if decodeStrictRegular(filepath.Join(runtimeHome, "instances", instance.Name(), "backups", backup.Name(), "pair.json"), &pair) == nil && pair.ReleaseReceipt.BuildID != "" {
-				keep[pair.ReleaseReceipt.BuildID] = true
-			}
+	policy, err := store.ReadChannelState(active.Receipt.Channel)
+	if err != nil {
+		return fmt.Errorf("read channel policy for release retention: %w", err)
+	}
+	if policyErr == nil && !reflect.DeepEqual(policy, observedPolicy) {
+		return errors.New("channel policy authority changed during retention")
+	}
+	if errors.Is(policyErr, os.ErrNotExist) {
+		if _, err := os.Lstat(policyPath); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("channel policy authority changed during retention")
 		}
-		var state instanceState
-		if decodeStrictRegular(filepath.Join(runtimeHome, "instances", instance.Name(), "state.json"), &state) == nil && stateHasLiveProcesses(state) {
-			keep[state.BuildID] = true
-		}
 	}
-	entries, err := os.ReadDir(filepath.Join(store.Home, "releases"))
+	if err := collectRetentionWorkspaceReferences(references, root, runtimeRoot, store.Home, stateDir, keep); err != nil {
+		return err
+	}
+	if afterRetentionReferenceCollection != nil {
+		afterRetentionReferenceCollection()
+	}
+	if err := references.validate(); err != nil {
+		return err
+	}
+	entries, err := root.Entries()
 	if err != nil {
 		return err
 	}
-	deleted := false
+	type retentionCandidate struct {
+		entry     retentionfs.Entry
+		receipt   release.Receipt
+		raw       []byte
+		inventory retentionfs.Inventory
+	}
+	var candidates []retentionCandidate
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || keep[entry.Name()] {
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !buildIDPattern.MatchString(entry.Name()) {
 			continue
 		}
-		receipt, err := readInstalledReceipt(store.Home, entry.Name())
-		if err != nil || receipt.Channel != "stable" {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(store.Home, "releases", entry.Name())); err != nil {
+		raw, observed, err := root.ReadReceipt(entry.Name())
+		if errors.Is(err, retentionfs.ErrChanged) {
 			return err
 		}
-		deleted = true
+		if err != nil {
+			continue
+		}
+		var encoded selectorReceipt
+		if err := decodeRetentionJSON(raw, &encoded); err != nil {
+			continue
+		}
+		receipt, err := releaseFromSelectorReceipt(encoded)
+		if err != nil || receipt.BuildID != entry.Name() {
+			continue
+		}
+		candidates = append(candidates, retentionCandidate{entry: observed, receipt: receipt, raw: raw})
 	}
-	if deleted {
-		return syncDirectory(filepath.Join(store.Home, "releases"))
+	if err := root.Validate(); err != nil {
+		return err
+	}
+	// A parseable receipt alone must not displace an intact signed prior
+	// release. Authenticate candidate trees before selecting that prior.
+	var prior *release.Receipt
+	for i := range candidates {
+		candidate := &candidates[i]
+		if candidate.receipt.Channel != "stable" || candidate.entry.Name == active.Receipt.BuildID {
+			continue
+		}
+		// The manifest signs the build, but not the local receipt's sequence.
+		// Only a sequence already bound by channel state can order candidates
+		// or authorize pruning. Preserve releases without that history.
+		key := fmt.Sprintf("%d", candidate.receipt.Sequence)
+		if policy.Channel != candidate.receipt.Channel || policy.SequenceBuildIDs[key] != candidate.receipt.BuildID || policy.SequenceDescriptors[key] != candidate.receipt.DescriptorSHA256 {
+			continue
+		}
+		inventory, err := retentionReleaseInventory(root, candidate.entry, candidate.receipt, candidate.raw)
+		if err != nil {
+			if errors.Is(err, retentionfs.ErrChanged) {
+				return err
+			}
+			continue
+		}
+		if err := root.VerifyEntry(candidate.entry, inventory); err != nil {
+			if errors.Is(err, retentionfs.ErrChanged) {
+				return err
+			}
+			// Preserve unfamiliar or modified files, including empty directories.
+			continue
+		}
+		candidate.inventory = inventory
+		receipt := candidate.receipt
+		if receipt.Channel == active.Receipt.Channel && receipt.Sequence <= active.Receipt.Sequence && policy.Permit(receipt) == nil && (prior == nil || receipt.Sequence > prior.Sequence || (receipt.Sequence == prior.Sequence && receipt.BuildID < prior.BuildID)) {
+			candidateReceipt := receipt
+			prior = &candidateReceipt
+		}
+	}
+	if prior != nil {
+		keep[prior.BuildID] = true
+	}
+	for _, candidate := range candidates {
+		if keep[candidate.entry.Name] || candidate.inventory == nil {
+			continue
+		}
+		if err := references.validate(); err != nil {
+			return err
+		}
+		claim, err := root.Claim(candidate.entry)
+		if err != nil {
+			return err
+		}
+		if err := claim.Remove(candidate.inventory, references.validate); err != nil {
+			return err
+		}
+	}
+	return root.Validate()
+}
+
+func retentionReleaseInventory(root *retentionfs.Root, entry retentionfs.Entry, receipt release.Receipt, receiptRaw []byte) (retentionfs.Inventory, error) {
+	manifestRaw, err := root.ReadFile(entry, "payload/manifest.json", 64<<20)
+	if err != nil {
+		return nil, err
+	}
+	signatureRaw, err := root.ReadFile(entry, "payload/manifest.sig", 1<<20)
+	if err != nil {
+		return nil, err
+	}
+	digest := func(raw []byte) string {
+		sum := sha256.Sum256(raw)
+		return hex.EncodeToString(sum[:])
+	}
+	if digest(manifestRaw) != receipt.ManifestSHA256 {
+		return nil, errors.New("release manifest differs from its receipt")
+	}
+	// Decode the same anchored bytes whose signature is checked below.
+	var distribution distributionManifest
+	if err := decodeRetentionJSON(manifestRaw, &distribution); err != nil {
+		return nil, err
+	}
+	if err := validateDistributionManifestShape(manifestRaw, distribution); err != nil {
+		return nil, err
+	}
+	if distribution.BuildID != receipt.BuildID || distribution.ReleaseChannel != receipt.Channel {
+		return nil, errors.New("release manifest does not match its receipt")
+	}
+	var signature manifestSignature
+	if err := decodeRetentionJSON(signatureRaw, &signature); err != nil {
+		return nil, err
+	}
+	if err := validateManifestSignatureShape(signatureRaw, signature, distribution); err != nil {
+		return nil, err
+	}
+	key, ok := embeddedReleaseTrust()[signature.ManifestKeyID]
+	if !ok || signature.Signature == nil {
+		return nil, errors.New("release signature has no trusted key")
+	}
+	signed, err := base64.StdEncoding.DecodeString(*signature.Signature)
+	if err != nil || !ed25519.Verify(key, signedMessage("jobctrl:manifest:v1\x00", manifestRaw), signed) {
+		return nil, errors.New("release signature does not authenticate the retained manifest")
+	}
+	inventory := retentionfs.Inventory{
+		"receipt.json":          {Type: "file", SHA256: digest(receiptRaw), SizeBytes: int64(len(receiptRaw))},
+		"payload/manifest.json": {Type: "file", SHA256: receipt.ManifestSHA256, SizeBytes: int64(len(manifestRaw))},
+		"payload/manifest.sig":  {Type: "file", SHA256: digest(signatureRaw), SizeBytes: int64(len(signatureRaw))},
+	}
+	if receipt.SchemaVersion == 2 {
+		policyRaw, err := root.ReadFile(entry, "policy.json", 1<<20)
+		if err != nil {
+			return nil, err
+		}
+		var policy release.ChannelMetadata
+		if digest(policyRaw) != receipt.PolicySHA256 || decodeRetentionJSON(policyRaw, &policy) != nil || policy.Channel != receipt.Channel || policy.Sequence != receipt.Sequence || policy.BuildID != receipt.BuildID || policy.DescriptorDigest != receipt.DescriptorSHA256 || policy.Minimum > policy.Sequence {
+			return nil, errors.New("release policy does not match its receipt")
+		}
+		inventory["policy.json"] = retentionfs.Item{Type: "file", SHA256: receipt.PolicySHA256, SizeBytes: int64(len(policyRaw))}
+	}
+	for _, file := range distribution.Files {
+		name := "payload/" + file.Path
+		if _, exists := inventory[name]; exists {
+			return nil, errors.New("release manifest overlaps its evidence envelope")
+		}
+		item := retentionfs.Item{Type: file.Type, SHA256: file.SHA256, SizeBytes: file.SizeBytes, Target: file.Target}
+		if file.Type == "file" {
+			item.CheckMode = true
+			if file.Mode == "0755" {
+				item.Mode = 0o755
+			} else {
+				item.Mode = 0o644
+			}
+		}
+		inventory[name] = item
+	}
+	return inventory, nil
+}
+
+// The current workspace is resolved at command entry. Other managed instance
+// directories can be mapped back only through their own valid runtime state.
+// If that authority is unavailable, no release is safe to prune.
+func collectRetentionWorkspaceReferences(authority *retentionReferenceAuthority, root *retentionfs.Root, runtimeRoot *os.Root, runtimeHome, stateDir string, keep map[string]bool) error {
+	if !filepath.IsAbs(stateDir) {
+		return errors.New("workspace path for release retention is not absolute")
+	}
+	current, err := filepath.EvalSymlinks(stateDir)
+	if err != nil {
+		return fmt.Errorf("resolve workspace for release retention: %w", err)
+	}
+	if err := collectBackupReleaseReferences(authority, current, keep); err != nil {
+		return err
+	}
+	currentHash := sha256.Sum256([]byte(current))
+	currentID := hex.EncodeToString(currentHash[:])
+	instanceRoot, err := authority.openDirectory(runtimeRoot, "instances")
+	if err != nil {
+		return fmt.Errorf("read instance authorities for release retention: %w", err)
+	}
+	authority.hold(instanceRoot)
+	instances, err := authority.entries(instanceRoot, "instances")
+	if err != nil {
+		return fmt.Errorf("list instance authorities for release retention: %w", err)
+	}
+	foundCurrent := false
+	for _, entry := range instances {
+		// Other names are foreign to resolveInstance's SHA-256 namespace.
+		if !sha256Pattern.MatchString(entry.Name()) {
+			continue
+		}
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("instance %s is not a regular directory", entry.Name())
+		}
+		if entry.Name() == currentID {
+			foundCurrent = true
+		}
+		var state instanceState
+		if err := authority.readJSON(instanceRoot, entry.Name(), "state.json", &state); err != nil {
+			if errors.Is(err, os.ErrNotExist) && entry.Name() == currentID {
+				// An independent Apply can have an execution receipt before the
+				// workspace has ever published a supervisor registry.
+				if err := verifyRetentionInstalledApplyAuthority(authority, instanceRoot, entry.Name(), runtimeHome, current); err != nil {
+					return fmt.Errorf("instance %s Apply authority cannot be verified: %w", entry.Name(), err)
+				}
+				continue // The resolved current workspace is already authoritative.
+			}
+			return fmt.Errorf("read instance authority %s for release retention: %w", entry.Name(), err)
+		}
+		if err := validateRuntimeState(state); err != nil {
+			return fmt.Errorf("validate instance authority %s: %w", entry.Name(), err)
+		}
+		if !filepath.IsAbs(state.CanonicalStateDir) || filepath.Clean(state.CanonicalStateDir) != state.CanonicalStateDir || (state.BuildID != "source" && !buildIDPattern.MatchString(state.BuildID)) {
+			return fmt.Errorf("invalid workspace or release identity for instance %s", entry.Name())
+		}
+		id := sha256.Sum256([]byte(state.CanonicalStateDir))
+		canonical, err := filepath.EvalSymlinks(state.CanonicalStateDir)
+		if err != nil || canonical != state.CanonicalStateDir || state.InstanceID != entry.Name() || hex.EncodeToString(id[:]) != entry.Name() {
+			return fmt.Errorf("workspace authority for instance %s cannot be verified", entry.Name())
+		}
+		if state.BuildID == "source" {
+			if err := verifyRetentionSourceAuthority(authority, instanceRoot, entry.Name(), runtimeHome, state); err != nil {
+				return fmt.Errorf("source instance %s authority cannot be verified: %w", entry.Name(), err)
+			}
+		} else {
+			if err := verifyRetentionInstalledApplyAuthority(authority, instanceRoot, entry.Name(), runtimeHome, state.CanonicalStateDir); err != nil {
+				return fmt.Errorf("instance %s Apply authority cannot be verified: %w", entry.Name(), err)
+			}
+			if stateHasLiveProcesses(state) {
+				if err := validateRetentionLiveRelease(root, runtimeHome, state); err != nil {
+					return fmt.Errorf("live instance %s release authority cannot be verified: %w", entry.Name(), err)
+				}
+				keep[state.BuildID] = true
+			}
+		}
+		if state.CanonicalStateDir != current {
+			if err := collectBackupReleaseReferences(authority, state.CanonicalStateDir, keep); err != nil {
+				return err
+			}
+		}
+	}
+	if !foundCurrent {
+		return errors.New("resolved workspace instance authority is missing")
 	}
 	return nil
+}
+
+func validateRetentionLiveRelease(root *retentionfs.Root, runtimeHome string, state instanceState) error {
+	expected := filepath.Join(runtimeHome, "releases", state.BuildID, "payload")
+	if !filepath.IsAbs(state.PayloadRoot) || filepath.Clean(state.PayloadRoot) != expected {
+		return errors.New("recorded payload path does not match its build")
+	}
+	raw, _, err := root.ReadReceipt(state.BuildID)
+	if err != nil {
+		return err
+	}
+	var encoded selectorReceipt
+	if err := decodeRetentionJSON(raw, &encoded); err != nil {
+		return err
+	}
+	receipt, err := releaseFromSelectorReceipt(encoded)
+	if err != nil || receipt.BuildID != state.BuildID || receipt.ManifestSHA256 != state.ManifestSHA256 {
+		return errors.New("recorded live release does not match its installed receipt")
+	}
+	return nil
+}
+
+func collectBackupReleaseReferences(authority *retentionReferenceAuthority, stateDir string, keep map[string]bool) error {
+	stateRoot, err := authority.open(stateDir)
+	if err != nil {
+		return fmt.Errorf("open workspace for release retention: %w", err)
+	}
+	backupRoot, err := authority.openDirectory(stateRoot, "backups")
+	if errors.Is(err, os.ErrNotExist) {
+		authority.watchAbsent(stateRoot, "backups")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read workspace backup references for release retention: %w", err)
+	}
+	authority.hold(backupRoot)
+	entries, err := authority.entries(backupRoot, "backups")
+	if err != nil {
+		return fmt.Errorf("list workspace backup references for release retention: %w", err)
+	}
+	for _, entry := range entries {
+		nativeName := strings.HasPrefix(entry.Name(), "pair-")
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			if nativeName {
+				return fmt.Errorf("backup pair %s is not a regular directory", entry.Name())
+			}
+			continue
+		}
+		var pair databasePair
+		if err := authority.readJSON(backupRoot, entry.Name(), "pair.json", &pair); err != nil {
+			if errors.Is(err, os.ErrNotExist) && !nativeName {
+				// A foreign directory is not a reference unless pair.json exists.
+				// readJSON watches both the directory and the absent metadata.
+				continue
+			}
+			return fmt.Errorf("read backup reference %s: %w", entry.Name(), err)
+		}
+		if pair.SchemaVersion != 1 || !filepath.IsLocal(pair.ID) || pair.CreatedAt.IsZero() || !pair.ReleaseReceipt.Valid() || !buildIDPattern.MatchString(pair.ReleaseReceipt.BuildID) || len(pair.Files) != 2 {
+			return fmt.Errorf("invalid backup reference %s", entry.Name())
+		}
+		files := map[string]bool{}
+		for _, file := range pair.Files {
+			if (file.Name != "jobctrl.db" && file.Name != "temporal.db") || files[file.Name] || !sha256Pattern.MatchString(file.SHA256) || file.SizeBytes <= 0 || file.SQLiteUserVer < 0 {
+				return fmt.Errorf("invalid backup reference %s", entry.Name())
+			}
+			files[file.Name] = true
+		}
+		// Rollback reads metadata from any backup directory but restores from
+		// pair.ID, which can identify a different directory. Keep that target
+		// under the same no-symlink, change-detection authority before pruning.
+		if pair.ID != entry.Name() {
+			if err := authority.watchDirectoryPath(backupRoot, pair.ID); err != nil {
+				return fmt.Errorf("backup reference %s target is unverifiable: %w", entry.Name(), err)
+			}
+		}
+		keep[pair.ReleaseReceipt.BuildID] = true
+	}
+	return nil
+}
+
+func decodeRetentionJSON(raw []byte, destination any) error {
+	keys := json.NewDecoder(bytes.NewReader(raw))
+	if err := rejectDuplicateRetentionKeys(keys); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return errors.New("trailing JSON value")
+	}
+	return nil
+}
+
+func rejectDuplicateRetentionKeys(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := map[string]bool{}
+		for decoder.More() {
+			key, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			name, ok := key.(string)
+			// encoding/json matches struct keys case-insensitively, so differently
+			// cased spellings must not provide competing authorities either.
+			name = strings.ToLower(name)
+			if !ok || seen[name] {
+				return errors.New("duplicate or invalid reference metadata key")
+			}
+			seen[name] = true
+			if err := rejectDuplicateRetentionKeys(decoder); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for decoder.More() {
+			if err := rejectDuplicateRetentionKeys(decoder); err != nil {
+				return err
+			}
+		}
+	default:
+		return errors.New("invalid reference metadata JSON")
+	}
+	_, err = decoder.Token()
+	return err
 }
 
 func uninstall(ctx launchContext, args []string, output io.Writer) error {
@@ -1842,6 +2449,9 @@ func uninstall(ctx launchContext, args []string, output io.Writer) error {
 		return err
 	}
 	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return err
+	}
 	if pathsOverlap(ctx.Instance.StateDir, store.Home) {
 		return errors.New("refusing uninstall because JobCtrl data path overlaps the runtime store")
 	}

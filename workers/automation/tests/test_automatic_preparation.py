@@ -301,6 +301,22 @@ def test_pending_score_is_preferred_and_never_starts_apply(conn):
     assert options["id_reuse_policy"] is WorkflowIDReusePolicy.REJECT_DUPLICATE
 
 
+def test_recovery_snapshots_saved_internal_concurrency_and_reattaches_unchanged(conn, tmp_path, monkeypatch):
+    config = tmp_path / "config.json"
+    config.write_text('{"pipeline_internal_concurrency": 10, "worker_activity_slots": 4}')
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(config))
+    _job(conn, enriched=True)
+    client = _Client()
+    client.lose_ack = True
+    with pytest.raises(RPCError):
+        asyncio.run(_tick(client))
+    assert client.starts[0][1].workers == 10
+    config.write_text('{"pipeline_internal_concurrency": 2}')
+    assert asyncio.run(_tick(client)) == 0
+    assert len(client.starts) == 1
+    assert client.starts[0][1].workers == 10
+
+
 def test_lost_ack_and_second_worker_reattach_to_the_reserved_execution(conn):
     job_id = _job(conn)
     client = _Client()
@@ -782,6 +798,158 @@ def test_stopped_score_owner_restores_committed_result(conn):
     assert _stage(conn, job_id, "score")["state"] == "succeeded"
     assert _stage(conn, job_id, "score")["attempt_count"] == 3
     assert conn.execute("SELECT COUNT(*) FROM job_scores WHERE job_id = ?", (str(job_id),)).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("stage", ["score", "tailor", "cover"])
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (WorkflowExecutionStatus.CANCELED, "canceled"),
+        (WorkflowExecutionStatus.TERMINATED, "failed"),
+        (WorkflowExecutionStatus.RUNNING, "running"),
+        (None, "running"),
+    ],
+)
+def test_stopped_direct_preparation_owner_uses_exact_history(
+    conn, stage, status, expected
+):
+    job_id = _job(conn, enriched=True)
+    workflow_id, run_id = "prep-direct-synthetic", "direct-exact-run"
+    set_stage_state(
+        conn,
+        job_id,
+        stage,
+        "running",
+        attempt_count=0,
+        metadata={"activityOwner": run_id, "priorScoreVersion": 0, "rescore": False},
+        validate_transition=False,
+    )
+    conn.execute(
+        "INSERT INTO workflow_run_projections (workflow_id,tenant_id,workflow_type,status,temporal_run_id,input_summary_json) VALUES (?,'local','JobPreparationWorkflow','canceled',?,?)",
+        (workflow_id, run_id, json.dumps({"jobId": str(job_id), "steps": [stage]})),
+    )
+    conn.commit()
+    client = _Client()
+    client.statuses[workflow_id] = WorkflowExecutionStatus.TERMINATED
+    if status is not None:
+        client.statuses[(workflow_id, run_id)] = status
+    asyncio.run(recovery._reconcile_stopped_activity_owners(client, conn))
+    assert client.describes == [(workflow_id, run_id)]
+    assert _stage(conn, job_id, stage)["state"] == expected
+    assert _stage(conn, job_id, stage)["attempt_count"] == int(expected == "failed")
+
+
+@pytest.mark.parametrize("mismatch", ["job", "stage", "owner"])
+def test_direct_preparation_recovery_rejects_unbound_projection(conn, mismatch):
+    job_id = _job(conn, enriched=True)
+    workflow_id, run_id = "prep-foreign-synthetic", "exact-foreign-run"
+    set_stage_state(
+        conn,
+        job_id,
+        "score",
+        "running",
+        metadata={"activityOwner": run_id},
+        validate_transition=False,
+    )
+    summary = {"jobId": str(job_id), "steps": ["score"]}
+    if mismatch == "job":
+        summary["jobId"] = str(canonical_job_id("90000000-0000-4000-8000-000000000001"))
+    if mismatch == "stage":
+        summary["steps"] = ["tailor"]
+    conn.execute(
+        "INSERT INTO workflow_run_projections (workflow_id,tenant_id,workflow_type,status,temporal_run_id,input_summary_json) VALUES (?,'local','JobPreparationWorkflow','canceled',?,?)",
+        (
+            workflow_id,
+            "other-run" if mismatch == "owner" else run_id,
+            json.dumps(summary),
+        ),
+    )
+    conn.commit()
+    before = _stage(conn, job_id, "score")
+    client = _Client()
+    client.statuses[(workflow_id, run_id)] = WorkflowExecutionStatus.CANCELED
+    asyncio.run(recovery._reconcile_stopped_activity_owners(client, conn))
+    assert client.describes == [] and _stage(conn, job_id, "score") == before
+
+
+def test_stopped_direct_preparation_restores_committed_score(conn):
+    job_id = _job(conn, enriched=True)
+    workflow_id, run_id = "prep-committed-synthetic", "committed-exact-run"
+    set_stage_state(
+        conn,
+        job_id,
+        "score",
+        "running",
+        attempt_count=0,
+        metadata={"activityOwner": run_id, "priorScoreVersion": 0, "rescore": False},
+        validate_transition=False,
+    )
+    conn.execute(
+        "INSERT INTO job_scores (tenant_id,job_id,version,fit_score,breakdown_json,keywords_json,scored_at,criteria_json,trace_json) VALUES ('local',?,1,8,'{}','[]',?,'{}','{}')",
+        (str(job_id), _OLD),
+    )
+    conn.execute(
+        "INSERT INTO workflow_run_projections (workflow_id,tenant_id,workflow_type,status,temporal_run_id,input_summary_json) VALUES (?,'local','JobPreparationWorkflow','canceled',?,?)",
+        (workflow_id, run_id, json.dumps({"jobId": str(job_id), "steps": ["score"]})),
+    )
+    conn.commit()
+    score = tuple(
+        conn.execute(
+            "SELECT * FROM job_scores WHERE job_id=?", (str(job_id),)
+        ).fetchone()
+    )
+    client = _Client()
+    client.statuses[(workflow_id, run_id)] = WorkflowExecutionStatus.CANCELED
+    asyncio.run(recovery._reconcile_stopped_activity_owners(client, conn))
+    assert _stage(conn, job_id, "score")["state"] == "succeeded"
+    assert (
+        tuple(
+            conn.execute(
+                "SELECT * FROM job_scores WHERE job_id=?", (str(job_id),)
+            ).fetchone()
+        )
+        == score
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [WorkflowExecutionStatus.CANCELED, WorkflowExecutionStatus.TERMINATED, None],
+)
+def test_direct_owner_recovery_preserves_unselected_job_and_unknown_status(
+    conn, status
+):
+    selected = _job(conn, number=1, enriched=True)
+    unselected = _job(conn, number=2, enriched=True)
+    workflow_id, run_id = "prep-exact-scope", "exact-scope-run"
+    for job_id in (selected, unselected):
+        set_stage_state(
+            conn,
+            job_id,
+            "score",
+            "running",
+            attempt_count=0,
+            metadata={"activityOwner": run_id},
+            validate_transition=False,
+        )
+    conn.execute(
+        "INSERT INTO workflow_run_projections (workflow_id,tenant_id,workflow_type,status,temporal_run_id,input_summary_json) VALUES (?,'local','JobPreparationWorkflow','canceled',?,?)",
+        (workflow_id, run_id, json.dumps({"jobId": str(selected), "steps": ["score"]})),
+    )
+    conn.commit()
+    before = {
+        str(job_id): _stage(conn, job_id, "score") for job_id in (selected, unselected)
+    }
+    client = _Client()
+    client.statuses[(workflow_id, run_id)] = status
+    asyncio.run(recovery._reconcile_stopped_activity_owners(client, conn))
+    assert _stage(conn, unselected, "score") == before[str(unselected)]
+    if status is None:
+        assert _stage(conn, selected, "score") == before[str(selected)]
+    else:
+        assert _stage(conn, selected, "score")["state"] == (
+            "canceled" if status == WorkflowExecutionStatus.CANCELED else "failed"
+        )
 
 
 @pytest.mark.parametrize(

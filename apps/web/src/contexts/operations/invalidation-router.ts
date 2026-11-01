@@ -1,6 +1,7 @@
 import { outreachKeys } from "../outreach/queryKeys.js";
 import { jobsKeys } from "./jobsKeys.js";
 import { outcomesKeys } from "./outcomesKeys.js";
+import { workflowRunsKeys } from "./workflowRunsKeys.js";
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
 import type { ApplyRunEventRecorded, TenantId } from "@jobctrl/domain-types";
@@ -118,6 +119,7 @@ import {
   contactResearchTaskNeedsReviewHandler,
   contactResearchTaskCompletedHandler,
   contactResearchTaskFailedHandler,
+  contactResearchSourceAttemptFailedHandler,
   outreachDraftGeneratedHandler,
   outreachDraftRevisedHandler,
   outreachDraftApprovedHandler,
@@ -308,6 +310,7 @@ export const handlers: HandlerMap = {
   ContactResearchTaskNeedsReview: contactResearchTaskNeedsReviewHandler,
   ContactResearchTaskCompleted: contactResearchTaskCompletedHandler,
   ContactResearchTaskFailed: contactResearchTaskFailedHandler,
+  ContactResearchSourceAttemptFailed: contactResearchSourceAttemptFailedHandler,
   OutreachDraftGenerated: outreachDraftGeneratedHandler,
   OutreachDraftRevised: outreachDraftRevisedHandler,
   OutreachDraftApproved: outreachDraftApprovedHandler,
@@ -370,9 +373,12 @@ export const invalidationRouter: InvalidationRouter = {
       // High-frequency `ApplyRunEventRecorded` events patch the apply-run
       // cache surgically per target §7.5; refetching per per-second event
       // would saturate the API.
-      queryClient.setQueryData(applyRunsKeys.detail(item.tenantId, item.runId), (current) =>
-        appendApplyRunEvent(current as never, item.event),
-      );
+      queryClient.setQueryData(applyRunsKeys.detail(item.tenantId, item.runId), (current) => {
+        const observed = queryClient.getQueryCache().findAll({ queryKey: workflowRunsKeys.detail(item.tenantId, item.runId) })
+          .some((query) => query.isActive());
+        const timeline = current ?? (observed ? { events: [] } : undefined);
+        return appendApplyRunEvent(timeline as never, item.event);
+      });
     }
   },
 };

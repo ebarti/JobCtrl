@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DemoFeatureFlagAdapter } from "../../demo/ports.js";
 import { renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
+import { useToastStore } from "../../shared/stores/toasts.js";
 import { JobBulkActions } from "./JobBulkActions.js";
 
 const originalConfirm = globalThis.window?.confirm;
@@ -45,6 +46,7 @@ async function openJobOperations(user: ReturnType<typeof userEvent.setup>) {
 }
 
 afterEach(() => {
+  useToastStore.getState().clear();
   if (typeof originalConfirm === "function") {
     Object.defineProperty(window, "confirm", {
       configurable: true,
@@ -55,6 +57,30 @@ afterEach(() => {
 });
 
 describe("<JobBulkActions>", () => {
+  it("reports an active score owner and leaves its selection available for retry", async () => {
+    const user = userEvent.setup();
+    const clearSelection = vi.fn();
+    Object.defineProperty(window, "confirm", { configurable: true, writable: true, value: () => true });
+    const resetStaleScoresForRescore = vi.fn(async () => ({
+      ok: true as const, count: 0, jobKeys: [], nextAction: "",
+      skippedActiveJobKeys: ["job-running"], alreadyPendingJobKeys: [],
+    }));
+    renderWithProviders(
+      <JobBulkActions
+        search={baseSearch} selectedCount={1} selectedJobKeys={["job-running"]}
+        selectedStaleKeys={["job-running"]} staleCount={1} hasItems hasAnyMatching loading={false}
+        onSelectPage={() => {}} onSelectAllMatching={() => {}} onClearSelection={() => {}}
+        onHideSelected={() => {}} onPermanentlyDeleteSelected={() => {}} onResetStaleSuccess={clearSelection}
+      />,
+      { ports: buildTestPorts({ api: { resetStaleScoresForRescore } }) },
+    );
+    const menu = await openJobOperations(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "Reset stale selected" }));
+    await waitFor(() => expect(resetStaleScoresForRescore).toHaveBeenCalled());
+    expect(await screen.findByText(/wait for scoring to finish, then retry/i)).toBeInTheDocument();
+    expect(clearSelection).not.toHaveBeenCalled();
+  });
+
   it("renders one toolbar with explicit eligible actions for mixed states", async () => {
     const user = userEvent.setup();
     renderWithProviders(

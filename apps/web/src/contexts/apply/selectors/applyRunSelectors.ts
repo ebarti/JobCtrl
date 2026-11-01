@@ -6,6 +6,9 @@ export interface ApplyRunEventEntry {
   readonly level: string;
   readonly message: string | null;
   readonly data: Record<string, unknown>;
+  readonly runEventId?: number;
+  readonly sourceEventId?: string;
+  readonly jobId?: string;
 }
 
 export interface ApplyRunWithEvents {
@@ -33,7 +36,15 @@ export function normalizeApplyRunEventEntry(event: unknown): ApplyRunEventEntry 
   const type = text(source["type"] ?? source["event_type"] ?? source["eventType"]) || "event";
   const level = text(source["level"]) || "info";
   const message = nullableText(source["message"]);
-  return { at, type, level, message, data };
+  const runEventId = source["runEventId"] ?? source["event_id"] ?? source["eventId"];
+  const sourceEventId = source["sourceEventId"];
+  const jobId = source["jobId"];
+  return {
+    at, type, level, message, data,
+    ...(typeof runEventId === "number" && Number.isSafeInteger(runEventId) && runEventId > 0 ? { runEventId } : {}),
+    ...(typeof sourceEventId === "string" && sourceEventId ? { sourceEventId } : {}),
+    ...(typeof jobId === "string" && jobId ? { jobId } : {}),
+  };
 }
 
 // Used by the §7.4 / §7.5 invalidation router's setQueryData path. Phase 5
@@ -48,5 +59,7 @@ export function appendApplyRunEvent<T extends ApplyRunWithEvents>(
     return undefined;
   }
   const entry = normalizeApplyRunEventEntry(event.payload.event);
-  return { ...current, events: [...current.events, entry] };
+  const jobId = (event.payload as unknown as Record<string, unknown>)["jobId"];
+  const scoped = typeof jobId === "string" && jobId ? { ...entry, jobId } : entry;
+  return { ...current, events: [...current.events, scoped] };
 }

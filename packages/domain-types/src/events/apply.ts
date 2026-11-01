@@ -1,3 +1,4 @@
+import { applyEventReferences } from "./apply-privacy.js";
 /**
  * Apply Automation domain events.
  *
@@ -73,7 +74,11 @@ export function createApplicationFailed(
   tenantId: TenantId,
   payload: ApplicationFailedPayload,
 ): ApplicationFailed {
-  return createDomainEvent("ApplicationFailed", tenantId, payload);
+  const safe = applyEventReferences("ApplicationFailed", { ...payload });
+  return createDomainEvent("ApplicationFailed", tenantId, {
+    jobId: payload.jobId, runId: payload.runId, attemptNumber: payload.attemptNumber,
+    result: (safe.result ?? payload.result) as Record<string, unknown>,
+  });
 }
 
 // -- ApplyRunStarted --------------------------------------------------------
@@ -128,18 +133,16 @@ export function createApplyRunEventRecorded(
   tenantId: TenantId,
   payload: ApplyRunEventRecordedPayload,
 ): ApplyRunEventRecorded {
-  return createDomainEvent("ApplyRunEventRecorded", tenantId, payload);
+  const safe = applyEventReferences("ApplyRunEventRecorded", { ...payload });
+  return createDomainEvent("ApplyRunEventRecorded", tenantId, {
+    runId: payload.runId, event: safe.event as Record<string, unknown>,
+  });
 }
 
 // -- EmailApplicationCandidateRecorded --------------------------------------
 
 export interface EmailApplicationCandidateRecordedPayload {
   readonly runId: string;
-  readonly recipient: string;
-  readonly subject: string;
-  readonly body: string;
-  readonly attachmentArtifactId: string;
-  readonly attachmentName: string;
 }
 
 export type EmailApplicationCandidateRecorded = DomainEvent<
@@ -147,11 +150,11 @@ export type EmailApplicationCandidateRecorded = DomainEvent<
   EmailApplicationCandidateRecordedPayload
 >;
 
-export function createEmailApplicationCandidateRecorded(
+export function createEmailApplicationCandidateRecorded<T extends EmailApplicationCandidateRecordedPayload>(
   tenantId: TenantId,
-  payload: EmailApplicationCandidateRecordedPayload,
+  payload: T,
 ): EmailApplicationCandidateRecorded {
-  return createDomainEvent("EmailApplicationCandidateRecorded", tenantId, payload);
+  return createDomainEvent("EmailApplicationCandidateRecorded", tenantId, { runId: payload.runId });
 }
 
 // -- ApplicationEmailFeedbackIngested ---------------------------------------

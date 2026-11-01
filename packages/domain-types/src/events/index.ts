@@ -365,6 +365,9 @@ export {
   type ContactResearchTaskFailedPayload,
   type ContactResearchTaskFailed,
   createContactResearchTaskFailed,
+  type ContactResearchSourceAttemptFailedPayload,
+  type ContactResearchSourceAttemptFailed,
+  createContactResearchSourceAttemptFailed,
   type OutreachDraftGeneratedPayload,
   type OutreachDraftGenerated,
   createOutreachDraftGenerated,
@@ -501,6 +504,7 @@ import type {
   ContactResearchTaskNeedsReview,
   ContactResearchTaskCompleted,
   ContactResearchTaskFailed,
+  ContactResearchSourceAttemptFailed,
   OutreachDraftGenerated,
   OutreachDraftRevised,
   OutreachDraftApproved,
@@ -611,6 +615,7 @@ export type DomainEventUnion =
   | ContactResearchTaskNeedsReview
   | ContactResearchTaskCompleted
   | ContactResearchTaskFailed
+  | ContactResearchSourceAttemptFailed
   | OutreachDraftGenerated
   | OutreachDraftRevised
   | OutreachDraftApproved
@@ -722,6 +727,7 @@ export const DOMAIN_EVENT_TYPES = [
   "ContactResearchTaskNeedsReview",
   "ContactResearchTaskCompleted",
   "ContactResearchTaskFailed",
+  "ContactResearchSourceAttemptFailed",
   "OutreachDraftGenerated",
   "OutreachDraftRevised",
   "OutreachDraftApproved",
@@ -742,3 +748,5 @@ type AssertEnumExhaustive = [DomainEventType] extends [EnumeratedDomainEventType
 
 const _assertExhaustive: AssertEnumExhaustive = true;
 void _assertExhaustive;
+
+export { applyEventReferences, isPrivateApplyEvent } from "./apply-privacy.js";

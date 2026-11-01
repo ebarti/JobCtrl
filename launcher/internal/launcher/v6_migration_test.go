@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -39,6 +40,9 @@ func newV6ActivationFixture(t *testing.T) v6ActivationFixture {
 func newV6ActivationFixtureWithPython(t *testing.T, python string) v6ActivationFixture {
 	t.Helper()
 	runtime, state := t.TempDir(), t.TempDir()
+	if _, err := resolveInstance([]string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := release.Open(runtime)
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +70,7 @@ func newV6ActivationFixtureWithPython(t *testing.T, python string) v6ActivationF
 				RuntimeHome: runtime,
 				StateDir:    state,
 				StatePath:   filepath.Join(state, "state.json"),
+				LockPath:    filepath.Join(state, "instance.lock"),
 				ControlPath: filepath.Join(state, "control.lock"),
 			},
 			Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state},
@@ -112,12 +117,12 @@ create_shipped_v6_database(pathlib.Path(sys.argv[2]))`
 	}
 }
 
-func reopenMigratedV14WithCandidateRuntime(ctx launchContext, database string) error {
+func reopenMigratedV15WithCandidateRuntime(ctx launchContext, database string) error {
 	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
 	code := `import sys
-from jobctrl.database import close_connection, open_exact_v14_database
+from jobctrl.database import close_connection, open_exact_v15_database
 path=sys.argv[1]
-connection=open_exact_v14_database(path)
+connection=open_exact_v15_database(path)
 try:
     row=connection.execute("SELECT job_id,url FROM jobs").fetchone()
     if row is None or not row[0] or row[0] == row[1] or row[1] != "https://jobs.example/shipped-v6":
@@ -127,12 +132,12 @@ finally:
 	command := exec.Command(python, "-I", "-B", "-c", code, database)
 	command.Env = ctx.Environment
 	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("candidate runtime failed to reopen exact v14: %w: %s", err, output)
+		return fmt.Errorf("candidate runtime failed to reopen exact v15: %w: %s", err, output)
 	}
 	return nil
 }
 
-func reopenMigratedV14WithTypeScriptAPI(database string) error {
+func reopenMigratedV15WithTypeScriptAPI(database string) error {
 	apiRoot, err := filepath.Abs(filepath.Join("..", "..", "..", "apps", "api"))
 	if err != nil {
 		return err
@@ -149,7 +154,7 @@ func reopenMigratedV14WithTypeScriptAPI(database string) error {
 	command := exec.Command(runner, "--import", "tsx", probe, database)
 	command.Dir = apiRoot
 	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("TypeScript API failed to reopen exact v14: %w: %s", err, output)
+		return fmt.Errorf("TypeScript API failed to reopen exact v15: %w: %s", err, output)
 	}
 	return nil
 }
@@ -394,9 +399,9 @@ func TestV6ToV12NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T
 	migrationBuilds := 0
 	sealedV7CandidateBuilder = func(candidate launchContext, pair databasePair, journalID string) (string, error) {
 		migrationBuilds++
-		return buildSealedV14Candidate(candidate, pair, journalID)
+		return buildSealedV15Candidate(candidate, pair, journalID)
 	}
-	sealedV7CandidateInstaller = installSealedV14Candidate
+	sealedV7CandidateInstaller = installSealedV15Candidate
 	candidateStarts, oldStarts := 0, 0
 	startReleaseCommand = func(base launchContext, receipt release.Receipt, journalID string) error {
 		if journalID == "" {
@@ -410,10 +415,10 @@ func TestV6ToV12NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T
 		switch receipt.BuildID {
 		case fixture.candidate.BuildID, next.BuildID:
 			candidateStarts++
-			if err := reopenMigratedV14WithCandidateRuntime(runtimeContext, database); err != nil {
+			if err := reopenMigratedV15WithCandidateRuntime(runtimeContext, database); err != nil {
 				return err
 			}
-			return reopenMigratedV14WithTypeScriptAPI(database)
+			return reopenMigratedV15WithTypeScriptAPI(database)
 		case fixture.old.BuildID:
 			oldStarts++
 			return reopenRestoredV6WithPriorRuntime(runtimeContext, database)
@@ -450,11 +455,11 @@ func TestV6ToV12NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T
 		t.Fatalf("paired backup did not preserve the shipped v6 source: %v", err)
 	}
 	if err := promoteExisting(fixture.ctx, fixture.store, active, next.BuildID, "update", &output); err != nil {
-		t.Fatalf("native exact-v14 promotion: %v", err)
+		t.Fatalf("native exact-v15 promotion: %v", err)
 	}
 	active, err = fixture.store.ReadActive()
 	if err != nil || active.Receipt != next || candidateStarts != 2 || oldStarts != 0 || migrationBuilds != 1 {
-		t.Fatalf("native exact-v14 promotion = active:%#v candidate starts:%d old starts:%d migration builds:%d err:%v", active, candidateStarts, oldStarts, migrationBuilds, err)
+		t.Fatalf("native exact-v15 promotion = active:%#v candidate starts:%d old starts:%d migration builds:%d err:%v", active, candidateStarts, oldStarts, migrationBuilds, err)
 	}
 
 	if err := rollbackExisting(fixture.ctx, fixture.store, active, fixture.old.BuildID, &output); err != nil {
@@ -469,7 +474,7 @@ func TestV6ToV12NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T
 	}
 }
 
-func TestV6ToV12NativeVerificationFailureRestoresAndReopensV6(t *testing.T) {
+func TestV6ToV12NativeVerificationFailureRetainsSourceAndJournal(t *testing.T) {
 	preserveMigrationSeams(t)
 	python := migrationIntegrationPython(t)
 	fixture := newV6ActivationFixtureWithPython(t, python)
@@ -485,7 +490,7 @@ func TestV6ToV12NativeVerificationFailureRestoresAndReopensV6(t *testing.T) {
 
 	temporalQuiescenceProof = func(_, _ launchContext) error { return nil }
 	sealedV7CandidateBuilder = postStampFailureCandidateBuilder()
-	sealedV7CandidateInstaller = installSealedV14Candidate
+	sealedV7CandidateInstaller = installSealedV15Candidate
 	candidateStarts, oldStarts := 0, 0
 	startReleaseCommand = func(base launchContext, receipt release.Receipt, journalID string) error {
 		if journalID == "" {
@@ -502,10 +507,10 @@ func TestV6ToV12NativeVerificationFailureRestoresAndReopensV6(t *testing.T) {
 			return reopenRestoredV6WithPriorRuntime(runtimeContext, database)
 		case fixture.candidate.BuildID:
 			candidateStarts++
-			if err := reopenMigratedV14WithCandidateRuntime(runtimeContext, database); err != nil {
+			if err := reopenMigratedV15WithCandidateRuntime(runtimeContext, database); err != nil {
 				return err
 			}
-			return reopenMigratedV14WithTypeScriptAPI(database)
+			return reopenMigratedV15WithTypeScriptAPI(database)
 		default:
 			return fmt.Errorf("unexpected release start %s", receipt.BuildID)
 		}
@@ -516,24 +521,34 @@ func TestV6ToV12NativeVerificationFailureRestoresAndReopensV6(t *testing.T) {
 		t.Fatal("native activation unexpectedly accepted a post-stamp verification failure")
 	}
 	active, err := fixture.store.ReadActive()
-	if err != nil || active.Receipt != fixture.old || candidateStarts != 0 || oldStarts != 1 {
-		t.Fatalf("post-stamp rollback = active:%#v candidate starts:%d old starts:%d err:%v", active, candidateStarts, oldStarts, err)
+	if err != nil || active.Receipt != fixture.old || candidateStarts != 0 || oldStarts != 0 {
+		t.Fatalf("post-stamp refusal = active:%#v candidate starts:%d old starts:%d err:%v", active, candidateStarts, oldStarts, err)
 	}
 	if retainedDigest, err := sha256Path(database); err != nil || retainedDigest != originalDigest {
 		t.Fatalf("unactivated source changed: original=%s retained=%s err=%v", originalDigest, retainedDigest, err)
 	}
 
-	sealedV7CandidateBuilder = buildSealedV14Candidate
-	if err := promoteExisting(fixture.ctx, fixture.store, active, fixture.candidate.BuildID, "update", &output); err != nil {
-		t.Fatalf("native retry after post-stamp failure: %v", err)
+	journal, err := fixture.store.ReadJournal()
+	if err != nil || !journal.Resumable() || !journal.PreserveLiveOnFailure || journal.State != release.PolicyPending || journal.BackupID == "" {
+		t.Fatalf("post-stamp journal = %#v, %v", journal, err)
 	}
-	active, err = fixture.store.ReadActive()
-	if err != nil || active.Receipt != fixture.candidate || candidateStarts != 1 || oldStarts != 1 {
-		t.Fatalf("post-stamp retry = active:%#v candidate starts:%d old starts:%d err:%v", active, candidateStarts, oldStarts, err)
+	before := snapshotPreservedTransition(t, fixture)
+	for attempt := 0; attempt < 2; attempt++ {
+		recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
+		if recovered || err == nil || !strings.Contains(err.Error(), "retain the live databases") || !reflect.DeepEqual(before, snapshotPreservedTransition(t, fixture)) {
+			t.Fatalf("post-stamp recovery %d = recovered:%v err:%v", attempt, recovered, err)
+		}
+	}
+	sealedV7CandidateBuilder = buildSealedV15Candidate
+	if err := promoteExisting(fixture.ctx, fixture.store, active, fixture.candidate.BuildID, "update", &output); err == nil || !strings.Contains(err.Error(), "unfinished") {
+		t.Fatalf("retry should require explicit recovery: %v", err)
+	}
+	if !reflect.DeepEqual(before, snapshotPreservedTransition(t, fixture)) || oldStarts != 0 || candidateStarts != 0 {
+		t.Fatal("refused retry changed durable state or started a release")
 	}
 }
 
-func TestV6ToV7ActivationFailuresRestoreRetryableV6Pair(t *testing.T) {
+func TestV6ToV7ActivationFailuresPreserveLivePair(t *testing.T) {
 	for _, stage := range []string{"before swap", "after swap"} {
 		t.Run(stage, func(t *testing.T) {
 			preserveMigrationSeams(t)
@@ -542,6 +557,7 @@ func TestV6ToV7ActivationFailuresRestoreRetryableV6Pair(t *testing.T) {
 			builder := syntheticV7CandidateBuilder(t, fixture.python)
 			if stage == "before swap" {
 				sealedV7CandidateBuilder = func(launchContext, databasePair, string) (string, error) {
+					setLifecycleSQLitePair(t, fixture.python, fixture.state, "later")
 					return "", errors.New("synthetic pre-swap failure")
 				}
 			} else {
@@ -553,6 +569,7 @@ func TestV6ToV7ActivationFailuresRestoreRetryableV6Pair(t *testing.T) {
 					if version, err := sqliteUserVersion(fixture.python, filepath.Join(fixture.state, "jobctrl.db")); err != nil || version != exactJobCtrlSchemaVersion {
 						t.Fatalf("post-swap fixture never activated v7: version=%d err=%v", version, err)
 					}
+					setLifecycleSQLitePair(t, fixture.python, fixture.state, "later")
 					return errors.New("synthetic post-swap failure")
 				}
 			}
@@ -570,25 +587,42 @@ func TestV6ToV7ActivationFailuresRestoreRetryableV6Pair(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "synthetic") {
 				t.Fatalf("%s activation failure = %v", stage, err)
 			}
-			if oldStarts != 1 || candidateStarts != 0 {
+			if oldStarts != 0 || candidateStarts != 0 {
 				t.Fatalf("%s start counts old=%d candidate=%d", stage, oldStarts, candidateStarts)
 			}
-			if version, err := sqliteUserVersion(fixture.python, filepath.Join(fixture.state, "jobctrl.db")); err != nil || version != legacyJobCtrlSchemaVersion {
-				t.Fatalf("%s did not restore retryable v6: version=%d err=%v", stage, version, err)
+			expectedVersion, expectedState := legacyJobCtrlSchemaVersion, release.PolicyPending
+			if stage == "after swap" {
+				expectedVersion, expectedState = exactJobCtrlSchemaVersion, release.MigrationCandidateReady
+			}
+			if version, err := sqliteUserVersion(fixture.python, filepath.Join(fixture.state, "jobctrl.db")); err != nil || version != expectedVersion {
+				t.Fatalf("%s did not preserve live version: version=%d err=%v", stage, version, err)
+			}
+			if got := lifecycleDatabaseValues(t, fixture.python, fixture.state); got["jobctrl.db"] != "laterjobctrl.db" || got["temporal.db"] != "latertemporal.db" {
+				t.Fatalf("%s lost independent commits: %v", stage, got)
 			}
 			active, err := fixture.store.ReadActive()
 			if err != nil || active.Receipt != fixture.old {
 				t.Fatalf("%s active pointer = %#v, %v", stage, active, err)
 			}
 			journal, err := fixture.store.ReadJournal()
-			if err != nil || journal.State != release.RolledBack || journal.BackupID == "" {
-				t.Fatalf("%s rollback journal = %#v, %v", stage, journal, err)
+			if err != nil || journal.State != expectedState || !journal.Resumable() || !journal.PreserveLiveOnFailure || journal.BackupID == "" {
+				t.Fatalf("%s retained journal = %#v, %v", stage, journal, err)
+			}
+			if got := lifecycleDatabaseValues(t, fixture.python, filepath.Join(fixture.state, "backups", journal.BackupID)); got["jobctrl.db"] != "oldjobctrl.db" || got["temporal.db"] != "oldtemporal.db" {
+				t.Fatalf("%s lost the paired pre-transition values: %v", stage, got)
+			}
+			before := snapshotPreservedTransition(t, fixture)
+			for attempt := 0; attempt < 2; attempt++ {
+				recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
+				if recovered || err == nil || !strings.Contains(err.Error(), "retain the live databases") || !reflect.DeepEqual(before, snapshotPreservedTransition(t, fixture)) {
+					t.Fatalf("%s recovery %d = recovered:%v err:%v", stage, attempt, recovered, err)
+				}
 			}
 		})
 	}
 }
 
-func TestV6ToV7InterruptedCandidateBoundariesRestoreThePairedV6State(t *testing.T) {
+func TestV6ToV7InterruptedCandidateBoundariesPreserveLivePair(t *testing.T) {
 	for _, stage := range []release.State{release.MigrationCandidateReady, release.MigrationActivated} {
 		t.Run(string(stage), func(t *testing.T) {
 			preserveMigrationSeams(t)
@@ -596,6 +630,9 @@ func TestV6ToV7InterruptedCandidateBoundariesRestoreThePairedV6State(t *testing.
 			pair, err := snapshotPair(fixture.ctx, fixture.old)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if got := lifecycleDatabaseValues(t, fixture.python, filepath.Join(fixture.state, "backups", pair.ID)); got["jobctrl.db"] != "oldjobctrl.db" || got["temporal.db"] != "oldtemporal.db" {
+				t.Fatalf("paired backup did not retain original values: %v", got)
 			}
 			journal, err := fixture.store.Begin("update", &fixture.old, &fixture.candidate, fixture.candidate.DescriptorSHA256)
 			if err != nil {
@@ -619,6 +656,10 @@ func TestV6ToV7InterruptedCandidateBoundariesRestoreThePairedV6State(t *testing.
 			if err := fixture.store.Advance(&journal, stage, nil); err != nil {
 				t.Fatal(err)
 			}
+			setLifecycleSQLitePair(t, fixture.python, fixture.state, "later")
+			if got := lifecycleDatabaseValues(t, fixture.python, fixture.state); got["jobctrl.db"] != "laterjobctrl.db" || got["temporal.db"] != "latertemporal.db" {
+				t.Fatalf("independent commits not visible before recovery: %v", got)
+			}
 			oldStarts := 0
 			startReleaseCommand = func(_ launchContext, receipt release.Receipt, journalID string) error {
 				if receipt != fixture.old || journalID != journal.ID {
@@ -628,44 +669,53 @@ func TestV6ToV7InterruptedCandidateBoundariesRestoreThePairedV6State(t *testing.
 				return nil
 			}
 
-			recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
-			if !recovered || err != nil {
-				t.Fatalf("recover interrupted %s = recovered:%v err:%v", stage, recovered, err)
-			}
-			if oldStarts != 1 {
-				t.Fatalf("interrupted %s old starts = %d", stage, oldStarts)
-			}
-			if version, err := sqliteUserVersion(fixture.python, filepath.Join(fixture.state, "jobctrl.db")); err != nil || version != legacyJobCtrlSchemaVersion {
-				t.Fatalf("interrupted %s did not restore v6: version=%d err=%v", stage, version, err)
-			}
-			if _, err := os.Lstat(v7CandidatePath(fixture.state, journal.ID)); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("interrupted %s left candidate staging behind: %v", stage, err)
-			}
-			loaded, err := fixture.store.ReadJournal()
-			if err != nil || loaded.State != release.RolledBack || loaded.Resumable() {
-				t.Fatalf("interrupted %s journal = %#v, %v", stage, loaded, err)
+			before := snapshotPreservedTransition(t, fixture)
+			for attempt := 0; attempt < 2; attempt++ {
+				recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
+				if recovered || err == nil || !strings.Contains(err.Error(), "retain the live databases") {
+					t.Fatalf("recovery %s attempt %d = recovered:%v err:%v", stage, attempt, recovered, err)
+				}
+				if oldStarts != 0 || !reflect.DeepEqual(before, snapshotPreservedTransition(t, fixture)) {
+					t.Fatalf("recovery %s attempt %d changed data, artifacts, journal or release selection; old starts=%d", stage, attempt, oldStarts)
+				}
+				loaded, err := fixture.store.ReadJournal()
+				if err != nil || loaded.ID != journal.ID || loaded.State != stage || !loaded.Resumable() {
+					t.Fatalf("interrupted %s journal = %#v, %v", stage, loaded, err)
+				}
 			}
 		})
 	}
 }
 
-func TestV6ToV7RollbackDoesNotRestartOldReleaseWhenSidecarCleanupFails(t *testing.T) {
+func TestV6ToV7PostSwapFailurePreservesLivePairAndSidecar(t *testing.T) {
 	preserveMigrationSeams(t)
 	fixture := newV6ActivationFixture(t)
 	temporalQuiescenceProof = func(_, _ launchContext) error { return nil }
 	sealedV7CandidateBuilder = syntheticV7CandidateBuilder(t, fixture.python)
-	failCleanup := false
+	postSwapCleanupCalls := 0
+	installed := false
 	removeSQLiteSidecar = func(path string) error {
-		if failCleanup && strings.HasSuffix(path, "temporal.db-journal") {
-			return errors.New("synthetic non-removable sidecar")
+		if installed {
+			postSwapCleanupCalls++
+			return errors.New("unexpected post-swap sidecar removal")
 		}
 		return os.Remove(path)
 	}
+	sidecar := filepath.Join(fixture.state, "temporal.db-journal")
 	sealedV7CandidateInstaller = func(candidate launchContext, path string) error {
 		if err := installSealedV7Candidate(candidate, path); err != nil {
 			return err
 		}
-		failCleanup = true
+		// Separate SQLite connections commit after the database swap, before the
+		// generic activation failure is returned.
+		setLifecycleSQLitePair(t, fixture.python, fixture.state, "later")
+		if got := lifecycleDatabaseValues(t, fixture.python, fixture.state); got["jobctrl.db"] != "laterjobctrl.db" || got["temporal.db"] != "latertemporal.db" {
+			t.Fatalf("independent commits not visible before failure: %v", got)
+		}
+		if err := os.WriteFile(sidecar, []byte("retained synthetic journal"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		installed = true
 		return errors.New("synthetic post-swap failure")
 	}
 	starts := 0
@@ -675,31 +725,28 @@ func TestV6ToV7RollbackDoesNotRestartOldReleaseWhenSidecarCleanupFails(t *testin
 	}
 
 	err := promoteExisting(fixture.ctx, fixture.store, fixture.active, fixture.candidate.BuildID, "update", io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "paired rollback restore failed") || !strings.Contains(err.Error(), "sidecar") {
-		t.Fatalf("sidecar cleanup failure did not fail closed: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "synthetic post-swap failure") || !strings.Contains(err.Error(), "retain the live databases") {
+		t.Fatalf("post-swap failure did not retain data: %v", err)
 	}
-	if starts != 0 {
-		t.Fatalf("old release restarted before exact paired cleanup: starts=%d", starts)
+	if starts != 0 || postSwapCleanupCalls != 0 {
+		t.Fatalf("post-swap cleanup or restart ran: starts=%d removals=%d", starts, postSwapCleanupCalls)
 	}
 	journal, err := fixture.store.ReadJournal()
-	if err != nil || journal.State != release.RollbackRestoring || !journal.Resumable() {
-		t.Fatalf("sidecar failure did not remain recoverable: %#v, %v", journal, err)
+	if err != nil || journal.State != release.MigrationCandidateReady || !journal.Resumable() || !journal.PreserveLiveOnFailure || journal.BackupID == "" {
+		t.Fatalf("post-swap failure did not retain its journal and backup: %#v, %v", journal, err)
 	}
-
-	failCleanup = false
-	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
-		if receipt != fixture.old {
-			t.Fatalf("sidecar recovery started unexpected release %#v", receipt)
+	if got := lifecycleDatabaseValues(t, fixture.python, filepath.Join(fixture.state, "backups", journal.BackupID)); got["jobctrl.db"] != "oldjobctrl.db" || got["temporal.db"] != "oldtemporal.db" {
+		t.Fatalf("post-swap failure lost the paired pre-transition values: %v", got)
+	}
+	before := snapshotPreservedTransition(t, fixture)
+	for attempt := 0; attempt < 2; attempt++ {
+		recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
+		if recovered || err == nil || !strings.Contains(err.Error(), "retain the live databases") {
+			t.Fatalf("recovery attempt %d = recovered:%v err:%v", attempt, recovered, err)
 		}
-		starts++
-		return nil
-	}
-	recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
-	if !recovered || err != nil || starts != 1 {
-		t.Fatalf("sidecar cleanup retry = recovered:%v starts:%d err:%v", recovered, starts, err)
-	}
-	if version, err := sqliteUserVersion(fixture.python, filepath.Join(fixture.state, "jobctrl.db")); err != nil || version != legacyJobCtrlSchemaVersion {
-		t.Fatalf("sidecar cleanup retry did not reopen v6: version=%d err=%v", version, err)
+		if starts != 0 || postSwapCleanupCalls != 0 || !reflect.DeepEqual(before, snapshotPreservedTransition(t, fixture)) {
+			t.Fatalf("recovery attempt %d changed live data, sidecar, backup, journal or release selection", attempt)
+		}
 	}
 }
 

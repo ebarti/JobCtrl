@@ -9,6 +9,7 @@ const apiState = requiredElement("api-state");
 const autofillButton = requiredButton("autofill");
 const captureButton = requiredButton("capture");
 const clearQueueButton = requiredButton("clear-queue");
+const retryQueueButton = requiredButton("retry-queue");
 const saveTokenButton = requiredButton("save-token");
 const selectDiscoveryButton = requiredButton("select-discovery");
 const statusText = requiredElement("status");
@@ -52,16 +53,14 @@ captureButton.addEventListener("click", () => {
   void sendMessage({ type: "captureCurrentTab" })
     .then((response) => {
       if (response.ok && response.status === "captured") {
-        setStatus(response.jobKey ? `Saved to JobCtrl: ${response.jobKey}` : "Saved to JobCtrl.");
+        const saved = response.jobKey ? `Saved to JobCtrl: ${response.jobKey}` : "Saved to JobCtrl.";
+        setStatus(response.queueSize > 0 ? `${saved} ${response.queueSize} capture(s) still queued.` : saved);
       } else if (response.ok && response.status === "queued") {
-        setStatus(`Queued locally. ${response.queueSize} capture(s) waiting.`);
+        setStatus(`Queued locally. ${response.queueSize} capture(s) waiting. ${response.message}`);
       } else if (!response.ok) {
         setStatus(response.message);
       }
       return refreshStatus({ preserveStatus: true });
-    })
-    .finally(() => {
-      captureButton.disabled = false;
     });
 });
 
@@ -89,10 +88,33 @@ clearQueueButton.addEventListener("click", () => {
   });
 });
 
+retryQueueButton.addEventListener("click", () => {
+  retryQueueButton.disabled = true;
+  setStatus("Syncing queued captures...");
+  void sendMessage({ type: "retryQueue" }).then((response) => {
+    if (response.ok && response.status === "queue_flushed") {
+      const detail = response.message ? ` ${response.message}` : "";
+      setStatus(`${response.flushed} capture(s) synced. ${response.queueSize} still queued.${detail}`);
+    } else {
+      setStatus(response.ok ? "The extension returned an unexpected sync response." : response.message);
+    }
+    return refreshStatus({ preserveStatus: true });
+  });
+});
+
 async function refreshStatus(options: { preserveStatus?: boolean } = {}): Promise<void> {
   const response = await sendMessage({ type: "getStatus" });
   if (!response.ok) {
-    apiState.textContent = "Unavailable";
+    if (response.error === "capture_queue_unavailable") {
+      setProtocolControlsEnabled(true);
+      captureButton.disabled = true;
+      autofillButton.disabled = true;
+      retryQueueButton.disabled = true;
+      clearQueueButton.disabled = false;
+      apiState.textContent = "Local capture queue unavailable";
+    } else {
+      apiState.textContent = "Unavailable";
+    }
     if (!options.preserveStatus) {
       setStatus(response.message);
     }
@@ -110,6 +132,7 @@ async function refreshStatus(options: { preserveStatus?: boolean } = {}): Promis
   autofillButton.disabled = !response.paired;
   captureButton.disabled = !response.paired;
   clearQueueButton.disabled = response.queueSize === 0;
+  retryQueueButton.disabled = !response.paired || response.queueSize === 0;
   selectDiscoveryButton.hidden = !response.paired || !response.apiReady || response.discoverySelected;
   selectDiscoveryButton.disabled = selectDiscoveryButton.hidden;
   if (options.preserveStatus) {
@@ -122,7 +145,7 @@ async function refreshStatus(options: { preserveStatus?: boolean } = {}): Promis
   } else if (!response.discoverySelected) {
     setStatus("The token is saved, but Discovery is not using this Chrome profile. Select it below.");
   } else if (response.queueSize > 0) {
-    setStatus(`${response.queueSize} queued capture(s) will sync after the next save.`);
+    setStatus(`${response.queueSize} queued capture(s). Select Sync queued captures to retry.`);
   } else {
     setStatus("Ready to save the current page.");
   }
@@ -142,6 +165,7 @@ function setProtocolControlsEnabled(enabled: boolean): void {
   autofillButton.disabled = !enabled;
   captureButton.disabled = !enabled;
   clearQueueButton.disabled = !enabled;
+  retryQueueButton.disabled = !enabled;
   selectDiscoveryButton.hidden = true;
   selectDiscoveryButton.disabled = true;
 }
@@ -195,6 +219,7 @@ function requiredInput(id: string): HTMLInputElement {
 type PopupResponse =
   | { ok: true; status: "captured"; jobKey: string | null; queueSize: number }
   | { ok: true; status: "queued"; queueSize: number; message: string }
+  | { ok: true; status: "queue_flushed"; flushed: number; queueSize: number; message: string | null }
   | {
       ok: true;
       status: "ready";

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
-from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+from jobctrl.infrastructure.migrations.schema_v15 import create_exact_v15_schema
 from jobctrl.infrastructure.profile.sqlite_repository import SqliteProfileRepository
 from jobctrl.llm_lanes import current_llm_lane
 
@@ -23,7 +23,7 @@ def seed(path=":memory:"):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA journal_mode=WAL")
-    create_exact_v14_schema(conn)
+    create_exact_v15_schema(conn)
     for job_id in (JOB, DUPLICATE, MISSING):
         conn.execute(
             "INSERT INTO jobs(tenant_id,job_id,url,title,company,description) VALUES('local',?,?, 'Synthetic engineer','Synthetic employer',?)",

@@ -17,30 +17,36 @@ class BenchmarkClassification(DeterminationModel):
     company_tier: InterpretedField[Literal["tier_1_local", "tier_2_ambitious", "tier_3_top_of_market", "unknown"]]
 
 
+def benchmark_classification_source(observation):
+    """The exact source identity shared by classification and batch deduplication."""
+    payload = {
+        key: getattr(observation, key)
+        for key in (
+            "source_id",
+            "company_name",
+            "role_title",
+            "location",
+            "level_label",
+            "company_tier",
+            "source_url",
+        )
+    }
+    text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(text.encode()).hexdigest(), text
+
+
 class ModelBenchmarkClassifier:
     def __init__(self, **dependencies):
         self._dependencies = dependencies
 
     def classify(self, observation):
-        payload = {
-            key: getattr(observation, key)
-            for key in (
-                "source_id",
-                "company_name",
-                "role_title",
-                "location",
-                "level_label",
-                "company_tier",
-                "source_url",
-            )
-        }
-        text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        entity_id, text = benchmark_classification_source(observation)
         return determine(
             kind="benchmark_classification",
             schema=BenchmarkClassification,
             schema_version="1",
             prompt_version="benchmark-classification-v1",
-            entity_id=hashlib.sha256(text.encode()).hexdigest(),
+            entity_id=entity_id,
             sources=[Source(source_id="provider_row", text=text)],
             context={},
             instruction="Classify this provider's reported salary population into the supplied occupation and seniority codes, and structured geographic places. An ambiguous mixed population remains unknown. Identify whether it is company-specific or a market aggregate and whether the source states a company compensation tier; do not infer a tier from the salary amount. Cite source spans for every judgment. No synonym tables or fuzzy similarity.",

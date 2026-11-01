@@ -96,7 +96,7 @@ def test_enabled_analysis_legs_default_aliases_and_validation() -> None:
 def test_analysis_sdk_set_version_includes_actual_synthesizer() -> None:
     assert setup_probes.analysis_sdk_set_version(
         ("claude", "antigravity"), synthesizer_provider="codex"
-    ) == "claude+antigravity-v2-synth-codex"
+    ) == "claude+antigravity-v3-verified-single-synth-codex"
 
 
 def test_codex_requires_persisted_cli_auth_and_uses_stable_jobctrl_home(

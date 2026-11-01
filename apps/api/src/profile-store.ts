@@ -1,3 +1,4 @@
+import { requiresLegacyEvidenceReview } from "./legacy-evidence-review.js";
 import { readCandidateInterpretationStatus } from "./candidate-interpretations.js";
 import { isDeepStrictEqual } from "node:util";
 import { ZodError } from "zod";
@@ -379,15 +380,17 @@ export function readProfileVersion(db: SqliteDatabase): number | null {
 
 export function readProfileConfig(db: SqliteDatabase): ProfileConfigResponse {
   ensureProfileTables(db);
-  return readProfileConfigFromInitializedTables(db);
+  return db.transaction(() => readProfileConfigFromInitializedTables(db))();
 }
 
 /** Read the canonical profile without initialization or compatibility writes.
  * Callers must use an exact-schema, read-only database connection. */
 export function readProfileConfigReadOnly(db: SqliteDatabase): ProfileConfigResponse {
   try {
-    assertValidSavedProfileJson(db);
-    return readProfileConfigFromInitializedTables(db);
+    return db.transaction(() => {
+      assertValidSavedProfileJson(db);
+      return readProfileConfigFromInitializedTables(db);
+    })();
   } catch (error) {
     if (error instanceof ZodError || error instanceof ProfileInputError) {
       throw new InvalidSavedProfileError("The saved profile cannot be inspected until its validation errors are corrected.");
@@ -491,11 +494,14 @@ function readProfileConfigFromInitializedTables(db: SqliteDatabase): ProfileConf
       templateText: DEFAULT_RESUME_TEMPLATE,
     };
   }
+  const profile = rowToProfile(db, row);
+  const pending = profile.resume.experience_entries.flatMap((entry) => entry.achievement_evidence).filter((item) => item.confirmation_review_required).length;
   return {
     ok: true,
+    ...(pending ? { legacyEvidenceReview: { status: "review_required" as const, count: pending } } : {}),
     profileVersion: Number(row.version ?? 1),
     candidateInterpretation: readCandidateInterpretationStatus(db,Number(row.version??1)),
-    profile: rowToProfile(db, row),
+    profile,
     style: styleFromRow(row),
     templateText: String(row.resume_template_text || DEFAULT_RESUME_TEMPLATE),
   };
@@ -992,6 +998,7 @@ function achievementEvidenceRows(db: SqliteDatabase, entryId: string): Array<Rec
     evidence_strength: text(row.evidence_strength, "draft"),
     claim_confidence: confidenceNumber(row.claim_confidence),
     user_confirmed: Boolean(Number(row.user_confirmed ?? 0)),
+    ...(requiresLegacyEvidenceReview(db, TENANT_ID, PROFILE_ID, entryId, text(row.evidence_id)) ? { confirmation_review_required: true } : {}),
     tags: parseTextArray(row.tags_json),
   }));
 }

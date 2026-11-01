@@ -11,6 +11,7 @@ from typing import Any, Callable
 from jobctrl.domain.compensation import (
     PostedCompensationFact,
 )
+from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
@@ -172,6 +173,24 @@ class SqlitePostedCompensationRepository:
         with self._conn:
             if event_write_fence is not None:
                 event_write_fence()
+            if not self._conn.in_transaction:
+                self._conn.execute("BEGIN IMMEDIATE")
+            current = self._conn.execute(
+                """
+                SELECT jobs.job_id, jobs.salary,
+                       enrichments.full_description AS enrichment_description,
+                       jobs.full_description, jobs.description
+                FROM jobs
+                LEFT JOIN job_enrichments AS enrichments
+                  ON enrichments.tenant_id = jobs.tenant_id
+                 AND enrichments.job_id = jobs.job_id
+                 AND enrichments.current_status = 'enriched'
+                WHERE jobs.tenant_id = ? AND jobs.job_id = ?
+                """,
+                (tenant_id, str(job_id)),
+            ).fetchone()
+            if current is None or posted_compensation_source_from_job(current) != (_nonempty_text(salary), source_field):
+                raise DeterminationFailure("posted_compensation_source_changed")
             self._save_fact_row(fact)
             SqliteDeterminationRepository(self._conn).bind(
                 tenant_id=tenant_id,

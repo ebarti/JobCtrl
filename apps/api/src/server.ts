@@ -1,4 +1,7 @@
-import { OutreachGenerationError } from "./outreach-generation-errors.js";
+import { PermanentDeleteSelectionConflict, PermanentDeleteSelectionRegistry } from "./permanent-delete-selection.js";
+import { readJobCtrlSettings } from "./settings-config.js";
+import { ActionReceiptConflictError } from "./action-receipts.js";
+import { OutreachGenerationError, OutreachPublicationConflictError } from "./outreach-generation-errors.js";
 import { registerOfferRoutes } from "./offer-routes.js";
 import { readCompanyBriefing } from "./company-briefings.js";
 
@@ -30,6 +33,8 @@ import {
   RepeatApplicationOverrideRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
+  BulkPermanentDeleteRequestSchema,
+  PreparePermanentDeleteSelectionRequestSchema,
   type BulkRunPendingPreparationRequest,
   BulkRunPendingPreparationRequestSchema,
   type BulkRunPendingPreparationResponse,
@@ -63,6 +68,7 @@ import {
   JobResumeTemplateAssignmentRequestSchema,
   JobListQuerySchema,
   JobUrlImportRequestSchema,
+  JobUrlImportStatusParamsSchema,
   LearningRecommendationEvidenceListQuerySchema,
   LearningRecommendationIdSchema,
   TailoringPolicyRevisionListQuerySchema,
@@ -146,6 +152,7 @@ import {
   importContacts,
   listContacts,
   updateContact,
+  ContactRevisionConflictError,
 } from "./contacts.js";
 import {
   validatePublicHttpUrl,
@@ -192,7 +199,16 @@ import {
   DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE,
   commandForResolvedBlockCondition,
 } from "./blocked-condition-recovery.js";
-import { createRetainedDatabase, databaseExists, getRow, openDatabase, openReadOnlyDatabase } from "./db.js";
+import {
+  createRetainedDatabase,
+  databaseExists,
+  getRow,
+  IncompatibleSchemaManifestError,
+  IncompatibleSchemaVersionError,
+  openDatabase,
+  openReadOnlyDatabase,
+  SUPPORTED_SCHEMA_VERSION,
+} from "./db.js";
 import { ConfigFileInputError } from "./config-file.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
@@ -204,6 +220,7 @@ import {
   listQuarantine,
   listRoleMatchFeedbackSuggestions,
   readDiscoverySettings,
+  InvalidSavedDiscoverySettingsError,
   listSourceLocatorCandidates,
   listSourceRegistry,
   patchSourceState,
@@ -285,6 +302,8 @@ import {
 } from "./manual-capture-worker.js";
 import {
   createWorkerJobUrlImporter,
+  createWorkerJobUrlImportStatusReader,
+  type JobUrlImportStatusReader,
   JobUrlImportError,
   type JobUrlImporter,
 } from "./job-url-import-worker.js";
@@ -345,6 +364,7 @@ import {
   getResumeTemplateDetail,
   listResumeTemplates,
   ResumeTemplateInputError,
+  ResumeTemplateVersionConflictError,
   resolveCurrentResumeArtifactIdForOpen,
   resolveEffectiveResumeTemplate,
   setDefaultResumeTemplate,
@@ -378,9 +398,6 @@ import {
 } from "@jobctrl/domain-types";
 import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
 import {
-  claimNextProfileContinuationEvent,
-  handleProfileUpdatedEvent,
-  markProfileContinuationEventsHandled,
   persistProfileUpdate,
 } from "./profile-events.js";
 import { dbFileIdentity, readLlmSpendHealth, readWorkerHealth } from "./worker-health.js";
@@ -390,6 +407,7 @@ import {
   hideJob,
   hideJobs,
   InputError,
+  ApplyResetRefusedError,
   markJobApplied,
   markJobSkipped,
   permanentlyDeleteJob,
@@ -464,6 +482,7 @@ export interface BuildAppOptions {
   manualCaptureImporter?: ManualCaptureImporter;
   discoveryBrowserBroker?: DiscoveryBrowserBroker;
   jobUrlImporter?: JobUrlImporter;
+  jobUrlImportStatusReader?: JobUrlImportStatusReader;
   /** Test seam for the pre-dispatch public-destination guard. */
   jobUrlValidator?: PublicUrlValidator;
   gmailFeedbackScanner?: GmailFeedbackScanner;
@@ -478,10 +497,18 @@ export interface BuildAppOptions {
 }
 
 export function buildApp(options: BuildAppOptions): FastifyInstance {
-  normalizeExistingDatabase(options.dbPath);
+  try {
+    normalizeExistingDatabase(options.dbPath);
+  } catch (error) {
+    if (error instanceof IncompatibleSchemaVersionError || error instanceof IncompatibleSchemaManifestError) {
+      return buildIncompatibleDatabaseApp(options, error);
+    }
+    throw error;
+  }
   const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
   const jobListDatabase = createRetainedDatabase(options.dbPath);
-  app.addHook("onClose", async () => { jobListDatabase.close(); });
+  const permanentDeleteSelections = new PermanentDeleteSelectionRegistry(options.dbPath);
+  app.addHook("onClose", async () => { jobListDatabase.close(); permanentDeleteSelections.close(); });
   installVitestInjectMutationDefaults(app);
   const appDir = options.appDir ?? path.dirname(options.dbPath);
   const readInterviewCatalog = createInterviewCatalogReader(options.interviewCatalogAssetLoader
@@ -507,7 +534,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     options.providerDispatcher ??
     createRuntimeJsonRpcDispatcherFactory(pythonRuntime)(actionContext);
   let discoveryBrowserContinuation: Promise<void> | null = null;
-  let profileContinuation: Promise<void> | null = null;
+  app.addHook("onClose", async () => {
+    // The reconnect route can start this work without awaiting it. It may use
+    // the RPC child after the HTTP response, so retain it during shutdown.
+    if (discoveryBrowserContinuation) await discoveryBrowserContinuation;
+  });
   const continueDiscoveryBrowserPreparation = (): Promise<void> => {
     if (discoveryBrowserContinuation) return discoveryBrowserContinuation;
     const continuation = dispatchDiscoveryBrowserContinuation(actionDispatcher, actionContext)
@@ -519,24 +550,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     discoveryBrowserContinuation = continuation;
     return continuation;
   };
-  const continueProfilePreparation = (): Promise<void> => {
-    if (profileContinuation) return profileContinuation;
-    const continuation = dispatchPendingProfileContinuations(
-      options.dbPath,
-      actionDispatcher,
-      actionContext,
-    ).finally(() => {
-      if (profileContinuation === continuation) {
-        profileContinuation = null;
-      }
-    });
-    profileContinuation = continuation;
-    return continuation;
-  };
   const manualCaptureImporter =
     options.manualCaptureImporter ?? createWorkerManualCaptureImporter({ pythonRuntime });
   const discoveryBrowserBroker = options.discoveryBrowserBroker ?? new DiscoveryBrowserBroker();
   const jobUrlImporter = options.jobUrlImporter ?? createWorkerJobUrlImporter({ pythonRuntime });
+  const jobUrlImportStatusReader = options.jobUrlImportStatusReader ?? createWorkerJobUrlImportStatusReader({ pythonRuntime });
   const jobUrlValidator = options.jobUrlValidator ?? validatePublicHttpUrl;
   const gmailFeedbackScanner =
     options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner(providerDispatcher);
@@ -546,16 +564,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const requireHealthyWorkerForActions =
     options.requireHealthyWorkerForActions ?? !options.actionDispatcher;
   ensureLocalCapabilityToken(appDir);
-
-  app.addHook("onListen", async () => {
-    // Health-only startup is allowed before initialization creates the exact
-    // database. Do not launch the Python RPC bootstrap or any continuation
-    // reader against a path that the initializer still owns.
-    if (!databaseExists(options.dbPath)) return;
-    void continueProfilePreparation().catch((error: unknown) => {
-      app.log.error({ err: error }, "Failed to reconcile profile-triggered preparation during startup");
-    });
-  });
 
   void app.register(cors, {
     delegator: (request, callback) => {
@@ -1149,6 +1157,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
                   ? "invalid_gmail_feedback_scan"
                   : "gmail_feedback_scan_failed",
               message: error.message,
+              ...(error.failureCode ? { failureCode: error.failureCode } : {}),
             };
           }
           throw error;
@@ -1518,6 +1527,17 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query)), jobListDatabase),
   );
 
+  app.get("/v1/jobs/reviewable-list", async (request, reply) => {
+    const query = JobListQuerySchema.parse(request.query);
+    const activeOnly = query.jobStates
+      ? !query.jobStates.some((state) => state !== "active")
+      : query.deleted === "active";
+    if (activeOnly) {
+      return withDb(reply, options.dbPath, (db) => ({ ...listJobs(db, query), observationId: null }), jobListDatabase);
+    }
+    return withDb(reply, options.dbPath, (db) => permanentDeleteSelections.observe(db, query, jobListDatabase.identity()), jobListDatabase);
+  });
+
   app.post("/v1/jobs/import-url", async (request, reply) => {
     const body = parseBody(reply, JobUrlImportRequestSchema, request.body ?? {});
     if (!body) {
@@ -1549,7 +1569,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return undefined;
     }
     try {
-      return await jobUrlImporter(body, { appDir, dbPath: options.dbPath });
+      const result = await jobUrlImporter(body, { appDir, dbPath: options.dbPath });
+      if (result.status === "started") void reply.code(202);
+      return result;
     } catch (error) {
       if (error instanceof JobUrlImportError) {
         void reply.code(error.statusCode);
@@ -1563,6 +1585,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       throw error;
     }
   });
+
+  app.get<{ Params: { workflowId: string; executionId: string } }>(
+    "/v1/jobs/import-url/:workflowId/:executionId", async (request, reply) => {
+      const execution = parseBody(reply, JobUrlImportStatusParamsSchema.pick({ workflowId: true, executionId: true }), request.params);
+      if (!execution) return undefined;
+      try {
+        return await jobUrlImportStatusReader(execution, { appDir, dbPath: options.dbPath });
+      } catch (error) {
+        if (!(error instanceof JobUrlImportError)) throw error;
+        void reply.code(error.statusCode);
+        return { ok: false, error: "job_url_import_status_unavailable", message: error.message };
+      }
+    },
+  );
 
   app.get("/v1/evidence-map", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listEvidenceMap(db)),
@@ -1856,12 +1892,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     return withWritableDb(reply, options.dbPath, (db) => softDeleteJobs(db, body));
   });
 
+  app.post("/v1/jobs/permanent-delete-selection", async (request, reply) => {
+    const body = parseBody(reply, PreparePermanentDeleteSelectionRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    return withWritableDb(reply, options.dbPath, () => permanentDeleteSelections.prepare(body));
+  });
+
   app.post("/v1/jobs/bulk-delete-permanent", async (request, reply) => {
-    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
-    if (!body) {
-      return undefined;
-    }
-    return withWritableDb(reply, options.dbPath, (db) => permanentlyDeleteJobs(db, body));
+    const body = parseBody(reply, BulkPermanentDeleteRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    return withWritableDb(reply, options.dbPath, (db) => body.selectionId
+      ? permanentDeleteSelections.delete(body)
+      : permanentlyDeleteJobs(db, body));
   });
 
   app.post("/v1/jobs/bulk-restore", async (request, reply) => {
@@ -2387,7 +2429,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       // is an explicit user re-generation, so it is not gated on the stage being
       // pending — a user may regenerate materials for a job whose tailor stage
       // already succeeded.
-      const primaryStage = body.stages[0] as Stage | undefined;
+      const { settings } = readJobCtrlSettings(options.configPath);
+      const requestedStages = body.stages ?? (settings.coverLetterGeneration ? ["tailor", "cover"] : ["tailor"]);
+      const stages = settings.coverLetterGeneration ? requestedStages : requestedStages.filter((stage) => stage !== "cover");
+      if (stages.length === 0) {
+        void reply.code(409);
+        return { ok: false, error: "cover_letter_generation_disabled", message: "Enable Generate cover letters in Settings before creating a cover letter." };
+      }
+      const primaryStage = stages[0] as Stage | undefined;
       if (!primaryStage) {
         void reply.code(400);
         return { ok: false, error: "no_material_stage_requested" };
@@ -2398,7 +2447,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         jobKey: jobId,
         jobId,
         stage: primaryStage,
-        stages: body.stages,
+        stages,
         dryRun: body.dryRun,
         limit: body.limit,
       };
@@ -2713,7 +2762,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (body.reason) {
         command.reason = body.reason;
       }
-      return buildActionResponse(command, { status: "skipped" }, { stage: marked.stage });
+      return buildActionResponse(command, { status: "skipped", message: "Skipped locally. Future Apply is stopped; an in-flight submission may still complete. Verify any uncertain external outcome." }, { stage: marked.stage });
     });
   });
 
@@ -2766,7 +2815,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get<{ Params: { runId: string } }>("/v1/workflow-runs/:runId", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => {
-      const detail = getWorkflowRunDetail(db, decodeRouteParam(request.params.runId));
+      const { jobId } = z.object({ jobId: z.string().uuid().optional() }).parse(request.query);
+      const detail = getWorkflowRunDetail(db, decodeRouteParam(request.params.runId), jobId);
       if (!detail) {
         void reply.code(404);
         return { ok: false, error: "workflow_run_not_found" };
@@ -3069,13 +3119,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     const db = openDatabase(options.dbPath);
     let profileResponse: ProfileConfigResponse | undefined;
-    let profileUpdatedEvent: ReturnType<typeof persistProfileUpdate>["recorded"] = null;
-    let queuePreparationContinuation = false;
     try {
       const update = persistProfileUpdate(db, body);
       profileResponse = update.profile;
-      profileUpdatedEvent = update.recorded;
-      queuePreparationContinuation = update.continuePreparation;
     } catch (error) {
       if (error instanceof ProfileVersionConflictError) {
         void reply.code(409);
@@ -3095,22 +3141,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     } finally {
       db.close();
     }
-    if (profileUpdatedEvent && queuePreparationContinuation) {
-      void continueProfilePreparation().catch((error: unknown) => {
-        request.log.error({ err: error }, "Failed to dispatch profile-update preparation continuation");
-      });
-    }
-    if (profileUpdatedEvent && profileResponse?.profileVersion) {
-      try {
-        await callRpc(providerDispatcher, RpcMethods.ProfileTargetRoleSuggestions, {
-          expectedAppDir: actionContext.appDir, expectedDbPath: options.dbPath,
-          expectedProfileVersion: profileResponse.profileVersion, maximumSuggestions: 5,
-        });
-      } catch {
-        // The worker records a distinct blocked interpretation state. A user's
-        // authored profile save remains successful and can be retried separately.
-      }
-    }
+    // Authored saves must not start semantic work. Suggestions are requested
+    // explicitly through POST /v1/profile/target-role-suggestions.
     if(profileResponse){
       const current=openReadOnlyDatabase(options.dbPath);
       try {
@@ -3372,7 +3404,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     const selectedModels = Object.entries(body.preferredModels ?? {}).filter(
       (entry): entry is ["codex" | "claude" | "google", string] => entry[1] !== null,
     );
-    if (selectedModels.length > 0) {
+    const materialModels = [
+      ...(body.defaultLlmModel ? [body.defaultLlmModel] : []),
+      ...(body.tailoringGeneratorModels ?? []),
+      ...(body.tailoringJudgeModel ? [body.tailoringJudgeModel] : []),
+    ].filter((model) => model.toLowerCase() !== "default");
+    const materialModelBindings = new Map<string, string>();
+    const selectedEfforts = Object.entries(body.codexReasoningEfforts ?? {}).filter((entry): entry is [string, string] => entry[1] !== null);
+    if (selectedModels.length > 0 || materialModels.length > 0 || selectedEfforts.length > 0) {
       let catalog: { providers: ProviderModelCatalogItem[] };
       try {
         catalog = await dispatchProviderModelCatalog(providerDispatcher);
@@ -3382,6 +3421,23 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           "provider_models_failed",
           "Provider models are temporarily unavailable.",
         );
+      }
+      if (selectedEfforts.length > 0) {
+        const codex = catalog.providers.find((provider) => provider.provider === "codex");
+        if (!codex?.ready) {
+          void reply.code(409);
+          return { ok: false, error: "provider_not_ready", message: "Codex must be ready before selecting reasoning effort." };
+        }
+        if (codex.models.length === 0 && codex.message) {
+          void reply.code(503);
+          return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+        }
+        for (const [model, effort] of selectedEfforts) {
+          if (!codex.models.find((candidate) => candidate.id === model)?.supportedReasoningEfforts?.some((option) => option.reasoningEffort === effort)) {
+            void reply.code(400);
+            return { ok: false, error: "invalid_reasoning_effort", message: "Select a reasoning effort offered by the current Codex model." };
+          }
+        }
       }
       for (const [provider, model] of selectedModels) {
         const item = catalog.providers.find((candidate) => candidate.provider === provider);
@@ -3409,6 +3465,57 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           };
         }
       }
+      for (const spec of materialModels) {
+        const separator = spec.indexOf(":");
+        const rawProvider = separator >= 0 ? spec.slice(0, separator).trim().toLowerCase() : null;
+        const provider = rawProvider === "gemini" ? "google" : rawProvider;
+        const model = separator >= 0 ? spec.slice(separator + 1).trim() : spec;
+        const invalidChoice = () => {
+          void reply.code(400);
+          return {
+            ok: false as const,
+            error: spec === body.defaultLlmModel ? "invalid_default_model" : "invalid_tailoring_model",
+            message: "Select a model offered by a ready provider.",
+          };
+        };
+        if (provider === null) {
+          // Bind a legacy bare ID to its unique offered route so the runtime
+          // cannot send a valid model name to a different default provider.
+          const offeredBy = catalog.providers.filter((item) => item.ready && item.models.some((candidate) => candidate.id === model));
+          if (offeredBy.length === 0 && catalog.providers.some((item) => item.ready && item.source === "live" && item.models.length === 0 && item.message)) {
+            void reply.code(503);
+            return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+          }
+          if (offeredBy.length !== 1) return invalidChoice();
+          materialModelBindings.set(spec, `${offeredBy[0]!.provider}:${model}`);
+          continue;
+        }
+        if (!["claude", "codex", "google"].includes(provider)) return invalidChoice();
+        const item = catalog.providers.find((candidate) => candidate.provider === provider);
+        if (!item?.ready) {
+          void reply.code(409);
+          return {
+            ok: false as const,
+            error: "provider_not_ready",
+            message: `${provider} must be ready before selecting a material model.`,
+          };
+        }
+        if (model === "" || model.toLowerCase() === "default") continue;
+        if (item.source === "live" && item.models.length === 0 && item.message) {
+          void reply.code(503);
+          return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+        }
+        if (!item.models.some((candidate) => candidate.id === model)) return invalidChoice();
+      }
+    }
+    if (body.tailoringGeneratorModels) {
+      body.tailoringGeneratorModels = body.tailoringGeneratorModels.map((model) => materialModelBindings.get(model) ?? model);
+    }
+    if (body.tailoringJudgeModel) {
+      body.tailoringJudgeModel = materialModelBindings.get(body.tailoringJudgeModel) ?? body.tailoringJudgeModel;
+    }
+    if (body.defaultLlmModel) {
+      body.defaultLlmModel = materialModelBindings.get(body.defaultLlmModel) ?? body.defaultLlmModel;
     }
     try {
       return writeSettingsConfig(
@@ -3660,6 +3767,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       try {
         return { ok: true, contact: updateContact(db, decodeRouteParam(request.params.contactId), body) };
       } catch (error) {
+        if (error instanceof ContactRevisionConflictError) {
+          void reply.code(409);
+          return { ok: false, error: "contact_revision_conflict", message: error.message };
+        }
         if (error instanceof ContactNotFoundError) {
           void reply.code(404);
           return { ok: false, error: "contact_not_found", message: error.message };
@@ -3869,7 +3980,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       const threadId = decodeRouteParam(request.params.threadId);
       return withWritableDb(reply, options.dbPath, async (db) => {
-        await outreachDraftGenerator(
+        const publication = await outreachDraftGenerator(
           {
             threadId,
             editedBodyText: body.editedBodyText,
@@ -3880,7 +3991,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           },
           actionContext,
         );
-        return { ok: true, thread: getOutreachThreadDetail(db, threadId) };
+        return {
+          ok: true,
+          thread: getOutreachThreadDetail(db, threadId),
+          publication: {
+            threadId: publication.threadId,
+            draftId: publication.draftId,
+            generation: publication.generation,
+          },
+        };
       });
     },
   );
@@ -3964,12 +4083,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         try {
           return {
             ok: true,
-            thread: logOutreachSend(
+            sendLog: logOutreachSend(
               db,
               decodeRouteParam(request.params.threadId),
-              body.draftId,
-              body.channel,
-              body.sentAt,
+              body,
             ),
           };
         } catch (error) {
@@ -4043,6 +4160,43 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     installWebAssetsNotFoundHandler(app, options.webAssetsDir);
   }
 
+  return app;
+}
+
+/** A database schema refusal must remain visible without opening product routes. */
+function buildIncompatibleDatabaseApp(
+  options: BuildAppOptions,
+  error: IncompatibleSchemaVersionError | IncompatibleSchemaManifestError,
+): FastifyInstance {
+  const app = Fastify({ logger: options.logger ?? false });
+  const currentVersion = error instanceof IncompatibleSchemaVersionError ? error.current : null;
+  const migrationRequired = currentVersion !== null && currentVersion >= 6 && currentVersion < SUPPORTED_SCHEMA_VERSION;
+  const newerDatabase = currentVersion !== null && currentVersion > SUPPORTED_SCHEMA_VERSION;
+  const problem = {
+    ok: false as const,
+    error: migrationRequired ? "database_migration_required" : "database_schema_incompatible",
+    currentVersion,
+    expectedVersion: SUPPORTED_SCHEMA_VERSION,
+    message: migrationRequired
+      ? "The workspace database needs an upgrade before this JobCtrl build can start. Use a compatible build or see the update guidance."
+      : newerDatabase
+        ? "This workspace was created by a newer JobCtrl version. Use a compatible newer build."
+        : "The workspace database schema is not compatible with this build. Stop JobCtrl and inspect the workspace before retrying.",
+  };
+
+  void app.register(cors, { origin: LOCAL_ORIGIN_PATTERNS, methods: LOCAL_CORS_METHODS });
+  app.addHook("onRequest", async (request, reply) => {
+    if (!isLoopbackHostHeader(request.headers.host)) {
+      return reply.code(403).send({ ok: false, error: "forbidden_host" });
+    }
+    if (!isLoopbackPeerAddress(request.ip || request.raw.socket.remoteAddress)) {
+      return reply.code(403).send({ ok: false, error: "forbidden_remote_client" });
+    }
+    return;
+  });
+  app.get("/v1/health", async (_request, reply) => reply.code(503).send(problem));
+  app.all("/v1/*", async (_request, reply) => reply.code(503).send(problem));
+  if (options.webAssetsDir) installWebAssetsNotFoundHandler(app, options.webAssetsDir);
   return app;
 }
 
@@ -4242,38 +4396,6 @@ async function dispatchDiscoveryBrowserContinuation(
   );
   if (!command) return;
   await actionDispatcher(command, actionContext);
-}
-
-async function dispatchPendingProfileContinuations(
-  dbPath: string,
-  actionDispatcher: ActionDispatcher,
-  actionContext: ActionDispatchContext,
-): Promise<void> {
-  // Yield once so profile writes committed in the same event-loop turn can be
-  // coalesced before any spendful continuation starts.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  while (true) {
-    const db = openDatabase(dbPath);
-    let eventId: number | null;
-    try {
-      eventId = claimNextProfileContinuationEvent(db);
-    } finally {
-      db.close();
-    }
-    if (eventId === null) return;
-
-    // The JSON-RPC adapter waits for this deterministic workflow to finish.
-    // That serializes genuine profile revisions; a restart attaches to the
-    // same Temporal execution before writing the handled marker.
-    await handleProfileUpdatedEvent(eventId, actionDispatcher, actionContext);
-
-    const handledDb = openDatabase(dbPath);
-    try {
-      markProfileContinuationEventsHandled(handledDb, [eventId], eventId);
-    } finally {
-      handledDb.close();
-    }
-  }
 }
 
 type BrowserRpcMethod = "browser_capabilities_list" | "browser_capability_enable" | "browser_capability_disable" | "browser_profile_copy";
@@ -5074,6 +5196,14 @@ function withDb<T>(
     db = retained ? retained.open() : openDatabase(dbPath);
     return read(db);
   } catch (error) {
+    if (error instanceof InvalidSavedDiscoverySettingsError) {
+      void reply.code(409);
+      return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
+    if (error instanceof PermanentDeleteSelectionConflict) {
+      void reply.code(409);
+      return { ok: false, error: "permanent_delete_selection_conflict", message: error.message };
+    }
     if (error instanceof ProfileInputError) {
       void reply.code(400);
       return {
@@ -5081,6 +5211,10 @@ function withDb<T>(
         error: "invalid_profile",
         message: error.message,
       };
+    }
+    if (error instanceof OutreachPublicationConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "outreach_publication_conflict", message: error.message, ...error.conflict };
     }
     if (error instanceof OutreachGenerationError) {
       void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
@@ -5157,6 +5291,23 @@ async function withWritableDb<T>(
     db = openDatabase(dbPath);
     return await write(db);
   } catch (error) {
+    if (error instanceof InvalidSavedDiscoverySettingsError) {
+      void reply.code(409);
+      return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
+    if (error instanceof PermanentDeleteSelectionConflict) {
+      void reply.code(409);
+      return { ok: false, error: "permanent_delete_selection_conflict", message: error.message,
+        ...(error.conflictingJobKeys ? {
+          deletedJobKeys: [], conflictingJobKeys: error.conflictingJobKeys,
+          unprocessedJobKeys: error.unprocessedJobKeys ?? [],
+        } : {}),
+      };
+    }
+    if (error instanceof OutreachPublicationConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "outreach_publication_conflict", message: error.message, ...error.conflict };
+    }
     if (error instanceof OutreachGenerationError) {
       void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
       return { ok: false, error: error.code, message: error.message };
@@ -5168,6 +5319,10 @@ async function withWritableDb<T>(
     if (error instanceof ResumeTemplateInputError) {
       void reply.code(400);
       return { ok: false, error: "invalid_resume_template", message: error.message };
+    }
+    if (error instanceof ResumeTemplateVersionConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "resume_template_version_conflict", message: error.message };
     }
     if (error instanceof SourceLocatorReviewError) {
       void reply.code(error.status);
@@ -5200,6 +5355,14 @@ async function withWritableDb<T>(
     if (error instanceof ResumeRenderError) {
       void reply.code(502);
       return { ok: false, error: "resume_render_failed", message: error.message };
+    }
+    if (error instanceof ApplyResetRefusedError) {
+      void reply.code(409);
+      return { ok: false, error: "apply_reset_refused", message: error.message };
+    }
+    if (error instanceof ActionReceiptConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "action_identity_conflict", message: error.message };
     }
     if (error instanceof InputError) {
       if (APPLY_REVIEW_PRECONDITION_ERRORS.has(error.message)) {

@@ -9,9 +9,13 @@ const ACTIVE_POLL_INTERVAL_MS = 15_000;
 const IDLE_POLL_INTERVAL_MS = 60_000;
 const PIPELINE_OPERATIONS_STALE_TIME_MS = 10_000;
 
-function isActiveExecution(snapshot: PipelineOperationsSnapshot | undefined): boolean {
+function needsFrequentUpdates(snapshot: PipelineOperationsSnapshot | undefined): boolean {
   const phase = snapshot?.execution?.phase;
-  return phase === "discovering" || phase === "draining";
+  const coverage = snapshot?.projectionCoverage?.status;
+  return (
+    phase === "discovering" || phase === "draining" ||
+    coverage === "recovering" || coverage === "retrying"
+  );
 }
 
 export function usePipelineOperationsQuery(): UseQueryResult<PipelineOperationsSnapshot> {
@@ -22,7 +26,7 @@ export function usePipelineOperationsQuery(): UseQueryResult<PipelineOperationsS
     queryFn: () => api.pipelineOperations(),
     staleTime: PIPELINE_OPERATIONS_STALE_TIME_MS,
     refetchInterval: (query) =>
-      isActiveExecution(query.state.data) ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS,
+      needsFrequentUpdates(query.state.data) ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS,
     refetchIntervalInBackground: false,
   });
 }

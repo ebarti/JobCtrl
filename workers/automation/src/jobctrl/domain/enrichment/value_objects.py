@@ -193,6 +193,8 @@ class DetailPage:
     payloads; ``html`` is the cleaned main-content HTML chunk used for
     Tier-3 LLM extraction. ``status`` mirrors the HTTP status code so
     extractors / orchestrators can short-circuit on permanent failures.
+    ``embedded_pages`` retains bounded visible public frame captures with
+    their own source URLs and evidence-completeness metadata.
     """
 
     url: str
@@ -207,9 +209,12 @@ class DetailPage:
     status_evidence_reason: str = ""
     status_visibility_verified: bool = False
     raw_html_hash: str = ""
+    embedded_pages: tuple[DetailPage, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not isinstance(self.url, str) or not self.url.strip():
             raise ValueError("DetailPage.url must be a non-empty string")
         if not isinstance(self.json_ld, tuple):
             raise ValueError("DetailPage.json_ld must be a tuple (got list?)")
+        if not isinstance(self.embedded_pages, tuple) or any(not isinstance(page, DetailPage) for page in self.embedded_pages):
+            raise ValueError("DetailPage.embedded_pages must contain captured DetailPage values")

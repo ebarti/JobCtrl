@@ -23,8 +23,12 @@ export const DEFAULT_JOBCTRL_SETTINGS: JobCtrlSettings = {
     compensation: 0,
   },
   analysisLegs: ["claude", "codex", "google"],
+  defaultLlmModel: null,
+  codexReasoningEfforts: {},
   tailoringGeneratorModels: null,
   tailoringJudgeModel: null,
+  resumeVoicePolish: false,
+  coverLetterGeneration: false,
   applyMaxBudgetUsd: 5,
   applyTimeoutSeconds: 900,
   scoreCriteria: "",
@@ -73,8 +77,16 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
     "restart",
   );
   const analysisLegs = persistedAnalysisLegs(raw);
+  const defaultLlmModel = persistedNullableModel(raw, "default_llm_model");
+  const codexReasoningEfforts = persistedCodexReasoningEfforts(raw);
   const tailoringGeneratorModels = persistedModels(raw, "tailoring_generator_models");
   const tailoringJudgeModel = persistedNullableModel(raw, "tailoring_judge_model");
+  const resumeVoicePolish = typeof raw.resume_voice_polish === "boolean"
+    ? persistedSetting(raw.resume_voice_polish, "next_workflow")
+    : defaultSetting(false, "next_workflow");
+  const coverLetterGeneration = typeof raw.cover_letter_generation === "boolean"
+    ? persistedSetting(raw.cover_letter_generation, "next_workflow")
+    : defaultSetting(false, "next_workflow");
   const applyMaxBudgetUsd = persistedNumber(
     raw,
     "apply_max_budget_usd",
@@ -102,8 +114,12 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       dailyBudgetUsd: dailyBudgetUsd.value,
       laneTokenLimits: laneTokenLimits.value,
       analysisLegs: analysisLegs.value,
+      defaultLlmModel: defaultLlmModel.value,
+      codexReasoningEfforts: codexReasoningEfforts.value,
       tailoringGeneratorModels: tailoringGeneratorModels.value,
       tailoringJudgeModel: tailoringJudgeModel.value,
+      resumeVoicePolish: resumeVoicePolish.value,
+      coverLetterGeneration: coverLetterGeneration.value,
       applyMaxBudgetUsd: applyMaxBudgetUsd.value,
       applyTimeoutSeconds: applyTimeoutSeconds.value,
       scoreCriteria: scoreCriteria.value,
@@ -117,8 +133,12 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       pipelineInternalConcurrency,
       workerActivitySlots,
       analysisLegs,
+      defaultLlmModel,
+      codexReasoningEfforts,
       tailoringGeneratorModels,
       tailoringJudgeModel,
+      resumeVoicePolish,
+      coverLetterGeneration,
       applyMaxBudgetUsd,
       applyTimeoutSeconds,
       scoreCriteria,
@@ -212,6 +232,15 @@ function persistedModels(
   return Object.hasOwn(raw, key)
     ? persistedSetting(normalizeModels(raw[key]), "next_workflow")
     : defaultSetting(null, "next_workflow");
+}
+
+function persistedCodexReasoningEfforts(raw: Record<string, unknown>): EffectiveSetting<Record<string, string>> {
+  const value = isRecord(raw.codex_reasoning_efforts)
+    ? Object.fromEntries(Object.entries(raw.codex_reasoning_efforts).filter(([model, effort]) => model.length > 0 && model.length <= 160 && typeof effort === "string" && effort.length > 0 && effort.length <= 40)) as Record<string, string>
+    : {};
+  return Object.hasOwn(raw, "codex_reasoning_efforts")
+    ? persistedSetting(value, "next_workflow")
+    : defaultSetting(value, "next_workflow");
 }
 
 function persistedNullableModel(

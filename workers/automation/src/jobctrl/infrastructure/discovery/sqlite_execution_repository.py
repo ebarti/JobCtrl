@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 import sqlite3
 from datetime import datetime, timezone
 
@@ -48,6 +49,7 @@ class SqliteDiscoveryExecutionRepository:
         source_family: str | None = None,
         source_run_id: str | None = None,
         linked_at: str | None = None,
+        commit: bool = True,
     ) -> DiscoveryExecutionJob:
         """Idempotently link a job, allowing only backlog-to-observed promotion.
 
@@ -64,7 +66,9 @@ class SqliteDiscoveryExecutionRepository:
         linked = linked_at or datetime.now(timezone.utc).isoformat()
         stable_job_id = self._resolve_job_id(execution, job_id)
 
-        with self._conn:
+        if not commit and not self._conn.in_transaction:
+            raise RuntimeError("execution membership must join an open caller transaction")
+        with self._conn if commit else nullcontext():
             self._conn.execute(
                 """
                 INSERT INTO discovery_execution_jobs (

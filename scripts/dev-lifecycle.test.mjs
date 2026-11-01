@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -22,6 +22,9 @@ async function createHarness() {
   await mkdir(homeDir, { recursive: true });
   await mkdir(path.dirname(fixtureLauncher), { recursive: true });
   await copyFile(launcher, fixtureLauncher);
+  await copyFile(path.join(root, "scripts/dev-schema-check.py"), path.join(temporaryRoot, "scripts/dev-schema-check.py"));
+  await mkdir(path.join(temporaryRoot, "workers/automation/src"), { recursive: true });
+  await symlink(path.join(root, "workers/automation/src/jobctrl"), path.join(temporaryRoot, "workers/automation/src/jobctrl"));
   await chmod(fixtureLauncher, 0o755);
   await writeFile(eventsPath, "");
 
@@ -79,6 +82,33 @@ exec sleep 300
   for (const name of ["pnpm", "temporal", "uv"]) {
     await copyFile(fakeCorepack, path.join(binDir, name));
   }
+  // Product ownership is exercised by the native source-controller tests;
+  // these shell fixtures stay in their own temporary process tree.
+  await writeFile(path.join(binDir, "go"), `#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == "-C" && "$3" == "run" && "$4" == "./cmd/jobctrl-source" ]]
+if [[ "$5" == "stop" || "$5" == "switch" ]]; then
+  controller="$JOBCTRL_DEV_DIR/pids/source-controller.pid"
+  if [[ -f "$controller" ]]; then
+    pid=$(cat "$controller")
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 100); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.05
+    done
+    rm -f "$controller"
+  fi
+  exit 0
+fi
+[[ "$5" != "verify" ]] || exit 0
+[[ "$5" == "run" ]]
+root="$6"
+shift 6
+export JOBCTRL_DEV_INNER=1
+echo "$$" > "$JOBCTRL_DEV_DIR/pids/source-controller.pid"
+exec "$root/scripts/dev" run "$@"
+`);
+  await chmod(path.join(binDir, "go"), 0o755);
   await writeFile(path.join(binDir, "curl"), "#!/usr/bin/env bash\nexit 1\n");
   await chmod(path.join(binDir, "curl"), 0o755);
 
@@ -205,6 +235,109 @@ exec sleep 300
     },
   };
 }
+
+test("default startup keeps the diagnostic interface when the database needs an upgrade", async () => {
+  const harness = await createHarness();
+  try {
+    const appDir = path.join(harness.temporaryRoot, "app");
+    await mkdir(appDir, { recursive: true });
+    const seed = spawnSync("python3", ["-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('pragma user_version=14'); c.close()", path.join(appDir, "jobctrl.db")]);
+    assert.equal(seed.status, 0);
+    assert.match(harness.run("start"), /incompatible workspace database/);
+    const events = await harness.waitForLaunches(2);
+    assert.match(events, /--filter @jobctrl\/api dev/);
+    assert.match(events, /exec vite/);
+    assert.doesNotMatch(events, /server start-dev|run jobctrl worker/);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("an explicit worker start refuses an incompatible database", async () => {
+  const harness = await createHarness();
+  try {
+    const appDir = path.join(harness.temporaryRoot, "app");
+    await mkdir(appDir, { recursive: true });
+    const database = path.join(appDir, "jobctrl.db");
+    const seed = spawnSync("python3", ["-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('pragma user_version=14'); c.close()", database]);
+    assert.equal(seed.status, 0);
+    const before = await readFile(database);
+    const result = harness.runResult("run", "worker");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /workspace database needs a compatible upgrade/);
+    assert.doesNotMatch(await harness.events(), /launch:/);
+    assert.deepEqual(await readFile(database), before);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("a source start does not kill an unverified tracked process", { skip: process.platform !== "darwin" }, async () => {
+  const harness = await createHarness();
+  const previous = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+  try {
+    const pidDir = path.join(harness.temporaryRoot, "dev", "pids");
+    await mkdir(pidDir, { recursive: true });
+    await writeFile(path.join(pidDir, "api.pid"), String(previous.pid));
+    const result = harness.runResult("run", "api");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /unverified previous api process/);
+    process.kill(previous.pid, 0);
+    assert.doesNotMatch(await harness.events(), /launch:/);
+  } finally {
+    previous.kill("SIGTERM");
+    await rm(path.join(harness.temporaryRoot, "dev", "pids", "api.pid"), { force: true });
+    await harness.cleanup();
+  }
+});
+
+test("source startup does not connect its web app to another responding API", async () => {
+  const harness = await createHarness();
+  try {
+    const curl = path.join(harness.temporaryRoot, "bin", "curl");
+    await writeFile(curl, "#!/usr/bin/env bash\nexit 0\n");
+    await chmod(curl, 0o755);
+    const result = harness.runResult("start");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /another API is responding/);
+    assert.doesNotMatch(await harness.events(), /launch:/);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("source startup shares the installed Temporal path, preserves legacy history, and refuses ambiguity", async () => {
+  const harness = await createHarness();
+  try {
+    const appDir = path.join(harness.temporaryRoot, "app");
+    const legacy = path.join(appDir, "temporal", "temporal.db");
+    const native = path.join(appDir, "temporal.db");
+    harness.run("start", "temporal");
+    assert.match(await harness.waitForLaunches(1), new RegExp(native.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    harness.run("stop", "temporal");
+    await harness.clearEvents();
+    await mkdir(path.dirname(legacy), { recursive: true });
+    await writeFile(legacy, "legacy history");
+    harness.run("start", "temporal");
+    assert.ok((await harness.waitForLaunches(1)).includes(legacy));
+    harness.run("stop", "temporal");
+    await writeFile(native, "installed history");
+    const refused = harness.runResult("start", "temporal");
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /conflicting Temporal histories/);
+    assert.equal(await readFile(legacy, "utf8"), "legacy history");
+    assert.equal(await readFile(native, "utf8"), "installed history");
+    await rm(native);
+    await writeFile(`${native}-wal`, "orphaned companion");
+    const orphaned = harness.runResult("start", "temporal");
+    assert.notEqual(orphaned.status, 0);
+    assert.match(orphaned.stderr, /orphaned SQLite companions/);
+    assert.equal(await readFile(`${native}-wal`, "utf8"), "orphaned companion");
+    assert.equal(await readFile(legacy, "utf8"), "legacy history");
+  } finally {
+    await harness.cleanup();
+  }
+});
 
 test("package scripts expose foreground and detached docs/demo lifecycle commands", async () => {
   const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
@@ -376,7 +509,7 @@ for (const mode of ["run", "start", "restart"]) {
         assert.equal(result.status, 130, `${result.stdout}\n${result.stderr}`);
         assert.match(result.stdout, /foreground run active/);
       } else {
-        assert.match(harness.run(mode, ...targets), /demo-web: started/);
+        assert.match(harness.run(mode, ...targets), /demo-web: (started|http:)/);
       }
       assert.doesNotMatch(await harness.waitForLaunches(targets.length), /build:/);
     } finally {

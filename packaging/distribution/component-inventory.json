@@ -147,19 +147,19 @@
       "id": "chromium-core",
       "classification": "core-runtime",
       "owner": "The Chromium Authors",
-      "version": "145.0.7632.6",
+      "version": "156.0.8078.4",
       "source": "https://playwright.azureedge.net/",
       "license": "BSD-3-Clause",
       "redistribution": "bundle",
       "requiredInCore": true,
-      "notes": "Playwright revision 1208 headless shell only. The full Chrome-for-Testing bundle is excluded because it contains Widevine CDM with separate commercial redistribution terms; Chromium third-party notices are shipped verbatim."
+      "notes": "Playwright revision 1248 headless shell only. The full Chrome-for-Testing bundle is excluded because it contains Widevine CDM with separate commercial redistribution terms; Chromium third-party notices are shipped verbatim."
     },
     {
       "id": "playwright-mcp",
       "classification": "core-runtime",
       "owner": "Microsoft Corporation",
-      "version": "0.0.77",
-      "source": "https://www.npmjs.com/package/@playwright/mcp/v/0.0.77",
+      "version": "0.0.83",
+      "source": "https://www.npmjs.com/package/@playwright/mcp/v/0.0.83",
       "license": "Apache-2.0",
       "redistribution": "bundle",
       "requiredInCore": true

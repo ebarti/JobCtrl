@@ -101,7 +101,7 @@ def interpretation():
     )
 
 
-def case(conn, model):
+def case(conn, model, preflight=lambda: None):
     deps = dict(
         llm=model,
         repository=SqliteDeterminationRepository(conn),
@@ -109,7 +109,7 @@ def case(conn, model):
         provider="fake",
         model="fake",
         lane="scoring",
-        preflight=lambda: None,
+        preflight=preflight,
     )
     return ScoreJobUseCase(
         repository=SqliteScoreRepository(conn),

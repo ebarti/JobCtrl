@@ -19,11 +19,9 @@ export interface GenerateMaterialsVariables {
   readonly dryRun?: boolean;
 }
 
-const DEFAULT_MATERIAL_STAGES: readonly MaterialStage[] = ["tailor", "cover"];
-
 function toRequest(variables: GenerateMaterialsVariables): Partial<GenerateMaterialsRequest> {
   return {
-    stages: [...(variables.stages ?? DEFAULT_MATERIAL_STAGES)],
+    ...(variables.stages ? { stages: [...variables.stages] } : {}),
     dryRun: variables.dryRun ?? false,
     limit: 1,
   };
@@ -56,7 +54,7 @@ export function useGenerateMaterialsMutation(): UseMutationResult<
         {
           queryKey: jobsKeys.detail(tenantId, variables.jobId),
           patch: (current) =>
-            patchStageRunning(current, (variables.stages ?? DEFAULT_MATERIAL_STAGES)[0] ?? "tailor"),
+            patchStageRunning(current, variables.stages?.[0] ?? "tailor"),
         },
       ],
       settle: (variables) => [

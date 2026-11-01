@@ -1378,3 +1378,10 @@ def explicit_semantic_ports(monkeypatch):
     from tests.workflow_determination_fakes import install_page_models
 
     install_page_models(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def smart_posting_transport_and_models(monkeypatch):
+    from tests.smart_posting_fakes import install_smart_posting_models
+
+    install_smart_posting_models(monkeypatch)

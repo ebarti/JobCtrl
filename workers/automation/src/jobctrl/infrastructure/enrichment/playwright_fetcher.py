@@ -23,8 +23,9 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 
 from jobctrl.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
 from jobctrl.domain.enrichment.value_objects import DetailPage
@@ -36,7 +37,9 @@ from jobctrl.infrastructure.network import (
     RunBudgetCounter,
     validate_public_http_url,
 )
+from jobctrl.infrastructure.network.http_client import record_rate_limited_response
 from jobctrl.infrastructure.network.proxy import ProxyConfig
+from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +48,7 @@ _NAV_TIMEOUT_MS = 45000
 _DCL_TIMEOUT_MS = 15000
 _IDLE_TIMEOUT_MS = 10000
 _MAIN_CONTENT_HTML_LIMIT = 50000
+_EMBEDDED_PAGE_LIMIT = 8
 
 
 class DetailPageFetchBlocked(RuntimeError):
@@ -57,6 +61,23 @@ class DetailPageFetchBlocked(RuntimeError):
 
 class DetailPageFetchUnavailable(RuntimeError):
     """The browser could not acquire a page for a transient runtime reason."""
+
+
+def _route_block_error(guard: PublicHttpUrlRouteGuard) -> DetailPageFetchBlocked:
+    kind = getattr(guard, "failure_kind", None)
+    code = "unsafe_redirect" if not isinstance(kind, PublicFetchFailureKind) or kind.destination_denied else kind.value
+    return DetailPageFetchBlocked(code, guard.blocked_reason or "Public page acquisition blocked")
+
+
+def _partial_resource_failure(guard: PublicHttpUrlRouteGuard) -> bool:
+    """Retain readable content without asserting complete availability evidence."""
+    kind = getattr(guard, "failure_kind", None)
+    return (
+        isinstance(kind, PublicFetchFailureKind)
+        and kind.retryable
+        and getattr(guard, "failure_resource_type", None)
+        in {"script", "stylesheet", "image", "font", "media", "xhr", "fetch", "ping"}
+    )
 
 
 class PlaywrightDetailPageFetcher:
@@ -122,7 +143,8 @@ class PlaywrightDetailPageFetcher:
             )
         # R10 pre-navigation gate: a robots-deny / budget-exhaustion performs
         # zero navigation and returns an empty page rather than fetching.
-        with self._politeness_session().guard(url) as decision:
+        session = self._politeness_session()
+        with session.guard(url) as decision:
             if not decision.allowed:
                 log.warning(
                     "PlaywrightDetailPageFetcher: navigation skipped by politeness gate %s: %s",
@@ -143,12 +165,16 @@ class PlaywrightDetailPageFetcher:
                     status=None,
                     fetched_at=fetched_at,
                 )
-            # The context presents the gateway-resolved honest UA — the same
-            # identity robots was evaluated with above, never an import-time
-            # constant — so an owner UA override reaches the browser fetch.
-            return self._fetch_page(url, fetched_at, user_agent=decision.user_agent)
+            # Carry the same selected identity and client hints into the browser.
+            return self._fetch_page(
+                url, fetched_at, user_agent=decision.user_agent,
+                request_headers=dict(decision.request_headers), session=session,
+            )
 
-    def _fetch_page(self, url: str, fetched_at: str, *, user_agent: str) -> DetailPage:
+    def _fetch_page(
+        self, url: str, fetched_at: str, *, user_agent: str, request_headers: dict[str, str],
+        session: PolitenessSession | None = None,
+    ) -> DetailPage:
         # Imported lazily because Playwright is heavyweight + optional
         # in some test environments (see workers/automation/pyproject).
         from playwright.sync_api import sync_playwright
@@ -159,14 +185,14 @@ class PlaywrightDetailPageFetcher:
                 launch_opts["proxy"] = self._proxy.playwright
             browser = p.chromium.launch(**launch_opts)
             try:
-                context = browser.new_context(user_agent=user_agent)
+                context = browser.new_context(user_agent=user_agent, extra_http_headers=request_headers)
                 page = context.new_page()
                 route_guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True).install()
                 status: int | None = None
                 resp = None
                 try:
                     try:
-                        resp = page.goto(url, timeout=_NAV_TIMEOUT_MS)
+                        resp = page.goto(url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
                         if resp is not None:
                             status = resp.status
                         page.wait_for_load_state("domcontentloaded", timeout=_DCL_TIMEOUT_MS)
@@ -178,17 +204,14 @@ class PlaywrightDetailPageFetcher:
                             # for our purposes.
                             pass
                     except Exception as exc:
-                        if route_guard.blocked:
+                        if route_guard.blocked and not _partial_resource_failure(route_guard):
                             log.warning(
                                 "PlaywrightDetailPageFetcher: unsafe navigation blocked %s: %s",
                                 route_guard.blocked_url or url,
                                 route_guard.blocked_reason,
                             )
                             if self._raise_on_unavailable:
-                                raise DetailPageFetchBlocked(
-                                    "unsafe_redirect",
-                                    route_guard.blocked_reason or "unsafe redirect blocked",
-                                )
+                                raise _route_block_error(route_guard)
                             return DetailPage(
                                 url=url,
                                 final_url=route_guard.blocked_url or url,
@@ -198,30 +221,28 @@ class PlaywrightDetailPageFetcher:
                                 status=status,
                                 fetched_at=fetched_at,
                             )
-                        log.warning("PlaywrightDetailPageFetcher: navigation error %s: %s", url, exc)
-                        if self._raise_on_unavailable:
-                            raise DetailPageFetchUnavailable("The browser could not load the posting page.") from exc
-                        return DetailPage(
-                            url=url,
-                            final_url=url,
-                            page_title="",
-                            html="",
-                            json_ld=(),
-                            status=status,
-                            fetched_at=fetched_at,
-                        )
+                        if not _partial_resource_failure(route_guard):
+                            log.warning("PlaywrightDetailPageFetcher: navigation error %s: %s", url, exc)
+                            if self._raise_on_unavailable:
+                                raise DetailPageFetchUnavailable("The browser could not load the posting page.") from exc
+                            return DetailPage(
+                                url=url,
+                                final_url=url,
+                                page_title="",
+                                html="",
+                                json_ld=(),
+                                status=status,
+                                fetched_at=fetched_at,
+                            )
 
-                    if route_guard.blocked:
+                    if route_guard.blocked and not _partial_resource_failure(route_guard):
                         log.warning(
                             "PlaywrightDetailPageFetcher: unsafe navigation blocked %s: %s",
                             route_guard.blocked_url or url,
                             route_guard.blocked_reason,
                         )
                         if self._raise_on_unavailable:
-                            raise DetailPageFetchBlocked(
-                                "unsafe_redirect",
-                                route_guard.blocked_reason or "unsafe redirect blocked",
-                            )
+                            raise _route_block_error(route_guard)
                         return DetailPage(
                             url=url,
                             final_url=route_guard.blocked_url or url,
@@ -254,6 +275,20 @@ class PlaywrightDetailPageFetcher:
                             status=status,
                             fetched_at=fetched_at,
                         )
+                    retry_after = record_rate_limited_response(
+                        session or self._politeness_session(), final_url, status, getattr(resp, "headers", None),
+                    )
+                    if retry_after is not None:
+                        message = f"HTTP {status}: the server deferred this request; retry after the host cooldown."
+                        if self._raise_on_unavailable:
+                            if status == 429:
+                                raise DetailPageFetchBlocked("rate_limited", message)
+                            raise DetailPageFetchUnavailable(message)
+                        return DetailPage(
+                            url=url, final_url=final_url, page_title="", html="", json_ld=(),
+                            status=status, fetched_at=fetched_at,
+                        )
+                    _dismiss_optional_linkedin_dialog(page)
                     page_title = ""
                     try:
                         page_title = page.title() or ""
@@ -262,18 +297,18 @@ class PlaywrightDetailPageFetcher:
 
                     json_ld_payloads = _collect_json_ld(page)
                     html = _collect_main_content(page)
+                    visibility = []
+                    status_html, status_complete, raw_hash = _collect_status_html(page, visibility_out=visibility)
+                    embedded_pages, embedded_complete = _collect_embedded_pages(page, fetched_at=fetched_at)
 
-                    if route_guard.blocked:
+                    if route_guard.blocked and not _partial_resource_failure(route_guard):
                         log.warning(
                             "PlaywrightDetailPageFetcher: unsafe navigation blocked %s: %s",
                             route_guard.blocked_url or url,
                             route_guard.blocked_reason,
                         )
                         if self._raise_on_unavailable:
-                            raise DetailPageFetchBlocked(
-                                "unsafe_redirect",
-                                route_guard.blocked_reason or "unsafe redirect blocked",
-                            )
+                            raise _route_block_error(route_guard)
                         return DetailPage(
                             url=url,
                             final_url=route_guard.blocked_url or final_url,
@@ -284,8 +319,12 @@ class PlaywrightDetailPageFetcher:
                             fetched_at=fetched_at,
                         )
 
-                    visibility = []
-                    status_html, status_complete, raw_hash = _collect_status_html(page, visibility_out=visibility)
+                    if _partial_resource_failure(route_guard):
+                        log.warning(
+                            "PlaywrightDetailPageFetcher: incomplete public resource acquisition (%s); availability remains unknown",
+                            route_guard.failure_kind.value,
+                        )
+                    _assert_capture_url(page, final_url)
                     return DetailPage(
                         url=url,
                         final_url=final_url,
@@ -294,8 +333,18 @@ class PlaywrightDetailPageFetcher:
                         json_ld=tuple(json_ld_payloads),
                         status=status,
                         fetched_at=fetched_at,
-                        status_html=status_html, status_evidence_complete=status_complete, raw_html_hash=raw_hash,
+                        status_html=status_html,
+                        status_evidence_complete=status_complete and embedded_complete and not route_guard.blocked,
+                        status_evidence_reason=(
+                            f"public_resource_{route_guard.failure_kind.value}" if route_guard.blocked
+                            else "embedded_capture_incomplete" if not embedded_complete else ""
+                        ),
+                        raw_html_hash=(hashlib.sha256(json.dumps({
+                            "root": raw_hash,
+                            "embedded": [{"url": frame.url, "raw_html_hash": frame.raw_html_hash} for frame in embedded_pages],
+                        }, sort_keys=True).encode()).hexdigest() if embedded_pages else raw_hash),
                         status_visibility_verified=bool(visibility),
+                        embedded_pages=embedded_pages,
                     )
                 finally:
                     route_guard.close()
@@ -306,6 +355,91 @@ class PlaywrightDetailPageFetcher:
 # ---------------------------------------------------------------------------
 # Helpers — pure functions called by the fetcher
 # ---------------------------------------------------------------------------
+
+
+def _collect_embedded_pages(page: Any, *, fetched_at: str) -> tuple[tuple[DetailPage, ...], bool]:
+    """Capture bounded public child documents already loaded under the route guard."""
+    frames = getattr(page, "frames", ())
+    main = getattr(page, "main_frame", None)
+    captured = []
+    complete = True
+    for frame in frames:
+        if frame is main:
+            continue
+        url = str(getattr(frame, "url", "") or "")
+        if not url.lower().startswith(("https://", "http://")):
+            continue
+        try:
+            element = getattr(frame, "frame_element", None)
+            if callable(element) and not element().is_visible():
+                continue
+        except Exception:
+            complete = False
+            continue
+        if not validate_public_http_url(url).allowed:
+            complete = False
+            continue
+        if len(captured) >= _EMBEDDED_PAGE_LIMIT:
+            complete = False
+            break
+        try:
+            visibility = []
+            status_html, status_complete, raw_hash = _collect_status_html(frame, visibility_out=visibility)
+            captured.append(DetailPage(
+                url=url, final_url=url, page_title=frame.title(), html=_collect_main_content(frame),
+                json_ld=tuple(_collect_json_ld(frame)), fetched_at=fetched_at,
+                status_html=status_html, status_evidence_complete=status_complete,
+                status_visibility_verified=bool(visibility), raw_html_hash=raw_hash,
+            ))
+            complete = complete and status_complete
+        except Exception:
+            complete = False
+    return tuple(captured), complete
+
+
+def _dismiss_optional_linkedin_dialog(page: Any) -> bool:
+    """Use only LinkedIn's offered guest-dialog dismiss control before capture."""
+    initial_url = None
+    dismissed = False
+    try:
+        initial_url = str(getattr(page, "url", ""))
+        current = urlsplit(initial_url)
+        host = (current.hostname or "").lower()
+        if current.scheme not in {"http", "https"} or not (
+            host == "linkedin.com" or host.endswith(".linkedin.com")
+        ) or not current.path.startswith("/jobs/view/"):
+            return False
+        dismiss = None
+        for candidate in page.locator("button.contextual-sign-in-modal__modal-dismiss:visible").all():
+            allowed = candidate.evaluate("""button => {
+                if (button.matches(':disabled') || button.type === 'reset'
+                    || (button.form !== null && button.type === 'submit')) return false;
+                if (getComputedStyle(button).visibility !== 'visible') return false;
+                for (let element = button; element; element = element.parentElement) {
+                    const style = getComputedStyle(element);
+                    if (style.display === 'none' || style.opacity === '0'
+                        || element.hasAttribute('inert') || element.getAttribute('aria-hidden') === 'true') return false;
+                }
+                return true;
+            }""")
+            if allowed:
+                dismiss = candidate
+                break
+        if dismiss is None:
+            return False
+        dismiss.click(timeout=2000, no_wait_after=True)
+        dismiss.wait_for(state="hidden", timeout=2000)
+        dismissed = True
+    except Exception as exc:  # Optional dismissal failure retains the actual page.
+        log.debug("Optional LinkedIn guest dialog remained open: %s", type(exc).__name__)
+    if initial_url is not None and str(getattr(page, "url", "")) != initial_url:
+        raise DetailPageFetchUnavailable("Guest dialog dismissal navigated away from the requested posting.")
+    return dismissed
+
+
+def _assert_capture_url(page: Any, expected_url: str) -> None:
+    if str(page.url) != expected_url:
+        raise DetailPageFetchUnavailable("The posting changed while its capture was being collected.")
 
 
 def _collect_json_ld(page: Any) -> list[Any]:
@@ -356,6 +490,66 @@ def _collect_status_html(page: Any, *, visibility_out: list[bool] | None = None)
         return "", False, ""
 
 
+# Shared by selected-main and body-fallback capture. Visibility can be
+# overridden by descendants; display:none and zero opacity hide the subtree.
+_VISIBLE_CONTENT_CLEANUP = """
+    for (let ancestor = originalRoot.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        if (style.display === 'none' || style.opacity === '0' || ancestor.getAttribute('aria-hidden') === 'true') {
+            return '';
+        }
+    }
+    const originals = [originalRoot, ...originalRoot.querySelectorAll('*')];
+    const copies = [clone, ...clone.querySelectorAll('*')];
+    const indices = new Map(originals.map((element, index) => [element, index]));
+    const blocked = [];
+    const visibility = [];
+    const visibleContent = [];
+    originals.forEach((original, index) => {
+        const style = getComputedStyle(original);
+        const parent = indices.get(original.parentElement);
+        blocked[index] = (parent !== undefined && blocked[parent]) || style.display === 'none'
+            || style.opacity === '0' || original.getAttribute('aria-hidden') === 'true';
+        visibility[index] = style.visibility;
+        visibleContent[index] = !blocked[index] && style.visibility === 'visible';
+    });
+    // A display:contents element has no box of its own but can render text.
+    // Propagate computed visibility without requiring element client rectangles.
+    for (let index = originals.length - 1; index > 0; index--) {
+        const parent = indices.get(originals[index].parentElement);
+        if (parent !== undefined && visibleContent[index]) visibleContent[parent] = true;
+    }
+    originals.forEach((original, index) => {
+        if (blocked[index] || !visibleContent[index]) {
+            copies[index].setAttribute('hidden', '');
+        } else {
+            // CSS may override the HTML hidden attribute, including on a
+            // visibility:hidden parent whose child explicitly becomes visible.
+            copies[index].removeAttribute('hidden');
+            if (visibility[index] !== 'visible') {
+                [...copies[index].childNodes].filter(child => child.nodeType === Node.TEXT_NODE)
+                    .forEach(child => child.remove());
+            }
+        }
+    });
+"""
+
+
+def _visible_inner_html(element: Any) -> str:
+    """Copy rendered content without letting hidden subtrees consume its cap."""
+    if not callable(getattr(element, "evaluate", None)):
+        # Static DOM ports have no computed style; the cleaner still removes
+        # explicit hidden/aria-hidden markup before applying the cap.
+        return element.inner_html()
+    return element.evaluate("""element => {
+        const clone = element.cloneNode(true);
+        const originalRoot = element;
+    """ + _VISIBLE_CONTENT_CLEANUP + """
+        return clone.hasAttribute('hidden') || clone.getAttribute('aria-hidden') === 'true'
+            ? '' : clone.innerHTML;
+    }""")
+
+
 def _collect_main_content(page: Any) -> str:
     """Select plausible main content, then bound its cleaned HTML."""
     for sel in ("main", "article", '[role="main"]', "#content", ".content"):
@@ -367,7 +561,9 @@ def _collect_main_content(page: Any) -> str:
             if text_len > 200:
                 # Raw attributes and page chrome must not displace posting text
                 # that fits within the cleaned-content budget.
-                return _clean_content_html(el.inner_html())[:_MAIN_CONTENT_HTML_LIMIT]
+                html = _clean_content_html(_visible_inner_html(el))[:_MAIN_CONTENT_HTML_LIMIT]
+                if html.strip():
+                    return html
         except Exception:
             continue
     try:
@@ -375,8 +571,11 @@ def _collect_main_content(page: Any) -> str:
             """
             () => {
                 const clone = document.body.cloneNode(true);
+                const originalRoot = document.body;
+            """ + _VISIBLE_CONTENT_CLEANUP + """
                 clone.querySelectorAll('nav, header, footer, script, style, noscript, svg, iframe').forEach(el => el.remove());
-                return clone.innerHTML;
+                return clone.hasAttribute('hidden') || clone.getAttribute('aria-hidden') === 'true'
+                    ? '' : clone.innerHTML;
             }
             """
         )
@@ -388,8 +587,14 @@ def _collect_main_content(page: Any) -> str:
 def _clean_content_html(html: str) -> str:
     """Strip noisy attributes / chrome from a content HTML chunk."""
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup.select("script, style, noscript, svg, iframe, nav, header, footer"):
-        tag.decompose()
+    for comment in soup.find_all(string=lambda value: isinstance(value, Comment)):
+        comment.extract()
+    for tag in list(soup.select(
+        "script, style, noscript, svg, iframe, nav, header, footer, "
+        "[hidden], [aria-hidden='true']"
+    )):
+        if tag.parent is not None:
+            tag.decompose()
 
     for tag in soup.find_all(True):
         new_attrs: dict = {}

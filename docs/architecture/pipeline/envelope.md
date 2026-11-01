@@ -20,7 +20,9 @@ The helpers live in
    `run`, with a compact camelCase input summary.
 2. **`check_spend_budget`** runs as a preflight for spendful workflows (see
    [Spend Ceiling](operations.md#spend-ceiling)). It runs with `maximum_attempts=1`, so a
-   depleted budget fails the run before any paid work.
+   depleted budget fails the run before any paid work. New histories use the
+   independent local control pool, so a refusal need not wait for busy model
+   slots. Existing remote histories replay their original commands.
 3. **Business activities** run (stages, per-job steps, apply, import, refresh).
 4. **`WorkflowCancellationRequested`** records requester, source, optional
    reason, exact Temporal run, and whether the evidence is delivered
@@ -125,6 +127,31 @@ to current, but cannot duplicate or demote it. A work plan remains explicitly
 `pending` until it becomes `planned`, `not_eligible`, or `failed`; a missing
 required-step list is never interpreted as proof of no work.
 
+### Completed Preparation Outcome Evidence
+
+`PreparationWorkflowOutcomeObserved` is an append-only audit receipt recovered
+from one exact completed `JobPreparationWorkflow` Temporal history. Decoder
+version 1 validates the start tenant, canonical JobId, `prep-` idempotency
+identity, ordered required steps and Discover execution against the current
+successful preparation owner and immutable membership. Its bounded result
+contains completed/skipped step enums and no failure. An empty skipped list is
+valid negative evidence; it does not explain a missing PDF.
+
+The receipt uses the existing `job_events` workflow-run identity and an
+idempotency key containing decoder version, tenant, preparation workflow and
+Temporal run. A short transaction rechecks ownership before append. Historical
+receipt recovery leaves workflow outcomes, accepted artifacts, stage states,
+immutable work plans and PDF lifecycle projections intact. Membership promotion
+from swept backlog to observed work retains the original owner and is not a
+lineage conflict.
+
+The normal worker reconciler inspects a bounded set of completed member owners
+that lack receipts, alongside its existing recovery work. Unavailable or
+malformed histories remain unproved and are retried without blocking later
+owners. The API uses only a valid exact receipt to explain conditional PDF
+nonexecution. Recorded PDF lifecycle states retain precedence. This adds no
+workflow commands and requires no history replay change or database migration.
+
 ### Broad-Board Search Unit Envelope
 
 The `jobspy` source family name remains a compatibility key, but its provider is
@@ -211,6 +238,14 @@ is a describe loop inside the worker's 15-second heartbeat loop (`cli.py`,
   duplicate starts still cannot reopen terminal truth. A recovered closed run
   receives its actual terminal outcome in the same pass.
 
+The RPC dispatch acknowledgement and the workflow's own start marker can arrive
+in either order. Their input summaries merge only when both identify the same
+exact Temporal run, so a sparse acknowledgement cannot erase a recorded JobId
+or configuration field. A new execution, or a start without a provable matching
+run ID, does not inherit the previous execution's input metadata. Both start
+facts remain in the timeline; this metadata rule does not reopen a terminal run
+or relax the marked missing-history recovery requirement.
+
 The reconciler never deletes or overwrites terminal audit events. Both
 `JobPipelineWorkflow` and
 `ApplyWorkflow` encode stage/apply failure in their *return value*, so a failing
@@ -270,17 +305,32 @@ stage — defeating heartbeats and starving every other activity on the worker.
   `abandoned_thread` and records an `operational_attempt_metric`
   (`stage="operations"`, `attempt_kind="temporal_activity_thread"`,
   `error_class="abandoned_thread"`) so a wedged thread is observable. The
-  log marks the already-retired executor generation as abandoned. A fresh
-  bounded generation has already taken over before the grace wait, while the
-  old thread remains fenced by its cancel token and exact activity ownership;
-  the old call cannot consume the capacity needed for Temporal retry and owner
-  reconciliation.
+  A fresh bounded generation can take over before the grace wait, while the old
+  call remains subject to its cancellation token and exact activity ownership.
+  At most three generations may remain outstanding in the process, including
+  the current one. At the limit, the helper refuses new blocking calls with the
+  retryable `activity_executor_capacity_exhausted` error. A generation releases
+  its capacity only when every submitted call in that generation has returned;
+  the next admission can then create a replacement. Cancellation and pool
+  retirement do not prove threads or child processes stopped.
+- Spend preflight, owner-scoped preparation cancellation, and workflow start and
+  outcome writes use a separate bounded pool of two calls. These short controls
+  remain eligible while stage generations are full. The control pool does not
+  rotate on cancellation; it refuses excess work until a call actually returns.
 
-Explicitly selected pipeline batches use a replay-versioned activity deadline:
-30 minutes per bounded worker wave, capped at 6 hours. The separate 2-minute
-heartbeat timeout remains fixed, so more legitimate batch work does not delay
-dead-worker detection. Histories created before the Temporal patch marker retain
-their recorded 30-minute timer when replayed.
+Score, Tailor and Cover use a **6-hour operational activity deadline** in both
+per-job preparation and pipeline batches. A stage owns several sequential model
+calls, source verification and bounded correction passes; a healthy Max-effort
+sequence can exceed the old 30-minute stage deadline. This limit applies to the
+whole activity, without adding a separate provider-call timeout. PDF rendering
+retains its 30-minute deadline. Explicitly selected Enrich batches retain the
+replay-versioned 30-minute-per-worker-wave deadline, capped at 6 hours.
+
+The separate **2-minute heartbeat timeout** remains fixed, as do explicit
+cancellation, spend checks and bounded retry counts. A longer stage allowance
+does not delay dead-worker detection. Changing the scheduled duration does not
+rewrite the timer of an activity already recorded in Temporal history; regression
+tests replay both old and current scheduling budgets through the new workflow.
 
 This is why the discovery source-family and enrichment activities (and the apply
 activity) accept a `threading.Event` cancel token: the workflow-level cancel
@@ -333,6 +383,7 @@ Retry behavior is driven by a small error taxonomy in
 | `TransientNetworkError` | `transient_network` | yes |
 | `BrowserTransientError` | `browser_transient` | yes |
 | `LlmTransientError` | `llm_transient` | yes |
+| `MaterialRejectedError` | `material_rejected` | no |
 | `SourceUnavailableError` | `source_unavailable` | yes |
 | unclassified exception | `unclassified` | yes |
 
@@ -342,6 +393,13 @@ Every retrying workflow lists
 configuration/precondition errors stop immediately, while transient failures
 retry up to the policy's attempt cap and then surface as a stage/workflow
 failure. `RuntimeIdentityMismatch` is also non-retryable.
+`material_rejected` carries `ApplicationError.non_retryable=true`: an exhausted
+source-bound material correction budget stops immediately, including under an
+already scheduled workflow's retry policy. The same native non-retryable flag
+carries `provider_non_retryable` through semantic determinations, durable Tailor
+and Cover states, and per-job activities. A privacy-safe adapter failure must
+not become `llm_transient` just because it crossed a material result boundary.
+Transient provider and network failures retain their normal retries.
 
 ## Availability Workflow Envelope
 

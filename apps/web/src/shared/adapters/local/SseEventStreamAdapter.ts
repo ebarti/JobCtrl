@@ -43,6 +43,7 @@ class SseSubscription implements EventStreamSubscription {
   private readonly statusHandlers = new Set<(status: EventStreamStatus) => void>();
   private currentStatus: EventStreamStatus = "connecting";
   private closed = false;
+  private workspaceChanged = false;
   private readonly listenerCleanup: Array<() => void> = [];
   private source: EventSource | null = null;
 
@@ -94,12 +95,19 @@ class SseSubscription implements EventStreamSubscription {
     this.source = source;
     this.setStatus("connecting");
 
-    const onOpen = () => this.setStatus("open");
-    // EventSource uses 'error' to signal both transient drops (it
-    // auto-reconnects per the server's `retry:`) and permanent
-    // failures.  We surface 'closed' on every error tick; callers
-    // observe the next 'open' to learn that reconnect succeeded.
-    const onError = () => this.setStatus("closed");
+    const onOpen = () => {
+      if (!this.workspaceChanged) this.setStatus("open");
+    };
+    // A changed workspace requires an explicit fresh subscription. A network
+    // reconnect on the old EventSource must not hide that recovery instruction.
+    const onError = (event: Event) => {
+      if (isWorkspaceChanged(event)) {
+        this.workspaceChanged = true;
+        this.setStatus("workspace_changed");
+      } else if (!this.workspaceChanged) {
+        this.setStatus("closed");
+      }
+    };
     source.addEventListener("open", onOpen);
     source.addEventListener("error", onError);
     this.listenerCleanup.push(() => source.removeEventListener("open", onOpen));
@@ -111,13 +119,15 @@ class SseSubscription implements EventStreamSubscription {
       this.listenerCleanup.push(() => source.removeEventListener(eventType, listener));
     }
 
-    const heartbeatListener = () => this.setStatus("open");
+    const heartbeatListener = () => {
+      if (!this.workspaceChanged) this.setStatus("open");
+    };
     source.addEventListener("heartbeat", heartbeatListener);
     this.listenerCleanup.push(() => source.removeEventListener("heartbeat", heartbeatListener));
   }
 
   private handleEvent(eventType: string, raw: MessageEvent): void {
-    if (this.closed) {
+    if (this.closed || this.workspaceChanged) {
       return;
     }
     const result = parseDomainEvent({
@@ -144,3 +154,15 @@ class SseSubscription implements EventStreamSubscription {
   }
 }
 
+
+function isWorkspaceChanged(event: Event): boolean {
+  const data = (event as MessageEvent<unknown>).data;
+  if (typeof data !== "string") return false;
+  try {
+    const parsed: unknown = JSON.parse(data);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      && (parsed as Record<string, unknown>).code === "event_stream_workspace_changed";
+  } catch {
+    return false;
+  }
+}

@@ -133,7 +133,7 @@ test("representative remediated routes have no critical or serious axe violation
 test("dark remediated routes have no critical or serious axe violations", async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto("/dashboard");
-  await page.getByRole("button", { name: "Switch to dark theme" }).click();
+  await page.getByRole("button", { name: "Light theme: Switch to dark theme" }).click();
   for (const route of REPRESENTATIVE_ROUTES) {
     await expectNoCriticalOrSeriousAxeViolations(page, route);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");

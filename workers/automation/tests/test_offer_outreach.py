@@ -278,6 +278,8 @@ def test_posted_compensation_joins_its_canonical_receipt_and_keeps_offer_authori
     conn, *_ = _setup(tmp_path)
     seed_terms(conn)
     text = "Synthetic posting EUR 100000 110000 per year"
+    conn.execute("UPDATE jobs SET salary=? WHERE tenant_id='local' AND job_id=?", (text, JOB))
+    conn.commit()
     output = dict(
         parse_state="parsed_range",
         currency="EUR",
