@@ -174,8 +174,8 @@ critical flows:
 4. **Profile edit + Plate baseline editor** → load profile → edit a field →
    save → baseline resume HTML is refetched with a new cache key and remains
    rendered in the Profile Plate editor.
-5. **Resume import wizard** → upload a PDF → preview parsed draft → confirm
-   → wizard exits to profile editor; profile reflects imported sections.
+5. **Resume import wizard** → upload and preview a PDF → confirm extraction →
+   review returned sections in Profile → explicitly accept selected sections.
 6. **Generate materials** → click "Generate" on a job → its detail workspace
    shows "queued" → simulate `ResumeApproved` event in the seed → the workspace
    shows approved status.

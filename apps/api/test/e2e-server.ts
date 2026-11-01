@@ -27,6 +27,7 @@ const coverRendererDispatcher = new SubprocessJsonRpcAdapter({
 const modelProfileSuggestions = process.env["JOBCTRL_E2E_PROFILE_SUGGESTIONS"] === "1";
 const { default: Database } = await import("better-sqlite3");
 const { recordCandidateProposal, recordModelDecision, bindDecision } = await import("./semantic-fixtures.js");
+const { recordImportAttempt, recordResumeExtraction } = await import("./profile-import-fixtures.js");
 const unavailable = async () => {
   throw new Error("Operation is outside the isolated E2E fixture");
 };
@@ -127,7 +128,27 @@ const app = buildApp({
     },
   },
   actionDispatcher: e2eStubActionDispatcher,
-  profileImporter: e2eStubProfileImporter,
+  profileImporter: async (input, context) => {
+    await assertIsolatedE2eWorkspace();
+    assertExpectedWorkspace(context);
+    const result = await e2eStubProfileImporter(input, context);
+    const db = new Database(config.dbPath);
+    try {
+      // Choose synthetic extractor output before the real API joins its receipt.
+      // Browser tests may delay this response, but positive setup must not forge it.
+      const experience = input.filename === "synthetic-review.pdf"
+        ? [{ title: "Synthetic imported role", company: "Synthetic company", bullets: ["Synthetic imported bullet"] }]
+        : input.filename === "synthetic-replay.pdf"
+          ? [{ title: "Synthetic replay role", company: "Synthetic company", bullets: ["Synthetic bullet"] }]
+          : [];
+      const determinationId = recordResumeExtraction(db, {
+        full_name: "E2E Imported Candidate",
+        ...(input.filename === "synthetic-consent.pdf" ? { email: "imported@example.invalid" } : {}),
+      }, { experience });
+      return { ...result, source: { ...(result.source as object),
+        ...recordImportAttempt(db, input, determinationId, { font_family: "roman" }) } };
+    } finally { db.close(); }
+  },
   profilePreviewRenderer: async (input, context) => {
     await assertIsolatedE2eWorkspace();
     assertExpectedWorkspace(context);

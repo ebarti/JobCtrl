@@ -73,6 +73,18 @@ Discovery settings reads and updates report invalid persisted search settings
 instead of replacing them with defaults; see the
 [Discovery controls contract](api/complete-contract.md#discovery-controls).
 
+`POST /v1/profile/import-resume` returns a transient draft. The web reviews
+selected sections before `PATCH /v1/profile`; its `expectedProfileVersion`
+may be `null` to fence creation against an initially absent profile. For Profile
+imports, the API joins the returned extraction ID to its persisted receipt and
+returns only the receipt's personal values as `profile.personal` and
+`source.extractedPersonal`. An absent, malformed, foreign, or incompatible receipt
+returns `502 resume_extraction_receipt_unavailable` without changing Profile.
+The worker binds each API-issued attempt to its parsed PDF digest, extraction and
+observed style in the database. The API checks the uploaded bytes and returned
+source against that binding. Selected Profile and style saves rejoin the attempt
+and extraction inside the version-fenced write.
+
 Target Search can request role suggestions through
 `POST /v1/profile/target-role-suggestions`. The web sends only the last saved
 `profileVersion`; it never sends the current browser form draft. The TypeScript

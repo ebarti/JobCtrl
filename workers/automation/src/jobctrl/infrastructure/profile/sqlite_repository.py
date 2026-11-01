@@ -212,6 +212,7 @@ class SqliteProfileRepository:
         pdf_bytes: bytes,
         *,
         filename: str = "resume.pdf",
+        attempt_id: str | None = None,
     ) -> ProfileImportResult:
         if self._pdf_parser is None:
             raise RuntimeError(
@@ -221,11 +222,13 @@ class SqliteProfileRepository:
 
         existing = self.load(tenant_id)
         rendering = self.load_rendering_settings(tenant_id)
+        options = {"attempt_id": attempt_id} if attempt_id is not None else {}
         draft = self._pdf_parser.parse(
             pdf_bytes,
             filename=filename,
             base_profile=existing.to_dict() if existing is not None else None,
             base_style=rendering["style"],
+            **options,
         )
 
         result = ProfileImportResult(

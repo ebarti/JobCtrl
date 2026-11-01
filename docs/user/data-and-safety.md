@@ -141,13 +141,14 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 
 | Path | Contents |
 | --- | --- |
-| `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, review drafts, contacts, private offer terms/decisions and sources, and workflows. Treat all three files as one database. |
+| `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, import receipt bindings, review drafts, contacts, private offer terms/decisions and sources, and workflows. Treat all three files as one database. |
 | `temporal.db` plus `-wal` / `-shm` | Shared Temporal history for new workspaces; earlier source workspaces may retain `temporal/temporal.db`. Treat the history and `jobctrl.db` as one pair. |
 | `config.json` | Non-secret Settings values: general controls, provider configuration metadata, preferred model IDs, compensation source policy, and browser-adoption metadata. No API keys or feed contents. |
 | `.env` | Legacy/plaintext provider credentials used by remaining compatibility paths. Not encrypted at rest. |
 | `codex_home/` | Stable JobCtrl-owned Codex CLI state. `auth.json` is outside the prompt-readable `workspace/` subtree. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated or separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/` | Generated text, HTML, and PDF artifacts. |
+| `profile-imports/` | Uploaded import PDFs retained for retry. The corresponding source-attempt bindings, which contain the digest and observed style but no PDF bytes, are in `jobctrl.db`. |
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state, including CAPTCHA usage metadata when applicable. |
 | `browser-profiles/` | Consented copied profiles retained for separate compatibility capabilities. Integrated `DiscoverWorkflow` never reads or launches them. Non-secret adoption metadata lives in `config.json`. |
 | `extension-capability-token`, `extension-discovery-installation-id` | Private local browser-extension pairing secret and the extension installation selected for Discovery. Discovery bridge task bodies and results are memory-only and are not stored beside them. |
@@ -158,7 +159,18 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 The resume-import wizard also keeps its selected PDF and filename in the web
 app's browser-local storage, outside `JOBCTRL_DIR`. Cancel keeps that selection;
 earlier-version import data remains separately stored even after current cleanup.
-removal and failure recovery are described in [Candidate Profile](candidate-profile.md#current-import-limitation).
+The extracted review draft is also saved in browser-local storage until it is
+accepted or rejected. New drafts contain the reviewable fields, the saved values needed
+to compare personal details, the profile version, and extraction receipt IDs and
+warnings; they do not contain the complete saved profile or resume text preview.
+Older retained review drafts may still contain the complete saved profile,
+including its password field, and the extraction text preview. They are preserved
+on reload, and a complete copy is retained within the draft if it is rebased.
+After acceptance or rejection, Profile exposes the preserved legacy review as
+JSON for inspection and copying; it stays in browser storage until site data is
+cleared.
+The completed request remains in app memory until reload. Removal and failure
+recovery are described in [Candidate Profile](candidate-profile.md#review-an-imported-resume).
 
 PDFs created with a Plate editor's **Export PDF** control are ordinary browser
 downloads, so their destination is the download location selected by the
