@@ -5,7 +5,7 @@ permissions:
   contents: read
 jobs:
   api:
-    name: API
+    name: Manual API
     uses: "./.github/workflows/ci-backend.yml"
     with:
       api: true
@@ -14,7 +14,7 @@ jobs:
       distribution: false
       edge: false
   frontend:
-    name: Frontend
+    name: Manual web
     uses: "./.github/workflows/ci-frontend.yml"
     with:
       web: true
@@ -24,7 +24,7 @@ jobs:
       docs: false
       demo: false
   support:
-    name: Support
+    name: Manual support
     uses: "./.github/workflows/ci-frontend.yml"
     with:
       web: false
@@ -34,7 +34,7 @@ jobs:
       docs: false
       demo: false
   browser:
-    name: Browser
+    name: Manual browser
     uses: "./.github/workflows/ci-frontend.yml"
     with:
       web: false
