@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -80,6 +81,59 @@ def source_runtime_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "source")
     for key in ("JOBCTRL_ENV_FILE", "JOBCTRL_PAYLOAD_DIR", "JOBCTRL_PROVIDER_PACKS_DIR"):
         monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def isolate_legacy_doctor_inputs(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+    """Fence unrelated inputs while each legacy CLI case owns its tested seam.
+
+    Temporal cases keep the real client factory and mock Client.connect;
+    Langfuse cases own HEAD/disable state; Gmail cases own their row inputs;
+    the budget case keeps real accounting against its own temporary database.
+    """
+    test_file = Path(str(request.fspath)).name
+    if test_file not in {
+        "test_doctor_temporal.py", "test_doctor_langfuse.py",
+        "test_doctor_gmail_mcp.py", "test_doctor_llm_budget.py",
+    }:
+        return
+
+    from jobctrl import config
+    from jobctrl.browser_capabilities import BrowserCapabilityStatus
+
+    app_dir = request.getfixturevalue("tmp_path")
+    monkeypatch.setenv("JOBCTRL_DIR", str(app_dir))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(app_dir / "config.json"))
+    for name in ("CAPSOLVER_API_KEY", "LANGFUSE_DISABLE", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config, "APP_DIR", app_dir)
+    monkeypatch.setattr(config, "DB_PATH", app_dir / "jobctrl.db")
+    monkeypatch.setattr(config, "RESUME_PATH", app_dir / "resume.txt")
+    monkeypatch.setattr(config, "RESUME_PDF_PATH", app_dir / "resume.pdf")
+    monkeypatch.setattr(config, "load_env", lambda: ())
+    monkeypatch.setattr(config, "load_search_config", lambda: {"boards": []})
+    monkeypatch.setattr(config, "load_saved_search_settings", lambda: {})
+    monkeypatch.setattr(config, "gmail_mcp_auth_status", lambda: (False, "synthetic auth absent"))
+    monkeypatch.setattr(config, "get_tier", lambda: 1)
+    monkeypatch.setattr("jobctrl.native_credentials.native_store_label", lambda: "synthetic store")
+    monkeypatch.setattr("jobctrl.infrastructure.profile.get_profile_repository", lambda: SimpleNamespace(load=lambda _tenant: None))
+    monkeypatch.setattr(
+        "jobctrl.browser_capabilities.list_browser_capabilities",
+        lambda: (
+            BrowserCapabilityStatus("core-browser", "missing", "synthetic Chromium absent"),
+            BrowserCapabilityStatus("auto-apply-browser", "disabled", "synthetic choice off"),
+            BrowserCapabilityStatus("authenticated-linkedin-browser", "disabled", "synthetic choice off"),
+        ),
+    )
+    monkeypatch.setattr("jobctrl.infrastructure.setup_probes.probe_analysis_setup", lambda: [])
+    monkeypatch.setattr("jobctrl.infrastructure.setup_probes.resolve_claude_apply_binary", lambda: str(app_dir / "absent-claude"))
+    monkeypatch.setattr(shutil, "which", lambda _binary: None)
+    monkeypatch.setattr("jobctrl.infrastructure.scoring.criteria_provider.read_apply_approval_required", lambda *, default: True)
+    monkeypatch.setattr("jobctrl.cli.httpx.head", lambda *_args, **_kwargs: pytest.fail("unexpected doctor HTTP probe"))
+    monkeypatch.setattr("jobctrl.cli.politeness_doctor_notices", lambda *_args: [])
+    if test_file != "test_doctor_llm_budget.py":
+        monkeypatch.setattr("jobctrl.database.get_connection", lambda: None)
+        monkeypatch.setattr("jobctrl.cli.llm_budget_doctor_notices", lambda: [])
 
 
 @pytest.fixture(autouse=True)
