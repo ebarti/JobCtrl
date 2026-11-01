@@ -149,6 +149,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
   projection details.
 - [`architecture/scoring.md`](architecture/scoring.md): scoring algorithm,
   evidence, policy, and calibration.
+- [Employer Sponsorship History](architecture/employer-sponsorship-history.md):
+  official-source investigation and future design (not implemented).
 - [`architecture/reviewed-screening-answers.md`](architecture/reviewed-screening-answers.md): private answer revisions, application contexts and model/review fences.
 - [`architecture/materials.md`](architecture/materials.md): employer analysis
   and cross-artifact auditability.
