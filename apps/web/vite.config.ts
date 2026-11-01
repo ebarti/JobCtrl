@@ -1,16 +1,24 @@
 import { fileURLToPath } from "node:url";
+import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 const demoApiProxyTarget = process.env["VITE_DEMO_API_PROXY_TARGET"];
+const ciLane = process.env["CI_LANE"];
+const ownedCiLane = process.env["CI"] === "true" &&
+  process.env["RUNNER_ENVIRONMENT"] === "github-hosted" &&
+  ["browsers", "core", "support"].includes(ciLane ?? "");
 
 export default defineConfig({
+  ...(ownedCiLane ? { cacheDir: path.join(process.env["RUNNER_TEMP"]!, `vite-${ciLane}`) } : {}),
   plugins: [
     tanstackRouter({
       target: "react",
       autoCodeSplitting: true,
+      // The CI job generates and builds the real tree before parallel consumers.
+      enableRouteGeneration: !(ownedCiLane && process.env["JOBCTRL_CI_ROUTES_READY"] === "1"),
     }),
     react(),
     tailwindcss(),

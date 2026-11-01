@@ -6,55 +6,77 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { SURFACES, SUITE_CONTEXTS, selectSurfaces } from "./pr-ci-routing.mjs";
+import { frontendRecipes } from "./ci-frontend-recipes.mjs";
+import { frontendLanes } from "./ci-frontend.mjs";
 
 const yamlReader = "require 'yaml'; require 'json'; puts JSON.generate(YAML.safe_load(File.read(ARGV[0]), aliases:true))";
 const load = name => JSON.parse(execFileSync("ruby", ["-e", yamlReader, fileURLToPath(new URL("../.github/workflows/" + name + ".yml", import.meta.url))], { encoding: "utf8" }));
-const pr = load("pr-ci");
+const pr = load("ci");
+const admission = load("ci-admission").jobs.preflight;
+const backend = load("ci-backend").jobs.checks;
+const frontend = load("ci-frontend").jobs.checks;
+const actionPath = fileURLToPath(new URL("../.github/actions/worker-checks/action.yml", import.meta.url));
+const worker = JSON.parse(execFileSync("ruby", ["-e", yamlReader, actionPath], { encoding: "utf8" })).runs;
+
 const events = workflow => workflow.on ?? workflow.true;
 const expression = value => "$" + "{{ " + value + " }}";
 const command = (job, text) => job.steps.find(step => step.run === text);
-const leaves = { api:"api", web:"web", storybook:"storybook", e2e:"e2e", extension:"extension", python:"python", docs:"docs", launcher0:"launcher", launcher1:"launcher", "credentials-macos":"credentials", "credentials-windows":"credentials", "credentials-ubuntu":"credentials", gmail:"gmail", distribution:"distribution", demo:"demo", edge:"edge" };
-const required = ["Release check","Script unit tests","Build (dead-link gate)","API checks and tests","Web unit, types, and build","Storybook build and browser tests","Web end-to-end","Browser extension","Python / Python 3.12"];
-
-test("native admission binds the required contexts without a planner or final-gate runner", () => {
-  assert.deepEqual(events(pr), { pull_request:{ types:["opened","synchronize","reopened","edited"] } });
-  assert.deepEqual(Object.keys(pr.jobs).sort(), ["preflight","scripts",...Object.keys(leaves),"preview"].sort());
+test("one shared entry budgets affected runners and preserves literal skipped native contexts", () => {
+  assert.deepEqual(events(pr), { pull_request:{ types:["opened","synchronize","reopened","edited"] }, push:{ branches:["main"] } });
+  assert.deepEqual(Object.keys(pr.jobs).sort(), ["admission","backend","frontend","browser","native","credentials","gmail","preview"].sort());
   assert.deepEqual(pr.permissions, { contents:"read" });
-  assert.equal(pr.concurrency["cancel-in-progress"], true);
-  const checkNames = ([id, job]) => id === "python" ? [job.name + " / " + load("python").jobs.python.name] : [job.name];
-  const names = Object.entries(pr.jobs).flatMap(checkNames);
-  for (const name of required) assert.equal(names.filter(item => item === name).length, 1, name);
-  assert.equal(pr.jobs.preflight.if, undefined);
-  assert.equal(pr.jobs.preflight.needs, undefined);
-  assert.equal(pr.jobs.scripts.if, undefined);
-  assert.equal(pr.jobs.scripts.needs, "preflight");
-  for (const [id,suite] of Object.entries(leaves)) {
-    const job=pr.jobs[id];
-    assert.equal(job.needs, "preflight");
-    if (id === "python") {
-      assert.equal(job.if, undefined, "the reusable call must expose its skipped child context");
-      assert.deepEqual(job.with, { enabled: expression("needs.preflight.outputs.python != 'false'") });
-    } else assert.equal(job.if, expression("needs.preflight.result == 'success' && needs.preflight.outputs." + suite + " != 'false'"));
-    assert.equal(job.permissions, undefined);
-    assert.equal(job.environment, undefined);
-    assert.equal(job["continue-on-error"] ?? false, false);
-    for (const step of job.steps ?? []) assert.equal(step["continue-on-error"] ?? false, false, step.name);
+  assert.equal(pr.concurrency["cancel-in-progress"], expression("github.event_name == 'pull_request'"));
+  const expanded=[];
+  for (const id of ["admission","backend","frontend","browser","native","credentials","gmail"]) {
+    const call=pr.jobs[id];
+    assert.equal(call.if, undefined, "skipped child contexts must remain materialized");
+    assert.equal(call["runs-on"], undefined);
+    assert.equal(call.steps, undefined);
+    assert.equal(call.secrets, undefined);
+    assert.equal(call.environment, undefined);
+    if(id!=="admission") assert.equal(call.needs,"admission");
+    const child=load(call.uses.split("/").at(-1).replace(".yml",""));
+    assert.deepEqual(child.permissions,{contents:"read"});
+    for(const job of Object.values(child.jobs)) {
+      expanded.push(call.name+" / "+job.name);
+      assert.equal(job.strategy,undefined,"skipping a matrix cannot emit every required child context");
+      assert.equal(job["continue-on-error"] ?? false,false);
+      for(const step of job.steps) assert.equal(step["continue-on-error"] ?? false,false,step.name);
+      if(["native","credentials","gmail"].includes(id)) assert.equal(job.if,expression("github.event_name == 'workflow_dispatch' || inputs.enabled"));
+    }
+    for(const [flag,value] of Object.entries(call.with ?? {})) {
+      if(typeof value==="boolean") { assert.equal(value,false); continue; }
+      const output=flag==="enabled"?({native:"launcher",credentials:"credentials",gmail:"gmail"}[id]):flag;
+      assert.equal(value,expression("needs.admission.outputs."+output+" != 'false'"));
+    }
   }
-  assert.deepEqual(Object.keys(pr.jobs.preflight.outputs).sort(), [...SURFACES,"head_privacy","preview"].sort());
-  const expanded = ["Release check","Script unit tests",...Object.values(SUITE_CONTEXTS).flat()].sort();
-  assert.equal(new Set(expanded).size, expanded.length);
-  assert.deepEqual(expanded, Object.entries(pr.jobs).filter(([id]) => id !== "preview").flatMap(checkNames).sort());
+  assert.equal(expanded.length,10,"four core and six platform-specific allocations at full scope");
+  assert.equal(new Set(expanded).size,expanded.length);
+  assert.deepEqual(expanded.sort(), [...new Set(["Admission / Release check","Backend / Core checks",...Object.values(SUITE_CONTEXTS).flat()])].sort());
+  const owners={api:["backend","api"],python:["backend","python"],distribution:["backend","distribution"],edge:["backend","edge"],
+    web:["frontend","web"],storybook:["frontend","storybook"],extension:["frontend","extension"],docs:["frontend","docs"],demo:["frontend","demo"],
+    e2e:["browser","e2e"],launcher:["native","enabled"],credentials:["credentials","enabled"],gmail:["gmail","enabled"]};
+  assert.deepEqual(Object.keys(owners).sort(),[...SURFACES].sort());
+  for(const [surface,[owner,input]] of Object.entries(owners))
+    assert.equal(pr.jobs[owner].with[input],expression("needs.admission.outputs."+surface+" != 'false'"),surface+" must retain a fail-closed owner");
+  assert.equal(pr.jobs.frontend.with.e2e,false,"E2E has an isolated VM");
+  assert.equal(pr.jobs.browser.with.web,false);
+  assert.equal(pr.jobs.browser.with.storybook,false);
+  assert.equal(admission.if,undefined);
+  assert.equal(backend.if,undefined,"repository contracts run for every verified change");
+  assert.equal(frontend.if,expression("inputs.web || inputs.storybook || inputs.e2e || inputs.extension || inputs.docs || inputs.demo"));
+  assert.deepEqual(Object.keys(admission.outputs).sort(),[...SURFACES,"head_privacy","preview"].sort());
 });
 
 test("privacy and scope are base-only; bootstrap has no exclusion authority", () => {
-  const job=pr.jobs.preflight;
+  const job=admission;
   assert.equal(job["timeout-minutes"], 5);
   const checkout=job.steps.find(step => step.uses?.startsWith("actions/checkout@"));
   assert.equal(checkout.with.ref, expression("github.sha"));
   assert.equal(checkout.with["fetch-depth"], 2);
   assert.equal(checkout.with["persist-credentials"], false);
   const resolve=job.steps.find(step => step.id==="policy");
-  assert.match(resolve.run, /git fetch --no-tags --depth=1 origin/);
+  assert.match(resolve.run, /git fetch --no-tags --depth=2 origin/);
   assert.match(resolve.run, /git archive "\$policy_sha" scripts\/release_check\.py/);
   assert.match(resolve.run, /git show "\$policy_sha:scripts\/pr-ci-routing\.mjs"/);
   const scan=job.steps.find(step => step.name==="Scan the whole candidate with the accepted privacy policy");
@@ -76,7 +98,7 @@ test("privacy and scope are base-only; bootstrap has no exclusion authority", ()
   assert.match(scope.run, /headPrivacy: true/);
   assert.match(scope.run, /JobCtrl CI scope v1/);
   const bootstrapNames=JSON.parse(scope.run.match(/const names = (\[[^\n]+\]);/)[1]);
-  assert.deepEqual(bootstrapNames.sort(), ["Release check","Script unit tests",...Object.values(SUITE_CONTEXTS).flat()].sort());
+  assert.deepEqual(bootstrapNames.sort(), [...new Set(["Admission / Release check","Backend / Core checks",...Object.values(SUITE_CONTEXTS).flat()])].sort());
   const bootstrapSuites=JSON.parse(scope.run.match(/const suites = (\[[^\n]+\]);/)[1]);
   assert.deepEqual(bootstrapSuites.sort(), [...SURFACES].sort());
   assert.doesNotMatch(JSON.stringify(job), /corepack|pnpm install|secrets\.|pull_request_target/);
@@ -95,7 +117,7 @@ test("bootstrap binds the actual merge parents while synchronize metadata can re
   const repo={id:42,full_name:"synthetic/JobCtrl",default_branch:"main"};
   const event={number:17,repository:repo,pull_request:{number:17,base:{ref:"main",sha:base,repo},head:{sha:head,repo},merge_commit_sha:base}};
   const eventPath=path.join(temporary,"event.json"),output=path.join(temporary,"output");
-  const run=pr.jobs.preflight.steps.find(step=>step.id==="scope").run;
+  const run=admission.steps.find(step=>step.id==="scope").run;
   const check=(overrides={})=>{
     writeFileSync(eventPath,JSON.stringify(event));writeFileSync(output,"");
     return spawnSync("bash",["-c",run],{cwd:repository,encoding:"utf8",env:{...process.env,
@@ -118,82 +140,92 @@ test("bootstrap binds the actual merge parents while synchronize metadata can re
   assert.equal(readFileSync(output,"utf8"),"");
 });
 
-test("pristine head privacy precedes tooling; boundary diagnostics remain independent of Storybook failures", () => {
-  const job=pr.jobs.scripts;
-  const scan=command(job,"python -I scripts/release_check.py --strict-prompt");
-  const setup=job.steps.find(step=>step.uses?.startsWith("pnpm/action-setup@"));
-  const install=command(job,"corepack pnpm install --frozen-lockfile");
-  const scripts=command(job,"corepack pnpm scripts:test");
-  assert.equal(scan.if,expression("needs.preflight.outputs.head_privacy != 'false'"));
-  assert.ok(job.steps.indexOf(scan)<job.steps.indexOf(setup));
-  assert.ok(job.steps.indexOf(setup)<job.steps.indexOf(install));
-  assert.ok(job.steps.indexOf(install)<job.steps.indexOf(scripts));
+test("pristine candidate privacy precedes installation; independent diagnostics survive peer failure", () => {
+  const scan=command(backend,"python -I scripts/release_check.py --strict-prompt");
+  const setup=backend.steps.find(step=>step.uses?.startsWith("pnpm/action-setup@"));
+  const install=command(backend,"corepack pnpm install --frozen-lockfile");
+  const scripts=command(backend,"corepack pnpm scripts:test");
+  assert.equal(scan.if,expression("inputs.head_privacy"));
+  assert.ok(backend.steps.indexOf(scan)<backend.steps.indexOf(setup));
+  assert.ok(backend.steps.indexOf(setup)<backend.steps.indexOf(install));
+  assert.ok(backend.steps.indexOf(install)<backend.steps.indexOf(scripts));
   assert.equal(scripts.if,undefined);
   assert.equal(scripts["timeout-minutes"],10);
-  assert.equal(command(job,"corepack pnpm web:lint:test"),undefined);
-  assert.equal(command(pr.jobs.web,"corepack pnpm web:lint:test"),undefined);
-  const boundary=command(pr.jobs.storybook,"corepack pnpm web:lint:test");
-  assert.equal(boundary.if,expression("!cancelled() && steps.dependencies.outcome == 'success'"));
-  assert.equal(command(pr.jobs.storybook,"corepack pnpm install --frozen-lockfile").id,"dependencies");
-  assert.ok(pr.jobs.storybook.steps.indexOf(boundary)>pr.jobs.storybook.steps.findIndex(step=>step.name==="Test Storybook"));
-  assert.equal(command(pr.jobs.web,"corepack pnpm web:lint").if,undefined);
-  const legacy=load("typescript").jobs;
-  assert.deepEqual(pr.jobs.web.steps,legacy.web.steps.filter(step=>step.name!=="Test frontend boundary regression controls"));
-  const story=structuredClone(pr.jobs.storybook.steps.filter(step=>step.name!=="Test frontend boundary regression controls"));
-  delete story.find(step=>step.name==="Install locked dependencies").id;
-  assert.deepEqual(story,legacy.storybook.steps);
-  assert.deepEqual(pr.jobs.e2e.steps,legacy.e2e.steps);
-
+  assert.equal(frontendRecipes.web[0].run,"corepack pnpm web:lint");
+  assert.equal(frontendRecipes.boundary[0].run,"corepack pnpm web:lint:test");
+  assert.deepEqual(frontendLanes.core,["web"]);
+  assert.deepEqual(frontendLanes.browsers,["e2e"]);
+  assert.deepEqual(frontendLanes.support,["boundary","storybook","extension","docs","demo"]);
+  const parallel=command(frontend,"node scripts/ci-frontend.mjs");
+  assert.equal(parallel.if,expression("!cancelled() && steps.dependencies.outcome == 'success'"));
+  const build=command(frontend,"corepack pnpm web:build");
+  assert.equal(build.if,expression("inputs.web"));
+  assert.ok(frontend.steps.indexOf(build)<frontend.steps.indexOf(parallel));
+  assert.equal(parallel.env.CI_ROUTES_READY,expression("steps.production.outcome == 'success'"));
+  assert.equal(frontend.steps.filter(step=>step.run?.includes("pnpm install")).length,1);
+  assert.equal(frontend.steps.filter(step=>step.run?.includes("playwright install --with-deps chromium")).length,1);
 });
 
-test("one primary Python result calls the canonical complete locked recipe", () => {
-  const owning = load("python");
-  const job = owning.jobs.python;
-  assert.equal(pr.jobs.python.uses, "./.github/workflows/python.yml");
-  assert.equal(pr.jobs.python.steps, undefined);
-  assert.equal(pr.jobs.python["runs-on"], undefined);
-  assert.ok(Object.hasOwn(events(owning), "workflow_call"));
-  assert.equal(events(owning).workflow_call.inputs.enabled.type, "boolean");
-  assert.equal(events(owning).workflow_call.inputs.enabled.default, true);
-  assert.equal(job.if, expression("github.event_name != 'pull_request' || inputs.enabled"));
-  assert.deepEqual(owning.permissions, { contents: "read" });
-  assert.equal(job.strategy, undefined);
-  assert.equal(job.name, "Python 3.12");
-  assert.equal(job.env.PYTHON_VERSION, "3.12");
-  assert.equal(job.env.UV_PYTHON, job.env.PYTHON_VERSION);
-  assert.equal(job.env.PYTHONFAULTHANDLER, "1");
-  assert.equal(job.steps.find(step => step.uses?.startsWith("actions/setup-python@")).with["python-version"], expression("env.PYTHON_VERSION"));
-  assert.ok(command(job, "uv --project workers/automation sync --locked --all-extras"));
-  assert.ok(command(job, "uv --project workers/automation run --locked --all-extras ruff check workers/automation/src workers/automation/tests"));
-  assert.ok(command(job, "uv --project workers/automation run --locked --all-extras python scripts/generate-semantic-result-schemas.py --check"));
-  assert.ok(command(job, 'uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25 --junitxml="$RUNNER_TEMP/python-$PYTHON_VERSION.xml"'));
-  assert.ok(command(job, "uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation"));
-  assert.equal(command(job, "bash scripts/install-temporal-test-server.sh").name, "Install verified Temporal time-skipping test server");
-  assert.equal(job.steps.find(step => step.name === "Upload synthetic Python JUnit report").if, "always()");
-  for (const step of job.steps) assert.equal(step["continue-on-error"] ?? false, false, step.name);
+test("backend and manual Python share the complete primary locked recipe", () => {
+  const job=load("python").jobs.python;
+  assert.deepEqual(events(load("python")),{workflow_dispatch:null});
+  assert.equal(job.env.PYTHON_VERSION,"3.12");
+  assert.equal(job.env.UV_PYTHON,"3.12");
+  assert.equal(job.env.PYTHONFAULTHANDLER,"1");
+  assert.deepEqual(backend.env,job.env);
+  const shared=backend.steps.find(step=>step.uses==="./.github/actions/worker-checks");
+  assert.equal(shared.if,expression("inputs.python"));
+  assert.ok(job.steps.some(step=>step.uses==="./.github/actions/worker-checks"));
+  assert.ok(command(backend,"uv --project workers/automation sync --locked --all-extras"));
+  assert.equal(worker.using,"composite");
+  assert.ok(command(worker,"uv --project workers/automation run --locked --all-extras ruff check workers/automation/src workers/automation/tests"));
+  assert.ok(command(worker,"uv --project workers/automation run --locked --all-extras python scripts/generate-semantic-result-schemas.py --check"));
+  assert.ok(command(worker,'uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25 --junitxml="$RUNNER_TEMP/python-$PYTHON_VERSION.xml"'));
+  assert.ok(command(worker,"uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation"));
+  assert.equal(command(worker,"bash scripts/install-temporal-test-server.sh").name,"Install verified Temporal time-skipping test server");
+  assert.equal(worker.steps.find(step=>step.name==="Upload synthetic Python JUnit report").if,"always()");
+  const network=command(worker,"bash scripts/ci-apt-timeouts.sh");
+  const chromium=worker.steps.find(step=>step.name==="Install Chromium for guarded availability regression");
+  assert.ok(network && worker.steps.indexOf(network)<worker.steps.indexOf(chromium));
+  assert.match(chromium.run,/^timeout --signal=TERM --kill-after=15s 8m uv .*playwright install --with-deps chromium$/);
+  const frontendNetwork=command(frontend,"bash scripts/ci-apt-timeouts.sh");
+  for(const step of frontend.steps.filter(step=>step.run?.includes("playwright install"))) {
+    assert.ok(frontend.steps.indexOf(frontendNetwork)<frontend.steps.indexOf(step));
+    assert.equal(step["timeout-minutes"],8);
+  }
+
+  for(const step of worker.steps) {
+    if(step.run) assert.equal(step.shell,"bash");
+    assert.equal(step["continue-on-error"] ?? false,false,step.name);
+  }
 });
 
-test("main/manual bodies stay intact without duplicate PR execution or expanded deployment access", () => {
-  for(const name of ["typescript","python","docs-site","repo-scripts","release-check","launcher","native-credentials","gmail-token-windows","distribution","demo-edge","demo-site"]){
+test("main has one core owner and retains separately gated site publications and manual diagnostics", () => {
+  for(const name of ["typescript","python","repo-scripts","release-check","launcher","native-credentials","gmail-token-windows","distribution","demo-edge"]){
     const on=events(load(name));
     assert.equal(on.pull_request,undefined,name);
+    assert.equal(on.push,undefined,name+" must not duplicate core main checks");
     assert.ok(Object.hasOwn(on,"workflow_dispatch"),name);
-    if(on.push) assert.deepEqual(on.push.branches,["main"]);
   }
-  for(const [oldName,oldId,newId] of [["typescript","api","api"],["typescript","extension","extension"],["docs-site","build","docs"],["native-credentials","native","credentials-macos"],["gmail-token-windows","private-token","gmail"],["distribution","audit","distribution"],["demo-site","build","demo"],["demo-edge","edge","edge"]])
-    assert.deepEqual(pr.jobs[newId].steps,load(oldName).jobs[oldId].steps,newId+" retains every product step");
-  assert.deepEqual(pr.jobs.preview.needs,["preflight","demo"]);
-  assert.match(pr.jobs.preview.if,/needs\.preflight\.outputs\.preview == 'true'/);
+  for(const name of ["docs-site","demo-site"]){
+    const on=events(load(name));
+    assert.equal(on.pull_request,undefined,name);
+    assert.deepEqual(on.push.branches,["main"]);
+  }
+  assert.deepEqual(pr.jobs.preview.needs,["admission","frontend"]);
+  assert.match(pr.jobs.preview.if,/needs\.admission\.outputs\.preview == 'true'/);
   assert.match(pr.jobs.preview.if,/head\.repo\.full_name == github\.repository/);
   assert.match(pr.jobs.preview.if,/vars\.DEMO_PREVIEW_DEPLOY_ENABLED == 'true'/);
   assert.match(load("docs-site").jobs.deploy.if,/github\.ref == 'refs\/heads\/main'/);
   assert.equal(load("demo-site").jobs.production.environment,"demo-production");
+  assert.equal(load("typescript").jobs.api.uses,"./.github/workflows/ci-backend.yml");
+  assert.equal(load("typescript").jobs.frontend.uses,"./.github/workflows/ci-frontend.yml");
 });
 
 test("both E2E modes publish distinct JUnit evidence and retain first-open screenshots", () => {
-  const job=pr.jobs.e2e;
-  const isolated=job.steps.find(step=>step.name==="Test web end-to-end");
-  const rpc=job.steps.find(step=>step.name==="Test real API and worker RPC boundaries");
+  const job=frontend;
+  const isolated=frontendRecipes.e2e.find(step=>step.name==="Test web end-to-end");
+  const rpc=frontendRecipes.e2e.find(step=>step.name==="Test real API and worker RPC boundaries");
   assert.equal(isolated.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE,expression("runner.temp")+"/e2e-isolated.xml");
   assert.equal(rpc.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE,expression("runner.temp")+"/e2e-real-rpc.xml");
   assert.match(rpc.run,/accepted-material-exports\.spec\.ts/);
@@ -201,8 +233,8 @@ test("both E2E modes publish distinct JUnit evidence and retain first-open scree
   const screenshots=job.steps.find(step=>step.name==="Upload synthetic first-connection screenshots");
   assert.match(screenshots.with.path,/e2e-isolated\.xml\.artifacts\/\*\*\/first-open-/);
   assert.match(screenshots.with.path,/e2e-real-rpc\.xml\.artifacts\/\*\*\/first-open-/);
-  assert.equal(screenshots.if,"always()");
-  assert.equal(job.steps.find(step=>step.name==="Upload synthetic E2E JUnit reports").if,"always()");
+  assert.match(screenshots.if,/always\(\).*inputs.e2e/);
+  assert.match(job.steps.find(step=>step.name==="Upload synthetic E2E JUnit reports").if,/always\(\).*inputs.e2e/);
 });
 
 test("accepted scanner executes against candidate files without importing candidate policy", context=>{
@@ -217,7 +249,7 @@ test("accepted scanner executes against candidate files without importing candid
   writeFileSync(path.join(candidate,"resume.pdf"),"synthetic forbidden artifact");
   execFileSync("git",["init","-q",candidate]);
   execFileSync("git",["-C",candidate,"add","."]);
-  const run=pr.jobs.preflight.steps.find(step=>step.name==="Scan the whole candidate with the accepted privacy policy").run;
+  const run=admission.steps.find(step=>step.name==="Scan the whole candidate with the accepted privacy policy").run;
   const result=spawnSync("bash",["-c",run],{cwd:candidate,encoding:"utf8",env:{...process.env,POLICY_DIRECTORY:policy,GITHUB_WORKSPACE:candidate}});
   assert.equal(result.status,1,result.stderr);
   assert.match(result.stdout,/resume\.pdf: private\/runtime file should not be committed/);
@@ -240,7 +272,7 @@ test("full scope and stale-base web changes cannot authorize static preview", co
   git("checkout","-qb","worker-change");writeFileSync(path.join(repository,worker),"worker change");git("commit","-qam","synthetic worker");
   git("checkout","-qb","updated-base",original);writeFileSync(path.join(repository,web),"accepted base web change");git("commit","-qam","synthetic updated base");const base=git("rev-parse","HEAD");
   git("merge","--no-ff","-qm","synthetic merge","worker-change");
-  const step=pr.jobs.preflight.steps.find(step=>step.id==="preview"),run=step.run;
+  const step=admission.steps.find(step=>step.id==="preview"),run=step.run;
   assert.equal(step.env.ADMITTED_AFFECTED,expression("steps.scope.outputs.head_privacy == 'false'"));
   const check=(merge,affected="true")=>{
     const output=path.join(temporary,"output");writeFileSync(output,"");
