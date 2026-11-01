@@ -285,6 +285,40 @@ describe("resume template service", () => {
     expect(event?.payload_json).toContain("unavailable");
   });
 
+  it("preserves accepted artifacts and bytes when a render-only refresh fails", async () => {
+    const saved = createResumeTemplateVersion(db, {
+      displayName: "Synthetic failed refresh template",
+      theme: { ...BUILT_IN_RESUME_TEMPLATE_THEME, fontFamily: "serif" },
+      layout: {},
+    });
+    setDefaultResumeTemplate(db, {
+      templateId: saved.template.templateId,
+      versionId: saved.template.activeVersion.versionId,
+    });
+    const readArtifacts = () => db.prepare(
+      "SELECT artifact_id, generation, status, path FROM job_materials_artifacts ORDER BY artifact_id",
+    ).all() as Array<{ artifact_id: string; generation: number; status: string; path: string }>;
+    const originalArtifacts = readArtifacts();
+    expect(originalArtifacts.map(({ artifact_id, status }) => ({ artifact_id, status }))).toEqual([
+      { artifact_id: "resume-pdf-v1", status: "approved" },
+      { artifact_id: "resume-text-v1", status: "approved" },
+    ]);
+    const originalBytes = originalArtifacts.map((artifact) => fs.readFileSync(artifact.path));
+
+    const refresh = await ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, async ({ pdfPath }) => {
+      fs.writeFileSync(pdfPath, "partial synthetic render");
+      throw new Error("Synthetic renderer failure");
+    });
+
+    expect(refresh.status).toBe("failed");
+    expect(refresh.generation).toBeNull();
+    expect(refresh.templateState?.state).toBe("refresh_failed");
+    expect(readArtifacts()).toEqual(originalArtifacts);
+    expect(originalArtifacts.map((artifact) => fs.readFileSync(artifact.path))).toEqual(originalBytes);
+    expect(db.prepare("SELECT generation, status FROM job_materials ORDER BY generation").all())
+      .toEqual([{ generation: 1, status: "resume_approved" }]);
+  });
+
   it("renders every line of a long resume across the refreshed PDF without truncation", async () => {
     const longBullet =
       "- Drove a company-wide reliability program spanning ingestion, streaming, and storage tiers while mentoring a distributed platform and product engineering team.";

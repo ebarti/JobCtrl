@@ -2,7 +2,7 @@ import type { JobApplicationOutcomeListResponse, ManualApplicationOutcomeRequest
 import { LOCAL_TENANT, createTenantId, type TenantId } from "@jobctrl/domain-types";
 import type { QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 
@@ -41,10 +41,33 @@ function fixture(ports: Ports, queryClient: QueryClient) {
   return { router, mount, view };
 }
 
+async function findDraftNote(family: "manual" | "reflection" = "manual") {
+  // Label resolution across every mounted form dominates these real-route
+  // cases. Keep the real label association, scoped to its owning section.
+  return waitFor(() => {
+    const section = document.getElementById(family === "manual" ? "job-detail-outcomes" : "job-detail-interview");
+    expect(section).not.toBeNull();
+    return within(section!).getByLabelText(family === "manual" ? "Local note" : "Reflection note", {
+      selector: family === "manual" ? "#manual-outcome-note" : "#interview-reflection-note",
+    });
+  });
+}
+
+async function findDraftButton(name: string, family: "manual" | "reflection" = "manual") {
+  const form = (await findDraftNote(family)).closest("form");
+  expect(form).not.toBeNull();
+  return within(form!).findByRole("button", { name });
+}
+
 async function expandOutcomes(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole("button", { name: "Sections" }));
-  await user.click(await screen.findByRole("button", { name: "Expand all" }));
-  return screen.findByLabelText("Local note", { selector: "#manual-outcome-note" });
+  const workspace = await screen.findByRole("article", { name: "Job details" });
+  const header = workspace.querySelector("header");
+  expect(header).not.toBeNull();
+  await user.click(within(header!).getByRole("button", { name: "Sections" }));
+  const menu = await screen.findByRole("navigation", { name: "Job detail sections" });
+  expect(menu.parentElement).not.toBeNull();
+  await user.click(within(menu.parentElement!).getByRole("button", { name: "Expand all" }));
+  return findDraftNote();
 }
 
 it.each([false, true])("retains a %s pending manual draft through real A-B-A job routes", async pending => {
@@ -62,10 +85,10 @@ it.each([false, true])("retains a %s pending manual draft through real A-B-A job
   await user.type(first, "Synthetic job A draft");
   let request: ManualApplicationOutcomeRequest | undefined;
   if (pending) {
-    await user.click(screen.getByRole("button", { name: "Record outcome" }));
+    await user.click(await findDraftButton("Record outcome"));
     await waitFor(() => expect(record).toHaveBeenCalledTimes(1));
     request = record.mock.calls[0]![1];
-    expect(await screen.findByRole("button", { name: "Start a new action" })).toBeEnabled();
+    expect(await findDraftButton("Start a new action")).toBeEnabled();
   }
   await act(async () => { await router.navigate({ to: "/jobs/$jobId", params: { jobId: JOB_B } }); });
   const second = await expandOutcomes(user);
@@ -76,7 +99,7 @@ it.each([false, true])("retains a %s pending manual draft through real A-B-A job
   expect(returned).toHaveValue("Synthetic job A draft");
   if (pending) {
     expect(returned).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Record outcome" }));
+    await user.click(await findDraftButton("Record outcome"));
     await waitFor(() => expect(record).toHaveBeenCalledTimes(2));
     expect(record.mock.calls[1]![1]).toEqual(request);
   }
@@ -94,8 +117,8 @@ it.each([
   const detail = (jobId: string) => makeJobDetail({ ...sampleJob, jobKey: jobId },
     withPrep ? { interviewPrep: { ...sampleInterviewPrep, jobId } } : {});
   const findNote = () => withPrep
-    ? screen.findByLabelText("Reflection note")
-    : screen.findByLabelText("Local note", { selector: "#manual-outcome-note" });
+    ? findDraftNote("reflection")
+    : findDraftNote();
   const submitName = withPrep ? "Record reflection" : "Record outcome";
   preload(queryClient, LOCAL_TENANT, JOB_A, withPrep);
   let finishJob!: (value: ReturnType<typeof makeJobDetail>) => void;
@@ -113,11 +136,11 @@ it.each([
   await user.type(first, "Synthetic tenant A draft");
   let request: ManualApplicationOutcomeRequest | undefined;
   if (pending) {
-    await user.click(screen.getByRole("button", { name: submitName }));
+    await user.click(await findDraftButton(submitName, family));
     await waitFor(() => expect(record).toHaveBeenCalledTimes(1));
     request = record.mock.calls[0]![1];
     if (withPrep) expect(request.interviewPrepGeneration).toBe(1);
-    expect(await screen.findByRole("button", { name: "Start a new action" })).toBeEnabled();
+    expect(await findDraftButton("Start a new action", family)).toBeEnabled();
   }
   view.rerender(mount(portsB));
   expect(screen.getByTestId("active-tenant")).toHaveTextContent(tenantB);
@@ -134,7 +157,7 @@ it.each([
   expect(returned).toHaveValue("Synthetic tenant A draft");
   if (pending) {
     expect(returned).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: submitName }));
+    await user.click(await findDraftButton(submitName, family));
     await waitFor(() => expect(record).toHaveBeenCalledTimes(2));
     expect(record.mock.calls[1]![1]).toEqual(request);
   }
@@ -163,8 +186,8 @@ it.each([
   const queryClient = createTestQueryClient();
   const withPrep = family === "reflection";
   const findNote = () => withPrep
-    ? screen.findByLabelText("Reflection note")
-    : screen.findByLabelText("Local note", { selector: "#manual-outcome-note" });
+    ? findDraftNote("reflection")
+    : findDraftNote();
   const submitName = withPrep ? "Record reflection" : "Record outcome";
   preload(queryClient, LOCAL_TENANT, JOB_A, withPrep);
   const record = vi.fn(async (jobKey: string, body: ManualApplicationOutcomeRequest) => {
@@ -179,10 +202,10 @@ it.each([
   await user.type(await findNote(), "Synthetic draft before dashboard");
   let request: ManualApplicationOutcomeRequest | undefined;
   if (pending) {
-    await user.click(screen.getByRole("button", { name: submitName }));
+    await user.click(await findDraftButton(submitName, family));
     await waitFor(() => expect(record).toHaveBeenCalledTimes(1));
     request = record.mock.calls[0]![1];
-    expect(await screen.findByRole("button", { name: "Start a new action" })).toBeEnabled();
+    expect(await findDraftButton("Start a new action", family)).toBeEnabled();
   }
   await act(async () => { await router.navigate({ to: "/dashboard" }); });
   expect(await screen.findByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
@@ -193,7 +216,7 @@ it.each([
   expect(returned).toHaveValue("Synthetic draft before dashboard");
   if (pending) {
     expect(returned).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: submitName }));
+    await user.click(await findDraftButton(submitName, family));
     await waitFor(() => expect(record).toHaveBeenCalledTimes(2));
     expect(record.mock.calls[1]![1]).toEqual(request);
   }
@@ -216,10 +239,10 @@ it.each([false, true])("retains a %s pending reflection through keyed job routes
   const ports = buildTestPorts({ api: { job, recordManualApplicationOutcome: record, materialLocaleVariants } });
   const { router } = fixture(ports, queryClient);
   await expandOutcomes(user);
-  await user.type(await screen.findByLabelText("Reflection note"), "Synthetic job A reflection");
+  await user.type(await findDraftNote("reflection"), "Synthetic job A reflection");
   let request: ManualApplicationOutcomeRequest | undefined;
   if (pending) {
-    await user.click(screen.getByRole("button", { name: "Record reflection" }));
+    await user.click(await findDraftButton("Record reflection", "reflection"));
     await waitFor(() => expect(record).toHaveBeenCalledTimes(1));
     request = record.mock.calls[0]![1];
     expect(request.interviewPrepGeneration).toBe(1);
@@ -227,15 +250,15 @@ it.each([false, true])("retains a %s pending reflection through keyed job routes
   }
   await act(async () => { await router.navigate({ to: "/jobs/$jobId", params: { jobId: JOB_B } }); });
   await expandOutcomes(user);
-  expect(await screen.findByLabelText("Reflection note")).toHaveValue("");
-  await user.type(screen.getByLabelText("Reflection note"), "Synthetic job B reflection");
+  expect(await findDraftNote("reflection")).toHaveValue("");
+  await user.type(await findDraftNote("reflection"), "Synthetic job B reflection");
   await act(async () => { await router.navigate({ to: "/jobs/$jobId", params: { jobId: JOB_A } }); });
   await expandOutcomes(user);
-  const returned = await screen.findByLabelText("Reflection note");
+  const returned = await findDraftNote("reflection");
   expect(returned).toHaveValue("Synthetic job A reflection");
   if (pending) {
     expect(returned).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Record reflection" }));
+    await user.click(await findDraftButton("Record reflection", "reflection"));
     await waitFor(() => expect(record).toHaveBeenCalledTimes(2));
     expect(record.mock.calls[1]![1]).toEqual(request);
   }
@@ -254,7 +277,7 @@ it("does not let a late acknowledgement clear a newer action after route replace
   const ports = buildTestPorts({ api: { recordManualApplicationOutcome: record, materialLocaleVariants } });
   const { router } = fixture(ports, queryClient);
   await user.type(await expandOutcomes(user), "Synthetic original action");
-  await user.click(screen.getByRole("button", { name: "Record outcome" }));
+  await user.click(await findDraftButton("Record outcome"));
   await waitFor(() => expect(record).toHaveBeenCalledTimes(1));
   const original = record.mock.calls[0]![1];
   await act(async () => { await router.navigate({ to: "/jobs/$jobId", params: { jobId: JOB_B } }); });
@@ -263,12 +286,12 @@ it("does not let a late acknowledgement clear a newer action after route replace
   const returned = await expandOutcomes(user);
   expect(returned).toHaveValue("Synthetic original action");
   expect(returned).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Start a new action" }));
+  await user.click(await findDraftButton("Start a new action"));
   await user.type(returned, " with a deliberate change");
   await act(async () => { finish({ ok: true, outcome: sampleApplicationOutcomes.outcomes[0]! }); await pending; });
   expect(returned).toHaveValue("Synthetic original action with a deliberate change");
   expect(returned).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Record outcome" }));
+  await user.click(await findDraftButton("Record outcome"));
   await waitFor(() => expect(record).toHaveBeenCalledTimes(2));
   expect(record.mock.calls[1]![1].requestId).not.toBe(original.requestId);
   await act(async () => { await router.navigate({ to: "/jobs/$jobId", params: { jobId: JOB_B } }); });
