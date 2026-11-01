@@ -170,7 +170,7 @@ func TestMacOSPayloadTrustUsesGatekeeperOnlyForOutermostApps(t *testing.T) {
 }
 
 func TestMacOSPayloadTrustRejectsInvalidCodeSignatureOrNotarization(t *testing.T) {
-	payload, _, nodePath, headlessShellPath, _, _ := macOSPayloadTrustFixture(t)
+	payload, _, nodePath, headlessShellPath, outerApp, nestedApp := macOSPayloadTrustFixture(t)
 	for _, testCase := range []struct {
 		name      string
 		failsCall func(path string, args []string) bool
@@ -190,19 +190,40 @@ func TestMacOSPayloadTrustRejectsInvalidCodeSignatureOrNotarization(t *testing.T
 			},
 			contains: "Developer ID/notarization verification failed",
 		},
+		{
+			name: "invalid nested bundle signature",
+			failsCall: func(path string, args []string) bool {
+				return path == "/usr/bin/codesign" && args[len(args)-1] == nestedApp
+			},
+			contains: "nested code-bundle signature verification failed",
+		},
+		{
+			name: "invalid app notarization",
+			failsCall: func(path string, args []string) bool {
+				return path == "/usr/bin/codesign" && args[len(args)-1] == outerApp && containsString(args, "--check-notarization")
+			},
+			contains: "Developer ID/notarization verification failed",
+		},
+		{
+			name: "invalid Gatekeeper assessment",
+			failsCall: func(path string, args []string) bool {
+				return path == "/usr/sbin/spctl"
+			},
+			contains: "Gatekeeper assessment failed",
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			err := verifyMacOSPayloadTrust(payload, func(path string, args ...string) (string, error) {
 				if testCase.failsCall(path, args) {
-					return "", errors.New("fixture verification failure")
+					return "fixture verifier detail\n", errors.New("fixture verification failure")
 				}
 				if path == "/usr/sbin/spctl" {
 					return "source=Notarized Developer ID\n", nil
 				}
 				return "", nil
 			})
-			if err == nil || !strings.Contains(err.Error(), testCase.contains) {
-				t.Fatalf("invalid trust check accepted: %v", err)
+			if err == nil || !strings.Contains(err.Error(), testCase.contains) || !strings.Contains(err.Error(), "fixture verifier detail") {
+				t.Fatalf("invalid trust check accepted or its diagnostic was lost: %v", err)
 			}
 		})
 	}
