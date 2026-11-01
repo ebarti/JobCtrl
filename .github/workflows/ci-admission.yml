@@ -1,0 +1,217 @@
+name: Trusted CI admission
+'on':
+  workflow_call:
+    outputs:
+      api:
+        value: "${{ jobs.preflight.outputs.api }}"
+      web:
+        value: "${{ jobs.preflight.outputs.web }}"
+      storybook:
+        value: "${{ jobs.preflight.outputs.storybook }}"
+      e2e:
+        value: "${{ jobs.preflight.outputs.e2e }}"
+      extension:
+        value: "${{ jobs.preflight.outputs.extension }}"
+      python:
+        value: "${{ jobs.preflight.outputs.python }}"
+      docs:
+        value: "${{ jobs.preflight.outputs.docs }}"
+      launcher:
+        value: "${{ jobs.preflight.outputs.launcher }}"
+      credentials:
+        value: "${{ jobs.preflight.outputs.credentials }}"
+      gmail:
+        value: "${{ jobs.preflight.outputs.gmail }}"
+      distribution:
+        value: "${{ jobs.preflight.outputs.distribution }}"
+      demo:
+        value: "${{ jobs.preflight.outputs.demo }}"
+      edge:
+        value: "${{ jobs.preflight.outputs.edge }}"
+      head_privacy:
+        value: "${{ jobs.preflight.outputs.head_privacy }}"
+      preview:
+        value: "${{ jobs.preflight.outputs.preview }}"
+permissions:
+  contents: read
+jobs:
+  preflight:
+    name: Release check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      api: "${{ steps.scope.outputs.api }}"
+      web: "${{ steps.scope.outputs.web }}"
+      storybook: "${{ steps.scope.outputs.storybook }}"
+      e2e: "${{ steps.scope.outputs.e2e }}"
+      extension: "${{ steps.scope.outputs.extension }}"
+      python: "${{ steps.scope.outputs.python }}"
+      docs: "${{ steps.scope.outputs.docs }}"
+      launcher: "${{ steps.scope.outputs.launcher }}"
+      credentials: "${{ steps.scope.outputs.credentials }}"
+      gmail: "${{ steps.scope.outputs.gmail }}"
+      distribution: "${{ steps.scope.outputs.distribution }}"
+      demo: "${{ steps.scope.outputs.demo }}"
+      edge: "${{ steps.scope.outputs.edge }}"
+      head_privacy: "${{ steps.scope.outputs.head_privacy }}"
+      preview: "${{ steps.preview.outputs.preview_allowed }}"
+    steps:
+    - name: Checkout the exact tested merge
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: "${{ github.sha }}"
+        fetch-depth: 2
+        persist-credentials: false
+    - name: Set up the pinned scope runtime
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: 22.21.1
+    - name: Read the accepted policy without executing candidate code
+      id: policy
+      shell: bash
+      env:
+        POLICY_REF: "${{ github.event.repository.default_branch }}"
+      run: |
+        set -euo pipefail
+        policy_dir="$RUNNER_TEMP/jobctrl-pr-policy"
+        mkdir -p "$policy_dir"
+        git fetch --no-tags --depth=2 origin "refs/heads/$POLICY_REF"
+        policy_sha="$(git rev-parse FETCH_HEAD)"
+        git archive "$policy_sha" scripts/release_check.py workers/automation/tests/test_release_check.py workers/automation/pyproject.toml workers/automation/uv.lock README.md package.json LICENSE NOTICE | tar -x -C "$policy_dir"
+        if git cat-file -e "$policy_sha:scripts/pr-ci-routing.mjs" 2>/dev/null; then
+          git show "$policy_sha:scripts/pr-ci-routing.mjs" > "$policy_dir/scripts/pr-ci-routing.mjs"
+        fi
+        echo "directory=$policy_dir" >> "$GITHUB_OUTPUT"
+        echo "commit=$policy_sha" >> "$GITHUB_OUTPUT"
+    - name: Set up the privacy interpreter
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.11'
+    - name: Set up pinned base-only privacy tools
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+      with:
+        version: 0.11.7
+        enable-cache: true
+        cache-dependency-glob: "${{ steps.policy.outputs.directory }}/workers/automation/uv.lock"
+        cache-suffix: pr-base-privacy
+    - name: Sync only the accepted privacy test tools
+      working-directory: "${{ steps.policy.outputs.directory }}"
+      run: uv --project "$POLICY_DIRECTORY/workers/automation" sync --locked --only-group
+        release-check
+      env:
+        POLICY_DIRECTORY: "${{ steps.policy.outputs.directory }}"
+    - name: Scan the whole candidate with the accepted privacy policy
+      env:
+        POLICY_DIRECTORY: "${{ steps.policy.outputs.directory }}"
+      run: |
+        python -I - <<'PYTHON'
+        import importlib.util
+        import os
+        from pathlib import Path
+        import sys
+        source = Path(os.environ["POLICY_DIRECTORY"]) / "scripts/release_check.py"
+        spec = importlib.util.spec_from_file_location("trusted_release_check", source)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        module.ROOT = Path(os.environ["GITHUB_WORKSPACE"])
+        raise SystemExit(module.main(["--strict-prompt"]))
+        PYTHON
+    - name: Test the accepted privacy policy in isolation
+      working-directory: "${{ steps.policy.outputs.directory }}"
+      env:
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      run: uv --project workers/automation run --locked --only-group release-check
+        pytest -q -c /dev/null -p no:cacheprovider --noconftest workers/automation/tests/test_release_check.py
+    - name: Fetch the exact main diff base when available
+      if: "${{ github.event_name == 'push' }}"
+      shell: bash
+      run: |
+        node --input-type=module <<'NODE'
+        import { readFileSync } from 'node:fs';
+        import { execFileSync } from 'node:child_process';
+        const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+        if (/^[a-f0-9]{40}$/.test(event.before ?? '') && event.before !== '0'.repeat(40)) {
+          try { execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'fetch', '--no-tags', '--depth=1', 'origin', event.before], { stdio: 'pipe' }); }
+          catch { console.log('Main diff base unavailable; accepted policy will use full core coverage.'); }
+        }
+        NODE
+    - name: Validate and publish the exact PR scope
+      id: scope
+      shell: bash
+      env:
+        POLICY_DIRECTORY: "${{ steps.policy.outputs.directory }}"
+        POLICY_COMMIT: "${{ steps.policy.outputs.commit }}"
+        EMIT_SCOPE_NOTICE: "${{ github.job == 'preflight' }}"
+      run: |
+        set -euo pipefail
+        set -- --event "$GITHUB_EVENT_PATH" --repository "$GITHUB_WORKSPACE" --policy "$POLICY_COMMIT" --output "$GITHUB_OUTPUT"
+        if [[ "$EMIT_SCOPE_NOTICE" == true ]]; then set -- "$@" --notice; fi
+        if [[ -f "$POLICY_DIRECTORY/scripts/pr-ci-routing.mjs" ]]; then
+          node "$POLICY_DIRECTORY/scripts/pr-ci-routing.mjs" "$@"
+        else
+          # A new helper cannot authorize exclusions on its own rollout PR.
+          node --input-type=module <<'NODE'
+        import { execFileSync } from 'node:child_process';
+        import { readFileSync, appendFileSync } from 'node:fs';
+        const e = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+        const p = e.pull_request;
+        const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+        const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
+        if (process.env.GITHUB_EVENT_NAME !== 'pull_request' || !p || !Number.isSafeInteger(e.number) || e.number < 1 || p.number !== e.number ||
+            !Number.isSafeInteger(e.repository.id) || e.repository.id < 1 ||
+            e.repository.full_name !== process.env.GITHUB_REPOSITORY || String(e.repository.id) !== process.env.GITHUB_REPOSITORY_ID ||
+            p.base.repo.full_name !== process.env.GITHUB_REPOSITORY || p.base.repo.id !== e.repository.id ||
+            !Number.isSafeInteger(p.head.repo?.id) || p.head.repo.id < 1 ||
+            !Number.isSafeInteger(Number(process.env.GITHUB_RUN_ID)) || !Number.isSafeInteger(Number(process.env.GITHUB_RUN_ATTEMPT)) ||
+            ![p.base.sha, p.head.sha, process.env.GITHUB_SHA, process.env.POLICY_COMMIT].every(sha) ||
+            process.env.GITHUB_REF !== 'refs/pull/' + e.number + '/merge' ||
+            !/^[1-9][0-9]*$/.test(process.env.GITHUB_RUN_ID ?? '') || !/^[1-9][0-9]*$/.test(process.env.GITHUB_RUN_ATTEMPT ?? '') ||
+            git('rev-parse', 'HEAD') !== process.env.GITHUB_SHA ||
+            git('show', '-s', '--format=%P', process.env.GITHUB_SHA) !== p.base.sha + ' ' + p.head.sha) throw Error('Unverified PR merge identity: ' + JSON.stringify({
+              eventBase: p.base.sha, eventHead: p.head.sha, eventMerge: p.merge_commit_sha,
+              testedMerge: process.env.GITHUB_SHA, checkout: git('rev-parse', 'HEAD'),
+              parents: git('show', '-s', '--format=%P', process.env.GITHUB_SHA),
+              eventRepository: e.repository.full_name, environmentRepository: process.env.GITHUB_REPOSITORY,
+              eventRepositoryId: e.repository.id, environmentRepositoryId: process.env.GITHUB_REPOSITORY_ID,
+              eventNumber: e.number, eventPullRequestNumber: p.number, ref: process.env.GITHUB_REF,
+            }));
+        const suites = ["api","web","storybook","e2e","extension","python","docs","launcher","credentials","gmail","distribution","demo","edge"];
+        const names = ["Admission / Release check", "Backend / Core checks", "Frontend / UI checks", "Browser / UI checks", "Native / Darwin launcher shard 0", "Native / Darwin launcher shard 1", "Credentials / Native credentials (macos-latest)", "Credentials / Native credentials (windows-latest)", "Credentials / Native credentials (ubuntu-latest)", "Gmail / Synthetic Gmail token ACL (Windows)"];
+        const selected = Object.fromEntries(suites.map(id => [id, true]));
+        const scope = {
+          schemaVersion: 1, repository: { id: e.repository.id, fullName: process.env.GITHUB_REPOSITORY },
+          pullRequest: e.number, run: { id: Number(process.env.GITHUB_RUN_ID), attempt: Number(process.env.GITHUB_RUN_ATTEMPT) },
+          event: 'pull_request', base: { ref: p.base.ref, sha: p.base.sha },
+          head: { repoId: p.head.repo?.id ?? null, sha: p.head.sha },
+          mergeSha: process.env.GITHUB_SHA, policy: { commit: process.env.POLICY_COMMIT, blob: 'bootstrap' },
+          mode: 'full', reason: 'bootstrap', selected, contexts: Object.fromEntries(names.map(name => [name, true])), headPrivacy: true,
+        };
+        appendFileSync(process.env.GITHUB_OUTPUT, [...suites.map(id => id + '=true'), 'head_privacy=true'].join('\n') + '\n');
+        if (process.env.EMIT_SCOPE_NOTICE === 'true') console.log('::notice title=JobCtrl CI scope v1::' + JSON.stringify(scope).replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A'));
+        NODE
+        fi
+    - name: Preserve the original static preview input scope
+      id: preview
+      shell: bash
+      env:
+        PR_BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+        ADMITTED_AFFECTED: "${{ steps.scope.outputs.head_privacy == 'false' }}"
+      run: |
+        node --input-type=module <<'NODE'
+        import { execFileSync } from 'node:child_process';
+        import { appendFileSync } from 'node:fs';
+        let allowed = false;
+        try {
+          if (process.env.ADMITTED_AFFECTED !== 'true') throw Error('No affected-only admission');
+          const raw = execFileSync('git', ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', process.env.PR_BASE_SHA, process.env.GITHUB_SHA, '--'], { maxBuffer: 32 * 1024 * 1024 });
+          const paths = new TextDecoder('utf-8', { fatal: true }).decode(raw).split('\0');
+          if (paths.pop() !== '') throw Error('Incomplete preview diff');
+          allowed = paths.some(path => path.startsWith('apps/web/') || path.startsWith('packages/') ||
+            ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.github/workflows/demo-site.yml'].includes(path) ||
+            /^scripts\/demo-[^/]*\.mjs$/.test(path));
+        } catch {
+          console.log('Static preview disabled: full/uncertain admission or original inputs not established.');
+        }
+        appendFileSync(process.env.GITHUB_OUTPUT, 'preview_allowed=' + allowed + '\n');
+        NODE

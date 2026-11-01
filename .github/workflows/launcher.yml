@@ -1,197 +1,209 @@
 name: Native Launcher CI
-
-# The launcher's migration boundary is cross-runtime: the Go launcher opens the
-# database with the locked Python migration runtime and reopens it through the
-# TypeScript API probe, so worker lock/schema and API reopen-probe files are
-# real inputs here alongside launcher/**.
-on:
-  push:
-    branches: ["main"]
-    paths:
-      - "launcher/**"
-      - "workers/automation/src/jobctrl/database.py"
-      - "workers/automation/src/jobctrl/browser_capabilities.py"
-      - "workers/automation/src/jobctrl/config.py"
-      - "workers/automation/src/jobctrl/state.py"
-      - "workers/automation/src/jobctrl/runtime.py"
-      - "workers/automation/src/jobctrl/apply/**"
-      - "workers/automation/src/jobctrl/infrastructure/apply/**"
-      - "workers/automation/src/jobctrl/domain/**"
-      - "workers/automation/src/jobctrl/infrastructure/migrations/**"
-      - "workers/automation/src/jobctrl/infrastructure/projections/**"
-      - "workers/automation/src/jobctrl/infrastructure/scoring/**"
-      - "workers/automation/src/jobctrl/infrastructure/temporal/**"
-      - "workers/automation/tests/fixtures/shipped_v6_schema.sql"
-      - "workers/automation/tests/v6_migration_fixture.py"
-      - "workers/automation/tests/helpers/apply_*.py"
-      - "workers/automation/tests/test_native_apply_readiness.py"
-      - "workers/automation/tests/test_apply_regressions.py"
-      - "workers/automation/tests/test_apply_use_cases.py"
-      - "workers/automation/tests/temporal_env.py"
-      - "workers/automation/tests/availability_fixture.py"
-      - "packaging/distribution/components.lock.json"
-      - "packaging/distribution/capability-policy.json"
-      - "workers/automation/pyproject.toml"
-      - "workers/automation/uv.lock"
-      - "apps/api/package.json"
-      - "apps/api/tsconfig.json"
-      - "apps/api/src/db.ts"
-      - "apps/api/src/schema-manifest.ts"
-      - "apps/api/test/support/reopen-exact-v8.ts"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "packages/tsconfig/**"
-      - ".github/workflows/launcher.yml"
-  pull_request:
-    paths:
-      - "launcher/**"
-      - "workers/automation/src/jobctrl/database.py"
-      - "workers/automation/src/jobctrl/browser_capabilities.py"
-      - "workers/automation/src/jobctrl/config.py"
-      - "workers/automation/src/jobctrl/state.py"
-      - "workers/automation/src/jobctrl/runtime.py"
-      - "workers/automation/src/jobctrl/apply/**"
-      - "workers/automation/src/jobctrl/infrastructure/apply/**"
-      - "workers/automation/src/jobctrl/domain/**"
-      - "workers/automation/src/jobctrl/infrastructure/migrations/**"
-      - "workers/automation/src/jobctrl/infrastructure/projections/**"
-      - "workers/automation/src/jobctrl/infrastructure/scoring/**"
-      - "workers/automation/src/jobctrl/infrastructure/temporal/**"
-      - "workers/automation/tests/fixtures/shipped_v6_schema.sql"
-      - "workers/automation/tests/v6_migration_fixture.py"
-      - "workers/automation/tests/helpers/apply_*.py"
-      - "workers/automation/tests/test_native_apply_readiness.py"
-      - "workers/automation/tests/test_apply_regressions.py"
-      - "workers/automation/tests/test_apply_use_cases.py"
-      - "workers/automation/tests/temporal_env.py"
-      - "workers/automation/tests/availability_fixture.py"
-      - "packaging/distribution/components.lock.json"
-      - "packaging/distribution/capability-policy.json"
-      - "workers/automation/pyproject.toml"
-      - "workers/automation/uv.lock"
-      - "apps/api/package.json"
-      - "apps/api/tsconfig.json"
-      - "apps/api/src/db.ts"
-      - "apps/api/src/schema-manifest.ts"
-      - "apps/api/test/support/reopen-exact-v8.ts"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "packages/tsconfig/**"
-      - ".github/workflows/launcher.yml"
+'on':
   workflow_dispatch:
-
+  workflow_call:
+    inputs:
+      enabled:
+        type: boolean
+        default: true
 permissions:
   contents: read
-
-concurrency:
-  group: launcher-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-
 jobs:
-  launcher-shard:
-    name: Darwin launcher shard ${{ matrix.shard }}
+  launcher0:
+    if: "${{ github.event_name == 'workflow_dispatch' || inputs.enabled }}"
+    name: Darwin launcher shard 0
     runs-on: macos-15
     timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1]
+    env:
+      TEST_SHARD: '0'
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up pinned Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.26.4"
-          cache-dependency-path: launcher/go.mod
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22.21.1
-          cache: pnpm
-      - name: Set up migration integration Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-      - name: Set up pinned uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: 0.11.7
-          enable-cache: true
-          cache-dependency-glob: workers/automation/uv.lock
-      - name: Sync the locked native integration runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Native Apply fixtures reuse pytest-decorated seeds and controlled ports.
-          uv --project workers/automation sync --locked --no-default-groups --group release-check
-          echo "JOBCTRL_MIGRATION_TEST_PYTHON=$GITHUB_WORKSPACE/workers/automation/.venv/bin/python3" >> "$GITHUB_ENV"
-      - name: Install the verified Temporal integration runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --input-type=module <<'NODE'
-          import { createHash } from 'node:crypto';
-          import { readFile, writeFile } from 'node:fs/promises';
-          import path from 'node:path';
-          const lock = JSON.parse(await readFile('packaging/distribution/components.lock.json', 'utf8'));
-          const input = lock.inputs.find((entry) => entry.id === 'temporal-runtime-archive');
-          if (lock.platform !== `${process.platform}-${process.arch}` || !input) throw new Error('No locked Temporal runtime for this runner');
-          const response = await fetch(input.url);
-          if (!response.ok) throw new Error(`Temporal download failed: ${response.status}`);
-          const archive = Buffer.from(await response.arrayBuffer());
-          if (createHash('sha256').update(archive).digest('hex') !== input.sha256) throw new Error('Temporal archive digest mismatch');
-          await writeFile(path.join(process.env.RUNNER_TEMP, 'jobctrl-temporal.tar.gz'), archive);
-          NODE
-          mkdir -p "$RUNNER_TEMP/jobctrl-temporal"
-          tar -xOf "$RUNNER_TEMP/jobctrl-temporal.tar.gz" temporal > "$RUNNER_TEMP/jobctrl-temporal/temporal"
-          chmod 700 "$RUNNER_TEMP/jobctrl-temporal/temporal"
-          echo "JOBCTRL_TEMPORAL_CLI_PATH=$RUNNER_TEMP/jobctrl-temporal/temporal" >> "$GITHUB_ENV"
-      - name: Install locked TypeScript migration probe
-        run: corepack pnpm install --frozen-lockfile
-      - name: Bind the migration integration Node runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "JOBCTRL_MIGRATION_TEST_NODE=$(command -v node)" >> "$GITHUB_ENV"
-      - name: Test native fixture publication
-        if: ${{ matrix.shard == 0 }}
-        working-directory: workers/automation
-        run: |
-          "$JOBCTRL_MIGRATION_TEST_PYTHON" -m unittest tests.test_native_apply_readiness
-      - name: Vet native launcher
-        if: ${{ matrix.shard == 0 }}
-        working-directory: launcher
-        run: go vet ./...
-      - name: Test native launcher shard
-        working-directory: launcher
-        shell: bash
-        env:
-          TEST_SHARD: ${{ matrix.shard }}
-        run: |
-          set -euo pipefail
-          # Separate runners own their fixed test ports. Each top-level test is
-          # assigned exactly once; selecting a parent includes all its subtests.
-          tests="$(go test ./internal/launcher -list '^Test' | awk -v shard="$TEST_SHARD" '/^Test[[:alnum:]_]+$/ { if (count++ % 2 == shard) print }')"
-          if [[ -z "$tests" ]]; then
-            echo "No native launcher tests were assigned to shard $TEST_SHARD" >&2
-            exit 1
-          fi
-          printf '%s\n' "$tests"
-          pattern="$(printf '%s\n' "$tests" | paste -sd '|' -)"
-          go test -race -timeout 18m -count=1 ./internal/launcher -run "^($pattern)$"
-          if [[ "$TEST_SHARD" = 0 ]]; then
-            go list ./... | grep -v '/internal/launcher$' | xargs go test -race -timeout 18m -count=1
-          fi
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Set up pinned Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.26.4
+        cache-dependency-path: launcher/go.mod
+    - name: Set up pnpm
+      uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+    - name: Set up Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: 22.21.1
+        cache: pnpm
+    - name: Set up migration integration Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.12'
+    - name: Set up pinned uv
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+      with:
+        version: 0.11.7
+        enable-cache: true
+        cache-dependency-glob: workers/automation/uv.lock
+    - name: Sync the locked native integration runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Native Apply fixtures reuse pytest-decorated seeds and controlled ports.
+        uv --project workers/automation sync --locked --no-default-groups --group release-check
+        echo "JOBCTRL_MIGRATION_TEST_PYTHON=$GITHUB_WORKSPACE/workers/automation/.venv/bin/python3" >> "$GITHUB_ENV"
+    - name: Install the verified Temporal integration runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        node --input-type=module <<'NODE'
+        import { createHash } from 'node:crypto';
+        import { readFile, writeFile } from 'node:fs/promises';
+        import path from 'node:path';
+        const lock = JSON.parse(await readFile('packaging/distribution/components.lock.json', 'utf8'));
+        const input = lock.inputs.find((entry) => entry.id === 'temporal-runtime-archive');
+        if (lock.platform !== `${process.platform}-${process.arch}` || !input) throw new Error('No locked Temporal runtime for this runner');
+        const response = await fetch(input.url);
+        if (!response.ok) throw new Error(`Temporal download failed: ${response.status}`);
+        const archive = Buffer.from(await response.arrayBuffer());
+        if (createHash('sha256').update(archive).digest('hex') !== input.sha256) throw new Error('Temporal archive digest mismatch');
+        await writeFile(path.join(process.env.RUNNER_TEMP, 'jobctrl-temporal.tar.gz'), archive);
+        NODE
+        mkdir -p "$RUNNER_TEMP/jobctrl-temporal"
+        tar -xOf "$RUNNER_TEMP/jobctrl-temporal.tar.gz" temporal > "$RUNNER_TEMP/jobctrl-temporal/temporal"
+        chmod 700 "$RUNNER_TEMP/jobctrl-temporal/temporal"
+        echo "JOBCTRL_TEMPORAL_CLI_PATH=$RUNNER_TEMP/jobctrl-temporal/temporal" >> "$GITHUB_ENV"
+    - name: Install locked TypeScript migration probe
+      run: corepack pnpm install --frozen-lockfile
+    - name: Bind the migration integration Node runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "JOBCTRL_MIGRATION_TEST_NODE=$(command -v node)" >> "$GITHUB_ENV"
+    - name: Test native fixture publication
+      if: "${{ env.TEST_SHARD == '0' }}"
+      working-directory: workers/automation
+      run: '"$JOBCTRL_MIGRATION_TEST_PYTHON" -m unittest tests.test_native_apply_readiness
 
-  launcher:
-    name: Darwin launcher (vet + race)
-    needs: launcher-shard
-    runs-on: ubuntu-24.04
+'
+    - name: Vet native launcher
+      if: "${{ env.TEST_SHARD == '0' }}"
+      working-directory: launcher
+      run: go vet ./...
+    - name: Test native launcher shard
+      working-directory: launcher
+      shell: bash
+      env:
+        TEST_SHARD: "${{ env.TEST_SHARD }}"
+      run: |
+        set -euo pipefail
+        # Separate runners own their fixed test ports. Each top-level test is
+        # assigned exactly once; selecting a parent includes all its subtests.
+        tests="$(go test ./internal/launcher -list '^Test' | awk -v shard="$TEST_SHARD" '/^Test[[:alnum:]_]+$/ { if (count++ % 2 == shard) print }')"
+        if [[ -z "$tests" ]]; then
+          echo "No native launcher tests were assigned to shard $TEST_SHARD" >&2
+          exit 1
+        fi
+        printf '%s\n' "$tests"
+        pattern="$(printf '%s\n' "$tests" | paste -sd '|' -)"
+        go test -race -timeout 18m -count=1 ./internal/launcher -run "^($pattern)$"
+        if [[ "$TEST_SHARD" = 0 ]]; then
+          go list ./... | grep -v '/internal/launcher$' | xargs go test -race -timeout 18m -count=1
+        fi
+  launcher1:
+    if: "${{ github.event_name == 'workflow_dispatch' || inputs.enabled }}"
+    name: Darwin launcher shard 1
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      TEST_SHARD: '1'
     steps:
-      - name: Confirm both native shards passed
-        run: echo "Both native launcher test shards passed."
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Set up pinned Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.26.4
+        cache-dependency-path: launcher/go.mod
+    - name: Set up pnpm
+      uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+    - name: Set up Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: 22.21.1
+        cache: pnpm
+    - name: Set up migration integration Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.12'
+    - name: Set up pinned uv
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+      with:
+        version: 0.11.7
+        enable-cache: true
+        cache-dependency-glob: workers/automation/uv.lock
+    - name: Sync the locked native integration runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Native Apply fixtures reuse pytest-decorated seeds and controlled ports.
+        uv --project workers/automation sync --locked --no-default-groups --group release-check
+        echo "JOBCTRL_MIGRATION_TEST_PYTHON=$GITHUB_WORKSPACE/workers/automation/.venv/bin/python3" >> "$GITHUB_ENV"
+    - name: Install the verified Temporal integration runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        node --input-type=module <<'NODE'
+        import { createHash } from 'node:crypto';
+        import { readFile, writeFile } from 'node:fs/promises';
+        import path from 'node:path';
+        const lock = JSON.parse(await readFile('packaging/distribution/components.lock.json', 'utf8'));
+        const input = lock.inputs.find((entry) => entry.id === 'temporal-runtime-archive');
+        if (lock.platform !== `${process.platform}-${process.arch}` || !input) throw new Error('No locked Temporal runtime for this runner');
+        const response = await fetch(input.url);
+        if (!response.ok) throw new Error(`Temporal download failed: ${response.status}`);
+        const archive = Buffer.from(await response.arrayBuffer());
+        if (createHash('sha256').update(archive).digest('hex') !== input.sha256) throw new Error('Temporal archive digest mismatch');
+        await writeFile(path.join(process.env.RUNNER_TEMP, 'jobctrl-temporal.tar.gz'), archive);
+        NODE
+        mkdir -p "$RUNNER_TEMP/jobctrl-temporal"
+        tar -xOf "$RUNNER_TEMP/jobctrl-temporal.tar.gz" temporal > "$RUNNER_TEMP/jobctrl-temporal/temporal"
+        chmod 700 "$RUNNER_TEMP/jobctrl-temporal/temporal"
+        echo "JOBCTRL_TEMPORAL_CLI_PATH=$RUNNER_TEMP/jobctrl-temporal/temporal" >> "$GITHUB_ENV"
+    - name: Install locked TypeScript migration probe
+      run: corepack pnpm install --frozen-lockfile
+    - name: Bind the migration integration Node runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "JOBCTRL_MIGRATION_TEST_NODE=$(command -v node)" >> "$GITHUB_ENV"
+    - name: Test native fixture publication
+      if: "${{ env.TEST_SHARD == '0' }}"
+      working-directory: workers/automation
+      run: '"$JOBCTRL_MIGRATION_TEST_PYTHON" -m unittest tests.test_native_apply_readiness
+
+'
+    - name: Vet native launcher
+      if: "${{ env.TEST_SHARD == '0' }}"
+      working-directory: launcher
+      run: go vet ./...
+    - name: Test native launcher shard
+      working-directory: launcher
+      shell: bash
+      env:
+        TEST_SHARD: "${{ env.TEST_SHARD }}"
+      run: |
+        set -euo pipefail
+        # Separate runners own their fixed test ports. Each top-level test is
+        # assigned exactly once; selecting a parent includes all its subtests.
+        tests="$(go test ./internal/launcher -list '^Test' | awk -v shard="$TEST_SHARD" '/^Test[[:alnum:]_]+$/ { if (count++ % 2 == shard) print }')"
+        if [[ -z "$tests" ]]; then
+          echo "No native launcher tests were assigned to shard $TEST_SHARD" >&2
+          exit 1
+        fi
+        printf '%s\n' "$tests"
+        pattern="$(printf '%s\n' "$tests" | paste -sd '|' -)"
+        go test -race -timeout 18m -count=1 ./internal/launcher -run "^($pattern)$"
+        if [[ "$TEST_SHARD" = 0 ]]; then
+          go list ./... | grep -v '/internal/launcher$' | xargs go test -race -timeout 18m -count=1
+        fi
