@@ -228,6 +228,19 @@ test("main has one core owner and retains separately gated site publications and
   assert.equal(load("typescript").jobs.frontend.uses,"./.github/workflows/ci-frontend.yml");
 });
 
+test("manual TypeScript diagnostics cannot duplicate automatic required check names", () => {
+  const contexts = workflow => Object.values(workflow.jobs).flatMap(call => {
+    if (!call.uses) return [];
+    const child = load(call.uses.split("/").at(-1).replace(".yml", ""));
+    return Object.values(child.jobs).map(job => call.name + " / " + job.name);
+  });
+  const automatic = new Set(contexts(pr));
+  const manual = contexts(load("typescript"));
+  assert.equal(manual.length, 4, "all four manual profiles remain available");
+  assert.equal(new Set(manual).size, manual.length);
+  for (const name of manual) assert.equal(automatic.has(name), false, name);
+});
+
 test("both E2E modes publish distinct JUnit evidence and retain first-open screenshots", () => {
   const job=frontend;
   const isolated=frontendRecipes.e2e.find(step=>step.name==="Test web end-to-end");
