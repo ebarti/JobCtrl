@@ -672,12 +672,13 @@ change until they are 30 days old; see the
 
 Python CI syncs `workers/automation/uv.lock` with `--locked --all-extras`; it
 must never resolve the floating ranges in `pyproject.toml` in place of the
-locked candidate graph. The full worker suite runs with two pytest-xdist
-processes and `--dist=loadfile`, keeping a file's fixtures in one process while
+locked candidate graph. Hosted worker verification uses four pytest-xdist
+processes on the observed four-CPU, 16-GiB Ubuntu runner; local aggregate commands
+keep two processes. Both use `--dist=loadfile`, keeping a file's fixtures in one process while
 independent files overlap. Each process owns its temporary JobCtrl workspace.
 `--max-worker-restart=0` makes a crashed or timed-out worker fail the run without
-an automatic restart. `corepack pnpm python:test` and the full worker recipe use
-the same settings and pass `workers/automation/tests` explicitly so pytest loads
+an automatic restart. `corepack pnpm python:test` and the full worker recipe
+pass `workers/automation/tests` explicitly so pytest loads
 the worker's configuration. Focused pytest commands stay serial unless the
 caller requests workers; do not pay process startup for a single small file.
 Ephemeral Temporal test environments must start and
