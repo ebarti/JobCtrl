@@ -1,7 +1,7 @@
 name: Docs Site
 
 # Push filters exclude documents outside the built site. PR verification lives
-# in pr-ci.yml; main/manual publication stays here.
+# in ci.yml; main/manual publication stays here.
 on:
   push:
     branches: ["main"]

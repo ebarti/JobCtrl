@@ -1,55 +1,35 @@
 name: Distribution
-
-# Fail-closed release contracts (provider locks, manifest counts, license,
-# payload, and direct-dependency baselines) for changes that move dependency
-# locks or packaging inputs — the surface Dependabot PRs touch.
-on:
-  push:
-    branches: ["main"]
-    paths:
-      - "package.json"
-      - "apps/*/package.json"
-      - "packages/*/package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "workers/automation/pyproject.toml"
-      - "workers/automation/uv.lock"
-      - "packaging/**"
-      - "scripts/distribution-*"
-      - ".github/workflows/distribution.yml"
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: distribution-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-
+  cancel-in-progress: "${{ github.ref != 'refs/heads/main' }}"
 jobs:
   audit:
     name: Release distribution contracts
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22.21.1
-          cache: pnpm
-      - name: Set up pinned uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: 0.11.7
-          enable-cache: true
-          cache-dependency-glob: workers/automation/uv.lock
-      - name: Install locked workspace dependencies
-        run: corepack pnpm install --frozen-lockfile
-      - name: Audit release distribution contracts
-        run: corepack pnpm distribution:audit
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Set up pnpm
+      uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+    - name: Set up Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: 22.21.1
+        cache: pnpm
+    - name: Set up pinned uv
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+      with:
+        version: 0.11.7
+        enable-cache: true
+        cache-dependency-glob: workers/automation/uv.lock
+    - name: Install locked workspace dependencies
+      run: corepack pnpm install --frozen-lockfile
+    - name: Audit release distribution contracts
+      run: corepack pnpm distribution:audit
+'on':
+  workflow_dispatch:
