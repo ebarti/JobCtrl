@@ -224,8 +224,12 @@ inherited environment variables first, with a process-start native OS
 credential-store fallback for the fixed secret allowlist. The fallback never
 overrides a non-empty environment value and never exposes the stored value through HTTP, logs, or diagnostics.
 The adapters use macOS Keychain, Windows Credential Manager, and Linux Secret
-Service. The CapSolver key is an env var scoped to the owned solver tool; Gmail token files are local;
-job-site passwords, if saved, remain local profile data and are not exposed to
+Service. The CapSolver key is an env var scoped to the owned solver tool; Gmail token files are local and
+use a private same-directory staged replacement for authentication and refresh.
+Windows stages use a protected current-user and LocalSystem DACL at creation;
+filesystems without persistent ACLs refuse the write. Provider errors and token
+contents are not included in persistence errors.
+Job-site passwords, if saved, remain local profile data and are not exposed to
 the page-reading agent.
 SQLite, generated artifacts, browser profiles, logs, prompts, completions, and
 worker directories are sensitive. Langfuse/OTel export is opt-in and
@@ -284,6 +288,11 @@ retries and layered containment. The use case
 (`infrastructure/apply/claude_code_cli.py`) enforce it; the full stage walkthrough
 is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
 
+- **Launch-bound browser cleanup.** Browser startup refuses an occupied CDP
+  resource. Cancellation and shutdown select only the exact recorded launch
+  identity, preserving unrelated listeners and processes. The platform
+  authority and incomplete-cleanup rules are owned by
+  [Apply browser ownership](../architecture/runtime.md#apply-browser-ownership).
 - **No model-owned final browser commit.** Every model-driven browser session
   is transport-locked. A live browser-form run returns
   `trusted_final_submit_required` before prompt rendering or browser launch.

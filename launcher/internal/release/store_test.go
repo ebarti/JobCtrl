@@ -180,6 +180,9 @@ func TestJournalPersistsFailureForSafeRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if j.SchemaVersion != 2 {
+		t.Fatalf("new journal version = %d, want 2", j.SchemaVersion)
+	}
 	if err := store.Advance(&j, CandidateStarting, errors.New("injected")); err != nil {
 		t.Fatal(err)
 	}
@@ -192,5 +195,51 @@ func TestJournalPersistsFailureForSafeRecovery(t *testing.T) {
 	}
 	if loaded.Resumable() {
 		t.Fatal("rolled back journal remained resumable")
+	}
+}
+
+func TestLegacyJournalRecoveryAdvancesWithProtocolTwoFence(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := Journal{SchemaVersion: 1, ID: "legacy", Operation: "update", State: CandidateStarting, UpdatedAt: time.Now().UTC()}
+	if err := store.writeJournal(legacy); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.ReadJournal()
+	if err != nil || loaded.SchemaVersion != 1 || !loaded.Resumable() {
+		t.Fatalf("legacy journal = %#v, %v", loaded, err)
+	}
+	if err := store.Advance(&loaded, RollbackRestoring, nil); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := store.ReadJournal()
+	if err != nil || reopened.SchemaVersion != 2 || reopened.State != RollbackRestoring || !reopened.Resumable() {
+		t.Fatalf("reopened journal = %#v, %v", reopened, err)
+	}
+	if err := store.Advance(&reopened, RolledBack, nil); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := store.ReadJournal()
+	if err != nil || terminal.SchemaVersion != 2 || terminal.Resumable() {
+		t.Fatalf("terminal journal = %#v, %v", terminal, err)
+	}
+}
+
+func TestJournalRejectsUnknownVersions(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsupported := Journal{SchemaVersion: 3, ID: "unknown", Operation: "update", State: CandidateStarting}
+	if err := store.writeJournal(unsupported); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadJournal(); err == nil {
+		t.Fatal("unknown journal version was accepted")
+	}
+	if err := store.Advance(&unsupported, RolledBack, nil); err == nil {
+		t.Fatal("unknown journal version was advanced")
 	}
 }

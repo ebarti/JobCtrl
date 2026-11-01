@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -134,7 +136,7 @@ def authenticate(*, open_browser: bool = True, timeout_seconds: int = 180) -> Pa
             self.send_response(200 if result.get("code") else 400)
             self.end_headers()
             body = (
-                "Gmail auth complete. You can close this tab."
+                "Gmail authorization received. Return to JobCtrl to finish."
                 if result.get("code")
                 else "Gmail auth failed. Return to the terminal."
             )
@@ -161,10 +163,14 @@ def authenticate(*, open_browser: bool = True, timeout_seconds: int = 180) -> Pa
         if not done.wait(timeout_seconds):
             raise GmailAuthError("timed out waiting for Gmail OAuth callback")
         if result.get("error"):
-            raise GmailAuthError(f"Gmail OAuth failed: {result['error']}")
+            if result["error"] == "state mismatch":
+                raise GmailAuthError("Gmail OAuth state mismatch")
+            raise GmailAuthError("Gmail OAuth authorization failed")
         token = exchange_code(client, redirect_uri, result["code"])
-        token_path.write_text(json.dumps(token, indent=2), encoding="utf-8")
-        token_path.chmod(0o600)
+        refresh = token.get("refresh_token")
+        if not isinstance(refresh, str) or not refresh.strip():
+            raise GmailAuthError("Gmail authorization did not provide a usable refresh token; retry authorization")
+        save_token(token, token_path)
         return token_path
     finally:
         server.shutdown()
@@ -172,20 +178,14 @@ def authenticate(*, open_browser: bool = True, timeout_seconds: int = 180) -> Pa
 
 
 def exchange_code(client: OAuthClient, redirect_uri: str, code: str) -> dict[str, Any]:
-    with httpx.Client(timeout=20) as http:
-        response = http.post(
-            TOKEN_URL,
-            data={
-                "client_id": client.client_id,
-                "client_secret": client.client_secret,
-                "code": code,
-                "grant_type": "authorization_code",
-                "redirect_uri": redirect_uri,
-            },
-        )
-        response.raise_for_status()
-        token = response.json()
-    token["expires_at"] = int(time.time()) + int(token.get("expires_in", 3600)) - 60
+    token = _request_token({
+        "client_id": client.client_id,
+        "client_secret": client.client_secret,
+        "code": code,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+    })
+    token["expires_at"] = _token_expiry(token)
     token["scope"] = token.get("scope") or GMAIL_READONLY_SCOPE
     return token
 
@@ -201,10 +201,61 @@ def load_token(path: Path | None = None) -> dict[str, Any]:
 
 
 def save_token(token: dict[str, Any], path: Path | None = None) -> None:
+    """Publish a complete private token without truncating the accepted file."""
     token_path = Path(path) if path else config.get_gmail_mcp_credentials_path()
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-    token_path.write_text(json.dumps(token, indent=2), encoding="utf-8")
-    token_path.chmod(0o600)
+    if not isinstance(token, dict) or not isinstance(token.get("access_token"), str) or not token["access_token"].strip():
+        raise GmailAuthError("Gmail token replacement is invalid")
+    try:
+        serialized = json.dumps(token, indent=2, allow_nan=False)
+    except (TypeError, ValueError):
+        raise GmailAuthError("Gmail token replacement is invalid") from None
+
+    descriptor: int | None = None
+    temporary: Path | None = None
+    try:
+        # Follow a configured symlink as the former direct write did; replace
+        # its target without destroying the link itself.
+        destination = token_path.resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, name = _create_private_token_stage(destination)
+        temporary = Path(name)
+        _prepare_private_token_stage(descriptor)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = None
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        temporary = None
+    except Exception:
+        raise GmailAuthError("Could not save the Gmail token") from None
+    finally:
+        cleanup_failed = False
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                cleanup_failed = True
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                cleanup_failed = True
+        if cleanup_failed:
+            raise GmailAuthError("Could not clean up a private temporary Gmail token") from None
+
+
+def _create_private_token_stage(destination: Path) -> tuple[int, str]:
+    if os.name == "nt":
+        from jobctrl.infrastructure.gmail.windows_private_file import create_private_stage
+
+        return create_private_stage(destination)
+    return tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+
+
+def _prepare_private_token_stage(descriptor: int) -> None:
+    if os.name != "nt":
+        os.fchmod(descriptor, 0o600)
 
 
 def get_access_token() -> str:
@@ -221,19 +272,40 @@ def refresh_token(token: dict[str, Any]) -> dict[str, Any]:
     if not refresh:
         raise GmailAuthError("Gmail token has no refresh_token; run jobctrl gmail-auth")
     client = load_oauth_client()
-    with httpx.Client(timeout=20) as http:
-        response = http.post(
-            TOKEN_URL,
-            data={
-                "client_id": client.client_id,
-                "client_secret": client.client_secret,
-                "refresh_token": refresh,
-                "grant_type": "refresh_token",
-            },
-        )
-        response.raise_for_status()
-        payload = response.json()
+    payload = _request_token({
+        "client_id": client.client_id,
+        "client_secret": client.client_secret,
+        "refresh_token": refresh,
+        "grant_type": "refresh_token",
+    })
     merged = {**token, **payload}
     merged["refresh_token"] = refresh
-    merged["expires_at"] = int(time.time()) + int(payload.get("expires_in", 3600)) - 60
+    merged["expires_at"] = _token_expiry(payload)
     return merged
+
+
+def _request_token(data: dict[str, str]) -> dict[str, Any]:
+    try:
+        with httpx.Client(timeout=20) as http:
+            response = http.post(TOKEN_URL, data=data)
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        raise GmailAuthError("Gmail token request failed") from None
+    _validate_token_response(payload)
+    return payload
+
+
+def _validate_token_response(payload: Any) -> None:
+    if not isinstance(payload, dict) or not isinstance(payload.get("access_token"), str) or not payload["access_token"].strip():
+        raise GmailAuthError("Gmail token response is invalid")
+
+
+def _token_expiry(payload: dict[str, Any]) -> int:
+    try:
+        expires_in = int(payload.get("expires_in", 3600))
+    except (TypeError, ValueError, OverflowError):
+        raise GmailAuthError("Gmail token response has invalid expiry") from None
+    if isinstance(payload.get("expires_in"), bool) or expires_in <= 0:
+        raise GmailAuthError("Gmail token response has invalid expiry")
+    return int(time.time()) + expires_in - 60

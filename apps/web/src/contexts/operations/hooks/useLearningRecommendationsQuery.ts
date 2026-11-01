@@ -16,12 +16,14 @@ const DEFAULT_PAGE = { page: 1, pageSize: 50 } as const;
 
 export function useLearningRecommendationsQuery(
   input: Partial<LearningRecommendationListQuery> = DEFAULT_PAGE,
+  enabled = true,
 ): UseQueryResult<LearningRecommendationListResponse> {
   const tenantId = useTenantId();
   const { api } = usePorts();
   return useQuery({
     queryKey: learningKeys.list(tenantId, input),
     queryFn: () => api.learningRecommendations(input),
+    enabled,
   });
 }
 

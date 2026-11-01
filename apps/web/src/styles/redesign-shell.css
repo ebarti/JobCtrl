@@ -421,6 +421,11 @@ html:has(.demo-guide-launcher) {
   border-inline-start-color: var(--warning-text);
 }
 
+.connection-banner a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .connection-pill-group:has(.connection-banner) {
   flex: 0 0 auto;
 }

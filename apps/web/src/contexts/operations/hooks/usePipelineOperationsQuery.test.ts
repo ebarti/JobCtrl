@@ -1,6 +1,6 @@
 import type { PipelineOperationsSnapshot } from "@jobctrl/contracts";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
-import { waitFor } from "@testing-library/react";
+import { act, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { pipelineKeys } from "../../pipeline/queryKeys.js";
@@ -70,4 +70,43 @@ describe("usePipelineOperationsQuery", () => {
 
     expect(result.current.error?.message).toBe("operations unavailable");
   });
+
+  it.each(["recovering", "retrying"] as const)(
+    "refreshes %s records after 15 seconds even before execution metadata is available",
+    async (status) => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      const recovering = {
+        status: "recovering" as const,
+        mode: null,
+        decoderVersion: null,
+        historyEventId: null,
+        expectedMembershipCount: null,
+        persistedMembershipCount: 0,
+        expectedStepCount: null,
+        persistedStepCount: 0,
+        updatedAt: null,
+      };
+      const pending: PipelineOperationsSnapshot = {
+        ...snapshot,
+        projectionCoverage: status === "retrying"
+          ? { ...recovering, status, errorCode: "recovery_manifest_set_mismatch" }
+          : recovering,
+      };
+      const pipelineOperations = vi.fn().mockResolvedValueOnce(pending).mockResolvedValue(snapshot);
+      const { result, unmount } = renderHookWithProviders(() => usePipelineOperationsQuery(), {
+        ports: buildTestPorts({ api: { pipelineOperations } }),
+      });
+      try {
+        await vi.waitFor(() => expect(result.current.data?.projectionCoverage?.status).toBe(status));
+        await act(async () => { await vi.advanceTimersByTimeAsync(14_000); });
+        expect(pipelineOperations).toHaveBeenCalledOnce();
+        await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+        await vi.waitFor(() => expect(result.current.data?.projectionCoverage?.status).toBe("ready"));
+        expect(pipelineOperations).toHaveBeenCalledTimes(2);
+      } finally {
+        unmount();
+        vi.useRealTimers();
+      }
+    },
+  );
 });

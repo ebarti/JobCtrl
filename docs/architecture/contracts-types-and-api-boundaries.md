@@ -5,12 +5,77 @@ runtime implementation. That separation lets the web app and TypeScript API
 share precise types without turning HTTP DTOs, SQLite rows, or Python objects
 into competing domain models.
 
+The API caches Python JSON-RPC adapters by app directory, configuration path and
+runtime identity. Provider, import and other services may retain adapters for
+different contexts concurrently. Selecting another context preserves in-flight
+requests and later calls on existing adapters; explicit registry reset closes
+all cached contexts. A context change must not revoke a service's live handle.
+
+Posting extraction schema 4 records the model's description source and first/
+last line IDs. Validation requires one ordered range inside that exact source;
+code copies its contiguous bytes, fills the derived value and citation, and
+persists them with the selector in the determination envelope. Cached reads
+recheck both the selector and derived fields against the same fingerprinted
+sources. The closed `source_origins` list records the observed URL for every
+source, including bounded visible public frame captures. Frame URLs pass the
+same public-destination validation before extraction. Capture identity includes
+the root and embedded raw-content hashes; incomplete frame capture cannot prove
+availability. Other fields keep their strict literal-value and citation checks;
+schema 3 receipts remain historical data.
+
 **Read this if** you are adding a field, event, route, JSON-RPC method, or typed
 client call and need to know which layer owns the contract.
 
 Gmail feedback scan summaries and `ApplicationEmailFeedbackIngested` payloads
 use canonical `jobId` across Python, REST contracts, domain events, and web
 invalidation. Posting and application URLs are search hints, never identity.
+
+Reviewed permanent deletion uses a process-local observation and a single-use
+selection receipt. The API retains the observed lifecycle revisions with the
+canonical job IDs and checks the cohort before removing any job. The
+ordinary explicit permanent-delete and guarded purge contracts remain separate.
+
+## Contact Edit Authority
+
+`ContactDetail.fingerprint` and the required
+`ContactUpdateRequest.expectedFingerprint` fence replacement edits in
+`apps/api/src/contacts.ts`. A detail read uses one SQLite snapshot of canonical
+contact rows, raw attribute values/identities and complete provenance. The opaque
+SHA-256 base includes tenant/contact identity and the latest durable contact
+publication event identity. It does not depend on projections or timestamp
+uniqueness; same-clock and provenance-only changes invalidate old bases. The
+publication identity also fences retries after a committed save whose reply was
+lost, including no-op edits. No schema migration is introduced.
+
+The update reserves SQLite's writer with `BEGIN IMMEDIATE` before reading and
+comparing the base, then applies changes, records events and reads the resulting
+base before commit. Any failure rolls back that whole transaction. Unchanged
+facts stay in place byte-for-byte; replacement only removes absent facts and
+inserts new/value-edited facts. Optional fact IDs select exact retained rows;
+foreign or repeated IDs fail within the transaction, while callers without IDs
+match exact raw values before normalized values. The writer validates only new
+or changed facts, preserving unchanged stored values outside current input
+limits. HTTP maps a mismatch to 409
+`contact_revision_conflict`, invalid requests to 400 and missing/deleted contacts
+to 404. A fingerprint is an edit fence, not authentication or an outreach thread
+publication version; existing worker writers remain under their own protocols.
+
+The context-owned web hooks handle query access and optimistic rollback. The
+editor pins an edit base and retains its form through conflicts and refetches.
+Reconciliation compares that base, the current draft and the loaded record;
+unchanged draft fields and independently added fact identities take the latest
+values. Competing field or fact edits/deletions require an explicit choice.
+When a draft-changed fact disappeared and new fact IDs appeared, their
+relationship is unknown; the user chooses whether to keep each new fact.
+Changing the draft while choices are open invalidates those choices. The editor
+omits unchanged fields and facts from its update and carries other unchanged
+facts by their identity and exact saved value when replacing a fact list. It
+validates changed facts against current input limits and refuses to convert an
+unsupported kind implicitly. A later conflict requires another review. The draft
+remains local to the open dialog. If a save succeeds after the form changed,
+the editor keeps the newer draft and requires a fresh read and reconciliation;
+it never resubmits automatically. A completion from a closed editor cannot
+change a subsequently opened editor session.
 
 ## Enrichment Retry Ownership
 
@@ -86,6 +151,16 @@ flowchart TD
 | Frontend boundary | `apps/web/src/shared/ports/ApiClientPort.ts` plus adapters | The capability the web app consumes and the selected local/demo implementation | Direct transport calls from feature components |
 | Python JSON-RPC mirror | `workers/automation/src/jobctrl/domain/rpc/messages.py` | Python validation/types for the methods crossing the TypeScript-to-Python boundary | Browser-facing REST contracts |
 | Physical persistence | Owning SQLite repository/write module and schema initialization | Tables, columns, indexes, migration compatibility, and row serialization | Domain meaning merely because a column exists |
+
+The typed HTTP client's request deadline covers response headers and the full
+JSON body, including error bodies. A timeout aborts the client transport and
+settles the request; it does not establish that a server-side write failed or
+stopped. `JobCtrlApiTimeoutError` and `JobCtrlApiUnconfirmedWriteError` identify
+an unknown write outcome after a timeout or an unreadable acknowledgement, so
+the owning editor can retain submitted text and avoid automatic replay. A
+completed HTTP 5xx on a write remains a `JobCtrlApiError` with its status and
+response body, and sets `writeOutcomeUnknown`: response construction can fail
+after commit. Read errors and explicit 4xx conflicts keep their existing meaning.
 
 `packages/contracts` depends on `packages/domain-types` and re-exports selected
 projection types. That is a dependency, not duplicate ownership: shared
@@ -244,17 +319,17 @@ failures, allowing each feature to preserve its HTTP error mapping. Worker
 error envelopes, request IDs, progress notifications, timeouts and close
 behavior remain transport concerns.
 
-Profile continuation keeps its `profile_updated:<eventId>` reason through the
-registered handler and deterministic workflow identity. The enforcing action
-dispatcher awaits completion before the server records a handled marker;
-structural, start, wait or transport failure leaves the durable intent available
-for startup reattachment. A failed pipeline completion also leaves it pending.
-The route integration tests in `apps/api/test/server.test.ts` use exact-schema
-owned workspaces and the registered Python handlers through the real adapter.
-Their synthetic WorkflowStarter and completion handle expose workflow input and
-ordering, returning the production result dataclasses. Held completion also
-checks marker ordering during startup reattachment. These fixtures do not
-exercise live acquisition, Temporal persistence or model quality.
+Legacy `profile_updated:<eventId>` reasons and awaited pipeline result contracts
+remain decodable for already admitted workflow histories. New profile saves and
+API startup never dispatch or reattach these continuations. The profile and audit
+event still commit atomically. Explicit score refresh uses a strict
+`score_profile_impact` result bound to the saved score and reviewed profile;
+Jobs reads join the recorded determination ID and expose its rationale without
+raw profile sources. Route tests prove repeated saves and API restart preserve
+accepted data and dispatch no preparation. Real Temporal fixtures separately
+exercise insignificant/significant/provider-failure results and fresh-history
+replay without model calls.
+
 
 The shared suite also covers parameter and parse errors, unknown-method
 mapping, workflow acknowledgments, and a negative registration/schema mutation.

@@ -186,6 +186,7 @@ const workflowLifecycleHandler = (
   patchQuery(
     workflowRunsKeys.detail(event.tenantId, event.payload.workflowId),
     (current) => patchWorkflowRunDetail(current, event),
+    false,
   ),
   invalidate(workflowRunsKeys.lists(event.tenantId)),
   invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.workflowId)),

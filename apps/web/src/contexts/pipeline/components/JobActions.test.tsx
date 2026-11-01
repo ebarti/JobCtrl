@@ -104,3 +104,13 @@ describe("<JobActions>", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+it("keeps active-run controls and Mark Applied beside the locally described Skip", async () => {
+  renderWithProviders(<JobActions jobId="job-1" currentStage="apply" activeApplyRunId="original" />);
+  expect(screen.getByRole("button", { name: "Stop application run" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Mark as applied" })).toBeVisible();
+  const skip = screen.getByRole("button", { name: "Skip" });
+  skip.focus();
+  expect(skip).toHaveFocus();
+  expect(skip).toHaveAccessibleDescription(/In-flight submissions may still complete/);
+});

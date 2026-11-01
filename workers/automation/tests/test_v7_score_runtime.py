@@ -44,9 +44,9 @@ class _StrongLlm:
         cite = {"source_id": source["source_id"], "quote": source["text"][:1000], "exact_values": []}
         fit_inputs = request["context"].get("requirement_fit_inputs", "")
         inputs = (
-            json.loads(fit_inputs.split("\n", 1)[1]) if fit_inputs else {"requirements": [], "profile_evidence": []}
+            json.loads(fit_inputs.split("\n", 1)[1]) if fit_inputs else {"requirements": []}
         )
-        evidence = [row["id"] for row in inputs["profile_evidence"]]
+        evidence = request["context"]["candidate_evidence_ids"]
         return {
             "score": 8,
             "technical_fit": 8,

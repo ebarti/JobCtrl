@@ -26,6 +26,7 @@ the Historical Spec Ledger in `plans/README.md`.
 
 **Local API & runtime**
 
+- [Agent Runtime Kit Owns Provider Execution](#_2026-10-21-agent-runtime-kit-owns-provider-execution) · 2026-10-21
 - [Fastify For The Local API](#_2026-05-02-fastify-for-the-local-api) · 2026-05-02
 - [Loopback API Binding By Default](#_2026-05-02-loopback-api-binding-by-default) · 2026-05-02
 - [Stage State Is The Operational Source Of Truth](#_2026-05-02-stage-state-is-the-operational-source-of-truth) · 2026-05-02
@@ -90,6 +91,7 @@ the Historical Spec Ledger in `plans/README.md`.
 **Data durability & spend**
 
 - [SQLite Backup Command + Schema-Version Guard](#_2026-07-02-sqlite-backup-command-schema-version-guard) · 2026-07-02
+- [Source Startup Preserves Temporal History Identity](#_2026-10-29-source-startup-preserves-temporal-history-identity) · 2026-10-29
 - [Local LLM Spend Ceiling](#_2026-07-03-local-llm-spend-ceiling) · 2026-07-03
 
 ## 2026-05-01: Local-First Before SaaS Hardening
@@ -869,6 +871,17 @@ Consequences:
 
 Cites: PRs #145, #147 (3-way leg), #149, #205, #213.
 
+### Amendment 2026-10-13
+
+The isolated credential home remains stable and imports only `auth.json`.
+Generation threads are ephemeral, and every generation/catalog app-server
+client redirects SQLite state and diagnostic logs to private temporary
+storage removed after shutdown. This prevents repeated provider calls from
+accumulating runtime databases and conversation rollouts beside credentials.
+JobCtrl-owned provider errors, usage and provenance remain durable; existing
+provider files and the user's normal Codex home are preserved.
+
+
 ## 2026-07-12: One Ready Provider Serves Core LLM And Analysis Paths
 
 Status: accepted; supersedes the mandatory Claude-synthesis and separate
@@ -906,6 +919,20 @@ Consequences:
 - Settings exposes three guided provider cards and provider-level revocation
 - local/custom-provider support requires a future explicit product contract
   before it can re-enter setup or runtime routing
+
+Amended 2026-10-20: Settings may persist one exact `default_llm_model` route.
+It takes precedence over automatic provider selection and provider-scoped model
+preferences for newly acquired core adapters, while explicit workflow models
+retain precedence. Its provider/model binding also owns the optional writing
+pass. Failed pinned routes never silently substitute another model. Model
+pickers contain only current authenticated runtime catalog options; saved IDs
+absent from the catalog remain visible solely as configuration status. SDK and
+CLI versions are upgraded together with their verified provider-pack metadata.
+Per-model Codex reasoning effort follows the same live capability boundary.
+An explicit saved effort overrides legacy per-call numeric thinking budgets;
+clearing it restores the previous call policy. Adapters capture it at
+construction, new acquisitions rebind after edits, and new determinations record
+it in provenance and cache identity without changing historical receipts.
 
 ## 2026-06-09: Generated-Materials Audit Is Served From Canonical Provenance Rows
 
@@ -993,6 +1020,16 @@ Consequences:
 
 Cites: `docs/plans/implemented/2026-06-15-requirement-fit-ledger.md`;
 PRs #162–#177, #189.
+
+2026-10-20 update: `requirement-fit-v2-scoped` counts only requirements whose
+accepted model-owned job interpretation assigns resume scope. Scoring joins
+exact requirement IDs, persists the scope and interpretation determination ID
+with each contribution, and excludes eligibility, logistics and employer
+conditions from capability coverage and its blocker cap. Their assessments and
+downstream eligibility gates remain intact. No lexical classifier or new
+semantic determination is introduced. Missing/foreign scope bindings or no
+weighted capability requirements fail without replacing the accepted score.
+Historical v1 reports retain their bytes and formula until an explicit rescore.
 
 ## 2026-06-20: Compensation Is Warning-Only Evidence From Reported Company-Role Observations
 
@@ -1183,6 +1220,8 @@ Consequences:
 - ambiguous live runs after submit intent park in `needs_verification` for
   human resolution instead of being auto-requeued
 - live runs without approval stay pending and record an awaiting-approval event
+- an owned email approval refusal before submit intent restores its own attempt
+  allowance at settlement or recovery without erasing the claim and refusal history
 - every run persists raw agent output, and successful live results persist
   confirmation evidence with conservative verification confidence
 
@@ -1818,7 +1857,8 @@ Consequences:
 
 ## 2026-07-06: Crawl Politeness / Third-Party-Control Compliance Layer
 
-Status: accepted; robots enforcement superseded by the 2026-09-13 decision below
+Status: accepted; robots enforcement superseded by the 2026-09-13 decision below;
+request identity amended on 2026-10-23 below
 
 Decision: every outbound discovery/enrichment fetch — the `urllib` client, the
 `python-jobspy` invocation boundary, and every Playwright navigation — routes
@@ -2633,8 +2673,12 @@ artifacts/approvals/outcomes, and closure never invokes Discovery policy deletio
 Job-scoped ownership allows unrelated work to overlap, with 25 jobs/sweep, 100
 posting acquisitions/hour (80 for sweeps and 20 reserved for foreground work),
 once/minute job starts, at least two-second host spacing and
-five-minute leases. Each acquisition charges the quota once; local refusals
-do not increase evidence backoff, including guarded browser-resource refusals.
+five-minute leases. Posting acquisition has a cumulative 120-second budget,
+including browser cleanup. Independent page-model interpretation pauses the
+network clock without renewing the original job lease; cancellation and ownership
+are rechecked before browser fallback. Each acquisition charges the quota once;
+local refusals do not increase evidence backoff, including guarded
+browser-resource refusals.
 Availability uncertainty does not quarantine medium/high-confidence content or
 create a content-review queue item. Failed/redirected required rendered dependencies
 cannot prove closure; only passive resources tolerate failures. Sweeps stop at
@@ -2642,6 +2686,15 @@ quota exhaustion and within a 20-minute budget below the activity timeout, with
 cooperative acquisition cancellation. Explicit commands alone own coalesced deferral
 feedback. Runtime-offline time leaves freshness honest. Live external
 ATS reliability is not inferred from deterministic transport QA.
+
+
+Preparation freshness clarification (2026-10-25): Score, Tailor and Cover reuse
+an exact-URL observation attempted within the preceding six hours, including an
+uncertain observation. They refresh missing or older observations. A cache hit
+preserves the recorded verdict and both observation clocks; it cannot renew
+positive verification, suppress background/explicit retries or change Apply's
+independent freshness and approval gates. Known unavailability, deletion,
+tenant/URL changes and the stage writer's candidate fence still stop preparation.
 
 ## Required-Bullet Coaching Uses LLM Determinations (2026-10-05)
 
@@ -2666,9 +2719,23 @@ Saved search controls are already authoritative when the user saves them. Source
 
 Owner correction (2026-10-07): remove the separate metadata-only intake filter, its queue and batch/model settings. JobStreaming executes saved provider searches; supported filters and unsupported-filter warnings belong to its adapters. Company ATS feeds may expose all listed vacancies and currently use JobCtrl’s direct API adapters; their suitability is assessed from full postings downstream. Historical intake captures and envelopes remain under the frozen native schema. Unconsumed source payloads recover through canonical ingestion in bounded source-family batches, with current literal exclusions and limits; the retired verdict, preferences and envelope are never consulted. Each new determination uses one provider. Employer analysis retains its optional ensemble; BR-058 permits one ready provider. Claim verification is a separate call alongside the existing quality judge. Generators record line IDs, evidence/requirement IDs, transform and reason; the verifier affirms source contributions and findings by line ID. Readers join recorded IDs; unanchored lines say “No recorded source”.
 
+Owner correction (2026-10-21): arbitrary-site feed cards are locators, not structurally valid job postings. Smart Extract must capture and verify an individual posting, extract source-bound actual role/employer/description/location fields, and record a full-posting qualification against the saved location/work-model rows before creating a Job. It reuses the manual URL-import source preparation and strict extractor. Specific-role identity, description quality and location compatibility come from cited determinations; no headline parsing, company guessing, geographic phrase tables or lexical fallback is permitted. Unresolved captures remain in the existing Manual Capture queue; confirmed mismatches remain outside Jobs with persisted determination references and progress events. Accepted snapshots retain those references and seed enrichment from that same capture. This does not reintroduce the removed metadata-only filter for structured board/ATS postings, reinterpret saved search queries, or restrict explicitly requested manual URL imports. Source availability does not prove a user's selection; disabled/rejected intent remains authoritative. See [Discovery](user/discovery.md#how-target-search-controls-are-used).
+
 Candidate interpretations are pending suggestions until the owner confirms selected values in a version-fenced profile save. Inferred seniority or strength never becomes an authored evidence fact. Job interpretation owns requirement scope and posting taxonomy; scoring resolves arithmetic over model verdicts and typed blockers. Scoring limits use recency and stable IDs rather than vocabulary overlap. Exact canonical identity and exact full-content fingerprints may deduplicate; non-exact role equivalence requires a determination.
 
 Exact schema 13 removed inferred seniority fields and withdrew unconfirmed old classification, provenance, pay and benchmark outputs for recomputation. Authored profile text, reviewed outcomes, comments and accepted artifact content remain; the paired backup is recoverable. No startup lexical reparse or silent admission repairs old records. Exact schema 14 follows the same stopped-runtime native backup/candidate/activation boundary. The v13-to-v14 cutover removes the redundant preference-approval foreign key, supersedes earlier intake decisions and retains their raw posting captures and historical determination envelopes. Canonical jobs, authored profile cells and accepted files are preserved.
+
+Owner correction (2026-10-27, #1281): legacy confirmation booleans have no
+recorded author authority. Cutover preserves all original evidence fields and
+confirmation history, and records explicit pending review in the private
+`job_events` ledger. Neither matching prose nor an exact or partial value shape
+can classify a record as system-derived. These non-model inventory/human review
+records are disjoint from semantic determinations. Canonical source generation
+fails explicitly while review is unresolved and preserves accepted artifacts.
+Current-state-bound human decisions and paired-backup recovery preserve newer
+edits and refuse conflicts; missing authority stays visible and never triggers
+automatic reconfirmation. See [Storage](architecture/storage.md#legacy-achievement-confirmation-history).
+
 
 Validation uses fake-model authority tests, strict failure/binding tests, one-off deletion searches and owned synthetic product-path QA. No eval sets, labeled sentence corpora, baseline comparisons or recorded-output replay fixtures are permitted. Temporal replay consumes persisted results; it does not call a provider. Merge and release remain owner decisions.
 
@@ -2722,3 +2789,316 @@ logging while retaining the previous approved text. General events/projections
 expose safe references only. No new CRM context, send transport or lexical
 semantic fallback is introduced. See [Outcomes](user/outcomes-and-feedback.md#actual-offer-terms-and-decisions)
 and [offer read model](architecture/read-model.md#offer-read-model).
+
+## 2026-10-21: Complete Model Stages Use The Long-Work Activity Budget
+
+Status: accepted
+
+Score, Tailor and Cover activities have a six-hour operational execution budget
+in per-job preparation and pipeline batches. A stage includes sequential model
+calls, verification and bounded correction; valid Max-effort work can exceed
+the former thirty-minute coarse deadline. PDF rendering keeps thirty minutes,
+and selected Enrich batches keep their existing worker-wave budget.
+
+The two-minute heartbeat timeout, explicit cancellation, spend preflight,
+bounded retry counts and acceptance gates remain enforced. This is a whole-stage
+Temporal deadline, not an additional provider-call limit. Existing scheduled
+timers remain recorded in history; synthetic regression runs prove a healthy
+stage crosses the old budget without retry, old histories replay under the new
+policy, and missing heartbeats and cancellation still stop work. See the
+[workflow envelope](architecture/pipeline/envelope.md#run_blocking_with_heartbeat).
+
+## 2026-10-21: Material Context Is Optional In Generated Claims
+
+Status: accepted
+
+Canonical role metadata and other context remain source facts, but a selected
+fit edge cannot force their repetition in mutable resume prose. The generation
+manifest requires selected achievements and explicit user pins. Omitted context
+receives no generated-coverage credit; declared context must still be affirmed
+by the source-bound verifier. Structural source ownership supplies this flag,
+without classifying meaning from source text.
+
+After the content-correction budget is exhausted, a recorded material rejection
+is non-retryable `material_rejected`. It cannot consume another complete budget
+under a transient-provider retry. Accepted artifacts and rejected audit history
+remain preserved. Real transport/provider failures retain their existing retry
+contract. See [Tailoring](architecture/tailoring.md).
+
+## 2026-10-21: Bounded Material Reviews Retain Decision History
+
+Status: accepted
+
+Resume and cover correction carry the recorded quality/persona determination
+IDs and complete typed results into subsequent generation and review. Changed
+voice proposals retain the selected candidate's review context and receive the
+existing fresh factual, quality and applicable six-persona checks. Reviewers
+consider prior repairs and explain reversals while judging the current artifact
+independently.
+
+This ledger is untrusted historical context, not new candidate evidence or a
+current citation source. Current source/line allowlists, generation permissions,
+typed verdict authority, attempt/spend limits and accepted-artifact preservation
+remain enforced. Review context participates in determination fingerprints and
+is retained with the artifact/attempt audit. See
+[Tailoring](architecture/tailoring.md#attempt-loop-and-candidate-selection).
+
+## 2026-10-21: Binding Repairs Receive Complete Mechanical Feedback
+
+Status: accepted
+
+Literal citation validation reports the current failure inventory across typed
+model, sequence and mapping fields. Scoring inventory errors identify their
+fields, canonical requirement spans and allowed IDs. This lets one bounded
+correction address the known mechanical violations together. Non-empty verbatim
+spans, exact values, current source membership and semantic verdict authority
+remain enforced; code does not normalize text, choose substitute evidence or
+infer meaning.
+
+The first safe error code remains stable. Canonical text and rejected values
+stay in request-local repair context, outside exception text and stored failure
+state. The existing three-call limit, lane/spend preflight, cache binding and
+accepted-artifact preservation remain unchanged. See
+[Scoring](architecture/scoring.md) and
+[Materials](architecture/materials.md#source-bound-claim-verification).
+
+
+## 2026-10-21: Agent Runtime Kit Owns Provider Execution
+
+Provider generation, analysis and voice delegate to agent-runtime-kit rather
+than each adapter owning a new SDK process. A process-owned async service keeps
+clients on one event loop. Runtime leases preserve existing admitted fanout;
+the cache bounds idle retention, not active pipeline concurrency. Codex reuses
+its process with a fresh ephemeral thread per task. Claude queries and
+Antigravity task isolation preserve independent semantic conversations.
+
+JobCtrl retains credential isolation, exact model/effort selection, native
+permissions, spend/lane admission, structured failure classification and all
+artifact acceptance rules. The Codex facade consumes the public turn stream to
+retain typed failures and joins SDK startup before cancellation teardown.
+Provider catalog/setup introspection remains native where the kit has no
+matching operation. [Agent Runtime Ownership](architecture/agent-runtime.md)
+owns the lifecycle and verification contract.
+
+Provider installation identity also includes the signed wheel specification,
+since adopting the kit moves shared dependencies into core without changing
+vendor SDK versions. Closure-addressed directories and activation schema 2
+preserve previous installations; verified schema-1 paths remain supported.
+Mutable activation metadata cannot authorize a different directory or tree.
+
+## 2026-10-22: Promote A Sole Verified Employer-Analysis Draft
+
+Status: accepted; supersedes mandatory synthesis for the single-admitted-leg
+case of the one-ready-provider analysis contract.
+
+Decision: when exactly one draft adapter is admitted, its successful grounded,
+source-verified draft is copied into the strict canonical `JobAnalysis` schema,
+excluding only `model_id`. The canonical boundary still performs source-bound
+verification, records its determination ID, and interprets requirements before
+persistence. Identical draft/canonical verification inputs may share the same
+durable determination. Multiple admitted legs retain agreement and synthesis,
+including degraded runs with one survivor. Zero successful drafts still fail.
+
+Rationale: a sole source-verified strict draft needs no reconciliation with
+another perspective. Removing its additional generation pass avoids one model
+request plus any fresh review caused by that rewrite, while preserving the
+independent source-verification gate. This deliberately foregoes that additional
+rewrite; equivalent prose quality and whole-workflow speedups are not inferred
+from call counts.
+
+Consequences: analysis execution cache identity moves to the
+`v3-verified-single` policy revision. Model, effort, lane/spend preflight, bounded
+repairs, interpretation provenance, generation allocation and preservation of
+accepted analysis during failed refreshes remain unchanged. Use owned synthetic
+sources and a configured-provider run for integration proof; do not introduce
+quality baselines, labeled corpora or recorded-output replay.
+
+## 2026-10-22: Extra Resume Polish Is Opt-In
+
+Status: accepted
+
+A selected résumé that has passed required factual, quality and applicable
+persona reviews is an accepted candidate. The production factory previously
+requested another writing pass whenever its provider was available; changed
+wording then required the same independent reviews again. This extra work can
+improve wording but is not necessary to establish the original approval.
+
+The saved boolean `resume_voice_polish` defaults to false and is editable under
+Settings → Model selection. A disabled pass retains the exact approved text
+and review identities with a truthful skipped audit. Opt-in and explicit voice
+ports keep the complete existing rewrite and fresh-review behavior. Model and
+effort choices, original review gates, source/version fences, cancellation,
+spend admission and failed-refresh preservation remain unchanged. Existing
+accepted materials and work already running are not rewritten by a setting edit.
+See [Materials](architecture/materials.md) and
+[Configuration](user/configuration.md).
+
+
+## 2026-10-23: Optional Generated Browser Request Headers
+
+Status: accepted
+
+Discovery Runtime replaces the crawler product/contact text fields with **Use
+browser headers**, off by default. The typed boolean is persisted in SQLite as
+`crawl_user_agent.use_browser_headers`. Existing product/contact settings and
+API compatibility remain intact so disabling the option restores the previous
+product/version/contact construction.
+
+The shared gateway snapshots the setting at construction. Only literal `true`
+enables `ua-generator`; it produces a desktop Chrome identity using the latest
+versions bundled with the installed library and matching client hints, retained
+for the gateway lifetime. Controlled HTTP and anonymous Playwright requests
+carry those headers. JobStreaming accepts the selected User-Agent but owns its
+other headers; connected Chrome keeps its own browser identity. Operation-specific
+Accept, Content-Type and encoding headers, URL/redirect validation, request
+budgets, pacing, and Retry-After behavior are unchanged. This replaces the
+mandatory non-browser identity portion of the 2026-07-06 decision. It does not
+change source access policy or imply that a denied request will be accepted.
+
+## 2026-10-23: Profile Saves Do Not Admit Scoring
+
+Profile edits persist a version and audit event without starting Score or material
+preparation. Explicit score refresh first uses a strict source-bound LLM
+determination to assess changed-profile significance for the selected job.
+Insignificant edits retain the original accepted score/date/profile provenance and
+record a review bound to both versions; significant edits proceed through normal
+scoring. Provider, spend, structure and missing-baseline failures stay explicit
+and preserve accepted data. No word lists, similarity thresholds or lexical
+fallback decide significance. See [Scoring](architecture/scoring.md#profile-edits-and-explicit-refresh).
+
+## 2026-10-24: Recovery Shares Capacity Across Independently Owned Cohorts
+
+Status: accepted
+
+Automatic recovery can overlap exact, independently owned per-job preparation
+and one-stage automatic batches. Each live cohort is read from its execution's
+immutable start event; its jobs stay excluded even between activities. Admission
+rechecks canonical ownership and frozen queue manifests under the SQLite write
+lock. Discovery, imports, unscoped/manual batches, foreign workspace bindings,
+missing history and conflicting owners retain the dispatch gate.
+
+Automatic batches share the saved internal concurrency budget. A batch accounts
+for the smaller of its immutable worker count and unfinished cohort membership;
+the next dispatch receives only remaining parallelism. Existing workflow input
+and frozen cohort identities are preserved. A recorded queued owner requires its
+exact execution before settlement, and missing history cannot start a replacement.
+Attempt limits, cooldowns, spend preflight, source politeness, cancellation/skip
+decisions and accepted artifacts remain protected. Worker activity slots remain
+an independent bound. No workflow command sequence changes. See
+[Operations](architecture/pipeline/operations.md#automatic-preparation-recovery).
+
+
+## 2026-10-25: Bound Generated Persona Review Diagnostics
+
+Status: accepted
+
+The six-persona high-fit review retains the complete supplied résumé, rubric,
+explicit per-persona pass/fail decisions and its separate acceptance gate.
+Only its new structured response format is narrowed: each persona returns at
+most three short citations and six prioritized actionable findings, with finite
+nested quote, rationale, repair and literal-value strings. Repeated defects
+may be grouped; unresolved defects still require fail even when summarized
+rather than individually enumerated. Diagnostic size and scores never decide
+meaning or override a model verdict.
+
+This prevents unnecessarily expansive diagnostic output from exhausting a
+provider response before returning a usable review. It does not lower effort,
+change the model, skip a persona, truncate model text after generation or
+fabricate an accepted result. Existing source-binding checks and the bounded
+structural-correction budget remain authoritative. New requests use prompt
+`resume-adversarial-v3`; old accepted receipts retain their wider canonical
+reader and original bytes. The response schema and prompt participate in the
+request fingerprint. Failed refreshes preserve accepted artifacts. Measure any
+latency benefit through the normal UI and recorded model calls; a finite schema
+alone does not prove a faster or more accurate review.
+
+
+## 2026-10-25: Share Temporary Provider SQLite Storage
+
+Status: accepted
+
+Native Codex clients in one process and credential home share a temporary
+SQLite store. A separate SQLite home per client makes the runtime import the
+same retained provider history repeatedly, multiplying startup work and disk
+use. The pinned runtime also keeps its SQLite logs in that directory, so moving
+metadata into persistent storage would change log retention as well.
+
+Keep metadata and SQLite logs temporary. Reference-counted client leases remove
+the shared store only after every client has closed. Each client keeps an
+independent temporary text-log directory. A process-owned OS lease protects
+active stores; later startup reclaims only unlocked, private stores whose
+ownership version, exact credential-home identity and recognized directory
+layout match. Linked ownership files, redirected paths and unfamiliar contents
+remain untouched. A forced shutdown therefore does not require duplicating or
+deleting the original provider history to recover disk space.
+
+Authentication stays in its stable isolated home; generation requests remain
+ephemeral. Workspace permissions, native policy validation, selected model/effort,
+process reuse, lane/spend admission and all semantic acceptance rules remain
+unchanged. Structural regressions exercise overlapping clients/threads, real
+process exit without cleanup, active-store protection and foreign-path
+preservation. The pinned native SDK check must prove shared temporary state,
+independent ephemeral threads and the existing credential-read fence.
+
+
+## 2026-10-25: Retain Applicable Accomplishments Within The Saved Bullet Limit
+
+Status: accepted
+
+Tailoring keeps as many applicable baseline accomplishments as possible within
+the configured maximum bullets per role. The maximum is a hard cap and is never
+raised from baseline length. Role presence alone does not establish completeness,
+and an absent target keyword or selected fit edge does not justify an omission.
+
+The generation response accounts for each selected role's baseline source IDs
+through a kept experience claim or a typed, source-bound omission proposal.
+Code rejects unknown/duplicate/conflicting decisions, dropped literal pins and
+cap omissions from an underfilled role. Independent quality review evaluates
+every omission, applicability and relative evidence selection. Independent
+factual review still verifies all source contributions and preserved substance.
+Neither generator rationale nor ID presence establishes semantic correctness.
+
+The source inventory, omission proposals and review receipt remain inspectable
+in the ordinary attempt audit. This uses existing generation and review calls;
+it adds no model stage. Optional role selection, immutable metadata, explicit
+pins, selected model/effort and accepted-artifact preservation remain in force.
+The owning contract is [Tailoring](architecture/tailoring.md).
+
+## 2026-10-27: Native Execution Ownership Uses Per-User Jobs
+
+Decision: start native runtime and Python CLI content in ephemeral per-user
+launchd jobs and durably record their kernel coalition identities before
+execution. Descendant ownership must survive detached sessions, platform exec,
+environment replacement and parent exit. Environment tags and PID/group probes
+alone cannot establish that contract. No root service, VM or automatic startup
+is introduced.
+
+The command root gets the first clean-shutdown signal. Verified timed-out
+leftovers are terminated and observed exited before restart or paired database
+work. Admission and stop share a control lock; durable stopped proof precedes
+receipt retirement. Unknown or legacy-untracked ownership is an explicit failure
+that preserves the registry and live data. Reboot remains last-resort manual
+troubleshooting, never the normal lifecycle contract.
+
+QA must exercise actual same-user scopes, detached platform and writer cases,
+other-instance preservation, interruption recovery and native Python network
+isolation. Release and genuine signed/notarized first-use qualification remain
+separate gates. See [runtime ownership](architecture/runtime.md) and
+[Reliability & QA](local-reliability-qa.md).
+
+## 2026-10-29: Source Startup Preserves Temporal History Identity
+
+Source development and installed releases share a workspace and select
+`$JOBCTRL_DIR/temporal.db` for new histories. A sole existing source history
+under `$JOBCTRL_DIR/temporal/temporal.db` stays at that path. Multiple histories
+or orphaned SQLite companions block startup rather than selecting either.
+
+On macOS, a source fleet uses the native workspace locks and process scope.
+For a verified owned schema-14 pair, its next startup automatically backs up
+both databases and activates the sealed schema-15 migration. Interrupted
+attempts are resumed forward using a fresh backup, preserving later writes.
+An older untracked runtime does not establish cleanup authority. Unsupported or
+unverified migrations leave the default source diagnostic API and web interface
+available without the worker or Temporal. Older application versions do not
+automatically downgrade the workspace. See
+[Local Development](local-development.md#schema-migrations-and-source-updates).

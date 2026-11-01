@@ -253,6 +253,53 @@ class SqliteCompensationRefreshStateRepository:
         self._conn.commit()
         return tuple(claimed)
 
+    def check_current(self, leases: tuple[CompensationRefreshLease, ...], *, now: str) -> None:
+        canonical_now = canonical_benchmark_timestamp(now, "now")
+        for lease in leases:
+            current = self.get(lease.benchmark_slice)
+            if (
+                current is None
+                or current.lease_owner != lease.token
+                or current.lease_expires_at != lease.expires_at
+                or current.lease_expires_at <= canonical_now
+            ):
+                raise StaleCompensationRefreshLease("compensation refresh lease expired or changed owner")
+
+    def renew_leases(
+        self, leases: tuple[CompensationRefreshLease, ...], *, now: str, lease_expires_at: str,
+    ) -> tuple[CompensationRefreshLease, ...]:
+        """Extend only the exact still-live owner; reject a partial renewal."""
+        canonical_now = canonical_benchmark_timestamp(now, "now")
+        expiry = canonical_benchmark_timestamp(lease_expires_at, "lease_expires_at")
+        if expiry <= canonical_now:
+            raise ValueError("compensation refresh lease must expire after now")
+        if any(expiry <= lease.expires_at for lease in leases):
+            raise ValueError("compensation renewal must extend every lease")
+        if self._conn.in_transaction:
+            raise RuntimeError("compensation renewal cannot own a caller transaction")
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            for lease in leases:
+                cursor = self._conn.execute(
+                    """
+                    UPDATE compensation_market_refresh_state
+                    SET lease_expires_at = ?, updated_at = ?
+                    WHERE tenant_id = ? AND taxonomy_version = ? AND role_family_code = ?
+                      AND seniority_label = ? AND country_code = ? AND subdivision_code = ?
+                      AND locality = ? AND component = ?
+                      AND lease_owner = ? AND lease_expires_at = ? AND lease_expires_at > ?
+                    """,
+                    (expiry, canonical_now, *_slice_key_values(lease.benchmark_slice),
+                     lease.token, lease.expires_at, canonical_now),
+                )
+                if cursor.rowcount != 1:
+                    raise StaleCompensationRefreshLease("compensation refresh lease expired or changed owner")
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+        return tuple(CompensationRefreshLease(lease.benchmark_slice, lease.token, expiry) for lease in leases)
+
     def mark_result(
         self,
         lease: CompensationRefreshLease,

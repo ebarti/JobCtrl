@@ -5,7 +5,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { hasRetailorableResumes, recordProfileUpdatedEvent } from "../src/profile-events.js";
+import { recordProfileUpdatedEvent } from "../src/profile-events.js";
 import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000091";
@@ -30,15 +30,13 @@ function exactDatabase(): Database.Database {
 }
 
 describe("exact-v7 profile events", () => {
-  it("records canonical profile events and detects only approved canonical resumes", () => {
+  it("records profile audit events without altering accepted material rows", () => {
     const db = exactDatabase();
 
-    expect(hasRetailorableResumes(db)).toBe(false);
     db.prepare(
       `INSERT INTO jobs (tenant_id, job_id, url, tailored_resume_path)
        VALUES ('local', ?, 'https://example.com/jobs/profile-events', '/legacy/resume.pdf')`,
     ).run(JOB_ID);
-    expect(hasRetailorableResumes(db)).toBe(false);
 
     db.prepare(
       `INSERT INTO job_materials (
@@ -52,7 +50,7 @@ describe("exact-v7 profile events", () => {
        ) VALUES ('local', ?, 1, 'tailored_resume', 'profile-resume', 'approved',
                  '/canonical/resume.pdf', 'pdf', '{}', ?)`,
     ).run(JOB_ID, NOW);
-    expect(hasRetailorableResumes(db)).toBe(true);
+    const before = db.prepare("SELECT * FROM job_materials_artifacts").all();
 
     const event = recordProfileUpdatedEvent(db, ["resume", "preferences"], NOW);
     expect(event).toMatchObject({
@@ -85,5 +83,6 @@ describe("exact-v7 profile events", () => {
       changedSections: ["resume", "preferences"],
     });
     expect(JSON.stringify(row)).not.toContain("job_url");
+    expect(db.prepare("SELECT * FROM job_materials_artifacts").all()).toEqual(before);
   });
 });

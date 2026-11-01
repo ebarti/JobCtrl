@@ -21,7 +21,7 @@ from jobctrl.domain.apply import ApplyRun, ApplyRunId, DryRunComplete
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobctrl.state import ensure_job_stage_rows, set_stage_state
+from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
 
 
 JOB_ID = JobId("10000000-0000-4000-8000-000000000001")
@@ -95,6 +95,8 @@ def test_mark_result_applied_registers_apply_log_artifact(
             "jobctrl.apply.launcher.get_connection",
             lambda: get_connection(db_path),
         )
+        record_job_event(conn, JOB_ID, "apply", "ApplyClaimAcquired", tenant_id=LOCAL_TENANT, payload={"run_id": "run-applied"})
+        conn.commit()
         mark_result(
             JOB_ID,
             "applied",
@@ -157,6 +159,8 @@ def test_mark_result_failed_registers_apply_log_artifact(tmp_path, monkeypatch):
             "jobctrl.apply.launcher.get_connection",
             lambda: get_connection(db_path),
         )
+        record_job_event(conn, JOB_ID, "apply", "ApplyClaimAcquired", tenant_id=LOCAL_TENANT, payload={"run_id": "run-failed"})
+        conn.commit()
         mark_result(
             JOB_ID,
             "failed",
@@ -200,6 +204,8 @@ def test_mark_result_dry_run_registers_apply_log_artifact(
             "jobctrl.apply.launcher.get_connection",
             lambda: get_connection(db_path),
         )
+        record_job_event(conn, JOB_ID, "apply", "ApplyClaimAcquired", tenant_id=LOCAL_TENANT, payload={"run_id": "run-dry"})
+        conn.commit()
         mark_result(
             JOB_ID,
             "dry_run",
@@ -272,6 +278,8 @@ def test_repository_persists_dry_run_blocked_channel_artifact(
             finished_at="2026-07-06T10:00:02+00:00",
         )
 
+        record_job_event(conn, JOB_ID, "apply", "ApplyClaimAcquired", tenant_id=LOCAL_TENANT, payload={"run_id": str(run.run_id)})
+        conn.commit()
         SqliteApplyRunRepository().save(run)
 
         row = conn.execute(
@@ -323,6 +331,8 @@ def test_mark_result_without_worker_id_skips_artifact_registration(
             lambda: get_connection(db_path),
         )
         # No run_ctx -> worker_id is None.
+        record_job_event(conn, JOB_ID, "apply", "ApplyClaimAcquired", tenant_id=LOCAL_TENANT, payload={"run_id": "run-manual"})
+        conn.commit()
         mark_result(
             JOB_ID,
             "applied",
@@ -364,6 +374,8 @@ def test_mark_result_apply_log_registration_is_idempotent(
             "jobctrl.apply.launcher.get_connection",
             lambda: get_connection(db_path),
         )
+        record_job_event(conn, JOB_ID, "apply", "ApplyClaimAcquired", tenant_id=LOCAL_TENANT, payload={"run_id": "run-1"})
+        conn.commit()
         mark_result(
             JOB_ID,
             "failed",
@@ -401,6 +413,8 @@ def test_mark_result_apply_log_registration_is_idempotent(
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write("second run\n")
 
+        record_job_event(conn, JOB_ID, "apply", "ApplyClaimAcquired", tenant_id=LOCAL_TENANT, payload={"run_id": "run-2"})
+        conn.commit()
         mark_result(
             JOB_ID,
             "applied",

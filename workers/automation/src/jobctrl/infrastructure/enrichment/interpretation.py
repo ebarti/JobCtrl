@@ -10,10 +10,14 @@ def interpret_job(conn, job, *, requirements=(), tenant_id="local", dependencies
     dependencies = dependencies or determination_dependencies(conn, tenant_id=tenant_id, lane="enrichment")
     snapshot = build_jd_snapshot(job)
     version = compute_snapshot_hash(snapshot)
-    fields = [
-        Source(source_id=f"job:{key}", text=str(job.get(key) or ""))
-        for key in ("title", "company", "location", "salary")
-    ]
+    fields: list[Source] = []
+    for key in ("title", "company", "location", "salary"):
+        value = job.get(key)
+        text = "" if value is None else str(value)
+        # A blank source cannot supply the required nonblank exact quote.
+        # The full posting remains authoritative when metadata is missing.
+        if text.strip():
+            fields.append(Source(source_id=f"job:{key}", text=text))
     service = ModelJobInterpreter(**dependencies)
     result, envelope = service.interpret(
         entity_id=str(job["job_id"]),

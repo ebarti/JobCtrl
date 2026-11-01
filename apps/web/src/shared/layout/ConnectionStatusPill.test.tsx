@@ -1,4 +1,5 @@
 import { screen, waitFor } from "@testing-library/react";
+import { JobCtrlApiError } from "@jobctrl/api-client";
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -9,13 +10,15 @@ import { ConnectionStatusPill } from "./ConnectionStatusPill.js";
 
 function renderConnectionStatusPill({
   health = sampleHealthResponse,
+  healthError,
 }: {
   health?: typeof sampleHealthResponse;
+  healthError?: Error;
 } = {}) {
   const eventStream = new FakeEventStreamPort();
   const ports = buildTestPorts({
     eventStream,
-    api: { health: vi.fn(async () => health) },
+    api: { health: vi.fn(async () => { if (healthError) throw healthError; return health; }) },
   });
   renderWithProviders(<ConnectionStatusPill />, { ports, withEventStream: true });
   return { eventStream };
@@ -76,6 +79,44 @@ describe("<ConnectionStatusPill>", () => {
     expect(alert).toHaveAttribute("aria-live", "assertive");
     expect(alert).toHaveAttribute("data-typography", "body");
     expect(alert).toHaveTextContent("No JobCtrl automation worker heartbeat has been written to the API database.");
+  });
+
+  it("identifies a migration refusal from the API without claiming a generic outage is a migration", async () => {
+    renderConnectionStatusPill({
+      healthError: new JobCtrlApiError(503, "Unavailable", undefined, {
+        ok: false, error: "database_migration_required", currentVersion: 14, expectedVersion: 15,
+      }),
+    });
+    expect(await screen.findByText("Upgrade required")).toHaveAttribute("data-status", "lost");
+    expect(screen.getByRole("alert")).toHaveTextContent("workspace database needs an upgrade");
+    expect(screen.getByRole("alert")).toContainElement(screen.getByRole("link", { name: "Update guidance" }));
+  });
+
+  it("does not present a newer database as needing migration", async () => {
+    renderConnectionStatusPill({
+      healthError: new JobCtrlApiError(503, "Unavailable", undefined, {
+        ok: false, error: "database_schema_incompatible", currentVersion: 16, expectedVersion: 15,
+      }),
+    });
+    expect(await screen.findByText("Database unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("newer JobCtrl version");
+  });
+
+  it("shows actionable workspace-change recovery even when worker health is unavailable", async () => {
+    const { eventStream } = renderConnectionStatusPill({
+      health: {
+        ...sampleHealthResponse,
+        worker: { ...sampleHealthResponse.worker, status: "missing", message: "Worker unavailable" },
+      },
+    });
+    await waitFor(() => expect(eventStream.subscriptions.length).toBe(1));
+    await act(async () => { eventStream.setStatus("workspace_changed"); });
+    expect(screen.getByText("Workspace changed")).toHaveAttribute("data-status", "lost");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Stop JobCtrl");
+    expect(alert).toHaveTextContent("inspect the workspace");
+    expect(alert).toHaveTextContent("restart JobCtrl");
+    expect(alert).toHaveTextContent("reload this page");
   });
 
   it("surfaces long event-stream disconnections as a status banner", async () => {

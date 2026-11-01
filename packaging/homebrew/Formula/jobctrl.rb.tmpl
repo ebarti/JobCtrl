@@ -14,13 +14,16 @@ class Jobctrl < Formula
   version "{{APP_VERSION}}"
   sha256 "{{ARTIFACT_SHA256}}"
   license "AGPL-3.0-only"
-  version_scheme 1
+  version_scheme 2
 
   JOBCTRL_BUILD_ID = "{{BUILD_ID}}"
   JOBCTRL_MANIFEST_SHA256 = "{{MANIFEST_SHA256}}"
   JOBCTRL_DESCRIPTOR_URL = "{{DESCRIPTOR_URL}}"
   JOBCTRL_DESCRIPTOR_SHA256 = "{{DESCRIPTOR_SHA256}}"
   JOBCTRL_SIGNATURE_SHA256 = "{{SIGNATURE_SHA256}}"
+  DEVELOPER_ID_REQUIREMENT = "anchor apple generic " \
+                             "and certificate 1[field.1.2.840.113635.100.6.2.6] exists " \
+                             "and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
 
   resource "jobctrl-release-descriptor" do
     url JOBCTRL_DESCRIPTOR_URL
@@ -32,46 +35,17 @@ class Jobctrl < Formula
     sha256 JOBCTRL_SIGNATURE_SHA256
   end
 
-  def verify_notarized_app!(bundle)
-    codesign_output, codesign_status = Open3.capture2e(
-      "/usr/bin/codesign",
-      "--verify",
-      "--deep",
-      "--strict",
-      "--check-notarization",
-      "-R=notarized",
-      "--verbose=2",
-      bundle.to_s,
-    )
-    unless codesign_status.success?
-      odie "JobCtrl release signature verification failed for #{bundle}: #{codesign_output}"
-    end
-
-    gatekeeper_output, gatekeeper_status = Open3.capture2e(
-      "/usr/sbin/spctl",
-      "--assess",
-      "--type",
-      "execute",
-      "--verbose=4",
-      bundle.to_s,
-    )
-    if !gatekeeper_status.success? || gatekeeper_output.exclude?("source=Notarized Developer ID")
-      odie "JobCtrl release is not Gatekeeper-notarized for #{bundle}: #{gatekeeper_output}"
-    end
-  end
-
-  def verify_notarized_executable!(executable)
+  def verify_developer_id_executable!(executable)
     codesign_output, codesign_status = Open3.capture2e(
       "/usr/bin/codesign",
       "--verify",
       "--strict",
-      "--check-notarization",
-      "-R=notarized",
+      "-R=#{DEVELOPER_ID_REQUIREMENT}",
       "--verbose=2",
       executable.to_s,
     )
     unless codesign_status.success?
-      odie "JobCtrl release executable signature verification failed for #{executable}: #{codesign_output}"
+      odie "JobCtrl Developer ID signature verification failed for #{executable}: #{codesign_output}"
     end
   end
 
@@ -87,9 +61,13 @@ class Jobctrl < Formula
     # libexec/bootstrap is a native bootstrap, not the runtime selector: on its first
     # normal-user invocation it authenticates these resources into the user
     # store, then re-execs that stable selector.
-    verify_notarized_executable!(buildpath/"launcher/jobctrl")
-    verify_notarized_executable!(buildpath/"launcher/jobctrl-installer")
-    verify_notarized_executable!(managed_headless_shell)
+    # Apple's live notarization service is unavailable in Homebrew's sandbox.
+    # Require a strict Developer ID signature here; the normal-user bootstrap
+    # checks notarization before running its installer, which verifies the full
+    # payload before activation. Homebrew's sandbox remains unchanged.
+    verify_developer_id_executable!(buildpath/"launcher/jobctrl")
+    verify_developer_id_executable!(buildpath/"launcher/jobctrl-installer")
+    verify_developer_id_executable!(managed_headless_shell)
     bootstrap = libexec/"bootstrap"
     bootstrap.install buildpath/"launcher/jobctrl"
     bootstrap.install buildpath/"launcher/jobctrl-installer"
@@ -117,6 +95,15 @@ class Jobctrl < Formula
   end
 
   def caveats
+    upgrade_warning = if ["0.4.0", "0.4.1"].include?(version.to_s)
+      <<~EOS
+        Upgrades from normally used JobCtrl 0.3.1 workspaces are currently
+        blocked because earlier child processes cannot be verified as stopped.
+        The previous workspace and installation records are preserved. The
+        new Homebrew command cannot start that workspace; keep the registry and
+        databases intact and see https://jobctrl.dev/user/getting-started#update-roll-back-or-remove-jobctrl
+      EOS
+    end
     <<~EOS
       JobCtrl #{version} (#{JOBCTRL_BUILD_ID}) uses the same signed ZIP and
       manifest as the curl channel. It has no Homebrew dependencies and no
@@ -124,6 +111,7 @@ class Jobctrl < Formula
       Temporal, and one managed core Chromium; Git, Corepack, uv, Poppler, and
       system Chrome are not required unless you explicitly enable an
       authenticated-browser capability.
+      #{upgrade_warning}
     EOS
   end
 

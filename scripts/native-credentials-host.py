@@ -158,6 +158,7 @@ def main() -> int:
             result = subprocess.run(
                 [shutil.which("node") or "node", str(ROOT / "apps/api/node_modules/tsx/dist/cli.mjs"), str(ROOT / "apps/api/test/native-credentials-host.ts")],
                 input=json.dumps(payload), encoding="utf-8", capture_output=True, timeout=60, cwd=ROOT,
+                env={**os.environ, "JOBCTRL_PYTHON_EXECUTABLE": sys.executable},
             )
             if value and (value in result.stdout or value in result.stderr):
                 raise RuntimeError("Native API bridge exposed a secret")

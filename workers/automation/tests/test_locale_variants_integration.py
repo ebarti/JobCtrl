@@ -1,4 +1,4 @@
-"""Real schema-14 persistence and product owners, using only the structural model port."""
+"""Real schema-15 persistence and product owners, using only the structural model port."""
 import json
 import sqlite3
 import zipfile
@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 
 from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.infrastructure.materials import locale_variants as locale
-from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+from jobctrl.infrastructure.migrations.schema_v15 import create_exact_v15_schema
 from tests.test_locale_variants import LocaleModel, dependencies
 
 JOB = "90000000-0000-4000-8000-000000000039"
@@ -22,7 +22,7 @@ TEXT = "Synthetic Name\nHistorical Title · Synthetic Employer · 2020\nDelivere
 def owned(tmp_path):
     connection = sqlite3.connect(tmp_path / "owned.db")
     connection.row_factory = sqlite3.Row
-    create_exact_v14_schema(connection)
+    create_exact_v15_schema(connection)
     connection.execute("INSERT INTO jobs(tenant_id,job_id,url,title,company) VALUES('local',?,'https://example.test/owned','Owned job','Synthetic Employer')", (JOB,))
     connection.execute("INSERT INTO candidate_profiles(tenant_id,profile_id,version,personal_full_name,updated_at) VALUES('local','default',1,'Synthetic Name','2026-10-09')")
     connection.execute("INSERT INTO candidate_profile_experience_entries(tenant_id,profile_id,entry_id,position_index,title,company,date_range) VALUES('local','default','entry',0,'Historical Title','Synthetic Employer','2020')")

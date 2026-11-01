@@ -562,9 +562,56 @@ describe("<StructuredProfileEditor>", () => {
     await user.keyboard("{Enter}");
     expect(within(first).getByRole("textbox", { name: "Bullet 1" })).toHaveFocus();
     const entries = JSON.parse(latestProfile).resume.experience_entries;
-    expect(entries.slice(-2).map((entry: { id: string }) => entry.id)).toEqual(["", ""]);
+    const addedIds = entries.slice(-2).map((entry: { id: string }) => entry.id);
+    expect(addedIds.every((id: string) => id.length > 0)).toBe(true);
+    expect(new Set(addedIds).size).toBe(2);
     expect(entries.at(-2).bullets).toEqual(["A3", "A1", "A2"]);
     expect(entries.at(-1).bullets).toEqual(["B1", "B2", "B3"]);
+  });
+
+  it("never reuses a removed draft identity or another entry kind's imported identity", async () => {
+    const user = userEvent.setup();
+    const initialProfile = structuredClone(sampleProfileResponse.profile) as JsonRecord;
+    const resume = initialProfile["resume"] as JsonRecord;
+    resume["skill_categories"] = [{ id: "skill-1", label: "Original skills", items: ["Python"] }];
+    (resume["experience_entries"] as JsonRecord[])[0]!["id"] = "skill-2";
+    (resume["tailoring_rules"] as JsonRecord)["required_experience_entry_ids"] = ["skill-2"];
+    (resume["tailoring_rules"] as JsonRecord)["required_skill_category_ids"] = ["skill-1"];
+    let latestProfile = JSON.stringify(initialProfile);
+    render(<StatefulEditor initialProfile={initialProfile} onLatestProfile={(value) => { latestProfile = value; }} />);
+    await user.click(screen.getByRole("button", { name: /^Skill categories\b/ }));
+    await user.click(screen.getByRole("button", { name: "Add skill category" }));
+    const firstId = JSON.parse(latestProfile).resume.skill_categories[1].id;
+    expect(["skill-1", "skill-2", ""]).not.toContain(firstId);
+    await user.click(screen.getAllByRole("button", { name: "Remove skill category" })[1]!);
+    await user.click(screen.getByRole("button", { name: "Add skill category" }));
+    const replacementId = JSON.parse(latestProfile).resume.skill_categories[1].id;
+    expect(["skill-1", "skill-2", firstId, ""]).not.toContain(replacementId);
+    const expected = structuredClone(initialProfile);
+    (expected["resume"] as JsonRecord)["skill_categories"] = [
+      { id: "skill-1", label: "Original skills", items: ["Python"] },
+      { id: replacementId, label: "", items: [""] },
+    ];
+    expect(JSON.parse(latestProfile)).toEqual(expected);
+  });
+
+  it.each([
+    ["Experience entries", "Add experience", "experience_entries", "required_bullets_by_experience_id", "experience-1"],
+    ["Skill categories", "Add skill category", "skill_categories", "required_skills_by_category_id", "skill-2"],
+  ])("does not inherit required content from a removed identity when adding %s", async (section, addLabel, collection, requiredMap, danglingId) => {
+    const user = userEvent.setup();
+    const initialProfile = structuredClone(sampleProfileResponse.profile) as JsonRecord;
+    const resume = initialProfile["resume"] as JsonRecord;
+    const entries = resume[collection] as JsonRecord[];
+    expect(entries.map((entry) => entry["id"])).not.toContain(danglingId);
+    (resume["tailoring_rules"] as JsonRecord)[requiredMap] = { [danglingId]: ["Preserved required content"] };
+    let latestProfile = JSON.stringify(initialProfile);
+    render(<StatefulEditor initialProfile={initialProfile} onLatestProfile={(value) => { latestProfile = value; }} />);
+    await user.click(screen.getByRole("button", { name: new RegExp(`^${section}\\b`) }));
+    await user.click(screen.getByRole("button", { name: addLabel }));
+    const saved = JSON.parse(latestProfile);
+    expect(saved.resume[collection].at(-1).id).not.toBe(danglingId);
+    expect(saved.resume.tailoring_rules[requiredMap]).toEqual({ [danglingId]: ["Preserved required content"] });
   });
 
   it("renders bullet standards as a combined fixed set", () => {

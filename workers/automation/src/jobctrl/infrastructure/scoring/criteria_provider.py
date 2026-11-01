@@ -125,6 +125,31 @@ def read_apply_concurrency(
     return min(16, max(1, _int(value, default)))
 
 
+def read_codex_reasoning_effort(model: str, path: Path | str | None = None) -> str | None:
+    """Return an explicit model-specific effort, preserving an unset choice."""
+
+    efforts = read_config_settings(path).get("codex_reasoning_efforts", {})
+    if not isinstance(efforts, dict):
+        raise ValueError("codex_reasoning_efforts must be an object")
+    effort = efforts.get(model)
+    if effort is None:
+        return None
+    if not isinstance(effort, str) or not 0 < len(effort.strip()) <= 40 or any(ord(c) < 32 or ord(c) == 127 for c in effort):
+        raise ValueError("Codex reasoning effort must be a provider effort identifier")
+    return effort.strip()
+
+
+def read_default_llm_model(path: Path | str | None = None) -> str | None:
+    """Read the explicitly selected default route; no provider substitution."""
+
+    value = read_config_settings(path).get("default_llm_model")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not 0 < len(value.strip()) <= 160:
+        raise ValueError("default_llm_model must be a model spec or null")
+    return value.strip()
+
+
 def read_preferred_model(
     provider: str,
     path: Path | str | None = None,

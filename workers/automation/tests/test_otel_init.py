@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import http.server
+import threading
 
 import pytest
 
@@ -35,17 +37,69 @@ def _set_creds(monkeypatch):
     monkeypatch.setenv("LANGFUSE_BASE_URL", "https://example.test")
 
 
-def _header(exporter, name: str) -> str | None:
-    """Case-insensitive lookup against the exporter's session headers."""
-    headers = dict(exporter._session.headers)
-    for key, value in headers.items():
-        if key.lower() == name.lower():
-            return value
-    return None
+@pytest.fixture
+def observed_otlp(monkeypatch):
+    """Observe real OTLP requests without depending on SDK transport internals."""
+    from jobctrl.infrastructure.observability import otel as otel_mod
 
-
-def test_init_otel_with_full_creds_configures_provider(monkeypatch):
     _set_creds(monkeypatch)
+    monkeypatch.setenv("LANGFUSE_DISABLE", "0")
+    for name in ("OTEL_EXPORTER_OTLP_COMPRESSION", "OTEL_EXPORTER_OTLP_TRACES_COMPRESSION"):
+        monkeypatch.delenv(name, raising=False)
+    observed = {"requests": [], "configuration": None}
+
+    class Receiver(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            observed["requests"].append({
+                "path": self.path,
+                "authorization": self.headers.get("Authorization"),
+                "ingestion_version": self.headers.get("x-langfuse-ingestion-version"),
+                "content_type": self.headers.get("Content-Type"),
+                "body": body,
+            })
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-protobuf")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Receiver)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    monkeypatch.setenv("LANGFUSE_BASE_URL", base_url)
+    exporter_type = otel_mod.OTLPSpanExporter
+
+    def construct_exporter(**kwargs):
+        observed["configuration"] = kwargs
+        return exporter_type(**kwargs)
+
+    monkeypatch.setattr(otel_mod, "OTLPSpanExporter", construct_exporter)
+    try:
+        yield observed
+    finally:
+        otel_mod.shutdown_otel()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def _observe_export(otel_mod, observed):
+    with otel_mod._provider.get_tracer("owned.otel-check").start_as_current_span("owned-dependency-export"):
+        pass
+    assert otel_mod._provider.force_flush(timeout_millis=3000)
+    assert len(observed["requests"]) == 1
+    request = observed["requests"][0]
+    assert request["path"] == "/api/public/otel/v1/traces"
+    assert request["content_type"] == "application/x-protobuf"
+    assert b"owned-dependency-export" in request["body"]
+    return request
+
+
+def test_init_otel_with_full_creds_configures_provider(observed_otlp):
     from jobctrl.infrastructure.observability import otel as otel_mod
 
     otel_mod.init_otel()
@@ -53,24 +107,22 @@ def test_init_otel_with_full_creds_configures_provider(monkeypatch):
     assert otel_mod.is_otel_enabled() is True
     assert otel_mod._provider is not None
     assert otel_mod._exporter is not None
-    # Endpoint must be the documented Langfuse OTLP path.
-    assert otel_mod._exporter._endpoint.endswith("/api/public/otel/v1/traces")
-    # Authorization header must be HTTP Basic with the base64 of pk:sk.
+    request = _observe_export(otel_mod, observed_otlp)
     expected = base64.b64encode(b"pk-test:sk-test").decode("ascii")
-    assert _header(otel_mod._exporter, "Authorization") == f"Basic {expected}"
-    assert _header(otel_mod._exporter, "x-langfuse-ingestion-version") == "4"
-    assert otel_mod._exporter._timeout == 5.0
+    assert request["authorization"] == f"Basic {expected}"
+    assert request["ingestion_version"] == "4"
+    assert observed_otlp["configuration"]["timeout"] == 5.0
 
 
-def test_init_otel_honors_export_timeout_env(monkeypatch):
-    _set_creds(monkeypatch)
+def test_init_otel_honors_export_timeout_env(monkeypatch, observed_otlp):
     monkeypatch.setenv("LANGFUSE_OTEL_TIMEOUT_SECONDS", "1.5")
     from jobctrl.infrastructure.observability import otel as otel_mod
 
     otel_mod.init_otel()
 
     assert otel_mod._exporter is not None
-    assert otel_mod._exporter._timeout == 1.5
+    _observe_export(otel_mod, observed_otlp)
+    assert observed_otlp["configuration"]["timeout"] == 1.5
 
 
 def test_init_otel_is_idempotent(monkeypatch):

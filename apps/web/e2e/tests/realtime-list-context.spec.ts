@@ -23,7 +23,7 @@ test("JobUpdated patches a filtered second page without losing selection, order 
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("request", (request) => {
     const pathname = new URL(request.url()).pathname;
-    if (pathname === "/v1/jobs") listReads += 1;
+    if (pathname === "/v1/jobs/reviewable-list") listReads += 1;
     if (pathname === "/v1/events/stream") connections += 1;
   });
   const cdp = await page.context().newCDPSession(page);
@@ -71,7 +71,7 @@ test("JobUpdated patches a filtered second page without losing selection, order 
     })();
 
     const initialResponse = page.waitForResponse(
-      (response) => new URL(response.url()).pathname === "/v1/jobs",
+      (response) => new URL(response.url()).pathname === "/v1/jobs/reviewable-list",
     );
     await page.goto(
       "/jobs?discoveredSince=2026-09-12T10%3A00%3A00.000Z&page=2&pageSize=20&sort=discovered_at&dir=desc",
@@ -154,7 +154,7 @@ test("JobUpdated patches a filtered second page without losing selection, order 
     // An event with unknown derived fields must still refetch this exact page.
     const refreshed = page.waitForResponse(
       (response) =>
-        new URL(response.url()).pathname === "/v1/jobs" && response.ok(),
+        new URL(response.url()).pathname === "/v1/jobs/reviewable-list" && response.ok(),
     );
     insertEvent.run(
       target.jobKey,

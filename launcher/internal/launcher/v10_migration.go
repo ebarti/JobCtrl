@@ -116,6 +116,9 @@ func installSealedV10Candidate(candidate launchContext, candidatePath string) er
 		return errors.New("v10 activation candidate is not an owner-private regular file")
 	}
 	live := filepath.Join(candidate.Instance.StateDir, "jobctrl.db")
+	if err := checkDatabasePublication(live); err != nil {
+		return err
+	}
 	liveInfo, err := os.Lstat(live)
 	if err != nil || !liveInfo.Mode().IsRegular() || liveInfo.Mode()&os.ModeSymlink != 0 {
 		return errors.New("live database is not a regular file")

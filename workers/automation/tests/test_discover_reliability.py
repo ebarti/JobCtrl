@@ -720,9 +720,12 @@ async def test_discovery_next_run_settings_stay_frozen_after_planning(
 
 
 def test_source_planning_does_not_run_hygiene_before_sources(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path, request,
 ) -> None:
-    monkeypatch.setattr(runner, "init_db", lambda: object())
+    path = tmp_path / "owned-source-plan.db"
+    conn = init_db(path)
+    request.addfinalizer(lambda: close_connection(path))
+    monkeypatch.setattr(runner, "init_db", lambda: conn)
     monkeypatch.setattr(runner.config, "load_search_config", lambda: {})
     monkeypatch.setattr(runner.config, "load_source_registry", lambda **_kwargs: [])
     monkeypatch.setattr(runner, "seed_discovery_control_queues", lambda *_args, **_kwargs: None)
@@ -731,10 +734,11 @@ def test_source_planning_does_not_run_hygiene_before_sources(
         "_plan_discovery_schedule",
         lambda *_args, **_kwargs: runner.DiscoverySchedule(()),
     )
-    monkeypatch.setattr(runner, "_pipeline_job_count", lambda: 0)
-    pass
 
-    plan = runner.plan_discovery_source_families(limit=500)
+    from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+    plan = runner.plan_discovery_source_families(
+        limit=500, discovery_execution=DiscoveryExecutionRef("local", "owned-plan", "owned-run"),
+    )
 
     assert plan["families"] == ["jobspy", "workday", "smartextract"]
 
@@ -2605,6 +2609,48 @@ def test_live_recovery_selector_is_scoped_and_retryable(
         }
     finally:
         close_connection(db_path)
+
+
+@pytest.mark.parametrize("in_flight", [False, True])
+def test_cooperative_enrichment_stop_propagates_without_crash_log(monkeypatch, caplog, in_flight):
+    stop = threading.Event()
+    done = threading.Event()
+    done.set()
+    monkeypatch.setattr(runner, "_count_pending", lambda *_args: 1)
+    original_enrich = runner._run_enrich
+
+    def interrupted_enrich(**kwargs):
+        stop.set()
+        return original_enrich(**kwargs)
+
+    if in_flight:
+        monkeypatch.setattr(runner, "_run_enrich", interrupted_enrich)
+    else:
+        stop.set()
+    result = {}
+    with pytest.raises(TransientNetworkError):
+        runner._run_discovery_enrichment_until_idle(done, result, workers=1, limit=0, cancel_event=stop)
+    assert result == {}
+    assert not [record for record in caplog.records if record.levelno >= 40]
+
+
+def test_unexpected_failure_racing_enrichment_stop_remains_a_failure(monkeypatch, caplog):
+    stop = threading.Event()
+    done = threading.Event()
+    done.set()
+    monkeypatch.setattr(runner, "_count_pending", lambda *_args: 1)
+
+    def broken_enrich(**_kwargs):
+        stop.set()
+        raise ValueError("synthetic real failure")
+
+    monkeypatch.setattr(runner, "_run_enrich", broken_enrich)
+    result = {}
+    runner._run_discovery_enrichment_until_idle(done, result, workers=1, limit=0, cancel_event=stop)
+    assert result["status"] == "failed"
+    assert result["error_class"] == "ValueError"
+    assert result["retryable"] is False
+    assert any(record.levelno >= 40 for record in caplog.records)
 
 
 def test_until_idle_records_systemic_failure_with_full_context(

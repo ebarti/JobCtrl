@@ -12,7 +12,7 @@ const PROVIDER_TOP_LEVEL = ["claude-agent-sdk", "google-antigravity", "openai-co
 const PACKS = [
   {
     id: "claude-agent-sdk",
-    version: "0.2.115",
+    version: "0.2.121",
     owner: "Anthropic PBC",
     source: "https://pypi.org/project/claude-agent-sdk/",
     license: "MIT AND LicenseRef-Anthropic-Commercial-Terms",
@@ -20,7 +20,7 @@ const PACKS = [
   },
   {
     id: "codex-provider-runtime",
-    version: "0.144.4",
+    version: "0.163.0",
     owner: "OpenAI",
     source: "https://pypi.org/project/openai-codex-cli-bin/",
     license: "Apache-2.0",
@@ -64,6 +64,14 @@ function run(command, args, cwd) {
 
 function markerMatchesDarwinArm64Cpython(marker) {
   if (!marker) return true;
+  // uv exports both NumPy resolutions; provider packs target CPython 3.12.
+  // Accept whole minor-version boundaries, where the patch version is irrelevant.
+  const pythonBoundary = marker.match(/^python_full_version (>=|<) '(\d+)\.(\d+)'$/);
+  if (pythonBoundary) {
+    const targetIsBefore = 3 < Number(pythonBoundary[2])
+      || (3 === Number(pythonBoundary[2]) && 12 < Number(pythonBoundary[3]));
+    return pythonBoundary[1] === "<" ? targetIsBefore : !targetIsBefore;
+  }
   if (marker.includes("sys_platform == 'win32'")) return false;
   if (marker.includes("platform_python_implementation != 'PyPy'")) return true;
   if (marker.includes("implementation_name != 'PyPy'")) return true;

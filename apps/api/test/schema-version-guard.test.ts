@@ -21,6 +21,7 @@ import {
   EXACT_V10_SCHEMA_MANIFEST,
   EXACT_V11_SCHEMA_MANIFEST,
   EXACT_V14_SCHEMA_MANIFEST,
+  EXACT_V15_SCHEMA_MANIFEST,
   hasExactV8SchemaManifest,
   hasExactV9SchemaManifest,
   schemaManifest,
@@ -35,7 +36,7 @@ function makeDbWithUserVersion(userVersion: number): { dbPath: string; cleanup: 
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
-function makeExactV14Database(): { dbPath: string; cleanup: () => void } {
+function makeExactDatabase(version: 14 | 15): { dbPath: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-exact-v9-"));
   const dbPath = path.join(dir, "jobs.db");
   const migrations = path.resolve(
@@ -51,7 +52,8 @@ function makeExactV14Database(): { dbPath: string; cleanup: () => void } {
   db.exec(fs.readFileSync(path.join(migrations, "schema_v12.sql"), "utf8"));
   db.exec(fs.readFileSync(path.join(migrations, "schema_v13.sql"), "utf8"));
   db.exec(fs.readFileSync(path.join(migrations, "schema_v14.sql"), "utf8"));
-  db.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
+  if (version === 15) db.exec(fs.readFileSync(path.join(migrations, "schema_v15.sql"), "utf8"));
+  db.pragma(`user_version = ${version}`);
   db.close();
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
@@ -66,7 +68,7 @@ function tableColumns(db: Database.Database, tableName: string): string[] {
 }
 
 describe("schema version guard at DB open", () => {
-  it.each([0, 6, 7, 8, 9, 10, 11, 12, 13, 15])("refuses schema version %i before runtime writes", (userVersion) => {
+  it.each([0, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16])("refuses schema version %i before runtime writes", (userVersion) => {
     const { dbPath, cleanup } = makeDbWithUserVersion(userVersion);
     try {
       const token = "job" + "ctl";
@@ -95,14 +97,31 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("opens the exact v14 schema", () => {
-    const { dbPath, cleanup } = makeExactV14Database();
+  it("opens the exact v15 schema", () => {
+    const { dbPath, cleanup } = makeExactDatabase(15);
     try {
       openDatabase(dbPath).close();
       openReadOnlyDatabase(dbPath).close();
     } finally {
       cleanup();
     }
+  });
+
+  it("refuses an exact v14 database without mutating its schema", () => {
+    const { dbPath, cleanup } = makeExactDatabase(14);
+    try {
+      const before = new Database(dbPath, { readonly: true });
+      const manifest = schemaManifest(before, 14);
+      before.close();
+      expect(manifest).toEqual(EXACT_V14_SCHEMA_MANIFEST);
+      expect(() => openDatabase(dbPath)).toThrow(IncompatibleSchemaVersionError);
+      expect(() => openReadOnlyDatabase(dbPath)).toThrow(IncompatibleSchemaVersionError);
+      const after = new Database(dbPath, { readonly: true });
+      try {
+        expect(after.pragma("user_version", { simple: true })).toBe(14);
+        expect(schemaManifest(after, 14)).toEqual(manifest);
+      } finally { after.close(); }
+    } finally { cleanup(); }
   });
 
   it("rejects a merely stamped v10 database before runtime writes", () => {
@@ -202,10 +221,17 @@ describe("schema version guard at DB open", () => {
     });
   });
 
-  it("seals the same v14 manifest in both runtimes", () => {
-    const {dbPath, cleanup} = makeExactV14Database();
+  it("seals the same v15 manifest in both runtimes", () => {
+    const {dbPath, cleanup} = makeExactDatabase(15);
     const db = new Database(dbPath);
-    try { expect(schemaManifest(db, SUPPORTED_SCHEMA_VERSION)).toEqual(EXACT_V14_SCHEMA_MANIFEST); }
+    try {
+      expect(schemaManifest(db, SUPPORTED_SCHEMA_VERSION)).toEqual(EXACT_V15_SCHEMA_MANIFEST);
+      const pythonManifest = fs.readFileSync(path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../../workers/automation/src/jobctrl/infrastructure/migrations/schema_manifest.py",
+      ), "utf8");
+      expect(pythonManifest).toContain(`fingerprint="${EXACT_V15_SCHEMA_MANIFEST.fingerprint}",`);
+    }
     finally { db.close(); cleanup(); }
   });
 

@@ -237,13 +237,45 @@ describe("SseEventStreamAdapter", () => {
     expect(subscription.status).toBe("open");
     expect(adapter.status).toBe("open");
 
-    source.emit("error");
+    source.emit("error", JSON.stringify({ code: "event_stream_unavailable" }));
     source.emit("heartbeat");
     expect(statuses.mock.calls.map(([status]) => status)).toEqual([
       "open",
       "closed",
       "open",
     ]);
+  });
+
+  it("keeps a workspace change actionable until a fresh subscription is created", () => {
+    const adapter = new SseEventStreamAdapter();
+    const subscription = adapter.subscribe({ tenantId: LOCAL_TENANT });
+    const source = onlySource();
+    const handler = vi.fn();
+    const statuses = vi.fn();
+    subscription.on(handler);
+    subscription.onStatusChange(statuses);
+    source.emit("open");
+    source.emit("error", JSON.stringify({ code: "event_stream_workspace_changed" }));
+    expect(subscription.status).toBe("workspace_changed");
+    source.emit("error");
+    source.emit("open");
+    source.emit("heartbeat");
+    source.emit("JobScored", encodeEnvelope({ jobId: "old-subscription" }));
+    expect(subscription.status).toBe("workspace_changed");
+    expect(adapter.status).toBe("workspace_changed");
+    expect(handler).not.toHaveBeenCalled();
+    expect(statuses.mock.calls.map(([status]) => status)).toEqual(["open", "workspace_changed"]);
+
+    subscription.close();
+    const fresh = adapter.subscribe({ tenantId: LOCAL_TENANT });
+    const freshSource = FakeEventSource.instances[1]!;
+    const freshHandler = vi.fn();
+    fresh.on(freshHandler);
+    freshSource.emit("open");
+    freshSource.emit("JobScored", encodeEnvelope({ jobId: "fresh-subscription" }));
+    expect(fresh.status).toBe("open");
+    expect(freshHandler).toHaveBeenCalledOnce();
+    fresh.close();
   });
 
   it("removes every transport listener and closes the source exactly once", () => {

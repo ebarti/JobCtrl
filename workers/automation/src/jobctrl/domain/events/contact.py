@@ -164,6 +164,19 @@ def create_contact_research_task_failed(
     return create_domain_event("ContactResearchTaskFailed", tenant_id, asdict(payload))
 
 
+@dataclass(frozen=True)
+class ContactResearchSourceAttemptFailedPayload:
+    task_id: str
+    outcome: str
+    attempted_at: str
+
+
+def create_contact_research_source_attempt_failed(
+    tenant_id: TenantId, payload: ContactResearchSourceAttemptFailedPayload
+) -> DomainEvent:
+    return create_domain_event("ContactResearchSourceAttemptFailed", tenant_id, asdict(payload))
+
+
 # -- OutreachThread aggregate -----------------------------------------------
 
 
@@ -295,6 +308,8 @@ __all__ = [
     "ContactDeletedPayload",
     "ContactResearchTaskCompletedPayload",
     "ContactResearchTaskFailedPayload",
+    "ContactResearchSourceAttemptFailedPayload",
+    "create_contact_research_source_attempt_failed",
     "ContactResearchTaskNeedsReviewPayload",
     "ContactResearchTaskStartedPayload",
     "ContactUpdatedPayload",

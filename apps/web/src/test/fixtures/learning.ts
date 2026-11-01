@@ -139,6 +139,8 @@ export const sampleTailoringPolicyRollback: TailoringPolicyRollbackResponse = {
   policyKind: "tailoring_rule",
   version: 5,
   status: "current",
+  currentVersion: 5, replayed: false, expectedCurrentVersion: 4,
+  commandId: "11111111-1111-4111-8111-111111111111",
   learnedRules: [],
   sourceReviewId: null,
   sourceRecommendationId: null,

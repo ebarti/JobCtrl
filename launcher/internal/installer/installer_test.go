@@ -63,6 +63,50 @@ func TestReleaseDescriptorAuthenticatesExactBytesAndOrigin(t *testing.T) {
 	}
 }
 
+func TestSigningMessageBoundsAndRejectsOversizedDescriptor(t *testing.T) {
+	const domain = "jobctrl:release-descriptor:v1\x00"
+	raw := []byte("payload")
+	message := signingMessage(domain, raw)
+	if !bytes.Equal(message, append([]byte(domain), raw...)) {
+		t.Fatal("signing message did not retain the exact domain and payload")
+	}
+	message[len(domain)] = 'X'
+	if string(raw) != "payload" {
+		t.Fatal("signing message aliases its input")
+	}
+	if got := signingMessage(strings.Repeat("d", maxSigningDomainBytes), make([]byte, maxDescriptorBytes)); len(got) != maxSigningDomainBytes+maxDescriptorBytes {
+		t.Fatal("message at the size limits was rejected")
+	}
+	if signingMessage(strings.Repeat("d", maxSigningDomainBytes+1), nil) != nil || signingMessage(domain, make([]byte, maxDescriptorBytes+1)) != nil {
+		t.Fatal("oversized signing message accepted")
+	}
+
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, err := json.Marshal(stableDescriptor("https://example.test/releases/jobctrl.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, _ := validateTransportURL("https://example.test/releases/darwin-arm64.json", false)
+	trust := map[string]ed25519.PublicKey{"jobctrl-release-v1": public}
+	// Whitespace is valid trailing JSON but still counts toward the authenticated
+	// byte limit. Prove the boundary works and an empty-message signature cannot
+	// be used when an oversized message is refused by signingMessage.
+	bounded := append(descriptor, bytes.Repeat([]byte(" "), maxDescriptorBytes-len(descriptor))...)
+	boundedSignature, _ := json.Marshal(signedDescriptorSignature(private, bounded))
+	if _, err := verifyDescriptor(bounded, boundedSignature, trust, false, source, false); err != nil {
+		t.Fatalf("descriptor at size limit rejected: %v", err)
+	}
+	oversized := append(bounded, ' ')
+	emptySignature := base64.StdEncoding.EncodeToString(ed25519.Sign(private, nil))
+	oversizedSignature, _ := json.Marshal(descriptorSignature{SchemaVersion: 1, Status: "signed", Algorithm: "ed25519", KeyID: "jobctrl-release-v1", Signature: &emptySignature})
+	if _, err := verifyDescriptor(oversized, oversizedSignature, trust, false, source, false); err == nil {
+		t.Fatal("oversized descriptor accepted using an empty-message signature")
+	}
+}
+
 func TestMacOSPayloadTrustUsesGatekeeperOnlyForOutermostApps(t *testing.T) {
 	payload, launcherPath, nodePath, headlessShellPath, outerApp, nestedApp := macOSPayloadTrustFixture(t)
 	type command struct {
@@ -126,7 +170,7 @@ func TestMacOSPayloadTrustUsesGatekeeperOnlyForOutermostApps(t *testing.T) {
 }
 
 func TestMacOSPayloadTrustRejectsInvalidCodeSignatureOrNotarization(t *testing.T) {
-	payload, _, nodePath, headlessShellPath, _, _ := macOSPayloadTrustFixture(t)
+	payload, _, nodePath, headlessShellPath, outerApp, nestedApp := macOSPayloadTrustFixture(t)
 	for _, testCase := range []struct {
 		name      string
 		failsCall func(path string, args []string) bool
@@ -146,19 +190,40 @@ func TestMacOSPayloadTrustRejectsInvalidCodeSignatureOrNotarization(t *testing.T
 			},
 			contains: "Developer ID/notarization verification failed",
 		},
+		{
+			name: "invalid nested bundle signature",
+			failsCall: func(path string, args []string) bool {
+				return path == "/usr/bin/codesign" && args[len(args)-1] == nestedApp
+			},
+			contains: "nested code-bundle signature verification failed",
+		},
+		{
+			name: "invalid app notarization",
+			failsCall: func(path string, args []string) bool {
+				return path == "/usr/bin/codesign" && args[len(args)-1] == outerApp && containsString(args, "--check-notarization")
+			},
+			contains: "Developer ID/notarization verification failed",
+		},
+		{
+			name: "invalid Gatekeeper assessment",
+			failsCall: func(path string, args []string) bool {
+				return path == "/usr/sbin/spctl"
+			},
+			contains: "Gatekeeper assessment failed",
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			err := verifyMacOSPayloadTrust(payload, func(path string, args ...string) (string, error) {
 				if testCase.failsCall(path, args) {
-					return "", errors.New("fixture verification failure")
+					return "fixture verifier detail\n", errors.New("fixture verification failure")
 				}
 				if path == "/usr/sbin/spctl" {
 					return "source=Notarized Developer ID\n", nil
 				}
 				return "", nil
 			})
-			if err == nil || !strings.Contains(err.Error(), testCase.contains) {
-				t.Fatalf("invalid trust check accepted: %v", err)
+			if err == nil || !strings.Contains(err.Error(), testCase.contains) || !strings.Contains(err.Error(), "fixture verifier detail") {
+				t.Fatalf("invalid trust check accepted or its diagnostic was lost: %v", err)
 			}
 		})
 	}
@@ -1366,7 +1431,10 @@ func signedDescriptorSignatureWithDomain(private ed25519.PrivateKey, raw []byte,
 
 func localFixture(t *testing.T, root string) (archivePath, descriptorPath, signaturePath string) {
 	t.Helper()
-	const runtimeManifest = `{"schemaVersion":1,"launcherProtocol":1,"ports":{"temporalGrpc":7233,"temporalUi":8233,"api":8766},"components":[{"name":"temporal","executable":"temporal/temporal","arguments":["server"]},{"name":"worker","executable":"python/bin/python3","arguments":["-I","-B","-m","jobctrl","worker"]},{"name":"api","executable":"node/bin/node","arguments":["${PAYLOAD_ROOT}/api/server.mjs"]}],"health":{"temporal":{"component":"temporal","arguments":["operator"]},"api":{"path":"/v1/health","requireWorkerHealthy":true,"requireWorkerPid":true}}}`
+	// Options.Environment may be nil in acquisition tests. Its fallback must
+	// resolve an owned workspace rather than inspect the test runner's home.
+	t.Setenv("JOBCTRL_DIR", filepath.Join(root, "owned-default-workspace"))
+	const runtimeManifest = `{"schemaVersion":1,"launcherProtocol":2,"ports":{"temporalGrpc":7233,"temporalUi":8233,"api":8766},"components":[{"name":"temporal","executable":"temporal/temporal","arguments":["server"]},{"name":"worker","executable":"python/bin/python3","arguments":["-I","-B","-m","jobctrl","worker"]},{"name":"api","executable":"node/bin/node","arguments":["${PAYLOAD_ROOT}/api/server.mjs"]}],"health":{"temporal":{"component":"temporal","arguments":["operator"]},"api":{"path":"/v1/health","requireWorkerHealthy":true,"requireWorkerPid":true}}}`
 	files := []struct {
 		path, text, component, componentPath, mode string
 	}{
@@ -1396,7 +1464,7 @@ func localFixture(t *testing.T, root string) (archivePath, descriptorPath, signa
 		components = append(components, map[string]any{"id": file.component, "classification": "core-runtime", "version": "2.0.0", "owner": "JobCtrl", "source": "https://example.test/source", "license": "AGPL-3.0-only", "redistribution": "bundle", "path": file.componentPath, "sha256": hex.EncodeToString(digest[:]), "sizeBytes": len(file.text), "required": true})
 	}
 	sort.Slice(components, func(left, right int) bool { return components[left]["id"].(string) < components[right]["id"].(string) })
-	manifest := map[string]any{"schemaVersion": 1, "appVersion": "2.0.0", "buildId": "fixture-build-0001", "releaseChannel": "local", "sourceDateEpoch": 0, "platform": map[string]any{"id": "darwin-arm64", "os": "darwin", "arch": "arm64", "minimumOsVersion": "15.0"}, "launcherCompatibility": map[string]any{"minimum": 1, "maximum": 1}, "components": components, "capabilities": []map[string]any{{"id": "core", "defaultEnabled": true, "componentIds": []string{"jobctrl-api", "jobctrl-launcher", "jobctrl-web", "jobctrl-worker", "node-runtime", "python-runtime", "temporal-runtime"}}}, "files": manifestFiles, "signing": map[string]any{"manifestAlgorithm": "ed25519", "manifestKeyId": "local-development", "codeSigning": "unsigned-local", "notarized": false}}
+	manifest := map[string]any{"schemaVersion": 1, "appVersion": "2.0.0", "buildId": "fixture-build-0001", "releaseChannel": "local", "sourceDateEpoch": 0, "platform": map[string]any{"id": "darwin-arm64", "os": "darwin", "arch": "arm64", "minimumOsVersion": "15.0"}, "launcherCompatibility": map[string]any{"minimum": 2, "maximum": 2}, "components": components, "capabilities": []map[string]any{{"id": "core", "defaultEnabled": true, "componentIds": []string{"jobctrl-api", "jobctrl-launcher", "jobctrl-web", "jobctrl-worker", "node-runtime", "python-runtime", "temporal-runtime"}}}, "files": manifestFiles, "signing": map[string]any{"manifestAlgorithm": "ed25519", "manifestKeyId": "local-development", "codeSigning": "unsigned-local", "notarized": false}}
 	manifestRaw, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -1433,4 +1501,68 @@ func localFixture(t *testing.T, root string) (archivePath, descriptorPath, signa
 		t.Fatal(err)
 	}
 	return archivePath, descriptorPath, signaturePath
+}
+
+func TestInitialInstallerPreservesExistingWorkspaceBeforeSelection(t *testing.T) {
+	for _, file := range []string{"jobctrl.db", "temporal.db"} {
+		t.Run(file, func(t *testing.T) {
+			root := t.TempDir()
+			archive, descriptor, signature := localFixture(t, root)
+			home, data := filepath.Join(root, "runtime"), filepath.Join(root, "data")
+			if err := os.MkdirAll(data, 0700); err != nil {
+				t.Fatal(err)
+			}
+			sentinel := []byte("owned-existing-" + file)
+			if err := os.WriteFile(filepath.Join(data, file), sentinel, 0600); err != nil {
+				t.Fatal(err)
+			}
+			options := Options{Home: home, Environment: []string{"HOME=" + root, "JOBCTRL_DIR=" + data}, Policy: localAcquisitionPolicy(), AllowUnsignedLocal: true}
+			for attempt := 0; attempt < 2; attempt++ {
+				if _, err := InstallFromLocalFiles(options, descriptor, signature, archive); err == nil {
+					t.Fatal("initial installer selected over existing workspace")
+				}
+			}
+			if after, err := os.ReadFile(filepath.Join(data, file)); err != nil || !bytes.Equal(after, sentinel) {
+				t.Fatalf("existing data changed: %v", err)
+			}
+			for _, name := range []string{release.ActiveFile, release.JournalFile, "current.json", "bin/jobctrl"} {
+				if _, err := os.Lstat(filepath.Join(home, name)); !os.IsNotExist(err) {
+					t.Fatalf("refused installer wrote %s: %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+func TestSameActiveInstallerChecksWorkspaceBeforeAdapterAdoption(t *testing.T) {
+	root := t.TempDir()
+	archive, descriptor, signature := localFixture(t, root)
+	home, data := filepath.Join(root, "runtime"), filepath.Join(root, "data")
+	options := Options{Home: home, Environment: []string{"HOME=" + root, "JOBCTRL_DIR=" + data}, Policy: localAcquisitionPolicy(), AllowUnsignedLocal: true}
+	if _, err := InstallFromLocalFiles(options, descriptor, signature, archive); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(home, release.ActiveFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(data, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := []byte("owned-unfamiliar-database")
+	if err := os.WriteFile(filepath.Join(data, "jobctrl.db"), sentinel, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, adapter := range []string{"local-fixture", "homebrew"} {
+		options.AcquisitionSource = adapter
+		if _, err := InstallFromLocalFiles(options, descriptor, signature, archive); err == nil {
+			t.Fatal("same-active adoption bypassed workspace check")
+		}
+	}
+	if after, err := os.ReadFile(filepath.Join(home, release.ActiveFile)); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("adapter changed on refusal: %v", err)
+	}
+	if after, err := os.ReadFile(filepath.Join(data, "jobctrl.db")); err != nil || !bytes.Equal(sentinel, after) {
+		t.Fatalf("workspace changed on refusal: %v", err)
+	}
 }

@@ -32,6 +32,32 @@ def _usage_from(value: object) -> tuple[int | None, int | None]:
     )
 
 
+def _usage_details_from(value: object) -> tuple[int | None, int | None]:
+    total = getattr(value, "total", value)
+    def count(name):
+        value = getattr(total, name, None)
+        return value if type(value) is int and value >= 0 else None
+    return count("cached_input_tokens"), count("reasoning_output_tokens")
+
+
+def _record_observed_usage(value, record_usage, record_usage_details):
+    # Diagnostics must not prevent accounting, including on cancellation.
+    errors = []
+    for callback, counts in (
+        (record_usage, _usage_from(value)),
+        (record_usage_details, _usage_details_from(value)),
+    ):
+        if callback is not None:
+            try:
+                callback(*counts)
+            except BaseException as exc:
+                errors.append(exc)
+    if errors:
+        if len(errors) > 1:
+            errors[0].add_note("Recording Codex usage details also failed.")
+        raise errors[0]
+
+
 def _status_value(turn: object) -> str:
     status = getattr(turn, "status", None)
     return str(getattr(status, "value", status) or "")
@@ -59,10 +85,11 @@ def _outcome_from_result(
     model: str,
     operation: str,
     record_usage: Callable[[int | None, int | None], None] | None,
+    record_usage_details: Callable[[int | None, int | None], None] | None,
 ) -> CodexTurnOutcome:
-    input_tokens, output_tokens = _usage_from(getattr(result, "usage", None))
-    if record_usage is not None:
-        record_usage(input_tokens, output_tokens)
+    usage = getattr(result, "usage", None)
+    input_tokens, output_tokens = _usage_from(usage)
+    _record_observed_usage(usage, record_usage, record_usage_details)
     if _status_value(result) != "completed":
         raise codex_turn_error(model=model, operation=operation, error=getattr(result, "error", None))
     final_response = getattr(result, "final_response", None)
@@ -84,6 +111,7 @@ async def run_codex_turn(
     operation: str,
     run_kwargs: dict[str, Any],
     record_usage: Callable[[int | None, int | None], None] | None = None,
+    record_usage_details: Callable[[int | None, int | None], None] | None = None,
 ) -> CodexTurnOutcome:
     """Collect a Codex turn without the SDK's lossy ``thread.run()`` wrapper.
 
@@ -102,6 +130,7 @@ async def run_codex_turn(
             model=model,
             operation=operation,
             record_usage=record_usage,
+            record_usage_details=record_usage_details,
         )
 
     handle = await turn_method(prompt, **run_kwargs)
@@ -135,9 +164,9 @@ async def run_codex_turn(
 
     input_tokens, output_tokens = _usage_from(usage)
     usage_error: BaseException | None = None
-    if usage is not None and record_usage is not None:
+    if usage is not None:
         try:
-            record_usage(input_tokens, output_tokens)
+            _record_observed_usage(usage, record_usage, record_usage_details)
         except BaseException as exc:
             usage_error = exc
 

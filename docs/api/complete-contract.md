@@ -61,6 +61,18 @@ Profile tables in `jobctrl.db` as the source of truth. When the profile
 tables are empty, `GET /v1/profile` returns an empty profile with default
 rendering settings. Explicit profile saves and resume-PDF imports create or
 update the SQLite rows.
+Profile reads optionally include `legacyEvidenceReview: { status:
+"review_required", count: number }`. Each affected achievement retains all saved
+fields, including `user_confirmed`, and adds read-computed
+`confirmation_review_required: true`; client writes cannot resolve this flag.
+Evidence Map freshness adds optional `confirmationReviewRequired: boolean`.
+Unresolved legacy confirmations produce `legacy_evidence_review_required` before
+canonical evidence-based generation. Explicit interview selection returns `400
+legacy_evidence_review_required` and retains the draft. Review/recovery use the
+[local bounded commands](../user/candidate-profile.md#review-legacy-confirmations),
+not a new HTTP write route. `LegacyEvidenceReviewRecorded` private event payloads
+are excluded from generic SSE.
+
 Profile reads include `profileVersion: number | null`. `PATCH /v1/profile`
 accepts optional `expectedProfileVersion`; when supplied, a mismatch returns
 `409 stale_profile_version` and the same transaction writes neither canonical
@@ -158,13 +170,16 @@ suggestion against the saved profile version in the same transaction. Historical
 locations and work models remain suggestions until accepted. The offline demo
 reports this capability unavailable.
 
-Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
-tailored resumes are present, the API handles that event by dispatching a
-background `tailor -> cover` pipeline run with `retailor=true`, `dryRun=false`,
-and no item limit. The Python materials generation path creates a new materials
-generation for each re-tailored job, immediately follows it with cover-letter
-generation for jobs that are ready, and preserves older generations as
-superseded artifact data.
+Profile-data writes record `ProfileUpdated` in `job_events` atomically with the
+profile version. They never dispatch Score, Tailor or Cover or reset accepted
+scores/materials. API startup does not replay historical profile-update
+continuations. Jobs list/detail expose `scoreProfileFreshness` from the canonical
+saved profile and score trace; absent source versions remain `unknown`.
+Explicit score refresh checks older-profile inputs through a cited LLM
+`score_profile_impact` determination. Insignificant edits retain the original score
+and attach its exact review ID; significant edits run a full score. Failed checks
+preserve the previous score. New profile versions require a new review; identical
+inputs reuse the accepted determination. See [Scoring](../architecture/scoring.md#profile-edits-and-explicit-refresh).
 The web Profile, Profile Target Search, Preferences, Discovery, and Settings forms
 autosave five seconds after the last edit using the same profile/settings
 mutation paths as the explicit Save buttons; failed validation or mutation
@@ -241,6 +256,17 @@ current default, `GET /v1/resume-templates/:templateId` returns one template,
 `POST /v1/resume-templates` saves a style/layout-only template
 version, `PATCH /v1/resume-templates/default` selects the default template, and
 `PATCH /v1/jobs/:jobKey/resume-template` sets or clears a per-job override.
+For a new template, omit `templateId` and `expectedVersionId`. Updating an
+existing template requires both fields; `expectedVersionId` must equal its
+current active version. The comparison, version insert and event commit under
+one SQLite write transaction. A mismatch returns `409`
+`resume_template_version_conflict` and writes nothing. Older update clients
+that omit the precondition receive `400` and must refresh before updating;
+they cannot silently overwrite a newer template. Default selection may supply
+`expectedActiveVersionId` to require that the selected template still has that
+active version. A mismatch returns the same `409` without changing the default.
+Clients may still deliberately select an earlier historical version when they
+omit that optional active-version precondition.
 `POST /v1/jobs/:jobKey/resume-template/ensure-current` lazily creates a
 render-only materials generation when the latest accepted resume text exists
 but was rendered with an older effective template. The refreshed `resume_pdf`
@@ -398,12 +424,17 @@ apply-review materials, stale scores, pending approvals, derived follow-ups due,
 and budget status. Passive reads never advance `digest_state.last_acknowledged_at`;
 only the explicit acknowledge flow may move the watermark. The digest uses a
 timestamp watermark and a UTC follow-up cutoff, resolving the plan's local-vs-UTC
-day-boundary inconsistency in favor of UTC.
+day-boundary inconsistency in favor of UTC. Match dates and follow-up outcomes
+are compared as instants at millisecond precision, including stored offsets.
+Each digest job must belong to the local tenant's canonical jobs table.
 `blockedSources.sources[]` keeps its stable `sourceId` and may include an
 optional registry-resolved `displayName`, which clients prefer for presentation.
 `POST /v1/digest/acknowledge` accepts an optional `acknowledgedAt` ISO
 timestamp, advances the watermark monotonically, and returns the updated
-`digest_state`. Acknowledge writes also record `DigestReviewed`, which lets the
+`digest_state`. Independent Python and API writers serialize before reading the
+prior watermark; the watermark and `DigestReviewed` event commit together.
+An acknowledgement within a caller-owned transaction leaves its commit or
+rollback to that caller. The event lets the
 SSE invalidation router refresh the dashboard digest query without any external
 delivery channel.
 `POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`
@@ -413,12 +444,26 @@ table with a correction-derived calibration anchor. It mirrors the Python
 directly to SQLite instead of crossing the Python JSON-RPC boundary. When the
 policy version changes, the API also marks comparable latest uncorrected scores
 stale in `job_score_staleness`; corrected score versions are not marked stale.
-`POST /v1/scoring/stale-scores/actions/reset-for-rescore` clears active stale
-markers and resets their score stage to `pending` for an explicit rescore. The
+`POST /v1/scoring/stale-scores/actions/reset-for-rescore` resets the score
+stage to `pending` for an explicit rescore while retaining the prior score and
+its unresolved stale markers. A completed replacement resolves only the
+source-matching policy markers observed before its inference, in the same
+transaction as the score, determination binding and requirement-fit report.
+Failed or canceled work and score reuse leave the markers unresolved; a later
+invalidation is not resolved by an earlier in-flight assessment. The
 body accepts `jobKeys` for selected stale scores or an empty list for all active
-stale scores, plus optional `limit` for bounded resets. The backend command
+stale scores, plus optional `limit` for bounded resets of distinct eligible
+jobs. Hidden, deleted, closed, expired, removed, and location-incompatible jobs
+are excluded, including when explicitly selected; they do not consume the limit.
+`jobKeys` and `count` report only jobs actually reset. Queued, running,
+and pending work stays untouched; `skippedActiveJobKeys` identifies jobs owned
+by ongoing work, while `alreadyPendingJobKeys` identifies work already waiting.
+After active work finishes, retry the reset only if the score remains stale. The backend command
 that consumes those reset jobs is `jobctrl score --rescore` or the batch
-API action with `stage: "score"` and `rescore: true`.
+API action with `stage: "score"` and `rescore: true`. The reset response and
+new `ScoreRescoreRequested` events expose the CLI command in `nextAction`;
+the CLI operates on the eligible scoring queue rather than limiting itself to
+the reset selection.
 The jobs list and all-matching bulk filters accept optional `jobStates` values
 `active`, `deleted`, and `hidden`. Multiple values have OR semantics and are
 applied before count and pagination. The displayed Job state is derived from
@@ -451,6 +496,30 @@ available at `POST /v1/jobs/bulk-delete-permanent` and
 `DELETE /v1/jobs/:key/permanent`; it removes the job row plus job-scoped state,
 projection rows, and delete/hide tombstones. It does not write a new suppression
 record, so rediscovery can add the same posting again later.
+
+The Jobs UI's removed-selection operation has an additional review fence.
+`GET /v1/jobs/reviewable-list` accepts the normal list query and returns the
+page with an `observationId`, or `null` when review capacity is unavailable.
+The observation freezes the matching removed cohort and expires after one
+minute. `POST /v1/jobs/permanent-delete-selection` accepts `observationId`,
+`selections` (normal bulk selectors), and, for explicit keys, `expected`
+entries containing `jobKey`, `deletedAt`, and `hiddenAt`. It returns an exact
+canonical `jobKeys` list and a single-use `selectionId`. More than 5,000
+matching removed jobs cannot be selected all at once; explicit visible-page
+selections remain available.
+Explicit reviewed selections use canonical Job IDs from the observed list;
+external URL aliases are refused for this operation so a later identity
+rebinding cannot redirect a confirmation to a different job. Unguarded
+compatibility endpoints retain their existing locator behavior.
+
+The confirmed bulk permanent-delete request supplies `allMatching: false`,
+those exact `jobKeys`, and `selectionId`. If the selection is missing, expired,
+changed, or its recorded lifecycle revision has changed, the API returns
+`409 permanent_delete_selection_conflict` without deleting any member. A client
+must refresh and select again. Unrelated workspace writes do not invalidate the
+selection. A receipt is process-local and single-use, including
+when refused. Existing direct permanent-delete requests without `selectionId`
+and the explicitly authorized job-data purge retain their existing behavior.
 `POST /v1/jobs/bulk-retry-failed` accepts the same selected-job or
 all-matching bulk mutation body and resets each active failed job's failed stage
 to `pending`; non-failed selected jobs are ignored. A persisted legacy
@@ -463,10 +532,26 @@ membership to persisted exhaustion, including when combined with `q` or
 `stages`. Public summaries keep the failed-state presentation and failure
 reason above.
 
-`POST /v1/jobs/import-url` accepts the strict body `{ url: string }`. The URL
-must be public HTTP(S); credential-bearing, private, loopback, unresolved, and unsafe redirect
-destinations fail closed. The API awaits the worker-owned Temporal import and
-returns one of:
+`POST /v1/jobs/import-url` accepts the strict body
+`{ url: string, awaitResult?: boolean }`. The URL must be public HTTP(S);
+credential-bearing, private, loopback, unresolved and unsafe redirect destinations
+fail closed. With `awaitResult: false`, the API returns `202` and
+`{ ok: true, status: "started", workflowId, executionId }` after the worker has
+acknowledged the durable import. The Jobs UI uses this mode. Omitting the flag or
+setting it to `true` retains the awaited `200` response for existing callers.
+
+`GET /v1/jobs/import-url/:workflowId/:executionId` reads only that exact local
+import history and returns `200` with `status: "pending"` while it is running.
+It never waits for running work and cannot start an import. The worker validates
+the tenant, expected app/database, workflow type, logical workflow ID and exact
+Temporal execution ID. It refuses foreign or mismatched histories and does not
+follow retries or a later run. A temporary read error returns an unavailable
+response; the UI keeps the acknowledged import pending and retries the read.
+Terminal `failed`, `canceled`, `timed_out` and `terminated` responses include a
+safe `message` and may include a closed interpretation `failureCode`; none is
+reported as an imported job.
+
+A completed status read and an awaited POST return one of:
 
 - `{ ok: true, status: "imported", jobKey, importedAt, alreadyExisted }` after
   deterministic page extraction, canonical Discovery ingestion, and snapshot
@@ -513,11 +598,29 @@ applying behavior twice.
 `GET /v1/learning/policies/materials?page=<n>&pageSize=<1..100>` returns
 allowlisted current/superseded revision summaries: version, learned rules,
 recommendation/review provenance when present, rollback provenance when
-present, and creation time. `POST /v1/learning/policies/materials/rollbacks`
-accepts `{ targetVersion: <positive integer> }` and appends a new current
-revision with `rollbackOfVersion` and `rollbackReasonCode: "user_requested"`.
-The exact structured replay is idempotent. Neither review nor rollback starts
-scoring, tailoring, Apply, workflow, or artifact work.
+present, and creation time. For new restores, history also exposes
+`restoreCommandId` and `restoredFromCurrentVersion`.
+
+`POST /v1/learning/policies/materials/rollbacks` accepts exactly
+`{ targetVersion, expectedCurrentVersion, commandId, reasonCode: "user_requested" }`.
+Versions are positive integers, and `commandId` is a canonical lowercase UUIDv4.
+The tenant-scoped target must exist and precede the reviewed current revision.
+A new command appends one revision only if the current version still equals
+`expectedCurrentVersion`. A changed head returns `409` with
+`tailoring_policy_stale_review`; refresh and review history before sending a new
+command ID. Reusing an accepted ID with a different payload returns `409` with
+`tailoring_policy_command_conflict`. Invalid bodies return `400`, while invalid
+or foreign targets are refused without exposing another tenant.
+
+The success response contains the accepted `version`, `rollbackOfVersion`,
+`rollbackReasonCode`, `expectedCurrentVersion`, `commandId`, `createdAt`,
+`learnedRules`, `replayed`, and `currentVersion`, plus the existing context and
+provenance fields. `status` is `current` only when the accepted version matched
+`currentVersion` at the transaction; otherwise it is `superseded`. The same
+command and reviewed payload return the original accepted revision and timestamp
+after response loss, restart, or intervening writes, with the head observed by
+that retry. The receipt and revision are committed atomically. Neither review
+nor rollback starts scoring, tailoring, Apply, workflow, or artifact work.
 
 ## Dashboard, analytics, and operational metrics
 
@@ -604,7 +707,7 @@ schema:
 | `stages` | Ordered `PipelineOperationalStage[]`; each has `stage`, `label`, `scope`, `currentExecution`, `existingBacklog`, `capacity`, `eta`, and `asOf`. |
 | `activeStageCounts` | `null` without fresh runtime telemetry, otherwise positive exact runtime-activity totals grouped by operational stage. These are shared-pool facts, not selected-execution completion proof. |
 | `activeItems` | Oldest-first `PipelineActiveItem[]`, maximum 20. |
-| `activeItemsTotal` | Exact allowlisted active-detail count, or `null` when inventory cannot make an exact statement. |
+| `activeItemsTotal` | Exact allowlisted active-detail count, or `null` when inventory cannot make an exact statement; zero does not establish idle capacity. |
 | `activeItemsTruncated` | Whether safe detail was omitted, or `null` when inventory is unavailable/stale. |
 | `overallEta` | The ETA discriminated union below. |
 
@@ -654,6 +757,17 @@ before its final durable event was recorded, the decoder appends the proven
 failed or completed terminal event and refreshes the projection. It never
 promotes a queued or running event to terminal from workflow status alone.
 
+A run-owned successful preparation receipt that completed Score and stopped at
+Tailor can resolve a canonical eligibility hold for cohort completion and ETA.
+The reader also requires the current successful Score owner and accepted score
+version, no unresolved score staleness, and exact non-retryable
+`SCORE_ELIGIBILITY_BLOCKED` gate provenance. Tailor/Cover counts remain `blocked`;
+only effective remaining work, issue classification, paths and swept-backlog
+contention exclude the proven completed hold. Generic/retryable blocks,
+missing/foreign receipts, later scores or owners and reset stages remain
+unresolved. An actual PDF lifecycle is authoritative. This is a read-only
+interpretation; the immutable plan and canonical rows are preserved.
+
 The canonical stage-count object contains non-negative integers for
 `eligible`, `waiting`, `processing`, `succeeded`, `skipped`, `blocked`,
 `failed`, `canceled`, `needsVerification`, `stale`, and `unknown`. The
@@ -695,8 +809,18 @@ Its `kind` is `shared_activity_pool` or
 includes positive `internalParallelism`. All available arms include `asOf`,
 `staleAfterSeconds`, nullable `taskQueue`, `freshWorkerCount`,
 `staleWorkerCount`, `invalidWorkerCount`, `configuredSlots`, `activeSlots`,
-`availableSlots`, `executorThreads`, nullable `slotSaturation`, and
-`approximateTaskQueue`. Stale/unavailable capacity carries `asOf`,
+`availableSlots`, `executorThreads`, nullable `slotSaturation`, optional
+nullable `blockingExecutor`, and `approximateTaskQueue`. `blockingExecutor`
+contains nonnegative `acceptingWorkers`, `refusingWorkers`, `unknownWorkers`,
+`unfinishedRetiredGenerations`, and `unfinishedRetiredCalls`. Counts cover fresh
+workers; incomplete status stays unknown. The call counts are reported running
+or unresolved calls, not proof of stopped threads. Optional
+`controlAcceptingWorkers`, `controlRefusingWorkers`, `controlUnknownWorkers`,
+and `controlUnfinishedCalls` describe the separately bounded short-control lane.
+Slot and admission counts aggregate fresh workers; any stale worker makes global
+occupancy and its admission status unknown, so fresh counts are only reported
+observations, not a complete view of all workers.
+Stale/unavailable capacity carries `asOf`,
 `staleAfterSeconds`, nullable `taskQueue`, a bounded `reason`, and the typed
 task-queue observation; it does not expose misleading slot zeros.
 The task-queue observation separately reports workflow/activity pollers and
@@ -707,7 +831,10 @@ jobs.
 `activeItems[]` is the oldest-first bounded view of allowlisted active activity
 kinds, with at most 20 entries. `activeItemsTotal` is the exact allowlisted
 count when available and `activeItemsTruncated` says whether detail was omitted;
-`activeSlots` still counts every activity. Active items are either resolved
+`activeSlots` still counts every activity. Manual URL intake is included as
+`job_url_import` with the fixed `job-url-import` operational kind, nullable
+safe workflow identity and no pipeline stage or Discover membership.
+Active items are either resolved
 jobs, source families, orchestration, or unresolved runtime activities. The
 worker never reads activity arguments for telemetry. It returns only validated
 safe workflow/run references and non-reversible local opaque identifiers; raw
@@ -725,14 +852,17 @@ non-reversible operational identifiers, never filesystem paths or raw job URLs.
 returns low/high seconds, `low`/`medium`/`high` confidence, basis
 (`source_rate`, `stage_throughput`, or `cohort_throughput`), sample size,
 timestamp, and caveat. Non-numeric states are `calibrating` (insufficient
-samples or, for `overallEta`, open membership), `paused`
+samples or open membership for an overall or empty selected scope), `paused`
 (worker/budget/blocking/dispatch reason), `stale`, or `unavailable` (including
 no work, unsupported telemetry, unknown scope, or unbounded contention). Every
 numeric estimate requires at least five recent successful samples for each
-relevant remaining stage and fresh usable capacity. `overallEta` additionally
-requires closed execution membership; per-stage and source-family rows can
-estimate their already-known scoped backlog while membership remains open. The
-estimator uses canonical job-stage and pipeline-step durations, falling back to
+relevant remaining stage and fresh usable capacity. A stale peer on the selected
+task queue makes shared contention unbounded even when another worker is fresh.
+`overallEta` additionally requires closed execution membership; per-stage and
+source-family rows can estimate their already-known scoped backlog while
+membership remains open. A selected scope cannot report `no_work` until
+membership closes; positive demand can still receive an estimate before closure.
+The estimator uses canonical job-stage and pipeline-step durations, falling back to
 operational attempt metrics only when the primary source is empty; it never
 blends the two. A source-family estimate may use recent completed-family
 durations even when provider `totalUnits` is null; it does not synthesize a
@@ -768,6 +898,11 @@ type and policy metadata are visible as columns instead of compact badges:
   dropping the worker search-contract fields stored in the same row. This is
   the scheduling mutation boundary; `/v1/settings` does not own discovery
   cadence.
+- Both routes return `409` with `error: "invalid_saved_search"` for a malformed
+  or structurally invalid saved Discovery settings row. They do not return
+  first-use defaults or replace that row; the response provides recovery
+  guidance without including saved values. A missing row still uses defaults;
+  supported legacy `sites` values remain selected when settings are updated.
 - `GET /v1/discovery/sources` lists source registry entries merged with
   `source_quality_stats`. Each entry also carries the same additive `politeness`
   object as `sourceHealth[]` (robots-disallowed / rate-limited / budget-exhausted
@@ -1126,7 +1261,7 @@ canonical identity: the schema does not trim, normalize, or change case, and
 rejects blank-only IDs. The same 1–200 raw-character bound applies to returned
 evidence links, outline evidence IDs, and retained selected evidence IDs.
 Eligible IDs identify current-profile
-achievement evidence with explicit `user_confirmed = 1`. The system does not
+achievement evidence with explicit `user_confirmed = 1` and no unresolved legacy confirmation review. The system does not
 manufacture evidence strength or seniority flags. Stale or invalid choices return
 `409 evidence_profile_changed` or `400 invalid_evidence_selection`; the client keeps
 the draft for reselection. Notes and new recollections are not accepted facts.
@@ -1294,6 +1429,15 @@ status, input summary, failure cause (`errorCode` / `errorMessage` /
 `retryable`), Temporal run id, and the folded lifecycle timeline — or `404`
 (`{ ok: false, error: "workflow_run_not_found" }`) for an unknown id. The
 `/runs/$runId` detail workspace renders it for every workflow type.
+Apply details also return `applyEvents`, a separate array of summaries from
+the selected tenant/job/run's durable Apply event rows. Each has a
+`sourceEventId`, a nullable monotonic `runEventId`, `type`, `at`, `level`, and
+`message`. No event payload is returned; non-Apply workflows return an empty
+array. The browser can use the run-event ID to reconcile an already delivered
+live event with its durable copy.
+The optional canonical `jobId` query parameter scopes the Apply history to
+that job. If the Apply projection is still absent, a matching durable start
+must confirm the run/job association before any Apply rows are returned.
 `POST /v1/workflow-runs/:runId/actions/cancel` dispatches a worker-backed
 `cancel_run` request for in-flight workflow IDs that are not tied to a concrete
 job row, such as global Discover or Apply runs started from the Pipelines tab.
@@ -1303,9 +1447,7 @@ transition. Whether cancellation wins or loses its race with completion, the
 terminal result and folded timeline remain inspectable through the same detail
 route.
 `GET /v1/dashboard/summary` also carries recent apply-run timeline summaries
-from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
-the run detail workspace renders persisted history without exposing raw event
-payloads.
+from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`).
 
 Dashboard pipeline progress can include an optional
 `sourceProgress.recoveredUnits: number | null`. For broad-board discovery it is
@@ -1403,6 +1545,16 @@ verification-code MCP server:
   `approval_stale_materials`, `approval_stale_profile`, or `approval_stale_url`
   before inserting a decision row. Approval records intent only in this slice;
   it does not dispatch the apply worker.
+  For an email preview, include `emailRecipient`, `emailAttachmentArtifactId`
+  and `reviewedEmailCandidate`: the complete `emailApplication` object that was
+  reviewed (recipient, subject, body, attachment ID/name, candidate run ID and
+  recorded timestamp). The transaction compares that exact identity with the
+  current preview; missing or changed identity returns `409
+  approval_stale_email_candidate` without recording approval. Matching recipient
+  and attachment IDs alone cannot approve a replacement subject/body.
+  When decision timestamps tie, a non-submit decision takes precedence over
+  `approve_submit`, independent of random decision ID order. A fresh approval
+  at a later timestamp is required to resolve that conservative refusal.
 - `POST /v1/jobs/:jobKey/repeat-application/override` accepts the displayed
   `evidenceFingerprint`, one `priorJobKey` present in the current matches, a
   10–400 character `reason`, and `confirmedBy` (default `user`). It appends an
@@ -1413,7 +1565,7 @@ verification-code MCP server:
   repeat_application_confirmation_not_required`.
 - `GET /v1/outcomes` and `GET /v1/jobs/:jobKey/outcomes` return reviewed
   outcomes and any outcome suggestions.
-- `POST /v1/jobs/:jobKey/outcomes` writes a manual reviewed outcome. For
+- `POST /v1/jobs/:jobKey/outcomes` requires UUID `requestId` and writes a manual reviewed outcome. For
   `kind: "interview"`, callers may include `interviewPrepGeneration` to link a
   post-interview reflection to an accepted or superseded prep generation for the
   same job. The link is nullable and invalid generations are rejected.
@@ -1424,7 +1576,11 @@ verification-code MCP server:
   application anchors. The request accepts optional `recipientEmail`, `limit`,
   `maxResultsPerAnchor`, and `windowDays` values. The response returns counts
   plus evidence/suggestion IDs, canonical `jobId` values, kinds, and confidence
-  values only; it never returns raw Gmail body text.
+  values only; it never returns raw Gmail body text. Worker failures return
+  `ok: false`, a safe `failureCode` and message, and an HTTP status: 400 for
+  invalid scan input, 503 for Gmail/model unavailability, and 500 for blocked
+  determinations or worker failures. Existing evidence remains stored; a
+  bounded scan is not an exhaustive mailbox search.
 
 The web review queue records approval facts only. `approve_submit` is bound to
 the material, profile, URL, and dry-run evidence shown in Apply Review; stale
@@ -1445,6 +1601,36 @@ Manual outcomes and suggestion corrections require canonical ISO-8601 UTC
 responses include nullable `interviewPrepGeneration`; it is set only for linked
 manual interview reflections.
 
+### Manual Action Retry Contract
+
+Manual outcomes (including prep-linked reflections) and Outreach send logs require
+`requestId` as a UUID. It is scoped by the trusted local tenant, operation
+(`manual-outcome`, `interview-reflection`, or `outreach-send-log`) and canonical
+target (job or thread). Job URL aliases resolve to the same canonical job scope.
+The API never takes tenant authority from the request body.
+
+The first accepted request atomically persists its canonical fact and one domain
+event bearing the durable receipt. Internal SQLite metadata binds validated
+fields and the accepted fact; the event payload exposes safe references rather
+than a guessable digest of private notes. Equal retries, including concurrent requests,
+lost HTTP responses and API restarts, return the original result IDs and
+timestamps. An omitted `occurredAt` remains omitted in the fingerprint; it does
+not become the generated first-acceptance timestamp on retry.
+
+Different validated fields under the same scope and identity return
+`409 { ok: false, error: "action_identity_conflict", message }` without applying
+any mutation. Invalid or inconsistent persisted receipt bindings also fail closed.
+Missing/malformed identities return `400` before mutation. An identity in another
+tenant, operation or target cannot retrieve this receipt. A deliberate new
+action uses a new identity and may append another fact/event.
+
+Replay reads the immutable canonical fact before current approval, offer-source
+or prep checks, and cannot overwrite later thread/review/reminder state. Fresh
+actions retain those checks. Reflections accept only stored accepted or
+superseded prep generations for the same job. Private note/reflection text stays
+in canonical private history, outside receipt events and conflict errors.
+Suggestion-decision semantics and external delivery authority are unchanged.
+
 These routes create `application_review_decisions`,
 `application_repeat_overrides`, `application_repeat_override_consumptions`,
 `application_repeat_audit`, `application_outcomes`,
@@ -1461,12 +1647,12 @@ link signals, and note/body presence flags.
 ## Contacts
 
 The Contact & Outreach context exposes local, loopback-only JSON routes for
-contact records and supervised research. There is still no send or drafting route,
-and nothing here sends anything. Contact-record writes are hosted directly in the
+contact records, supervised research and reviewed outreach drafts. Nothing here
+sends outreach. Contact-record writes are hosted directly in the
 TypeScript API (`apps/api/src/contacts.ts`): they write the canonical
 `contacts` / `contact_attributes` rows, append durable, SSE-visible events to
-`job_events` (`entity_kind = 'contact'`, `entity_ref = <contactId>`), and refresh
-the `contact_projections` read model. The Python worker's
+`job_events` (`entity_kind = 'contact'`, `entity_ref = <contactId>`). List reads
+refresh the `contact_projections` read model; detail reads use canonical rows. The Python worker's
 `SqliteContactRepository` writes the same tables and event types.
 
 Sensitivity: attribute VALUES (names, emails, notes) live only in
@@ -1480,16 +1666,36 @@ fact carries provenance (`sourceKind`, `sourceRef`, `captureMethod`, `capturedAt
   company. Each `ContactSummary` carries `contactId`, `displayName`, `role`,
   `employer`, `jobId`, `attributeCount`, `confirmedCount`, `sourceKinds`,
   `allConfirmed`, and timestamps.
-- `GET /v1/contacts/:contactId` returns a `ContactDetail` — the summary fields
-  plus `attributes[]`, each with its `value` and full `provenance`. An unknown id
-  returns `{ ok: false, error: "contact_not_found" }`.
+- `GET /v1/contacts/:contactId` returns a `ContactDetail`: identity, display
+  name, role, employer/job links, timestamps, `attributes[]` with full
+  provenance, and an opaque `fingerprint` from one canonical read snapshot.
+  Unknown or soft-deleted contacts return HTTP 404 `contact_not_found`.
 - `POST /v1/contacts` creates a contact (`ContactCreateRequest`: `role`,
   optional `employer` / `jobId`, and `attributes[]`). A contact must link to at
   least one of `employer` / `jobId`, or the route returns `invalid_contact`.
   Created facts are tagged `sourceKind = user_entered`.
 - `PATCH /v1/contacts/:contactId` updates a contact's link, role, and/or
-  attributes (`ContactUpdateRequest`). Replacing `attributes` re-tags them as
-  `user_entered`; an unknown id returns `contact_not_found`.
+  attributes (`ContactUpdateRequest`). `expectedFingerprint` is required: send
+  the unchanged `fingerprint` from the contact being edited (64 lowercase hex
+  characters). Missing or malformed bases return HTTP 400 `invalid_contact`.
+  A valid but older or foreign base returns HTTP 409
+  `{ ok: false, error: "contact_revision_conflict", message }`, with no fact,
+  contact or success-event writes. Unknown/deleted contacts return HTTP 404
+  `contact_not_found`. Comparison, replacement and events share one immediate
+  SQLite transaction. A successful response contains the next usable base.
+  Each replacement fact may carry its saved `attributeId`. When its identity and
+  kind match and the saved value equals the input as sent or after trimming the
+  input, the row and its provenance are retained. A foreign or repeated
+  ID returns HTTP 400 without writes. A changed value or kind creates a new
+  user-entered fact only when its kind is supported and its trimmed value is
+  nonempty and at most 2,000 characters. Unchanged stored facts retain their
+  exact values and provenance even if they predate these input limits. For
+  callers omitting IDs, matching checks exact raw values before trimmed values;
+  use IDs to distinguish duplicate facts. Omitted fields remain
+  unchanged; explicit `null` clears a link, with at least one link required.
+  After a conflict or uncertain acknowledgement, read back the contact and
+  reconcile deliberately before sending its new base. Retrying the old base
+  never replays the accepted mutation. There is no automatic merge or history API.
 - `DELETE /v1/contacts/:contactId` soft-deletes a contact and returns
   `{ ok, contactId, deletedAt }`.
 - `POST /v1/contacts/import` previews or imports a contact list. The reviewed
@@ -1541,6 +1747,20 @@ require an explicit confirm command before becoming stored contact facts (INV-4)
   summary plus `sourceAttempts[]` (the per-source outcome audit) and
   `candidates[]`, each with its proposed `attributes[]` (value + provenance).
   An unknown id returns `{ ok: false, error: "research_task_not_found" }`.
+
+  Successful model attempts include `determinationId`; older and unsuccessful
+  attempts may omit it. `no_candidates` requires an accepted empty model result.
+  `provider_unavailable`, `provider_failed`, `spend_denied`, `invalid_output`,
+  `empty_content`, and `extraction_failed` describe failed inference or missing
+  source text. They include safe guidance in `detail`; they do not promote
+  contacts or replace previously accepted proposals.
+  The detail reader joins a recorded receipt to its task, contact lane and
+  source identity. A missing, damaged, foreign or inconsistent receipt, or a
+  historical empty result without a receipt, is reported as `extraction_failed`
+  while existing proposals remain readable.
+  Acquisition failures use the distinct outcomes `response_too_large`,
+  `acquisition_timeout`, `redirect_failed`, `transport_failed`, and
+  `http_error`, with an actionable `detail`. They are not `no_candidates`.
 - `POST /v1/contacts/research` (`RunContactResearchRequest`: optional `employer` /
   `jobId` — at least one required — plus opted-in `sources[]`) mints a `taskId`,
   pre-creates a `queued` task, dispatches `run_contact_research`, and returns
@@ -1569,9 +1789,10 @@ hosted in the TypeScript API (`apps/api/src/outreach.ts`); approval is HARD-gate
 the persisted `gate_results_json.passed` (INV-5). There is no send route anywhere —
 an approved draft is copied out by the browser clipboard, never sent (INV-1).
 
-Sensitivity: the draft `bodyText`, gate results, and claim provenance live only in
-canonical `outreach_drafts` and reach the client through the thread detail read
-below; the draft-lifecycle events written to `job_events` (`entity_kind =
+Sensitivity: published draft `bodyText`, gate results, and claim provenance live
+in canonical `outreach_drafts` and reach the client through the thread detail
+read below. A stale completion returns its private unpublished proposal directly
+to its caller; it does not enter canonical history or event payloads; the draft-lifecycle events written to `job_events` (`entity_kind =
 'outreach'`, `entity_ref = <threadId>`) carry only ids, kinds, generation, and
 timestamps.
 
@@ -1588,7 +1809,11 @@ timestamps.
 - `POST /v1/outreach/threads/:threadId/drafts` **revises** the thread
   (`ReviseOutreachDraftRequest`: `editedBodyText`, optional `kind`,
   `applicationRole`, `llmModel`). The edited body becomes a new generation and
-  re-runs the identical gates; returns `{ ok, thread }`.
+  re-runs the identical gates. The response returns `{ ok, thread, publication }`;
+  `publication` contains the worker's `threadId`, `draftId`, and `generation`
+  for this operation. The thread readback can be null or fail to contain that
+  exact draft; callers must treat an absent or mismatched acknowledgement as
+  unconfirmed and inspect the current history before retrying.
 - `POST /v1/outreach/threads/:threadId/drafts/:draftId/approve` approves a
   candidate draft. It returns `409 { error: "draft_gates_not_passed" }` when the
   persisted gates did not pass (INV-5), `404 { error: "outreach_draft_not_found" }`
@@ -1599,17 +1824,71 @@ timestamps.
   draft (`RejectOutreachDraftRequest`: optional `reason`); the last approved draft
   is left untouched (INV-5).
 
+Both generation and revision can return HTTP `409`:
+
+```json
+{
+  "ok": false,
+  "error": "outreach_publication_conflict",
+  "message": "Outreach changed while this draft was being verified. Your edits and completed checks are retained. Compare the current thread before deliberately retrying.",
+  "outcome": "conflict",
+  "threadId": "thread-id",
+  "unpublishedDraft": {
+    "bodyText": "The completed proposal",
+    "kind": "intro_request",
+    "gateResults": {
+      "passed": true,
+      "computedAgainst": "rendered_draft",
+      "determinationIds": ["claim-determination-id", "quality-determination-id"],
+      "lineAnchors": [],
+      "sourceContext": null,
+      "fabrications": [],
+      "validation": { "passed": true, "errors": [], "warnings": [] },
+      "judge": { "approved": true, "score": 0.9, "criterionScores": {}, "issues": [], "notes": "" }
+    },
+    "provenance": []
+  }
+}
+```
+
+The registered RPC returns the strict `{ outcome, threadId, unpublishedDraft }`
+variant for this case; successful results keep their existing shape and all six
+draft kinds. The proposal has no accepted `draftId`, generation or review status.
+Its gate results retain their determination IDs, line anchors and source context;
+provenance retains recorded source citations. Neither the conflict nor a failed
+publication creates a successful lifecycle event. Completed determinations may
+remain recorded independently of publication.
+
+Refetch by contact and optional job to inspect the current thread; a competing
+first creation may have a different thread ID. Reconcile explicitly before
+retrying against that state. This protocol does not automatically regenerate or
+make generation and revision commands idempotent. Send-log retries are described
+below. The web editor and generation control
+retain unpublished text, completed checks and provenance separately from a
+mutation error across query/SSE refresh and a failed deliberate retry. The normal
+generation caller re-reads by contact/job after conflict, so a competing creation
+can resolve to the winner's different thread ID. Retained sessions belong to their
+recipient/job; switching targets suspends the previous controls until returning
+to that target. Generation additionally scopes purpose and offer revision. A
+comparison is required before retrying; no automatic generation retry occurs.
+Private proposals clear on success or explicit discard. They are not persisted
+across panel unmount, tenant change, page reload or navigation.
+
 Send logging and follow-ups (Phase 4) are simple state transitions hosted directly
 in the TypeScript API. **No route sends anything (INV-1)** — `send-logs` records a
 user-attested fact, and the follow-up routes manage a surfaced-only reminder:
 
 - `POST /v1/outreach/threads/:threadId/send-logs` records that the **user** sent an
-  approved draft (`LogOutreachSendRequest`: `draftId`, `channel`, `sentAt`). It is
-  the ONLY way a thread reaches a "sent" state; it rejects any draft that is not
-  approved with `400 { error: "invalid_outreach_transition" }` (approving and
-  logging a send are distinct actions), and returns the updated
-  `OutreachThreadDetail` (`sendLogs`, `isSent`). The written `OutreachSendLogged`
-  event carries only ids, the channel label, and timestamps.
+  approved draft (`LogOutreachSendRequest`: UUID `requestId`, `draftId`, `channel`, `sentAt`). It is
+  the ONLY way a thread reaches a "sent" state. A fresh action rejects a draft
+  that is not approved with `400 { error: "invalid_outreach_transition" }`;
+  an identical accepted retry still returns its original result if approval later
+  changes. Approving and logging a send are distinct actions. The route returns
+  `{ ok: true, sendLog: OutreachSendLogDto }`. The immutable
+  `sendLog` contains `sendLogId`, `threadId`, `draftId`, `channel`, `sentAt` and
+  `loggedAt`. Read the current thread through the contact Outreach GET. The
+  written `OutreachSendLogged` event carries safe references, the channel label,
+  timestamps and receipt metadata.
 - `POST /v1/outreach/threads/:threadId/follow-up/schedule` schedules the next
   follow-up (`ScheduleFollowUpRequest`: optional `dueAt`, `basis`, `submittedAt`,
   `hasLoggedReply`). When `dueAt` is omitted the date is DERIVED from the
@@ -1740,8 +2019,23 @@ Current-version preparation maintenance actions are separate endpoints:
 - `POST /v1/materials/actions/retailor-current-policy` dispatches
   `retailor_current_policy` for selected or bounded eligible jobs and can
   suppress prior active artifacts.
-- `POST /v1/jobs/:jobKey/actions/retry-stage` resets the selected stage. With
-  `runAfter: true`, preparation retries dispatch a job-scoped pipeline workflow
+- `POST /v1/jobs/:jobKey/actions/mark-skipped` atomically records a local Apply
+  stop and `StageSkipped` event, preserving the attempt budget and materials.
+  The response `message` explains that an in-flight submission may still complete;
+  this action does not dispatch cancellation. Job Detail's `applyAudit` exposes
+  `manual_apply_skip` and `submission_intent_recorded` as separate blocker facts;
+  intent detail/source retains original run IDs from canonical event history.
+  Skip retains `manualDisposition: "skip"` and `previousState` in its event.
+  Only a safe explicit reset or manual Applied resolution releases the stop. A
+  prior `needs_verification` remains a `submission_outcome_uncertain` blocker
+  even without an intent receipt.
+- `POST /v1/jobs/:jobKey/actions/retry-stage` resets the selected stage. Apply
+  reset returns `409` (`apply_reset_refused`) without mutation when submit intent exists, or
+  the stage is queued/running, succeeded, needs_verification or a policy-owned
+  skip. Safe pre-intent manual stops can be reset; historical events and accepted
+  artifacts remain. Neither resetAttempts nor runAfter resolves external
+  uncertainty. Mixed Enrich/Apply cohorts reject atomically on an unsafe Apply
+  target. With `runAfter: true`, preparation retries dispatch a job-scoped pipeline workflow
   for the remaining preparation stages (`enrich` -> `score` -> `tailor` ->
   `cover`, starting at the retried stage). `apply` retry still dispatches the
   explicit apply action; retries do not auto-submit applications unless the
@@ -1809,9 +2103,11 @@ generation when tailoring succeeds.
 
 Other per-job action routes: `POST /v1/jobs/:jobKey/actions/apply` dispatches
 the apply JSON-RPC method (and so `ApplyWorkflow`) for one job;
-`POST /v1/jobs/:jobKey/actions/generate-materials` dispatches the tailor →
-cover preparation stages for one job and returns `202` when the worker is
-ready; `POST /v1/jobs/:jobKey/actions/generate-interview-prep` dispatches the
+`POST /v1/jobs/:jobKey/actions/generate-materials` resolves omitted `stages`
+from saved `coverLetterGeneration`: Tailor by default, Tailor → Cover when
+enabled. While disabled, Cover is omitted from mixed requests and a cover-only
+request returns `409 cover_letter_generation_disabled` without dispatch.
+Accepted requests return `202` when the worker is ready; `POST /v1/jobs/:jobKey/actions/generate-interview-prep` dispatches the
 explicit `generate_interview_prep` workflow action for one job and returns `202`
 when queued (`200` for a completed dispatch response);
 `POST /v1/jobs/:jobKey/actions/cancel` requests cooperative
@@ -1897,6 +2193,14 @@ gated by the same check and return
 heartbeat is missing, stale, or mismatched. Action routes share dispatch
 semantics: a queued Temporal workflow start returns `202` with the workflow
 ID, while synchronous local results return `200`.
+
+When exact-schema admission fails at startup, `/v1/health` returns `503` with
+`{ ok: false, error: "database_migration_required" | "database_schema_incompatible",
+currentVersion: number | null, expectedVersion: number, message: string }`.
+The first code is reserved for supported older version numbers; a newer, unknown,
+or malformed schema uses the second. All product `/v1/*` requests fail with
+the same diagnostic while the API remains in this mode. Its response contains
+no workspace path, and reopening the workspace after repair requires a restart.
 Non-apply pipeline runs also emit pipeline-level
 `StageStarted` / `StageCompleted` / `StageFailed` rows, and Discover emits
 the same lifecycle rows plus `DiscoveryRunStarted`,
@@ -1986,7 +2290,13 @@ run link to its exact activity stream.
   unsupported host return sanitized `409 credential_store_unavailable`;
   operational native-store failures return sanitized
   `503 credential_store_unavailable` with a sanitized operational or rollback
-  failure reason. Neither
+  failure reason. A concurrent update that cannot acquire credential ownership
+  within 30 seconds returns `503 credential_store_unavailable` with reason
+  `busy`. A mutation whose helper has not stopped at its deadline returns
+  `partial_failure`; later updates wait until the helper stops. When process
+  identity cannot be verified, the API preserves the record and returns
+  `503 credential_store_unavailable` with reason `ownership_unverified`.
+  Restoring process inspection permits a retry without restarting the machine. Neither
   path returns raw native-store errors. `GET` and `DELETE` never return stored
   values; private batch snapshots are used only for compensating rollback, not
   provider runtime. If
@@ -2177,6 +2487,11 @@ point the proxy at a non-default API port.
 
 ## Server-Sent Events — `GET /v1/events/stream`
 
+`ArchivedSmartPostingPrepared` is an internal private receipt and is omitted from
+SSE, including replay. Its captured posting and model envelopes are never part
+of the public stream. Completion and source-owner events contain references
+only. Generic Activity event summaries expose no receipt payload.
+
 The API exposes a Server-Sent Events endpoint that the frontend's
 `SseEventStreamAdapter` (`apps/web/src/shared/adapters/local/`) consumes via
 the browser's native `EventSource`. Per
@@ -2240,6 +2555,10 @@ data: {"tenantId":"local","jobId":"job-...","artifactId":"...","generation":2,"a
 
 event: heartbeat
 data: {"watermark":12346}
+
+# Sent when database access or polling fails:
+event: error
+data: {"code":"event_stream_unavailable"}
 ```
 
 Each frame:
@@ -2299,7 +2618,56 @@ Tenant scope is mandatory; there is no "all tenants" mode
    neither is supplied — first connect streams from the current tail with
    no backfill).
 
-If both header and query are present, `Last-Event-ID` wins.
+If both header and query are present, `Last-Event-ID` wins. When the database is
+absent or unavailable at first connection and no resume position is supplied,
+the cursor starts at zero because the current tail cannot be read; restoration
+can therefore replay historical events. The server retains an established
+subscriber's cursor across a database failure and resumes after it when the
+observed database path identity and schema remain unchanged.
+
+### Database failures
+
+If opening, validating, or polling the event database fails, the API sends each
+subscriber an `error` event with code `event_stream_unavailable` and keeps the
+stream open. The browser adapter treats this event as disconnected. The event
+contains no SQLite error, path, or event data. Keepalive comments continue, but
+heartbeats are suppressed while the stream is unavailable. The server retries
+database access at most once every five seconds while subscribers remain; after
+a successful poll of the same database, it resumes ordered, tenant-scoped
+delivery and sends a heartbeat. The stream retains its first accepted SQLite
+connection across read failures and checks the path identity and schema before
+and after reads before publishing their results. If no valid database was ever
+opened, the first valid database can be admitted automatically. Closing the last subscriber stops
+polling. If the database has never existed since the stream was registered, it
+remains a quiet stream until it appears.
+
+Once a valid database has been opened, an observed file identity or schema
+change cannot prove that its event history continues the old one. The stream
+stops polling, sends
+`event: error` with code `event_stream_workspace_changed`, and stays degraded for
+all subscribers without replay or heartbeat. That frame includes an empty `id:`
+field so an `EventSource` that receives it clears its saved `Last-Event-ID` for
+native reconnects. It cannot clear an explicit `?since` in the request URL;
+callers must discard that cursor when creating a fresh subscription.
+
+The web adapter keeps the old subscription in `workspace_changed` status even
+if its transport reconnects, and ignores its domain events. The UI instructs the
+user to stop JobCtrl and inspect the workspace using the
+[stopped restore procedure](../user/data-and-safety.md#back-up-and-restore),
+then restart the JobCtrl runtime and reload the page for a fresh subscription.
+A machine reboot is not part of this recovery. If a tab was offline and never
+received the reset frame, its old native cursor can survive an API restart;
+numeric event IDs cannot establish history continuity across that restart or an
+unsupported in-place database rewrite. SQLite schema rejection remains enforced;
+this behavior does not repair or modify the database.
+
+Path checks do not prove the identity of the SQLite handle opened during first
+admission. If the live path changes from database A to B and back to A while the
+connection is opening, SQLite can open B while both path checks see A; the stream
+can then publish B's events without a workspace-change warning. Replacing or
+restoring a database while JobCtrl is running is unsupported. Stop the runtime
+before using the [restore procedure](../user/data-and-safety.md#back-up-and-restore),
+then restart JobCtrl and reload the page for a fresh subscription.
 
 ### Cadences
 

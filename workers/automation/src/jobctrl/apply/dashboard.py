@@ -4,10 +4,12 @@ Displays real-time worker status, job progress, and recent events
 in a terminal dashboard using the Rich library.
 """
 
-import logging
 import copy
+import itertools
+import logging
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -42,7 +44,8 @@ class WorkerState:
 
 # Module-level state (thread-safe via _lock)
 _worker_states: dict[int, WorkerState] = {}
-_events: list[str] = []
+_events: dict[int | None, list[tuple[int, str]]] = {}
+_event_sequence = itertools.count()
 _lock = threading.Lock()
 MAX_EVENTS = 8
 
@@ -51,10 +54,23 @@ MAX_EVENTS = 8
 # State mutation helpers
 # ---------------------------------------------------------------------------
 
-def init_worker(worker_id: int = 0) -> None:
+def reset_dashboard(worker_ids: Iterable[int] | None = None) -> None:
+    """Clear selected resource owners; None explicitly clears all owners."""
+    selected = None if worker_ids is None else frozenset(worker_ids)
+    with _lock:
+        if selected is None:
+            _worker_states.clear()
+            _events.clear()
+        else:
+            for worker_id in selected:
+                _worker_states.pop(worker_id, None)
+                _events.pop(worker_id, None)
+
+
+def init_worker(worker_id: int = 0, *, display_id: int | None = None) -> None:
     """Register the worker in the dashboard state."""
     with _lock:
-        _worker_states[worker_id] = WorkerState(worker_id=worker_id)
+        _worker_states[worker_id] = WorkerState(worker_id=worker_id if display_id is None else display_id)
 
 
 def update_state(worker_id: int = 0, **kwargs) -> None:
@@ -77,29 +93,40 @@ def get_state(worker_id: int = 0) -> WorkerState | None:
         return _worker_states.get(worker_id)
 
 
-def get_worker_states() -> list[WorkerState]:
-    """Return a stable snapshot of all known worker states."""
+def get_worker_states(worker_ids: Iterable[int] | None = None) -> list[WorkerState]:
+    """Copy selected states, ordered by display ordinal and resource identity."""
+    selected = None if worker_ids is None else frozenset(worker_ids)
     with _lock:
-        return [copy.copy(state) for state in sorted(_worker_states.values(), key=lambda s: s.worker_id)]
+        items = (
+            (worker_id, state) for worker_id, state in _worker_states.items()
+            if selected is None or worker_id in selected
+        )
+        return [copy.copy(state) for _, state in sorted(items, key=lambda item: (item[1].worker_id, item[0]))]
 
 
-def get_recent_events() -> list[str]:
-    """Return the most recent dashboard events in display order."""
+def get_recent_events(worker_ids: Iterable[int] | None = None) -> list[str]:
+    """Merge selected owners' event buffers in original insertion order."""
+    selected = None if worker_ids is None else frozenset(worker_ids)
     with _lock:
-        return list(_events)
+        events = [
+            event for worker_id, buffer in _events.items()
+            if selected is None or worker_id in selected
+            for event in buffer
+        ]
+        return [message for _, message in sorted(events)[-MAX_EVENTS:]]
 
 
-def add_event(msg: str) -> None:
-    """Add a timestamped event to the scrolling event log.
+def add_event(msg: str, *, worker_id: int | None = None) -> None:
+    """Append an event to its resource owner's bounded buffer.
 
-    Args:
-        msg: Rich markup string describing the event.
+    Unowned legacy events are visible only to explicit all-owner readers.
+    Ownership never comes from display text.
     """
     ts = datetime.now().strftime("%H:%M:%S")
     with _lock:
-        _events.append(f"[dim]{ts}[/dim] {msg}")
-        if len(_events) > MAX_EVENTS:
-            _events.pop(0)
+        buffer = _events.setdefault(worker_id, [])
+        buffer.append((next(_event_sequence), f"[dim]{ts}[/dim] {msg}"))
+        del buffer[:-MAX_EVENTS]
 
 
 # ---------------------------------------------------------------------------
@@ -124,8 +151,8 @@ _STATUS_STYLES: dict[str, str] = {
 }
 
 
-def render_dashboard() -> Table:
-    """Build the Rich table showing all worker statuses.
+def render_dashboard(worker_ids: Iterable[int] | None = None) -> Table:
+    """Build the Rich table showing selected worker statuses.
 
     Returns:
         A Rich Table object ready for display.
@@ -142,8 +169,7 @@ def render_dashboard() -> Table:
     table.add_column("Fail", width=4, justify="right", style="red")
     table.add_column("Cost", width=8, justify="right")
 
-    with _lock:
-        states = sorted(_worker_states.values(), key=lambda s: s.worker_id)
+    states = get_worker_states(worker_ids)
 
     total_applied = 0
     total_failed = 0
@@ -187,16 +213,15 @@ def render_dashboard() -> Table:
     return table
 
 
-def render_full() -> Table | Group:
+def render_full(worker_ids: Iterable[int] | None = None) -> Table | Group:
     """Render the dashboard table plus the recent events panel.
 
     Returns:
         A Rich Group (table + events panel) or just the table if no events.
     """
-    table = render_dashboard()
-
-    with _lock:
-        event_lines = list(_events)
+    selected = None if worker_ids is None else frozenset(worker_ids)
+    table = render_dashboard(selected)
+    event_lines = get_recent_events(selected)
 
     if event_lines:
         event_text = Text.from_markup("\n".join(event_lines))
@@ -211,14 +236,14 @@ def render_full() -> Table | Group:
     return table
 
 
-def get_totals() -> dict[str, int | float]:
-    """Compute aggregate totals across all workers.
+def get_totals(worker_ids: Iterable[int] | None = None) -> dict[str, int | float]:
+    """Compute aggregate totals across selected workers.
 
     Returns:
         Dict with keys: applied, failed, cost.
     """
-    with _lock:
-        applied = sum(s.jobs_applied for s in _worker_states.values())
-        failed = sum(s.jobs_failed for s in _worker_states.values())
-        cost = sum(s.total_cost for s in _worker_states.values())
+    states = get_worker_states(worker_ids)
+    applied = sum(s.jobs_applied for s in states)
+    failed = sum(s.jobs_failed for s in states)
+    cost = sum(s.total_cost for s in states)
     return {"applied": applied, "failed": failed, "cost": cost}

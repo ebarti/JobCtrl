@@ -1,4 +1,5 @@
-import type { TailoringPolicyRevisionSummary } from "@jobctrl/contracts";
+import { JobCtrlApiError } from "@jobctrl/api-client";
+import type { TailoringPolicyRevisionSummary, TailoringPolicyRollbackRequest } from "@jobctrl/contracts";
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { useState } from "react";
 
@@ -19,16 +20,29 @@ const HISTORY_PAGE_SIZE = 100;
 
 export function TailoringPolicyHistoryPanel() {
   const [page, setPage] = useState(1);
+  const [review, setReview] = useState<TailoringPolicyRollbackRequest | null>(null);
+  const [staleReview, setStaleReview] = useState(false);
+  const [receipt, setReceipt] = useState<{ version: number; currentVersion: number } | null>(null);
   const history = useTailoringPolicyRevisionsQuery({
     page,
     pageSize: HISTORY_PAGE_SIZE,
   });
+  const currentHistory = useTailoringPolicyRevisionsQuery({ page: 1, pageSize: HISTORY_PAGE_SIZE });
+  const current = currentHistory.data?.revisions.find((revision) => revision.status === "current");
   const rollback = useRollbackTailoringPolicyMutation();
   const revisions = history.data?.revisions ?? [];
   const readError =
-    history.error instanceof Error ? history.error.message : null;
+    history.error instanceof Error ? history.error.message :
+    currentHistory.error instanceof Error ? currentHistory.error.message : null;
   const rollbackError =
     rollback.error instanceof Error ? rollback.error.message : null;
+  const restoreOutcomeUnknown = rollback.error !== null && (
+    !(rollback.error instanceof JobCtrlApiError) ||
+    rollback.error.writeOutcomeUnknown ||
+    rollback.error.status >= 500 ||
+    rollback.error.status === 408 ||
+    rollback.error.status === 429
+  );
 
   return (
     <section className="card col-span-full tailoring-policy-history-panel">
@@ -47,11 +61,28 @@ export function TailoringPolicyHistoryPanel() {
           <AlertDescription>{readError}</AlertDescription>
         </Alert>
       ) : null}
-      {rollbackError ? (
+      {staleReview ? (
         <Alert variant="destructive">
           <IconAlertTriangle aria-hidden="true" />
-          <AlertTitle>Policy restore failed</AlertTitle>
-          <AlertDescription>{rollbackError}</AlertDescription>
+          <AlertTitle>Policy changed since review</AlertTitle>
+          <AlertDescription>Review the latest history and start a new restore.</AlertDescription>
+        </Alert>
+      ) : null}
+      {receipt ? (
+        <p className="tailoring-policy-restore-status" role="status">Restore recorded as version {receipt.version}. Current version when checked: {receipt.currentVersion}.</p>
+      ) : null}
+      {rollbackError && !staleReview ? (
+        <Alert variant="destructive">
+          <IconAlertTriangle aria-hidden="true" />
+          <AlertTitle>{restoreOutcomeUnknown ? "Policy restore outcome not confirmed" : "Policy restore failed"}</AlertTitle>
+          <AlertDescription>
+            {restoreOutcomeUnknown ? (
+              <>
+                <p>The restore may have completed. Retry this request to confirm the result, or check policy history.</p>
+                <p>{rollbackError}</p>
+              </>
+            ) : rollbackError}
+          </AlertDescription>
         </Alert>
       ) : null}
       {history.isFetching && !history.data ? (
@@ -70,12 +101,47 @@ export function TailoringPolicyHistoryPanel() {
               key={revision.version}
               revision={revision}
               restoring={rollback.isPending}
+              disabled={rollback.isPending || currentHistory.isFetching || currentHistory.isError || !current || review !== null}
               onRestore={(targetVersion) => {
+                if (!current) return;
                 rollback.reset();
-                rollback.mutate(targetVersion);
+                setStaleReview(false);
+                setReceipt(null);
+                setReview({
+                  targetVersion,
+                  expectedCurrentVersion: current.version,
+                  commandId: crypto.randomUUID(),
+                  reasonCode: "user_requested",
+                });
               }}
             />
           ))}
+        </div>
+      ) : null}
+      {review ? (
+        <div className="tailoring-policy-restore-review" role="region" aria-label="Review policy restore">
+          <p>Review restore: current version {review.expectedCurrentVersion} → configuration from version {review.targetVersion}.</p>
+          <p>Reason: user requested. This creates a new policy revision.</p>
+          <div className="row-actions">
+            <Button type="button" disabled={rollback.isPending} onClick={() => {
+              rollback.mutate(review, {
+                onSuccess: (result) => {
+                  setReceipt({ version: result.version, currentVersion: result.currentVersion });
+                  setReview(null);
+                },
+                onError: (error) => {
+                  if (isStaleReview(error)) {
+                    setReview(null);
+                    setStaleReview(true);
+                  }
+                },
+              });
+            }}>Confirm restore</Button>
+            <Button type="button" variant="outline" disabled={rollback.isPending} onClick={() => {
+              rollback.reset();
+              setReview(null);
+            }}>Cancel</Button>
+          </div>
         </div>
       ) : null}
       {history.data && history.data.totalPages > 1 ? (
@@ -115,10 +181,12 @@ export function TailoringPolicyHistoryPanel() {
 function TailoringPolicyRevisionCard({
   revision,
   restoring,
+  disabled,
   onRestore,
 }: {
   readonly revision: TailoringPolicyRevisionSummary;
   readonly restoring: boolean;
+  readonly disabled: boolean;
   readonly onRestore: (targetVersion: number) => void;
 }) {
   const titleId = `tailoring-policy-version-${revision.version}`;
@@ -170,8 +238,8 @@ function TailoringPolicyRevisionCard({
             type="button"
             size="sm"
             variant="outline"
-            disabled={restoring}
-            aria-label={`Restore tailoring policy version ${revision.version}`}
+            disabled={disabled}
+            aria-label={restoring ? "Restoring… tailoring policy" : `Restore version ${revision.version} of tailoring policy`}
             onClick={() => onRestore(revision.version)}
           >
             {restoring ? "Restoring…" : `Restore version ${revision.version}`}
@@ -195,6 +263,7 @@ function revisionProvenance(revision: TailoringPolicyRevisionSummary) {
     return (
       <span className="tailoring-policy-provenance">
         <span>Restored from version {revision.rollbackOfVersion}</span>
+        {revision.restoredFromCurrentVersion ? <span className="meta">Reviewed current version {revision.restoredFromCurrentVersion}</span> : null}
         <span className="meta">
           Reason: {rollbackReason(revision.rollbackReasonCode)}
         </span>
@@ -210,4 +279,10 @@ function rollbackReason(
   return reason === "user_requested"
     ? "user requested"
     : "historical or unspecified";
+}
+
+function isStaleReview(error: Error): boolean {
+  if (!(error instanceof JobCtrlApiError) || error.status !== 409) return false;
+  const body = error.responseBody;
+  return body !== null && typeof body === "object" && "error" in body && body.error === "tailoring_policy_stale_review";
 }

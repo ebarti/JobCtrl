@@ -20,6 +20,7 @@ import {
   AvailabilityWorkflowStartSchema,
   CancelRunParamsSchema,
   CancelRunResultSchema,
+  CareerLearningResponseSchema,
   DEFAULT_PIPELINE_LLM_MODEL,
   ENDPOINTS,
   endpointSpecJsonSchemaFixture,
@@ -197,14 +198,14 @@ describe("current RPC caller controls and dispatch results", () => {
     expect(ProfileImportResultSchema.safeParse({ ...ack, result: { status: "succeeded" } }).success).toBe(false);
   });
 
-  it("retains required awaited import payloads and rejects missing or malformed nested results", () => {
+  it("permits async URL acknowledgements and validates completed import payloads", () => {
     const jobUrlResult = { status: "succeeded", outcome: "imported", job_id: CANONICAL_JOB_ID, item_id: null, reason: null, imported_at: "2026-10-17T00:00:00Z", already_existed: false, error: null, error_code: null };
     const captureResult = { status: "succeeded", job_id: CANONICAL_JOB_ID, item_id: "synthetic-capture", imported_at: "2026-10-17T00:00:00Z", retry_context: { synthetic: true }, error: null, error_code: null };
-    for (const [schema, result] of [
-      [JobUrlImportResultSchema, jobUrlResult], [ManualCaptureImportResultSchema, captureResult],
+    for (const [schema, result, allowsAcknowledgement] of [
+      [JobUrlImportResultSchema, jobUrlResult, true], [ManualCaptureImportResultSchema, captureResult, false],
     ] as const) {
       expect(schema.parse({ ...ack, result })).toEqual({ ...ack, result });
-      expect(schema.safeParse(ack).success).toBe(false);
+      expect(schema.safeParse(ack).success).toBe(allowsAcknowledgement);
       expect(schema.safeParse({ ...ack, result: { status: "succeeded" } }).success).toBe(false);
     }
   });
@@ -288,6 +289,16 @@ describe("endpoint spec fixture", () => {
       endpoints: { ...endpointSpecsFixture.endpoints, ...providerEndpointSpecs },
     });
     expect(Object.fromEntries(Object.entries(current.endpoints).filter(([name]) => careerNames.includes(name)).map(([name, schema]) => [name, createHash("sha256").update(JSON.stringify(schema)).digest("hex")]))).toEqual(careerLearningSchemaHashes);
+  });
+
+  it("requires qualified career timestamps with RFC 3339 seconds", () => {
+    const timestamp = CareerLearningResponseSchema.shape.cohorts.element.shape.comparedAt;
+    for (const value of ["2026-01-01T12:30:00Z", "2026-01-01T12:30:00.123+01:00"]) {
+      expect(timestamp.safeParse(value).success).toBe(true);
+    }
+    for (const value of ["2026-01-01T12:30Z", "2026-01-01T12:30:00", "2026-02-30T12:30:00Z"]) {
+      expect(timestamp.safeParse(value).success).toBe(false);
+    }
   });
 
   it("records the indirect worker RPCs used by merged endpoint handlers", () => {
@@ -427,7 +438,7 @@ describe("learning recommendation review RPC contract", () => {
 describe("tailoring policy rollback RPC contract", () => {
   it("registers a runtime-scoped rollback with closed policy metadata", () => {
     const endpoint = ENDPOINTS.rollbackTailoringPolicy;
-    const request = endpoint.request.parse({ targetVersion: 1 });
+    const request = endpoint.request.parse({ targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" });
     const params = endpoint.dispatch.params(
       { request, pathParam: undefined },
       ENDPOINT_DISPATCH_CONTEXT,
@@ -442,6 +453,7 @@ describe("tailoring policy rollback RPC contract", () => {
       context: "materials",
       policyKind: "tailoring_rule",
       policyVersion: 3,
+      currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111",
       rollbackOfVersion: 1,
       rollbackReasonCode: "user_requested",
       learnedRules: [],
@@ -460,9 +472,18 @@ describe("tailoring policy rollback RPC contract", () => {
       rollbackOfVersion: 1,
       createdAt: "2026-08-01T12:34:56.000Z",
     });
-    expect(() =>
-      endpoint.request.parse({ targetVersion: 0 }),
-    ).toThrow();
+    for (const invalid of [
+      { targetVersion: 1 },
+      { ...request, targetVersion: 0 },
+      { ...request, expectedCurrentVersion: 0 },
+      { ...request, commandId: "not-a-command-id" },
+      { ...request, reasonCode: "other" },
+    ]) {
+      expect(endpoint.request.safeParse(invalid).success).toBe(false);
+    }
+    expect(endpoint.dispatch.response({ request, pathParam: undefined, result: {
+      ...result, commandId: "22222222-2222-4222-8222-222222222222",
+    } })).toBeNull();
     expect(() =>
       endpoint.dispatch.result.parse({
         status: "succeeded",

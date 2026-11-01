@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from jobctrl.infrastructure.gmail.auth import GmailAuthError
 from jobctrl.infrastructure.rpc import handlers
 
 
@@ -56,14 +57,29 @@ def test_auth_failures_pass_through_as_ok_false(monkeypatch):
     }
 
 
-def test_scan_exceptions_become_ok_false_with_the_real_message(monkeypatch):
+def test_auth_exceptions_become_safe_typed_failures(monkeypatch):
     def raising_scan(**_kwargs):
-        raise RuntimeError("Gmail auth required: run jobctrl gmail-auth")
+        raise GmailAuthError("private credential detail")
 
     monkeypatch.setattr(
         "jobctrl.infrastructure.gmail.feedback.scan_gmail_feedback", raising_scan
     )
     assert handlers.gmail_feedback_scan({}) == {
         "ok": False,
-        "message": "Gmail auth required: run jobctrl gmail-auth",
+        "status": "unavailable",
+        "failureCode": "gmail_auth_required",
+        "message": "Gmail authentication is required; reconnect Gmail and retry.",
+    }
+
+
+def test_unexpected_exceptions_do_not_expose_message_content(monkeypatch):
+    def raising_scan(**_kwargs):
+        raise RuntimeError("private message body")
+
+    monkeypatch.setattr("jobctrl.infrastructure.gmail.feedback.scan_gmail_feedback", raising_scan)
+    assert handlers.gmail_feedback_scan({}) == {
+        "ok": False,
+        "status": "blocked",
+        "failureCode": "gmail_scan_failed",
+        "message": "Gmail feedback scan failed.",
     }

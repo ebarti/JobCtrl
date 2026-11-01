@@ -29,6 +29,56 @@ describe("<CandidateReviewList>", () => {
     expect(view.getByRole("button", { name: /confirm contact/i })).toBeInTheDocument();
   });
 
+  it("shows actionable acquisition failures alongside any existing proposals", () => {
+    const task = makeResearchTaskDetail({
+      sourceAttempts: [
+        {
+          sourceKind: "public_web_page",
+          sourceRef: "https://acme.example/team",
+          outcome: "response_too_large",
+          attemptedAt: "2026-07-06T00:00:00+00:00",
+          detail: "The page is too large; choose a smaller public page.",
+        },
+        {
+          sourceKind: "public_web_page",
+          sourceRef: "https://acme.example/people",
+          outcome: "acquisition_timeout",
+          attemptedAt: "2026-07-06T00:00:00+00:00",
+          detail: "The page took too long to load; retry or choose another source.",
+        },
+      ],
+    });
+    const view = renderWithProviders(<CandidateReviewList task={task} />);
+    expect(view.getByText("Page too large")).toBeInTheDocument();
+    expect(view.getByText("The page is too large; choose a smaller public page.")).toBeInTheDocument();
+    expect(view.getByText("Page timed out")).toBeInTheDocument();
+    expect(view.getAllByText("Dana Hiring-Manager").length).toBeGreaterThan(0);
+    expect(view.queryByText("No contacts found")).toBeNull();
+  });
+
+  it("distinguishes failed inference from an accepted empty result", () => {
+    const task = makeResearchTaskDetail({
+      sourceAttempts: [
+        {
+          sourceKind: "public_web_page", sourceRef: "https://acme.example/team",
+          outcome: "provider_unavailable", attemptedAt: "2026-07-06T00:00:00Z",
+          detail: "Model provider unavailable; check provider settings and retry. (provider_unavailable)",
+        },
+        {
+          sourceKind: "public_web_page", sourceRef: "https://acme.example/people",
+          outcome: "invalid_output", attemptedAt: "2026-07-06T00:00:00Z",
+          detail: "Model response could not be verified; retry the research. (field_binding_invalid)",
+        },
+      ],
+    });
+    const view = renderWithProviders(<CandidateReviewList task={task} />);
+    expect(view.getByText("Model provider unavailable")).toBeInTheDocument();
+    expect(view.getByText("Model response could not be verified")).toBeInTheDocument();
+    expect(view.getByText(/check provider settings and retry/i)).toBeInTheDocument();
+    expect(view.queryByText("No contacts found")).toBeNull();
+    expect(view.getAllByText("Dana Hiring-Manager").length).toBeGreaterThan(0);
+  });
+
   it("shows a confirmed note and no confirm action once a candidate is confirmed", () => {
     const confirmed = makeResearchTaskDetail({
       status: "completed",

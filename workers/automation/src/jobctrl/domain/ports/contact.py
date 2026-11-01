@@ -16,12 +16,13 @@ aggregate. Local-mode adapter is
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
 from jobctrl.domain.contact.aggregate import Contact
 from jobctrl.domain.contact.outreach import OutreachThread
-from jobctrl.domain.contact.research import ContactResearchTask
+from jobctrl.domain.contact.research import ContactResearchTask, ResearchSourceAttempt
 from jobctrl.domain.identifiers import ContactId, JobId
 from jobctrl.domain.tenant import TenantId
 
@@ -65,6 +66,16 @@ class ContactResearchTaskRepository(Protocol):
     def save(self, tenant_id: TenantId, task: ContactResearchTask) -> ContactResearchTask:
         """Persist the aggregate (task + candidates + attempts) and publish events."""
 
+    def save_attempt_if_unproposed(
+        self, tenant_id: TenantId, task: ContactResearchTask, *,
+        check_cancelled: Callable[[], None] | None = None,
+        new_attempts: tuple[ResearchSourceAttempt, ...] = (),
+    ) -> tuple[ContactResearchTask, bool]:
+        """Atomically save an activity attempt only until a proposal is published.
+
+        Check cancellation after acquiring the writer fence and before persisting.
+        """
+
     def list_for_tenant(self, tenant_id: TenantId) -> list[ContactResearchTask]:
         """Return all research tasks for the tenant, newest first."""
 
@@ -91,7 +102,11 @@ class OutreachThreadRepository(Protocol):
         """Return the thread for a ``(contact, optional application)``, or ``None``."""
 
     def save(self, tenant_id: TenantId, thread: OutreachThread) -> OutreachThread:
-        """Persist the aggregate (thread + drafts) and publish its domain events."""
+        """Compare publication_base atomically, then persist append-only history,
+        lifecycle changes and durable events. None requires expected absence.
+        Raise OutreachPublicationConflict with the unpublished proposal on stale
+        state; return an aggregate carrying the newly committed base on success.
+        """
 
     def list_for_tenant(self, tenant_id: TenantId) -> list[OutreachThread]:
         """Return all outreach threads for the tenant, newest first."""

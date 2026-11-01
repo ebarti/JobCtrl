@@ -19,6 +19,7 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.infrastructure.temporal.control import execute_control_activity
     from jobctrl.contact.activities import (
         RunContactResearchActivityInput,
         RunContactResearchActivityOutput,
@@ -91,13 +92,17 @@ class ContactResearchWorkflow:
             expected_db_path=payload.expected_db_path,
         )
         try:
-            await workflow.execute_activity(
-                check_spend_budget,
-                SpendBudgetInput(tenant_id=payload.tenant_id, lane="contact"),
-                start_to_close_timeout=_DEFAULT_TIMEOUT,
-                heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
-                retry_policy=_TAILOR_RETRY,
-            )
+            # Old histories contain this command. New runs preflight immediately
+            # before each determination so a denial is recorded on its source.
+            source_preflight = workflow.patched("contact-research-source-spend-preflight-v1")
+            if not source_preflight:
+                await execute_control_activity(
+                    check_spend_budget,
+                    SpendBudgetInput(tenant_id=payload.tenant_id, lane="contact"),
+                    start_to_close_timeout=_DEFAULT_TIMEOUT,
+                    heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
+                    retry_policy=_TAILOR_RETRY,
+                )
             output = await workflow.execute_activity(
                 run_contact_research_activity,
                 RunContactResearchActivityInput(
@@ -164,11 +169,13 @@ class ContactResearchWorkflow:
             return result
 
         result = _output_to_result(output)
+        report_failure = workflow.patched("contact-research-attempt-failure-outcome-v1")
         await emit_workflow_outcome(
             tenant_id=payload.tenant_id,
             workflow_type="ContactResearchWorkflow",
-            status="succeeded",
+            status="failed" if (source_preflight or report_failure) and result.status == "failed" else "succeeded",
             started_at=started_at,
+            error_code=result.error_code if (source_preflight or report_failure) else None,
             expected_app_dir=payload.expected_app_dir,
             expected_db_path=payload.expected_db_path,
         )
@@ -183,6 +190,7 @@ def _output_to_result(
         status=output.status,
         candidate_count=output.candidate_count,
         attempt_count=output.attempt_count,
+        error_code=output.error_code,
     )
 
 

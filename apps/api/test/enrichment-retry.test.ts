@@ -149,3 +149,20 @@ describe("canonical enrichment retry through HTTP, Python RPC and CLI", () => {
     } finally { await app.close(); }
   });
 });
+
+it.each(["intent", "prior admitted run"])("rejects %s in a real HTTP to RPC mixed cohort without resetting Enrich", async (blocker) => {
+  const f = fixture();
+  f.db.prepare("UPDATE job_stage_states SET stage='apply',state='failed' WHERE job_id=? AND stage='score'").run(PEER);
+  f.db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','ApplySubmitIntended',?,'2026-10-24')").run(PEER, JSON.stringify({ run_id: "original-1173" }));
+  if (blocker !== "intent") {
+    f.db.prepare("UPDATE job_events SET event_type='ApplyRunStarted' WHERE job_id=? AND stage='apply'").run(PEER);
+    f.db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','StageCanceled',?,'2026-10-24')").run(PEER, JSON.stringify({ run_id: "original-1173" }));
+  }
+  const tables = ["job_stage_states", "job_events", "job_enrichments", ...preservedTables];
+  const before = tables.map((table) => f.db.prepare(`SELECT * FROM ${table}`).all());
+  const response = await f.app.inject({ method: "POST", url: "/v1/jobs/bulk-retry-failed", payload: { allMatching: false, jobKeys: [JOB, PEER] } });
+  expect(response.statusCode, response.body).toBeGreaterThanOrEqual(400);
+  expect(response.body).toContain(blocker);
+  expect(tables.map((table) => f.db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+  expect(f.actionDispatcher).not.toHaveBeenCalled();
+});

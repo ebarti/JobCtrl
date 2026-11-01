@@ -1,8 +1,9 @@
-import { JobUrlImportRequestSchema } from "@jobctrl/contracts";
+import { JobUrlImportRequestSchema, type JobUrlImportExecution } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useId, useState, type JSX } from "react";
 
 import { useImportJobMutation } from "../../contexts/discovery/hooks/useImportJobMutation.js";
+import { useJobUrlImportStatusQuery } from "../../contexts/operations/hooks/useJobUrlImportStatusQuery.js";
 import {
   getApiCapabilityAvailability,
   LOCAL_INSTALL_GUIDE_URL,
@@ -25,13 +26,42 @@ export interface ImportJobUrlDialogProps {
   onImported: (jobKey: string) => void;
 }
 
+interface StartedImport {
+  execution: JobUrlImportExecution;
+  url: string;
+}
+
+function ImportProgress({ execution, url, onImported }: StartedImport & ImportJobUrlDialogProps): JSX.Element {
+  const progress = useJobUrlImportStatusQuery(execution);
+  const outcome = progress.data;
+  const pending = !outcome || outcome.status === "pending";
+  const terminalError = outcome && "message" in outcome ? outcome.message : "";
+
+  return (
+    <div className="banner inline min-w-0 break-all" role="status">
+      <div>{url}</div>
+      {pending ? "Import accepted and running in the background. " : terminalError ? `Import stopped: ${terminalError} ` : outcome?.status === "manual_capture_required" ? "This posting needs Manual Capture. " : "Import finished. "}
+      {outcome?.status === "imported" ? (
+        <Button type="button" variant="link" size="content" onClick={() => onImported(outcome.jobKey)}>View job</Button>
+      ) : null}
+      {outcome?.status === "manual_capture_required" ? <a href="/discovery">Open Manual Capture</a> : null}{" "}
+      <a href={`/runs/${encodeURIComponent(execution.workflowId)}`}>View import run</a>
+      {pending && progress.isError ? (
+        <div>Progress is temporarily unavailable. The import may still be running; JobCtrl will check again automatically.</div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX.Element {
   const { featureFlags } = usePorts();
   const availability = getApiCapabilityAvailability(featureFlags, "importJobUrl");
   const mutation = useImportJobMutation();
+  const pending = mutation.isPending;
   const inputId = useId();
   const availabilityId = useId();
   const [open, setOpen] = useState(false);
+  const [imports, setImports] = useState<StartedImport[]>([]);
   const [manualCapture, setManualCapture] = useState<{
     itemId: string;
     reason: string;
@@ -53,6 +83,14 @@ export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX
       setManualCapture(null);
       try {
         const result = await mutation.mutateAsync(parsed.data);
+        if (result.status === "started") {
+          setImports((previous) => [
+            { execution: result, url: parsed.data.url },
+            ...previous.filter(({ execution }) => execution.workflowId !== result.workflowId || execution.executionId !== result.executionId),
+          ]);
+          form.reset();
+          return;
+        }
         if (result.status === "imported") {
           form.reset();
           setOpen(false);
@@ -85,7 +123,7 @@ export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX
         <DialogHeader>
           <DialogTitle>Import a job posting</DialogTitle>
           <DialogDescription>
-            Paste the public posting URL. JobCtrl will read it now and add the job to this list.
+            Paste a public posting URL. Once accepted, you can add another while it imports in the background.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -106,7 +144,7 @@ export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX
                   inputMode="url"
                   autoComplete="url"
                   placeholder="https://company.example/jobs/role"
-                  disabled={mutation.isPending}
+                  disabled={pending}
                   value={field.state.value}
                   onBlur={field.handleBlur}
                   onChange={(event) => field.handleChange(event.target.value)}
@@ -130,14 +168,21 @@ export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX
               <a href="/discovery">Open Manual Capture</a>
             </div>
           ) : null}
+          {imports.length > 0 ? (
+            <div className="grid max-h-64 gap-2 overflow-y-auto">
+              {imports.map(({ execution, url }) => (
+                <ImportProgress key={`${execution.workflowId}:${execution.executionId}`} execution={execution} url={url} onImported={onImported} />
+              ))}
+            </div>
+          ) : null}
           {!availability.available ? (
             <p className="banner inline" id={availabilityId}>
               {availability.reason} <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
             </p>
           ) : null}
           <DialogFooter>
-            <Button type="submit" disabled={mutation.isPending || !availability.available}>
-              {mutation.isPending ? "Importing…" : "Import job"}
+            <Button type="submit" disabled={pending || !availability.available}>
+              {pending ? "Starting…" : "Import job"}
             </Button>
           </DialogFooter>
         </form>

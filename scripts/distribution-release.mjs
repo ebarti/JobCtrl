@@ -537,7 +537,7 @@ export async function classifyAppleSigningTargets({ payloadRoot = null, machO, a
 
 export function chromiumEntitlementsForTarget(target, entitlements = CHROMIUM_ENTITLEMENTS) {
   const normalized = target.split(path.sep).join("/");
-  if (/chromium_headless_shell-1208\/chrome-headless-shell-mac-arm64\/chrome-headless-shell$/.test(normalized)) return entitlements.headlessShell;
+  if (/chromium_headless_shell-1248\/chrome-headless-shell-mac-arm64\/chrome-headless-shell$/.test(normalized)) return entitlements.headlessShell;
   // The core payload contains no full Chrome-for-Testing app/framework tree.
   // Libraries and every optional host-browser path remain unentitled here.
   return null;

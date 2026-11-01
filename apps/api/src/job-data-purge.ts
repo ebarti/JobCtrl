@@ -39,6 +39,8 @@ const WORKFLOW_LIFECYCLE_EVENT_TYPES = [
   "WorkflowTerminated",
 ] as const;
 const DISCOVERY_EXECUTION_EVENT_TYPES = [
+  "DiscoveryResultPlanFrozen",
+  "DiscoveryNewJobAdmitted",
   "DiscoveryRunStarted",
   "DiscoveryRunCompleted",
   "DiscoveryRunFailed",

@@ -7,7 +7,7 @@ import {
 } from "@jobctrl/contracts";
 import { CONTACT_ROLES } from "@jobctrl/domain-types";
 import { useForm } from "@tanstack/react-form";
-import { useId } from "react";
+import { forwardRef, useId, useImperativeHandle, useRef } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
 import {
@@ -31,6 +31,9 @@ import {
 } from "../lib/contact-copy.js";
 
 export interface ContactAttributeRow {
+  /** Identity of the saved fact being edited; new rows have no identity. */
+  attributeId?: string;
+  unsupportedKind?: string;
   kind: ContactAttributeKind;
   value: string;
 }
@@ -45,11 +48,20 @@ export interface ContactFormValues {
 export interface ContactFormProps {
   submitLabel: string;
   pending: boolean;
+  pauseWhilePending?: boolean;
+  saveBlocked?: boolean;
   onSubmit: (request: ContactCreateRequest) => void | Promise<void>;
   initialValues?: Partial<ContactFormValues>;
+  /** Edits validate saved facts against their current base, rather than as new facts. */
+  validateEdit?: (values: ContactFormValues) => string | undefined;
   lockedJobId?: string;
   errorMessage?: string;
   onCancel?: () => void;
+}
+
+export interface ContactFormHandle {
+  getValues(): ContactFormValues;
+  setValues(values: ContactFormValues): void;
 }
 
 function defaultFormValues(
@@ -84,38 +96,55 @@ function assembleCandidate(values: ContactFormValues) {
   };
 }
 
-export function ContactForm({
+export const ContactForm = forwardRef<ContactFormHandle, ContactFormProps>(function ContactForm({
   submitLabel,
   pending,
+  pauseWhilePending = false,
+  saveBlocked = false,
   onSubmit,
   initialValues,
+  validateEdit,
   lockedJobId,
   errorMessage,
   onCancel,
-}: ContactFormProps) {
+}, ref) {
   const formId = useId();
+  const editingPaused = pending && pauseWhilePending;
+  const defaults = useRef(defaultFormValues(initialValues, lockedJobId));
+  const validate = (values: ContactFormValues) => {
+    const candidate = assembleCandidate(values);
+    const result = ContactCreateRequestSchema.safeParse(
+      validateEdit ? { ...candidate, attributes: [] } : candidate,
+    );
+    return result.success
+      ? validateEdit?.(values)
+      : (result.error.issues[0]?.message ?? "Invalid contact.");
+  };
   const form = useForm({
-    defaultValues: defaultFormValues(initialValues, lockedJobId),
+    defaultValues: defaults.current,
     validators: {
       onSubmit: ({ value }) => {
-        const result = ContactCreateRequestSchema.safeParse(
-          assembleCandidate(value),
-        );
-        return result.success
-          ? undefined
-          : (result.error.issues[0]?.message ?? "Invalid contact.");
+        return validate(value);
       },
     },
     onSubmit: async ({ value }) => {
+      const candidate = assembleCandidate(value);
       const result = ContactCreateRequestSchema.safeParse(
-        assembleCandidate(value),
+        validateEdit ? { ...candidate, attributes: [] } : candidate,
       );
-      if (!result.success) {
+      if (!result.success || validateEdit?.(value)) {
         return;
       }
       await onSubmit(result.data);
     },
   });
+  useImperativeHandle(ref, () => ({
+    getValues: () => structuredClone(form.state.values),
+    setValues: (values) => {
+      defaults.current = values;
+      form.reset(values);
+    },
+  }), [form]);
 
   return (
     <form
@@ -129,11 +158,14 @@ export function ContactForm({
       {errorMessage ? (
         <div className="banner inline">{errorMessage}</div>
       ) : null}
+      {editingPaused ? <p role="status">Saving contact. Editing is paused until the save finishes.</p> : null}
+      <fieldset disabled={editingPaused} className="contents">
       <form.Field name="role">
         {(field) => (
           <Field className="field">
             <FieldLabel htmlFor={`${formId}-role`}>Role</FieldLabel>
             <Select
+              disabled={editingPaused}
               items={CONTACT_ROLES.map((role) => ({
                 label: contactRoleLabel(role),
                 value: role,
@@ -205,6 +237,7 @@ export function ContactForm({
                           Kind
                         </FieldLabel>
                         <Select
+                          disabled={editingPaused}
                           items={CONTACT_ATTRIBUTE_KINDS.map((kind) => ({
                             label: contactAttributeKindLabel(kind),
                             value: kind,
@@ -239,6 +272,9 @@ export function ContactForm({
                       </Field>
                     )}
                   </form.Field>
+                  {attributesField.state.value[index]?.unsupportedKind ? (
+                    <p>Saved fact type: {attributesField.state.value[index]?.unsupportedKind}. This editor cannot replace it.</p>
+                  ) : null}
                   <form.Field name={`attributes[${index}].value`}>
                     {(valueField) => (
                       <Field className="field compact">
@@ -297,7 +333,7 @@ export function ContactForm({
           <div className="form-actions">
             <Button
               type="submit"
-              disabled={pending || isSubmitting}
+              disabled={pending || isSubmitting || saveBlocked}
             >
               {pending || isSubmitting ? "Saving…" : submitLabel}
             </Button>
@@ -309,6 +345,7 @@ export function ContactForm({
           </div>
         )}
       </form.Subscribe>
+      </fieldset>
     </form>
   );
-}
+});

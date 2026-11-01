@@ -5,6 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import NAMESPACE_URL, uuid5
 
+import pytest
+
 from typer.testing import CliRunner
 
 from jobctrl.cli import app
@@ -352,10 +354,15 @@ def test_build_pdf_renderer_uses_html_resume_renderer() -> None:
     assert isinstance(renderer, HtmlResumePdfAdapter)
 
 
+@pytest.mark.parametrize("cover_enabled", [False, True])
 def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
     tmp_path,
     monkeypatch,
+    cover_enabled,
 ):
+    setting = tmp_path / "config.json"
+    setting.write_text(json.dumps({"cover_letter_generation": cover_enabled}))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(setting))
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
     target_url = "https://example.com/stale-cover"
@@ -433,13 +440,13 @@ def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
             (str(LOCAL_TENANT), str(target_job_id)),
         ).fetchone()
         assert dict(cover) == {
-            "state": "pending",
+            "state": "pending" if cover_enabled else "skipped",
             "attempt_count": 0,
             "started_at": None,
             "finished_at": None,
             "duration_ms": None,
-            "error_code": None,
-            "error_message": None,
+            "error_code": None if cover_enabled else "COVER_LETTER_GENERATION_DISABLED",
+            "error_message": None if cover_enabled else "Cover-letter generation is turned off in Settings.",
             "next_action": None,
         }
         event = conn.execute(
@@ -452,8 +459,11 @@ def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
             """,
             (str(LOCAL_TENANT), str(target_job_id)),
         ).fetchone()
-        assert event["event_type"] == "StageReset"
-        assert event["message"] == "Cover stage reset after tailored resume generation"
+        assert event["event_type"] == ("StageReset" if cover_enabled else "StageSkipped")
+        assert event["message"] == (
+            "Cover stage reset after tailored resume generation" if cover_enabled
+            else "Cover-letter generation disabled by Settings."
+        )
     finally:
         close_connection(db_path)
 

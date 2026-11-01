@@ -779,7 +779,7 @@ export function ResumePlateEditor({
       </div>
       {draftError ? <div className="banner inline">{draftError}<Button onClick={documentState.onRetryLoad}>Retry loading draft</Button></div> : null}
       {saveError ? <div className="banner inline">{saveError}</div> : null}
-      {seedError ? <div className="banner inline">{seedError}<Button onClick={documentState.onRetryComments}>Retry comment review</Button></div> : null}
+      {seedError ? <div className="banner inline flex-wrap"><p>{seedError} Retry saving the existing review findings; this does not run a new review.</p><Button type="button" onClick={documentState.onRetryComments}>Retry saving review comments</Button></div> : null}
       {renderError ? <div className="banner inline">{renderError}</div> : null}
       {renderResult && !renderResult.ok ? (
         <div className="banner inline" role="status">

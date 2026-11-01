@@ -58,7 +58,7 @@ def test_digest_cli_prints_read_only_summary(monkeypatch) -> None:
     build_calls: list[int] = []
     acknowledge_calls: list[str] = []
 
-    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(cli, "_bootstrap", lambda **_kwargs: None)
     monkeypatch.setattr("jobctrl.database.get_connection", lambda: object())
     monkeypatch.setattr(criteria_provider, "read_min_fit_score", lambda: 7)
     monkeypatch.setattr(
@@ -85,7 +85,7 @@ def test_digest_cli_prints_read_only_summary(monkeypatch) -> None:
 def test_digest_cli_json_acknowledges_generated_digest(monkeypatch) -> None:
     acknowledge_calls: list[str] = []
 
-    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(cli, "_bootstrap", lambda **_kwargs: None)
     monkeypatch.setattr("jobctrl.database.get_connection", lambda: object())
     monkeypatch.setattr(criteria_provider, "read_min_fit_score", lambda: 7)
     monkeypatch.setattr(
@@ -118,7 +118,7 @@ def test_digest_cli_json_acknowledges_generated_digest(monkeypatch) -> None:
 def test_digest_cli_allows_one_off_threshold_override(monkeypatch) -> None:
     build_calls: list[int] = []
 
-    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(cli, "_bootstrap", lambda **_kwargs: None)
     monkeypatch.setattr("jobctrl.database.get_connection", lambda: object())
     monkeypatch.setattr(criteria_provider, "read_min_fit_score", lambda: 3)
     monkeypatch.setattr(

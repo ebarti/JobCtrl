@@ -30,7 +30,8 @@ class _CoverHarness:
 
 
 @pytest.mark.asyncio
-async def test_cover_activity_invokes_observed_cover_core():
+@pytest.mark.parametrize("allow_override", [False, True])
+async def test_cover_activity_invokes_observed_cover_core(allow_override: bool):
     queue = f"cover-{uuid.uuid4()}"
 
     with patch(
@@ -47,7 +48,10 @@ async def test_cover_activity_invokes_observed_cover_core():
             ):
                 output: CoverActivityOutput = await env.client.execute_workflow(
                     _CoverHarness.run,
-                    CoverActivityInput(tenant_id="local", min_score=6, limit=2),
+                    CoverActivityInput(
+                        tenant_id="local", min_score=6, limit=2,
+                        allow_low_fit_override=allow_override,
+                    ),
                     id=f"cover-wf-{uuid.uuid4()}",
                     task_queue=queue,
                 )
@@ -57,6 +61,7 @@ async def test_cover_activity_invokes_observed_cover_core():
     assert args[0] == "cover"
     assert args[2]["min_score"] == 6
     assert args[2]["limit"] == 2
+    assert args[2]["allow_low_fit_override"] is allow_override
     assert kwargs["mode"] == "workflow"
     assert output.status == "ok"
     assert output.elapsed == pytest.approx(0.5)

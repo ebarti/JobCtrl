@@ -185,6 +185,7 @@ export interface ContactResearchSourceAttemptEntry {
   readonly outcome: string;
   readonly attemptedAt: string;
   readonly detail: string;
+  readonly determinationId?: string | null;
 }
 
 export interface ContactResearchCandidateEntry {

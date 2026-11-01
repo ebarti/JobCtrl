@@ -15,6 +15,8 @@ policy, provenance and transaction ports below:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Protocol
 
@@ -26,7 +28,9 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysisDraft,
 )
 from jobctrl.domain.materials.entities import Artifact
-from jobctrl.domain.materials.policy import TailoringPolicy, TailoringPolicyRollbackReason
+from jobctrl.domain.materials.policy import (
+    TailoringPolicy, TailoringPolicyRollbackReason, TailoringPolicyRollbackResult,
+)
 from jobctrl.domain.materials.provenance import BulletProvenanceSet
 from jobctrl.domain.ports.artifact_review import ArtifactStatus
 from jobctrl.domain.materials.value_objects import ArtifactType, RenderFormat
@@ -140,6 +144,21 @@ class MaterialsRepository(Protocol):
         """
         ...
 
+    def write_transaction(self) -> AbstractContextManager[None]:
+        """Serialize material authority checks and writes with other writers."""
+        ...
+
+    def publish_rendered_pdf(
+        self, expected: MaterialsSet, artifact: Artifact, source_sha256: str,
+        *, commit_guard: Callable[[], None] | None = None,
+    ) -> MaterialsSet | None:
+        """Publish only if the approved source and PDF slot are still current.
+
+        The read, comparison, and write must share one writer transaction with
+        other material and Apply-intent writers. Return ``None`` for stale input.
+        """
+        ...
+
     def list_pending_tailor(
         self,
         tenant_id: TenantId,
@@ -247,10 +266,12 @@ class TailoringPolicyRepository(Protocol):
         tenant_id: TenantId,
         *,
         target_version: int,
+        expected_current_version: int,
+        command_id: str,
         reason: TailoringPolicyRollbackReason,
         rolled_back_at: str,
-    ) -> TailoringPolicy:
-        """Append a current revision that restores a prior effective policy."""
+    ) -> TailoringPolicyRollbackResult:
+        """Restore the reviewed transition once, or replay its durable receipt."""
         ...
 
 

@@ -42,11 +42,11 @@ test("Jobs view requests one bounded combined deep page with exact adjacent, cla
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname === "/v1/jobs") requests.push(url.pathname + url.search);
+    if (url.pathname === "/v1/jobs/reviewable-list") requests.push(url.pathname + url.search);
   });
   page.on("response", (response) => {
     const url = new URL(response.url());
-    if (url.pathname !== "/v1/jobs") return;
+    if (url.pathname !== "/v1/jobs/reviewable-list") return;
     pendingReads.push(
       (async () => {
         reads.push({
@@ -90,7 +90,7 @@ test("Jobs view requests one bounded combined deep page with exact adjacent, cla
     const responseFor = () =>
       page.waitForResponse(
         (response) =>
-          new URL(response.url()).pathname === "/v1/jobs" && response.ok(),
+          new URL(response.url()).pathname === "/v1/jobs/reviewable-list" && response.ok(),
       );
     const capture = async (name: string) => {
       const image = testInfo.outputPath(`${name}.png`);
@@ -141,7 +141,7 @@ test("Jobs view requests one bounded combined deep page with exact adjacent, cla
       .toBe("discover");
     const combinedReady = page.waitForResponse((response) => {
       const url = new URL(response.url());
-      return url.pathname === "/v1/jobs" &&
+      return url.pathname === "/v1/jobs/reviewable-list" &&
         url.searchParams.get("stages") === "discover,apply" &&
         url.searchParams.get("page") === "1" && response.ok();
     });

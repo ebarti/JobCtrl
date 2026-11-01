@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
+import { DemoFeatureFlagAdapter } from "../../../demo/ports.js";
 import { StageTimeline } from "./StageTimeline.js";
 
 function makeStage(
@@ -48,6 +49,24 @@ function discoveryBrowserBridge(
 }
 
 describe("<StageTimeline>", () => {
+  it("disables the legacy enrichment retry when the demo cannot dispatch it", async () => {
+    const retryStage = vi.fn();
+    const ports = buildTestPorts({ api: { retryStage } });
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+    renderWithProviders(
+      <StageTimeline jobId="synthetic-job" stages={[{
+        ...makeStage("enrich", "blocked"),
+        errorCode: "ENRICH_ROBOTS_DISALLOWED",
+      }]} />,
+      { ports },
+    );
+    const retry = screen.getByRole("button", { name: "Retry enrichment" });
+    expect(retry).toBeDisabled();
+    expect(screen.getByText("Retrying enrichment is unavailable in the demo.")).toBeInTheDocument();
+    await userEvent.setup().click(retry);
+    expect(retryStage).not.toHaveBeenCalled();
+  });
+
   it("renders preparation as a semantic operational list without legacy pills", () => {
     const { container } = renderWithProviders(
       <StageTimeline

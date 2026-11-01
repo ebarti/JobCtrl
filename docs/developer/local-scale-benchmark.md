@@ -3,7 +3,7 @@
 The local scale benchmark is a reproducible, synthetic baseline for JobCtrl's
 production read paths. It creates a new owned temporary app directory, config,
 SQLite database, and artifact directory for each dataset, initializes the
-database with the exact schema-v14 constructor, and removes the workspace after
+database with the exact schema-v15 constructor, and removes the workspace after
 the dataset finishes. It has no flag for an existing app directory or database.
 
 Run it from the repository root with a new output path:
@@ -28,7 +28,7 @@ must pass the production schema with no ready provider and no models. Any
 failure stops the run before provider model discovery can execute.
 
 The focused harness checks statistics, unsafe arguments, cleanup after failure,
-exact-v14 seed totals, deliberately perturbed correctness oracles, an ambient
+exact-v15 seed totals, deliberately perturbed correctness oracles, an ambient
 Bedrock/AWS/provider-credential counterfactual, and a
 smallest-dataset integration through the real HTTP, timer SSE, preview,
 projection, and `SubprocessJsonRpcAdapter` paths:
@@ -37,7 +37,7 @@ projection, and `SubprocessJsonRpcAdapter` paths:
 corepack pnpm --filter @jobctrl/api benchmark:local-scale:test
 ```
 
-The exact-v14 and production-path integration cases require `uv`. They are
+The exact-v15 and production-path integration cases require `uv`. They are
 skipped when `uv` is unavailable so ordinary TypeScript CI can still test the
 runtime-independent harness contracts. Accepted delivery verification requires
 `uv` and execution of every integration case; skipped cases do not establish
@@ -113,7 +113,7 @@ client request or a controlled experiment forwarding real combined responses
 to the current UI.
 
 The `combinedStages` report extension runs only after all original scenarios at
-all three sizes. Each extension dataset gets another owned exact-v14 workspace.
+all three sizes. Each extension dataset gets another owned exact-v15 workspace.
 The original seed, scenarios, two warmups, seven retained samples, and report
 fields remain available in `datasets`; their measurements precede the extension's
 allocations and writes. The exact schema constructor supplies the canonical
@@ -125,7 +125,7 @@ third job in Apply and the rest in Discover. Groups of four share discovery
 timestamps across stages to exercise ascending job-ID ties. It also seeds
 canonical `job_scores` versions with deterministic 1–10 scores. The original
 datasets preserve their legacy `jobs.fit_score` cells for comparison; those cells
-do not supply current list scores on exact-v14, and the original scenarios do not
+do not supply current list scores on exact-v15, and the original scenarios do not
 prove numeric score ordering. The extension measures combined
 discovery first, adjacent, deep, and clamped pages; duplicate-stage input; scalar/array
 precedence; explicit empty arrays; empty membership; search first, deep, and
@@ -226,7 +226,7 @@ are not adopted acceptance thresholds.
 ## Measured baseline
 
 The archived results below and the linked JSON retain their original v10 schema
-and measurements. Current runs use v14; compare schema identities explicitly
+and measurements. Current runs use v15; compare schema identities explicitly
 before drawing performance conclusions across revisions.
 
 This baseline measured commit `8c80b31b584c7ef92b80f92ea9e496c968a8269a`

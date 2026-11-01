@@ -1494,3 +1494,32 @@ def GeneratedClaimMapping(**kwargs):
         transform_type="rephrase",
         **kwargs,
     )
+
+
+@pytest.mark.parametrize("with_plan", [False, True])
+@pytest.mark.parametrize("source_kind", ["baseline", "confirmed_ledger", "unconfirmed_ledger", "metadata"])
+def test_required_role_empty_permissions_use_only_available_achievement_sources(with_plan, source_kind):
+    profile = _profile()
+    entry = profile["resume"]["experience_entries"][0]
+    if source_kind != "baseline":
+        entry["bullets"] = []
+    if source_kind not in {"confirmed_ledger", "unconfirmed_ledger"}:
+        entry["achievement_evidence"] = []
+    elif source_kind == "unconfirmed_ledger":
+        entry["achievement_evidence"][0]["user_confirmed"] = False
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    normalized = snapshot.as_dict()
+    plan = build_tailoring_plan(normalized, _senior_job(), employer_analysis=_employer_analysis("python"))
+    prompt = build_master_tailor_prompt(snapshot, tailoring_plan=plan if with_plan else None)
+    empty_roles = json.loads(prompt.split("REQUIRED EXPERIENCE IDS ALLOWING EMPTY BULLETS:\n")[1].split("\n\n", 1)[0])
+    expected_empty = source_kind in {"unconfirmed_ledger", "metadata"}
+    assert (entry["id"] in empty_roles) is expected_empty
+    fields = ContentValidator().validate_json_fields(_mapped_payload(bullets=[], bullet_mappings=[]), normalized)
+    assert fields.passed is expected_empty
+    # Fixed role metadata is preserved even when it cannot support a bullet.
+    assert normalized["resume"]["experience_entries"][0]["title"] == entry["title"]
+    if with_plan:
+        inventory = json.loads(prompt.split("EXPERIENCE BULLET EVIDENCE IDS BY ROLE:\n")[1].split("\n\n", 1)[0])
+        assert bool(inventory[entry["id"]]) is (not expected_empty)
+        if source_kind == "baseline":
+            assert inventory[entry["id"]] == [f"experience:{entry['id']}:source:0"]

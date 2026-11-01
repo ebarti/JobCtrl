@@ -22,8 +22,9 @@ from rich.text import Text
 
 from jobctrl import __version__
 from jobctrl.company_briefing_cli import app as company_briefing_app
-from jobctrl.source_proposals_cli import app as source_proposals_app
+from jobctrl.legacy_evidence_cli import app as legacy_evidence_app
 from jobctrl.pipeline import SUPPORTED_STAGE_ORDER, run_single_job
+from jobctrl.source_proposals_cli import app as source_proposals_app
 from jobctrl.workflow_specs import (
     build_apply_workflow_spec,
     build_compensation_refresh_workflow_spec,
@@ -49,6 +50,7 @@ credentials_app = typer.Typer(help="Manage provider credentials in the operating
 app.add_typer(credentials_app, name="credentials")
 app.add_typer(company_briefing_app, name="company-briefing")
 app.add_typer(source_proposals_app, name="source-proposals")
+app.add_typer(legacy_evidence_app, name="legacy-evidence")
 console = Console()
 log = logging.getLogger(__name__)
 
@@ -122,7 +124,7 @@ def migrate_credentials(
 _projection_subscription = None
 
 
-def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
+def _bootstrap(*, reconcile_posted_compensation: bool = False, strict_projection_refresh: bool = False) -> None:
     """Common setup: load env, create dirs, init DB, refresh projections.
 
     Phase 9 (S-32): the ``ProjectionBuilder`` runs an initial backfill on
@@ -131,12 +133,15 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
     cheap (incremental from the watermark) and ensures the dashboards
     don't go blank after a fresh DB or a schema migration.
 
+    Digest reads opt into an error if this refresh fails; other commands can
+    continue using their existing projections while a later refresh retries.
+
     The same builder also subscribes (idempotently) to the process-wide
     ``InProcessEventBus`` so events emitted later in the worker run
     drive live projection refreshes.
     """
     global _projection_subscription
-    from jobctrl.config import load_env, ensure_dirs
+    from jobctrl.config import ensure_dirs, load_env
     from jobctrl.database import get_connection, init_db
     from jobctrl.infrastructure.projections.projection_builder import (
         ProjectionBuilder,
@@ -158,7 +163,11 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
         # event — including ``ThreadPoolExecutor`` worker threads in
         # ``apply --workers > 1``) opens a connection on its own
         # thread instead of reusing the bootstrap-thread handle.
-        builder = ProjectionBuilder(conn_factory=get_connection)
+        builder = (
+            ProjectionBuilder(conn_factory=get_connection, strict_reads=True)
+            if strict_projection_refresh
+            else ProjectionBuilder(conn_factory=get_connection)
+        )
         builder.refresh()
         if _projection_subscription is None:
             from jobctrl.infrastructure.events import get_default_publisher
@@ -175,6 +184,8 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
         except Exception:  # noqa: BLE001 - preserve the original failure
             log.exception("ProjectionBuilder bootstrap rollback failed")
         log.exception("ProjectionBuilder backfill on bootstrap failed")
+        if strict_projection_refresh:
+            raise
 
 
 def _check_tier2_stage(stage: str) -> None:
@@ -1561,7 +1572,7 @@ def compensation_refresh(
 @app.command()
 def apply(
     limit: Optional[int] = typer.Option(
-        None, "--limit", "-l", help="Max applications to submit (default: all ready jobs)."
+        None, "--limit", "-l", help="Maximum jobs to claim, including skipped jobs (default: all ready jobs)."
     ),
     workers: int = typer.Option(1, "--workers", "-w", help="Number of parallel browser workers."),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for job selection."),
@@ -1579,6 +1590,7 @@ def apply(
     ),
     fail_reason: Optional[str] = typer.Option(None, "--fail-reason", help="Reason for --mark-failed."),
     reset_failed: bool = typer.Option(False, "--reset-failed", help="Reset all failed jobs for retry."),
+    recover_stopped: bool = typer.Option(False, "--recover-stopped", help="Recover verifiably ended Apply custody; retain Skip and submission evidence. No application is started."),
 ) -> None:
     """Launch auto-apply to submit job applications."""
     _bootstrap()
@@ -1592,6 +1604,13 @@ def apply(
     from jobctrl.infrastructure.profile import get_profile_repository
 
     # --- Utility modes (no Chrome/Claude needed) ---
+
+    if recover_stopped:
+        from jobctrl.apply.launcher import recover_ambiguous_running_apply
+
+        count = recover_ambiguous_running_apply(only_stopped=True)
+        console.print(f"Recovered {count} Apply custody record(s). Skip and submission evidence retained; reset separately when safe.")
+        return
 
     def resolve_job_id(posting_url: str) -> JobId:
         identity = SqliteJobIdentityResolver(get_connection()).resolve_current_by_posting_url(
@@ -1615,12 +1634,15 @@ def apply(
     if mark_failed:
         from jobctrl.apply.launcher import mark_job
 
-        mark_job(
-            resolve_job_id(mark_failed),
-            "failed",
-            reason=fail_reason,
-            tenant_id=LOCAL_TENANT,
-        )
+        try:
+            mark_job(
+                resolve_job_id(mark_failed),
+                "failed",
+                reason=fail_reason,
+                tenant_id=LOCAL_TENANT,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--mark-failed") from exc
         console.print(f"[yellow]Marked as failed:[/yellow] {mark_failed} ({fail_reason or 'manual'})")
         return
 
@@ -1840,7 +1862,7 @@ def digest(
     ),
 ) -> None:
     """Show the local daily digest."""
-    _bootstrap()
+    _bootstrap(strict_projection_refresh=True)
 
     from jobctrl.database import get_connection
     from jobctrl.digest import acknowledge_digest, build_digest
@@ -1873,7 +1895,11 @@ def digest(
     )
     console.print(_render_digest_table(digest_payload))
     for briefing in digest_payload.get("companyBriefings", []):
-        console.print(Text(f"Company briefing: {briefing['name']} · {briefing['status']} · observed {briefing['observedAt'] or 'never'} · /jobs/{briefing['jobId']}"))
+        console.print(
+            Text(
+                f"Company briefing: {briefing['name']} · {briefing['status']} · observed {briefing['observedAt'] or 'never'} · /jobs/{briefing['jobId']}"
+            )
+        )
         if briefing["failureCode"]:
             console.print(Text("Refresh failed: " + briefing["failureCode"]))
     links_table = _render_digest_links_table(digest_payload)
@@ -2251,9 +2277,16 @@ async def _reconcile_discovery_schedule(client: Any, task_queue: str) -> None:
         DiscoverWorkflowInput,
         discover_workflow_id,
     )
+    from jobctrl.domain.errors import InvalidSavedSearchError, SavedSearchReadError
     from jobctrl.domain.tenant import LOCAL_TENANT
 
-    enabled, cron = load_discovery_schedule_settings()
+    try:
+        enabled, cron = load_discovery_schedule_settings()
+    except (InvalidSavedSearchError, SavedSearchReadError) as exc:
+        # Do not delete or replace an existing schedule when its authority is
+        # unavailable. Discovery planning will refuse to use the same inputs.
+        log.warning("Discovery schedule reconciliation skipped: %s", exc)
+        return
     schedule_id = f"jobctrl-discovery-{LOCAL_TENANT}"
     handle = client.get_schedule_handle(schedule_id)
     if not enabled:
@@ -2332,6 +2365,10 @@ def worker(
     # here, not two hours into a Discover run.
     _preflight_browsers_or_exit()
 
+    from jobctrl.infrastructure.runtime_identity import (
+        current_runtime_identity,
+        write_worker_heartbeat,
+    )
     from jobctrl.infrastructure.temporal import (
         JOBCTRL_TASK_QUEUE,
         build_worker,
@@ -2342,10 +2379,6 @@ def worker(
     )
     from jobctrl.infrastructure.temporal.concurrency import resolve_max_concurrent_activities
     from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
-    from jobctrl.infrastructure.runtime_identity import (
-        current_runtime_identity,
-        write_worker_heartbeat,
-    )
 
     queue = task_queue or JOBCTRL_TASK_QUEUE
 
@@ -2415,25 +2448,34 @@ def worker(
                 f"[yellow]Auto-apply loop {startup_auto_apply.action}: {startup_auto_apply.workflow_id}.[/yellow]"
             )
         try:
-            await worker.run()
+            from jobctrl.infrastructure.temporal.worker import run_worker_until_sigterm
+
+            await run_worker_until_sigterm(worker)
         finally:
             from jobctrl.infrastructure.temporal.run_in_activity import (
-                shutdown_activity_executors,
+                drain_activity_executors,
             )
 
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
-            shutdown_activity_executors()
+            await drain_activity_executors()
 
     from jobctrl.infrastructure.observability import shutdown_otel
 
     try:
         asyncio.run(_run())
     finally:
-        # Flush any in-flight spans so the BatchSpanProcessor doesn't drop
-        # them on Ctrl-C.
-        shutdown_otel()
+        from jobctrl.infrastructure.llm.agent_runtime_pool import close_agent_runtimes
+
+        try:
+            from jobctrl.infrastructure.materials.letter_reviews import close_letter_reviews
+
+            close_letter_reviews()
+            close_agent_runtimes()
+        finally:
+            # Runtime teardown may emit final accounting; flush after it settles.
+            shutdown_otel()
 
 
 async def _worker_heartbeat_loop(
@@ -2811,6 +2853,9 @@ async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | Non
         if await _reconcile_cancellation_audit(temporal_client, conn, run):
             changed += 1
     changed += _reconcile_canceled_enrichment_cohorts(conn, tenant_id=str(tenant))
+    from jobctrl.infrastructure.temporal.preparation_outcome_audit import reconcile_preparation_outcomes
+
+    changed += await reconcile_preparation_outcomes(temporal_client, conn=conn, tenant_id=str(tenant))
     return changed
 
 
@@ -3218,11 +3263,11 @@ def backup(
     Nothing is ever deleted. To restore, stop the app and copy a backup file
     over ~/.jobctrl/jobctrl.db.
     """
-    from jobctrl.database import backup_database
+    from jobctrl.database import UnresolvedDatabaseInitializationError, backup_database
 
     try:
         destination = backup_database(output)
-    except (FileNotFoundError, FileExistsError, OSError, sqlite3.Error) as exc:
+    except (FileNotFoundError, FileExistsError, OSError, sqlite3.Error, UnresolvedDatabaseInitializationError) as exc:
         console.print(f"[red]Backup failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
 
@@ -3260,16 +3305,16 @@ def politeness_doctor_notices(conn, search_cfg: dict) -> list[tuple[str, str, st
     search-config dict. ``doctor`` maps the levels to its status marks.
     """
     from jobctrl.config import resolve_jobspy_boards
-    from jobctrl.infrastructure.network import resolve_honest_user_agent
+    from jobctrl.infrastructure.network.politeness import resolve_request_headers
 
     rows: list[tuple[str, str, str]] = []
 
-    user_agent = resolve_honest_user_agent().header_value()
+    user_agent = resolve_request_headers(search_cfg)["User-Agent"]
     rows.append(
         (
             "crawl user-agent",
             "ok",
-            f"{user_agent} — review before real crawls; edit it in Discovery runtime settings",
+            f"{user_agent} — review before real crawls; header mode is set in Discovery runtime settings",
         )
     )
 
@@ -3338,17 +3383,18 @@ def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
     import os
     import shutil
+
     from jobctrl.config import (
-        load_env,
         DB_PATH,
         RESUME_PATH,
         RESUME_PDF_PATH,
-        load_search_config,
         gmail_mcp_auth_status,
+        load_env,
+        load_search_config,
     )
     from jobctrl.domain.tenant import LOCAL_TENANT
-    from jobctrl.infrastructure.profile import get_profile_repository
     from jobctrl.infrastructure.apply.claude_code_cli import _claude_supports_budget_flag
+    from jobctrl.infrastructure.profile import get_profile_repository
     from jobctrl.infrastructure.scoring.criteria_provider import (
         read_apply_approval_required,
     )
@@ -3356,8 +3402,8 @@ def doctor() -> None:
         probe_analysis_setup,
         resolve_claude_apply_binary,
     )
-    from jobctrl.runtime import is_bundled_runtime, payload_path
     from jobctrl.native_credentials import native_store_label
+    from jobctrl.runtime import is_bundled_runtime, payload_path
 
     credential_diagnostics = load_env() or ()
     bundled = is_bundled_runtime()
@@ -3660,11 +3706,11 @@ def doctor() -> None:
 
     # --- Crawl politeness disclosure (R10) ---
     try:
-        from jobctrl.config import load_saved_search_settings
+        from jobctrl.config import load_discovery_crawler_settings
         from jobctrl.database import get_connection as _get_connection
 
         try:
-            politeness_cfg = load_saved_search_settings()
+            politeness_cfg = load_discovery_crawler_settings()
         except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
             politeness_cfg = {}
         try:
@@ -3696,7 +3742,7 @@ def doctor() -> None:
     console.print()
 
     # Tier summary
-    from jobctrl.config import get_tier, TIER_LABELS
+    from jobctrl.config import TIER_LABELS, get_tier
 
     tier = get_tier()
     console.print(f"[bold]Current tier: Tier {tier} — {TIER_LABELS[tier]}[/bold]")
@@ -3801,8 +3847,12 @@ def material_export(
     connection = init_db()
     try:
         result = export_accepted_material(
-            connection, tenant_id=tenant, job_id=job_id, artifact_id=source_artifact_id,
-            generation=generation, root=APP_DIR,
+            connection,
+            tenant_id=tenant,
+            job_id=job_id,
+            artifact_id=source_artifact_id,
+            generation=generation,
+            root=APP_DIR,
             settings={"format": format_name, "paper": paper, "locale": locale},
         )
         typer.echo(json.dumps(result, ensure_ascii=False))
@@ -3833,14 +3883,20 @@ def material_locale(
     format_name: str = typer.Option("txt", "--format"),
 ):
     """Generate, independently review, accept and export source-linked locale revisions."""
-    from jobctrl.database import init_db
     from jobctrl.config import APP_DIR
-    from jobctrl.infrastructure.materials.locale_variants import operation
+    from jobctrl.database import init_db
     from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.materials.locale_variants import operation
+
     request = {"operation": operation_name}
     if operation_name == "generate":
-        request.update(sourceArtifactId=source_artifact_id, sourceLocale=source_locale, targetLocale=target_locale,
-                       expectedGeneration=generation, expectedProfileVersion=profile_version)
+        request.update(
+            sourceArtifactId=source_artifact_id,
+            sourceLocale=source_locale,
+            targetLocale=target_locale,
+            expectedGeneration=generation,
+            expectedProfileVersion=profile_version,
+        )
     elif operation_name != "history":
         request.update(revisionId=revision_id, expectedVersion=expected_version)
         if operation_name == "review":
@@ -3858,7 +3914,6 @@ def material_locale(
         connection.close()
 
 
-
 screening_app = typer.Typer(help="Review local screening answers; never enter or submit forms.")
 app.add_typer(screening_app, name="screening")
 
@@ -3867,7 +3922,13 @@ def _screening_cli_response(job_id, tenant, command=None):
     from jobctrl import config
     from jobctrl.infrastructure.rpc.handlers import screening_answers
     from jobctrl.infrastructure.rpc.server import _RpcParamError
-    params = {"tenantId": tenant, "jobId": job_id, "expectedAppDir": str(config.APP_DIR), "expectedDbPath": str(config.DB_PATH)}
+
+    params = {
+        "tenantId": tenant,
+        "jobId": job_id,
+        "expectedAppDir": str(config.APP_DIR),
+        "expectedDbPath": str(config.DB_PATH),
+    }
     if command is not None:
         params["command"] = command
     try:

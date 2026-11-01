@@ -32,6 +32,7 @@ test("locale review is independent and a failed refresh preserves accepted conte
     await route.fulfill({ json: { supportedLocales: ["en", "es"], sources: [{ artifactId: "source-resume", generation: 1, kind: "tailored_resume" }], profileVersion: 1, variants: [revision] } });
   });
   await page.goto(`/jobs/${QA_PLATFORM_JOB_ID}`);
+  await page.getByRole("button", { name: /· Locale variants/ }).click();
   const panel = page.getByRole("region", { name: "Reviewed locale variants" });
   // The section's explicit accessible name works as a region without a new app route.
   await expect(panel.getByRole("button", { name: "Accept locale revision" })).toBeDisabled();

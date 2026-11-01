@@ -1,0 +1,498 @@
+#!/usr/bin/env node
+
+// Exercise the published acquisition commands on a disposable macOS runner.
+// Unlike the pre-publication signed-cache smoke, Homebrew itself is unmodified.
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createHash, createPublicKey } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
+import net from "node:net";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
+import { verifyReleaseDescriptorSignature } from "./distribution-homebrew.render.bundle.mjs";
+import { fetchPublishedReleases, installArgs, isKnownLegacyRefusal, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode, verifyLegacyRefusal } from "./released-upgrade-smoke.mjs";
+import { establishSourceOwnership } from "./released-source-ownership.mjs";
+
+const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
+
+// When 0.4.0 follows a newer stable release, 0.3.1 remains
+// a public predecessor. Qualify both transitions rather than letting the newer
+// same-schema predecessor hide the documented legacy refusal.
+export function selectAcquisitionSourceVersions(releases, candidateVersion) {
+  const latest = selectLatestReleasedVersion(releases, candidateVersion);
+  if (candidateVersion !== "0.4.0" || latest === "0.3.1") return [latest];
+  const legacy = releases.filter((release) => release.tag_name === "v0.3.1" && release.draft === false && release.prerelease === false);
+  assert.equal(legacy.length, 1, "v0.4.0 requires the published v0.3.1 predecessor for acquisition qualification");
+  return [latest, "0.3.1"];
+}
+const hash = async (file) => {
+  const digest = createHash("sha256");
+  for await (const chunk of createReadStream(file)) digest.update(chunk);
+  return digest.digest("hex");
+};
+
+async function run(executable, args, env, { allowFailure = false } = {}) {
+  const child = spawn(executable, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+  let output = "";
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.on("data", (chunk) => { output += chunk; });
+  const timer = setTimeout(() => child.kill("SIGKILL"), 300_000);
+  try {
+    const result = await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    if (!allowFailure) assert.equal(result.code, 0, `${path.basename(executable)} ${args.join(" ")}: ${output}`);
+    return { ...result, output };
+  } finally { clearTimeout(timer); }
+}
+
+async function pathExists(file) {
+  try { await lstat(file); return true; }
+  catch (error) { if (error.code === "ENOENT") return false; throw error; }
+}
+
+// This test installs into Homebrew's real prefix. Refuse developer machines
+// and any runner that already has a JobCtrl installation before touching it.
+function assertHostedRunner(environment) {
+  assert.ok(environment.GITHUB_ACTIONS === "true" && environment.RUNNER_ENVIRONMENT === "github-hosted",
+    "Homebrew acquisition qualification requires a disposable GitHub-hosted runner");
+}
+
+export async function assertDisposableBrewFixture({ environment, cellar, frontend }) {
+  assertHostedRunner(environment);
+  for (const file of [cellar, frontend]) {
+    assert.ok(!(await pathExists(file)), `Homebrew acquisition qualification refuses an existing JobCtrl installation: ${file}`);
+  }
+}
+
+export async function cleanupBrewFixture({ brew, formula, tap, env, cellar, tapCreated, runner = run, environment = process.env }) {
+  if (!tapCreated) return;
+  assertHostedRunner(environment);
+  const failures = [];
+  const attempt = async (args) => {
+    try {
+      const result = await runner(brew, args, env, { allowFailure: true });
+      if (result.code !== 0) failures.push(`${args[0]} failed: ${result.output}`);
+    } catch (error) { failures.push(`${args[0]} failed: ${error.message}`); }
+  };
+  // Homebrew retains older kegs after an upgrade. This runner was checked
+  // empty before the test, so all versions here belong to this fixture.
+  if (await pathExists(cellar)) await attempt(["uninstall", "--force", "--formula", formula]);
+  await attempt(["untap", tap]);
+  if (failures.length) throw new Error(`Homebrew fixture cleanup failed: ${failures.join("; ")}`);
+}
+
+async function download(url, file, env) {
+  await run("/usr/bin/curl", ["--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--retry", "2", "--max-time", "240", url, "-o", file], env);
+}
+
+async function releaseIdentity(directory, trust) {
+  const descriptorRaw = await readFile(path.join(directory, "release-descriptor.json"), "utf8");
+  const signatureRaw = await readFile(path.join(directory, "release-descriptor.json.sig"), "utf8");
+  const descriptor = verifyReleaseDescriptorSignature({ descriptorRaw, signatureRaw, trust });
+  const manifest = await readJson(path.join(directory, "manifest.json"));
+  assert.equal(await hash(path.join(directory, "manifest.json")), descriptor.artifact.manifestSha256);
+  assert.equal(manifest.buildId, descriptor.buildId);
+  assert.equal(manifest.appVersion, descriptor.appVersion);
+  return { descriptor, manifest, directory };
+}
+
+async function publishedSource(version, root, trust, env) {
+  const directory = path.join(root, `v${version}`);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  for (const name of ["release-descriptor.json", "release-descriptor.json.sig", "manifest.json", "install.sh", "SHA256SUMS"]) {
+    await download(`https://github.com/ebarti/JobCtrl/releases/download/v${version}/${name}`, path.join(directory, name), env);
+  }
+  const release = await releaseIdentity(directory, trust);
+  assert.equal(release.descriptor.appVersion, version);
+  const sums = await readFile(path.join(directory, "SHA256SUMS"), "utf8");
+  const scriptLine = sums.split(/\r?\n/).filter((line) => /^[a-f0-9]{64}  install\.sh$/.test(line));
+  assert.equal(scriptLine.length, 1, "published source must have one install-script checksum");
+  assert.equal(await hash(path.join(directory, "install.sh")), scriptLine[0].slice(0, 64));
+  return release;
+}
+
+const pointer = (release) => `https://releases.jobctrl.dev/v1/artifacts/${release.descriptor.buildId}/channel-pointer.json`;
+
+async function prepareWorkspace(old, runtime, state, env, frontend) {
+  const selector = path.join(runtime, "bin", "jobctrl");
+  await run(frontend, ["start", "--no-open"], env);
+  assert.equal(JSON.parse((await run(selector, ["status", "--json"], env)).output).status, "running");
+  const oldPayload = path.join(runtime, "releases", old.descriptor.buildId, "payload");
+  const python = path.join(oldPayload, "python", "bin", "python3");
+  let temporal = path.join(oldPayload, "temporal", "temporal");
+  const workflowId = `jobctrl-acquisition-qa-${path.basename(path.dirname(state))}`;
+  const temporalCommand = (args) => run(temporal, [...args, "--address", "127.0.0.1:7233", "--disable-config-file", "--disable-config-env"], env);
+  await temporalCommand(["workflow", "start", "--workflow-id", workflowId, "--type", "JobCtrlUpgradeSmoke", "--task-queue", "jobctrl-upgrade-unused", "--input", "{}"]);
+  await temporalCommand(["workflow", "terminate", "--workflow-id", workflowId, "--reason", "Owned acquisition QA fixture"]);
+  const history = JSON.parse((await temporalCommand(["workflow", "describe", "--workflow-id", workflowId, "--output", "json"])).output).workflowExecutionInfo;
+  await run(selector, ["stop"], env);
+  const seed = `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]); c.execute("INSERT INTO jobs(tenant_id,job_id,url,title) VALUES('local','019ed290-3340-7000-8000-000000000892','https://jobs.example/acquisition-qa','Preserved acquisition QA job')"); c.commit(); print(c.execute('PRAGMA user_version').fetchone()[0]); c.close()`;
+  const schema = Number((await run(python, ["-I", "-B", "-c", seed, path.join(state, "jobctrl.db")], env)).output.trim());
+  await writeFile(path.join(state, "qa-external-resume.txt"), "Synthetic external resume\n", { mode: 0o600 });
+  const context = { selector, python, temporalCommand, workflowId, history, schema };
+  context.useCandidate = (candidate) => {
+    const payload = path.join(runtime, "releases", candidate.descriptor.buildId, "payload");
+    context.python = path.join(payload, "python", "bin", "python3");
+    temporal = path.join(payload, "temporal", "temporal");
+  };
+  return context;
+}
+
+// Build a separate synthetic source-owned workspace without starting the
+// untracked predecessor supervisor. This qualifies the supported scoped path;
+// it is not a recovery procedure for an actual legacy installation.
+export async function prepareScopedWorkspace(old, root, runtime, state, env) {
+  const fixture = await realpath(root), temp = await realpath(os.tmpdir());
+  const within = (parent, child) => {
+    const relative = path.relative(parent, child);
+    return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  };
+  assert.ok(within(temp, fixture) && within(fixture, await realpath(runtime)) && within(fixture, await realpath(state)), "scoped qualification requires an isolated temporary workspace");
+  const oldPayload = path.join(runtime, "releases", old.descriptor.buildId, "payload");
+  const python = path.join(oldPayload, "python", "bin", "python3");
+  let temporal = path.join(oldPayload, "temporal", "temporal");
+  const selector = path.join(runtime, "bin", "jobctrl");
+  const historyPath = path.join(state, "temporal", "temporal.db");
+  await mkdir(path.dirname(historyPath), { recursive: true, mode: 0o700 });
+  const seed = `import sys
+from jobctrl.database import create_exact_v14_database
+c=create_exact_v14_database(sys.argv[1]); c.execute("INSERT INTO jobs(tenant_id,job_id,url,title) VALUES('local','019ed290-3340-7000-8000-000000000892','https://jobs.example/acquisition-qa','Preserved acquisition QA job')"); c.commit(); c.close()`;
+  await run(python, ["-I", "-B", "-c", seed, path.join(state, "jobctrl.db")], env);
+  const temporalCommand = (args) => run(temporal, [...args, "--address", "127.0.0.1:7233", "--disable-config-file", "--disable-config-env"], env);
+  const listener = net.createServer();
+  await new Promise((resolve, reject) => { listener.once("error", reject); listener.listen(0, "127.0.0.1", resolve); });
+  const seedPort = listener.address().port;
+  await new Promise((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
+  const seedTemporalCommand = (args, options) => run(temporal, [...args, "--address", `127.0.0.1:${seedPort}`, "--disable-config-file", "--disable-config-env"], env, options);
+  const workflowId = `jobctrl-scoped-upgrade-qa-${path.basename(path.dirname(state))}`;
+  const child = spawn(temporal, ["server", "start-dev", "--ip", "127.0.0.1", "--port", String(seedPort), "--db-filename", historyPath, "--headless", "--log-level", "error", "--disable-config-file", "--disable-config-env"], { env, stdio: ["ignore", "pipe", "pipe"] });
+  let output = "";
+  for (const stream of [child.stdout, child.stderr]) stream.on("data", (chunk) => { output = (output + chunk).slice(-8192); });
+  const finished = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code, signal) => resolve({ code, signal })); });
+  let history;
+  try {
+    const deadline = Date.now() + 60_000;
+    let healthy = false;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null || child.signalCode !== null) throw new Error(`synthetic Temporal exited before readiness: ${output}`);
+      const holders = await run("/usr/sbin/lsof", ["-nP", `-iTCP:${seedPort}`, "-sTCP:LISTEN", "-Fp"], env, { allowFailure: true });
+      const holderPids = holders.output.split(/\r?\n/).filter((line) => /^p[0-9]+$/.test(line));
+      if (holderPids.length === 0) { await delay(250); continue; }
+      assert.deepEqual(holderPids, [`p${child.pid}`], "synthetic Temporal port belongs to a different process");
+      const health = await seedTemporalCommand(["operator", "cluster", "health", "--command-timeout", "2s", "--output", "json"], { allowFailure: true });
+      if (health.code === 0) { healthy = true; break; }
+      await delay(250);
+    }
+    assert.ok(healthy, `synthetic Temporal did not become healthy: ${output}`);
+    await seedTemporalCommand(["workflow", "start", "--workflow-id", workflowId, "--type", "JobCtrlUpgradeSmoke", "--task-queue", "jobctrl-upgrade-unused", "--input", "{}"]);
+    await seedTemporalCommand(["workflow", "terminate", "--workflow-id", workflowId, "--reason", "Owned scoped upgrade QA fixture"]);
+    history = JSON.parse((await seedTemporalCommand(["workflow", "describe", "--workflow-id", workflowId, "--output", "json"])).output).workflowExecutionInfo;
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    let timer;
+    try { await Promise.race([finished, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("synthetic Temporal did not stop")), 15_000); })]); }
+    catch (error) { child.kill("SIGKILL"); await finished.catch(() => {}); throw error; }
+    finally { clearTimeout(timer); }
+  }
+  await writeFile(path.join(state, "qa-external-resume.txt"), "Synthetic external resume\n", { mode: 0o600 });
+  await establishSourceOwnership({ sourceBinary: process.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, root, runtime, state, history: historyPath, python, env });
+  const context = { selector, python, temporalCommand, workflowId, history, historyPath, schema: 14 };
+  context.useCandidate = (candidate) => {
+    const payload = path.join(runtime, "releases", candidate.descriptor.buildId, "payload");
+    context.python = path.join(payload, "python", "bin", "python3");
+    temporal = path.join(payload, "temporal", "temporal");
+  };
+  return context;
+}
+
+async function verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, expectedTitle = "Preserved acquisition QA job") {
+  const active = await readJson(path.join(runtime, "active.json"));
+  assert.equal(active.receipt.buildId, candidate.descriptor.buildId);
+  assert.equal(JSON.parse((await run(context.selector, ["status", "--json"], env)).output).status, "running");
+  const query = "import json,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(json.dumps([c.execute('PRAGMA user_version').fetchone()[0],c.execute(\"SELECT title FROM jobs WHERE url='https://jobs.example/acquisition-qa'\").fetchone()[0]])); c.close()";
+  assert.deepEqual(JSON.parse((await run(context.python, ["-I", "-B", "-c", query, path.join(state, "jobctrl.db")], env)).output), [expectedSchema, expectedTitle]);
+  assert.equal(await readFile(path.join(state, "qa-external-resume.txt"), "utf8"), "Synthetic external resume\n");
+  const history = JSON.parse((await context.temporalCommand(["workflow", "describe", "--workflow-id", context.workflowId, "--output", "json"])).output).workflowExecutionInfo;
+  assert.equal(history.execution.runId, context.history.execution.runId);
+  assert.equal(history.status, "WORKFLOW_EXECUTION_STATUS_TERMINATED");
+  assert.equal(history.historyLength, context.history.historyLength);
+  const journal = await readJson(path.join(runtime, "transition.json"));
+  assert.ok(journal.backupId);
+  const pairDir = path.join(state, "backups", journal.backupId);
+  const pair = await readJson(path.join(pairDir, "pair.json"));
+  assert.equal(pair.id, journal.backupId);
+  assert.deepEqual(pair.files.map((file) => file.name).sort(), ["jobctrl.db", "temporal.db"]);
+  for (const file of pair.files) assert.equal(await hash(path.join(pairDir, file.name)), file.sha256);
+}
+
+async function verifyPreservedPredecessor(context, old, state, env) {
+  assert.equal(JSON.parse((await run(context.selector, ["version", "--json"], env)).output).buildId, old.descriptor.buildId);
+  await run(context.selector, ["start", "--no-open"], env);
+  assert.equal(JSON.parse((await run(context.selector, ["status", "--json"], env)).output).status, "running");
+  const query = "import json,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(json.dumps([c.execute('PRAGMA user_version').fetchone()[0],c.execute(\"SELECT title FROM jobs WHERE url='https://jobs.example/acquisition-qa'\").fetchone()[0]])); c.close()";
+  assert.deepEqual(JSON.parse((await run(context.python, ["-I", "-B", "-c", query, path.join(state, "jobctrl.db")], env)).output), [14, "Preserved acquisition QA job"]);
+  assert.equal(await readFile(path.join(state, "qa-external-resume.txt"), "utf8"), "Synthetic external resume\n");
+  const history = JSON.parse((await context.temporalCommand(["workflow", "describe", "--workflow-id", context.workflowId, "--output", "json"])).output).workflowExecutionInfo;
+  assert.equal(history.execution.runId, context.history.execution.runId);
+  assert.equal(history.historyLength, context.history.historyLength);
+  await run(context.selector, ["stop"], env);
+}
+
+async function useLegacyHistory(state) {
+  const directory = path.join(state, "temporal");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  for (const suffix of ["", "-wal", "-shm"]) {
+    try { await rename(path.join(state, `temporal.db${suffix}`), path.join(directory, `temporal.db${suffix}`)); }
+    catch (error) { if (!suffix || error.code !== "ENOENT") throw error; }
+  }
+  return path.join(directory, "temporal.db");
+}
+
+async function curlScenario(old, candidate, root, baseEnv, scoped = false) {
+  const home = path.join(root, "home"), runtime = path.join(root, "runtime"), state = path.join(root, "state"), bin = path.join(root, "bin");
+  for (const directory of [home, state, bin]) await mkdir(directory, { recursive: true, mode: 0o700 });
+  const env = { ...baseEnv, HOME: home, JOBCTRL_RUNTIME_HOME: runtime, JOBCTRL_DIR: state };
+  const selector = path.join(runtime, "bin", "jobctrl");
+  try {
+    await run("/bin/bash", [path.join(old.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(old)], env);
+    const context = scoped ? await prepareScopedWorkspace(old, root, runtime, state, env) : await prepareWorkspace(old, runtime, state, env, selector);
+    console.log(`${old.descriptor.appVersion}: upgrading through the released curl bootstrap`);
+    const upgrade = [path.join(candidate.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(candidate)];
+    const forward = selectUpgradeMode(old.manifest, candidate.manifest, context.schema) === "forward-schema-15";
+    if (!scoped && isKnownLegacyRefusal(old, candidate, forward ? "forward-schema-15" : "compatible")) {
+      await verifyLegacyRefusal({ root, runtime, state, history: path.join(state, "temporal.db"), external: [path.join(state, "qa-external-resume.txt")],
+        invoke: () => run("/bin/bash", upgrade, env, { allowFailure: true }) });
+      await verifyPreservedPredecessor(context, old, state, env);
+      return { acquisition: "curl", status: "expected-refusal", sourceSchema: 14, targetSchema: 14,
+        checks: ["released-bootstrap-refuses-untracked-legacy-ownership", "data-registry-selector-and-journal-preserved", "released-predecessor-restarts-in-controlled-fixture", "job-resume-and-temporal-history-preserved"] };
+    }
+    const checks = ["released-bootstrap", "real-services", "paired-backup", "job-and-resume-preserved", "temporal-history-preserved", "stop-and-restart"];
+    let title = "Preserved acquisition QA job";
+    if (forward) {
+      // Earlier source checkouts stored the same history one level deeper.
+      // Recreate that owned, stopped layout to qualify its real upgrade path.
+      const historyPath = scoped ? context.historyPath : await useLegacyHistory(state);
+      if (!scoped) await establishSourceOwnership({ sourceBinary: process.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, root, runtime, state, history: historyPath, python: context.python, env });
+      checks.push("synthetic-source-owner-established-for-legacy-history");
+      if (scoped) checks.push("synthetic-scoped-workspace-created-without-running-legacy-supervisor");
+      const matrix = await runForwardInterruptionMatrix({
+        old, candidate, root, runtime, state, env, selector, acquisition: "curl", readinessFailure: true,
+        historyPath, jobUrl: "https://jobs.example/acquisition-qa",
+        payload: path.join(runtime, "releases", candidate.descriptor.buildId, "payload"),
+        initial: { executable: "/bin/bash", args: upgrade },
+      });
+      title = matrix.title;
+      checks.push(...matrix.checks);
+    } else {
+      await run("/bin/bash", upgrade, env);
+    }
+    context.useCandidate(candidate);
+    const expectedSchema = forward ? 15 : context.schema;
+    await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
+    await run(selector, ["stop"], env);
+    await run(selector, ["start", "--no-open"], env);
+    await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
+    return { acquisition: scoped ? "curl-scoped-synthetic" : "curl", status: "upgraded", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
+  } finally { await run(selector, ["stop"], env, { allowFailure: true }).catch(() => {}); }
+}
+
+// A checkout may already have migrated the shared workspace before the user
+// acquires the new installed release. Qualify that distinct stopped-state path.
+async function curlAlreadyMigratedScenario(old, candidate, root, baseEnv) {
+  const source = old.manifest.launcherCompatibility, target = candidate.manifest.launcherCompatibility;
+  if (source?.minimum !== 1 || source?.maximum !== 1 || target?.minimum !== 2 || target?.maximum !== 2) {
+    return { acquisition: "curl-already-migrated", status: "not-applicable" };
+  }
+  const home = path.join(root, "home"), runtime = path.join(root, "runtime"), state = path.join(root, "state"), bin = path.join(root, "bin");
+  for (const directory of [home, state, bin]) await mkdir(directory, { recursive: true, mode: 0o700 });
+  const env = { ...baseEnv, HOME: home, JOBCTRL_RUNTIME_HOME: runtime, JOBCTRL_DIR: state };
+  const selector = path.join(runtime, "bin", "jobctrl");
+  try {
+    await run("/bin/bash", [path.join(old.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(old)], env);
+    const known = isKnownLegacyRefusal(old, candidate, "forward-schema-15");
+    const context = known ? await prepareScopedWorkspace(old, root, runtime, state, env) : await prepareWorkspace(old, runtime, state, env, selector);
+    if (selectUpgradeMode(old.manifest, candidate.manifest, context.schema) !== "forward-schema-15") {
+      return { acquisition: "curl-already-migrated", status: "not-applicable" };
+    }
+    const history = known ? context.historyPath : await useLegacyHistory(state);
+    await run(candidate.installer, installArgs(candidate, runtime, true, "curl"), env);
+    const payload = path.join(runtime, "releases", candidate.descriptor.buildId, "payload");
+    const python = path.join(payload, "python", "bin", "python3");
+    const app = path.join(state, "jobctrl.db");
+    const appInode = (await stat(app)).ino, historyInode = (await stat(history)).ino;
+    const migrate = "import sqlite3,sys; from jobctrl.infrastructure.migrations.schema_v15 import upgrade_exact_v14_schema_to_v15; c=sqlite3.connect(sys.argv[1]); upgrade_exact_v14_schema_to_v15(c); c.close()";
+    await run(python, ["-I", "-B", "-c", migrate, app], env);
+    if (!known) await establishSourceOwnership({ sourceBinary: process.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, root, runtime, state, history, python: context.python, env });
+    await run("/bin/bash", [path.join(candidate.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(candidate)], env);
+    context.useCandidate(candidate);
+    await verifyWorkspace(context, candidate, runtime, state, env, 15);
+    assert.equal((await stat(app)).ino, appInode);
+    assert.equal((await stat(history)).ino, historyInode);
+    await run(selector, ["stop"], env);
+    await run(selector, ["start", "--no-open"], env);
+    await verifyWorkspace(context, candidate, runtime, state, env, 15);
+    return { acquisition: "curl-already-migrated", status: "upgraded", sourceSchema: 15, targetSchema: 15, checks: ["real-installer-accepts-already-migrated-workspace", "synthetic-source-owner-established-for-legacy-history", "legacy-history-path-and-inode-preserved", "job-resume-and-workflow-preserved", "paired-backup", "stop-and-restart"] };
+  } finally { await run(selector, ["stop"], env, { allowFailure: true }).catch(() => {}); }
+}
+
+async function oldFormula(brew, old, env) {
+  await run(brew, ["tap", "ebarti/tap"], env);
+  const repository = (await run(brew, ["--repository", "ebarti/tap"], env)).output.trim();
+  assert.ok(path.isAbsolute(repository));
+  const shallow = (await run("/usr/bin/git", ["-C", repository, "rev-parse", "--is-shallow-repository"], env)).output.trim();
+  if (shallow === "true") await run("/usr/bin/git", ["-C", repository, "fetch", "--unshallow"], env);
+  const revisions = (await run("/usr/bin/git", ["-C", repository, "log", "--format=%H", "--all", "--", "Formula/jobctrl.rb"], env)).output.trim().split("\n");
+  for (const revision of revisions.slice(0, 100)) {
+    if (!/^[a-f0-9]{40}$/.test(revision)) continue;
+    const candidate = await run("/usr/bin/git", ["-C", repository, "show", `${revision}:Formula/jobctrl.rb`], env, { allowFailure: true });
+    if (candidate.code === 0 && candidate.output.includes(`JOBCTRL_BUILD_ID = "${old.descriptor.buildId}"`)) return candidate.output;
+  }
+  throw new Error("cannot find the exact published source formula in the Homebrew tap history");
+}
+
+async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "homebrew", scoped = false) {
+  const runtime = path.join(root, "runtime"), state = path.join(root, "state"), cache = path.join(root, "brew-cache");
+  for (const directory of [state, cache]) await mkdir(directory, { recursive: true, mode: 0o700 });
+  const env = { ...baseEnv, JOBCTRL_RUNTIME_HOME: runtime, JOBCTRL_DIR: state, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_CACHE: cache };
+  const brew = "/opt/homebrew/bin/brew";
+  const tap = `jobctrl/upgrade-qa-${process.env.GITHUB_RUN_ID ?? process.pid}`;
+  const formula = `${tap}/jobctrl`;
+  const frontend = "/opt/homebrew/bin/jobctrl";
+  let tapCreated = false, scenarioFailure;
+  try {
+    let context;
+    if (sourceAcquisition === "curl") {
+      // The historical 0.3.0 formula asks Apple's live notarization service
+      // from inside Homebrew's sandbox. Exercise its genuine curl installation
+      // and the genuine newer formula instead; the release gate separately
+      // tests Homebrew-to-Homebrew using the latest stable formula.
+      const bin = path.join(root, "curl-bin");
+      await mkdir(bin, { recursive: true, mode: 0o700 });
+      await run("/bin/bash", [path.join(old.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(old)], env);
+      context = scoped ? await prepareScopedWorkspace(old, root, runtime, state, env) : await prepareWorkspace(old, runtime, state, env, path.join(runtime, "bin", "jobctrl"));
+    }
+    const source = sourceAcquisition === "homebrew" ? await oldFormula(brew, old, env) : null;
+    await run(brew, ["tap-new", "--no-git", tap], env); tapCreated = true;
+    const repository = (await run(brew, ["--repository", tap], env)).output.trim();
+    const formulaPath = path.join(repository, "Formula", "jobctrl.rb");
+    if (sourceAcquisition === "homebrew") {
+      await writeFile(formulaPath, source, { mode: 0o644 });
+      await run(brew, ["install", "--formula", formula], env);
+      // Homebrew installs a prefix-owned bootstrap only. Resolve it once so
+      // the synthetic scoped fixture has an authenticated old selection,
+      // without starting the untracked predecessor supervisor.
+      if (scoped) assert.equal(JSON.parse((await run(frontend, ["version", "--json"], env)).output).buildId, old.descriptor.buildId);
+      context = scoped ? await prepareScopedWorkspace(old, root, runtime, state, env) : await prepareWorkspace(old, runtime, state, env, frontend);
+    }
+    console.log(`${old.descriptor.appVersion}: upgrading through unmodified Homebrew`);
+    await copyFile(path.join(candidate.directory, "jobctrl.rb"), formulaPath);
+    await run(brew, [sourceAcquisition === "homebrew" ? "upgrade" : "install", "--formula", formula], env);
+    const forward = selectUpgradeMode(old.manifest, candidate.manifest, context.schema) === "forward-schema-15";
+    if (!scoped && isKnownLegacyRefusal(old, candidate, forward ? "forward-schema-15" : "compatible")) {
+      await verifyLegacyRefusal({ root, runtime, state, history: path.join(state, "temporal.db"), external: [path.join(state, "qa-external-resume.txt")],
+        invoke: () => run(frontend, ["start", "--no-open"], env, { allowFailure: true }) });
+      await verifyPreservedPredecessor(context, old, state, env);
+      return { acquisition: sourceAcquisition === "homebrew" ? "unmodified-homebrew" : "curl-to-unmodified-homebrew", status: "expected-refusal", sourceSchema: 14, targetSchema: 14,
+        checks: ["new-formula-frontend-refuses-untracked-legacy-ownership", "data-registry-selector-and-journal-preserved", "released-predecessor-selector-restarts-in-controlled-fixture", "job-resume-and-temporal-history-preserved"] };
+    }
+    const checks = [sourceAcquisition === "homebrew" ? "real-formula-upgrade" : "real-formula-install-over-curl-workspace", "real-services", "paired-backup", "job-and-resume-preserved", "temporal-history-preserved", "stop-and-restart"];
+    let title = "Preserved acquisition QA job";
+    if (forward) {
+      const matrix = await runForwardInterruptionMatrix({
+        old, candidate, root, runtime, state, env, selector: context.selector, acquisition: "homebrew", readinessFailure: true,
+        ...(scoped ? { historyPath: context.historyPath } : {}),
+        jobUrl: "https://jobs.example/acquisition-qa",
+        payload: path.join(runtime, "releases", candidate.descriptor.buildId, "payload"),
+        initial: { executable: frontend, args: ["start", "--no-open"] },
+      });
+      title = matrix.title;
+      checks.push(...matrix.checks);
+      if (scoped) checks.push("synthetic-scoped-workspace-created-without-running-legacy-supervisor");
+    } else {
+      await run(frontend, ["start", "--no-open"], env);
+    }
+    context.useCandidate(candidate);
+    const expectedSchema = forward ? 15 : context.schema;
+    await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
+    await run(context.selector, ["stop"], env);
+    await run(frontend, ["start", "--no-open"], env);
+    await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
+    return { acquisition: scoped ? "homebrew-scoped-synthetic" : sourceAcquisition === "homebrew" ? "unmodified-homebrew" : "curl-to-unmodified-homebrew", status: "upgraded", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
+  } catch (error) {
+    scenarioFailure = error;
+    throw error;
+  } finally {
+    await run(path.join(runtime, "bin", "jobctrl"), ["stop"], env, { allowFailure: true }).catch(() => {});
+    try {
+      await cleanupBrewFixture({ brew, formula, tap, env, cellar: "/opt/homebrew/Cellar/jobctrl", tapCreated });
+    } catch (error) {
+      if (scenarioFailure) scenarioFailure.message += `\n${error.message}`;
+      else throw error;
+    }
+  }
+}
+
+// Real installers and Homebrew do not need the metadata API token or the
+// runner's action credentials. Keep them out of every child process.
+export function acquisitionChildEnvironment(inherited) {
+  const env = { ...inherited, PATH: "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", HOMEBREW_NO_AUTO_UPDATE: "1" };
+  for (const name of ["JOBCTRL_RELEASE_METADATA_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]) delete env[name];
+  return env;
+}
+
+export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output, publicKeyBase64, keyId, homebrewSource = "homebrew" }) {
+  assert.ok(homebrewSource === "homebrew" || homebrewSource === "curl", "invalid Homebrew source acquisition");
+  assert.equal(process.platform, "darwin"); assert.equal(process.arch, "arm64");
+  await assertDisposableBrewFixture({ environment: process.env, cellar: "/opt/homebrew/Cellar/jobctrl", frontend: "/opt/homebrew/bin/jobctrl" });
+  const raw = Buffer.from(publicKeyBase64 ?? "", "base64"); assert.equal(raw.length, 32);
+  assert.match(keyId ?? "", /^[A-Za-z0-9._-]+$/);
+  const publicKey = createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw]), format: "der", type: "spki" });
+  const trust = new Map([[keyId, publicKey]]);
+  const candidate = await releaseIdentity(releaseDirectory, trust);
+  candidate.installer = path.join(releaseDirectory, "jobctrl-installer");
+  candidate.archive = path.join(releaseDirectory, `jobctrl-${candidate.descriptor.appVersion}-darwin-arm64.zip`);
+  assert.equal(await hash(candidate.installer), candidate.manifest.files.find((file) => file.path === "launcher/jobctrl-installer").sha256);
+  assert.equal(await hash(candidate.archive), candidate.descriptor.artifact.sha256);
+  await chmod(candidate.installer, 0o700);
+  const releases = await fetchPublishedReleases(process.env.JOBCTRL_RELEASE_METADATA_TOKEN);
+  const versions = selectAcquisitionSourceVersions(releases, candidate.descriptor.appVersion);
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "jobctrl-acquisition-upgrades-")));
+  const env = acquisitionChildEnvironment(process.env);
+  const started = performance.now();
+  const results = [], sourceBuildIds = {};
+  for (const version of versions) {
+    const old = await publishedSource(version, root, trust, env);
+    assert.ok(old.descriptor.sequence < candidate.descriptor.sequence);
+    sourceBuildIds[version] = old.descriptor.buildId;
+    const sourceRoot = path.join(root, `from-${version}`);
+    const scenarios = [
+      await curlScenario(old, candidate, path.join(sourceRoot, "curl"), env),
+      await brewScenario(old, candidate, path.join(sourceRoot, "homebrew"), env, homebrewSource),
+    ];
+    if (isKnownLegacyRefusal(old, candidate, "forward-schema-15")) {
+      scenarios.push(await curlScenario(old, candidate, path.join(sourceRoot, "curl-scoped"), env, true));
+      scenarios.push(await brewScenario(old, candidate, path.join(sourceRoot, "homebrew-scoped"), env, homebrewSource, true));
+    }
+    scenarios.push(await curlAlreadyMigratedScenario(old, candidate, path.join(sourceRoot, "curl-already-migrated"), env));
+    results.push(...scenarios.map((result) => ({ ...result, sourceVersion: version })));
+  }
+  const status = results.some((result) => result.status === "expected-refusal") ? "qualified-with-legacy-refusal" : "passed";
+  const report = { schemaVersion: 1, status, sourceBuildId: sourceBuildIds[versions[0]], sourceBuildIds, candidateBuildId: candidate.descriptor.buildId, elapsedMs: Math.round(performance.now() - started), results };
+  await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+  return report;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  const options = new Map();
+  for (let index = 2; index < process.argv.length; index += 2) {
+    assert.ok(["--release-dir", "--output", "--homebrew-source"].includes(process.argv[index]) && !options.has(process.argv[index]) && process.argv[index + 1], "invalid or duplicate acquisition-upgrade argument");
+    options.set(process.argv[index], process.argv[index + 1]);
+  }
+  await runPublishedAcquisitionUpgrades({ releaseDirectory: options.get("--release-dir"), output: options.get("--output"), publicKeyBase64: process.env.JOBCTRL_RELEASE_PUBLIC_KEY, keyId: process.env.JOBCTRL_RELEASE_KEY_ID, homebrewSource: options.get("--homebrew-source") });
+}

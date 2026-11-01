@@ -138,6 +138,15 @@ function createOwnedE2eWorkspace(parentOverride) {
       throw new Error("E2E parent must not follow a symlink");
     assertInside(temporaryRoot, parent);
   }
+  return allocateOwnedE2eWorkspace(parent, temporaryRoot);
+}
+
+function createSiblingOwnedE2eWorkspace(owner) {
+  const workspace = assertOwnedE2eWorkspace(owner);
+  return allocateOwnedE2eWorkspace(workspace.temporaryRoot, workspace.temporaryRoot);
+}
+
+function allocateOwnedE2eWorkspace(parent, temporaryRoot) {
   const appDir = fs.mkdtempSync(path.join(parent, DIRECTORY_PREFIX));
   const metadata = fs.lstatSync(appDir, { bigint: true });
   const workspace = {
@@ -378,6 +387,7 @@ module.exports = {
   canonicalTemporaryRoot,
   canonicalTemporaryRoots,
   createOwnedE2eWorkspace,
+  createSiblingOwnedE2eWorkspace,
   assertOwnedE2eWorkspace,
   workspaceEnvironment,
   assertE2eWorkspaceEnvironment,

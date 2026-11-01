@@ -64,7 +64,7 @@ func buildSealedV14Candidate(candidate launchContext, pair databasePair, journal
 	var receipt sealedV14CandidateReceipt
 	if err := decodeSingleJSON(output, &receipt); err != nil ||
 		receipt.SchemaVersion != 1 || receipt.Status != "ready" ||
-		receipt.UserVersion != currentJobCtrlSchemaVersion || receipt.JobCount < 0 || receipt.TableCount != 128 ||
+		receipt.UserVersion != v14JobCtrlSchemaVersion || receipt.JobCount < 0 || receipt.TableCount != 128 ||
 		!validSHA256(receipt.SourceDataDigest) || !validSHA256(receipt.CandidateDataDigest) ||
 		receipt.SourceDataDigest != receipt.CandidateDataDigest || !validSHA256(receipt.CandidateSHA256) {
 		cleanupV14Candidate(candidate.Instance.StateDir, journalID)
@@ -81,7 +81,7 @@ func buildSealedV14Candidate(candidate launchContext, pair databasePair, journal
 		return "", errors.New("sealed v14 candidate digest verification failed")
 	}
 	version, versionErr := sqliteUserVersion(python, path)
-	if versionErr != nil || version != currentJobCtrlSchemaVersion {
+	if versionErr != nil || version != v14JobCtrlSchemaVersion {
 		cleanupV14Candidate(candidate.Instance.StateDir, journalID)
 		return "", errors.New("sealed v14 candidate schema verification failed")
 	}
@@ -117,6 +117,9 @@ func installSealedV14Candidate(candidate launchContext, candidatePath string) er
 		return errors.New("v14 activation candidate is not an owner-private regular file")
 	}
 	live := filepath.Join(candidate.Instance.StateDir, "jobctrl.db")
+	if err := checkDatabasePublication(live); err != nil {
+		return err
+	}
 	liveInfo, err := os.Lstat(live)
 	if err != nil || !liveInfo.Mode().IsRegular() || liveInfo.Mode()&os.ModeSymlink != 0 {
 		return errors.New("live database is not a regular file")
@@ -132,7 +135,7 @@ func installSealedV14Candidate(candidate launchContext, candidatePath string) er
 		}
 		return errors.New("locked exact-v14 activation failed")
 	}
-	if version, err := sqliteUserVersion(python, live); err != nil || version != currentJobCtrlSchemaVersion {
+	if version, err := sqliteUserVersion(python, live); err != nil || version != v14JobCtrlSchemaVersion {
 		return errors.New("installed v14 database did not reopen at the exact schema version")
 	}
 	return nil
@@ -169,6 +172,9 @@ func cleanupV14Candidate(stateDir, journalID string) {
 }
 
 func bindV14Source(candidate launchContext, source, path string) error {
+	if err := checkDatabasePublication(filepath.Join(candidate.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
 	command := exec.Command(python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v14_activation",
 		"--mode", "bind", "--source", source, "--live", filepath.Join(candidate.Instance.StateDir, "jobctrl.db"),

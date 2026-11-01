@@ -8,6 +8,7 @@ import { jobsKeys } from "../../operations/jobsKeys.js";
 import { server } from "../../../test/msw/server.js";
 import { renderHookWithProviders } from "../../../test/render.js";
 import { useMarkSkippedMutation } from "./useMarkSkippedMutation.js";
+import { patchListApplyStatus } from "../lib/jobDetailPatches.js";
 
 const initialDetail = {
   ok: true,
@@ -46,4 +47,37 @@ describe("useMarkSkippedMutation", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"))).toEqual(initialDetail);
   });
+});
+
+it.each(["running", "needs_verification"])("keeps %s work and verification evidence visible during local Skip", async (state) => {
+  const { result, queryClient } = renderHookWithProviders(() => useMarkSkippedMutation());
+  const detail = { ...initialDetail, job: { jobKey: "job-1", applyStatus: "in_progress" },
+    activeApplyRun: { runId: "original" }, stages: [{ stage: "apply", state }],
+    applyAudit: { hardBlockers: [{ code: "submission_intent_recorded" }] } };
+  queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"), detail);
+  await act(async () => { result.current.mutate({ jobId: "job-1" }); });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"))).toEqual(detail);
+});
+
+it("retains unresolved outcome evidence after the active run has ended", async () => {
+  const { result, queryClient } = renderHookWithProviders(() => useMarkSkippedMutation());
+  const detail = { ...initialDetail, job: { jobKey: "job-1", applyStatus: "failed" }, activeApplyRun: null,
+    stages: [{ stage: "apply", state: "skipped" }], applyAudit: { hardBlockers: [{ code: "submission_outcome_uncertain" }] } };
+  queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"), detail);
+  await act(async () => { result.current.mutate({ jobId: "job-1" }); });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"))).toEqual(detail);
+});
+
+it.each(["queued", "succeeded"])("retains the %s disposition during an optimistic Skip", async (state) => {
+  const { result, queryClient } = renderHookWithProviders(() => useMarkSkippedMutation());
+  const detail = { ...initialDetail, job: { jobKey: "job-1", applyStatus: state === "succeeded" ? "applied" : null },
+    stages: [{ stage: "apply", state }] };
+  queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"), detail);
+  await act(async () => { result.current.mutate({ jobId: "job-1" }); });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"))).toEqual(detail);
+  const page = { items: [{ jobKey: "job-1", applyStatus: detail.job.applyStatus, currentState: state }] };
+  expect(patchListApplyStatus(page, "job-1", "skipped")).toEqual(page);
 });

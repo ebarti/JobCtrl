@@ -24,7 +24,7 @@ def scoring_current_policy_job_ids(
     limit: int = 0,
     job_ids: tuple[JobId, ...] = (),
 ) -> tuple[JobId, ...]:
-    """Return active enriched jobs missing a current-policy score."""
+    """Explicit refresh candidates with old policy or an older recorded profile."""
 
     register_score_eligibility_sql(conn)
     current_version = _current_scoring_policy_version(conn, tenant_id)
@@ -56,7 +56,13 @@ def scoring_current_policy_job_ids(
             latest_score.job_id IS NULL
             OR (
               (latest_score.correction_json IS NULL OR TRIM(latest_score.correction_json) = '')
-              AND {_score_policy_version_expr("latest_score.trace_json")} != ?
+              AND (
+                {_score_policy_version_expr("latest_score.trace_json")} != ?
+                OR (json_extract(latest_score.trace_json, '$.profile_snapshot_version') > 0
+                  AND json_extract(latest_score.trace_json, '$.profile_snapshot_version') < (
+                    SELECT p.version FROM candidate_profiles p
+                    WHERE p.tenant_id=j.tenant_id AND p.profile_id='default'))
+              )
             )
           )
         ORDER BY j.discovered_at DESC

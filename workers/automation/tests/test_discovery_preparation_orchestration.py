@@ -71,9 +71,9 @@ def test_derive_preparation_targets_is_sorted_and_prefers_score_workflow(
 
     assert [target.job_id for target in targets] == [_job_id(1), _job_id(2), _job_id(3)]
     assert {target.tenant_id for target in targets} == {LOCAL_TENANT}
-    assert targets[0].steps == ["score", "tailor", "cover", "pdf"]
+    assert targets[0].steps == ["score", "tailor", "pdf"]
     assert targets[0].target_version == "11"
-    assert targets[2].steps == ["tailor", "cover", "pdf"]
+    assert targets[2].steps == ["tailor", "pdf"]
     assert targets[2].target_version == "7"
 
 
@@ -119,7 +119,7 @@ def test_derive_targets_score_only_skips_pending_tailor(
     # Score-only (every subsequent streaming pass) never touches pending_tailor,
     # so the mid-tailor job cannot get a second, racing prep workflow.
     assert [target.job_id for target in score_only] == [_job_id(10)]
-    assert score_only[0].steps == ["score", "tailor", "cover", "pdf"]
+    assert score_only[0].steps == ["score", "tailor", "pdf"]
 
 
 def test_derive_preparation_targets_uses_exact_v7_job_identity_queries(
@@ -263,9 +263,9 @@ def test_derive_preparation_targets_uses_exact_v7_job_identity_queries(
             pending_tailor_id,
             restored_score_id,
         ]
-        assert targets[0].steps == ["score", "tailor", "cover", "pdf"]
-        assert targets[1].steps == ["tailor", "cover", "pdf"]
-        assert targets[2].steps == ["score", "tailor", "cover", "pdf"]
+        assert targets[0].steps == ["score", "tailor", "pdf"]
+        assert targets[1].steps == ["tailor", "pdf"]
+        assert targets[2].steps == ["score", "tailor", "pdf"]
         suppressed = conn.execute(
             """
             SELECT status, metadata_json
@@ -399,10 +399,19 @@ def test_streaming_fanout_dedups_repeated_passes_via_deterministic_ids(
     ]
     monkeypatch.setattr(preparation, "derive_preparation_targets", lambda _payload: list(targets))
     starter = _FakeUseExistingStarter()
+    captured = []
 
-    stats_pass1 = preparation.start_discovery_preparation_workflows(workflow_starter=starter)
+    async def bound_starter(spec):
+        captured.append(spec.args[0])
+        return await starter(spec)
+
+    monkeypatch.setattr(preparation, "current_runtime_identity", lambda: SimpleNamespace(
+        app_dir="/synthetic/app", db_path="/synthetic/app/jobctrl.db",
+    ))
+
+    stats_pass1 = preparation.start_discovery_preparation_workflows(workflow_starter=bound_starter)
     started_after_pass1 = list(starter.new_starts)
-    stats_pass2 = preparation.start_discovery_preparation_workflows(workflow_starter=starter)
+    stats_pass2 = preparation.start_discovery_preparation_workflows(workflow_starter=bound_starter)
 
     # Both passes request the identical deterministic ids.
     expected_ids = ["prep-preparation:key-a", "prep-preparation:key-b"]
@@ -414,6 +423,8 @@ def test_streaming_fanout_dedups_repeated_passes_via_deterministic_ids(
     assert starter.new_starts == expected_ids
     assert stats_pass1["queued"] == {"job_preparation": 2}
     assert stats_pass2["queued"] == {"job_preparation": 2}
+    assert all(payload.expected_app_dir == "/synthetic/app" for payload in captured)
+    assert all(payload.expected_db_path == "/synthetic/app/jobctrl.db" for payload in captured)
 
 
 def test_per_job_handoff_id_converges_with_fanout_and_forks_on_reenrichment(
@@ -549,7 +560,7 @@ def test_build_preparation_workflow_spec_uses_deterministic_id(
     assert spec.workflow_id.startswith("prep-preparation:")
     (payload,) = spec.args
     assert isinstance(payload, JobPreparationInput)
-    assert payload.steps == ["tailor", "cover", "pdf"]
+    assert payload.steps == ["tailor", "pdf"]
     assert payload.job_id == _job_id(40)
     assert spec.workflow_id == f"prep-{payload.idempotency_key}"
 
@@ -606,3 +617,14 @@ def test_discovery_source_failure_records_failed_progress(monkeypatch: pytest.Mo
         "status": "failed",
         "message": "JobSpy failed",
     }
+
+
+def test_explicit_preparation_workspace_identity_is_preserved(conn, monkeypatch):
+    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
+    spec = preparation.build_preparation_workflow_spec(
+        tenant_id=LOCAL_TENANT, job_id=_job_id(99), steps=["score", "tailor", "pdf"],
+        kind=PreparationWorkItemKind.SCORE_JOB, target_version=1, source_event_id="event-explicit-runtime",
+        expected_app_dir="/explicit/app", expected_db_path="/explicit/app/jobctrl.db",
+    )
+    assert spec.args[0].expected_app_dir == "/explicit/app"
+    assert spec.args[0].expected_db_path == "/explicit/app/jobctrl.db"

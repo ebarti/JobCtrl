@@ -85,6 +85,7 @@ for (const mobile of [false, true]) {
     await expect(page).toHaveURL((url) => url.pathname === `/jobs/${job}`);
     await expect(page).toHaveTitle(/JobCtrl/);
     await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+    await page.getByRole("button", { name: /· Role Analysis/ }).click();
     const briefing = page.getByRole("region", { name: "Company briefing", exact: true });
     await expect(briefing).toBeVisible();
     await expect(briefing).toContainText("Stale briefing");

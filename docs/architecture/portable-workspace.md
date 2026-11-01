@@ -124,5 +124,5 @@ Mandatory refusal fixtures cover incompatible versions/schema, tampered manifest
 members, missing files, conflicts, path/link escapes, concurrent writers, and stale
 consent. Interruption, disk/permission failures, and recovery must independently
 prove source/destination preservation. Applicable independent
-[Tier 3 operational gates](../local-reliability-qa.md), review PASS, and QA PASS
+[Tier 3 operational gates](../local-reliability-qa.md) and QA PASS
 are release conditions. This proposal performs no destructive operational QA.

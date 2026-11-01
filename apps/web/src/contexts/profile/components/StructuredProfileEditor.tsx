@@ -191,6 +191,23 @@ function TargetPreferenceCard({
   );
 }
 
+function hasRequiredExperienceBullets(profile: JsonRecord, id: string): boolean {
+  const pins = recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id");
+  return asTextArray(pins[id]).some((bullet) => bullet.trim().length > 0);
+}
+
+function effectiveRequiredExperienceIds(profile: JsonRecord): string[] {
+  const configured = textArrayAt(profile, "resume.tailoring_rules.required_experience_entry_ids");
+  const known = recordArrayAt(profile, "resume.experience_entries")
+    .map((entry) => textFrom(entry["id"]))
+    .filter(Boolean);
+  const included = new Set(configured.length > 0 ? configured : known);
+  for (const id of known) {
+    if (hasRequiredExperienceBullets(profile, id)) included.add(id);
+  }
+  return Array.from(included);
+}
+
 export function StructuredProfileEditor({
   applicationConfigurationFields,
   mode = "profile",
@@ -202,6 +219,7 @@ export function StructuredProfileEditor({
 }: StructuredProfileEditorProps) {
   const focusTargetsRef = useRef(new Map<string, HTMLElement>());
   const pendingFocusKeyRef = useRef<string | null>(null);
+  const reservedRepeatIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     const focusKey = pendingFocusKeyRef.current;
@@ -280,7 +298,11 @@ export function StructuredProfileEditor({
       return;
     }
     updateProfileDraft((draft) => {
-      const values = new Set(textArrayAt(draft, path));
+      const isExperience = path === "resume.tailoring_rules.required_experience_entry_ids";
+      const values = new Set(isExperience ? effectiveRequiredExperienceIds(draft) : textArrayAt(draft, path));
+      if (isExperience && !checked && (
+        hasRequiredExperienceBullets(draft, id) || (values.has(id) && values.size === 1)
+      )) return;
       if (checked) {
         values.add(id);
       } else {
@@ -344,18 +366,63 @@ export function StructuredProfileEditor({
   const addRepeatItem = (path: string) => {
     updateProfileDraft((draft) => {
       const items = recordArrayAt(draft, path);
-      setPathValue(draft, path, [...items, defaultRepeatItem(path)]);
+      // Identity is structural and allocated once, never derived from labels.
+      // Keep removed draft IDs reserved and avoid imported/required identities.
+      for (const entryPath of ["resume.experience_entries", "resume.education_entries", "resume.skill_categories"]) {
+        for (const entry of recordArrayAt(draft, entryPath)) {
+          reservedRepeatIdsRef.current.add(textFrom(entry["id"]));
+        }
+      }
+      for (const requiredPath of [
+        "resume.tailoring_rules.required_experience_entry_ids",
+        "resume.tailoring_rules.required_education_entry_ids",
+        "resume.tailoring_rules.required_skill_category_ids",
+      ]) {
+        for (const id of textArrayAt(draft, requiredPath)) {
+          reservedRepeatIdsRef.current.add(id);
+        }
+      }
+      for (const requiredMapPath of [
+        "resume.tailoring_rules.required_bullets_by_experience_id",
+        "resume.tailoring_rules.required_skills_by_category_id",
+      ]) {
+        for (const id of Object.keys(recordAt(draft, requiredMapPath))) {
+          reservedRepeatIdsRef.current.add(id);
+        }
+      }
+      const item = defaultRepeatItem(path, reservedRepeatIdsRef.current);
+      const id = textFrom(item["id"]);
+      if (id) reservedRepeatIdsRef.current.add(id);
+      setPathValue(draft, path, [...items, item]);
+      if (path === "resume.experience_entries" && id) {
+        const requiredPath = "resume.tailoring_rules.required_experience_entry_ids";
+        const configured = textArrayAt(draft, requiredPath);
+        const included = new Set(configured.length > 0 ? configured : items
+          .map((entry) => textFrom(entry["id"]))
+          .filter(Boolean));
+        included.add(id);
+        setPathValue(draft, requiredPath, Array.from(included));
+      }
     });
   };
 
   const removeRepeatItem = (path: string, index: number) => {
     updateProfileDraft((draft) => {
       const items = recordArrayAt(draft, path);
+      const removedId = textFrom(items[index]?.["id"]);
       setPathValue(
         draft,
         path,
         items.filter((_, itemIndex) => itemIndex !== index),
       );
+      if (path === "resume.experience_entries" && removedId) {
+        const requiredPath = "resume.tailoring_rules.required_experience_entry_ids";
+        setPathValue(draft, requiredPath, textArrayAt(draft, requiredPath).filter((id) => id !== removedId));
+        const bulletPath = "resume.tailoring_rules.required_bullets_by_experience_id";
+        const requiredBullets = { ...recordAt(draft, bulletPath) };
+        delete requiredBullets[removedId];
+        setPathValue(draft, bulletPath, requiredBullets);
+      }
     });
   };
 
@@ -1379,9 +1446,7 @@ export function StructuredProfileEditor({
   const experienceEntries = recordArrayAt(profile, "resume.experience_entries");
   const educationEntries = recordArrayAt(profile, "resume.education_entries");
   const skillCategories = recordArrayAt(profile, "resume.skill_categories");
-  const requiredExperienceIds = new Set(
-    textArrayAt(profile, "resume.tailoring_rules.required_experience_entry_ids"),
-  );
+  const requiredExperienceIds = new Set(effectiveRequiredExperienceIds(profile));
   const requiredEducationIds = new Set(
     textArrayAt(profile, "resume.tailoring_rules.required_education_entry_ids"),
   );
@@ -1454,7 +1519,12 @@ export function StructuredProfileEditor({
                 "resume.tailoring_rules.max_experience_bullets",
                 "Max bullets per role",
                 "number",
-                { min: 1, max: 99, step: 1 },
+                {
+                  min: 1,
+                  max: 99,
+                  step: 1,
+                  helperText: "Hard maximum per role. Tailoring keeps as many applicable baseline accomplishments as possible within this limit.",
+                },
               )}
             </AdaptiveFieldGrid>
             <AdaptiveFieldGrid>
@@ -1490,6 +1560,11 @@ export function StructuredProfileEditor({
               <FieldDescription className="experience-order-description">
                 The resume follows this order. Sort by date, or move individual roles into a custom
                 sequence.
+              </FieldDescription>
+              <FieldDescription>
+                All roles appear by default. Uncheck a role to let tailoring omit it.
+                Roles with Required bullets stay included. At least one role stays required;
+                new experiences start included.
               </FieldDescription>
               {experienceEntries.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
@@ -1549,7 +1624,8 @@ export function StructuredProfileEditor({
                           <Checkbox
                             id={requiredEntryId}
                             checked={requiredExperienceIds.has(entryId)}
-                            disabled={!entryId}
+                            disabled={!entryId || hasRequiredExperienceBullets(profile, entryId)
+                              || (requiredExperienceIds.has(entryId) && requiredExperienceIds.size === 1)}
                             onCheckedChange={(checked) =>
                               setRequiredId(
                                 "resume.tailoring_rules.required_experience_entry_ids",

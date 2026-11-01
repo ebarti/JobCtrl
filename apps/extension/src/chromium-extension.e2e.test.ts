@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { launchExtensionContext } from "./chromium-extension-test-context.js";
@@ -189,7 +190,7 @@ describe("Chromium loaded extension privacy boundary", () => {
       expect(await sendExtensionMessage(controller, { type: "getStatus" })).toMatchObject({
         ok: true,
         status: "ready",
-        protocolVersion: 2,
+        protocolVersion: 3,
         paired: true,
         apiReady: true,
         discoverySelected: true,
@@ -442,9 +443,10 @@ async function installFakeLoopbackApi(
       return;
     }
     if (requestUrl.pathname === "/v1/extension/captures") {
+      const body = request.postDataJSON() as { captureId: string };
       await json(route, {
         ok: true,
-        itemId: "extension-capture-1",
+        itemId: `extension:${createHash("sha256").update(body.captureId).digest("hex").slice(0, 32)}`,
         jobKey: "synthetic-job",
         importedAt: "2026-07-05T10:00:00Z",
         provenance: {
