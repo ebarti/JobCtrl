@@ -461,12 +461,54 @@ func currentScopeTransportAlive(scope executionScope) (bool, error) {
 	return true, nil
 }
 
+// A detached supervisor's parent waits for readiness before it can exit. It
+// is transport only when its live birth, parent, executable and native scope
+// match this exact command. Use the same identity in the count and PID census.
+func currentScopeWaitingParent(ctx launchContext, scope executionScope) (ownedProcess, error) {
+	readyFD, err := strconv.Atoi(environmentMap(ctx.Environment)["JOBCTRL_READY_FD"])
+	if err != nil || readyFD < 3 {
+		return ownedProcess{}, nil
+	}
+	pid := os.Getppid()
+	before, err := processBSDInfoIncludingZombies(pid)
+	if errors.Is(err, syscall.ESRCH) {
+		return ownedProcess{}, nil
+	}
+	if err != nil {
+		return ownedProcess{}, err
+	}
+	if binary.LittleEndian.Uint32(before[4:]) == 5 || int(binary.LittleEndian.Uint32(before[16:])) != scope.RootPID || int(binary.LittleEndian.Uint32(before[20:])) != os.Getuid() {
+		return ownedProcess{}, nil
+	}
+	path, err := processExecutable(pid)
+	if err != nil {
+		return ownedProcess{}, err
+	}
+	if !sameExecutable(path, ctx.Executable) {
+		return ownedProcess{}, nil
+	}
+	ids, err := processCoalitionIDs(pid)
+	if err != nil {
+		return ownedProcess{}, err
+	}
+	after, err := processBSDInfoIncludingZombies(pid)
+	if err != nil {
+		return ownedProcess{}, err
+	}
+	identity := processIdentityFromBSD(before)
+	if os.Getppid() != pid || processIdentityFromBSD(after) != identity || binary.LittleEndian.Uint32(after[4:]) == 5 || int(binary.LittleEndian.Uint32(after[16:])) != scope.RootPID || int(binary.LittleEndian.Uint32(after[20:])) != os.Getuid() || ids != scope.CoalitionIDs {
+		return ownedProcess{}, errors.New("detached startup transport changed identity")
+	}
+	return ownedProcess{PID: pid, ParentPID: scope.RootPID, Identity: identity, CoalitionIDs: ids}, nil
+}
+
 // The scope counter is atomic. In the current scope only the inspecting
-// command and its exact verified transport may be excluded. Fence a live
+// command and its exact verified transports may be excluded. Fence each live
 // transport on both sides of the count so its exit cannot hide a successor.
 func scopedTaskZero(ctx launchContext, scope executionScope, currentScope string, witnesses ...executionWitnesses) (bool, bool) {
 	allowed := uint64(0)
 	transport := false
+	waitingParent := ownedProcess{}
 	if scope.ID == currentScope {
 		allowed = 1 // currentExecutionScope already authenticated the caller.
 		var err error
@@ -475,6 +517,13 @@ func scopedTaskZero(ctx launchContext, scope executionScope, currentScope string
 			return false, false
 		}
 		if transport {
+			allowed++
+		}
+		waitingParent, err = currentScopeWaitingParent(ctx, scope)
+		if err != nil {
+			return false, false
+		}
+		if waitingParent.PID != 0 {
 			allowed++
 		}
 	}
@@ -503,6 +552,10 @@ func scopedTaskZero(ctx launchContext, scope executionScope, currentScope string
 	if scope.ID == currentScope {
 		after, err := currentScopeTransportAlive(scope)
 		if err != nil || transport != after {
+			return false, false
+		}
+		waitingAfter, err := currentScopeWaitingParent(ctx, scope)
+		if err != nil || waitingAfter != waitingParent {
 			return false, false
 		}
 	}
@@ -548,6 +601,16 @@ func discoverScopedProcesses(ctx launchContext, state instanceState, scopes []ex
 		if allZero {
 			return nil, nil
 		}
+		waitingParent := ownedProcess{}
+		for _, scope := range scopes {
+			if scope.ID == currentScope {
+				waitingParent, err = currentScopeWaitingParent(ctx, scope)
+				if err != nil {
+					return nil, err
+				}
+				break
+			}
+		}
 		members, inventory, complete, err := executionProcessInventory(scopedProcessIDs, processCoalitionIDs)
 		result := make([]ownedProcess, 0)
 		for _, member := range members {
@@ -558,6 +621,9 @@ func discoverScopedProcesses(ctx launchContext, state instanceState, scopes []ex
 			// The helper is the current public start/CLI command's parent,
 			// not a leftover of an earlier runtime generation.
 			if scope.ID == currentScope && scope.RootPID == member.PID && scope.RootIdentity == member.Identity {
+				continue
+			}
+			if scope.ID == currentScope && waitingParent.PID != 0 && member == waitingParent {
 				continue
 			}
 			result = append(result, member)

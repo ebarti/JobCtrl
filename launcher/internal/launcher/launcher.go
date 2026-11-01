@@ -5,6 +5,7 @@ package launcher
 
 import (
 	"bufio"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -25,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -41,10 +43,12 @@ var (
 )
 
 const (
-	launcherProtocol   = 2
-	stateSchemaVersion = 1
-	logLineLimit       = 200
-	startupTimeout     = 30 * time.Second
+	launcherProtocol         = 2
+	stateSchemaVersion       = 1
+	logLineLimit             = 200
+	startupTimeout           = 30 * time.Second
+	temporalProbeTimeout     = 3 * time.Second
+	temporalProbeOutputLimit = 16 << 10
 	// Detached start spans two sequential supervisor health phases: Temporal,
 	// then API/worker. The parent must not kill a supervisor that is still
 	// within those valid phase deadlines.
@@ -420,6 +424,7 @@ func transitionRecoveryUnavailable(journal release.Journal) bool {
 }
 
 // Control/read-only commands run outside the runtime's execution boundary.
+// Temporal status probes acquire their own short-lived durable OS scope.
 // Every public entry that can leave runtime children gets a durable OS scope.
 func commandRequiresOwnedExecution(args []string) bool {
 	if len(args) == 0 {
@@ -1966,8 +1971,8 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 	defer func() {
 		shutdownComponents(&state, children, ctx.Instance.StatePath)
 		cleanupErr := terminateOwnedProcesses(ctx, state)
-		if cleanupErr != nil && result == nil {
-			result = fmt.Errorf("clean up remaining instance processes: %w", cleanupErr)
+		if cleanupErr != nil {
+			result = errors.Join(result, fmt.Errorf("clean up remaining instance processes: %w", cleanupErr))
 		}
 		if cleanupErr == nil && state.ExecutionScopeID != "" {
 			state.OwnershipVerified = true
@@ -1994,7 +1999,7 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		return err
 	}
-	if err := waitForTemporal(ctx, children["temporal"], exits, signals); err != nil {
+	if err := waitForTemporal(ctx, ctx, children["temporal"], exits, signals); err != nil {
 		if errors.Is(err, errStartupInterrupted) {
 			return nil
 		}
@@ -2171,31 +2176,128 @@ func startComponent(ctx launchContext, state *instanceState, name string) (*exec
 	}
 	return command, nil
 }
-func waitForTemporal(ctx launchContext, temporal *exec.Cmd, exits <-chan componentExit, signals <-chan os.Signal) error {
-	deadline := time.Now().Add(startupTimeout)
+func waitForTemporal(ctx, controller launchContext, temporal *exec.Cmd, exits <-chan componentExit, signals <-chan os.Signal) error {
+	startup, cancelStartup := context.WithTimeout(context.Background(), startupTimeout)
+	defer cancelStartup()
 	var last error
-	for time.Now().Before(deadline) {
+	for {
 		select {
 		case <-signals:
 			return errStartupInterrupted
 		case exit := <-exits:
 			return startupComponentExitError{exit}
+		case <-startup.Done():
+			return temporalStartupTimeout(last)
 		default:
 		}
 		if !processPIDAlive(temporal.Process.Pid) {
 			return errors.New("Temporal exited before becoming healthy")
 		}
-		if err := temporalHealthProbe(ctx); err == nil {
-			return nil
-		} else {
-			last = err
+		probeCtx, cancelProbe := context.WithCancel(startup)
+		result := make(chan error, 1)
+		go func() { result <- temporalHealthProbe(probeCtx, ctx, controller) }()
+		var cause error
+		select {
+		case last = <-result:
+		case <-signals:
+			cause = errStartupInterrupted
+		case exit := <-exits:
+			cause = startupComponentExitError{exit}
+		case <-startup.Done():
+			cause = startup.Err()
 		}
-		time.Sleep(150 * time.Millisecond)
+		if cause != nil {
+			cancelProbe()
+			last = <-result
+			var cleanupErr *temporalProbeCleanupError
+			if errors.As(last, &cleanupErr) {
+				return fmt.Errorf("Temporal probe cleanup failed: %w", last)
+			}
+			if errors.Is(cause, context.DeadlineExceeded) {
+				return temporalStartupTimeout(last)
+			}
+			return cause
+		}
+		cancelProbe()
+		if last == nil {
+			select {
+			case <-signals:
+				return errStartupInterrupted
+			case exit := <-exits:
+				return startupComponentExitError{exit}
+			case <-startup.Done():
+				return temporalStartupTimeout(nil)
+			default:
+			}
+			return nil
+		}
+		var cleanupErr *temporalProbeCleanupError
+		if errors.As(last, &cleanupErr) {
+			return fmt.Errorf("Temporal probe cleanup failed: %w", last)
+		}
+		timer := time.NewTimer(150 * time.Millisecond)
+		select {
+		case <-signals:
+			timer.Stop()
+			return errStartupInterrupted
+		case exit := <-exits:
+			timer.Stop()
+			return startupComponentExitError{exit}
+		case <-startup.Done():
+			timer.Stop()
+			return temporalStartupTimeout(last)
+		case <-timer.C:
+		}
 	}
-	return fmt.Errorf("embedded Temporal did not become healthy: %w", last)
 }
 
-func probeTemporal(ctx launchContext) error {
+func temporalStartupTimeout(last error) error {
+	if last == nil {
+		last = context.DeadlineExceeded
+	}
+	return fmt.Errorf("embedded Temporal did not become healthy before startup deadline: %w", last)
+}
+
+type temporalProbeCleanupError struct{ err error }
+
+func (e *temporalProbeCleanupError) Error() string { return e.err.Error() }
+func (e *temporalProbeCleanupError) Unwrap() error { return e.err }
+
+type boundedProbeOutput struct {
+	mu        sync.Mutex
+	data      []byte
+	truncated bool
+}
+
+func (b *boundedProbeOutput) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := len(p)
+	remaining := temporalProbeOutputLimit - len(b.data)
+	if remaining < len(p) {
+		b.truncated = true
+		p = p[:remaining]
+	}
+	b.data = append(b.data, p...)
+	return n, nil
+}
+
+func (b *boundedProbeOutput) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	value := strings.TrimSpace(string(b.data))
+	if b.truncated {
+		value += " [output truncated]"
+	}
+	return value
+}
+
+func probeTemporal(parent context.Context, ctx, controller launchContext) error {
+	probeCtx, cancel := context.WithTimeout(parent, temporalProbeTimeout)
+	defer cancel()
+	if controller.Instance != ctx.Instance {
+		return errors.New("Temporal probe controller belongs to a different instance")
+	}
 	ctx, err := withTemporalHistory(ctx)
 	if err != nil {
 		return err
@@ -2212,10 +2314,16 @@ func probeTemporal(ctx launchContext) error {
 			return err
 		}
 	}
-	probe := exec.Command(executable, arguments...)
-	probe.Env, probe.Dir = ctx.Environment, ctx.Instance.StateDir
-	if output, err := probe.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	output := &boundedProbeOutput{}
+	// The executable and arguments belong to the service's verified payload.
+	// The helper belongs to the independently authenticated current controller.
+	controller.PayloadRoot = ctx.PayloadRoot
+	controller.Environment = ctx.Environment
+	if err := runTemporalProbeInOwnedExecution(probeCtx, controller, executable, arguments, output); err != nil {
+		if diagnostic := output.String(); diagnostic != "" {
+			return fmt.Errorf("Temporal health probe: %w: %s", err, diagnostic)
+		}
+		return fmt.Errorf("Temporal health probe: %w", err)
 	}
 	return nil
 }
@@ -2678,14 +2786,16 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	}
 	differentRelease := validateStateBinding(ctx, state) != nil
 	type componentStatus struct {
-		State     string     `json:"state"`
-		PID       int        `json:"pid"`
-		Log       string     `json:"log"`
-		ExitedAt  *time.Time `json:"exitedAt,omitempty"`
-		ExitError string     `json:"exitError,omitempty"`
+		State       string     `json:"state"`
+		PID         int        `json:"pid"`
+		Log         string     `json:"log"`
+		ExitedAt    *time.Time `json:"exitedAt,omitempty"`
+		ExitError   string     `json:"exitError,omitempty"`
+		HealthError string     `json:"healthError,omitempty"`
 	}
 	components := map[string]componentStatus{}
 	allReady := true
+	var probeCleanupErr error
 	workerRecord := state.Components["worker"]
 	apiRecord := state.Components["api"]
 	apiWorkerHealth := errors.New("API is not running")
@@ -2696,11 +2806,20 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 		record, found := state.Components[name]
 		live := found && recordMatchesLiveProcess(record)
 		stateName := "stopped"
+		var healthError string
 		if live {
 			stateName = "running"
-			if !differentRelease && name == "temporal" && probeTemporal(ctx) != nil {
-				stateName = "unhealthy"
-				allReady = false
+			if !differentRelease && name == "temporal" {
+				if probeErr := temporalHealthProbe(context.Background(), ctx, ctx); probeErr != nil {
+					stateName = "unhealthy"
+					allReady = false
+					healthError = probeErr.Error()
+					var cleanupErr *temporalProbeCleanupError
+					if errors.As(probeErr, &cleanupErr) {
+						probeCleanupErr = fmt.Errorf("Temporal health probe cleanup incomplete; preserve its receipt and run jobctrl stop: %w", probeErr)
+						healthError = probeCleanupErr.Error()
+					}
+				}
 			}
 			if !differentRelease && (name == "worker" || name == "api") && apiWorkerHealth != nil {
 				stateName = "unhealthy"
@@ -2714,7 +2833,7 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 				stateName = "stale"
 			}
 		}
-		components[name] = componentStatus{stateName, record.PID, record.LogPath, record.ExitedAt, record.ExitError}
+		components[name] = componentStatus{stateName, record.PID, record.LogPath, record.ExitedAt, record.ExitError, healthError}
 	}
 	supervisorLive := recordMatchesLiveProcess(state.Supervisor)
 	overall := "stopped"
@@ -2752,24 +2871,34 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	}
 
 	if jsonOutput {
-		return json.NewEncoder(output).Encode(struct {
+		err := json.NewEncoder(output).Encode(struct {
 			Status        string                     `json:"status"`
 			InstanceID    string                     `json:"instanceId"`
 			StateDir      string                     `json:"stateDir"`
 			SupervisorPID int                        `json:"supervisorPid"`
 			Components    map[string]componentStatus `json:"components"`
 		}{overall, state.InstanceID, state.CanonicalStateDir, state.Supervisor.PID, components})
+		return errors.Join(err, probeCleanupErr)
 	}
 	if overall == "source-running" {
 		_, err := fmt.Fprintf(output, "JobCtrl: source supervisor running (pid=%d). Use corepack pnpm dev:status in its checkout for component health.\n", state.Supervisor.PID)
-		return err
+		return errors.Join(err, probeCleanupErr)
 	}
-	fmt.Fprintf(output, "JobCtrl: %s\n", overall)
+	if _, err := fmt.Fprintf(output, "JobCtrl: %s\n", overall); err != nil {
+		return errors.Join(err, probeCleanupErr)
+	}
 	for _, name := range []string{"temporal", "worker", "api"} {
 		item := components[name]
-		fmt.Fprintf(output, "%-9s %-8s pid=%d\n", name, item.State, item.PID)
+		if _, err := fmt.Fprintf(output, "%-9s %-8s pid=%d\n", name, item.State, item.PID); err != nil {
+			return errors.Join(err, probeCleanupErr)
+		}
+		if item.HealthError != "" {
+			if _, err := fmt.Fprintf(output, "  health: %s\n", item.HealthError); err != nil {
+				return errors.Join(err, probeCleanupErr)
+			}
+		}
 	}
-	return nil
+	return probeCleanupErr
 }
 func logs(ctx launchContext, args []string, output io.Writer) error {
 	if len(args) > 1 || (len(args) == 1 && args[0] == "--follow") {

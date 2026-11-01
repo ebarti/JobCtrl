@@ -63,6 +63,7 @@ type executionCommand struct {
 	Executable             string
 	Arguments, Environment []string
 	Directory              string
+	TemporalProbe          bool `json:",omitempty"`
 }
 type executionControl struct {
 	Signal int `json:"signal"`
@@ -556,6 +557,31 @@ func cleanupExecutionLeftovers(ids [2]uint64) error {
 	return nil
 }
 
+// A health command has no cooperative shutdown work. Kill only members of
+// its dedicated, verified coalition, including children that escaped a process
+// group or outlived their parent. Repeated censuses cover a final concurrent fork.
+func cleanupTemporalProbeMembers(ids [2]uint64) error {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		members, err := executionMembers(ids)
+		if err != nil {
+			return err
+		}
+		if len(members) == 0 {
+			return nil
+		}
+		for _, member := range members {
+			if err := signalExecutionRoot(ids, member.PID, member.Identity, syscall.SIGKILL); err != nil {
+				return err
+			}
+		}
+		if time.Now().After(deadline) {
+			return errors.New("Temporal probe members survived cleanup")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func authenticatedOwnedExecution(ctx launchContext) (bool, error) {
 	id := environmentMap(ctx.Environment)[executionScopeVariable]
 	if id == "" {
@@ -700,6 +726,9 @@ func ownedExecutionHelper(args []string) (handled bool, resultErr error) {
 		}
 	}()
 	cleanup := func() error {
+		if command.TemporalProbe {
+			return cleanupTemporalProbeMembers(ids)
+		}
 		var cleanupErr error
 		if cancellation == nil {
 			cleanupErr = cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
@@ -721,9 +750,15 @@ waiting:
 	for {
 		select {
 		case waitErr = <-waited:
-			if cancellation != nil || isApplyExecution(command.Arguments) {
-				if err := cleanupExecutionLeftovers(ids); err != nil {
-					return true, errors.Join(errors.New("could not clean cancelled execution"), err)
+			if cancellation != nil || isApplyExecution(command.Arguments) || command.TemporalProbe {
+				cleanupErr := error(nil)
+				if command.TemporalProbe {
+					cleanupErr = cleanupTemporalProbeMembers(ids)
+				} else {
+					cleanupErr = cleanupExecutionLeftovers(ids)
+				}
+				if cleanupErr != nil {
+					return true, errors.Join(errors.New("could not clean execution"), cleanupErr)
 				}
 			}
 			break waiting
@@ -734,6 +769,13 @@ waiting:
 			}
 			if cancellation != nil {
 				continue
+			}
+			if command.TemporalProbe {
+				if err := cleanupTemporalProbeMembers(ids); err != nil {
+					return true, errors.Join(errors.New("could not clean Temporal probe"), err)
+				}
+				waitErr = <-waited
+				break waiting
 			}
 			// Only the verified command root receives interactive cancellation.
 			// A native supervisor retains ownership of its ordered child drain.
@@ -875,6 +917,22 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 // afterAdmission releases a caller's selection lock only after the durable
 // scope receipt has been published and its command has been authorized.
 func runInOwnedExecutionWithAdmission(ctx launchContext, args []string, stdout, stderr io.Writer, afterAdmission func() error) error {
+	return runOwnedExecution(context.Background(), ctx, args, stdout, stderr, nil, afterAdmission)
+}
+
+// The probe admits only the already-validated Temporal executable in a fresh scope.
+func runTemporalProbeInOwnedExecution(parent context.Context, ctx launchContext, executable string, args []string, output io.Writer) error {
+	command := &executionCommand{Executable: executable, Arguments: args, Directory: ctx.Instance.StateDir, TemporalProbe: true}
+	err := runOwnedExecution(parent, ctx, nil, output, output, command, nil)
+	var cleanupErr *temporalProbeCleanupError
+	if parent.Err() != nil && !errors.As(err, &cleanupErr) {
+		return parent.Err()
+	}
+	return err
+}
+
+func runOwnedExecution(parent context.Context, ctx launchContext, args []string, stdout, stderr io.Writer, probe *executionCommand, afterAdmission func() error) (resultErr error) {
+	isProbe := probe != nil
 	sandboxSelector := environmentMap(ctx.Environment)[executionQASandboxVariable]
 	if sandboxSelector != "" && sandboxSelector != executionQASandboxSelector {
 		return errors.New("unknown execution QA sandbox restriction")
@@ -883,7 +941,12 @@ func runInOwnedExecutionWithAdmission(ctx launchContext, args []string, stdout, 
 	if controlPath == "" {
 		controlPath = filepath.Join(filepath.Dir(ctx.Instance.StatePath), "control.lock")
 	}
-	admission, err := acquireLock(controlPath, false)
+	if err := parent.Err(); err != nil {
+		return err
+	}
+	// Stop holds this lock while it asks the supervisor to drain. A probe
+	// must never wait for that lock and keep the supervisor from noticing stop.
+	admission, err := acquireLock(controlPath, isProbe)
 	if err != nil {
 		return fmt.Errorf("acquire execution admission lock: %w", err)
 	}
@@ -926,6 +989,10 @@ func runInOwnedExecutionWithAdmission(ctx launchContext, args []string, stdout, 
 	}
 	defer listener.Close()
 	_ = listener.SetDeadline(time.Now().Add(20 * time.Second))
+	if isProbe {
+		stopClosing := context.AfterFunc(parent, func() { _ = listener.Close() })
+		defer stopClosing()
+	}
 	label := "dev.jobctrl.exec." + ctx.Instance.ID + "." + id
 	plist := filepath.Join(temporary, "job.plist")
 	if err = os.WriteFile(plist, executionPlist(label, executable, socket, challenge, sandboxSelector == executionQASandboxSelector), 0600); err != nil {
@@ -933,21 +1000,41 @@ func runInOwnedExecutionWithAdmission(ctx launchContext, args []string, stdout, 
 	}
 	domain := ""
 	for _, candidate := range []string{"gui/" + strconv.Itoa(os.Getuid()), "user/" + strconv.Itoa(os.Getuid())} {
-		if exec.Command("/bin/launchctl", "bootstrap", candidate, plist).Run() == nil {
+		command := exec.Command("/bin/launchctl", "bootstrap", candidate, plist)
+		if isProbe {
+			command = exec.CommandContext(parent, "/bin/launchctl", "bootstrap", candidate, plist)
+		}
+		if command.Run() == nil {
 			domain = candidate
 			break
+		}
+		if err := parent.Err(); err != nil {
+			return err
 		}
 	}
 	if domain == "" {
 		return errors.New("could not establish a private per-user execution scope")
 	}
-	defer exec.Command("/bin/launchctl", "bootout", domain+"/"+label).Run()
+	if isProbe {
+		defer func() { _ = bootoutOwnedExecution(domain, label) }()
+	} else {
+		defer exec.Command("/bin/launchctl", "bootout", domain+"/"+label).Run()
+	}
 	connection, err := listener.AcceptUnix()
 	if err != nil {
 		return errors.New("execution helper did not connect")
 	}
 	defer connection.Close()
 	_ = connection.SetDeadline(time.Now().Add(20 * time.Second))
+	stopHandshake := func() bool { return false }
+	handshakeDeadlineSet := make(chan struct{})
+	if isProbe {
+		stopHandshake = context.AfterFunc(parent, func() {
+			_ = connection.SetDeadline(time.Now())
+			close(handshakeDeadlineSet)
+		})
+		defer stopHandshake()
+	}
 	decoder := json.NewDecoder(connection)
 	var hello executionHello
 	if err = decoder.Decode(&hello); err != nil || hello.Challenge != challenge || hello.PID <= 0 {
@@ -994,6 +1081,18 @@ func runInOwnedExecutionWithAdmission(ctx launchContext, args []string, stdout, 
 	if err = syncDirectory(dir); err != nil {
 		return err
 	}
+	if isProbe {
+		defer func() {
+			// On an interrupted handshake, EOF makes the helper abort or drain
+			// its admitted command before the controller verifies its scope.
+			_ = connection.Close()
+			releaseLock(admission)
+			admission = nil
+			if err := finishTemporalProbeScope(ctx, scope); err != nil {
+				resultErr = errors.Join(resultErr, &temporalProbeCleanupError{err})
+			}
+		}()
+	}
 	out, closeOut, err := executionOutput(stdout)
 	if err != nil {
 		return err
@@ -1019,15 +1118,33 @@ func runInOwnedExecutionWithAdmission(ctx launchContext, args []string, stdout, 
 		return err
 	}
 	signals := make(chan os.Signal, 8)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signals)
+	if !isProbe {
+		signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(signals)
+	}
 	forwardingDone := make(chan struct{})
 	defer close(forwardingDone)
+	if isProbe {
+		if err := parent.Err(); err != nil {
+			return err
+		}
+	}
 	if _, _, err = connection.WriteMsgUnix([]byte{1}, syscall.UnixRights(int(os.Stdin.Fd()), int(out.Fd()), int(errout.Fd())), nil); err != nil {
 		return err
 	}
-	if err = json.NewEncoder(connection).Encode(executionCommand{executable, args, environment, cwd}); err != nil {
+	command := executionCommand{Executable: executable, Arguments: args, Environment: environment, Directory: cwd}
+	if isProbe {
+		command = *probe
+		command.Environment = environment
+	}
+	if err = json.NewEncoder(connection).Encode(command); err != nil {
 		return errors.New("could not authorize execution")
+	}
+	if isProbe {
+		if !stopHandshake() {
+			<-handshakeDeadlineSet
+		}
+		_ = connection.SetDeadline(time.Time{})
 	}
 	// Stop can now see the durable receipt before it obtains its exclusive
 	// control lock. Waiting for the command result must never hold admission.
@@ -1043,6 +1160,16 @@ func runInOwnedExecutionWithAdmission(ctx launchContext, args []string, stdout, 
 		encoder := json.NewEncoder(connection)
 		for {
 			select {
+			case <-parent.Done():
+				_ = connection.SetWriteDeadline(time.Now().Add(time.Second))
+				if err := encoder.Encode(executionControl{Signal: int(syscall.SIGTERM)}); err != nil {
+					_ = connection.Close()
+					return
+				}
+				// A failed or stuck cleanup must not turn a deadline into an
+				// unbounded wait. Its durable receipt remains for `stop`.
+				_ = connection.SetReadDeadline(time.Now().Add(3 * time.Second))
+				return
 			case received := <-signals:
 				if err := encoder.Encode(executionControl{Signal: int(received.(syscall.Signal))}); err != nil {
 					connection.Close()
@@ -1055,12 +1182,20 @@ func runInOwnedExecutionWithAdmission(ctx launchContext, args []string, stdout, 
 	}()
 	var result executionResult
 	if err = decoder.Decode(&result); err != nil {
+		if isProbe {
+			// The deferred scope census decides whether cleanup was verified.
+			// A missing command result alone does not prove that it failed.
+			return errors.New("probe execution ended without a command result")
+		}
 		return errors.New("execution helper exited without a command result")
 	}
 	if result.Failed {
 		return errors.New("authorized command could not start")
 	}
 	if result.CleanupError != "" {
+		if isProbe {
+			return fmt.Errorf("probe helper reported cleanup failure: %s", result.CleanupError)
+		}
 		detail := fmt.Sprintf("owned execution cleanup incomplete: %s", result.CleanupError)
 		if isApplyExecution(args) && result.CleanupCategory == "inspection_denied" {
 			return ownedExecutionCleanupError{detail, result.CleanupCategory}
@@ -1074,7 +1209,7 @@ func runInOwnedExecutionWithAdmission(ctx launchContext, args []string, stdout, 
 		if err := completeApplyExecution(ctx, scope); err != nil {
 			return fmt.Errorf("verify Apply execution completion: %w", err)
 		}
-	} else if result.Code == 0 || (len(args) > 0 && args[0] == "__source-run") {
+	} else if !isProbe && (result.Code == 0 || (len(args) > 0 && args[0] == "__source-run")) {
 		if err := attestFinishedOrdinaryExecution(ctx, scope); err != nil {
 			return fmt.Errorf("attest finished execution: %w", err)
 		}
@@ -1143,6 +1278,100 @@ func attestFinishedOrdinaryExecution(ctx launchContext, scope executionScope) er
 	return nil // A concurrent Stop already retired the scope.
 }
 
+func finishTemporalProbeScope(ctx launchContext, scope executionScope) error {
+	exited, err := waitExecutionRoot(scope.RootPID, scope.RootIdentity, 2*time.Second)
+	if err != nil {
+		return err
+	}
+	if !exited {
+		return errors.New("Temporal probe helper did not exit; execution receipt preserved")
+	}
+	members, err := executionMembers(scope.CoalitionIDs)
+	if err != nil {
+		return err
+	}
+	if len(members) != 0 {
+		return errors.New("Temporal probe execution still has members; execution receipt preserved")
+	}
+	controlPath := ctx.Instance.ControlPath
+	if controlPath == "" {
+		controlPath = filepath.Join(filepath.Dir(ctx.Instance.StatePath), "control.lock")
+	}
+	lock, err := acquireLock(controlPath, true)
+	if errors.Is(err, ErrLockHeld) {
+		// The holder may be stopping this supervisor, so never wait for it.
+		// Preserve the joined/zero proof before deferred bootout can reap the
+		// coalition, even if the holder has not made its first census yet.
+		return preserveTemporalProbeCompletion(ctx, scope)
+	}
+	if err != nil {
+		return err
+	}
+	defer releaseLock(lock)
+	return retireExecutionScopesWithCompletion(ctx, []executionScope{scope}, false, false, false)
+}
+
+var readTemporalProbeScopes = readOwnedExecutionScopes
+
+// Only the original probe controller calls this after joining its exact helper
+// and verifying zero members. Stop may hold the control lock before its first
+// census. Publishing this scope's same-boot proof cannot admit any new work and
+// lets that later census resolve a reaped coalition without trusting absence.
+func preserveTemporalProbeCompletion(ctx launchContext, scope executionScope) error {
+	boot, err := executionBootSession()
+	if err != nil || boot != scope.BootSession {
+		return errors.Join(errors.New("Temporal probe boot identity changed"), err)
+	}
+	raw, err := json.Marshal(scope)
+	if err != nil {
+		return err
+	}
+	expected := executionCompletionForReceipt(scope, append(raw, '\n'), boot)
+	matches := func(completion executionCompletion) bool {
+		return completion.Scope == scope && completion.ReceiptSHA256 == expected.ReceiptSHA256 && completion.VerificationBootSession == boot
+	}
+	scopes, err := readTemporalProbeScopes(ctx)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Stop can durably complete and remove a receipt after ReadDir but
+			// before its open. Absence is not proof; recheck only this exact
+			// scope's durable completion without weakening the strict reader.
+			completion, completionErr := readExecutionCompletion(ctx, scope.ID)
+			if completionErr == nil && matches(completion) {
+				return nil
+			}
+			return errors.Join(err, errors.New("Temporal probe receipt disappeared without its exact completion"), completionErr)
+		}
+		return err
+	}
+	active := false
+	for _, current := range scopes {
+		if current.ID == scope.ID {
+			if current != scope {
+				return errors.New("Temporal probe receipt changed before completion")
+			}
+			active = true
+		}
+	}
+	completion, completionErr := readExecutionCompletion(ctx, scope.ID)
+	if completionErr != nil && !errors.Is(completionErr, os.ErrNotExist) {
+		return completionErr
+	}
+	if errors.Is(completionErr, os.ErrNotExist) {
+		if !active {
+			return errors.New("Temporal probe receipt disappeared without its exact completion")
+		}
+		if err := publishExecutionCompletion(ctx, expected); err != nil {
+			return err
+		}
+		completion, completionErr = readExecutionCompletion(ctx, scope.ID)
+	}
+	if completionErr != nil || !matches(completion) {
+		return errors.Join(errors.New("Temporal probe completion does not match its exact receipt and boot"), completionErr)
+	}
+	return nil
+}
+
 // Called only after an all-instance zero census, with the stop control lock
 // held. A receipt is retained on a genuine bootout failure; no names outside
 // the strict ledger are submitted to launchctl or removed from disk.
@@ -1163,6 +1392,12 @@ func attestStoppedExecutionScopes(ctx launchContext) error {
 }
 
 func retireExecutionScopes(ctx launchContext, scopes []executionScope, entireInstance, proofOnly bool) error {
+	return retireExecutionScopesWithCompletion(ctx, scopes, entireInstance, proofOnly, true)
+}
+
+// Probe scopes have no durable completion reader. Their controller retires only
+// its own scope after a zero census; ordinary and stopped proofs retain completion.
+func retireExecutionScopesWithCompletion(ctx launchContext, scopes []executionScope, entireInstance, proofOnly, recordCompletion bool) error {
 	dir, err := executionScopeDirectory(ctx, false)
 	if err != nil {
 		return err
@@ -1195,26 +1430,28 @@ func retireExecutionScopes(ctx launchContext, scopes []executionScope, entireIns
 		}
 		snapshots = append(snapshots, snapshot{scope, raw, info})
 	}
-	boot, err := executionBootSession()
-	if err != nil {
-		return err
-	}
 	completions := make([]executionCompletion, 0, len(snapshots))
 	// Callers hold the lifecycle control lock after a complete zero census
 	// covering every selected scope. Unselected scopes may remain live for a
 	// completed Apply activity. Preflight all proofs before publishing any.
-	for _, snapshot := range snapshots {
-		completion := executionCompletionForReceipt(snapshot.scope, snapshot.raw, boot)
-		previous, err := readExecutionCompletion(ctx, snapshot.scope.ID)
-		if errors.Is(err, os.ErrNotExist) {
-			completions = append(completions, completion)
-			continue
-		}
+	if recordCompletion {
+		boot, err := executionBootSession()
 		if err != nil {
 			return err
 		}
-		if previous.Scope != snapshot.scope || previous.ReceiptSHA256 != completion.ReceiptSHA256 {
-			return errors.New("execution completion does not match its retired receipt")
+		for _, snapshot := range snapshots {
+			completion := executionCompletionForReceipt(snapshot.scope, snapshot.raw, boot)
+			previous, err := readExecutionCompletion(ctx, snapshot.scope.ID)
+			if errors.Is(err, os.ErrNotExist) {
+				completions = append(completions, completion)
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if previous.Scope != snapshot.scope || previous.ReceiptSHA256 != completion.ReceiptSHA256 {
+				return errors.New("execution completion does not match its retired receipt")
+			}
 		}
 	}
 	for _, completion := range completions {
@@ -1225,7 +1462,7 @@ func retireExecutionScopes(ctx launchContext, scopes []executionScope, entireIns
 	if proofOnly {
 		return nil
 	}
-	if stopCompletionCheckpoint != nil {
+	if recordCompletion && stopCompletionCheckpoint != nil {
 		if err := stopCompletionCheckpoint("execution-completions-durable"); err != nil {
 			return err
 		}
