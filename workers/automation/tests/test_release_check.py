@@ -46,6 +46,75 @@ def test_public_copyright_attribution_does_not_disable_private_name_detection() 
     ) == ["README.md: contains private first name"]
 
 
+def test_public_competitor_citations_allow_the_reviewed_comparison() -> None:
+    rel = Path("docs/comparison.md")
+    page = (release_check.ROOT / rel).read_text(encoding="utf-8")
+    owner = "-".join(("Pickle", "Pixel"))
+    commit = "4a8d521f67f5139811c0a910ef37410f8e6d836a"
+    repository = f"https://github.com/{owner}/ApplyPilot"
+    for url in (
+        f"{repository}/tree/{commit}",
+        f"{repository}/releases/tag/v0.3.0",
+        f"{repository}/blob/{commit}/README.md",
+        f"{repository}/blob/{commit}/src/applypilot/apply/launcher.py",
+    ):
+        assert url in page
+        assert release_check.scan_text(rel.as_posix(), url, rel) == []
+    assert release_check.scan_text(rel.as_posix(), page, rel) == []
+
+
+def test_public_competitor_citations_do_not_exempt_other_owner_references() -> None:
+    owner = "-".join(("Pickle", "Pixel"))
+    repository = f"https://github.com/{owner}/ApplyPilot"
+    commit = "4a8d521f67f5139811c0a910ef37410f8e6d836a"
+    reviewed = f"{repository}/blob/{commit}/README.md"
+    rel = Path("docs/comparison.md")
+    expected = ["docs/comparison.md: contains old repository owner"]
+    for text in (
+        owner,
+        f"{reviewed}\nRepository owner: {owner}",
+        f"https://github.com/{owner}/another-project",
+        f"{repository}-unreviewed/tree/{commit}",
+        f"{repository}/blob/{'0' * 40}/README.md",
+        f"{repository}/blob/{commit}/unreviewed.py",
+        f"{repository}/releases/tag/v0.3.1",
+        f"{reviewed}.unreviewed",
+        f"https://unreviewed.example/?next={reviewed}",
+        f"{repository}/tree/{commit}/unreviewed",
+    ):
+        assert release_check.scan_text(rel.as_posix(), text, rel) == expected
+
+    for other in (
+        Path("README.md"),
+        Path("docs/unrelated.md"),
+        Path("docs/other/../comparison.md"),
+        Path("src/unrelated.py"),
+    ):
+        assert release_check.scan_text(other.as_posix(), reviewed, other) == [
+            f"{other}: contains old repository owner"
+        ]
+    path = Path(owner) / "source.py"
+    assert release_check.scan_name(path.as_posix(), path) == [
+        f"{path}: contains old repository owner"
+    ]
+
+
+def test_public_competitor_citations_preserve_private_data_tripwires() -> None:
+    owner = "-".join(("Pickle", "Pixel"))
+    url = f"https://github.com/{owner}/ApplyPilot/tree/4a8d521f67f5139811c0a910ef37410f8e6d836a"
+    first_name = "El" + "oi"
+    domain = "el" + "oi" + "barti" + ".com"
+    rel = Path("docs/comparison.md")
+    findings = release_check.scan_text(
+        rel.as_posix(), f"{url}\nPrivate candidate: {first_name} {domain}", rel
+    )
+    assert {finding.split(": ", 1)[1] for finding in findings} == {
+        "contains private first name",
+        "contains private username/domain",
+        "contains private personal domain",
+    }
+
+
 def test_public_controller_disclosures_are_limited_to_exact_public_surfaces() -> None:
     controller = "El" + "oi Barti"
     email = "me@" + "el" + "oi" + "barti" + ".com"
