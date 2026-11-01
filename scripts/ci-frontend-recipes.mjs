@@ -15,6 +15,10 @@ export const frontendRecipes = {
     {
       "name": "Test public web types",
       "run": "corepack pnpm web:test-d"
+    },
+    {
+      "name": "Build web",
+      "run": "corepack pnpm web:build"
     }
   ],
   "boundary": [

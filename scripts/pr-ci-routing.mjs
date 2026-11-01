@@ -7,16 +7,16 @@ import { fileURLToPath } from "node:url";
 export const SUITE_CONTEXTS = Object.freeze({
   api: ["Backend / Core checks"],
   web: ["Frontend / UI checks"],
-  storybook: ["Frontend / UI checks"],
+  storybook: ["Support / UI checks"],
   e2e: ["Browser / UI checks"],
-  extension: ["Frontend / UI checks"],
+  extension: ["Support / UI checks"],
   python: ["Backend / Core checks"],
-  docs: ["Frontend / UI checks"],
+  docs: ["Support / UI checks"],
   launcher: ["Native / Darwin launcher shard 0", "Native / Darwin launcher shard 1"],
   credentials: ["Credentials / Native credentials (macos-latest)", "Credentials / Native credentials (windows-latest)", "Credentials / Native credentials (ubuntu-latest)"],
   gmail: ["Gmail / Synthetic Gmail token ACL (Windows)"],
   distribution: ["Backend / Core checks"],
-  demo: ["Frontend / UI checks"],
+  demo: ["Support / UI checks"],
   edge: ["Backend / Core checks"],
 });
 export const SURFACES = Object.freeze(Object.keys(SUITE_CONTEXTS));

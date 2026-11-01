@@ -20,9 +20,15 @@ export function selectedFrontend(environment) {
   }));
 }
 
+export function assertSingleFrontendProfile(selected) {
+  const profiles = [selected.web, selected.e2e, selected.storybook || selected.extension || selected.docs || selected.demo];
+  if (profiles.filter(Boolean).length > 1) throw Error("Web, supporting UI and E2E require separate runners");
+}
+
 // Commands remain in the runner's process tree. GitHub owns cancellation and
 // the final disposable-VM boundary, including descendants and job timeouts.
 export async function runFrontendLanes({ selected, recipes = frontendRecipes, environment = process.env, directory = root, logDirectory }) {
+  assertSingleFrontendProfile(selected);
   await mkdir(logDirectory, { mode: 0o700 });
   const results = [];
   const runLane = async ([lane, suites]) => {
@@ -36,7 +42,6 @@ export async function runFrontendLanes({ selected, recipes = frontendRecipes, en
             console.log("Starting " + label);
             log.write("\n" + label + "\n");
             const env = { ...environment, CI_LANE: lane };
-            if (selected.web && environment.CI_ROUTES_READY === "true") env.JOBCTRL_CI_ROUTES_READY = "1";
             for (const [key, value] of Object.entries(recipe.env ?? {}))
               env[key] = value.replaceAll("${{ runner.temp }}", environment.RUNNER_TEMP);
             const child = spawn("bash", ["-euo", "pipefail", "-c", recipe.run], {
@@ -58,22 +63,18 @@ export async function runFrontendLanes({ selected, recipes = frontendRecipes, en
       } finally { await new Promise(resolve => log.end(resolve)); }
   };
   const lanes = [];
-  if (selected.web && environment.CI_ROUTES_READY === "false") {
-    // A failed initial build still permits independent diagnostics. Serial
-    // recovery attempts cannot race to regenerate an unfinished route tree.
-    for (const lane of Object.entries(frontendLanes)) {
-      try { await runLane(lane); lanes.push({ status: "fulfilled" }); }
-      catch (reason) { lanes.push({ status: "rejected", reason }); }
-    }
-  } else lanes.push(...await Promise.allSettled(Object.entries(frontendLanes).map(runLane)));
+  for (const lane of Object.entries(frontendLanes)) {
+    try { await runLane(lane); lanes.push({ status: "fulfilled" }); }
+    catch (reason) { lanes.push({ status: "rejected", reason }); }
+  }
   const errors = lanes.filter(lane => lane.status === "rejected").map(lane => String(lane.reason));
   await writeFile(path.join(logDirectory, "outcomes.json"), JSON.stringify({ errors, results }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
-  return !(selected.web && environment.CI_ROUTES_READY === "false") && !errors.length && results.every(result => result.passed);
+  return !errors.length && results.every(result => result.passed);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.platform !== "linux" || process.env.CI !== "true" || process.env.RUNNER_ENVIRONMENT !== "github-hosted")
-    throw Error("Parallel browser verification requires an isolated GitHub-hosted Linux runner");
+    throw Error("Frontend verification requires an isolated GitHub-hosted Linux runner");
   if (!path.isAbsolute(process.env.RUNNER_TEMP ?? "")) throw Error("An owned runner temporary directory is required");
   const selected = selectedFrontend(process.env);
   const success = await runFrontendLanes({ selected, logDirectory: path.join(process.env.RUNNER_TEMP, "ci-frontend-logs") });
