@@ -8,7 +8,7 @@ export const SUITE_CONTEXTS = Object.freeze({
   api: ["Backend / Core checks"],
   web: ["Frontend / UI checks"],
   storybook: ["Frontend / UI checks"],
-  e2e: ["Frontend / UI checks"],
+  e2e: ["Browser / UI checks"],
   extension: ["Frontend / UI checks"],
   python: ["Backend / Core checks"],
   docs: ["Frontend / UI checks"],

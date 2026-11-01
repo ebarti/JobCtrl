@@ -555,7 +555,9 @@ labels and Project status do not approve code execution.
 
 Pull requests and pushes to `main` use `.github/workflows/ci.yml`. The entry
 contains triggers and reusable-workflow calls; each child job still receives
-its own runner. An ordinary API or web PR uses three allocations:
+its own runner. An ordinary API or site-documentation PR uses three allocations. Web PRs use
+four, preserving a separate E2E machine after the combined runner caused
+contention and timeouts in a hosted trial:
 
 - **Admission / Release check**, in `ci-admission.yml`, scans the actual
   candidate with accepted default-branch privacy code, validates source and run
@@ -565,8 +567,10 @@ its own runner. An ordinary API or web PR uses three allocations:
   repository contracts for every verified change. Selected API, Python,
   distribution and edge checks reuse that runner and its locked dependencies.
 - **Frontend / UI checks**, in `ci-frontend.yml`, installs shared Node/Chromium
-  tooling once and runs selected frontend checks. It allocates no runner when
-  no frontend suite is selected.
+  tooling once and runs selected web, Storybook, extension and site checks. It
+  allocates no runner when none is selected.
+- **Browser / UI checks** calls the same frontend recipe with only E2E enabled,
+  retaining isolated and real-RPC modes on a separate VM.
 
 Missing policy at first adoption, unknown paths, shared dependencies, CI or
 privacy inputs, and uncertain scope select full coverage or block verification.
@@ -585,8 +589,8 @@ jobs, including literal skipped platform jobs; there is no final summary runner.
 | Worker source | API/RPC integration, the full worker suite on Python 3.12 and two native launcher shards |
 | Shared contracts, locks, toolchains, CI, privacy or unknown inputs | Full validation, including platform-specific proof |
 
-The frontend worker overlaps three independent lanes: browser E2E, web checks
-plus boundary regressions, and Storybook/extension/docs/demo checks. Commands
+The supporting frontend worker overlaps web checks with boundary regressions
+then Storybook/extension/docs/demo checks. E2E runs alone on the browser worker. Commands
 within a suite retain their original order and failure behavior. A failed suite
 keeps the job red while independent suites finish their diagnostics. Each lane
 retains a log and per-command duration/result in the `frontend-lanes` artifact;
@@ -597,7 +601,9 @@ tree before parallel consumers start. Those consumers use separate Vite caches
 and the already generated tree. If that build fails, remaining diagnostics run
 serially and the result stays failed. The parallel browser entry requires an
 isolated GitHub-hosted Linux runner; use the ordinary individual commands for
-local testing. Job cancellation and timeouts remain owned by the hosted runner.
+local testing. Job cancellation and timeouts remain owned by the hosted runner. Browser
+installation has an eight-minute bound; hosted Ubuntu package transport uses
+bounded retries and timeouts without changing repositories or signature checks.
 
 The complete primary Python recipe lives in
 `.github/actions/worker-checks/action.yml`; the backend and standalone manual
@@ -606,10 +612,12 @@ The complete primary Python recipe lives in
 3.12. This removes complete 3.11 and 3.13 repetitions without changing package
 interpreter metadata or certifying those source interpreters.
 
-The three-runner target applies to ordinary changes. Selected native launcher
+The three-runner target applies when one of the two frontend workers is
+sufficient. Web source needs both; broader safety inputs can need additional
+platform proof. Selected native launcher
 proof retains two isolated macOS shards because its tests own fixed ports.
 Native credential checks retain macOS, Windows and Linux jobs; synthetic Gmail
-ACL checks retain Windows. Full scope therefore needs nine allocations. These
+ACL checks retain Windows. Full scope therefore needs ten allocations. These
 platform boundaries are preserved rather than replaced with Linux substitutes.
 
 The entry also owns affected checks on `main` pushes. It verifies the exact

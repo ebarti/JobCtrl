@@ -21,13 +21,13 @@ const worker = JSON.parse(execFileSync("ruby", ["-e", yamlReader, actionPath], {
 const events = workflow => workflow.on ?? workflow.true;
 const expression = value => "$" + "{{ " + value + " }}";
 const command = (job, text) => job.steps.find(step => step.run === text);
-test("one shared entry retains three ordinary allocations and literal skipped native contexts", () => {
+test("one shared entry budgets affected runners and preserves literal skipped native contexts", () => {
   assert.deepEqual(events(pr), { pull_request:{ types:["opened","synchronize","reopened","edited"] }, push:{ branches:["main"] } });
-  assert.deepEqual(Object.keys(pr.jobs).sort(), ["admission","backend","frontend","native","credentials","gmail","preview"].sort());
+  assert.deepEqual(Object.keys(pr.jobs).sort(), ["admission","backend","frontend","browser","native","credentials","gmail","preview"].sort());
   assert.deepEqual(pr.permissions, { contents:"read" });
   assert.equal(pr.concurrency["cancel-in-progress"], expression("github.event_name == 'pull_request'"));
   const expanded=[];
-  for (const id of ["admission","backend","frontend","native","credentials","gmail"]) {
+  for (const id of ["admission","backend","frontend","browser","native","credentials","gmail"]) {
     const call=pr.jobs[id];
     assert.equal(call.if, undefined, "skipped child contexts must remain materialized");
     assert.equal(call["runs-on"], undefined);
@@ -45,13 +45,23 @@ test("one shared entry retains three ordinary allocations and literal skipped na
       if(["native","credentials","gmail"].includes(id)) assert.equal(job.if,expression("github.event_name == 'workflow_dispatch' || inputs.enabled"));
     }
     for(const [flag,value] of Object.entries(call.with ?? {})) {
+      if(typeof value==="boolean") { assert.equal(value,false); continue; }
       const output=flag==="enabled"?({native:"launcher",credentials:"credentials",gmail:"gmail"}[id]):flag;
       assert.equal(value,expression("needs.admission.outputs."+output+" != 'false'"));
     }
   }
-  assert.equal(expanded.length,9,"three core and six platform-specific allocations at full scope");
+  assert.equal(expanded.length,10,"four core and six platform-specific allocations at full scope");
   assert.equal(new Set(expanded).size,expanded.length);
   assert.deepEqual(expanded.sort(), [...new Set(["Admission / Release check","Backend / Core checks",...Object.values(SUITE_CONTEXTS).flat()])].sort());
+  const owners={api:["backend","api"],python:["backend","python"],distribution:["backend","distribution"],edge:["backend","edge"],
+    web:["frontend","web"],storybook:["frontend","storybook"],extension:["frontend","extension"],docs:["frontend","docs"],demo:["frontend","demo"],
+    e2e:["browser","e2e"],launcher:["native","enabled"],credentials:["credentials","enabled"],gmail:["gmail","enabled"]};
+  assert.deepEqual(Object.keys(owners).sort(),[...SURFACES].sort());
+  for(const [surface,[owner,input]] of Object.entries(owners))
+    assert.equal(pr.jobs[owner].with[input],expression("needs.admission.outputs."+surface+" != 'false'"),surface+" must retain a fail-closed owner");
+  assert.equal(pr.jobs.frontend.with.e2e,false,"E2E has an isolated VM");
+  assert.equal(pr.jobs.browser.with.web,false);
+  assert.equal(pr.jobs.browser.with.storybook,false);
   assert.equal(admission.if,undefined);
   assert.equal(backend.if,undefined,"repository contracts run for every verified change");
   assert.equal(frontend.if,expression("inputs.web || inputs.storybook || inputs.e2e || inputs.extension || inputs.docs || inputs.demo"));
@@ -143,9 +153,9 @@ test("pristine candidate privacy precedes installation; independent diagnostics 
   assert.equal(scripts["timeout-minutes"],10);
   assert.equal(frontendRecipes.web[0].run,"corepack pnpm web:lint");
   assert.equal(frontendRecipes.boundary[0].run,"corepack pnpm web:lint:test");
-  assert.deepEqual(frontendLanes.core,["web","boundary"]);
+  assert.deepEqual(frontendLanes.core,["web"]);
   assert.deepEqual(frontendLanes.browsers,["e2e"]);
-  assert.deepEqual(frontendLanes.support,["storybook","extension","docs","demo"]);
+  assert.deepEqual(frontendLanes.support,["boundary","storybook","extension","docs","demo"]);
   const parallel=command(frontend,"node scripts/ci-frontend.mjs");
   assert.equal(parallel.if,expression("!cancelled() && steps.dependencies.outcome == 'success'"));
   const build=command(frontend,"corepack pnpm web:build");
@@ -174,6 +184,16 @@ test("backend and manual Python share the complete primary locked recipe", () =>
   assert.ok(command(worker,"uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation"));
   assert.equal(command(worker,"bash scripts/install-temporal-test-server.sh").name,"Install verified Temporal time-skipping test server");
   assert.equal(worker.steps.find(step=>step.name==="Upload synthetic Python JUnit report").if,"always()");
+  const network=command(worker,"bash scripts/ci-apt-timeouts.sh");
+  const chromium=worker.steps.find(step=>step.name==="Install Chromium for guarded availability regression");
+  assert.ok(network && worker.steps.indexOf(network)<worker.steps.indexOf(chromium));
+  assert.match(chromium.run,/^timeout --signal=TERM --kill-after=15s 8m uv .*playwright install --with-deps chromium$/);
+  const frontendNetwork=command(frontend,"bash scripts/ci-apt-timeouts.sh");
+  for(const step of frontend.steps.filter(step=>step.run?.includes("playwright install"))) {
+    assert.ok(frontend.steps.indexOf(frontendNetwork)<frontend.steps.indexOf(step));
+    assert.equal(step["timeout-minutes"],8);
+  }
+
   for(const step of worker.steps) {
     if(step.run) assert.equal(step.shell,"bash");
     assert.equal(step["continue-on-error"] ?? false,false,step.name);

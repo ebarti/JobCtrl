@@ -177,7 +177,7 @@ jobs:
               eventNumber: e.number, eventPullRequestNumber: p.number, ref: process.env.GITHUB_REF,
             }));
         const suites = ["api","web","storybook","e2e","extension","python","docs","launcher","credentials","gmail","distribution","demo","edge"];
-        const names = ["Admission / Release check", "Backend / Core checks", "Frontend / UI checks", "Native / Darwin launcher shard 0", "Native / Darwin launcher shard 1", "Credentials / Native credentials (macos-latest)", "Credentials / Native credentials (windows-latest)", "Credentials / Native credentials (ubuntu-latest)", "Gmail / Synthetic Gmail token ACL (Windows)"];
+        const names = ["Admission / Release check", "Backend / Core checks", "Frontend / UI checks", "Browser / UI checks", "Native / Darwin launcher shard 0", "Native / Darwin launcher shard 1", "Credentials / Native credentials (macos-latest)", "Credentials / Native credentials (windows-latest)", "Credentials / Native credentials (ubuntu-latest)", "Gmail / Synthetic Gmail token ACL (Windows)"];
         const selected = Object.fromEntries(suites.map(id => [id, true]));
         const scope = {
           schemaVersion: 1, repository: { id: e.repository.id, fullName: process.env.GITHUB_REPOSITORY },

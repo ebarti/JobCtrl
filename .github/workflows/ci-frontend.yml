@@ -62,14 +62,19 @@ jobs:
     - name: Sync locked Python dependencies for real RPC and PDF checks
       if: "${{ inputs.e2e }}"
       run: uv --project workers/automation sync --locked --all-extras
+    - name: Bound hosted Ubuntu package transport
+      run: bash scripts/ci-apt-timeouts.sh
     - name: Install shared pinned Node Chromium and its system dependencies
+      timeout-minutes: 8
       run: corepack pnpm --filter @jobctrl/web exec playwright install --with-deps
         chromium
     - name: Install the separate locked Python Chromium
+      timeout-minutes: 8
       if: "${{ inputs.e2e }}"
       run: uv --project workers/automation run --locked --all-extras playwright install
         chromium
     - name: Prepare PDF measurement tools
+      timeout-minutes: 8
       run: |
         sudo apt-get update
         sudo apt-get install --yes poppler-utils

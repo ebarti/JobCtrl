@@ -123,12 +123,12 @@ test("trusted proof binds repository, PR, producer, base, head, merge and helper
   assert.equal(proof.base.sha, f.base);
   assert.deepEqual(proof.policy, { commit: f.base, blob: f.git("rev-parse", `${f.base}:scripts/pr-ci-routing.mjs`) });
   assert.deepEqual(names(proof), ["docs"]);
-  assert.equal(Object.keys(proof.contexts).length, 9);
+  assert.equal(Object.keys(proof.contexts).length, 10);
   assert.equal(proof.contexts["Admission / Release check"], true);
   assert.equal(proof.contexts["Backend / Core checks"], true);
   assert.equal(proof.contexts["Frontend / UI checks"], true);
   assert.equal(proof.selected.python, false);
-  assert.equal(new Set(Object.values(SUITE_CONTEXTS).flat()).size, 8);
+  assert.equal(new Set(Object.values(SUITE_CONTEXTS).flat()).size, 9);
 });
 
 test("credential ownership tests retain every native adapter OS context", (t) => {
@@ -340,7 +340,8 @@ test("main uses its exact complete diff and leaves site publication to its exist
   assert.equal(proof.before,f.base);
   assert.deepEqual(names(proof),["api","e2e"]);
   assert.equal(proof.contexts["Backend / Core checks"],true);
-  assert.equal(proof.contexts["Frontend / UI checks"],true);
+  assert.equal(proof.contexts["Browser / UI checks"],true);
+  assert.equal(proof.contexts["Frontend / UI checks"],false);
   const docs=pushFixture(t);
   const docsProof=docs.plan();
   assert.deepEqual(names(docsProof),[]);

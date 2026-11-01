@@ -8,8 +8,8 @@ import { frontendRecipes } from "./ci-frontend-recipes.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 export const frontendLanes = Object.freeze({
   browsers: ["e2e"],
-  core: ["web", "boundary"],
-  support: ["storybook", "extension", "docs", "demo"],
+  core: ["web"],
+  support: ["boundary", "storybook", "extension", "docs", "demo"],
 });
 
 export function selectedFrontend(environment) {

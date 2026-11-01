@@ -35,10 +35,21 @@ jobs:
     with:
       web: "${{ needs.admission.outputs.web != 'false' }}"
       storybook: "${{ needs.admission.outputs.storybook != 'false' }}"
-      e2e: "${{ needs.admission.outputs.e2e != 'false' }}"
+      e2e: false
       extension: "${{ needs.admission.outputs.extension != 'false' }}"
       docs: "${{ needs.admission.outputs.docs != 'false' }}"
       demo: "${{ needs.admission.outputs.demo != 'false' }}"
+  browser:
+    name: Browser
+    needs: admission
+    uses: "./.github/workflows/ci-frontend.yml"
+    with:
+      web: false
+      storybook: false
+      e2e: "${{ needs.admission.outputs.e2e != 'false' }}"
+      extension: false
+      docs: false
+      demo: false
   native:
     name: Native
     needs: admission

@@ -68,9 +68,12 @@ runs:
   - name: Install verified Temporal time-skipping test server
     shell: bash
     run: bash scripts/install-temporal-test-server.sh
+  - name: Bound hosted Ubuntu package transport
+    run: bash scripts/ci-apt-timeouts.sh
+    shell: bash
   - name: Install Chromium for guarded availability regression
-    run: uv --project workers/automation run --locked --all-extras playwright install
-      --with-deps chromium
+    run: timeout --signal=TERM --kill-after=15s 8m uv --project workers/automation run
+      --locked --all-extras playwright install --with-deps chromium
     shell: bash
   - name: Test
     run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests
