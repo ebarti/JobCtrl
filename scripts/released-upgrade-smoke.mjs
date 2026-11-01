@@ -14,15 +14,27 @@ import { pathToFileURL } from "node:url";
 import { verifyReleaseDescriptorSignature } from "./distribution-homebrew.render.bundle.mjs";
 
 export function selectLatestReleasedVersion(releases, candidateVersion) {
-  const previous = releases
-    .filter((release) => release.draft === false && release.prerelease === false && release.tag_name !== `v${candidateVersion}`)
-    .sort((left, right) => Date.parse(right.published_at) - Date.parse(left.published_at))[0];
+  const stable = releases
+    .filter((release) => release.draft === false && release.prerelease === false)
+    .map((release) => {
+      const publishedAt = Date.parse(release.published_at);
+      assert.ok(Number.isFinite(publishedAt), "stable release publication date is invalid");
+      return { release, publishedAt };
+    });
+  const candidates = stable.filter(({ release }) => release.tag_name === `v${candidateVersion}`);
+  assert.ok(candidates.length <= 1, "duplicate published candidate release");
+  const candidateTime = candidates[0]?.publishedAt;
+  if (candidateTime !== undefined) {
+    assert.ok(!stable.some(({ release, publishedAt }) => release.tag_name !== `v${candidateVersion}` && publishedAt === candidateTime), "stable release publication order is ambiguous");
+  }
+  const previous = stable
+    .filter(({ release, publishedAt }) => release.tag_name !== `v${candidateVersion}` && (candidateTime === undefined || publishedAt < candidateTime))
+    .sort((left, right) => right.publishedAt - left.publishedAt)[0]?.release;
   assert.ok(previous, "no previous published stable release is available for upgrade verification");
   const tag = previous.tag_name;
   if (typeof tag !== "string" || !/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(tag) || tag.trim() !== tag) {
     throw new Error("stable release tag must be v<major>.<minor>.<patch>");
   }
-  assert.ok(Number.isFinite(Date.parse(previous.published_at)), "stable release publication date is invalid");
   return tag.slice(1);
 }
 // A read-only workflow token avoids GitHub's shared-IP rate limit. The
@@ -75,7 +87,7 @@ const hash = async (file) => {
 // This is a release-specific limitation, not a new definition of a successful
 // upgrade. All other version pairs retain the positive upgrade qualification.
 export function isKnownLegacyRefusal(old, candidate, mode) {
-  return old.descriptor.appVersion === "0.3.1" && ["0.4.0", "0.4.1", "0.4.2"].includes(candidate.descriptor.appVersion) && mode === "forward-schema-15";
+  return old.descriptor.appVersion === "0.3.1" && ["0.4.0", "0.4.1"].includes(candidate.descriptor.appVersion) && mode === "forward-schema-15";
 }
 
 // Capture the stopped synthetic workspace and its authenticated selection.
