@@ -928,6 +928,26 @@ and [`_email_application_context`](../../../workers/automation/src/jobctrl/domai
 Browser final submit remains manual; Gmail verification, provider receipt
 validation and manual Skip semantics retain their separate contracts.
 
+For outcome-suggestion decision conflicts, run the API application-feedback
+and web ApplicationOutcomes, suggestion-retention, mutation and demo suites, plus the isolated
+`outcome-decision-conflict.spec.ts` browser flow. In owned SQLite, overlap two
+independent connections for opposite and identical decisions, verify one
+terminal event/outcome, and retry with changed correction kind, time, note and
+reason. Alter the saved outcome, note, reason, decision event, receipt and pending
+status independently; a request matching a damaged fact must remain unverifiable.
+Replace a valid `unknown` kind with an unsupported raw value and ensure display
+normalization cannot certify it as the original fact. Corrupt or remove nested
+demo receipt objects; retry must return an unverifiable conflict and preserve
+the damaged record until a job-scoped purge can identify its owner.
+Inject an event-write failure, check historical replay uncertainty, and confirm
+that persisted and streamed events contain no private text or receipt digest.
+Check equivalent demo receipts and their job-scoped permanent deletion. In the rendered flow, retain a
+correction across another review and query refresh, show the saved decision,
+and require an explicit dismissal without resubmitting the attempted input.
+Switch tenant and job with colliding suggestion IDs and navigate away while a
+decision is pending; verify drafts and late acknowledgements stay with their
+initiating owner and do not clear or expose another owner's input.
+
 For interview-history and Apply Review comment recovery, run the focused
 Interviews view, note-form, interview-query and Apply Review session/view tests.
 In an owned synthetic workspace, fail preparation and note history reads,
@@ -2385,6 +2405,15 @@ real store. The `Native credential stores` CI workflow runs it on hosted macOS,
 Windows (Python 3.12), and Linux. Linux runs a temporary Secret Service inside
 an owned D-Bus session; Windows additionally checks restrictive source DACLs
 after migration and rollback. A queued or blocked job is not host evidence.
+Run `python scripts/test_native_credentials_host.py` for the fake-only diagnostic
+contracts before the native proof. The harness reports the primary proof failure
+and cleanup failures separately, with only fixed phase names, timings and error
+types. Its Windows Python-reader probe adds fixed stderr markers around script
+entry, module load, compilation, input parsing, native-call entry and script exit;
+raw command output is never emitted. Missing markers do not establish a startup
+cause, and script exit can still precede native-buffer cleanup and process exit.
+The TypeScript bridge retains its coarser API phase. A hosted Windows run is
+required to observe these boundaries; fake tests do not qualify Windows behavior.
 From a prepared source checkout on macOS or Windows, run it with a Python
 environment containing `python-dotenv` and the installed Node dependencies.
 On Linux, use `dbus-run-session -- python scripts/native-credentials-host.py

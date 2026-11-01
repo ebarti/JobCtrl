@@ -2142,9 +2142,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
-      return withWritableDb(reply, options.dbPath, (db) =>
-        decideOutcomeSuggestion(db, decodeRouteParam(request.params.suggestionId), body),
-      );
+      return withWritableDb(reply, options.dbPath, (db) => {
+        const result = decideOutcomeSuggestion(db, decodeRouteParam(request.params.suggestionId), body);
+        if (!result.ok) void reply.code(409);
+        return result;
+      });
     },
   );
 

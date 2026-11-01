@@ -1,13 +1,14 @@
 // @vitest-environment node
 
 import { describe, expect, it, vi } from "vitest";
-import { ProfileSchema } from "@jobctrl/contracts";
-import type { DomainEventType } from "@jobctrl/domain-types";
+import { ProfileSchema, type OutcomeSuggestionDecisionRequest } from "@jobctrl/contracts";
+import { createDigestReviewed, LOCAL_TENANT, type DomainEventType } from "@jobctrl/domain-types";
 
 import coachingFixtures from "../../../../packages/domain-types/test/fixtures/required-bullet-suggestions.json" with { type: "json" };
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import { DemoApiClientAdapter } from "./DemoApiClientAdapter.js";
+import { purgeDemoJobProjections } from "./purgeDemoJobProjections.js";
 import {
   DEMO_BROWSER_LOCAL_COMMANDS,
   DEMO_PRODUCTION_NO_EVENT_COMMANDS,
@@ -16,6 +17,7 @@ import {
 import {
   DemoWorkspaceRepository,
   DemoWorkspaceStorageError,
+  DEMO_WORKSPACE_EVENT_LOG_LIMIT,
   InMemoryDemoWorkspaceStore,
   type DemoWorkspaceSnapshot,
   type DemoWorkspaceStore,
@@ -93,7 +95,7 @@ const EXPECTED_RESPONSE_KEYS = {
   setDefaultResumeTemplate: ["defaultTemplate", "ok"],
   setJobResumeTemplate: ["effectiveTemplate", "jobKey", "ok", "overrideTemplate", "templateState"],
   recordManualApplicationOutcome: ["ok", "outcome"],
-  decideOutcomeSuggestion: ["ok", "outcome", "suggestion"],
+  decideOutcomeSuggestion: ["disposition", "ok", "outcome", "suggestion"],
   deleteJob: ["count", "jobKeys", "ok"],
   deleteJobs: ["count", "jobKeys", "ok"],
   permanentlyDeleteJob: ["count", "jobKeys", "ok"],
@@ -1357,7 +1359,11 @@ describe("DemoLocalCommandExecutor", () => {
       draft.state.readModel.analytics.jobOutcomes[JOB]!.suggestions.push(structuredClone(suggestion));
     });
     const first = await adapter.decideOutcomeSuggestion("suggestion-replay", { decision: "accept", note: "Confirmed" });
-    const replay = await adapter.decideOutcomeSuggestion("suggestion-replay", { decision: "accept", note: "Replay" });
+    const replay = await adapter.decideOutcomeSuggestion("suggestion-replay", { decision: "accept", note: "Confirmed" });
+    await expect(adapter.decideOutcomeSuggestion("suggestion-replay", { decision: "accept", note: "Different" }))
+      .rejects.toMatchObject({ status: 409, responseBody: { error: "outcome_suggestion_conflict" } });
+    expect(first.disposition).toBe("applied");
+    expect(replay.disposition).toBe("replayed");
     const snapshot = repository.snapshotNow();
     expect(replay.outcome).toEqual(first.outcome);
     expect(snapshot.state.readModel.analytics.outcomes.outcomes.filter(
@@ -1382,6 +1388,200 @@ describe("DemoLocalCommandExecutor", () => {
       entry.event.eventType === "OutcomeSuggestionDecided" &&
       entry.event.payload.suggestionId === "suggestion-replay",
     )).toHaveLength(1);
+    await repository.mutate((_draft, context) => {
+      for (let index = 0; index < DEMO_WORKSPACE_EVENT_LOG_LIMIT; index += 1) {
+        context.appendDomainEvent(createDigestReviewed(LOCAL_TENANT, {
+          acknowledgedAt: NOW, reviewedAt: NOW, previousAcknowledgedAt: null,
+        }));
+      }
+    });
+    expect(repository.snapshotNow().eventLog.some((entry) => entry.event.eventType === "OutcomeSuggestionDecided" &&
+      entry.event.payload.suggestionId === "suggestion-replay")).toBe(false);
+    expect((await adapter.decideOutcomeSuggestion("suggestion-replay", { decision: "accept", note: "Confirmed" })).disposition).toBe("replayed");
+  });
+
+  it.each([
+    "outcome-kind", "outcome-note", "decision-reason", "event-kind", "receipt-fact", "missing-receipt", "reset-pending",
+    "null-receipt", "array-receipt", "null-event", "missing-event", "null-fact", "missing-fact",
+    "null-suggestion", "missing-suggestion", "missing-outcome", "null-request", "null-container",
+  ] as const)(
+    "refuses a demo suggestion replay after synthetic %s corruption", async (damage) => {
+      const store = new InMemoryDemoWorkspaceStore();
+      const { adapter, repository } = await harness(store);
+      const suggestionId = `suggestion-integrity-${damage}`;
+      const receiptKey = JSON.stringify(["local", JOB, suggestionId]);
+      await repository.mutate((draft) => {
+        const suggestion = { suggestionId, jobKey: JOB, evidenceId: "synthetic-evidence", determination: null,
+          citations: [], suggestedKind: "interview" as const, confidence: 0.9, rationale: "Synthetic",
+          status: "pending" as const, createdAt: NOW, decidedAt: null, decisionReason: null, decidedOutcomeId: null };
+        draft.state.readModel.analytics.outcomes.suggestions.push(structuredClone(suggestion));
+        draft.state.readModel.analytics.jobOutcomes[JOB]!.suggestions.push(structuredClone(suggestion));
+      });
+      const privateNote = "synthetic private note";
+      const privateReason = "synthetic private reason";
+      const request: OutcomeSuggestionDecisionRequest = { decision: "correct", outcomeKind: "offer",
+        occurredAt: "2026-01-01T12:00:00.000Z", note: privateNote, reason: privateReason };
+      await adapter.decideOutcomeSuggestion(suggestionId, request);
+      expect((await adapter.decideOutcomeSuggestion(suggestionId, request)).disposition).toBe("replayed");
+      const before = repository.snapshotNow();
+      const eventText = JSON.stringify(before.eventLog);
+      expect(eventText).not.toContain(privateNote);
+      expect(eventText).not.toContain(privateReason);
+      let retry: OutcomeSuggestionDecisionRequest = request;
+      await repository.mutate((draft) => {
+        const global = draft.state.readModel.analytics.outcomes;
+        const perJob = draft.state.readModel.analytics.jobOutcomes[JOB]!;
+        const suggestions = [global.suggestions.find((item) => item.suggestionId === suggestionId)!,
+          perJob.suggestions.find((item) => item.suggestionId === suggestionId)!];
+        const outcomes = [global.outcomes.find((item) => item.suggestionId === suggestionId)!,
+          perJob.outcomes.find((item) => item.suggestionId === suggestionId)!];
+        const receipt = draft.state.suggestionDecisionReceipts![receiptKey]!;
+        switch (damage) {
+          case "outcome-kind":
+            outcomes.forEach((outcome) => { outcome.kind = "rejection"; });
+            retry = { ...request, outcomeKind: "rejection" };
+            break;
+          case "outcome-note":
+            outcomes.forEach((outcome) => { outcome.note = "altered synthetic note"; });
+            retry = { ...request, note: "altered synthetic note" };
+            break;
+          case "decision-reason":
+            suggestions.forEach((item) => { item.decisionReason = "altered synthetic reason"; });
+            retry = { ...request, reason: "altered synthetic reason" };
+            break;
+          case "event-kind": {
+            // Event history is append-only through the repository; inject the
+            // damage through the independently owned backing store below.
+            break;
+          }
+          case "receipt-fact":
+            Object.assign(receipt.fact.suggestion, { decisionReason: "altered receipt" });
+            break;
+          case "null-receipt":
+            Object.assign(draft.state.suggestionDecisionReceipts!, { [receiptKey]: null });
+            break;
+          case "array-receipt":
+            Object.assign(draft.state.suggestionDecisionReceipts!, { [receiptKey]: [] });
+            break;
+          case "null-event":
+            Object.assign(receipt, { event: null });
+            break;
+          case "missing-event":
+            Reflect.deleteProperty(receipt, "event");
+            break;
+          case "null-fact":
+            Object.assign(receipt, { fact: null });
+            break;
+          case "missing-fact":
+            Reflect.deleteProperty(receipt, "fact");
+            break;
+          case "null-suggestion":
+            Object.assign(receipt.fact, { suggestion: null });
+            break;
+          case "missing-suggestion":
+            Reflect.deleteProperty(receipt.fact, "suggestion");
+            break;
+          case "missing-outcome":
+            Reflect.deleteProperty(receipt.fact, "outcome");
+            break;
+          case "null-request":
+            Object.assign(receipt, { request: null });
+            break;
+          case "null-container":
+            Object.assign(draft.state, { suggestionDecisionReceipts: null });
+            break;
+          case "missing-receipt":
+            delete draft.state.suggestionDecisionReceipts![receiptKey];
+            break;
+          case "reset-pending":
+            suggestions.forEach((item) => Object.assign(item, { status: "pending", decidedAt: null, decisionReason: null, decidedOutcomeId: null }));
+            break;
+        }
+      });
+      if (damage === "event-kind") {
+        await store.transact((current, transaction) => {
+          const draft = structuredClone(current!);
+          const receipt = draft.state.suggestionDecisionReceipts![receiptKey]!;
+          const event = draft.eventLog.find((entry) => entry.sequence === receipt.eventSequence)!;
+          Object.assign(event.event.payload, { outcomeKind: "rejection" });
+          transaction.putSnapshot({ ...draft, revision: draft.revision + 1 });
+        });
+        const persisted = (await store.readSnapshot())!;
+        const event = persisted.eventLog.find((entry) => entry.sequence === persisted.state.suggestionDecisionReceipts![receiptKey]!.eventSequence)!;
+        expect(event.event.payload).toMatchObject({ outcomeKind: "rejection" });
+      }
+      const corruptedReceipts = structuredClone((await repository.snapshot()).state.suggestionDecisionReceipts);
+      await expect(adapter.decideOutcomeSuggestion(suggestionId, retry)).rejects.toMatchObject({
+        status: 409, responseBody: { error: "outcome_suggestion_replay_unverifiable" },
+      });
+      const after = repository.snapshotNow();
+      expect(after.state.suggestionDecisionReceipts).toEqual(corruptedReceipts);
+      expect(after.state.readModel.analytics.outcomes.outcomes.filter((item) => item.suggestionId === suggestionId)).toHaveLength(1);
+      expect(after.eventLog.filter((entry) => entry.event.eventType === "OutcomeSuggestionDecided" && entry.event.payload.suggestionId === suggestionId)).toHaveLength(1);
+    },
+  );
+
+  it("does not replace a malformed pending receipt even after the bounded event history is absent", async () => {
+    const store = new InMemoryDemoWorkspaceStore();
+    const { adapter, repository } = await harness(store);
+    const suggestionId = "suggestion-corrupt-pending-receipt";
+    await repository.mutate((draft) => {
+      const suggestion = { suggestionId, jobKey: JOB, evidenceId: "synthetic-evidence", determination: null,
+        citations: [], suggestedKind: "interview" as const, confidence: 0.9, rationale: "Synthetic",
+        status: "pending" as const, createdAt: NOW, decidedAt: null, decisionReason: null, decidedOutcomeId: null };
+      draft.state.readModel.analytics.outcomes.suggestions.push(structuredClone(suggestion));
+      draft.state.readModel.analytics.jobOutcomes[JOB]!.suggestions.push(structuredClone(suggestion));
+    });
+    await adapter.decideOutcomeSuggestion(suggestionId, { decision: "accept" });
+    const key = JSON.stringify(["local", JOB, suggestionId]);
+    await repository.mutate((draft) => {
+      for (const suggestion of [draft.state.readModel.analytics.outcomes.suggestions.find((item) => item.suggestionId === suggestionId)!,
+        draft.state.readModel.analytics.jobOutcomes[JOB]!.suggestions.find((item) => item.suggestionId === suggestionId)!]) {
+        Object.assign(suggestion, { status: "pending", decidedAt: null, decisionReason: null, decidedOutcomeId: null });
+      }
+      Object.assign(draft.state.suggestionDecisionReceipts!, { [key]: null });
+    });
+    await store.transact((current, transaction) => {
+      const draft = structuredClone(current!);
+      transaction.putSnapshot({ ...draft, eventLog: [], revision: draft.revision + 1 });
+    });
+    expect((await store.readSnapshot())!.eventLog).toHaveLength(0);
+    await repository.snapshot();
+    await expect(adapter.decideOutcomeSuggestion(suggestionId, { decision: "ignore" })).rejects.toMatchObject({
+      status: 409, responseBody: { error: "outcome_suggestion_replay_unverifiable" },
+    });
+    const snapshot = repository.snapshotNow();
+    expect(snapshot.state.suggestionDecisionReceipts?.[key]).toBeNull();
+    expect(snapshot.state.readModel.analytics.outcomes.outcomes.filter((item) => item.suggestionId === suggestionId)).toHaveLength(1);
+    expect(snapshot.eventLog).toHaveLength(0);
+  });
+
+  it("purges only the selected job's private suggestion receipts", async () => {
+    const { adapter, repository } = await harness();
+    const suggestionId = "suggestion-purge-receipt";
+    await repository.mutate((draft) => {
+      const suggestion = { suggestionId, jobKey: JOB, evidenceId: "synthetic-evidence", determination: null,
+        citations: [], suggestedKind: "interview" as const, confidence: 0.9, rationale: "Synthetic",
+        status: "pending" as const, createdAt: NOW, decidedAt: null, decisionReason: null, decidedOutcomeId: null };
+      draft.state.readModel.analytics.outcomes.suggestions.push(structuredClone(suggestion));
+      draft.state.readModel.analytics.jobOutcomes[JOB]!.suggestions.push(structuredClone(suggestion));
+    });
+    await adapter.decideOutcomeSuggestion(suggestionId, { decision: "correct", outcomeKind: "offer", note: "synthetic note" });
+    const key = JSON.stringify(["local", JOB, suggestionId]);
+    await repository.mutate((draft) => {
+      const receipt = draft.state.suggestionDecisionReceipts![key]!;
+      draft.state.suggestionDecisionReceipts!["other"] = { ...receipt,
+        fact: { ...receipt.fact, suggestion: { ...receipt.fact.suggestion, jobKey: "synthetic-other-job" } } };
+      draft.state.suggestionDecisionReceipts!["malformed-target-key"] = structuredClone(receipt);
+      Object.assign(receipt, { fact: null });
+      Object.assign(draft.state.suggestionDecisionReceipts!, { "malformed-other-key": null });
+      purgeDemoJobProjections(draft, JOB);
+    });
+    const receipts = repository.snapshotNow().state.suggestionDecisionReceipts!;
+    expect(receipts[key]).toBeUndefined();
+    expect(receipts["other"]).toBeDefined();
+    expect(receipts["malformed-target-key"]).toBeUndefined();
+    expect(receipts["malformed-other-key"]).toBeNull();
   });
 
   it("propagates a score correction policy revision and marks comparable scores stale", async () => {
