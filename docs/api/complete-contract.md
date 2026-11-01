@@ -2154,9 +2154,32 @@ geographic token list removes a source, or lexical recall floor decides admissio
 
 Saved location and work-model rows remain paired. Work models are exact taxonomy
 codes or product labels, with comma-separated selections within a row. A
-location-less Remote row keeps an empty board location. Unsupported controls
+location-less Remote row keeps an empty saved location and sends an absent
+location to JobStreaming. Unsupported controls
 produce the non-retryable `invalid_saved_work_model` planning failure; readers,
 scoring and network identity do not materialize board controls.
+
+Before a board is dispatched, selected Remote scopes that its pinned adapter
+cannot execute exactly are rejected. Indeed cannot combine Remote and a lookback;
+Glassdoor cannot combine Remote and a location; Glassdoor and ZipRecruiter
+require a Remote lookback in whole days. The selected boards and targets are
+not silently changed, and no request starts for an incompatible board unit.
+Compatible units retain their results; the source run records partial failure,
+and the workflow reports non-retryable `unsupported_remote_search` with guidance.
+The same reporting applies when an adapter's declared capabilities cannot
+apply the selected Remote filters.
+Profile and Discovery-settings edits that introduce these combinations return
+HTTP 400 `unsupported_remote_search` before saving. Unrelated edits to legacy
+configurations remain available and preserved values are not rewritten.
+The same check covers an exposed legacy location when a Profile override is
+removed and rejects newly added location-free Hybrid or On-site rows. New
+execution snapshots retain the literal query and location arrays, recording
+their absence as empty arrays, and retain tier and location-label filters.
+Older snapshots keep their prior fallback for absent values.
+An older recorded plan is checked again before broad-board acquisition. Healthy
+board and family results proceed through enrichment and preparation before the
+workflow reports `unsupported_remote_search`. This also applies to the
+unsaved first-use defaults, which include Indeed with Remote and a lookback.
 
 JobStreaming executes supported source search/filter parameters. Support varies by provider; the current JobCtrl consumer does not display the SDK’s capability warnings. Structurally valid fetched listings are stored under exact identity and proceed to full-posting analysis/scoring; there is no separate metadata-only intake model, listing-decision endpoint or batch/model setting. Direct company ATS adapters may return a whole listed feed. Literal exact-title exclusions, source-native listing flags, security checks and run limits remain mechanical. Broad-board capture, ingestion and filtered receipts are durable before provider checkpoint acknowledgement; retries preserve idempotency and lease fencing. Historical intake captures and envelopes stay under the frozen native schema. Each runnable family re-ingests up to 100 unconsumed source payloads before fetching, honoring literal exclusions and the remaining new-job limit. Consumption follows successful ingestion and retries use stable observation/event IDs; historical verdicts and preferences are never read.
 

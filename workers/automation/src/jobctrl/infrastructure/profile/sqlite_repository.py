@@ -21,9 +21,11 @@ from jobctrl.domain.events import (
     create_profile_imported,
     create_profile_updated,
 )
+from jobctrl.domain.errors import ConfigurationError
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.profile.aggregate import DEFAULT_PROFILE_ID, InvalidProfileError, Profile
 from jobctrl.domain.profile.ports import PdfParserPort, ProfileImportResult
+from jobctrl.domain.profile.search_targets import active_target_rows, guarded_target_rows, has_profile_target_rows, legacy_remote_target_rows
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.materials.resume_style import (
@@ -84,11 +86,26 @@ class SqliteProfileRepository:
         finally:
             self._conn.execute("RELEASE SAVEPOINT profile_authority_read")
 
-    def save(self, tenant_id: TenantId, profile: Profile) -> ProfileSnapshot:
-        previous = self.load(tenant_id)
-        previous_dict = previous.to_dict() if previous is not None else {}
+    def create_if_absent(self, tenant_id: TenantId, profile: Profile) -> ProfileSnapshot:
+        """Create the wizard's initial Profile without replacing a concurrent one."""
+        if (profile.profile_id or self._profile_id) != self._profile_id:
+            raise ConfigurationError("Profile identity changed during setup. Retry jobctrl init.")
+        if self._conn.in_transaction:
+            raise ConfigurationError("Profile setup could not acquire its write lock. Retry jobctrl init.")
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            if self._profile_row(tenant_id) is not None:
+                raise ConfigurationError(
+                    "A Profile was created while setup was in progress. "
+                    "It was not changed; retry jobctrl init."
+                )
+            return self.save(tenant_id, profile)
+        except BaseException:
+            if self._conn.in_transaction:
+                self._conn.rollback()
+            raise
 
-        row = self._profile_row(tenant_id)
+    def save(self, tenant_id: TenantId, profile: Profile) -> ProfileSnapshot:
         candidate = _profile_dict_with_authored_achievement_evidence(profile)
         validated = Profile.from_dict(
             tenant_id,
@@ -96,9 +113,46 @@ class SqliteProfileRepository:
             profile_id=profile.profile_id or self._profile_id,
         )
         _reject_unsupported_top_level_fields(validated)
-        version = int(row["version"]) + 1 if row is not None else 1
-        rendering = self.load_rendering_settings(tenant_id)
-        self._replace_profile(tenant_id, validated, version=version, rendering=rendering)
+        experience = validated.to_dict().get("experience", {})
+        remote_rows = guarded_target_rows(experience.get("target_locations", ""), experience.get("target_work_models", ""))
+        has_targets = has_profile_target_rows(experience.get("target_locations", ""), experience.get("target_work_models", ""))
+        owns_lock = (bool(remote_rows) or not has_targets) and not self._conn.in_transaction
+        if owns_lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            previous = self.load(tenant_id)
+            previous_dict = previous.to_dict() if previous is not None else {}
+            row = self._profile_row(tenant_id)
+            before = previous_dict.get("experience", {})
+            cleared_targets = has_profile_target_rows(
+                before.get("target_locations", ""), before.get("target_work_models", "")
+            ) and not has_targets
+            existing_rows = guarded_target_rows(before.get("target_locations", ""), before.get("target_work_models", ""))
+            new_remote = []
+            for remote_row in remote_rows:
+                if remote_row not in existing_rows:
+                    new_remote.append(remote_row)
+                else:
+                    existing_rows.remove(remote_row)
+            if new_remote or cleared_targets:
+                from jobctrl.config import _default_discovery_search_config, _read_discovery_search_config, resolve_jobspy_boards
+                from jobctrl.domain.discovery.remote_search import validate_target_row
+
+                settings = _read_discovery_search_config(self._conn) or _default_discovery_search_config()
+                hours_old = settings.get("defaults", {}).get("hours_old", 72)
+                rows = legacy_remote_target_rows(settings.get("locations")) if cleared_targets else new_remote
+                for location, choices, _label in active_target_rows(rows, settings):
+                    validate_target_row(
+                        location=location, choices=choices, sites=tuple(resolve_jobspy_boards(settings, warn=False)),
+                        hours_old=int(hours_old) if hours_old is not None else None,
+                    )
+            version = int(row["version"]) + 1 if row is not None else 1
+            rendering = self.load_rendering_settings(tenant_id)
+            self._replace_profile(tenant_id, validated, version=version, rendering=rendering)
+        except Exception:
+            if owns_lock and self._conn.in_transaction:
+                self._conn.rollback()
+            raise
 
         # Read computed authority from persisted review receipts, never client flags.
         snapshot = ProfileSnapshot.from_profile(self.load(tenant_id), version=version)
