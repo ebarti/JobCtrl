@@ -96,6 +96,30 @@ def runtime(tmp_path, monkeypatch):
     database.close_connection(db_path)
 
 
+@pytest.fixture
+def _virtual_parent_pacing(runtime, monkeypatch):
+    """Advance parent pacing for policy checks; keep real browser deadlines."""
+    clock = VirtualClock()
+    started_at = availability._now()
+    monkeypatch.setattr("jobctrl.infrastructure.network.rate_limiter._SHARED_RATE_LIMITER", no_sleep_limiter(clock))
+    monkeypatch.setattr(availability, "_now", lambda: started_at + timedelta(seconds=clock.now()))
+    monkeypatch.setattr(availability, "time", SimpleNamespace(monotonic=time.monotonic, sleep=clock.sleep))
+    yield clock
+
+    # The real acquisition still emits host-ledger events. Check pacing per
+    # host: another host may legitimately start at the same virtual instant.
+    requests_by_host = {}
+    for payload, occurred_at in runtime.conn.execute(
+        "SELECT payload_json, occurred_at FROM job_events WHERE entity_kind='availability_request' ORDER BY event_id"
+    ):
+        host = json.loads(payload)["host"]
+        requests_by_host.setdefault(host, []).append(datetime.fromisoformat(occurred_at))
+    assert any(len(times) > 1 for times in requests_by_host.values())
+    assert sum(clock.sleeps) >= 2, "the fixture must exercise pacing, not bypass acquisition"
+    for times in requests_by_host.values():
+        assert all(later - earlier >= timedelta(seconds=2) for earlier, later in zip(times, times[1:]))
+
+
 @pytest.mark.asyncio
 async def test_real_temporal_activity_and_registered_workflow_record_current_evidence(runtime):
     assert SavedPostingAvailabilityWorkflow in WORKFLOWS
@@ -345,7 +369,9 @@ def test_batch_scoring_fences_posting_changes_before_stage_attempt_or_provider(r
     assert not runtime.conn.in_transaction
 
 
-def test_real_chromium_hidden_css_status_requires_visibility_and_retains_fallback_lineage(runtime, monkeypatch):
+def test_real_chromium_hidden_css_status_requires_visibility_and_retains_fallback_lineage(
+    runtime, monkeypatch, _virtual_parent_pacing
+):
     runtime.page_decisions.extend(["unknown", "active"])
     public_url = "https://93.184.216.34/jobs/role-123"
     runtime.conn.execute("UPDATE jobs SET url = ? WHERE job_id = ?", (public_url, JOB))
@@ -542,7 +568,7 @@ def test_real_context_guard_blocks_native_service_worker_prototype_without_unown
     "channel", ["popup", "service_worker", "worker", "shared_worker", "websocket", "webtransport", "webrtc"]
 )
 def test_real_context_guard_blocks_private_popup_and_unowned_native_channels_before_outbound(
-    runtime, native_sinks, channel
+    runtime, native_sinks, channel, _virtual_parent_pacing
 ):
     runtime.page_decisions.extend(["unknown", "unknown"])
     public_url = "https://93.184.216.34/jobs/context-guard"
@@ -590,7 +616,9 @@ def test_real_context_guard_blocks_private_popup_and_unowned_native_channels_bef
 
 
 @pytest.mark.parametrize("secondary", ["popup", "popup_worker", "iframe_worker"])
-def test_real_context_guard_routes_first_public_popup_through_actual_host_ledger_and_ipc(runtime, secondary):
+def test_real_context_guard_routes_first_public_popup_through_actual_host_ledger_and_ipc(
+    runtime, secondary, _virtual_parent_pacing
+):
     runtime.page_decisions.extend(["unknown", "active"])
     public_url = "https://93.184.216.34/jobs/public-popup"
     popup_url = "https://1.1.1.1/synthetic-popup"
@@ -637,7 +665,7 @@ def test_real_context_guard_routes_first_public_popup_through_actual_host_ledger
     )
 
 
-def test_real_context_guard_keeps_failed_status_resource_uncertain_with_its_hash(runtime):
+def test_real_context_guard_keeps_failed_status_resource_uncertain_with_its_hash(runtime, _virtual_parent_pacing):
     runtime.page_decisions.extend(["unknown", "unknown"])
     public_url = "https://93.184.216.34/jobs/resource-failure"
     module_url = "https://1.1.1.1/synthetic-status.js"
@@ -806,7 +834,9 @@ def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime
     "resource, status",
     [("fetch", 403), ("fetch", 429), ("fetch", 503), ("script", 302), ("style", 302), ("iframe", 302)],
 )
-def test_real_renderer_failed_status_dependency_cannot_manufacture_closure(runtime, resource, status):
+def test_real_renderer_failed_status_dependency_cannot_manufacture_closure(
+    runtime, resource, status, _virtual_parent_pacing
+):
     runtime.page_decisions.extend(["unknown", "unknown"])
     public_url = "https://93.184.216.34/jobs/status-dependency"
     endpoint = "https://93.184.216.35/dependency"

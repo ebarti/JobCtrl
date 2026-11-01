@@ -251,9 +251,8 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
-If you installed the briefly published v0.4.2, v0.4.0 is the later corrected
-release. Use `jobctrl update` for the bundled installation or
-`brew upgrade ebarti/tap/jobctrl` for Homebrew; both retain the existing workspace.
+For Homebrew installations, `brew upgrade ebarti/tap/jobctrl` updates the
+formula while retaining the existing workspace.
 
 A compatible source checkout and installed app use the same workspace, profile,
 resume and Temporal history. Older installed releases have limits: v0.3.1 supports
