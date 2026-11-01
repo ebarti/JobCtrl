@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { PROJECTION_WATERMARK_NAME } from "../src/contracts.js";
 import { refreshProjections } from "../src/projections.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const FIXTURE_PATH = fileURLToPath(
   new URL(
@@ -52,7 +52,7 @@ function emptyDb(): Database.Database {
   const directory = fs.mkdtempSync("/tmp/jobctrl-api-pipeline-step-");
   directories.push(directory);
   const dbPath = `${directory}/jobctrl.db`;
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   databases.push(db);
   return db;

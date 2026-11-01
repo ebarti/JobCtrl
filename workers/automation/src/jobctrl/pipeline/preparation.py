@@ -26,6 +26,7 @@ from jobctrl.domain.discovery.execution import (
     DiscoveryExecutionWorkPlanState,
     validate_required_steps,
 )
+from jobctrl.infrastructure.materials.cover_letter_policy import configured_preparation_steps, reconcile_cover_letter_policy
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.preparation import PreparationWorkItemKind, make_preparation_idempotency_key
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
@@ -39,6 +40,7 @@ from jobctrl.infrastructure.rpc.workflow_starter import (
     default_workflow_starter,
 )
 from jobctrl.infrastructure.scoring import SqliteScoringPolicyRepository
+from jobctrl.infrastructure.runtime_identity import current_runtime_identity
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.preparation.workflow import (
     JobPreparationInput,
@@ -123,18 +125,31 @@ def derive_preparation_targets(payload: DerivePreparationTargetsInput) -> list[P
     conn = get_connection()
     tenant_id = TenantId(payload.tenant_id)
     min_score = db_module.effective_tailoring_min_score(payload.min_score)
-    state_changes = reconcile_all_score_threshold_skips(
-        conn,
-        tenant_id=tenant_id,
-        min_score=min_score,
-    )
-    state_changes += reconcile_tailor_terminal_dependents(
-        conn,
-        tenant_id=tenant_id,
-    )
-    if state_changes:
+    # Even a conditional UPDATE matching no rows acquires SQLite's writer.
+    # Own this reconciliation transaction explicitly, and reject inherited
+    # writes before entering the rollback scope so their caller keeps control.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        from jobctrl.infrastructure.materials.manual_decline import release_manual_material_skips
+
+        release_manual_material_skips(conn, tenant_id=tenant_id)
+        reconcile_all_score_threshold_skips(
+            conn,
+            tenant_id=tenant_id,
+            min_score=min_score,
+        )
+        reconcile_tailor_terminal_dependents(
+            conn,
+            tenant_id=tenant_id,
+        )
+        # Keep eligibility selection and artifact mutation under this write
+        # owner, so a concurrent approval cannot replace the selected generation.
+        _suppress_ineligible_artifacts(conn, tenant_id=tenant_id, min_score=min_score)
+        reconcile_cover_letter_policy(conn, tenant_id=tenant_id)
         conn.commit()
-    _suppress_ineligible_artifacts(conn, tenant_id=tenant_id, min_score=min_score)
+    except Exception:
+        conn.rollback()
+        raise
     targets = _derive_targets(
         conn,
         tenant_id=tenant_id,
@@ -155,7 +170,6 @@ def start_discovery_preparation_workflows(
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     workflow_starter: WorkflowStarter | None = None,
     include_pending_tailor: bool = True,
@@ -194,7 +208,6 @@ def start_discovery_preparation_workflows(
                     llm_model=llm_model,
                     tailor_models=tailor_models,
                     tailor_judge_model=tailor_judge_model,
-                    tailor_judge_min_score=tailor_judge_min_score,
                     discovery_execution=discovery_execution,
                     discovery_cohort_kind=discovery_cohort_kind,
                 ),
@@ -253,7 +266,6 @@ def start_job_preparation_workflow(
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     workflow_starter: WorkflowStarter | None = None,
     connection: sqlite3.Connection | None = None,
@@ -273,6 +285,7 @@ def start_job_preparation_workflow(
     stable_job_id = canonical_job_id(str(job_id))
     try:
         conn = connection or get_connection()
+        reconcile_cover_letter_policy(conn, tenant_id=tenant_id, job_id=stable_job_id)
         target_version = current_scoring_policy_version(conn, tenant_id)
         source_event_id = _latest_source_event_id(
             conn,
@@ -291,7 +304,6 @@ def start_job_preparation_workflow(
             llm_model=llm_model,
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
-            tailor_judge_min_score=tailor_judge_min_score,
             source_event_id=source_event_id,
             discovery_execution=discovery_execution,
             discovery_cohort_kind=(discovery_cohort_kind if discovery_execution is not None else None),
@@ -347,9 +359,9 @@ def build_preparation_workflow_spec(
     retailor: bool = False,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    explicit_material_request: bool = False,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     source_event_id: str | None = None,
     expected_app_dir: str | None = None,
@@ -358,6 +370,7 @@ def build_preparation_workflow_spec(
     discovery_cohort_kind: DiscoveryExecutionCohortKind | None = None,
 ) -> WorkflowStartSpec:
     stable_job_id = canonical_job_id(str(job_id))
+    steps = configured_preparation_steps(steps)
     source_event = (
         source_event_id
         if source_event_id is not None
@@ -373,7 +386,10 @@ def build_preparation_workflow_spec(
         kind=kind,
         target_version=target_version,
         source_event_id=source_event,
+        explicit_material_request=explicit_material_request,
+        include_cover_letter="tailor" not in steps or "cover" in steps,
     )
+    runtime = current_runtime_identity()
     payload = JobPreparationInput(
         tenant_id=str(tenant_id),
         job_id=stable_job_id,
@@ -387,12 +403,12 @@ def build_preparation_workflow_spec(
         retailor=retailor,
         suppress_existing_artifacts=suppress_existing_artifacts,
         allow_low_fit_override=allow_low_fit_override,
+        explicit_material_request=explicit_material_request,
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score,
         llm_model=llm_model or DEFAULT_PIPELINE_LLM_MODEL_SPEC,
-        expected_app_dir=expected_app_dir,
-        expected_db_path=expected_db_path,
+        expected_app_dir=expected_app_dir if expected_app_dir is not None else runtime.app_dir,
+        expected_db_path=expected_db_path if expected_db_path is not None else runtime.db_path,
         discovery_execution=discovery_execution,
         discovery_cohort_kind=discovery_cohort_kind,
     )
@@ -635,12 +651,14 @@ def _target(
     source_event_id: str,
     steps: list[str],
 ) -> PreparationTarget:
+    steps = configured_preparation_steps(steps)
     idempotency_key = make_preparation_idempotency_key(
         tenant_id=tenant_id,
         job_id=job_id,
         kind=kind,
         target_version=target_version,
         source_event_id=source_event_id,
+        include_cover_letter="tailor" not in steps or "cover" in steps,
     )
     return PreparationTarget(
         tenant_id=tenant_id,
@@ -661,12 +679,12 @@ def _workflow_spec_for_target(
     llm_model: str | None,
     tailor_models: tuple[str, ...],
     tailor_judge_model: str | None,
-    tailor_judge_min_score: float | None,
     discovery_execution: DiscoveryExecutionRef | None,
     discovery_cohort_kind: DiscoveryExecutionCohortKind,
 ) -> WorkflowStartSpec:
     if target.tenant_id != tenant_id:
         raise ValueError("preparation target tenant does not match workflow tenant")
+    runtime = current_runtime_identity()
     payload = JobPreparationInput(
         tenant_id=str(tenant_id),
         job_id=target.job_id,
@@ -679,9 +697,10 @@ def _workflow_spec_for_target(
         llm_model=llm_model or DEFAULT_PIPELINE_LLM_MODEL_SPEC,
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score,
         discovery_execution=discovery_execution,
         discovery_cohort_kind=(discovery_cohort_kind if discovery_execution is not None else None),
+        expected_app_dir=runtime.app_dir,
+        expected_db_path=runtime.db_path,
     )
     return WorkflowStartSpec(
         workflow=JobPreparationWorkflow,
@@ -900,7 +919,7 @@ def _unselected_work_plan_outcome(
         return ("not_eligible", "job_not_actionable")
     if str(row["active_state"] or "") in {"closed", "expired", "removed", "location_incompatible"}:
         return ("not_eligible", "posting_not_actionable")
-    if bool(row["has_resume_pdf"]) and bool(row["has_cover_pdf"]):
+    if bool(row["has_resume_pdf"]) and (bool(row["has_cover_pdf"]) or "cover" not in configured_preparation_steps(["cover"])):
         return ("not_eligible", "preparation_already_accounted")
 
     stage_rows = conn.execute(
@@ -1064,7 +1083,7 @@ def _suppress_active_artifacts(
         """,
         (reason, suppressed_at, suppressed_at, str(tenant_id), str(job_id), generation),
     )
-    conn.commit()
+    # derive_preparation_targets owns commit/rollback for the complete sweep.
     return 1
 
 
@@ -1084,6 +1103,10 @@ def _jobs_needing_artifact_suppression(
         LEFT JOIN latest_scores score
           ON score.tenant_id = jobs.tenant_id
          AND score.job_id = jobs.job_id
+        LEFT JOIN job_stage_states score_stage
+          ON score_stage.tenant_id = jobs.tenant_id
+         AND score_stage.job_id = jobs.job_id
+         AND score_stage.stage = 'score'
         LEFT JOIN latest_active_materials materials
           ON materials.tenant_id = jobs.tenant_id
          AND materials.job_id = jobs.job_id
@@ -1095,9 +1118,26 @@ def _jobs_needing_artifact_suppression(
          AND tailored_resume.status = 'approved'
         WHERE jobs.tenant_id = ?
           AND tailored_resume.artifact_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM job_score_staleness stale
+             WHERE stale.tenant_id = jobs.tenant_id
+               AND stale.job_id = jobs.job_id
+               AND stale.resolved = 0
+          )
+          AND (
+            score_stage.state IS NULL
+            OR score_stage.state = 'succeeded'
+          )
           AND (
             score.fit_score IS NULL
-            OR score.fit_score < ?
+            OR (
+              score.fit_score < ?
+              AND CASE
+                WHEN json_valid(tailored_resume.metadata_json)
+                  THEN COALESCE(json_type(tailored_resume.metadata_json, '$.allow_low_fit_override'), '')
+                ELSE ''
+              END != 'true'
+            )
             OR score.eligible_for_downstream = 0
           )
         ORDER BY jobs.discovered_at DESC, jobs.job_id

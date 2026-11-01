@@ -1,3 +1,7 @@
+import { outreachKeys } from "../outreach/queryKeys.js";
+import { jobsKeys } from "./jobsKeys.js";
+import { outcomesKeys } from "./outcomesKeys.js";
+import { workflowRunsKeys } from "./workflowRunsKeys.js";
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
 import type { ApplyRunEventRecorded, TenantId } from "@jobctrl/domain-types";
@@ -8,6 +12,7 @@ import {
   applicationFailedHandler,
   applicationOutcomeRecordedHandler,
   applicationSubmittedHandler,
+  dryRunCompletedHandler,
   applyReviewDecisionRecordedHandler,
   applyRunEventRecordedHandler,
   applyRunStartedHandler,
@@ -32,6 +37,7 @@ import {
   jobUnhiddenHandler,
   sourceLocationCandidateDiscoveredHandler,
   sourceLocationCandidatePromotedHandler,
+  sourceLocationCandidateReviewedHandler,
   sourceRegistryEntryCreatedHandler,
   sourceRegistryEntryUpdatedHandler,
   sourceStateChangedHandler,
@@ -41,6 +47,8 @@ import {
   compensationFactsUpdatedHandler,
   enrichmentFailedHandler,
   jobActiveStateChangedHandler,
+  jobAvailabilityObservedHandler,
+  availabilityRequestChangedHandler,
   jobEnrichedHandler,
   postingContentSnapshotCapturedHandler,
   postingContentSnapshotFailedHandler,
@@ -51,6 +59,7 @@ import {
   employerAnalyzedHandler,
   interviewPrepFailedHandler,
   interviewPrepGeneratedHandler,
+  interviewQuestionNoteSavedHandler,
   materialsExhaustedHandler,
   pdfRenderedHandler,
   resumeApprovedHandler,
@@ -110,6 +119,7 @@ import {
   contactResearchTaskNeedsReviewHandler,
   contactResearchTaskCompletedHandler,
   contactResearchTaskFailedHandler,
+  contactResearchSourceAttemptFailedHandler,
   outreachDraftGeneratedHandler,
   outreachDraftRevisedHandler,
   outreachDraftApprovedHandler,
@@ -122,7 +132,8 @@ import {
 import { activityKeys } from "./activityKeys.js";
 import { applyRunsKeys } from "./applyRunsKeys.js";
 import { digestKeys } from "./digestKeys.js";
-import type { KnownDomainEvent, KnownDomainEventType } from "./types.js";
+import type { DomainEventUnion as KnownDomainEvent } from "@jobctrl/domain-types";
+import type { KnownDomainEventType } from "./types.js";
 
 export type InvalidationItem =
   | { readonly kind: "invalidate"; readonly queryKey: QueryKey }
@@ -131,6 +142,12 @@ export type InvalidationItem =
       readonly queryKey: QueryKey;
       readonly exact: boolean;
       readonly updater: (current: unknown) => unknown;
+    }
+  | {
+      readonly kind: "reconcile-query";
+      readonly queryKey: QueryKey;
+      readonly invalidateAfterPatch: boolean;
+      readonly updater: (current: unknown, queryKey: QueryKey) => unknown;
     }
   | {
       readonly kind: "apply-run-event-append";
@@ -157,6 +174,19 @@ export const patchQuery = (
   queryKey,
   exact,
   updater,
+});
+
+// Returning undefined means the event cannot truthfully reconcile this query.
+// Only existing queries are inspected; fallback invalidation is exact per page.
+export const reconcileQuery = (
+  queryKey: QueryKey,
+  updater: (current: unknown, queryKey: QueryKey) => unknown,
+  options: { readonly invalidateAfterPatch?: boolean } = {},
+): InvalidationItem => ({
+  kind: "reconcile-query",
+  queryKey,
+  updater,
+  invalidateAfterPatch: options.invalidateAfterPatch ?? false,
 });
 
 export const patchApplyRunEvent = (
@@ -193,6 +223,7 @@ export const handlers: HandlerMap = {
   DiscoveryFeedbackRecorded: discoveryFeedbackRecordedHandler,
   SourceLocationCandidateDiscovered: sourceLocationCandidateDiscoveredHandler,
   SourceLocationCandidatePromoted: sourceLocationCandidatePromotedHandler,
+  SourceLocationCandidateReviewed: sourceLocationCandidateReviewedHandler,
   SourceRegistryEntryCreated: sourceRegistryEntryCreatedHandler,
   SourceRegistryEntryUpdated: sourceRegistryEntryUpdatedHandler,
   SourceStateChanged: sourceStateChangedHandler,
@@ -201,6 +232,8 @@ export const handlers: HandlerMap = {
   PostingContentSnapshotCaptured: postingContentSnapshotCapturedHandler,
   PostingContentSnapshotFailed: postingContentSnapshotFailedHandler,
   JobActiveStateChanged: jobActiveStateChangedHandler,
+  JobAvailabilityObserved: jobAvailabilityObservedHandler,
+  AvailabilityLeaseChanged: availabilityRequestChangedHandler,
   ContentDuplicateCandidateDetected: contentDuplicateCandidateDetectedHandler,
   JobScored: jobScoredHandler,
   ScoreCorrected: scoreCorrectedHandler,
@@ -214,6 +247,7 @@ export const handlers: HandlerMap = {
   BulletProvenanceRecorded: bulletProvenanceRecordedHandler,
   InterviewPrepGenerated: interviewPrepGeneratedHandler,
   InterviewPrepFailed: interviewPrepFailedHandler,
+  InterviewQuestionNoteSaved: interviewQuestionNoteSavedHandler,
   TailoringPolicyUpdated: tailoringPolicyUpdatedHandler,
   TailorRetailorRequested: tailorRetailorRequestedHandler,
   TailoredArtifactsSuppressed: tailoredArtifactsSuppressedHandler,
@@ -236,9 +270,15 @@ export const handlers: HandlerMap = {
   EmailApplicationCandidateRecorded: emailApplicationCandidateRecordedHandler,
   ApplicationEmailFeedbackIngested: applicationEmailFeedbackIngestedHandler,
   ApplicationSubmitted: applicationSubmittedHandler,
+  DryRunCompleted: dryRunCompletedHandler,
   ApplicationFailed: applicationFailedHandler,
   ApplyReviewDecisionRecorded: applyReviewDecisionRecordedHandler,
   ApplicationOutcomeRecorded: applicationOutcomeRecordedHandler,
+  OfferRecordChanged: (event) => [
+    invalidate(outcomesKeys.detail(event.tenantId, event.payload.jobId)),
+    invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+    invalidate(outreachKeys.threads(event.tenantId)),
+  ],
   OutcomeSuggestionDecided: outcomeSuggestionDecidedHandler,
   StageStarted: stageStartedHandler,
   StageCompleted: stageCompletedHandler,
@@ -270,6 +310,7 @@ export const handlers: HandlerMap = {
   ContactResearchTaskNeedsReview: contactResearchTaskNeedsReviewHandler,
   ContactResearchTaskCompleted: contactResearchTaskCompletedHandler,
   ContactResearchTaskFailed: contactResearchTaskFailedHandler,
+  ContactResearchSourceAttemptFailed: contactResearchSourceAttemptFailedHandler,
   OutreachDraftGenerated: outreachDraftGeneratedHandler,
   OutreachDraftRevised: outreachDraftRevisedHandler,
   OutreachDraftApproved: outreachDraftApprovedHandler,
@@ -310,12 +351,34 @@ export const invalidationRouter: InvalidationRouter = {
         );
         continue;
       }
+      if (item.kind === "reconcile-query") {
+        for (const query of queryClient.getQueryCache().findAll({ queryKey: item.queryKey })) {
+          const current = query.state.data;
+          // Reconcile explicit invalidation and responses in flight on the server.
+          const next = query.state.isInvalidated || query.state.fetchStatus === "fetching"
+            ? undefined
+            : item.updater(current, query.queryKey);
+          if (next !== undefined && next !== current) {
+            // A partial event patch does not refresh unrelated fields.
+            queryClient.setQueryData(query.queryKey, next, {
+              updatedAt: query.state.dataUpdatedAt,
+            });
+          }
+          if (next === undefined || item.invalidateAfterPatch) {
+            void queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true });
+          }
+        }
+        continue;
+      }
       // High-frequency `ApplyRunEventRecorded` events patch the apply-run
       // cache surgically per target §7.5; refetching per per-second event
       // would saturate the API.
-      queryClient.setQueryData(applyRunsKeys.detail(item.tenantId, item.runId), (current) =>
-        appendApplyRunEvent(current as never, item.event),
-      );
+      queryClient.setQueryData(applyRunsKeys.detail(item.tenantId, item.runId), (current) => {
+        const observed = queryClient.getQueryCache().findAll({ queryKey: workflowRunsKeys.detail(item.tenantId, item.runId) })
+          .some((query) => query.isActive());
+        const timeline = current ?? (observed ? { events: [] } : undefined);
+        return appendApplyRunEvent(timeline as never, item.event);
+      });
     }
   },
 };

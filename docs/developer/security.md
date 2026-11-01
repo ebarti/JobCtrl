@@ -27,7 +27,7 @@ JSON-RPC/Temporal, and a Python worker performs discovery, enrichment, scoring,
 resume and cover-letter generation, PDF rendering, Gmail-assisted verification,
 and guarded apply automation. A Chromium extension is integrated Discovery's
 live-profile browser transport and can also capture the active page and run
-deterministic autofill against the local API.
+source-bound model autofill against the local API.
 
 Primary assets are the candidate profile and resume baseline, generated resumes
 and cover letters, application history, SQLite event/projection data, local
@@ -100,11 +100,9 @@ Locality is enforced structurally for ordinary local callers:
 ::: warning The loopback assumption is load-bearing
 Be honest about the limits. This posture is safe only while the API stays on
 loopback; the moment it is exposed remotely, the loopback assumption breaks and
-real authentication is required (see [Hosted-Future Posture](#hosted-future-posture)).
-Hosted auth, tenant isolation, an encrypted secret vault, and an audit log are
-roadmap items, not current guarantees — see [SECURITY.md](../../SECURITY.md) and
-the SaaS section of the [backlog](../backlog.md). Local data at rest is not
-encrypted.
+real authentication and a separate security review are required. Remote or
+multi-user exposure is outside this local threat model; see
+[SECURITY.md](../../SECURITY.md). Local data at rest is not encrypted.
 :::
 
 ### Attack Surface, Mitigations, And Attacker Stories
@@ -126,11 +124,12 @@ HTML preview path as sensitive.
 surface. After pairing with the local capability token it can POST active-page
 captures, GET a whitelisted autofill profile DTO, and lease bounded
 execution-bound Discovery tasks from the memory-only broker. It has no
-apply/submit route, and deterministic autofill excludes password and resume
+apply/submit route, and source-bound model autofill excludes password and resume
 content. The content script intentionally matches all HTTP(S) pages so source
 and application hosts do not require per-host releases; autofill remains passive
 until an explicit review click, while the background worker may open temporary
-inactive tabs for an explicitly started/scheduled Discover execution. The
+tabs for an explicitly started/scheduled Discover execution. LinkedIn job
+pages use an active tab in an unfocused window; other pages remain inactive. The
 manifest's HTTP(S) host permission is also wildcarded so brokered API requests
 can execute in the service worker when an API origin cannot host an injectable
 HTML page. Capture/autofill routes remain loopback-only; the service worker does
@@ -168,13 +167,19 @@ installs tab-scoped DNR rules that allow main-frame navigation
 only to the exact source origin; a cross-origin redirect is blocked before
 dispatch. A task-scoped `webNavigation.onErrorOccurred` listener observes only
 the temporary tab's top frame, reports cross-origin blocked navigation as
-non-retryable `unsafe_redirect`, and is removed during task cleanup. Page-owned
+non-retryable `unsafe_redirect`, and is removed during task cleanup. LinkedIn job tasks move their known owned `about:blank` tab into
+`windows.create({focused: false, tabId})` before target navigation, leaving that
+tab active without focusing its window. Cleanup removes only the task-owned tab,
+not the whole window, so user-added tabs survive. Late tab/window creation and
+DNR installation perform cleanup again after cancellation instead of leaking
+resources or starting a canceled navigation. Page-owned
 fetch/XHR subresources are not matched by the DNR rules. The content script and broker independently reject non-web,
 credential-bearing, lexically local, or cross-origin final targets. Response
 streaming stops at the 4 MB UTF-8 byte bound instead of buffering an unbounded
 body. JobCtrl applies host pacing,
-run budgets, and robots policy around that transport; `robots.txt` is acquired
-through the same profile and evaluated with the browser-reported user agent.
+concurrency and run budgets around that transport. Neither connected nor
+anonymous Discovery/Enrich requests or evaluates `robots.txt`; historical
+robots-blocked outcomes remain readable and retryable.
 JobStreaming remains a documented residual for request accounting because its
 internal traversal is invocation-gated, even though its provider sessions use
 the extension. Normal rendered-page subresource loading is Chrome/site-owned and
@@ -190,7 +195,7 @@ cover-letter generation combine untrusted job/contact text with sensitive
 profile facts. Main impacts are privacy leakage to configured providers and
 integrity attacks on scores, recommendations, generated materials, or
 applicant-side outreach drafts. Controls include structured schemas,
-deterministic requirement/evidence grounding, provenance rows, rendered-text
+source-bound model claim verification and mechanical citation binding, provenance rows, rendered-text
 keyword coverage, never-fabricate detectors, structured judge review,
 adversarial review for high-fit jobs, and fail-closed preservation of the last
 accepted artifact. Prompt injection that only changes a reviewable score or
@@ -219,12 +224,16 @@ The detailed containment rules are below in
 [Apply-Path Containment](#apply-path-containment).
 
 **Secrets, files, and observability.** Runtime LLM provider keys use explicit
-environment variables first, with a process-start macOS Keychain fallback for
-three supported settings. The fallback never overrides a non-empty environment
-value and never exposes the stored value through HTTP, logs, or diagnostics.
-Native Windows and Linux credential-store adapters are planned. The CapSolver
-key is an env var scoped to the owned solver tool; Gmail token files are local;
-job-site passwords, if saved, remain local profile data and are not exposed to
+inherited environment variables first, with a process-start native OS
+credential-store fallback for the fixed secret allowlist. The fallback never
+overrides a non-empty environment value and never exposes the stored value through HTTP, logs, or diagnostics.
+The adapters use macOS Keychain, Windows Credential Manager, and Linux Secret
+Service. The CapSolver key is an env var scoped to the owned solver tool; Gmail token files are local and
+use a private same-directory staged replacement for authentication and refresh.
+Windows stages use a protected current-user and LocalSystem DACL at creation;
+filesystems without persistent ACLs refuse the write. Provider errors and token
+contents are not included in persistence errors.
+Job-site passwords, if saved, remain local profile data and are not exposed to
 the page-reading agent.
 SQLite, generated artifacts, browser profiles, logs, prompts, completions, and
 worker directories are sensitive. Langfuse/OTel export is opt-in and
@@ -283,6 +292,11 @@ retries and layered containment. The use case
 (`infrastructure/apply/claude_code_cli.py`) enforce it; the full stage walkthrough
 is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
 
+- **Launch-bound browser cleanup.** Browser startup refuses an occupied CDP
+  resource. Cancellation and shutdown select only the exact recorded launch
+  identity, preserving unrelated listeners and processes. The platform
+  authority and incomplete-cleanup rules are owned by
+  [Apply browser ownership](../architecture/runtime.md#apply-browser-ownership).
 - **No model-owned final browser commit.** Every model-driven browser session
   is transport-locked. A live browser-form run returns
   `trusted_final_submit_required` before prompt rendering or browser launch.
@@ -397,22 +411,23 @@ apply-worker state, or raw logs and traces. Use synthetic fixtures or
 
 **Store credentials in a secret port.** Credentials must use a secret port or
 explicit environment variables, never SQLite, snapshots, logs, traces, or
-artifacts (TR-013). The macOS-only API store
+artifacts (TR-013). The native API credential store
 (`apps/api/src/credentials.ts`) accepts only the fixed Claude/Google guided
 allowlist plus legacy OpenAI-key deletion. It can atomically replace a provider
-configuration, presence-check, and remove those Keychain entries without
-returning values. Private reads are limited to compensating rollback after a
-failed batch and must never be logged or sent over HTTP. Presence is tri-state:
+configuration, presence-check, and remove those native entries without
+returning values. Native reads used for presence inspection, compensating
+rollback, or migration verification remain private and must never be logged or
+sent over HTTP. Presence is tri-state:
 `configured: false` means
 confirmed absent; `configured: null` with `inspection_failed` means unknown and
 must not be collapsed into absence. Unsupported mutations return a sanitized
 409, operational store failures a sanitized 503 with an explicit failure reason, and
-neither exposes raw `security` output. After env-file loading, the shared Python
+neither exposes raw native-store command output. After env-file loading, the shared Python
 `config.load_env()` boundary loads a missing or empty value through a bounded,
-non-interactive Keychain lookup once per process; any non-empty environment
+native credential lookup once per process; any non-empty environment
 value wins, failures degrade to no fallback, and long-lived workers require a
-restart after a web edit. Windows and Linux use environment configuration until
-their planned native adapters ship. The
+restart after a web edit. Persistent legacy secret migration verifies native
+readback before removing source assignments and never logs values. The
 CapSolver key is an env var scoped to the
 owned CAPTCHA tool. A job-site login password, if the user provides one,
 remains local profile data; it is neither interpolated into the Apply prompt nor
@@ -458,38 +473,21 @@ to a fixture just because the scrubber is green today.
 
 **The docs site has a publish boundary.** The VitePress config
 (`docs/.vitepress/config.ts`) excludes `docs/plans/`, `docs/incidents/`,
-`docs/backlog.md`, `docs/delivered.md`, and the repo-facing `docs/README.md`
+`docs/delivered.md`, and the repo-facing `docs/README.md`
 from the built site via `srcExclude`,
 and rewrites any inbound link that escapes the published set (repo-root files or
 unpublished internal docs) to an absolute GitHub URL so the deployed site never
 ships a relative link that 404s. When adding a page, keep internal-only material
 in the excluded set and link to it normally; the config handles the rewrite.
 
-## Hosted-Future Posture
+## Deployment Boundary {#hosted-future-posture}
 
-The local-only posture is a deliberate stop on the way to a hosted multi-tenant
-target, and the seams that would change security are already named in
-[`docs/architecture/domain-model/cloud.md`](../architecture/domain-model/cloud.md) §9 (with fitness functions in §9.4) and
-the SaaS section of the [backlog](../backlog.md). The load-bearing ones:
-
-- **API authentication.** "No auth" holds only while the API is loopback-bound.
-  Any public-facing deployment triggers an Identity & Access context — Auth0 or
-  Cognito issuing JWTs, validated by a gateway that injects a
-  `TenantContext { tenantId, userId, roles }` into every request.
-- **Tenant derivation.** Domain types already carry `TenantId`; today it is the
-  constant `local`. In hosted mode the value's source changes to JWT claims — a
-  mechanical change, because query keys, events, and projections are already
-  tenant-scoped.
-- **Secret storage.** The current environment-first, macOS-Keychain-fallback
-  credential model gives way to a managed secret vault (e.g. AWS Secrets
-  Manager) on any hosted or multi-tenant deployment. `.env` is unencrypted.
-- **Browser isolation.** Local Chrome on CDP ports becomes managed browser
-  sessions (e.g. Browserbase) on any cloud deployment, because running Chrome in a
-  container needs elevated privileges or `--no-sandbox`. This is a day-1 cloud
-  blocker, not a gradual migration.
-
-None of these exist in local mode today; they are the next-evolution seam, and
-each is gated by a concrete trigger rather than shipped speculatively.
+This threat model covers the local product. Tenant-scoped types and query keys
+do not establish authenticated multi-user isolation, and loopback checks do not
+protect a remotely exposed API. A different deployment requires its own
+authentication, authorization, credential, browser and data-isolation review
+before it can make security guarantees. The current guarantees and reporting
+policy are documented in [SECURITY.md](../../SECURITY.md).
 
 ## Reporting A Security Issue
 

@@ -27,27 +27,14 @@ function scoreTone(score: number | null): ScoreTone {
 }
 
 function scoreBadgeStyle(score: number | null): ScoreBadgeStyle | undefined {
-  if (score === null) return undefined;
-  const clamped = clampScore(score);
-  if (clamped === 5) {
-    return {
-      "--fit-score-bg": "var(--muted)",
-      "--fit-score-border": "var(--border)",
-      "--fit-score-fg": "var(--muted-foreground)",
-      "--fit-score-shadow": "none",
-    };
-  }
-
-  const token = clamped > 5 ? "var(--success)" : "var(--destructive)";
-  const distance = Math.abs(clamped - 5) / 5;
-  const fill = Math.round(12 + distance * 40);
-  const border = Math.round(24 + distance * 42);
-
+  const filled = score !== null && clampScore(score) > 5;
   return {
-    "--fit-score-bg": `color-mix(in oklab, ${token} ${fill}%, var(--card))`,
-    "--fit-score-border": `color-mix(in oklab, ${token} ${border}%, var(--border))`,
-    "--fit-score-fg": "var(--foreground)",
-    "--fit-score-shadow": `inset 0 0 0 1px color-mix(in oklab, ${token} ${Math.min(border, 64)}%, transparent)`,
+    "--fit-score-bg": filled ? "var(--primary)" : "var(--card)",
+    "--fit-score-border": score === null ? "var(--border)" : "var(--primary)",
+    "--fit-score-fg": filled
+      ? "var(--primary-foreground)"
+      : score === null ? "var(--muted-foreground)" : "var(--foreground)",
+    "--fit-score-shadow": "none",
   };
 }
 

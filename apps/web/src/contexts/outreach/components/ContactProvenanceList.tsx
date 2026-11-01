@@ -30,7 +30,7 @@ export function ContactProvenanceList({ attributes }: ContactProvenanceListProps
         return (
           <li key={attribute.attributeId} className="contact-provenance-item">
             <div className="contact-provenance-fact">
-              <span className="contact-attribute-kind">{kindLabel}</span>
+              <span className="contact-attribute-kind" data-typography="label">{kindLabel}</span>
               <span className="contact-attribute-value">{attribute.value}</span>
             </div>
             <dl

@@ -33,6 +33,15 @@ class LlmMessage:
     content: str
 
 
+class LlmFailure(RuntimeError):
+    """Provider-neutral failure code; source text never belongs in the message."""
+
+    def __init__(self, code: str, *, retryable: bool = True):
+        self.code = code
+        self.retryable = retryable
+        super().__init__(f"llm:{code}")
+
+
 class LlmPort(Protocol):
     """Driven port for chat-style LLM completion.
 

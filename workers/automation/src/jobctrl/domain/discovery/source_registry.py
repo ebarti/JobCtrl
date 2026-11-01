@@ -50,17 +50,13 @@ class SourcePolicyMethod(str, Enum):
 
 
 class RobotsPolicy(str, Enum):
-    """How the politeness gateway treats robots.txt for a source.
+    """Acquisition policy metadata; robots.txt is never consulted.
 
-    ``HONOR`` (the fail-closed default) fetches and obeys the target host's
-    ``robots.txt`` before any page-rendering fetch. ``EXEMPT_DOCUMENTED_API``
-    marks a source that is accessed through a documented public JSON API or
-    licensed feed whose usage is governed by that documented contract rather
-    than the host's crawl directives (owner decision D2). Rate, concurrency,
-    and per-run budget still apply to exempt sources — only the robots check
-    is skipped.
+    Historical values remain readable for existing source records. They do not
+    enable enforcement: all supported acquisition uses the same no-robots policy.
     """
 
+    IGNORE = "ignore"
     HONOR = "honor"
     EXEMPT_DOCUMENTED_API = "exempt_documented_api"
 
@@ -133,7 +129,7 @@ class SourcePolicy:
     # politeness gateway (``infrastructure/network``) enforces them at every
     # fetch surface. ``max_pages_per_run`` keeps its existing meaning (result
     # volume); ``max_requests_per_run`` is the distinct outbound-request budget.
-    robots_policy: RobotsPolicy = RobotsPolicy.HONOR
+    robots_policy: RobotsPolicy = RobotsPolicy.IGNORE
     min_request_interval_seconds: float = 1.0
     max_concurrent_requests_per_host: int = 1
     max_requests_per_run: int = 500
@@ -187,7 +183,6 @@ WORKDAY_API_POLICY = SourcePolicy(
     allowed_methods=(SourcePolicyMethod.API,),
     max_pages_per_run=500,
     max_run_frequency="PT6H",
-    robots_policy=RobotsPolicy.EXEMPT_DOCUMENTED_API,
     max_requests_per_run=2000,
 )
 
@@ -196,13 +191,12 @@ ATS_API_POLICY = SourcePolicy(
     allowed_methods=(SourcePolicyMethod.API,),
     max_pages_per_run=500,
     max_run_frequency="PT6H",
-    robots_policy=RobotsPolicy.EXEMPT_DOCUMENTED_API,
     max_requests_per_run=2000,
 )
 
 # Detail-page enrichment crawls arbitrary employer/board detail hosts with a
-# real browser, so it honors robots.txt (fail-closed default) and paces every
-# navigation through the shared host limiter. ``min_request_interval_seconds``
+# browser or guarded HTTP transport. It does not consult robots.txt and paces
+# every navigation through the shared host limiter. ``min_request_interval_seconds``
 # subsumes the old fixed per-site ``SITE_DELAYS`` sleep (default was 2.0s); the
 # host-keyed limiter now applies that spacing per host across threads.
 # ``max_requests_per_run`` is a runaway-navigation safety valve, not a normal-run
@@ -212,7 +206,6 @@ ENRICHMENT_CRAWL_POLICY = SourcePolicy(
     allowed_methods=(SourcePolicyMethod.RENDERED_DETAIL,),
     max_pages_per_run=500,
     max_run_frequency="PT6H",
-    robots_policy=RobotsPolicy.HONOR,
     min_request_interval_seconds=2.0,
     max_concurrent_requests_per_host=1,
     max_requests_per_run=1000,

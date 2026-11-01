@@ -46,9 +46,7 @@ def _valid_profile() -> dict:
                     "date": "2019",
                 }
             ],
-            "skill_categories": [
-                {"id": "lang", "label": "Languages", "items": ["Python", "Go"]}
-            ],
+            "skill_categories": [{"id": "lang", "label": "Languages", "items": ["Python", "Go"]}],
             "tailoring_rules": {
                 "required_experience_entry_ids": ["role_1"],
                 "required_education_entry_ids": ["edu_1"],
@@ -65,9 +63,9 @@ def _valid_profile() -> dict:
 
 
 def _new_repo(tmp_path: Path) -> tuple[SqliteProfileRepository, sqlite3.Connection, list[DomainEvent]]:
-    conn = sqlite3.connect(tmp_path / "jobctrl.db")
-    conn.row_factory = sqlite3.Row
-    ensure_profile_tables(conn)
+    from jobctrl.database import init_db
+
+    conn = init_db(tmp_path / "jobctrl.db")
     bus = InProcessEventBus()
     events: list[DomainEvent] = []
     bus.subscribe(None, events.append)
@@ -103,9 +101,7 @@ def test_profile_schema_is_normalized_without_blob_escape_hatch(tmp_path):
         "candidate_profile_resume_constraint_metrics",
     }.issubset(tables)
 
-    root_columns = {
-        row["name"] for row in conn.execute("PRAGMA table_info(candidate_profiles)")
-    }
+    root_columns = {row["name"] for row in conn.execute("PRAGMA table_info(candidate_profiles)")}
     forbidden = {"style_json", "json_blob", "payload_json"}
     assert root_columns.isdisjoint(forbidden)
 
@@ -128,14 +124,9 @@ def test_profile_schema_initializer_does_not_repair_partial_legacy_table(tmp_pat
 
     ensure_profile_tables(conn)
 
-    root_columns = {
-        row["name"] for row in conn.execute("PRAGMA table_info(candidate_profiles)")
-    }
+    root_columns = {row["name"] for row in conn.execute("PRAGMA table_info(candidate_profiles)")}
     assert "experience_target_track" not in root_columns
-    assert not any(
-        statement.lstrip().upper().startswith("ALTER TABLE CANDIDATE_PROFILES")
-        for statement in statements
-    )
+    assert not any(statement.lstrip().upper().startswith("ALTER TABLE CANDIDATE_PROFILES") for statement in statements)
     conn.close()
 
 
@@ -148,11 +139,9 @@ def test_save_and_load_round_trips_profile_through_relational_rows(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM candidate_profiles").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM candidate_profile_experience_entries").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM candidate_profile_experience_bullets").fetchone()[0] == 2
-    assert conn.execute("SELECT COUNT(*) FROM candidate_profile_achievement_evidence").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM candidate_profile_achievement_evidence").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM candidate_profile_skill_items").fetchone()[0] == 2
-    root = conn.execute(
-        "SELECT writing_tone, max_experience_bullets FROM candidate_profiles"
-    ).fetchone()
+    root = conn.execute("SELECT writing_tone, max_experience_bullets FROM candidate_profiles").fetchone()
     assert root["writing_tone"] == "technical"
     assert root["max_experience_bullets"] == 3
 
@@ -161,165 +150,8 @@ def test_save_and_load_round_trips_profile_through_relational_rows(tmp_path):
     loaded_entry = loaded.to_dict()["resume"]["experience_entries"][0]
     assert loaded_entry["summary"] == "Owned the backend platform mandate."
     assert loaded_entry["bullets"] == ["Built APIs.", "Reduced incidents 40%."]
-    assert [item["id"] for item in loaded_entry["achievement_evidence"]] == [
-        "role_1_bullet_1",
-        "role_1_bullet_2",
-    ]
-    assert [item["source_text"] for item in loaded_entry["achievement_evidence"]] == [
-        "Built APIs.",
-        "Reduced incidents 40%.",
-    ]
-    assert loaded_entry["achievement_evidence"][1]["metrics"] == ["40%"]
+    assert loaded_entry["achievement_evidence"] == []
     assert [event.event_type for event in events] == ["ProfileUpdated"]
-
-
-def test_metric_projection_derives_achievement_metrics_and_preserves_legacy_values(tmp_path):
-    repo, conn, _ = _new_repo(tmp_path)
-    raw = _valid_profile()
-    raw["resume"]["experience_entries"][0]["bullets"] = [
-        "Reduced synthetic warehouse energy spend by £240k (12%) against a £2M+ budget."
-    ]
-    legacy_metric = "Unassigned synthetic legacy metric: 99.9% uptime"
-    raw["resume_constraints"] = {"real_metrics": [legacy_metric]}
-
-    snapshot = repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, raw))
-
-    assert snapshot.as_dict()["resume_constraints"]["real_metrics"] == [
-        "£240k",
-        "12%",
-        "£2M+",
-        legacy_metric,
-    ]
-    assert [
-        row["metric_text"]
-        for row in conn.execute(
-            "SELECT metric_text FROM candidate_profile_resume_constraint_metrics "
-            "ORDER BY metric_index"
-        ).fetchall()
-    ] == ["£240k", "12%", "£2M+", legacy_metric]
-
-    loaded = repo.load(LOCAL_TENANT)
-    assert loaded is not None
-    updated = loaded.to_dict()
-    updated["resume"]["experience_entries"][0]["bullets"] = [
-        "Reduced synthetic warehouse energy spend by £250k (13%) against a £2M+ budget."
-    ]
-    stale_round_trip = Profile.from_dict(LOCAL_TENANT, updated)
-
-    refreshed_snapshot = repo.save(LOCAL_TENANT, stale_round_trip)
-
-    assert refreshed_snapshot.as_dict()["resume_constraints"]["real_metrics"] == [
-        "£250k",
-        "13%",
-        "£2M+",
-        legacy_metric,
-    ]
-    assert [
-        row["metric_text"]
-        for row in conn.execute(
-            "SELECT metric_text FROM candidate_profile_resume_constraint_metrics "
-            "ORDER BY metric_index"
-        ).fetchall()
-    ] == ["£250k", "13%", "£2M+", legacy_metric]
-
-
-def test_save_rederives_materialized_achievement_evidence_when_bullets_change(tmp_path):
-    repo, _, _ = _new_repo(tmp_path)
-
-    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, _valid_profile()))
-    loaded = repo.load(LOCAL_TENANT)
-    assert loaded is not None
-    updated = loaded.to_dict()
-    updated["resume"]["experience_entries"][0]["bullets"] = [
-        "Built APIs.",
-        "Reduced incidents 55%.",
-    ]
-
-    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, updated))
-
-    refreshed = repo.load(LOCAL_TENANT)
-    assert refreshed is not None
-    refreshed_entry = refreshed.to_dict()["resume"]["experience_entries"][0]
-    assert [item["source_text"] for item in refreshed_entry["achievement_evidence"]] == [
-        "Built APIs.",
-        "Reduced incidents 55%.",
-    ]
-    assert refreshed_entry["achievement_evidence"][1]["metrics"] == ["55%"]
-    assert refreshed.resume_constraints.real_metrics == ("55%",)
-
-
-@pytest.mark.parametrize("with_authored", [False, True])
-def test_save_preserves_reordered_bullet_evidence_and_required_controls(tmp_path, with_authored):
-    repo, conn, _ = _new_repo(tmp_path)
-    raw = _valid_profile()
-    raw["resume"]["experience_entries"][0]["bullets"] = [
-        "Reduced incidents 40%.", "Built APIs.", "Reduced incidents 40%."
-    ]
-    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, raw))
-    loaded = repo.load(LOCAL_TENANT)
-    assert loaded is not None
-    updated = loaded.to_dict()
-    entry = updated["resume"]["experience_entries"][0]
-    if with_authored:
-        entry["achievement_evidence"][1].update(id="authored_api", tags=["authored"])
-    original = {item["id"]: item for item in entry["achievement_evidence"]}
-    entry["bullets"] = ["Built APIs.", "Reduced incidents 40%.", "Reduced incidents 40%."]
-
-    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, updated))
-    loaded = repo.load(LOCAL_TENANT)
-    assert loaded is not None
-    updated = loaded.to_dict()
-    updated["personal"]["preferred_name"] = "Jordan"
-    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, updated))
-    loaded = repo.load(LOCAL_TENANT)
-    assert loaded is not None
-    result = loaded.to_dict()
-    assert {item["id"]: item for item in result["resume"]["experience_entries"][0]["achievement_evidence"]} == original
-    assert result["resume"]["tailoring_rules"]["required_bullets_by_experience_id"] == {"role_1": ["Built APIs."]}
-    assert {
-        row["evidence_id"]: (row["source_text"], json.loads(row["metrics_json"]))
-        for row in conn.execute("SELECT evidence_id, source_text, metrics_json FROM candidate_profile_achievement_evidence")
-    } == {key: (item["source_text"], item["metrics"]) for key, item in original.items()}
-
-    # A later edit and deletion refresh only the changed achievement; the moved
-    # API bullet and remaining incident evidence keep their established IDs.
-    result["resume"]["experience_entries"][0]["bullets"] = ["Built APIs.", "Reduced incidents 55%."]
-    snapshot = repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, result))
-    assert snapshot.as_dict()["resume_constraints"]["real_metrics"] == ["55%"]
-    assert conn.execute("SELECT COUNT(*) FROM candidate_profile_achievement_evidence").fetchone()[0] == 2
-
-
-def test_save_rederives_precanonical_materialized_evidence_when_bullet_changes(tmp_path):
-    repo, conn, _ = _new_repo(tmp_path)
-    raw = _valid_profile()
-    raw["resume"]["experience_entries"][0]["bullets"][0] = (
-        "Scaled the platform to 200 users."
-    )
-    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, raw))
-
-    # Simulate the exact auto-derived row written before count metrics such as
-    # "200 users" were recognized. The old extractor stored an empty list.
-    conn.execute(
-        "UPDATE candidate_profile_achievement_evidence SET metrics_json = '[]' "
-        "WHERE evidence_id = 'role_1_bullet_1'"
-    )
-    conn.commit()
-
-    loaded = repo.load(LOCAL_TENANT)
-    assert loaded is not None
-    updated = loaded.to_dict()
-    updated["resume"]["experience_entries"][0]["bullets"][0] = (
-        "Scaled the platform to 250 users."
-    )
-    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, updated))
-
-    refreshed = repo.load(LOCAL_TENANT)
-    assert refreshed is not None
-    evidence = refreshed.to_dict()["resume"]["experience_entries"][0][
-        "achievement_evidence"
-    ][0]
-    assert evidence["source_text"] == "Scaled the platform to 250 users."
-    assert evidence["metrics"] == ["250 users"]
 
 
 def test_save_and_load_preserves_achievement_evidence_and_tailoring_controls(tmp_path):
@@ -334,7 +166,6 @@ def test_save_and_load_preserves_achievement_evidence_and_tailoring_controls(tmp
             "tools": ["Python", "PostgreSQL"],
             "metrics": ["35% latency reduction"],
             "outcome": "faster API responses",
-            "seniority_signal": "technical ownership",
             "evidence_strength": "verified",
             "claim_confidence": 0.95,
             "user_confirmed": True,
@@ -379,9 +210,10 @@ def test_save_and_load_preserves_achievement_evidence_and_tailoring_controls(tmp
     assert loaded is not None
     loaded_entry = loaded.to_dict()["resume"]["experience_entries"][0]
     assert loaded_entry["achievement_evidence"] == raw["resume"]["experience_entries"][0]["achievement_evidence"]
-    assert loaded.to_dict()["resume"]["tailoring_rules"]["tailoring_policy"][
-        "auto_approvable_claim_modes"
-    ] == ["verified_only", "adjacent_translation"]
+    assert loaded.to_dict()["resume"]["tailoring_rules"]["tailoring_policy"]["auto_approvable_claim_modes"] == [
+        "verified_only",
+        "adjacent_translation",
+    ]
     assert loaded.to_dict()["resume"]["tailoring_rules"]["revision_gates"] == {
         "min_fit_score": 9,
         "must_have_coverage": 0.9,

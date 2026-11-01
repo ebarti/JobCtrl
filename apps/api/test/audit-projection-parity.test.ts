@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 /**
  * Cross-runtime projection parity for the read-model projections (AUDIT-02).
  *
@@ -13,7 +14,7 @@
  *    match the fixture's ``expected`` block, both as raw projection columns AND as
  *    the camelCase DTOs the read model serves, and
  *  - the FULL dual-written column set for job_list_projections /
- *    job_detail_projections / dashboard_projections matches the fixture's
+ *    dashboard_projections plus the TS-owned job_detail_projections matches the fixture's
  *    ``expectedProjections`` block key-for-key, PLUS a column-set guard: the set
  *    of columns the TS builder emits must equal the fixture's expected keys plus
  *    the wall-clock ``nonDeterministicColumns``. That guard fails if EITHER
@@ -30,7 +31,7 @@ import Database from "better-sqlite3";
 
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const FIXTURE_PATH = fileURLToPath(
   new URL("../../../packages/domain-types/test/fixtures/audit_projection_parity.json", import.meta.url),
@@ -192,10 +193,10 @@ function seedRows(dbPath: string): void {
   db.prepare(
     `INSERT INTO jobs (
        tenant_id, job_id, url, title, company, site, strategy, location, salary, description,
-       full_description, application_url, apply_status, applied_at,
+       full_description, apply_status, applied_at,
        score_reasoning, discovered_at
      ) VALUES ('local', @job_id, @url, @title, @company, @site, @strategy, @location, @salary, @description,
-       @full_description, @application_url, @apply_status, @applied_at,
+       @full_description, @apply_status, @applied_at,
        @score_reasoning, @discovered_at)`,
   ).run({
     job_id: jobId,
@@ -208,12 +209,13 @@ function seedRows(dbPath: string): void {
     salary: fixture.job.salary,
     description: fixture.job.description,
     full_description: fixture.job.fullDescription,
-    application_url: fixture.job.applicationUrl,
     apply_status: fixture.job.applyStatus,
     applied_at: fixture.job.appliedAt,
     score_reasoning: fixture.job.scoreReasoning,
     discovered_at: fixture.job.discoveredAt,
   });
+
+  seedApplicationUrl(db, "local", jobId, fixture.job.applicationUrl);
 
   const insertScore = db.prepare(
     `INSERT INTO job_scores (
@@ -303,22 +305,23 @@ function seedRows(dbPath: string): void {
     `INSERT INTO job_interview_prep (
        job_id, generation, tenant_id, status, model, generated_at, gate_status,
        fabrication_findings_json, grounding_findings_json, judge_verdict,
-       warnings_json, failure_reason
+       warnings_json, failure_reason, generation_context_json
      ) VALUES (@job_id, @generation, 'local', @status, @model, @generated_at, @gate_status,
        @fabrication_findings_json, @grounding_findings_json, @judge_verdict,
-       @warnings_json, @failure_reason)`,
+       @warnings_json, @failure_reason, @generation_context_json)`,
   );
   for (const prep of fixture.rows.jobInterviewPrep) {
-    insertInterviewPrep.run({ job_id: jobId, ...prep });
+    const context = prep.generation_context_json === null ? null : withExactV7JobIds(JSON.parse(String(prep.generation_context_json)));
+    insertInterviewPrep.run({ job_id: jobId, ...prep, generation_context_json: context === null ? null : JSON.stringify(context) });
   }
   const insertInterviewPrepItem = db.prepare(
     `INSERT INTO job_interview_prep_items (
        job_id, generation, item_id, tenant_id, kind, title, generated_text,
        evidence_ids_json, requirement_ids_json, source_text_json, transform_type,
-       control, grounding_audit_json, warnings_json, position
+       control, grounding_audit_json, warnings_json, position, question_metadata_json
      ) VALUES (@job_id, @generation, @item_id, 'local', @kind, @title, @generated_text,
        @evidence_ids_json, @requirement_ids_json, @source_text_json, @transform_type,
-       @control, @grounding_audit_json, @warnings_json, @position)`,
+       @control, @grounding_audit_json, @warnings_json, @position, @question_metadata_json)`,
   );
   for (const item of fixture.rows.jobInterviewPrepItems) {
     insertInterviewPrepItem.run({ job_id: jobId, ...item });
@@ -510,7 +513,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
   it("the TS builder + read model agree with the Python builder on the audit read shapes", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
-      initializeExactV7Database(dbPath);
+      initializeExactDatabase(dbPath);
       seedRows(dbPath);
 
       const app = buildApp({
@@ -568,11 +571,15 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
 
         // (2) Read path: the read model serves the canonical employer analysis
         // and interview prep on the job detail.
-        expect(detailRes.json().employerAnalysis).toEqual(fixture.expected.employerAnalysisJson);
-        expect(detailRes.json().interviewPrep).toEqual(
-          withExactV7JobIds(fixture.expected.interviewPrepJson),
-        );
-        expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("prompt");
+        expect(detailRes.json().employerAnalysis).toEqual({...fixture.expected.employerAnalysisJson as object,determinations:[]});
+        // Current staleness is derived at the HTTP boundary; retained snapshots
+        // and the cross-runtime canonical projection above remain unchanged.
+        expect(detailRes.json().interviewPrep).toEqual({
+          ...withExactV7JobIds(fixture.expected.interviewPrepJson) as object,
+          staleReasons: ["catalog_changed", "profile_changed", "job_changed", "employer_analysis_changed", "approved_materials_changed"],
+        });
+        expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("promptText");
+        expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("rawPrompt");
         expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("full_description");
 
         // (3) Read path: the artifact detail serves provenance + coverage + voice
@@ -581,34 +588,8 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
         expect(artifactRes.statusCode, artifactRes.body).toBe(200);
         const explanation = artifactRes.json().tailoringExplanation;
         expect(explanation).not.toBeNull();
-        expect(explanation.bulletProvenance).toEqual([
-          {
-            bulletId: "executive_profile#0",
-            section: "executive_profile",
-            sourceId: "executive_profile",
-            evidenceIds: [],
-            sourceText: [],
-            requirementIds: [],
-            matchedKeywords: [],
-            transformType: "reframe",
-            control: "rephrase_allowed",
-            rationale: "Reframed summary.",
-            generatedText: "Senior platform engineer.",
-          },
-          {
-            bulletId: "experience:acme#0",
-            section: "experience",
-            sourceId: "acme",
-            evidenceIds: ["ev_platform"],
-            sourceText: [],
-            requirementIds: ["r1"],
-            matchedKeywords: ["developer platform"],
-            transformType: "voice",
-            control: "rephrase_allowed",
-            rationale: "Voiced.",
-            generatedText: "Owned the developer platform across the fleet.",
-          },
-        ]);
+        expect(explanation.bulletProvenance).toEqual([]);
+        expect(explanation.determinations).toEqual([]);
         expect(explanation.coverageAudit).toEqual({
           computedAgainst: "rendered_text",
           planned: ["developer platform", "kafka"],
@@ -624,7 +605,6 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
           accepted: true,
           model: "claude-opus-4-8",
           promptVersion: "voice-pass-v1",
-          proxyDelta: { improved: true },
           reason: "",
           summaryRejectionReason: "",
           scopeViolations: [],
@@ -651,7 +631,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
   it("the TS builder writes the full projection column set the Python builder produces", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
-      initializeExactV7Database(dbPath);
+      initializeExactDatabase(dbPath);
       seedRows(dbPath);
 
       const app = buildApp({

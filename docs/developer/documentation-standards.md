@@ -15,10 +15,12 @@ only enough context to orient the reader, then link to the owner.
 
 | Concept | Canonical owner |
 | --- | --- |
-| Public product behavior, command surface, runtime requirements, generated artifacts, and top-level safety | Root [`README.md`](../../README.md) |
-| End-user setup, tour, normal flows, configuration, data, and security | The matching page under [`docs/user/`](../user/getting-started.md) |
+| Project summary, install quick start, top-level safety, outbound-data summary, and documentation links | Root [`README.md`](../../README.md), kept short: it links to owners instead of repeating their detail |
+| End-user behavior, setup, tour, normal flows, configuration, data, and security | The matching page under [`docs/user/`](../user/getting-started.md) |
+| CLI command reference | [Daily Workflow](../user/normal-flows.md#command-reference) |
 | Contributor entry and reading path | [Contributor Start](README.md) |
 | Repository layout and source ownership | [Repository & Ownership Map](repository-and-ownership-map.md) |
+| Release preparation, publication, and public-channel verification | [Releasing JobCtrl](releasing.md) |
 | Documentation governance and style | This page |
 | Runtime processes and their responsibilities | [Runtime & Processes](../architecture/runtime.md) |
 | Shared domain types, REST DTOs, JSON-RPC, and API layering | [Contracts, Types & API Boundaries](../architecture/contracts-types-and-api-boundaries.md) |
@@ -32,7 +34,7 @@ only enough context to orient the reader, then link to the owner.
 | Backend and frontend architectural rules | The numbered [backend](../architecture/domain-model/index.md) and [frontend](../architecture/frontend/index.md) references |
 | Product and technical invariants | [Requirements](../requirements.md) |
 | Accepted architectural choices | [Decisions](../decisions.md) |
-| Public direction and detailed deferred work | [`ROADMAP.md`](../../ROADMAP.md) and [`docs/backlog.md`](../backlog.md), respectively |
+| Public direction and detailed deferred work | [`ROADMAP.md`](../../ROADMAP.md) and [GitHub Issues](https://github.com/ebarti/JobCtrl/issues), respectively; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) owns historical backlog dispositions |
 | Active delivery work and implemented records | [`docs/plans/`](../plans/) |
 
 This ownership rule does not forbid a short recap. It forbids maintaining two
@@ -65,11 +67,12 @@ Update the existing owner rather than creating a parallel page:
 
 | What changed | Update |
 | --- | --- |
-| User-facing behavior, CLI commands, runtime requirements, generated artifacts, or safety notes | Root `README.md` and the owning `docs/user/` page when detailed guidance changes |
+| User-facing behavior, CLI commands, runtime requirements, generated artifacts, or safety notes | The owning `docs/user/` page; CLI commands also update the [command reference](../user/normal-flows.md#command-reference). Edit the root `README.md` only when its install steps, pipeline summary, safety list, or outbound-data list becomes wrong; never add feature detail to it |
 | Install, run, verify, or frontend-development commands | `docs/local-development.md` |
 | QA expectations, regression matrix, or manually verified product paths | `docs/local-reliability-qa.md` or its focused `docs/developer/qa/` owner |
 | API route family, JSON-RPC dispatch behavior, or SSE contract | `docs/local-ts-api.md` and the owning `docs/api/` page; field-level changes also update `docs/api/complete-contract.md` |
 | Runtime process ownership or local-first boundary | `docs/architecture/runtime.md` or `docs/architecture/index.md` |
+| Semantic judgments, determination schemas, confirmation, or failure handling | The owning architecture and user page, API contract, `docs/decisions.md`, and Auditability Checks; update `docs/requirements.md` when its contract changes. Validation proves model authority and citation binding without eval corpora |
 | Shared contract/type boundary | `docs/architecture/contracts-types-and-api-boundaries.md` |
 | Canonical data/event/projection flow | `docs/architecture/data-events-and-projections.md`; physical table/file ownership stays in `storage.md` |
 | Pipeline workflow, activity, concurrency, persistence, or failure behavior | The owning `docs/architecture/pipeline/` page |
@@ -149,6 +152,22 @@ runtime jargon once before using the short form.
 Use domain terms within their bounded context. Do not rename an aggregate,
 event, state, or policy in prose merely to sound friendlier; explain it once
 and keep the ubiquitous language intact.
+
+## Site Appearance
+
+The published guide follows the Swiss timetable visual contract in
+[`DESIGN.md`](../../DESIGN.md). The theme imports the product's palette,
+typography stacks and radius from `apps/web/src/styles/tokens.css`; VitePress
+adapts the dark selector at build time so its first paint uses the same tokens.
+Keep article text at a comfortable reading size instead of copying the app's
+compact control sizing. Neutral surfaces, square controls and section rules
+carry the hierarchy; preserve semantic warnings and visible focus.
+
+The homepage retains its existing entry points and feature order. Numbered
+feature markers are visual wayfinding, not a new workflow. Refresh product
+imagery through the [owned synthetic capture workflow](../local-development.md#documentation-screenshots)
+after shared branding or typography changes. Diagram palettes are curated for
+both themes; their system font also works inside serialized zoom images.
 
 ## Diagrams
 

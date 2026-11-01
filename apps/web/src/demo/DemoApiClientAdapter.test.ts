@@ -1,7 +1,10 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
   JOB_SORT_FIELDS,
+  ProfileSchema,
   type ActivityEventSummary,
   type ArtifactDetail,
   type JobCompensationSummary,
@@ -10,6 +13,7 @@ import {
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import { sampleProviderModelsResponse } from "../test/fixtures/projections.js";
+import { makeQuestionPrep } from "../test/fixtures/interviews.js";
 import { FakeTelemetryPort } from "../test/testPorts.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import {
@@ -108,6 +112,10 @@ async function replaceJobs(
 }
 
 const READ_CASES = [
+  ["interviewCatalog", (api: ApiClientPort) => api.interviewCatalog()],
+  ["interviewQuestion", (api: ApiClientPort) => api.interviewQuestion("B11")],
+  ["interviewPrepHistory", (api: ApiClientPort) => api.interviewPrepHistory("job-contoso-reliability")],
+  ["interviewNotes", (api: ApiClientPort) => api.interviewNotes("job-contoso-reliability")],
   ["health", (api: ApiClientPort) => api.health()],
   ["dashboardSummary", (api: ApiClientPort) => api.dashboardSummary()],
   ["outcomeAnalytics", (api: ApiClientPort) => api.outcomeAnalytics()],
@@ -119,10 +127,6 @@ const READ_CASES = [
   ],
   ["discoverySettings", (api: ApiClientPort) => api.discoverySettings()],
   ["discoverySources", (api: ApiClientPort) => api.discoverySources()],
-  [
-    "discoverySourcePreview",
-    (api: ApiClientPort) => api.discoverySourcePreview("demo-source:northwind"),
-  ],
   ["compensationSources", (api: ApiClientPort) => api.compensationSources()],
   [
     "discoveryLocatorCandidates",
@@ -184,6 +188,7 @@ const READ_CASES = [
       api.artifactPreviewHtmlUrl("artifact-tailored-resume", 7),
   ],
   ["profile", (api: ApiClientPort) => api.profile()],
+
   ["profilePreviewPdfUrl", (api: ApiClientPort) => api.profilePreviewPdfUrl(7)],
   [
     "profilePreviewHtmlUrl",
@@ -223,6 +228,15 @@ describe("DemoApiClientAdapter", () => {
     expect(catalog.providers.find((provider) => provider.provider === "claude")?.models).toEqual(
       sampleProviderModelsResponse.providers.find((provider) => provider.provider === "claude")?.models,
     );
+  });
+
+  it("reports model coaching unavailable without fetching or changing the offline profile", async () => {
+    const { adapter, repository } = await createAdapter();
+    const before = repository.snapshotNow();
+    await expect(adapter.requiredBulletSuggestions({ expectedProfileVersion: 1, maximumSuggestions: 12 }))
+      .rejects.toMatchObject({ code: "demo_capability_not_implemented" });
+    expect(repository.snapshotNow()).toEqual(before);
+    repository.dispose();
   });
 
   it("covers every port member and reserves capability errors for unavailable methods", async () => {
@@ -368,6 +382,31 @@ describe("DemoApiClientAdapter", () => {
     expect((await repository.snapshot()).state.receipts).toHaveLength(before + 1);
   });
 
+  it("bounds combined deep pages, honors stage precedence and returns global metadata", async () => {
+    const { adapter, repository } = await createAdapter();
+    const base = repository.snapshotNow().state.readModel.jobs.list.items[0]!;
+    const rows = Array.from({ length: 5001 }, (_, index): JobSummary => ({
+      ...base, jobKey: `synthetic-${String(index).padStart(5, "0")}`,
+      title: "Synthetic page tie", currentStage: index % 2 ? "apply" : "discover",
+      discoveredAt: "2026-01-01T00:00:00Z", deletedAt: null, hiddenAt: null,
+      activeState: "active",
+    }));
+    await replaceJobs(repository, [...rows].reverse());
+    const page = await adapter.jobs({ stage: "score", stages: ["discover", "apply", "discover"], page: 100, pageSize: 50 });
+    expect(page.items.map((job) => job.jobKey)).toEqual(rows.slice(4950, 5000).map((job) => job.jobKey));
+    expect(page.pagination).toEqual({ page: 100, pageSize: 50, total: 5001, pages: 101 });
+    expect(page.filter).toMatchObject({ stages: ["discover", "apply"] });
+    for (const selection of [{}, { stage: "score" as const, stages: [] }, { stages: ["apply" as const] }]) {
+      const result = await adapter.jobs({ ...selection, page: 999, pageSize: 50 });
+      expect(result.pagination.total).toBe(selection.stages?.length ? 2500 : 5001);
+      expect(result.items.length).toBeLessThanOrEqual(50);
+      expect(result.pagination.page).toBe(result.pagination.pages);
+    }
+    const empty = await adapter.jobs({ stages: ["discover", "apply"], q: "no synthetic match", page: 100 });
+    expect(empty.items).toEqual([]);
+    expect(empty.pagination).toEqual({ page: 1, pageSize: 50, total: 0, pages: 1 });
+  }, 15_000);
+
   it("matches production job filters, sorting, pagination, and filter metadata", async () => {
     const { adapter } = await createAdapter();
     const filtered = await adapter.jobs({
@@ -418,6 +457,97 @@ describe("DemoApiClientAdapter", () => {
       pageSize: 1,
       total: 3,
       pages: 3,
+    });
+  });
+
+  it("returns effective stage metadata with globally combined demo pages", async () => {
+    const { adapter, repository } = await createAdapter();
+    const base = repository.snapshotNow().state.readModel.jobs.list.items[0]!;
+    await replaceJobs(repository, [
+      { ...structuredClone(base), jobKey: "combined-a", currentStage: "discover", currentSubstage: "discover", fitScore: 5 },
+      { ...structuredClone(base), jobKey: "combined-b", currentStage: "apply", currentSubstage: "apply", fitScore: 5 },
+      { ...structuredClone(base), jobKey: "combined-c", currentStage: "score", currentSubstage: "score", fitScore: 3 },
+    ]);
+    const combined = await adapter.jobs({ stages: ["discover", "apply", "discover"], stage: "score",
+      sort: "fit_score", dir: "desc", page: 999, pageSize: 1 });
+    expect(combined.items.map((job) => job.jobKey)).toEqual(["combined-b"]);
+    expect(combined.pagination).toEqual({ page: 2, pageSize: 1, total: 2, pages: 2 });
+    expect(combined.filter).toMatchObject({ stage: "score", stages: ["discover", "apply"] });
+    const cleared = await adapter.jobs({ stages: [], stage: "apply" });
+    expect(cleared.pagination.total).toBe(3);
+    expect(cleared.filter).toMatchObject({ stage: "apply", stages: [] });
+    for (const query of [{ stage: "apply" as const }, { stage: "apply" as const, stages: undefined }]) {
+      const scalar = await adapter.jobs(query);
+      expect(scalar.items.map((job) => job.jobKey)).toEqual(["combined-b"]);
+      expect(scalar.filter).toMatchObject({ stage: "apply", stages: ["apply"] });
+    }
+  });
+
+  it("matches production job-state precedence, OR filtering, and pagination", async () => {
+    const { adapter, repository } = await createAdapter();
+    const base = repository.snapshotNow().state.readModel.jobs.list.items[0]!;
+    await replaceJobs(repository, [
+      {
+        ...structuredClone(base),
+        jobKey: "state-active",
+        title: "Active job",
+        deletedAt: null,
+        hiddenAt: null,
+      },
+      {
+        ...structuredClone(base),
+        jobKey: "state-deleted",
+        title: "Deleted job",
+        deletedAt: "2026-07-10T09:00:00.000Z",
+        hiddenAt: null,
+      },
+      {
+        ...structuredClone(base),
+        jobKey: "state-hidden",
+        title: "Hidden job",
+        deletedAt: "2026-07-10T09:00:00.000Z",
+        hiddenAt: "2026-07-11T09:00:00.000Z",
+      },
+      {
+        ...structuredClone(base),
+        jobKey: "state-closed",
+        title: "Closed job",
+        activeState: "expired",
+        deletedAt: null,
+        hiddenAt: null,
+      },
+    ]);
+
+    await expect(
+      adapter.jobs({ deleted: "active", jobStates: ["deleted"] }),
+    ).resolves.toMatchObject({
+      items: [{ jobKey: "state-deleted" }],
+      pagination: { total: 1, pages: 1 },
+      filter: { jobStates: ["deleted"] },
+    });
+    const mixed = await adapter.jobs({
+      jobStates: ["active", "hidden"],
+      sort: "title",
+      dir: "asc",
+      page: 1,
+      pageSize: 1,
+    });
+    expect(mixed.items.map((job) => job.jobKey)).toEqual(["state-active"]);
+    expect(mixed.pagination).toEqual({
+      page: 1,
+      pageSize: 1,
+      total: 2,
+      pages: 2,
+    });
+    await expect(
+      adapter.jobs({ deleted: "closed", jobStates: ["active"] }),
+    ).resolves.toMatchObject({
+      items: [{ jobKey: "state-active" }],
+      pagination: { total: 1 },
+    });
+    await expect(adapter.jobs({ deleted: "closed" })).resolves.toMatchObject({
+      items: [{ jobKey: "state-closed" }],
+      pagination: { total: 1 },
     });
   });
 
@@ -489,29 +619,59 @@ describe("DemoApiClientAdapter", () => {
     await replaceJobs(repository, [high, low]);
 
     for (const sort of JOB_SORT_FIELDS) {
-      const result = await adapter.jobs({
-        sort,
-        dir: "asc",
-        deleted: "all",
-      });
-      expect(
-        result.items.map((job) => job.jobKey),
-        sort,
-      ).toEqual(["sort-low", "sort-high"]);
+      for (const dir of ["asc", "desc"] as const) {
+        const result = await adapter.jobs({
+          stages: ["apply", "tailor", "apply"],
+          sort,
+          dir,
+          deleted: "all",
+        });
+        expect(
+          result.items.map((job) => job.jobKey),
+          `${sort} ${dir}`,
+        ).toEqual(dir === "asc" ? ["sort-low", "sort-high"] : ["sort-high", "sort-low"]);
+        expect(result.pagination.total).toBe(2);
+        expect(result.sort).toEqual({ field: sort, dir });
+      }
     }
 
     const tiedHighKey = { ...structuredClone(low), jobKey: "z-key" };
     const tiedLowKey = { ...structuredClone(low), jobKey: "a-key" };
     await replaceJobs(repository, [tiedHighKey, tiedLowKey]);
-    expect(
-      (
-        await adapter.jobs({
-          sort: "title",
-          dir: "desc",
-          deleted: "all",
-        })
-      ).items.map((job) => job.jobKey),
-    ).toEqual(["a-key", "z-key"]);
+    for (const sort of JOB_SORT_FIELDS) {
+      for (const dir of ["asc", "desc"] as const) {
+        const result = await adapter.jobs({
+          stages: ["apply", "tailor"], sort, dir, deleted: "all",
+          pageSize: 1, page: 2,
+        });
+        expect(result.items.map((job) => job.jobKey), `tied ${sort} ${dir}`)
+          .toEqual(["z-key"]);
+        expect(result.pagination).toEqual({ page: 2, pageSize: 1, total: 2, pages: 2 });
+      }
+    }
+  });
+
+  it("keeps Unicode substring search and locale ordering on combined pages", async () => {
+    const { adapter, repository } = await createAdapter();
+    const base = repository.snapshotNow().state.readModel.jobs.list.items[0]!;
+    const rows: JobSummary[] = [
+      { ...base, jobKey: "unicode-z", title: "Zebra ÄBC engineer", currentStage: "discover" },
+      { ...base, jobKey: "unicode-a", title: "Äpple äbc engineer", currentStage: "apply" },
+      { ...base, jobKey: "unicode-other", title: "Ordinary engineer", currentStage: "score" },
+    ];
+    await replaceJobs(repository, rows);
+    for (const q of ["", "äbc"]) {
+      for (const dir of ["asc", "desc"] as const) {
+        const result = await adapter.jobs({
+          stages: ["discover", "apply"], q, sort: "title", dir,
+          deleted: "all", pageSize: 1, page: 1,
+        });
+        expect(result.items.map((job) => job.jobKey)).toEqual([
+          dir === "asc" ? "unicode-a" : "unicode-z",
+        ]);
+        expect(result.pagination.total).toBe(2);
+      }
+    }
   });
 
   it("matches production compensation state and confidence-band ordering", async () => {
@@ -871,7 +1031,6 @@ describe("DemoApiClientAdapter", () => {
 
     const missingReads = [
       () => adapter.activityEvent("missing"),
-      () => adapter.discoverySourcePreview("missing"),
       () => adapter.resumeReviewDraft("missing"),
       () => adapter.resumeReviewFeedback("missing"),
       () => adapter.resumeTemplate("missing"),
@@ -898,33 +1057,48 @@ describe("DemoApiClientAdapter", () => {
       code: "demo_capability_not_implemented",
     });
   });
+});
 
-  it("emits only closed action telemetry without affecting scenario results", async () => {
-    const telemetry = new FakeTelemetryPort();
-    const { adapter } = await createAdapter({ telemetry });
 
-    await expect(adapter.rescoreJob("job-fabrikam-systems", {})).resolves.toMatchObject({
-      status: "queued",
-    });
-    expect(telemetry.event).toHaveBeenNthCalledWith(1, "demo_action_started", {
-      feature: "scoring",
-      action: "rescore",
-      scenario: "success",
-    });
-    expect(telemetry.event).toHaveBeenCalledTimes(1);
+describe("interview demo contract", () => {
+  it("derives note origins, rejects forged bindings and detaches missing retained origins without rewriting history", async () => {
+    const { adapter, repository } = await createAdapter();
+    const jobId = "job-contoso-reliability";
+    const prep = makeQuestionPrep("B11", jobId);
+    await repository.mutate((draft) => { draft.state.readModel.jobs.details[jobId]!.interviewPrep = prep; });
+    await expect(adapter.saveInterviewNote(jobId, { questionId: "TS09", expectedRevision: 0, noteText: "Invalid origin", sourceGeneration: prep.generation })).rejects.toMatchObject({ status: 400, message: "invalid_interview_note_source" });
+    await expect(adapter.saveInterviewNote(jobId, { questionId: "B11", expectedRevision: 0, noteText: "Forged context", sourceGeneration: prep.generation, bindings: { catalogBinding: null, cardRevision: null, cardDigest: null, contextDigest: "a".repeat(64) } })).rejects.toMatchObject({ status: 400, message: "invalid_interview_note_bindings" });
+    const saved = await adapter.saveInterviewNote(jobId, { questionId: "B11", expectedRevision: 0, noteText: "Retained note", sourceGeneration: prep.generation });
+    expect(saved.note).toMatchObject({ sourceGeneration: prep.generation, bindings: { catalogBinding: prep.generationContext!.catalogBinding, contextDigest: prep.generationContext!.contextDigest } });
+    await repository.mutate((draft) => { draft.state.readModel.jobs.details[jobId]!.interviewPrep = null; });
+    const orphan = await adapter.saveInterviewNote(jobId, { questionId: "B11", expectedRevision: 1, noteText: "Retained independent edit" });
+    expect(orphan.note).toMatchObject({ sourceGeneration: null, bindings: { contextDigest: null }, revision: 2 });
+    const history = await adapter.interviewNotes(jobId, { questionId: "B11", history: true });
+    expect(history.notes.find((note) => note.revision === 1)?.sourceGeneration).toBe(prep.generation);
+  });
 
-    telemetry.event.mockClear();
-    await expect(adapter.retailorJob("job-fabrikam-systems", {})).resolves.toMatchObject({
-      status: "blocked",
-    });
-    expect(telemetry.event).toHaveBeenNthCalledWith(2, "demo_action_failed", {
-      feature: "materials",
-      action: "retailor",
-      scenario: "retry",
-      result: "failed",
-      errorCode: "validation_rejected",
-      durationBucket: expect.stringMatching(/ms|s/),
-    });
-    adapter.dispose();
+  it("shares all 121 questions with principle, negotiation and retired semantics", async () => {
+    const { adapter } = await createAdapter();
+    const response = await adapter.interviewCatalog();
+    expect(response.total).toBe(121);
+    expect((await adapter.interviewQuestion("B11")).question.defaultAnswerFormat).toBe("principle");
+    expect((await adapter.interviewQuestion("TS09")).question.defaultAnswerFormat).toBe("principle");
+    expect((await adapter.interviewQuestion("C07")).question.answer).toMatch(/range/i);
+    await expect(adapter.interviewQuestion("C08")).rejects.toMatchObject({ status: 410 });
+  });
+
+  it("keeps independent notes, CAS conflicts, history and safe events inside the workspace", async () => {
+    const { adapter, repository } = await createAdapter();
+    const before = await adapter.profile();
+    const saved = await adapter.saveInterviewNote("job-contoso-reliability", { questionId: "B11", expectedRevision: 0, noteText: "Synthetic unverified recollection" });
+    expect(saved.note).toMatchObject({ revision: 1, factualSupport: "unverified_user_statement", editStatus: "user_edited" });
+    await expect(adapter.saveInterviewNote("job-contoso-reliability", { questionId: "B11", expectedRevision: 0, noteText: "stale text" })).rejects.toMatchObject({ status: 409 });
+    await adapter.saveInterviewNote("job-contoso-reliability", { questionId: "B11", expectedRevision: 1, noteText: "Newer synthetic note" });
+    expect((await adapter.interviewNotes("job-contoso-reliability", { questionId: "B11", history: true })).notes).toHaveLength(2);
+    expect((await adapter.interviewNotes("job-contoso-reliability", { questionId: "B11" })).notes[0]?.noteText).toBe("Newer synthetic note");
+    expect((await adapter.interviewNotes("job-contoso-reliability", { questionId: "TS09" })).notes).toHaveLength(0);
+    expect(await adapter.profile()).toEqual(before);
+    const snapshot = await repository.snapshot();
+    expect(JSON.stringify(snapshot.eventLog)).not.toContain("Synthetic unverified recollection");
   });
 });

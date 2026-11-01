@@ -12,20 +12,22 @@ import {
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { UseMutationResult } from "@tanstack/react-query";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/useDeleteJobsBulkMutation.js";
 import { useHideJobsBulkMutation } from "../../contexts/discovery/hooks/useHideJobsBulkMutation.js";
-import { usePermanentlyDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/usePermanentlyDeleteJobsBulkMutation.js";
+import { permanentDeleteConflictReceipt, usePermanentlyDeleteJobsBulkMutation, usePreparePermanentDeleteSelectionMutation } from "../../contexts/discovery/hooks/usePermanentlyDeleteJobsBulkMutation.js";
 import { useRestoreJobsBulkMutation } from "../../contexts/discovery/hooks/useRestoreJobsBulkMutation.js";
 import { useUnhideJobsBulkMutation } from "../../contexts/discovery/hooks/useUnhideJobsBulkMutation.js";
-import { useJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
+import { useReviewableJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
+import { JOB_STATES, type JobState } from "@jobctrl/contracts";
 import { useRetryFailedJobsMutation } from "../../contexts/pipeline/hooks/useRetryFailedJobsMutation.js";
 import { useRunPendingPreparationMutation } from "../../contexts/pipeline/hooks/useRunPendingPreparationMutation.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 import {
   JOBS_TABLE_COLUMN_IDS,
+  DEFAULT_JOBS_HIDDEN_COLUMN_IDS,
   JOBS_TABLE_ID,
   DEFAULT_SAVED_TABLE_VIEW_ID,
   type SavedTablePresentation,
@@ -47,7 +49,13 @@ import {
 import { JobBulkActions } from "./JobBulkActions.js";
 import { ImportJobUrlDialog } from "./ImportJobUrlDialog.js";
 import { JobsTable } from "./JobsTable.js";
-import { bulkJobFilters, jobsListInput } from "./jobStageFilters.js";
+import { JOB_STATE_FILTER_VALUES, jobStateValue } from "./columns.js";
+import {
+  allJobStates,
+  bulkJobFilters,
+  effectiveJobStates,
+  jobsListInput,
+} from "./jobStageFilters.js";
 
 const SORTABLE_JOB_FIELDS: ReadonlySet<JobSortField> = new Set([
   "discovered_at",
@@ -81,13 +89,15 @@ const SEARCH_FILTER_COLUMNS = new Set([
   "current_stage",
   "current_state",
   "apply_status",
+  "job_state",
 ]);
 const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
-const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
-  "source",
-  "compensation_warnings",
-  "resume_template",
-] as const;
+const UNAVAILABLE_ACTIVE_STATES = new Set([
+  "closed",
+  "expired",
+  "removed",
+  "location_incompatible",
+]);
 const DEFAULT_JOBS_PRESENTATION: SavedTablePresentation = {
   columns: {
     order: [...JOBS_TABLE_COLUMN_IDS],
@@ -116,6 +126,42 @@ function filterFor(value: string | undefined): DataGridTextFilter | undefined {
   return { operator: "contains", text: "", selectedValues: [value] };
 }
 
+function filterForValues(
+  values: readonly string[],
+): DataGridTextFilter | undefined {
+  if (!values.length) return undefined;
+  return { operator: "contains", text: "", selectedValues: [...values] };
+}
+
+const JOB_STATE_LABEL_BY_VALUE: Record<
+  JobState,
+  (typeof JOB_STATE_FILTER_VALUES)[number]
+> = {
+  active: "Active",
+  deleted: "Deleted",
+  hidden: "Hidden",
+};
+
+const JOB_STATE_VALUE_BY_LABEL: ReadonlyMap<string, JobState> = new Map(
+  Object.entries(JOB_STATE_LABEL_BY_VALUE).map(([value, label]) => [
+    label,
+    value as JobState,
+  ]),
+);
+
+function sameJobStates(left: readonly JobState[], right: readonly JobState[]) {
+  return (
+    left.length === right.length && left.every((state) => right.includes(state))
+  );
+}
+
+function isWorkflowEligibleJob(job: JobSummary): boolean {
+  return (
+    jobStateValue(job) === "active" &&
+    !UNAVAILABLE_ACTIVE_STATES.has(job.activeState)
+  );
+}
+
 function firstAllowedValue<T extends string>(
   filter: DataGridTextFilter | undefined,
   allowed: readonly T[],
@@ -126,7 +172,15 @@ function firstAllowedValue<T extends string>(
 }
 
 function searchFilters(search: JobsSearch): DataGridFilterState {
+  const jobStates = effectiveJobStates(search);
   return {
+    ...(jobStates.length === JOB_STATES.length
+      ? {}
+      : {
+          job_state: filterForValues(
+            jobStates.map((state) => JOB_STATE_LABEL_BY_VALUE[state]),
+          ),
+        }),
     ...(search.stage !== "all"
       ? { current_stage: filterFor(search.stage) }
       : {}),
@@ -142,7 +196,10 @@ function searchFilters(search: JobsSearch): DataGridFilterState {
 function localFiltersOnly(filters: DataGridFilterState): DataGridFilterState {
   return Object.fromEntries(
     Object.entries(filters).filter(
-      ([columnId]) => !SEARCH_FILTER_COLUMNS.has(columnId),
+      ([columnId, filter]) =>
+        !SEARCH_FILTER_COLUMNS.has(columnId) ||
+        (columnId === "current_stage" &&
+          (filter?.selectedValues.length ?? 0) > 1),
     ),
   );
 }
@@ -214,6 +271,7 @@ function savedUrlFiltersFromSearch(
     state: search.state,
     applyStatus: search.applyStatus,
     deleted: search.deleted,
+    jobStates: search.jobStates,
     pageSize: search.pageSize,
     minFitScore: search.minFitScore,
     maxFitScore: search.maxFitScore,
@@ -230,6 +288,7 @@ function searchPatchFromSavedView(view: SavedTableView): Partial<JobsSearch> {
     state: filters.state ?? "all",
     applyStatus: filters.applyStatus ?? "all",
     deleted: filters.deleted ?? "active",
+    jobStates: filters.jobStates,
     pageSize: filters.pageSize ?? 50,
     minFitScore: filters.minFitScore,
     maxFitScore: filters.maxFitScore,
@@ -267,10 +326,12 @@ export function JobsView() {
   const search = useSearch({ from: "/jobs" });
   const navigate = useNavigate({ from: "/jobs" });
 
-  const { data, isFetching, error } = useJobsListQuery(jobsListInput(search));
   const deleteJobs = useDeleteJobsBulkMutation();
   const hideJobs = useHideJobsBulkMutation();
   const permanentlyDeleteJobs = usePermanentlyDeleteJobsBulkMutation();
+  const preparePermanentDelete = usePreparePermanentDeleteSelectionMutation();
+  const [permanentDeleteError, setPermanentDeleteError] = useState<string | null>(null);
+  const [permanentDeleteConflict, setPermanentDeleteConflict] = useState<ReturnType<typeof permanentDeleteConflictReceipt>>(null);
   const restoreJobs = useRestoreJobsBulkMutation();
   const unhideJobs = useUnhideJobsBulkMutation();
   const retryFailedJobs = useRetryFailedJobsMutation();
@@ -288,12 +349,19 @@ export function JobsView() {
   const setSavedPresentation = useSavedTableViewsStore(
     (state) => state.setTablePresentation,
   );
-  const message = error instanceof Error ? error.message : null;
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [allMatchingSelected, setAllMatchingSelected] = useState(false);
+  const [selectionObservationId, setSelectionObservationId] = useState<string | null>(null);
+  const [selectionLifecycle, setSelectionLifecycle] = useState<Record<string, { jobKey: string; deletedAt: string | null; hiddenAt: string | null }>>({});
   const [localTableFilters, setLocalTableFilters] =
-    useState<DataGridFilterState>({});
+    useState<DataGridFilterState>(
+      () =>
+        (savedTableViews.find(
+          (view) =>
+            view.tableId === JOBS_TABLE_ID && view.id === activeSavedViewId,
+        )?.gridFilters ?? {}) as DataGridFilterState,
+    );
   const [visiblePageKeys, setVisiblePageKeys] = useState<string[]>([]);
   const activeSavedView = useMemo(
     () =>
@@ -308,8 +376,26 @@ export function JobsView() {
       ...localTableFilters,
       ...searchFilters(search),
     }),
-    [localTableFilters, search.applyStatus, search.stage, search.state],
+    [
+      localTableFilters,
+      search.applyStatus,
+      search.deleted,
+      search.jobStates,
+      search.stage,
+      search.state,
+    ],
   );
+  const selectedStages =
+    search.stage === "all"
+      ? JOB_TABLE_STAGE_FILTERS.filter((stage) =>
+          localTableFilters.current_stage?.selectedValues.includes(stage),
+        )
+      : undefined;
+  const stages = selectedStages?.length ? selectedStages : undefined;
+  const { data, isFetching, error, refetch: refreshJobs } = useReviewableJobsListQuery(
+    jobsListInput(search, stages),
+  );
+  const message = error instanceof Error ? error.message : null;
 
   useEffect(() => {
     setLocalTableFilters(
@@ -317,7 +403,14 @@ export function JobsView() {
     );
   }, [activeSavedView?.gridFilters]);
 
-  const hasLocalFilters = hasActiveDataGridFilters(localTableFilters);
+  const hasLocalFilters = hasActiveDataGridFilters(
+    Object.fromEntries(
+      Object.entries(localTableFilters).filter(
+        ([key, filter]) =>
+          key !== "current_stage" || Boolean(filter?.text.trim()),
+      ),
+    ),
+  );
   const savedViewSnapshot = useMemo<SavedTableViewSnapshot>(
     () => ({
       ...savedPresentation,
@@ -330,6 +423,7 @@ export function JobsView() {
       savedPresentation,
       search.applyStatus,
       search.deleted,
+      search.jobStates,
       search.dir,
       search.discoveredSince,
       search.maxFitScore,
@@ -346,8 +440,11 @@ export function JobsView() {
   useEffect(() => {
     setRowSelection({});
     setAllMatchingSelected(false);
+    setSelectionObservationId(null);
+    setSelectionLifecycle({});
   }, [
     search.deleted,
+    search.jobStates,
     search.dir,
     search.page,
     search.pageSize,
@@ -356,12 +453,16 @@ export function JobsView() {
     search.stage,
     search.state,
     search.applyStatus,
+    search.discoveredSince,
     search.minFitScore,
     search.maxFitScore,
+    search.scoredSince,
   ]);
   useEffect(() => {
     setRowSelection({});
     setAllMatchingSelected(false);
+    setSelectionObservationId(null);
+    setSelectionLifecycle({});
   }, [localTableFilters]);
 
   const setSearch = useCallback(
@@ -422,28 +523,56 @@ export function JobsView() {
   const handleTableFiltersChange = useCallback(
     (next: DataGridFilterState) => {
       setLocalTableFilters(localFiltersOnly(next));
-      const nextStage =
-        firstAllowedValue(next.current_stage, JOB_TABLE_STAGE_FILTERS) ?? "all";
+      const nextStages = JOB_TABLE_STAGE_FILTERS.filter((stage) =>
+        next.current_stage?.selectedValues.includes(stage),
+      );
+      const nextStage = nextStages.length === 1 ? nextStages[0]! : "all";
       const nextState =
-        firstAllowedValue(next.current_state, USER_FACING_STAGE_STATES) ?? "all";
+        firstAllowedValue(next.current_state, USER_FACING_STAGE_STATES) ??
+        "all";
       const applyFilter = firstAllowedValue(next.apply_status, [
         "applied",
       ] as const);
       const nextApplyStatus = applyFilter ?? "all";
+      const selectedJobStates = (next.job_state?.selectedValues ?? []).flatMap(
+        (label) => {
+          const value = JOB_STATE_VALUE_BY_LABEL.get(label);
+          return value ? [value] : [];
+        },
+      );
+      const nextJobStates = selectedJobStates.length
+        ? JOB_STATES.filter((state) => selectedJobStates.includes(state))
+        : allJobStates();
       if (
         nextStage !== search.stage ||
+        !sameKeys(
+          nextStages,
+          search.stage === "all"
+            ? (localTableFilters.current_stage?.selectedValues ?? [])
+            : [search.stage],
+        ) ||
         nextState !== search.state ||
-        nextApplyStatus !== search.applyStatus
+        nextApplyStatus !== search.applyStatus ||
+        !sameJobStates(nextJobStates, effectiveJobStates(search))
       ) {
         setSearch({
           stage: nextStage,
           state: nextState,
           applyStatus: nextApplyStatus,
+          jobStates: nextJobStates,
           page: 1,
         });
       }
     },
-    [search.applyStatus, search.stage, search.state, setSearch],
+    [
+      search.applyStatus,
+      search.deleted,
+      search.jobStates,
+      search.stage,
+      search.state,
+      localTableFilters,
+      setSearch,
+    ],
   );
 
   const sorting = useMemo<SortingState>(
@@ -464,6 +593,18 @@ export function JobsView() {
   };
 
   const handleRowSelectionChange = (next: RowSelectionState) => {
+    if (!Object.values(next).some(Boolean)) setSelectionObservationId(null);
+    else if (!selectionObservationId) setSelectionObservationId(data?.observationId ?? null);
+    setSelectionLifecycle((previous) => {
+      const retained: typeof previous = {};
+      for (const [key, selected] of Object.entries(next)) {
+        if (!selected) continue;
+        const job = (data?.items ?? []).find((item) => item.jobKey === key);
+        if (previous[key]) retained[key] = previous[key]!;
+        else if (job) retained[key] = { jobKey: key, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
+      }
+      return retained;
+    });
     setAllMatchingSelected(false);
     setRowSelection(next);
   };
@@ -475,10 +616,48 @@ export function JobsView() {
         .map(([key]) => key),
     [rowSelection],
   );
+  const selectedKeysByState = useMemo<Record<JobState, string[]>>(() => {
+    const next: Record<JobState, string[]> = {
+      active: [],
+      deleted: [],
+      hidden: [],
+    };
+    const selected = new Set(selectedKeys);
+    for (const job of data?.items ?? []) {
+      if (selected.has(job.jobKey)) {
+        next[jobStateValue(job)].push(job.jobKey);
+      }
+    }
+    return next;
+  }, [data?.items, selectedKeys]);
+  const matchingJobStates = useMemo(
+    () => effectiveJobStates(search),
+    [search.deleted, search.jobStates],
+  );
+  const selectedJobStates = useMemo(
+    () =>
+      allMatchingSelected
+        ? matchingJobStates
+        : JOB_STATES.filter((state) => selectedKeysByState[state].length > 0),
+    [allMatchingSelected, matchingJobStates, selectedKeysByState],
+  );
+  const selectedWorkflowEligibleKeys = useMemo(() => {
+    if (allMatchingSelected) return [];
+    const selected = new Set(selectedKeys);
+    return (data?.items ?? [])
+      .filter((job) => selected.has(job.jobKey) && isWorkflowEligibleJob(job))
+      .map((job) => job.jobKey);
+  }, [allMatchingSelected, data?.items, selectedKeys]);
+  const hasActiveMatches =
+    Boolean(data?.pagination.total) &&
+    matchingJobStates.includes("active") &&
+    (search.jobStates !== undefined || search.deleted !== "closed");
   const staleKeysOnPage = useMemo(
     () =>
       (data?.items ?? [])
-        .filter((job) => job.scoreStaleness.isStale)
+        .filter(
+          (job) => isWorkflowEligibleJob(job) && job.scoreStaleness.isStale,
+        )
         .map((job) => job.jobKey),
     [data?.items],
   );
@@ -486,21 +665,31 @@ export function JobsView() {
     () =>
       allMatchingSelected
         ? []
-        : selectedKeys.filter((jobKey) => staleKeysOnPage.includes(jobKey)),
-    [allMatchingSelected, selectedKeys, staleKeysOnPage],
+        : selectedKeysByState.active.filter((jobKey) =>
+            staleKeysOnPage.includes(jobKey),
+          ),
+    [allMatchingSelected, selectedKeysByState.active, staleKeysOnPage],
   );
 
   const selectAllMatching = () => {
+    setSelectionObservationId(data?.observationId ?? null);
+    setSelectionLifecycle({});
     setRowSelection({});
     setAllMatchingSelected(Boolean(data?.pagination.total));
   };
 
   const clearSelection = () => {
+    setSelectionObservationId(null);
+    setSelectionLifecycle({});
     setRowSelection({});
     setAllMatchingSelected(false);
   };
 
   const selectPage = () => {
+    setSelectionObservationId(data?.observationId ?? null);
+    setSelectionLifecycle(Object.fromEntries((data?.items ?? [])
+      .filter((job) => visiblePageKeys.includes(job.jobKey))
+      .map((job) => [job.jobKey, { jobKey: job.jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt }])));
     setAllMatchingSelected(false);
     const next: RowSelectionState = {};
     for (const jobKey of visiblePageKeys) {
@@ -518,44 +707,70 @@ export function JobsView() {
     [],
   );
 
-  const restoring = search.deleted === "deleted";
-  const hidden = search.deleted === "hidden";
-  const primaryMutation = hidden
-    ? unhideJobs
-    : restoring
-      ? restoreJobs
-      : deleteJobs;
   const selectionMutationBusy =
     deleteJobs.isPending ||
     hideJobs.isPending ||
-    permanentlyDeleteJobs.isPending ||
+    permanentlyDeleteJobs.isPending || preparePermanentDelete.isPending ||
     restoreJobs.isPending ||
     unhideJobs.isPending;
 
-  const selectedPayloads = (): BulkJobMutationRequest[] =>
-    allMatchingSelected
-      ? bulkJobFilters(search).map((filter) => ({
-          allMatching: true,
-          filter,
-          jobKeys: [],
-        }))
-      : [{ allMatching: false, jobKeys: selectedKeys }];
+  const selectedPayloads = (
+    jobStates: readonly JobState[] = selectedJobStates,
+  ): BulkJobMutationRequest[] => {
+    if (!allMatchingSelected) {
+      return [
+        {
+          allMatching: false,
+          jobKeys: jobStates.flatMap(
+            (jobState) => selectedKeysByState[jobState],
+          ),
+        },
+      ];
+    }
+    const eligibleMatchingStates = matchingJobStates.filter((jobState) =>
+      jobStates.includes(jobState),
+    );
+    if (!eligibleMatchingStates.length) return [];
+    const filters = search.jobStates
+      ? bulkJobFilters(search, { jobStates: eligibleMatchingStates }, stages)
+      : bulkJobFilters(search, {}, stages);
+    return filters.map((filter) => ({
+      allMatching: true,
+      filter,
+      jobKeys: [],
+    }));
+  };
 
-  const selectedRetryPayloads = (): BulkRetryFailedRequest[] =>
-    selectedPayloads().map((payload) => ({
+  const selectedRetryPayloads = (): BulkRetryFailedRequest[] => {
+    const payloads = allMatchingSelected
+      ? selectedPayloads(["active"])
+      : [
+          {
+            allMatching: false as const,
+            jobKeys: selectedWorkflowEligibleKeys,
+          },
+        ];
+    return payloads.map((payload) => ({
       ...payload,
       ...retryRunOptions(stageTriggerConfigs),
     }));
+  };
 
   const pendingPreparationPayloads = (): BulkRunPendingPreparationRequest[] =>
-    bulkJobFilters(search, { deleted: "active", state: "pending" }).map(
-      (filter) => ({
-        allMatching: true,
-        filter,
-        jobKeys: [],
-        ...pendingPreparationRunOptions(stageTriggerConfigs),
-      }),
-    );
+    bulkJobFilters(
+      search,
+      {
+        deleted: "active",
+        ...(search.jobStates ? { jobStates: ["active"] as const } : {}),
+        state: "pending",
+      },
+      stages,
+    ).map((filter) => ({
+      allMatching: true,
+      filter,
+      jobKeys: [],
+      ...pendingPreparationRunOptions(stageTriggerConfigs),
+    }));
 
   const mutatePayloads = (
     mutation: BulkJobMutation,
@@ -611,44 +826,49 @@ export function JobsView() {
       .catch(() => undefined);
   };
 
-  const mutateSelected = (mutation: BulkJobMutation, label: string) => {
+  const mutateSelected = (
+    mutation: BulkJobMutation,
+    label: string,
+    jobStates: readonly JobState[],
+  ) => {
+    const payloads = selectedPayloads(jobStates);
     const count = allMatchingSelected
       ? (data?.pagination.total ?? 0)
-      : selectedKeys.length;
+      : payloads.reduce((total, payload) => total + payload.jobKeys.length, 0);
     if (!count) {
       return;
     }
-    if (
-      !window.confirm(
-        `${label} ${count} selected job${count === 1 ? "" : "s"}?`,
-      )
-    ) {
+    const prompt = allMatchingSelected
+      ? `${label} all matching eligible jobs?`
+      : `${label} ${count} selected job${count === 1 ? "" : "s"}?`;
+    if (!window.confirm(prompt)) {
       return;
     }
-    mutatePayloads(mutation, selectedPayloads());
+    mutatePayloads(mutation, payloads);
   };
 
-  const mutatePrimarySelected = () => {
-    mutateSelected(
-      primaryMutation,
-      hidden ? "Unhide" : restoring ? "Restore" : "Delete",
-    );
-  };
+  const deleteSelected = () => mutateSelected(deleteJobs, "Delete", ["active"]);
+
+  const restoreSelected = () =>
+    mutateSelected(restoreJobs, "Restore", ["deleted"]);
+
+  const unhideSelected = () => mutateSelected(unhideJobs, "Unhide", ["hidden"]);
 
   const hideSelected = () => {
-    mutateSelected(hideJobs, "Hide");
+    mutateSelected(hideJobs, "Hide", ["active"]);
   };
 
   const retryFailedSelected = () => {
     const count = allMatchingSelected
       ? (data?.pagination.total ?? 0)
-      : selectedKeys.length;
+      : selectedWorkflowEligibleKeys.length;
     if (!count) {
       return;
     }
-    if (
-      !window.confirm(`Retry ${count} selected job${count === 1 ? "" : "s"}?`)
-    ) {
+    const prompt = allMatchingSelected
+      ? "Retry all matching eligible active jobs?"
+      : `Retry ${count} selected job${count === 1 ? "" : "s"}?`;
+    if (!window.confirm(prompt)) {
       return;
     }
     mutateRetryPayloads(retryFailedJobs, selectedRetryPayloads());
@@ -662,14 +882,20 @@ export function JobsView() {
     }
     mutateRetryPayloads(
       retryFailedJobs,
-      bulkJobFilters(search, { deleted: "active", state: "failed" }).map(
-        (filter) => ({
-          allMatching: true,
-          filter,
-          jobKeys: [],
-          ...retryRunOptions(stageTriggerConfigs),
-        }),
-      ),
+      bulkJobFilters(
+        search,
+        {
+          deleted: "active",
+          ...(search.jobStates ? { jobStates: ["active"] as const } : {}),
+          state: "failed",
+        },
+        stages,
+      ).map((filter) => ({
+        allMatching: true,
+        filter,
+        jobKeys: [],
+        ...retryRunOptions(stageTriggerConfigs),
+      })),
     );
   };
 
@@ -687,8 +913,68 @@ export function JobsView() {
     );
   };
 
+  // Freeze the cohort before asking for confirmation. A filter is not an
+  // authority to delete jobs that start matching while the prompt is open.
+  const permanentDeleteSelectionRef = useRef("");
+  const permanentDeleteSelectionIdentity = JSON.stringify({
+    allMatchingSelected, selectedKeys, selectionLifecycle, search, stages, observationId: selectionObservationId,
+    rows: (data?.items ?? []).filter((job) => selectedKeys.includes(job.jobKey))
+      .map((job) => [job.jobKey, job.deletedAt, job.hiddenAt]),
+  });
+  permanentDeleteSelectionRef.current = permanentDeleteSelectionIdentity;
+
   const permanentlyDeleteSelected = () => {
-    mutateSelected(permanentlyDeleteJobs, "Permanently delete");
+    const expected = allMatchingSelected ? undefined : Object.values(selectionLifecycle)
+      .filter((job) => job.deletedAt || job.hiddenAt);
+    const selections = allMatchingSelected
+      ? selectedPayloads(["deleted", "hidden"])
+      : [{ allMatching: false, jobKeys: (expected ?? []).map((job) => job.jobKey) }];
+    if (!selections.length) return;
+    if (!selectionObservationId) {
+      setPermanentDeleteError("The job list needs to be refreshed before deleting. Select the removed jobs again.");
+      clearSelection();
+      void refreshJobs();
+      return;
+    }
+    const identity = permanentDeleteSelectionIdentity;
+    setPermanentDeleteError(null);
+    setPermanentDeleteConflict(null);
+    void (async () => {
+      try {
+        const prepared = await preparePermanentDelete.mutateAsync({
+          observationId: selectionObservationId,
+          selections,
+          ...(expected ? { expected } : {}),
+        });
+        if (identity !== permanentDeleteSelectionRef.current) {
+          setPermanentDeleteError("The selection changed. Select the removed jobs again before deleting.");
+          clearSelection();
+          void refreshJobs();
+          return;
+        }
+        if (!prepared.jobKeys.length) {
+          setPermanentDeleteError("No selected removed jobs are available. Refresh the list and select them again.");
+          clearSelection();
+          void refreshJobs();
+          return;
+        }
+        if (!window.confirm(`Permanently delete ${prepared.jobKeys.length} selected removed job${prepared.jobKeys.length === 1 ? "" : "s"}?`)) {
+          clearSelection();
+          void refreshJobs();
+          return;
+        }
+        await permanentlyDeleteJobs.mutateAsync({
+          allMatching: false,
+          jobKeys: prepared.jobKeys,
+          selectionId: prepared.selectionId,
+        });
+        clearSelection();
+      } catch (error) {
+        clearSelection();
+        setPermanentDeleteConflict(permanentDeleteConflictReceipt(error));
+        setPermanentDeleteError(error instanceof Error ? error.message : "The selected jobs could not be deleted. Refresh and select them again.");
+      }
+    })();
   };
 
   const selectedCount = allMatchingSelected
@@ -718,10 +1004,21 @@ export function JobsView() {
       />
       <section className="card full data-list-card">
         {message ? <div className="banner inline">{message}</div> : null}
+        {permanentDeleteError ? <div className="banner inline" role="alert">{permanentDeleteError}</div> : null}
+        {permanentDeleteConflict ? (
+          <details>
+            <summary>No jobs were deleted. {permanentDeleteConflict.conflictingJobKeys.length} changed; {permanentDeleteConflict.unprocessedJobKeys.length} were not processed.</summary>
+            <p>Changed: {permanentDeleteConflict.conflictingJobKeys.join(", ") || "none identified"}</p>
+            <p>Not processed: {permanentDeleteConflict.unprocessedJobKeys.join(", ") || "none"}</p>
+          </details>
+        ) : null}
         <JobBulkActions
           search={search}
           selectedCount={selectedCount}
-          selectedJobKeys={allMatchingSelected ? [] : selectedKeys}
+          selectedJobStates={selectedJobStates}
+          allMatchingSelected={allMatchingSelected}
+          hasActiveMatches={hasActiveMatches}
+          selectedJobKeys={selectedWorkflowEligibleKeys}
           staleCount={staleKeysOnPage.length}
           selectedStaleKeys={selectedStaleKeys}
           hasItems={visiblePageKeys.length > 0}
@@ -730,11 +1027,12 @@ export function JobsView() {
           loading={selectionMutationBusy}
           retryLoading={retryFailedJobs.isPending}
           pendingPreparationLoading={runPendingPreparation.isPending}
-          onSetDeleted={(deleted) => setSearch({ deleted, page: 1 })}
           onSelectPage={selectPage}
           onSelectAllMatching={selectAllMatching}
           onClearSelection={clearSelection}
-          onPrimaryAction={mutatePrimarySelected}
+          onDeleteSelected={deleteSelected}
+          onRestoreSelected={restoreSelected}
+          onUnhideSelected={unhideSelected}
           onHideSelected={hideSelected}
           onPermanentlyDeleteSelected={permanentlyDeleteSelected}
           onRetryFailedSelected={retryFailedSelected}
@@ -751,7 +1049,7 @@ export function JobsView() {
           rowSelection={rowSelection}
           onRowSelectionChange={handleRowSelectionChange}
           allMatchingSelected={allMatchingSelected}
-          page={search.page}
+          page={data?.pagination.page ?? search.page}
           pageSize={search.pageSize}
           onPageChange={(page) => setSearch({ page })}
           onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}

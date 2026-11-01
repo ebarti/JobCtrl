@@ -16,6 +16,7 @@ import { InterviewPrepPanel, type InterviewPrepPanelProps } from "./InterviewPre
 const meta = {
   title: "Contexts/Materials/InterviewPrepPanel",
   component: InterviewPrepPanel,
+  tags: ["interview993"],
 } satisfies Meta<typeof InterviewPrepPanel>;
 
 export default meta;

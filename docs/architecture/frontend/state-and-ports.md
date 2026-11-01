@@ -23,6 +23,7 @@ is the canonical decision matrix.
 | Datum | Layer | Why |
 |---|---|---|
 | Jobs list filters (`stage`, `state`, `q`, `deleted`) | **URL** | Bookmarkable; survives refresh; copy-paste shareable. |
+| Discovery source-review column filters and sort | **URL** | Bookmarkable review state; applying a named view navigates to its snapshot, while reload honors the current URL. |
 | Sort field & direction | **URL** | Same reasons. |
 | Page index, page size | **URL** | Same. |
 | Selected job (detail workspace active) | **URL** | Refresh restores the bookmarkable detail route. |
@@ -42,11 +43,28 @@ is the canonical decision matrix.
 | Jobs list response | **Server** (Query) | Same. |
 | Job detail | **Server** (Query) | Same. |
 | Saved resume review draft | **Server** (Query) | The apply-context reconciler publishes create/save/seed/render/reply responses to the initiating tenant/job key. Draft identity and base generation precede revision/state/time ordering; threads, replies and feedback signals merge independently by their IDs. |
-| Unsaved resume review edits | **Mounted Plate session** | Acknowledging saved snapshot A updates the baseline while later text or formatting B stays dirty. Comment-only updates do not reset focus or selection. |
+| Unsaved resume review edits | **Apply-owned mounted session** | `useApplyReviewSession` owns the document, autosave, submitted/saved baselines, render attempts, accepted comparison and approval preparation. Document identities compare the normalized persistence form, so acknowledging equivalent pasted blocks stops autosave without replacing the live editor; later text, formatting or undo B stays dirty. Saved text includes unnumbered pasted paragraphs alongside anchored lines. Materials renders controlled state; comment-only updates do not reset focus or selection. Tenant/job changes replace the session; replacement drafts reset document identity independently of revision counters. Every cache publication obeys the current material source fence; the session's own accepted render can retain its original base after promotion. |
+| Pending resume comment seeds | **Apply-owned mounted session** | Seed payloads and publisher callbacks bind to the initiating text/PDF material IDs. A material switch discards incompatible retained seeds before a replacement draft loads; delayed callbacks cannot attach foreign pins. Materials publishes empty pin lists too, so an empty source never replays an earlier payload. |
+| Manual outcome and reflection drafts | **Apply-owned app session** | Separate in-memory drafts and uncertain retry identities by tenant and job. The app route retains them across top-level navigation, keyed drawers, nested run detail, and cold tenant reads. Switching owners restores only that owner's input; a late acknowledgement from an unmounted form leaves its original action available for safe retry. Reloading clears this state. |
+| Interviews filters, graph/list mode, selected card, and optional canonical job | **URL** | The library view is bookmarkable and remains distinct from generated prep; navigation and browser Back/Forward use this state. |
+| Interviews Questions/Sources perspective, author drill-down, graph pan/zoom, and inspector tab | **Component** (`useState` / tabs) | Transient exploration controls; they do not shadow URL-owned card/job/filters, accepted evidence selections, or private drafts. |
+| Installed interview catalog and job prep/history/notes | **Server** (Query) | Public Operations read hooks use the API port; catalog browsing does not require a job/worker/provider. |
+| Unsaved interview question selection/order, context, and note text | **Materials session store + Form library state** | TanStack Form validates mutations; a tenant/job/question-keyed in-memory Zustand store preserves drafts through navigation. Dirty edits survive delayed responses, save failures, and revision conflicts; a newer query result cannot overwrite them. Personal text is not persisted in browser storage or URL state. |
+| Manual outcome, reflection and send-log retry | **Mounted form session** | Each form retains the submitted payload and request identity in memory until acknowledgement or an explicit new action. Send-log reconciliation updates only the initiating thread; current thread reads remain authoritative. See the [retry contract](../../api/complete-contract.md#manual-action-retry-contract). |
 | Artifacts list / detail | **Server** (Query) | Same. |
 | Apply run live timeline | **Server** (Query) — appended via `setQueryData` from SSE | High-frequency; see §7.5. |
-| Resume import wizard step state (uploaded file metadata, parsed draft) | **Client** (Zustand+persist) | Cross-step, refresh-safe, but not URL-bound (the URL identifies *which step*, not *the data*). |
-| Form drafts (profile, settings) | **Form library state** (TanStack Form) | Profile and resume style stay object-valued until the existing string-valued update request; validation does not replace the edited object with normalized schema output. Owned by the form until submit; mutates the server via the mutation hook. Direct Profile Plate edits with an unambiguous semantic owner project into this same draft rather than creating a second profile store. |
+| Resume import wizard selection and options | **Client** (Zustand + browser storage) | The filename and PDF are accepted together only after a successful storage write; pending reads and failed replacements cannot publish a stale choice. Current-version tabs compare and update the versioned record in a single IndexedDB read-write transaction, including a tombstone for cleanup. A stale snapshot or unavailable transaction fails closed and offers recovery. The earlier v1 key is read-only and separately recoverable; older tabs cannot erase the v2 record, but still need reloading because they cannot coordinate v1 writes with each other. Selection and options survive navigation, refresh, and Cancel, until explicit removal or successful import cleanup. In-flight and completed imports within a tab are matched by exact source and options; successful removal retires completed-request authority without bypassing an in-flight request. Request identity and returned drafts stay in session memory and are not staged into Profile. The URL identifies the step, not its data. |
+| Form drafts (profile, settings) | **Form library state** (TanStack Form) | Profile and resume style stay object-valued until the existing string-valued update request; validation does not replace the edited object with normalized schema output. Owned by the form until submit; mutates the server via the mutation hook. The shared Profile, Cost and capacity, and Discovery Automation autosave controller attempts an unchanged dirty snapshot once after five seconds; an explicit Save or a different draft can retry, and an in-flight submit does not erase newer edits. Apply and Discovery runtime forms keep a tenant-scoped, non-refetchable acknowledged baseline in the QueryClient: successful reads and their own save responses advance it, while optimistic writes and rollbacks do not; newer edits remain pending. Within one QueryClient, runtime writes for the same tenant and panel are ordered across remounts, and saves write only deliberately edited fields so an unacknowledged commit cannot be overwritten by a stale draft. Direct Profile Plate edits with an unambiguous semantic owner project into this same draft rather than creating a second profile store. |
+
+Contact creation and model-policy editors pause during their saves; contact
+edits retain newer typing and fence closed or reopened sessions. Provider setup
+forms clear only acknowledged unchanged write-only inputs and preserve newer
+drafts across provider-status updates. Offer forms retain
+their drafts across canonical revisions and require an explicit fresh-read
+reconciliation before retrying with the new IDs. Template drafts stay scoped
+to tenant and template; reconciliation keeps edited fields over a freshly read
+version. Template updates and the UI's default selection bind the expected
+active version at the API boundary.
 | Connection status to API (the inline "live"/"offline" status) | **Server** (Query: `useHealthQuery({ refetchInterval: ... })`) | Polling the health endpoint, not a manual `useState`. |
 
 ### 5.2 URL ↔ Query Cache Binding
@@ -54,18 +72,28 @@ is the canonical decision matrix.
 Search params drive query keys. The pattern is:
 
 ```ts
-// routes/jobs.tsx (loader)
-loader: async ({ deps: { search }, context: { queryClient, tenantId } }) =>
-  queryClient.ensureQueryData({
-    queryKey: jobsKeys.list(tenantId, search),
-    queryFn: () => apiClient.jobs(search),
-  }),
+// routes/artifacts.tsx: validate/map URL input, then delegate to its read owner.
+loader: ({ deps, context }) =>
+  prefetchArtifactsList(context, artifactsListInput(deps.search)),
 ```
 
-The route's loader prefetches based on the typed search params. The
-component reads via `useJobsListQuery(useSearch(...))`, which builds the
-same query key. The cache hit rate is maximal because the URL is the
-single key derivation source.
+Operations, Profile and Outreach expose read helpers in their own
+`readQueries.ts` modules. Helpers accept structural tenant, API-port and query
+client dependencies independent of the router/generated tree. Routes validate
+search and orchestrate these helpers; they never operate on API or QueryClient
+capabilities. Contexts never import views. Shared key/read factories are reused
+by the observers; hook-specific `enabled`, `select`, freshness and refetch
+policies stay on the hooks.
+
+The existing prefetches await best-effort `prefetchQuery` reads using the query
+client's freshness defaults. Activity detail instead awaits `ensureQueryData`,
+unwrapping the event and propagating errors (including 404). Its observer's
+404-to-null policy is separate. An accepted Activity cache entry is reused even
+when stale; no automatic background revalidation is requested by that helper.
+
+Jobs has no loader: its view owns the effective-query handoff after saved-view
+and URL state are resolved. `useJobsListQuery` consumes that effective input;
+adding an independent route prefetch would risk a competing cache key.
 
 **Pagination + sort changes** mutate the URL (via `navigate({ search: { ...,
 page: 2 } })`); the URL change triggers a re-render with new search
@@ -98,6 +126,17 @@ Synchronous mutations that do not patch a specific cached row still reconcile
 through `onSettled` invalidation. Non-apply-only global/batch pipeline stage
 starts use that path: the API returns HTTP 200 with worker action results, then
 the mutation invalidates operational reads on settle.
+
+Interview note saves compare `expectedRevision` at the canonical owner. The
+browser reconciles the returned saved revision with its current form draft,
+keeping edits made after submission dirty. A `409` includes `currentNote` through
+`JobCtrlApiError.responseBody`; displaying it does not overwrite the draft or
+retry on a newer revision automatically. Concurrent mutation rollback must not
+restore an older whole-query snapshot over a newer saved note. Prep generation
+does not rebind an existing note: ordinary edits omit origin claims, and new
+bound notes use their retained selected-card origin or server-derived bindings.
+Generation is asynchronous: terminal events reconcile history/current prep, while the
+last accepted result stays visible through pending or failed replacement.
 
 ### 5.4 Stale Time and Garbage Collection
 
@@ -133,9 +172,11 @@ hitting the network and gives a clear seam for cloud evolution.
 | Port | Purpose | Local-mode adapter | Hosted-mode adapter (named, not built) |
 |---|---|---|---|
 | `ApiClientPort` | HTTP requests against `apps/api` | `JobCtrlApiClient` from `@jobctrl/api-client` | Transport with hosted authentication when implemented |
+| `RequestIdentityPort` | Create an identity for each deliberate manual action | `BrowserRequestIdentityAdapter` (UUID) | Same adapter |
 | `EventStreamPort` | Subscribe to a stream of `DomainEvent`s | `SseEventStreamAdapter` (`new EventSource(...)`) | `WebSocketEventStreamAdapter` (if SSE proves limiting at scale) or same SSE adapter behind CDN with edge buffering |
 | `StoragePort` | Persist client preferences and wizard drafts | `LocalStorageAdapter` (browser `localStorage`) | `IndexedDbAdapter` (when client-side cache exceeds 5 MB) |
 | `SessionPort` | Resolve `TenantId` and `UserId` for the current request | `LocalSessionAdapter` (returns `LOCAL_TENANT` + a stub user) | `JwtSessionAdapter` (Auth0 / Cognito; reads JWT, exposes `useSession()`) |
+| `ArtifactDownloadPort` | Download retained, verified DOCX bytes | `BrowserArtifactDownloadAdapter` calls the API client, creates a temporary object URL and starts a browser download | No hosted implementation; public demo reports unavailable |
 | `ClipboardPort` | Copy CLI commands to clipboard | `NavigatorClipboardAdapter` (`navigator.clipboard.writeText`) | Same adapter |
 | `OpenInOsPort` | Open an artifact in the OS default app (local-only feature) | `OpenArtifactAdapter` (POSTs to `/v1/artifacts/:id/open`) | **Disabled** in hosted mode — port returns `Unsupported`; the UI surfaces a "download" affordance instead. (Cloud users get presigned S3 URLs.) |
 | `TelemetryPort` | Emit frontend telemetry (errors, route timings, mutation latencies) | `ConsoleTelemetryAdapter` (no-op + dev-tools logs) | `OpenTelemetryWebAdapter` → OTLP collector → backend tracing pipeline |
@@ -155,11 +196,13 @@ React context:
 // shared/providers/ports.tsx
 const PortsContext = createContext<{
   api: ApiClientPort;
+  requestIdentity: RequestIdentityPort;
   eventStream: EventStreamPort;
   storage: StoragePort;
   session: SessionPort;
   clipboard: ClipboardPort;
   openInOs: OpenInOsPort;
+  artifactDownload: ArtifactDownloadPort;
   telemetry: TelemetryPort;
   featureFlags: FeatureFlagPort;
 } | null>(null);
@@ -246,31 +289,28 @@ The hosted-mode `WebSocketEventStreamAdapter` (if the SSE adapter proves
 limiting under cross-region or CDN-buffered conditions, see fitness
 function §9.4) preserves the same interface; only the transport changes.
 
-### 6.5 `contexts/operations/types.ts` — Frontend ACL
+### 6.5 Canonical DTOs And Frontend Input Refinements
 
-The frontend has an Anti-Corruption Layer too: `contexts/operations/types.ts`
-re-exports the projection and API response types and adds frontend-only
-refinements (e.g., narrower string-union types over `state` / `stage`
-derived from `STAGES` / `STAGE_STATE_KINDS`). The projection shapes are
-canonically defined in `@jobctrl/domain-types` (`operations/`) and
-re-exported through `@jobctrl/contracts`; the ACL is the intended single
-import surface for feature code, though `@jobctrl/contracts` is still
-imported directly in places today.
+Import unchanged wire DTOs, Zod schemas and wire constants directly from
+`@jobctrl/contracts`. Import domain vocabulary and the domain-event union from
+`@jobctrl/domain-types`. Those packages own the shapes; transparent aliases or
+re-exports do not isolate consumers from a wire-shape change. A canonical shape
+change requires updating its affected consumers.
 
-Why an ACL (this thin):
+`contexts/operations/types.ts` owns genuine frontend input refinements:
+`JobsListInput` accepts readonly stage selections, list inputs allow partial
+queries, and stage filters include the UI's `"all"` sentinel. It also retains
+string `JobId` compatibility, the indexed event-type union and the
+endpoint-derived availability acknowledgement. It does not mirror canonical
+DTOs, schemas or constants. The Operations public barrel exposes its hooks,
+query keys, infrastructure and frontend refinements.
 
-- **Single point of compile-time impact** when a backend projection
-  shape changes — the ACL re-export site is the first error; we update
-  the frontend only at that boundary.
-- **Frontend-only refinements** (string narrowing for exhaustive
-  `switch`, branded date types, etc.) are introduced once.
-- **Future deviation from contract types** (e.g., a frontend-derived
-  computed field) has a natural home.
-
-This is an extremely thin ACL — it is mostly re-exports today. It exists
-because the alternative ("just import from `@jobctrl/contracts` directly")
-makes a future tightening of types or addition of frontend computed shape
-into a sprawling refactor.
+`corepack pnpm web:lint` permits canonical package imports without contract
+exemptions. It independently enforces capability ports, context-owned API/query/
+store usage and dependency direction, including edges hidden by local barrels.
+Remaining capability and dependency exemptions require exact file/symbol reasons
+and fail when stale. Canonical imports grant no capability to call the API client
+or query client from a view.
 
 ### 6.6 No Direct DOM Access from Feature Code
 
@@ -290,8 +330,55 @@ coordination goes through:
 - **The query cache and its invalidations** for data dependencies.
 - **Ports** for browser APIs (clipboard, notifications, OS-open).
 
-The only `window` access in feature code is via a port (e.g.,
-`ports.clipboard.write(text)`).
+Browser capabilities belong behind ports (e.g., `ports.clipboard.write(text)`).
+The lint checker guards direct storage, fetch, `EventSource`, clipboard, and
+browser event-bus access. Existing exceptions are scoped to the three persisted
+context stores' storage access and `ResumeAuditPins`' HTML-preview fetch; they do not
+authorize those capabilities in other feature modules.
+
+### Automated Boundary Checks
+
+`corepack pnpm web:lint` uses TypeScript syntax, resolved symbols and capability
+provenance to check dependency and capability boundaries:
+
+- Contexts cannot import views, and views cannot add another view's modules.
+  The existing Analytics-to-Dashboard KPI composition has an exact-edge
+  relocation exception.
+- Aggregate contexts cannot import another aggregate's hooks or stores;
+  Operations read hooks remain the shared read-side exception.
+- Views and routes cannot use runtime Query or Zustand APIs or call the API client.
+  Type-only imports remain valid; API error values and URL-only preview helpers
+  have scoped exceptions.
+- Loader context, API and QueryClient origins remain protected through aliases,
+  casts, fallback/conditional expressions, parameter and destructuring defaults, array
+  spread/rest positions, `for...of` bindings and assignments, comma-expression
+  results, `await` and member assignments even with `any` or
+  unresolved context declarations. API/cache capabilities and their containers
+  cannot escape through arbitrary calls, route/view return values, class-field
+  initializers, constructor parameter properties or receiver-field assignments.
+  Method receivers containing capabilities are handoffs too, including array
+  extraction and iteration calls. Passing them to a helper requires
+  a resolved context-owned implementation (including immutable aliases). The
+  shared syntax tracer follows computed keys through containers and bindings; an
+  unresolved key on a known capability container cannot grant access. Local
+  shadowing, known non-capability keys and context helper calls remain valid.
+  Context helper results retain returned capability provenance across module
+  boundaries and `any` annotations; ownership permits dependency handoff, not
+  returning raw API/cache authority to a route or view. DTO results remain valid.
+  Runtime re-exports cannot hide Query/API imports in exported containers or
+  destructured aliases, including mixed default/named imports and missing package
+  declarations.
+  `web:lint:test` overlays negative controls on the real
+  tsconfig/generated route program and requires source-located boundary
+  diagnostics independently of compiler errors.
+- Production code cannot import test scaffolding. Tests, stories, and generated
+  source are excluded from feature checks.
+
+The checker preserves ordinary `useState`, `useEffect`, and `useRef` use; it
+does not prove state lifetime, mutation ownership, or runtime behavior. Review
+still determines whether state belongs in a context, the URL, or a persistent
+store. Runtime/computed module imports are unsupported at these boundaries;
+use statically resolvable dependencies so ownership can be checked.
 
 ### 6.7 Driving Ports (Use Cases) — Implicit
 
@@ -303,3 +390,15 @@ formalize a `UseCase` interface for them — the React conventions
 (hook + mutation function) are the de facto driving-port representation.
 
 ---
+
+## Posting Availability State
+
+The Enrichment context owns `PostingAvailability` and `useCheckAvailabilityMutation`;
+Job Detail composes its public component. Persisted attempt/success evidence,
+next due and read-time freshness remain server state. The mutation calls the API
+port, snapshots the tenant-first job detail, marks a check optimistically and
+rolls back on failure, then invalidates that detail and tenant job lists. It
+exposes worker-offline failure and retry without erasing older successful
+evidence or accepted artifacts. A queued acknowledgement is not a verified
+active posting. Persisted request deferral/retry feedback replaces the queued
+acknowledgement separately from acquisition attempt/success clocks.

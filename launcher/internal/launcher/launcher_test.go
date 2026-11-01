@@ -24,10 +24,12 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/ebarti/jobctrl/launcher/internal/release"
 )
 
 const validRuntimeManifest = `{
-  "schemaVersion":1,"launcherProtocol":1,
+  "schemaVersion":1,"launcherProtocol":2,
   "ports":{"temporalGrpc":7233,"temporalUi":8233,"api":8766},
   "components":[
     {"name":"temporal","executable":"temporal/temporal","arguments":["server"]},
@@ -439,6 +441,7 @@ func verifiedPayloadFixture(t *testing.T) (string, distributionManifest) {
 		{path: "api/payload", contents: "api", mode: 0o644},
 		{path: "launcher/links/to-safe", target: "../safe.txt"},
 		{path: "launcher/safe.txt", contents: "safe payload", mode: 0o644},
+		{path: "launcher/update-protocol.json", contents: "{\"schemaVersion\":1,\"journalStartup\":true}\n", mode: 0o644},
 		{path: "node/payload", contents: "node", mode: 0o644},
 		{path: "python/payload", contents: "python", mode: 0o644},
 		{path: "temporal/payload", contents: "temporal", mode: 0o644},
@@ -516,7 +519,7 @@ func verifiedPayloadFixture(t *testing.T) (string, distributionManifest) {
 	value := map[string]any{
 		"schemaVersion": 1, "appVersion": "2.0.0", "buildId": "local-test-build", "releaseChannel": "local", "sourceDateEpoch": 0,
 		"platform":              map[string]any{"id": "darwin-arm64", "os": "darwin", "arch": "arm64", "minimumOsVersion": "15.0"},
-		"launcherCompatibility": map[string]any{"minimum": 1, "maximum": 1},
+		"launcherCompatibility": map[string]any{"minimum": 2, "maximum": 2},
 		"components":            components,
 		"capabilities":          []map[string]any{{"id": "core-browser", "defaultEnabled": true, "componentIds": []string{"jobctrl-web"}}},
 		"files":                 filesJSON,
@@ -787,7 +790,7 @@ func main() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "start", "--no-open"); err == nil || !strings.Contains(output, "recorded") {
+	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "start", "--no-open"); err == nil || (!strings.Contains(output, "recorded") && !strings.Contains(output, "remaining instance processes")) {
 		t.Fatalf("immediate restart after SIGKILL supervisor was accepted: %v\n%s", err, output)
 	}
 	after, err := os.ReadFile(stateFiles[0])
@@ -802,6 +805,36 @@ func main() {
 	}
 	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "stop"); err != nil {
 		t.Fatalf("final fixture stop: %v\n%s", err, output)
+	}
+
+	store, err := release.Open(instanceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestDigest, err := sha256Path(filepath.Join(payloadRoot, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := release.Receipt{SchemaVersion: 1, BuildID: manifest.BuildID, Channel: "local", Sequence: 1,
+		ArtifactSHA256: strings.Repeat("a", 64), ManifestSHA256: manifestDigest,
+		DescriptorSHA256: strings.Repeat("b", 64), DescriptorURL: "local-fixture", InstalledAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	journal, err := store.Begin("update", &receipt, &receipt, receipt.DescriptorSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Advance(&journal, release.CandidateStarting, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = store.Advance(&journal, release.Promoted, nil)
+		_, _ = runLauncherCommand(t, "jobctrl", otherCWD, environment, "stop")
+	}()
+	transitionEnv := append(append([]string{}, environment...), "JOBCTRL_TRANSITION_JOURNAL="+journal.ID)
+	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, transitionEnv, "start", "--no-open"); err != nil {
+		t.Fatalf("authenticated transition start and detached supervisor failed: %v\n%s", err, output)
+	}
+	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, transitionEnv, "status", "--json"); err == nil || !strings.Contains(output, "unfinished update transition") {
+		t.Fatalf("ordinary command bypassed the in-progress transition: %v\n%s", err, output)
 	}
 }
 
@@ -919,7 +952,7 @@ func TestProcessRecordMatchesOwnedChildAfterSeparateExec(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = syscall.Kill(-child.Process.Pid, syscall.SIGTERM)
+		_ = child.Process.Signal(syscall.SIGTERM)
 		_, _ = child.Process.Wait()
 	})
 	executable, err := processExecutable(child.Process.Pid)
@@ -959,9 +992,7 @@ func startOwnedSleep(t *testing.T) (*exec.Cmd, componentRecord, <-chan error) {
 	reaped := make(chan error, 1)
 	go func() { reaped <- child.Wait() }()
 	t.Cleanup(func() {
-		if processPIDAlive(child.Process.Pid) {
-			_ = syscall.Kill(-record.PGID, syscall.SIGKILL)
-		}
+		_ = child.Process.Kill()
 		select {
 		case <-reaped:
 		case <-time.After(time.Second):
@@ -1003,9 +1034,7 @@ func TestTerminateRecordProvesOwnedProcessGroupIsEmpty(t *testing.T) {
 	reaped := make(chan error, 1)
 	go func() { reaped <- child.Wait() }()
 	t.Cleanup(func() {
-		if processGroupAlive(record.PGID) {
-			_ = syscall.Kill(-record.PGID, syscall.SIGKILL)
-		}
+		_ = child.Process.Kill()
 		select {
 		case <-reaped:
 		case <-time.After(time.Second):
@@ -1050,15 +1079,19 @@ func TestStopTerminatesLiveRecordEvenWhenAnOldStateMarkedItExited(t *testing.T) 
 	}
 	manifest := runtimeManifest{}
 	manifest.Ports.TemporalGRPC, manifest.Ports.TemporalUI, manifest.Ports.API = 7233, 8233, 8766
-	ctx := launchContext{PayloadRoot: payload, Manifest: manifest, Distribution: distributionManifest{BuildID: "build"}, Instance: instance{ID: "instance", StateDir: stateRoot, StatePath: filepath.Join(stateRoot, "state.json"), ControlPath: filepath.Join(stateRoot, "control.lock")}}
+	ctx := launchContext{PayloadRoot: payload, Manifest: manifest, Distribution: distributionManifest{BuildID: "build"}, Instance: instance{ID: "instance", StateDir: stateRoot, StatePath: filepath.Join(stateRoot, "state.json"), LockPath: filepath.Join(stateRoot, "instance.lock"), ControlPath: filepath.Join(stateRoot, "control.lock")}}
 	oldExit := time.Now().UTC().Add(-time.Minute)
 	record.ExitedAt = &oldExit
 	state := instanceState{SchemaVersion: stateSchemaVersion, InstanceID: "instance", CanonicalStateDir: stateRoot, PayloadRoot: payload, BuildID: "build", ManifestSHA256: digest, Ports: runtimePorts{TemporalGRPC: 7233, TemporalUI: 8233, API: 8766}, Components: map[string]componentRecord{"worker": record}}
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		t.Fatal(err)
 	}
-	if err := stop(ctx); err != nil {
-		t.Fatalf("stop must repair stale live process record: %v", err)
+	before, err := os.ReadFile(ctx.Instance.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(ctx); !errors.Is(err, errUntrackedOwnership) {
+		t.Fatalf("legacy cleanup must retain uncertainty after terminating a stale live record: %v", err)
 	}
 	if err := <-reaped; err == nil {
 		t.Fatal("sleep unexpectedly exited cleanly after stop")
@@ -1066,9 +1099,12 @@ func TestStopTerminatesLiveRecordEvenWhenAnOldStateMarkedItExited(t *testing.T) 
 	if processPIDAlive(record.PID) || processGroupAlive(record.PGID) {
 		t.Fatal("stop left the falsely marked-live owned process group running")
 	}
+	if after, err := os.ReadFile(ctx.Instance.StatePath); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("legacy cleanup changed the stale registry without durable ownership: %v", err)
+	}
 	updated, err := readState(ctx.Instance.StatePath)
-	if err != nil || updated.StoppedAt == nil {
-		t.Fatalf("stop did not persist a proven stopped state: %#v, %v", updated, err)
+	if err != nil || updated.StoppedAt != nil || updated.OwnershipVerified {
+		t.Fatalf("legacy cleanup recorded a false stopped proof: %#v, %v", updated, err)
 	}
 }
 

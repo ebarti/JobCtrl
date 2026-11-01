@@ -22,12 +22,6 @@ from jobctrl.domain.contact.outreach import (
 from jobctrl.domain.contact.outreach_gates import (
     DraftGateResults,
     OutreachClaimProvenance,
-    build_outreach_evidence_corpus,
-    build_outreach_judge_prompt,
-    compute_outreach_claim_provenance,
-    parse_outreach_judge_response,
-    scan_outreach_draft,
-    validate_outreach_draft,
 )
 from jobctrl.domain.contact.outreach_use_cases import (
     ApproveOutreachDraftUseCase,
@@ -140,12 +134,6 @@ __all__ = [
     "ScheduleFollowUpUseCase",
     "follow_up_is_due",
     "suggest_follow_up",
-    "build_outreach_evidence_corpus",
-    "build_outreach_judge_prompt",
-    "compute_outreach_claim_provenance",
-    "parse_outreach_judge_response",
-    "scan_outreach_draft",
-    "validate_outreach_draft",
     "ResearchRunResult",
     "ResearchSourceAttempt",
     "ResearchSourceCategory",

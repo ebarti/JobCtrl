@@ -11,7 +11,10 @@ at the top of `docs/`.
 Accepted public implementation plans are listed below. Bundled distribution
 and the public live demo are delivered and archived
 under `implemented/`; their separately deferred operational and privacy
-follow-ups live in `docs/publish-checklist.md` and `docs/backlog.md`. Add new
+follow-ups live in
+[GitHub Issues](https://github.com/ebarti/JobCtrl/issues). The
+[migration index #881](https://github.com/ebarti/JobCtrl/issues/881) owns historical
+backlog dispositions. Add new
 accepted-but-not-yet-delivered public product plans at the top level.
 
 This is a public repository. Owner-only launch/growth strategy, campaign
@@ -31,10 +34,32 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 
 ## Active Plans
 
-- [Preserve Behavior While Removing Duplicated State And Execution](2026-09-06-simplification-stack.md)
-  — accepted; four stacked PRs for review drafts, profile editing and Tailor.
+The [shared workspace upgrade plan](2026-10-29-shared-workspace-upgrades.md)
+records shared-workspace upgrade behavior and remaining qualification work.
+
+Current accepted scope and dependencies live in [GitHub Issues](https://github.com/ebarti/JobCtrl/issues).
+The [profile evidence and selective resume composition program](https://github.com/ebarti/JobCtrl/issues/883)
+has a [reviewable integrated proposal](2026-09-21-profile-evidence-selective-tailoring.md)
+for draft evidence capture, explicit canonical promotion, opt-in selective
+composition, rendered-artifact audit, and dependent delivery slices. The plan
+is unshipped and awaits explicit user approval before implementation. Its
+[#1013 intake investigation](2026-09-21-profile-evidence-selective-tailoring.md#2-current-foundations-and-acceptance-map)
+reconciles shipped versioned-save/model foundations with the missing browser
+draft handoff and proposed multi-source review/promotion contract. This remains
+one docs-only issue delivery, not implementation of the program.
+
+The [demo access, consent withdrawal, and visitor erasure proposal](2026-09-22-demo-access-consent-withdrawal-proposal.md)
+is **PROPOSED** for [#885](https://github.com/ebarti/JobCtrl/issues/885).
+It recommends analytics-optional access and a bounded withdrawal/deletion
+contract, but awaits the listed owner decisions and authorizes no implementation.
+
+## Revalidated Delivery Records
+
+- [Preserve Behavior While Removing Duplicated State And Execution](implemented/2026-09-06-simplification-stack.md)
+  — delivered in #865, #866, #868 and #869, all merged on 2026-09-08.
 - [Stable Job Identity, Workflow Parity, And Feedback Learning](2026-07-29-stable-job-identity-workflow-feedback-learning.md)
-  — accepted; implementation in progress as small stacked PRs.
+  — core foundations delivered; remaining URL cleanup, realtime patches and
+  browser proof are linked from its revalidated status banner.
 
 ## Historical Spec Ledger
 
@@ -76,12 +101,12 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-06-30 | [Requirement-Led Resume Tailoring](implemented/2026-06-30-requirement-led-resume-tailoring.md) | Implemented — #201–#203; hardened by #216, #224, #228, #229; ADR 2026-06-30 |
 | 2026-07-03 | [Temporal-Native Rearchitecture](implemented/2026-07-03-temporal-native-rearchitecture.md) | Implemented — #230 (plan), #233, #231, #235, #238, #237, #239, #240; ADRs 2026-07-03 |
 | 2026-07-03 | [Temporal Rearchitecture — Implementation Spec (P1b–P5)](implemented/2026-07-03-temporal-rearch-implementation-spec.md) | Implemented — spec #232 |
-| 2026-07-03 | [OSS Release Remediation — Implementation Spec for Codex](implemented/2026-07-03-oss-release-remediation-spec.md) | Closed by #274 inventory, then W1 restamped after #336, #337, #338, #340, #342, and #345 — W1.1-W1.7 complete; W1.8 dry-run-by-default was withdrawn by owner decision; overall release remains no-go pending non-W1 owner/release checkpoints |
-| 2026-07-05 | [OSS Release — Drive-to-Done and Completion Verification Plan](implemented/2026-07-05-oss-release-drive-to-done-plan.md) | Restamped after the W1 remediation train and W0.6 owner pass — W1 apply-safety and the W2.1 rename are complete; W2.4 was explicitly deferred for v2.0.0 on 2026-07-10; overall R1 remains no-go pending final owner/release checkpoints and green post-public hosted gates |
+| 2026-07-03 | [OSS Release Remediation — Implementation Spec for Codex](implemented/2026-07-03-oss-release-remediation-spec.md) | Closed by #274 inventory, then W1 restamped after #336, #337, #338, #340, #342, and #345 — W1.1-W1.7 complete; W1.8 dry-run-by-default was withdrawn by owner decision; initial-publication process retired; retained as implementation history |
+| 2026-07-05 | [OSS Release — Drive-to-Done and Completion Verification Plan](implemented/2026-07-05-oss-release-drive-to-done-plan.md) | Restamped after the W1 remediation train and W0.6 owner pass — W1 apply-safety and the W2.1 rename are complete; W2.4 was explicitly deferred for v2.0.0 on 2026-07-10; initial-publication go/no-go process retired; retained as implementation history |
 | 2026-07-05 | [Low-Friction Install & Auth Reuse](implemented/2026-07-05-low-friction-install-plan.md) | Implemented — #254 (plan), #317, #354 |
-| 2026-07-05 | [First-Run Time-to-Value: Real-Path Measurement Discipline](implemented/2026-07-05-first-run-ttfv-plan.md) | Implemented / closed — #259 (plan), #343; Goal B withdrawn and #330 closed unmerged; desktop-packaging verdict remains pending owner-run TTFV evidence |
+| 2026-07-05 | [First-Run Time-to-Value: Real-Path Measurement Discipline](implemented/2026-07-05-first-run-ttfv-plan.md) | Implemented / closed — #259 (plan), #343; Goal B withdrawn and #330 closed unmerged |
 | 2026-07-05 | [Streaming Pipeline Latency — Score As You Discover](implemented/2026-07-05-streaming-pipeline-latency-plan.md) | Implemented — #260 (plan), #301, #306, #311; decisions recorded in #318 |
-| 2026-07-05 | [Launch-Readiness Artifacts](implemented/2026-07-05-launch-readiness-artifacts-plan.md) | Implemented / closed — #262 (plan), #298-#305, #324, #341, #354; owner-only publish actions remain in `docs/publish-checklist.md` |
+| 2026-07-05 | [Launch-Readiness Artifacts](implemented/2026-07-05-launch-readiness-artifacts-plan.md) | Implemented / closed — #262 (plan), #298-#305, #324, #341, #354; initial-publication process retired after the repository became public |
 | 2026-07-05 | [Career Evidence Map + Interview Preparation](implemented/2026-07-05-evidence-map-interview-prep-plan.md) | Implemented — #263 (plan), #276, #279, #283, #285, #293, #294 |
 | 2026-07-05 | [Application Outcome Analytics And Artifact Comparison](implemented/2026-07-05-outcome-analytics-plan.md) | Implemented — #264 (plan), #273, #280, #284, #287, #295 |
 | 2026-07-05 | [Browser Extension — Capture, Assisted Autofill, and Deferred Guarded Submission](implemented/2026-07-05-browser-extension-plan.md) | Implemented through deterministic capture/autofill — #265 (plan), #277, #281, #282; P2b free-text drafts and P3 guarded submission remain deferred |
@@ -90,7 +115,7 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-07-05 | [Product Rename to JobCtrl](implemented/2026-07-05-rename-jobctrl-plan.md) | Implemented — #261 (plan), #349; hardening #350; #351 closeout; R0.1 updates the final public spelling to JobCtrl |
 | 2026-07-05 | [Crawl Politeness Hardening](implemented/2026-07-05-crawl-politeness-plan.md) | Implemented — #272 (plan), #297-#316; pacing-test hardening #334; ADR 2026-07-06 |
 | 2026-07-08 | [Web UI/UX Revamp — Left-Rail Shell + JobCtrl Design System](implemented/2026-07-08-web-ui-revamp-plan.md) | Implemented — #356; design-system docs follow-up continues separately in #357 |
-| 2026-07-10 | [Bundled JobCtrl Distribution](implemented/2026-07-10-bundled-jobctrl-distribution-plan.md) | Implemented / closed with operational follow-ups — #394, #396, and #399–#405; signed/notarized `v2.0.7`, GitHub Release, R2, Homebrew, and PyPI are live; published-artifact acceptance remains in the release checklist/backlog; ADR 2026-07-10 |
+| 2026-07-10 | [Bundled JobCtrl Distribution](implemented/2026-07-10-bundled-jobctrl-distribution-plan.md) | Implemented / closed with operational follow-ups — #394, #396, and #399–#405; signed/notarized `v2.0.7`, GitHub Release, R2, Homebrew, and PyPI are live; published-artifact acceptance is tracked in [#884](https://github.com/ebarti/JobCtrl/issues/884); ADR 2026-07-10 |
 | 2026-07-11 | [Public JobCtrl Live Demo](implemented/2026-07-11-public-live-demo-plan.md) | Implemented / public — #407–#417; consent-gated analytics #497; analytics-optional access and withdrawal/erasure remain separately scoped privacy follow-ups |
 | 2026-07-13 | [Discovery Pipeline Operations Visibility](implemented/2026-07-13-discovery-pipeline-operations-visibility-plan.md) | Implemented — cumulative integration #464 incorporated the reviewed #459–#462 stack; production follow-ups #465–#467 |
 | 2026-07-14 | [End-to-End Product Redesign](implemented/2026-07-14-end-to-end-product-redesign.md) | Implemented — cumulative integration #464 incorporated the reviewed #453–#463 stack; production follow-ups #465–#467 |

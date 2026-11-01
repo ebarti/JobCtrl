@@ -18,9 +18,10 @@ scripts/install
 ```
 
 `scripts/install` is the first-run path for new contributors. It checks for
-Node.js, Corepack, uv, and the Temporal CLI, offers
+Node.js 22.13 or newer, Corepack, uv (the Python worker needs Python 3.11 or
+newer), the Temporal CLI, and Go 1.24 or newer on macOS, offers
 Homebrew installs for missing machine-level tools when available, then runs the
-repository dependency setup: frozen pnpm install, uv sync, and Playwright
+repository dependency setup: frozen corepack pnpm install, uv sync, and Playwright
 Chromium installs for both the web package and the Python worker. This direct
 entry point can install a missing standalone Corepack package; once Corepack is
 available, `corepack pnpm install:interactive` invokes the same script. It then
@@ -39,7 +40,7 @@ The public installer resolves the authenticated stable release pointer and
 delegates installation to the signed native installer. Contributors continue
 to use `scripts/install` and the source commands on this page.
 `docs/public/install.sh` must stay byte-for-byte identical to `scripts/get`;
-`pnpm docs:build` checks that before building the site.
+`corepack pnpm docs:build` checks that before building the site.
 
 For machines that already have the system tools and browsers installed, use the
 non-interactive dependency sync:
@@ -57,6 +58,11 @@ Playwright browser binaries. Do not set `UV_EXCLUDE_NEWER` (or a global uv
 so every `--locked` command in this repository fails or, worse, rewrites the
 lockfile. System Chrome/Chromium is optional; contributor
 testing of apply behavior must explicitly enable a browser capability first.
+The full worker suite also exercises guarded anonymous availability in real
+Chromium. Install the locked worker browser revision with
+`uv --project workers/automation run --locked --all-extras playwright install chromium`
+before that suite; Python CI installs its browser and Linux prerequisites.
+This fixture uses a disposable anonymous context and synthetic employer transport.
 
 The source installer downloads separate web/E2E and Python-worker Playwright
 Chromium revisions. The bundled release instead contains exactly one
@@ -75,16 +81,47 @@ uv --project workers/automation run jobctrl setup --non-interactive --json --ski
 
 ## Run
 
+### Native credential migration
+
+Stop the owned development stack, then run:
+
 ```bash
-pnpm dev
+scripts/dev migrate-credentials
 ```
 
-`pnpm dev` is the source-development counterpart of installed
-`jobctrl start`. It starts the full local fleet in dependency order: Temporal dev server,
-TypeScript API, Vite web app, and the Python worker. Before each
-component starts, the launcher stops the existing tracked JobCtrl process
-tree for that component, so rerunning `pnpm dev` starts from a clean owned
-stack. It runs in the foreground so supervised terminals keep the child
+This invokes `jobctrl credentials migrate` before sourcing any environment
+file. It selects `$JOBCTRL_DIR/.env` (default `~/.jobctrl/.env`), the checkout's
+`.env`, then `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`), in the same order
+as the development launcher. It migrates only the fixed guided secret allowlist
+and writes a secret-free completion marker under `JOBCTRL_DIR`. Inherited shell
+values are never persisted. Restart the stack after success; already-running
+services retain their old inherited values.
+
+For a source CLI invocation, `uv --project workers/automation run jobctrl
+credentials migrate` defaults to the active owned `.env`, the current
+directory's `.env`, and `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`).
+Use repeated `--env-file` arguments when an exact source set is required.
+See [Configuration](user/configuration.md#migrating-legacy-plaintext-secrets)
+for conflict handling, preservation, scope, and the one-time marker.
+
+QA must use uniquely owned temporary files and a synthetic native-store
+namespace. Never run a migration test against these default personal paths.
+
+### Start the development stack
+
+```bash
+corepack pnpm dev
+```
+
+`corepack pnpm dev` is the source-development counterpart of installed
+`jobctrl start`. It first builds the browser extension, then starts the full
+local fleet in dependency order: Temporal dev server, TypeScript API, Vite web
+app, and the Python worker. On macOS, the fleet uses the same workspace lock
+and process ownership as a compatible installed application. Starting a source fleet
+stops the previously owned source or installed fleet for that workspace first.
+Older untracked processes cannot provide this ownership proof merely by stopping.
+The command runs
+in the foreground so supervised terminals keep the child
 processes alive; keep the terminal open and stop the stack with Ctrl-C. The
 launcher tracks PIDs under `.dev/pids/`, writes logs under `.dev/logs/`, and
 defaults to:
@@ -94,7 +131,7 @@ defaults to:
   `JOBCTRL_API_PORT=8766`
 - Web API base URL: `VITE_JOBCTRL_API_BASE_URL=http://127.0.0.1:8766`
 - Web port: `5173` (`JOBCTRL_WEB_PORT` can override it)
-- Temporal persistence: `$JOBCTRL_DIR/temporal/temporal.db`
+- Temporal persistence for a new workspace: `$JOBCTRL_DIR/temporal.db`
   (`JOBCTRL_TEMPORAL_DB` can override it)
 
 `jobctrl.db` and the Temporal history store form one runtime identity. Keeping
@@ -102,6 +139,99 @@ both under `JOBCTRL_DIR` lets an interrupted workflow reconnect to the same
 history when the source stack is restarted from another Git worktree. To run a
 fully isolated stack, give it a separate `JOBCTRL_DIR`; do not point a shared
 `jobctrl.db` at a worktree-local Temporal database.
+
+If another API responds on the configured port and is not tracked by this
+checkout, source startup refuses before replacing processes or starting a web
+app against that API. Stop the other runtime or choose separate bindings. This
+probe only detects a responding API; it does not establish that all writers or
+detached descendants have stopped and is not migration authority.
+
+The current source and compatible installed launchers retain the earlier
+`$JOBCTRL_DIR/temporal/temporal.db` location if that is the only existing
+history. New workspaces use `$JOBCTRL_DIR/temporal.db`. If both locations or
+orphaned SQLite companions exist, startup refuses to choose between them.
+Preserve the application database, both histories and their companions; do
+not copy, replace or delete either history to make startup succeed. On macOS,
+`JOBCTRL_DB_PATH` and `JOBCTRL_TEMPORAL_DB` must identify the database and
+history in `JOBCTRL_DIR`. Set a separate `JOBCTRL_DIR` for an isolated stack.
+A compatible installed launcher only accepts a legacy source history once a
+healthy source fleet has established its shared ownership; an older untracked
+source runtime cannot supply that proof. In particular, v0.3.1 expects the root
+`temporal.db` and does not support the earlier source-only location. The macOS
+source fleet uses the local Temporal server at `localhost:7233` and its `default`
+namespace, as the installed app does.
+
+### Schema migrations and source updates
+
+The source checkout and the installed application are separate versions. To
+update a clean source checkout, first stop its attached stack with Ctrl-C. Then
+fast-forward its intended branch, refresh its dependencies and restart it:
+
+```bash
+git status --short --branch
+git pull --ff-only
+corepack pnpm dev:setup
+corepack pnpm dev
+```
+
+Preserve or commit any unrelated local changes before pulling. Pulling source
+does not update the installed application. For an installed release, use
+`jobctrl update` when a compatible release is available; the installed updater
+owns the stopped-runtime migration and paired backup. The schema-14 to 15
+protocol change specifically requires the trusted new installer described in
+[Getting Started](user/getting-started.md#update-roll-back-or-remove-jobctrl),
+not the older installed updater. Updating a database makes it unavailable to
+older builds that require an earlier schema. Source and installed builds use
+the same profile and resume in the shared workspace; they cannot run different
+schema versions against it at the same time.
+
+While the checkout owns the workspace, `jobctrl status` identifies its source
+supervisor. Use `corepack pnpm dev:status` in that checkout for individual
+component health. Stop the source fleet before using the installed `jobctrl
+backup` command; it will not replace a running source fleet with an installed
+one.
+
+On macOS, starting this checkout automatically upgrades an owned schema-14
+workspace to schema 15. It stops the owned runtime, backs up the application
+database and its matching Temporal history under
+`$JOBCTRL_DIR/backups/source-pair-<id>/`, and validates the upgrade before
+starting. No separate migration command is needed. If the upgrade is
+interrupted, restart the same checkout to retry; each attempt backs up the
+current pair and does not restore an older backup over later writes. Keep the
+recovery journal and all databases and SQLite companions in place.
+
+If the earlier runtime's ownership cannot be verified, the automatic upgrade
+does not modify the workspace. With an untracked legacy registry, the source
+command can stop before opening the diagnostic interface and report the
+ownership problem in the terminal instead. If a diagnostic API does start for
+an incompatible schema, it reports that an upgrade is needed without starting
+the worker or Temporal. If a legacy runtime lacks complete ownership records,
+there is currently no documented self-service recovery.
+Preserve the registry, workspace and journal and seek support; a computer
+restart alone does not clear the refusal. Schemas older than 14, newer than this
+build, ambiguous histories, and non-macOS source starts do not take this
+automatic path. Do not invoke the private migration modules directly on a live
+workspace: they do not establish process ownership or a paired backup.
+
+For development that does not need personal data, a new isolated workspace
+uses the checkout's current schema on first start. This isolates the databases,
+not inherited provider credentials or environment files; use the synthetic QA
+rules in [Reliability & QA](local-reliability-qa.md#safe-qa-data) when testing:
+
+```bash
+JOBCTRL_DIR="$(mktemp -d)" corepack pnpm dev
+```
+
+Use a deliberately retained path instead of `mktemp` if the workspace must
+survive the session. Keep the application and Temporal databases together.
+
+Whenever `scripts/dev run`, `start`, or `restart` selects the product `web`
+component (including the default fleet), it runs `corepack pnpm extension:build`
+once before stopping or replacing any tracked process. A build failure aborts
+startup and leaves the existing processes and logs intact. Docs, demo, and
+component sets without `web` skip this build, as do status and stop commands.
+The launcher prints the absolute `dist/extension` path and Chrome load/reload
+instructions; loading or refreshing the extension in Chrome remains manual.
 
 ### Runtime Overrides
 
@@ -123,49 +253,142 @@ launcher defaults above.
 | `JOBCTRL_DEMO_API_PORT`         | `8787`                      | Local Wrangler port for the demo consent and telemetry API.                                                                                                                                                            |
 | `JOBCTRL_DEMO_STATE_DIR`        | `.dev/demo/wrangler`        | Local Wrangler/D1 persistence shared by demo migrations and the demo API process.                                                                                                                                      |
 | `VITE_JOBCTRL_API_BASE_URL`     | proxied `/v1`               | Browser API origin when not using the default Vite proxy.                                                                                                                                                              |
-| `JOBCTRL_TEMPORAL_DB`           | `$JOBCTRL_DIR/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. Override it only together with an isolated `JOBCTRL_DIR`; sharing JobCtrl projections while switching Temporal history stores breaks workflow recovery. |
-| `TEMPORAL_ADDRESS`              | `localhost:7233`            | Temporal server address used by the worker, CLI, and workflow-starting RPC.                                                                                                                                            |
-| `TEMPORAL_NAMESPACE`            | `default`                   | Temporal namespace.                                                                                                                                                                                                    |
+| `JOBCTRL_TEMPORAL_DB`           | `$JOBCTRL_DIR/temporal.db`, or the sole existing legacy `$JOBCTRL_DIR/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. On macOS this must be the history selected for `JOBCTRL_DIR`; sharing JobCtrl projections while switching histories breaks workflow recovery. |
+| `TEMPORAL_ADDRESS`              | `localhost:7233`            | Temporal server address used by the worker, CLI, and workflow-starting RPC. The macOS shared-workspace fleet requires this local server. |
+| `TEMPORAL_NAMESPACE`            | `default`                   | Temporal namespace. The macOS shared-workspace fleet requires `default`. |
 | `JOBCTRL_API_SSE_POLL_MS`       | `250`                       | API event-stream database poll interval in milliseconds.                                                                                                                                                               |
 | `VITE_DEV_API_PROXY_TARGET`     | `http://127.0.0.1:8766`     | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks.                                                                                                                                 |
 | `VITE_DEMO_API_PROXY_TARGET`    | launcher-managed            | Vite dev-server `/api` proxy target for demo mode. The launcher sets it to the tracked local Wrangler process so consent stays same-origin.                                                                            |
 | `VITE_GOOGLE_MAPS_API_KEY`      | unset                       | Enables Google Maps address search in the Profile form.                                                                                                                                                                |
+| `JOBCTRL_SKIP_BROWSER_PREFLIGHT` | unset                    | Set to `1` to skip the worker's startup Chromium check, for a worker that runs only non-browser activities. |
+| `PLAYWRIGHT_SKIP_BROWSER_GC`    | unset                       | Set to `1` when running `playwright install` from another checkout, so it keeps the browser revisions other worktrees still use in the shared Playwright cache. |
 
 Inspect the foreground stack from another terminal:
 
 ```bash
-pnpm dev:status
-pnpm dev:logs worker
+corepack pnpm dev:status
+corepack pnpm dev:logs worker
 scripts/dev list
 ```
 
-`pnpm dev:status` combines PID liveness with the API worker heartbeat health
-classification. When the worker process is alive but its heartbeat is stale,
-the worker row reports `stale` so operator status matches the dashboard.
+`corepack pnpm dev:status` reports tracked PID liveness separately from health.
+The API row can show `migration`, `incompatible`, `healthy`, or `unknown` when
+its watcher is alive. `unknown` means the health probe did not establish a
+result; it does not prove the process is down. When the worker process is alive
+but its heartbeat is stale, the worker row reports `stale`.
 
 For a detached background stack in a normal shell, use the explicit daemon mode:
 
 ```bash
-pnpm dev:start
-pnpm dev:stop
+corepack pnpm dev:start
+corepack pnpm dev:stop
 ```
 
-`pnpm dev:start` prints the observed API, web, and Temporal bindings after the
+`corepack pnpm dev:start` prints the observed API, web, and Temporal bindings after the
 processes launch. Use the printed web URL rather than assuming `5173`, because
 Vite can bind a higher port when another local JobCtrl web server is already
 using the requested port.
 
+### Purge A Source Workspace's Job Data
+
+This internal maintenance command is intended for disposable test workspaces
+and deliberate local reset work. `corepack pnpm data:purge-jobs` is read-only
+unless it receives the exact confirmation phrase. Use it first to resolve and
+count the target workspace:
+
+```bash
+corepack pnpm data:purge-jobs --app-dir /path/to/disposable-jobctrl-dir
+```
+
+Before execution, stop every JobCtrl process using that workspace and verify
+that no API or worker from another worktree still has `jobctrl.db` open (for
+example, `lsof /path/to/disposable-jobctrl-dir/jobctrl.db`). A fresh worker
+heartbeat for this database blocks deletion; wait at least 45 seconds after
+the last heartbeat once the worker is stopped. Heartbeats do not detect every
+API or other writer, so the process check remains required. Any database commit
+by another connection between inventory and the deletion lock aborts the run
+without deleting or moving files. Stop the writer and repeat inventory before
+retrying. Then run:
+
+```bash
+corepack pnpm data:purge-jobs --app-dir /path/to/disposable-jobctrl-dir \
+  --confirm DELETE-ALL-JOB-DATA
+```
+
+The command backs up first, purges the exact-v12 local Job graph, archives live
+generated resume/cover-letter entries and registered job logs, removes the
+job/Discovery execution ledger, source-quality summaries, job-stage operational
+attempts, and projection-rebuilding lifecycle events, compacts SQLite, and
+checks that profile/templates/Discovery settings/Settings fingerprints did not
+change. It preserves unrelated Profile, source-control, contact/outreach,
+maintenance-workflow history, and non-job operational attempts. It is not a
+Temporal-history or secure-erasure command. The owning boundary is documented
+in [Storage](architecture/storage.md).
+
+If post-commit SQLite compaction alone fails, the command still verifies the
+logical purge and preservation boundary, reports that the purge committed, and
+prints the recovery bundle plus free-space and compaction guidance. If those
+post-commit invariants cannot be verified, keep JobCtrl stopped and follow the
+printed recovery-bundle restore guidance.
+
+#### Resolve Provisional Missing-History Executions
+
+The inventory and refusal message list workflow/run IDs for `terminated` +
+`reconciled_not_found` rows. They are provisional: the worker may have reached
+the wrong Temporal server or lost access to the authoritative history. An absent
+execution cannot be canceled. Restore access to the correct history and let the
+reconciler settle it normally whenever that history still exists.
+
+For a deliberate reset after permanent local history loss only:
+
+1. Stop JobCtrl API, workers, launchers, and any other writer. Verify no process
+   has this `jobctrl.db` open. Keep the worker stopped throughout this procedure.
+2. Verify the workspace's configured Temporal address and namespace against the
+   intended history store. Inspect that namespace's complete workflow inventory
+   and each exact workflow/run ID listed by the purge. The namespace must be
+   empty and every listed execution must be absent. An unreachable server, an
+   empty result from a different namespace, or a permissions error is not proof.
+   Do not restore older Temporal history after this clearance.
+3. Open this workspace database in `sqlite3` and create a separate pre-clearance
+   backup with `.backup '/absolute/private/path/jobctrl-before-clearance.db'`.
+   Keep it with the later purge recovery bundle; the purge's own backup is taken
+   after this clearance. Set named parameters `:workflow_id` and
+   `:temporal_run_id` to one exact inventoried pair (SQL NULL for a null run ID),
+   and execute the guarded statement below. Confirm `changes()` is exactly one;
+   zero means the identity or state changed and requires a fresh inventory.
+4. Close SQLite, rerun inventory, and execute the confirmed purge while all
+   writers remain stopped. Repeat the guarded clearance only for other exact
+   pairs independently verified in step 2. Active stages and ordinary active
+   workflows still block the command.
+
+```sql
+UPDATE workflow_run_projections
+SET error_code = 'operator_verified_history_absent',
+    error_message = 'Operator verified the configured Temporal namespace empty before an offline job-data purge.'
+WHERE tenant_id = 'local'
+  AND workflow_id = :workflow_id
+  AND temporal_run_id IS :temporal_run_id
+  AND LOWER(status) = 'terminated'
+  AND LOWER(COALESCE(error_code, '')) = 'reconciled_not_found';
+SELECT changes();
+```
+
+This maintenance-only clearance preserves the terminal status and records why
+the absent execution no longer blocks the reset. It does not assert that an
+unreachable execution finished, and it must not be used during normal operation.
+
 Run individual components only when troubleshooting a specific process:
 
 ```bash
-temporal server start-dev --db-filename "$JOBCTRL_DIR/temporal/temporal.db"
-pnpm api:dev
-pnpm web:dev
+temporal server start-dev --db-filename "$JOBCTRL_TEMPORAL_DB"
+corepack pnpm api:dev
+corepack pnpm web:dev
 uv --project workers/automation run jobctrl worker
 uv --project workers/automation run jobctrl doctor
 ```
 
-The Temporal dev server binds the frontend gRPC service on `127.0.0.1:7233` and
+Set `JOBCTRL_TEMPORAL_DB` to the existing workspace history before starting
+Temporal directly; the source launcher normally selects it for you. The Temporal dev server binds the frontend gRPC service on `127.0.0.1:7233` and
 the Web UI on `http://127.0.0.1:8233`. The launcher passes
 `--db-filename "$JOBCTRL_TEMPORAL_DB"` so workflow history persists across
 launcher and worktree restarts instead of disappearing when the process exits.
@@ -178,7 +401,7 @@ Run the complete local public demo—synthetic browser-local workspace plus the
 real local consent and telemetry Worker—with:
 
 ```bash
-pnpm demo:dev
+corepack pnpm demo:dev
 ```
 
 This is the foreground form: keep the terminal open and press Ctrl-C to stop
@@ -186,25 +409,33 @@ both tracked processes. For a detached demo that returns control to the shell,
 use the complete lifecycle:
 
 ```bash
-pnpm demo:start
-pnpm demo:status
-pnpm demo:stop
+corepack pnpm demo:start
+corepack pnpm demo:status
+corepack pnpm demo:stop
 ```
 
-`pnpm demo:start` applies pending migrations to the local D1 store, starts the
+`corepack pnpm demo:start` applies pending migrations to the local D1 store, starts the
 Wrangler API on port `8787`, starts the demo-mode Vite app on requested port
 `5174`, prints both observed bindings, and returns. Vite proxies `/api/*` to
 Wrangler without changing the browser-facing origin, preserving the same-origin
 consent and secure-cookie boundary used in production. Local D1 state persists
 under `.dev/demo/wrangler/`; override the three `JOBCTRL_DEMO_*` variables in
 the table above for isolated multi-worktree sessions. Inspect process logs with
-`pnpm dev:logs demo-api` or `pnpm dev:logs demo-web`.
+`corepack pnpm dev:logs demo-api` or `corepack pnpm dev:logs demo-web`.
 
 The local demo does not start the JobCtrl API, Temporal, Python worker, SSE, or
 host-OS integrations. Only the exact value `demo` selects this frontend
 composition; the lifecycle command supplies it automatically. A missing or
 invalid `VITE_JOBCTRL_APP_MODE` keeps the normal local composition, so a
 mistyped value cannot produce a partially mounted app.
+
+For the target-role suggestion browser check, start `corepack pnpm demo:dev`,
+accept the local demo gate, open **Discovery → Target search**, and use **Suggest
+roles**. The bundled profile fixture has version `1` and explicit Management /
+Director preferences. Its deterministic result is labeled `model_stub` with a
+`stubbed_model_evidence` warning; it is fixture evidence, not a real provider
+run. Edit, reject, or add the proposal, then save to exercise the same
+version-checked form path without production profile data or a database.
 
 Demo mode now renders the static acceptance gate before creating IndexedDB.
 If the same-origin local Worker is unavailable, acceptance remains fail-closed
@@ -266,20 +497,20 @@ The production Wrangler configs bind the EU-scoped
 intentionally ignored—the checked-in environment contract contains only the
 four bindings used by this package.
 
-`.github/workflows/demo-site.yml` always builds and verifies the demo. Same-repo
+On pull requests, the shared CI frontend workflow builds the browser-local
+demo for shared web and dependency changes. The shared backend worker
+checks and dry-runs both edge Workers only for
+edge-package, shared TypeScript configuration, dependency or edge-workflow
+changes. The site workflow also verifies the Workers on `main` pushes and manual
+runs before any production deployment. Same-repo
 pull requests publish a static Pages preview only when
 `DEMO_PREVIEW_DEPLOY_ENABLED=true`. Production runs only from `main` when
 `DEMO_DEPLOY_ENABLED=true`, applies D1 migrations, deploys both Workers, and
 then publishes Pages. The workflow uses the existing
 `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` secrets.
 
-The owner-approved open-source sequence does not require paid
-private-repository Actions minutes. While the repository is private, zero-step
-billing failures are expected and are not validation evidence. First pass the
-complete exact-tree local privacy/release gate, then make the repository public
-and rerun the hosted workflows on that same `main` SHA. Enable production demo
-deployment only after those hosted gates and the demo privacy approvals pass;
-see the repository-only [publish checklist](publish-checklist.md).
+Production deployment uses the workflow controls above. Verify the affected
+checks on the deployed revision; repository publication is already complete.
 
 Rollback the static site from the Cloudflare Pages deployment history, then
 redeploy the prior Worker versions if the fault crosses the `/api/*` boundary.
@@ -291,39 +522,195 @@ consent read, and exact denied/granted cookie boundary.
 
 ## Verify
 
+Schema v15 migrations require verified instance cleanup and a separate sealed
+candidate. For a synthetic exact-v14 source, exercise the private boundary with
+`python -m jobctrl.infrastructure.migrations.v14_to_v15_execute --source
+<source.db> --candidate <candidate.db>`. The command never installs the
+candidate. The authenticated new installer owns stopped-runtime paired backup,
+exact-v14 in-place activation, readiness and forward recovery. Historical
+protocol-1 controllers refuse the protocol-2 target before backup; run the new
+installer against the original authenticated installation instead. Before
+selector replacement, retry that trusted installer; the old public binary
+cannot decode the new journal. After replacement, ordinary `jobctrl update`
+resumes through the new controller. Each retry preserves newer live app/Temporal writes and takes a current WAL-aware backup.
+A cross-protocol rollback is refused. Never run a migration executor against
+the live path as its candidate. See
+[the distribution contract](../packaging/distribution/README.md) and
+[release qualification](developer/releasing.md#schema-15-installed-upgrade-qualification).
+
+Choose the touched-surface recipe and required gates through
+[Reliability & QA](local-reliability-qa.md). The root aggregates do not include
+the separate web unit, type-level, Playwright or Storybook suites. Build the
+Python package when packaging behavior changes.
+
+For reproducible 100, 1,000, and 10,000-job local scale measurements through
+the production projection, HTTP, SSE, preview, and Python RPC paths, use the
+[local scale benchmark](developer/local-scale-benchmark.md).
+
+## Pull-request CI
+
+The repository requires maintainer approval for workflow runs from all external
+fork contributors. Review the proposed changes before approving a run. Issue
+labels and Project status do not approve code execution.
+
+Pull requests and pushes to `main` use `.github/workflows/ci.yml`. The entry
+contains triggers and reusable-workflow calls; each child job still receives
+its own runner. An ordinary API or site-documentation PR uses three allocations.
+Web PRs use five, preserving separate web, supporting UI and E2E machines after
+combined runners caused contention and timeouts in hosted trials:
+
+- **Admission / Release check**, in `ci-admission.yml`, scans the actual
+  candidate with accepted default-branch privacy code, validates source and run
+  identities, and classifies the complete Git diff. It executes no candidate
+  code or candidate dependency installation.
+- **Backend / Core checks**, in `ci-backend.yml`, installs Node once and runs
+  repository contracts for every verified change. Selected API, Python,
+  distribution and edge checks reuse that runner and its locked dependencies.
+- **Frontend / UI checks**, in `ci-frontend.yml`, installs Node once and runs web
+  lint, types, unit tests and build. It allocates no
+  runner when web checks are excluded.
+- **Support / UI checks** runs boundary, Storybook, extension and site checks
+  sequentially on another VM, with shared browser setup. It allocates no
+  runner when none is selected.
+- **Browser / UI checks** calls the same frontend recipe with only E2E enabled,
+  retaining isolated and real-RPC modes on a separate VM.
+
+Missing policy at first adoption, unknown paths, shared dependencies, CI or
+privacy inputs, and uncertain scope select full coverage or block verification.
+Forks, stacked bases outside the default branch and moving policy bases use
+full coverage. A suite runs unless trusted admission explicitly excludes it;
+missing outputs cannot silently omit one. The scope notice records the source,
+policy, run and selected checks. Required contexts belong to the actual worker
+jobs, including literal skipped platform jobs; there is no final summary runner.
+
+| Changed surface | Product checks, in addition to privacy and repository contracts |
+| --- | --- |
+| Published site documentation | Docs build, emitted links/redirects and rendered Chromium checks |
+| Documentation outside the built site | No unrelated product suite |
+| Web source | Web lint/types/unit/build, Storybook/browser controls and both web E2E modes |
+| API source | API checks/tests and web E2E, including real worker RPC |
+| Worker source | API/RPC integration, the full worker suite on Python 3.12 and two native launcher shards |
+| Shared contracts, locks, toolchains, CI, privacy or unknown inputs | Full validation, including platform-specific proof |
+
+Each frontend worker runs one profile at a time. Web checks, supporting UI
+checks and E2E have separate VMs; compiler, accessibility and browser-heavy
+work no longer compete inside one runner. Within a profile, commands keep their
+original order and failure behavior, while independent suites finish their
+diagnostics after a failure. The role-named `frontend-lanes` artifacts retain
+logs and per-command outcomes. Both E2E modes retain separate JUnit and
+screenshot evidence. Resource logs record available CPUs and memory for timing
+comparisons.
+
+The web profile keeps the original lint, types, unit, public-type and production
+build sequence. Browser installation is selected only for profiles that need it
+and has an eight-minute bound. Hosted Ubuntu package transport uses bounded
+retries and timeouts without changing repositories or signature checks.
+
+The complete primary Python recipe lives in
+`.github/actions/worker-checks/action.yml`; the backend and standalone manual
+`python.yml` both call it after locked setup. The installed app bundles CPython
+3.12, so the full suite, including migration and security cases, runs once on
+3.12. This removes complete 3.11 and 3.13 repetitions without changing package
+interpreter metadata or certifying those source interpreters.
+
+The three-runner target applies when one frontend worker is sufficient. Web
+source needs all three; broader safety inputs can need additional platform
+proof. Selected native launcher proof retains two isolated macOS shards because
+its tests own fixed ports.
+Native credential checks retain macOS, Windows and Linux jobs; synthetic Gmail
+ACL checks retain Windows. Full scope therefore needs eleven allocations. These
+platform boundaries are preserved rather than replaced with Linux substitutes.
+
+The entry also owns affected checks on `main` pushes. It verifies the exact
+before/after diff; absent or forced history and moving policy use full core
+coverage. Documentation and demo publication remain in `docs-site.yml` and
+`demo-site.yml`, with their existing main input filters, environments and
+credentials. Their builds are not repeated by the core main workflow. Other standalone suite workflows remain available for manual diagnostics; the
+TypeScript entry uses the same three isolated frontend profiles.
+
+PR demo previews additionally require affected-only admission, the original
+Demo Site input paths, the same repository and the existing explicit preview
+setting. Bootstrap, full, shared, CI, security and uncertain admissions verify
+selected surfaces without publishing a preview. When changing required context
+names, verify every replacement job before migrating the ruleset; preserve
+strict up-to-date enforcement, app identity and all other protections.
+
+For the elapsed-time study, retain the workflow, all-attempt job metadata and
+trusted scope notice while the PR association is available. GitHub's REST API
+provides the workflow and job timestamps:
+
 ```bash
-pnpm check
-pnpm test
-uv --project workers/automation run --extra dev python -m build workers/automation
-git diff --check
+gh api repos/ebarti/JobCtrl/actions/runs/RUN_ID
+gh api --paginate 'repos/ebarti/JobCtrl/actions/runs/RUN_ID/jobs?filter=all&per_page=100'
 ```
 
-Use focused checks while iterating:
+Measure total candidate elapsed time from the earliest attributable
+workflow creation, including prerequisites and retries, alongside the original
+required-job span. Separate pre-start delay from execution, runner allocations
+from materialized job records, and executed checks from intentional exclusions.
+Full-workflow completion stays unavailable while a workflow can still create
+later jobs. Required-context rules are recorded at collection time.
+Incomplete, failed or unattributed proof cannot enter a successful sample;
+missing historical PR or tested-base identity remains unknown. Compare similar
+changes, test coverage, runner load and toolchains before claiming a speedup.
 
-```bash
-corepack pnpm api:check
-corepack pnpm api:test
-corepack pnpm web:check
-corepack pnpm web:build
-corepack pnpm --filter @jobctrl/web e2e:demo-workspace
-corepack pnpm scripts:test
-corepack pnpm qa:test
-corepack pnpm extension:check
-corepack pnpm extension:test
-corepack pnpm extension:build
-corepack pnpm extension:e2e
-```
+Dependabot automatic rebases are disabled to keep parked dependency PRs from
+restarting CI after unrelated merges. Refresh the PR selected for its next
+merge, then verify that candidate. Update schedules and dependency groups still
+apply. GitHub may continue automatically rebasing PRs opened before this policy
+change until they are 30 days old; see the
+[Dependabot rebase policy](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#rebase-strategy).
 
-The hermetic broad-board recovery fixture uses local fake adapters and a
-time-skipping Temporal test server; it performs no external crawl:
-
-```bash
-uv --project workers/automation run pytest -q \
-  workers/automation/tests/test_jobstreaming_resumable_discovery.py
-```
-
-Regenerate public documentation screenshots with `pnpm docs:screenshots` — see
-[Documentation Screenshots](#documentation-screenshots).
+Python CI syncs `workers/automation/uv.lock` with `--locked --all-extras`; it
+must never resolve the floating ranges in `pyproject.toml` in place of the
+locked candidate graph. The full worker suite runs with two pytest-xdist
+processes and `--dist=loadfile`, keeping a file's fixtures in one process while
+independent files overlap. Each process owns its temporary JobCtrl workspace.
+`--max-worker-restart=0` makes a crashed or timed-out worker fail the run without
+an automatic restart. `corepack pnpm python:test` and the full worker recipe use
+the same settings and pass `workers/automation/tests` explicitly so pytest loads
+the worker's configuration. Focused pytest commands stay serial unless the
+caller requests workers; do not pay process startup for a single small file.
+Ephemeral Temporal test environments must start and
+stop only through the bounded, retried lifecycle in
+`workers/automation/tests/temporal_env.py` — two hosted lanes previously hung
+for GitHub's full six-hour ceiling on a wedged test-server start — and every
+test carries a three-minute `pytest-timeout` bound that dumps all thread
+stacks and hard-exits the wedged process (`timeout_method = "thread"`; a
+signal cannot unwind a blocked worker-pool thread), with a 45-minute job
+ceiling behind it. CI points `TMPDIR` at `/dev/shm` when available so
+hosted-runner disk latency cannot amplify the SQLite migration tests; the
+macOS launcher workflow still proves the migration boundary on real disk.
+Python CI installs the checksum-verified Temporal CLI and the separately pinned
+Temporal time-skipping test server before the suite. Their paths are passed to
+the corresponding tests, so neither depends on an SDK download during a test.
+The test-server archive and its SHA-256 are pinned to the official Temporal
+Java SDK release in `scripts/install-temporal-test-server.sh`; review that pin
+when changing the locked Python SDK.
+If the SDK's automatic test-server download is unavailable locally, point
+`JOBCTRL_TEMPORAL_TEST_SERVER_PATH` at an existing Temporal time-skipping test
+server executable and `JOBCTRL_TEMPORAL_CLI_PATH` at an installed Temporal CLI.
+These test-only overrides must be absolute executable file paths; invalid paths
+fail before startup. They use the SDK's supported existing-binary parameters and
+retain real servers, per-test lifecycles, startup/shutdown bounds and workflow
+execution. Unset overrides keep the SDK's normal download/cache behavior.
+Dependabot staggers package-manager batches weekly, groups compatible minor
+and patch updates, and applies a rolling cooldown before opening a candidate
+lockfile. Packages with explicit reviewed UV cutoffs are excluded from routine
+version updates: advancing them requires a reviewed cutoff change and coupled
+lockfile maintenance. These type-only exclusions preserve security update
+attempts. A security fix published after a cutoff still requires that deliberate
+cutoff and lockfile update before resolution can succeed.
+For the Claude SDK argument-injection fix, the reviewed cutoff advances only
+to 2026-07-18 and both provider groups pin `claude-agent-sdk==0.2.121`.
+The worker and separately shipped provider-pack lock must advance together.
+Node security backports use version-bounded overrides and exact-release
+exceptions to the existing eight-day package age gate; the global gate remains
+in force. Prefer a patched supported major line over an unrelated major
+migration, such as Vite 7.3.7 for the app and Vite 6.4.4 for VitePress.
+The repository-root Ruff configuration and the worker project both select the
+existing `E4`, `E7`, `E9`, and `F` rule groups explicitly so tool upgrades do not
+silently expand the contributor lint policy.
 
 ## Test And Documentation Workspaces
 
@@ -332,9 +719,9 @@ and CI from a real JobCtrl workspace:
 
 | Variable                     | What it does                                                                                  |
 | ---------------------------- | --------------------------------------------------------------------------------------------- |
-| `JOBCTRL_E2E_APP_DIR`        | Disposable app directory used by ordinary Playwright e2e. For `docs:screenshots`, an existing temporary parent under which the runner creates its own marker-protected child. |
-| `JOBCTRL_E2E_DB_PATH`        | E2E database path.                                                                            |
-| `JOBCTRL_E2E_SETTINGS_PATH`  | E2E settings path.                                                                            |
+| `JOBCTRL_E2E_APP_DIR`        | Optional existing temporary parent. Every ordinary, isolated or screenshot run creates and removes only its own marked child; the parent is preserved. |
+| `JOBCTRL_E2E_DB_PATH`        | Contained database path derived from the current owned allocation; not an independent caller override.                                                                            |
+| `JOBCTRL_E2E_CONFIG_PATH`  | Contained settings path derived from the current owned allocation.                                                                            |
 | `JOBCTRL_E2E_API_PORT`       | E2E API port.                                                                                 |
 | `JOBCTRL_E2E_WEB_PORT`       | E2E web port.                                                                                 |
 | `JOBCTRL_E2E_STUB_DISPATCH`  | Routes selected dispatches through deterministic test stubs.                                  |
@@ -342,7 +729,19 @@ and CI from a real JobCtrl workspace:
 | `VITE_JOBCTRL_SHOW_DEVTOOLS` | Shows TanStack Router and Query devtools in local Vite dev builds.                            |
 | `VITE_JOBCTRL_HIDE_DEVTOOLS` | Compatibility override that hides TanStack devtools even when the show flag is set.           |
 
-Never point these paths at a real `~/.jobctrl` workspace.
+Never point these paths at a real `~/.jobctrl` workspace. The harness retains an
+independent allocation capability in `JOBCTRL_E2E_WORKSPACE` and checks its
+contained database/config/state paths before use or cleanup. State JSON alone
+cannot authorize deletion. All modes start their own servers; a busy configured
+port fails instead of reusing an unidentified listener. The API startup wrapper
+seeds the owned database before API construction, and global setup verifies that
+seed receipt. See [isolated browser setup](developer/qa/browser-smoke.md#isolated-browser-mode).
+
+## Publish a release
+
+Use [Releasing JobCtrl](developer/releasing.md) for version preparation, curated
+notes, exact-candidate checks, protected signing, publication, and independent
+verification of every public channel.
 
 ## Build the bundled payload
 
@@ -354,13 +753,13 @@ The artifact ships only the statically linked launcher and the Go standard
 library BSD-3-Clause attribution — never the compiler.
 
 ```bash
-pnpm distribution:audit
-pnpm distribution:build
+corepack pnpm distribution:audit
+corepack pnpm distribution:build
 ```
 
-`pnpm distribution:audit` checks the component inventory, redistribution and
+`corepack pnpm distribution:audit` checks the component inventory, redistribution and
 license policy, exact external archive locks, provider-pack wheel locks, source
-dependency baseline, and signing policy. `pnpm distribution:build` writes an
+dependency baseline, and signing policy. `corepack pnpm distribution:build` writes an
 unsigned local payload and deterministic ZIP archive under
 `dist/distribution-real/`. The build compiles the API and web app, installs the
 core-only Python closure, embeds the pinned Node, Temporal, Python Playwright,
@@ -384,13 +783,26 @@ and records each canonical `JOBCTRL_DIR` under
 `~/Library/Application Support/JobCtrl/instances/<sha256>` (override with
 `JOBCTRL_RUNTIME_HOME`). This is an artifact smoke/development surface only;
 `scripts/dev` remains the source-contributor launcher until the installer and
-signing phases land. Use the much smaller contract fixture while changing the
-builder itself:
+signing phases land. Signed protocol-2 upgrades use the authenticated installer
+and signed schema declaration, with normal cleanup and forward recovery. Synthetic local
+artifacts do not qualify the actual signed/notarized installed upgrade; follow
+[the release contract](developer/releasing.md#schema-15-installed-upgrade-qualification).
+Use the much smaller contract fixture while changing the builder itself:
 
 ```bash
-pnpm distribution:build:fixture
-pnpm distribution:provider-lock:check
+corepack pnpm distribution:build:fixture
+corepack pnpm distribution:provider-lock:check
 ```
+
+The extracted-payload smoke runs the real API, JSON-RPC, Temporal workflow,
+worker activities and SQLite persistence without provider credentials. Its
+private worker bootstrap supplies explicit page-interpretation and description
+quality model choices through `LlmPort`; normal spend preflight, source/citation
+validation and determination persistence still execute. The bootstrap is passed
+as test code outside the immutable payload and is never installed or selected
+by product configuration. The resulting `semanticModel` evidence identifies
+the synthetic boundary. This proves capture plumbing and restart preservation,
+not model accuracy or live-provider readiness.
 
 Provider SDKs and their proprietary companion runtimes are not copied into the
 core archive. Their complete transitive wheel closures are generated from the
@@ -407,9 +819,9 @@ job output, and real LLM spend. The wrapper lives at `scripts/ttfv-real.mjs`
 and is exposed through:
 
 ```bash
-pnpm ttfv:real
-pnpm ttfv:probe
-pnpm ttfv:summary -- "$HOME/.jobctrl/measurements/ttfv-real-run-"*.json
+corepack pnpm ttfv:real
+corepack pnpm ttfv:probe
+corepack pnpm ttfv:summary -- "$HOME/.jobctrl/measurements/ttfv-real-run-"*.json
 ```
 
 Use `node scripts/ttfv-real.mjs run ...` directly on a clean checkout before
@@ -437,46 +849,163 @@ native lookalike.
 Run the dev server:
 
 ```bash
-pnpm web:dev
+corepack pnpm web:dev
 ```
 
-Typecheck and build:
+Check frontend boundaries, typecheck, and build:
 
 ```bash
-pnpm web:check
-pnpm web:build
+corepack pnpm web:lint
+corepack pnpm web:check
+corepack pnpm web:build
 ```
+
+`web:lint` checks production imports and browser-capability access using the
+TypeScript syntax tree and capability provenance, including real generated
+loader controls independent of compiler diagnostics. Run
+`corepack pnpm web:lint:test` for the complete positive/negative boundary suite.
+Existing boundary debt has scoped exceptions; new
+imports cannot silently widen them. See the
+[frontend boundary checks](architecture/frontend/state-and-ports.md#automated-boundary-checks)
+for the enforced rules, legitimate infrastructure access, and review limits.
+
+### Required-bullet coaching verification
+
+Required-bullet semantic findings live in
+`workers/automation/src/jobctrl/domain/profile/required_bullet_coaching.py` and
+must originate in `LlmPort.chat_json`. Shared TypeScript fixtures cover mechanical
+source binding and safe acceptance using explicit model test doubles. They never
+encode phrase-trigger expectations. Test an identical saved claim with different
+model findings, provider failure without fallback, forged sources, malformed
+output, spend/lane binding and saves during a pending call. Pure tests and stubbed
+browser runs do not prove a real configured provider response; verify that
+separately using only synthetic source facts in an owned QA workspace.
+
+Run these focused checks with prepared workspace dependencies:
+
+```bash
+UV_EXCLUDE_NEWER=false uv --project workers/automation run --locked --all-extras pytest -q workers/automation/tests/test_required_bullet_coaching.py
+corepack pnpm --filter @jobctrl/domain-types check
+corepack pnpm --filter @jobctrl/domain-types test
+corepack pnpm --filter @jobctrl/contracts check
+corepack pnpm --filter @jobctrl/api-client check
+corepack pnpm api:check
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/required-bullet-suggestions.test.ts test/server.test.ts
+corepack pnpm web:lint
+corepack pnpm web:check
+corepack pnpm --filter @jobctrl/web exec vitest run \
+  src/demo/capabilities.test.ts \
+  src/demo/DemoApiClientAdapter.test.ts \
+  src/demo/DemoLocalCommandExecutor.test.ts \
+  src/demo/DemoScenarioEngine.test.ts \
+  src/contexts/profile/components/RequiredBulletSuggestions.test.tsx \
+  src/contexts/profile/forms/profile-form.test.tsx \
+  src/contexts/profile/hooks/useUpdateProfileMutation.test.ts
+JOBCTRL_E2E_ISOLATED=1 corepack pnpm --filter @jobctrl/web exec playwright test \
+  --config=e2e/playwright.config.ts e2e/tests/required-bullet-coaching.spec.ts
+corepack pnpm web:build
+corepack pnpm demo:build
+corepack pnpm docs:build
+git diff --check origin/main...HEAD
+```
+
+The Playwright configuration creates an owned disposable synthetic workspace
+and starts its own API/web servers; choose available isolated
+`JOBCTRL_E2E_API_PORT` and `JOBCTRL_E2E_WEB_PORT` values when the defaults are
+occupied. Generation, rejection, acceptance, persistence/reload, delayed
+responses, conflicts and lost-response recovery must execute. Skips or failed
+browser startup do not pass this gate. The [auditability checks](developer/qa/regression-catalog.md#auditability-checks)
+define the preservation invariants; the [frontend inventory](architecture/frontend/index.md#shared-production-and-demo-coaching)
+describes other shared helpers and remaining adapter/simulation duplication.
+
+### Frontend test pyramid
 
 Run the test pyramid (Vitest unit / hook / component, type-level tests, and
 Playwright end-to-end) through the root aliases:
 
 ```bash
-pnpm web:test
-pnpm web:test:watch
-pnpm web:test:coverage
-pnpm web:test-d
-pnpm web:e2e
-pnpm web:e2e:headed
+corepack pnpm web:test
+corepack pnpm web:test:watch
+corepack pnpm web:test:coverage
+corepack pnpm web:test-d
+corepack pnpm web:e2e
+corepack pnpm web:e2e:headed
+corepack pnpm web:e2e:live-worker:test
+node scripts/live-worker-browser-smoke.mjs
 ```
+
+`web:e2e` builds a fresh production web bundle inside its owned temporary
+workspace and serves it with Vite preview. Browser contexts load bundled chunks
+instead of repeatedly loading the development module graph. The same-origin
+`/v1` and SSE proxy still reaches that run's real API. One Playwright worker
+preserves the shared seeded database's mutation order; every test still gets a
+fresh browser context. Build failures fail the run before preview can start.
+
+For a small focused browser run, the development server avoids the fresh build
+cost:
+
+```bash
+JOBCTRL_E2E_WEB_SERVER=dev JOBCTRL_E2E_ISOLATED=1 corepack pnpm --filter @jobctrl/web exec playwright test --config=e2e/playwright.config.ts e2e/tests/dashboard.spec.ts
+```
+
+Only `preview` (the default) and `dev` are accepted. Both modes allocate the same
+owned synthetic workspace and retain the same assertions. The focused browser
+recipes in `scripts/checks.toml` and the focused real-RPC CI step explicitly use
+`dev`; the full CI browser suite uses the default production preview. The separate
+demo workspace suite keeps its development server for source-module browser probes.
+
+`web:e2e` uses the deterministic stub dispatcher and seeded worker heartbeat.
+Its cover-letter PDF measurement cases also require the Poppler system tools
+`pdfinfo`, `pdffonts`, `pdftotext` and `pdftoppm` on PATH. Install them during
+environment preparation, before browser tests: on Ubuntu/Linux CI use
+`sudo apt-get update && sudo apt-get install --yes poppler-utils`; on macOS use
+`brew install poppler`. Verify preparation with
+`corepack pnpm --filter @jobctrl/web e2e:check-pdf-tools`. The materials test
+preflight fails explicitly if any required tool is unavailable; it never skips
+measurements or installs system packages during a test run.
+
+The direct `node scripts/live-worker-browser-smoke.mjs` command is a separate,
+slower, opt-in integration lane: it starts an owned Temporal dev server, the
+standard Python worker registry, the real API JSON-RPC dispatcher, and Vite
+against one disposable synthetic workspace. Its single Cover workflow uses a
+loopback-only deterministic model boundary and proves queued dispatch, real
+worker lifecycle/projection events, API/SSE identity correlation, and terminal
+browser state without provider spend or an application submission. A
+capability-validated worker bootstrap ignores dotenv, native credential stores, and persisted
+provider connections, asserts isolated credential homes, and enables only the
+authenticated loopback provider route. The direct Node launcher uses the same
+credential list before its first child process, so Corepack, pnpm, and
+Playwright receive only the scrubbed environment. There is deliberately no
+package-manager alias for the live run because its outer Corepack and pnpm
+processes would start before the launcher; invoke the direct Node command from
+the repository root. Persisted
+process-group capabilities let the outer teardown verify cleanup after a runtime
+supervisor failure, while an explicit persistent guard prevents the allocator's
+exit cleanup from erasing an unverified workspace. Run
+`web:e2e:live-worker:test` first when changing these
+bootstrap, lifecycle, or cleanup guards. Logs and browser evidence remain under
+`dist/live-worker-smoke/`; temporary app and Temporal state are deleted only
+after every owned process group is verified stopped.
 
 The package-local commands are equivalent and useful when working directly
 inside the web package:
 
 ```bash
-pnpm --filter @jobctrl/web test
-pnpm --filter @jobctrl/web test:watch
-pnpm --filter @jobctrl/web test:coverage
-pnpm --filter @jobctrl/web test-d
-pnpm --filter @jobctrl/web e2e
-pnpm --filter @jobctrl/web e2e:headed
+corepack pnpm --filter @jobctrl/web test
+corepack pnpm --filter @jobctrl/web test:watch
+corepack pnpm --filter @jobctrl/web test:coverage
+corepack pnpm --filter @jobctrl/web test-d
+corepack pnpm --filter @jobctrl/web e2e
+corepack pnpm --filter @jobctrl/web e2e:headed
 ```
 
 Run Storybook locally and against the built assets:
 
 ```bash
-pnpm web:storybook
-pnpm web:storybook:build
-pnpm web:storybook:test
+corepack pnpm web:storybook
+corepack pnpm web:storybook:build
+corepack pnpm web:storybook:test
 ```
 
 `web:storybook:test` runs the Storybook test runner over the static build,
@@ -486,7 +1015,7 @@ which executes the per-story `play()` interactions and the
 ## Browser Extension
 
 The Manifest V3 browser extension lives under `apps/extension`. It is the local
-capture/autofill client and integrated-Discovery browser transport for the
+capture/autofill client and optional integrated-Discovery browser transport for the
 TypeScript API, not a hosted/browser-store package.
 
 ```bash
@@ -496,9 +1025,16 @@ corepack pnpm extension:build
 corepack pnpm extension:e2e
 ```
 
+The extension E2E suite requires headed Chromium. On Linux without a display,
+run `xvfb-run --auto-servernum corepack pnpm extension:e2e`; the CI browser
+installation uses Playwright's `--with-deps` option to install Xvfb. A missing
+browser or display fails the required tests.
+
 `corepack pnpm extension:build` writes the unpacked extension bundle to
-`dist/extension/`; load that directory in Chrome/Chromium developer mode for
-manual QA, or reload its existing unpacked-extension card after rebuilding.
+`dist/extension/`. The source launcher also runs this build before starting or
+restarting the product web component. Open `chrome://extensions`, enable
+**Developer mode**, and choose **Load unpacked** with that directory for manual
+QA, or click **Reload** on its existing unpacked-extension card after rebuilding.
 Reload any application tabs that were already open so Chrome injects the newly
 built content script into them.
 Chrome can otherwise load the rebuilt popup from disk while retaining the old
@@ -511,7 +1047,8 @@ as access to all ordinary web sites; browser-internal and extension pages remain
 outside that match. Autofill stays passive until an explicit extension action;
 the background service worker also polls for bounded Discovery tasks and
 executes HTTP/API work in the service worker and rendered-page work in temporary
-inactive tabs in the profile where the extension is loaded. Saving the token in
+tabs in the profile where the extension is loaded. LinkedIn jobs use an active
+tab moved into an unfocused window; other pages use inactive tabs. Saving the token in
 that popup explicitly selects its extension-local installation UUID for
 Discovery; merely retaining an older token does not win a race with another
 Chrome profile. The extension uses `activeTab`, `alarms`,
@@ -530,47 +1067,59 @@ an already stored token reports whether this exact installation is selected and
 offers **Use this Chrome profile for Discovery**, so recovery does not require
 copying the token again.
 
+Discovery and Enrich also run without loading the extension. Each acquisition
+setup prefers the selected installation only when its bounded status probe
+reports connected; otherwise it uses the existing public HTTP or anonymous
+Playwright path. Site, DNS, access, and cancellation failures do not
+switch transport. Integrated fallback never enables copied-profile access.
+
+The focused `e2e/tests/optional-extension.spec.ts` browser check uses the owned
+synthetic workspace and real API/UI. Its dispatcher acknowledges launches
+without running a worker or contacting job sites. Persisted production worker
+fixtures in `test_optional_extension.py` and `test_enrichment_politeness_gate.py`
+cover acquisition in both modes separately.
+
 ## Docs Site
 
 The documentation under `docs/` (minus internal planning docs) is also a
 static VitePress site, configured in `docs/.vitepress/config.ts`. The site
 publishes the user guide, developer guide, architecture docs, and reference
 docs behind a hero landing page (`docs/index.md`); `docs/plans/`,
-`docs/incidents/`, `docs/backlog.md`, and the repo-facing `docs/README.md`
+`docs/incidents/`, and the repo-facing `docs/README.md`
 map stay repository-only, and links that point at unpublished or repo-root
 files are rewritten to GitHub URLs at build time.
 
 ```bash
-pnpm docs:dev
-pnpm docs:build
-pnpm docs:check:runtime
-pnpm docs:preview
+corepack pnpm docs:dev
+corepack pnpm docs:build
+corepack pnpm docs:check:runtime
+corepack pnpm docs:preview
 ```
 
-`pnpm docs:dev` is the foreground server and stops with Ctrl-C. For a tracked
+`corepack pnpm docs:dev` is the foreground server and stops with Ctrl-C. For a tracked
 background server that returns control to the shell, use:
 
 ```bash
-pnpm docs:start
-pnpm docs:status
-pnpm docs:stop
+corepack pnpm docs:start
+corepack pnpm docs:status
+corepack pnpm docs:stop
 ```
 
-`pnpm docs:start` prints the observed VitePress URL (requested port `4174`) and
+`corepack pnpm docs:start` prints the observed VitePress URL (requested port `4174`) and
 returns. Use that URL because VitePress may select a higher port when the
 requested one is occupied. Its PID and log use the shared `.dev/` launcher
-state; inspect the log with `pnpm dev:logs docs`.
+state; inspect the log with `corepack pnpm dev:logs docs`.
 
-`pnpm docs:build` fails on dead internal links, then runs
+`corepack pnpm docs:build` fails on dead internal links, then runs
 `scripts/check-docs-site-links.mjs`, which fails if any href/src emitted into
 the built site does not resolve to a built page or asset (this catches links
 to pages relocated by `rewrites`, which VitePress's source-level dead-link
-check cannot see). Together they are the docs link-integrity gate; CI runs
-them on pushes to `main`, and maintainers can run the docs workflow manually for
-pull requests after review.
-(`.github/workflows/docs-site.yml`). Mermaid diagrams render client-side in
+check cannot see). Together they are the docs link-integrity gate. The docs
+workflow (`.github/workflows/docs-site.yml`) runs these checks and the rendered
+Chromium regression gate on matching pull requests and pushes to `main`, before
+uploading the site artifact. It also supports manual runs. Mermaid diagrams render client-side in
 the browser, so a build that passes can still contain a diagram that fails to
-parse. `pnpm docs:check:runtime` starts a fresh preview and checks hydration,
+parse. `corepack pnpm docs:check:runtime` starts a fresh preview and checks hydration,
 images, navigation, responsive diagrams, search, the comparison screenshot-carousel
 interaction, and the desktop/mobile comparison layout (including keyboard access to
 its wide table) in Chromium. It also intercepts the Google tag and proves the
@@ -580,7 +1129,7 @@ tracking plus clears site analytics cookies after withdrawal.
 Choose whether this browser gate is required using
 [Documentation verification](developer/documentation-standards.md#verification),
 and run it after `corepack pnpm docs:build` when required. Note that
-`pnpm docs:preview` snapshots the built file list at startup: after any
+`corepack pnpm docs:preview` snapshots the built file list at startup: after any
 rebuild, restart the preview server or hashed assets will 404. Deploys to
 Cloudflare Pages run from `main` once the `DOCS_DEPLOY_ENABLED` repository
 variable and the Cloudflare credentials are configured.
@@ -601,7 +1150,7 @@ Public screenshots are generated from synthetic data only — never from a real
 `~/.jobctrl` workspace.
 
 ```bash
-pnpm docs:screenshots
+corepack pnpm docs:screenshots
 ```
 
 The command runs `apps/web/e2e/tests/docs-screenshots.spec.ts` through the
@@ -615,11 +1164,16 @@ detail workspaces, profile-import steps, Settings routes, and fixed mobile
 companions. The internal capture manifest lives in
 `apps/web/e2e/tests/docs-screenshots.spec.ts`; it is not part of the public
 Product Tour. No real LLM provider, job source, Gmail account, or browser
-submission is involved.
+submission is involved. After a successful gallery capture,
+`scripts/render-docs-brand-assets.mjs` renders the docs favicon/header marks,
+app icons and social preview from the canonical `apps/web/public/favicon.svg`
+and the freshly captured synthetic dashboard. The header has explicit light
+and dark assets so it follows the reader's selected docs theme independently
+of the operating-system theme.
 
 The spec is opt-in: it only writes when `JOBCTRL_DOCS_SCREENSHOTS=1` is set,
-which `pnpm docs:screenshots` does for you. A bare full e2e run
-(`pnpm --filter @jobctrl/web e2e`) skips it, so QA runs never rewrite the
+which `corepack pnpm docs:screenshots` does for you. A bare full e2e run
+(`corepack pnpm --filter @jobctrl/web e2e`) skips it, so QA runs never rewrite the
 committed screenshots.
 
 The wrapper allocates isolated ports and a marker-owned temporary workspace by
@@ -631,7 +1185,7 @@ mkdir -p /tmp/jobctrl-docs-shots
 JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-docs-shots \
 JOBCTRL_E2E_API_PORT=8890 \
 JOBCTRL_E2E_WEB_PORT=5290 \
-pnpm docs:screenshots
+corepack pnpm docs:screenshots
 ```
 
 Refresh checklist: run the command on a clean checkout, confirm every asset in
@@ -639,9 +1193,15 @@ the internal capture manifest was rewritten, review every desktop and mobile
 PNG for private data, broken layout, clipped content, and local-path leaks, and
 inspect Pipelines for the seeded execution, three source families, two
 reconciliation steps, available worker capacity, visual stage flow,
-stop/recovery controls, and active work. Confirm Jobs shows only the
-Active/Deleted/Hidden queue tabs and that Sources/Warnings remain hidden in its
-default view. Check Apply Review's left queue plus sequential review content,
+stop/recovery controls, and active work. Confirm Jobs shows one table with a
+static Active/Deleted/Hidden **Job state** column filter defaulted to Active,
+and that the default view keeps source, compensation detail, warnings, resume
+template, and discovery date available through Columns rather than widening
+the initial table. Check Job Detail's
+labeled metadata, six assessment cells, visible requirement evidence, and
+readable artifact labels/actions. Check Apply Review's left queue, sequential
+review content, and Submit gates table with Gate/State/Detail columns. Inspect
+Profile/Settings for strong input outlines and section rules, then check
 Artifact Detail's preview after its audit details, and the mobile
 Profile/Evidence/record-card reflows without horizontal overflow. Keep raw IDs
 and paths inside technical disclosures. Open the rendered Product Tour and
@@ -675,12 +1235,12 @@ below.
 | #   | Asset                                                                   | Class | Claim(s)                               | Regeneration / proof                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Status                                                                                          |
 | --- | ----------------------------------------------------------------------- | ----- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | 1   | First run → empty dashboard                                             | B     | `CL-060`, `CL-072`                     | Empty-workspace seed variant + a `docs-screenshots.spec.ts` onboarding surface                                                                                                                                                                                                                                                                                                                                                                                                              | Deferred — needs an empty-workspace seed variant + capture surface                              |
-| 2   | Resume / profile import                                                 | B/C   | `CL-080`                               | `pnpm docs:screenshots` → `profile-import-upload.png`, `profile-import-preview.png`, `profile-import-confirm.png`; actual import remains a separately driven lifecycle                                                                                                                                                                                                                                                                                                                      | Static wizard Covered; import mutation lifecycle Defined (class C)                              |
-| 3   | Discovery → scored jobs + requirement fit + provenance                  | A     | `CL-001`, `CL-010`, `CL-011`, `CL-020` | `pnpm docs:screenshots` → `jobs.png`, `job-detail.png` (seed: scored job, `job_requirement_fit_items`, `job_bullet_provenance`)                                                                                                                                                                                                                                                                                                                                                             | Covered                                                                                         |
-| 4   | Apply-review audit surfaces                                             | A     | `CL-023`, `CL-024`, `CL-030`           | `pnpm docs:screenshots` → `apply-review.png` (seed: approved generation, evidence, `change_annotations`)                                                                                                                                                                                                                                                                                                                                                                                    | Covered                                                                                         |
-| 5   | Failed refresh preserves last accepted artifact                         | B     | `CL-025`                               | Regression tests `apps/api/test/resume-templates.test.ts` ("keeps the last accepted resume artifact when the PDF render fails"; "reports refresh unavailable without hiding the last accepted artifact") and `apps/api/test/resume-review-drafts.test.ts` ("fails the render and preserves prior approved artifacts …"); run `pnpm api:test`                                                                                                                                                | Covered — invariant proven from fixture                                                         |
+| 2   | Resume / profile import                                                 | B/C   | `CL-080`                               | `corepack pnpm docs:screenshots` → `profile-import-upload.png`, `profile-import-preview.png`, `profile-import-confirm.png`; actual import remains a separately driven lifecycle                                                                                                                                                                                                                                                                                                                      | Static wizard Covered; import mutation lifecycle Defined (class C)                              |
+| 3   | Discovery → scored jobs + requirement fit + provenance                  | A     | `CL-001`, `CL-010`, `CL-011`, `CL-020` | `corepack pnpm docs:screenshots` → `jobs.png`, `job-detail.png` (seed: scored job, `job_requirement_fit_items`, `job_bullet_provenance`)                                                                                                                                                                                                                                                                                                                                                             | Covered                                                                                         |
+| 4   | Apply-review audit surfaces                                             | A     | `CL-023`, `CL-024`, `CL-030`           | `corepack pnpm docs:screenshots` → `apply-review.png` (seed: approved generation, evidence, `change_annotations`)                                                                                                                                                                                                                                                                                                                                                                                    | Covered                                                                                         |
+| 5   | Failed refresh preserves last accepted artifact                         | B     | `CL-025`                               | Regression tests `apps/api/test/resume-templates.test.ts` ("keeps the last accepted resume artifact when the PDF render fails"; "reports refresh unavailable without hiding the last accepted artifact") and `apps/api/test/resume-review-drafts.test.ts` ("fails the render and preserves prior approved artifacts …"); run `corepack pnpm api:test`                                                                                                                                                | Covered — invariant proven from fixture                                                         |
 | 6   | Tailoring gate rejects an unsupported claim                             | B     | `CL-021`                               | Grounding-gate regression `workers/automation/tests/test_claim_grounding.py` (a claim whose text is absent from the shipped resume is flagged `ungrounded` with an inspectable reason — the CL-021 fail-closed behaviour) and `workers/automation/tests/test_coverage_audit.py` (fabricated/stuffed keywords fall into `missing`); the apply-review rendering of the resulting blocker is seeded in `apps/api/test/qa-seed.ts` and asserted by `apps/api/test/application-feedback.test.ts` | Covered — gate + surface proven from fixtures                                                   |
-| 7   | Dry-run apply completes + live-approval gate + blocked-channel evidence | B / C | `CL-030`–`CL-034`                      | Approval card + dry-run run (`qa-run-1`) via `pnpm docs:screenshots`; live blocked-channel evidence via a driven dry-run (capability shipped: approval binding + dry-run evidence)                                                                                                                                                                                                                                                                                                          | Approval card + dry-run run Covered; live blocked-channel evidence Defined (class C)            |
+| 7   | Dry-run apply completes + live-approval gate + blocked-channel evidence | B / C | `CL-030`–`CL-034`                      | Approval card + dry-run run (`qa-run-1`) via `corepack pnpm docs:screenshots`; live blocked-channel evidence via a driven dry-run (capability shipped: approval binding + dry-run evidence)                                                                                                                                                                                                                                                                                                          | Approval card + dry-run run Covered; live blocked-channel evidence Defined (class C)            |
 | 8   | Spend-ceiling stop + health surface                                     | B / C | `CL-040`, `CL-041`                     | Health surface with an `llm_spend`-at/over-budget seed fixture + capture; stop lifecycle via a driven run (spend ceiling shipped)                                                                                                                                                                                                                                                                                                                                                           | Deferred — needs an `llm_spend` seed fixture + health capture; stop lifecycle Defined (class C) |
 | 9   | Reliability demo — kill worker, restart, resume                         | C     | `CL-050` (`TR-008`)                    | `scripts/reliability-demo.sh` drives `DurabilityProbeWorkflow` (a hermetic durable-timer probe — no crawl/LLM) on an isolated stack; kills the worker by captured PID tree and asserts the same run ids resume in Temporal + the read-model projection. Probe covered by `workers/automation/tests/test_workflow_durability_probe.py`; see [Reliability & QA → Durable-Execution Recovery Demo](local-reliability-qa.md#durable-execution-recovery-demo)                                    | Defined — self-asserting, re-runnable script (verified locally)                                 |
 
@@ -689,3 +1249,17 @@ need a new synthetic seed variant or capture surface, not a missing product
 capability. Class-C assets (2 actual import mutation, 7 live evidence, 8 stop
 lifecycle, 9) are defined driven flows, never faked with a staged static image.
 No asset regenerates from a real workspace.
+
+## Screening CLI
+
+The installed CLI supports `jobctrl screening read JOB_ID` and `jobctrl screening write JOB_ID command.json`. From source use the prepared locked interpreter with `PYTHONPATH=workers/automation/src workers/automation/.venv/bin/python -m jobctrl.cli screening read JOB_ID`. The [user reference](user/screening-answers.md#cli-and-local-api) defines command fields and source/privacy boundaries.
+
+Native launcher tests use temporary same-user launchd jobs and private ownership
+receipts. They need access to the per-user launchd domain and native process
+inspection; an outer tool sandbox can deny those probes without proving a
+service is absent. Keep HOME, JOBCTRL_DIR and runtime paths synthetic. The
+bundled smoke applies its fixed loopback restriction inside the job helper via
+`JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1`; unknown selector values fail.
+The actual native CPython network test and independent direct-runtime sandbox
+checks must both execute. No arbitrary sandbox profile or ownership bypass is
+accepted from the environment.

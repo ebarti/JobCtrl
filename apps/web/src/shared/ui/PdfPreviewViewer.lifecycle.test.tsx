@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pdfMocks = vi.hoisted(() => ({
@@ -29,12 +29,16 @@ const viewerProps = {
 };
 
 interface PageOptions {
+  onCancel?: () => void;
   renderPromise?: Promise<void>;
 }
 
 function createPage(options: PageOptions = {}) {
   const cleanup = vi.fn();
   const renderPromise = options.renderPromise ?? Promise.resolve();
+  const cancel = vi.fn(() => {
+    options.onCancel?.();
+  });
   return {
     cleanup,
     getViewport: vi.fn(({ scale }: { scale: number }) => ({
@@ -42,19 +46,12 @@ function createPage(options: PageOptions = {}) {
       transform: [scale, 0, 0, scale, 0, 0],
       width: 600 * scale,
     })),
-    render: vi.fn(() => ({ promise: renderPromise })),
+    render: vi.fn(() => ({ cancel, promise: renderPromise })),
   };
 }
 
-function installPdfDocument(
-  pages: ReturnType<typeof createPage>[],
-  onDestroy?: () => void,
-) {
-  const destroy = vi.fn(async () => {
-    onDestroy?.();
-  });
+function installPdfDocument(pages: ReturnType<typeof createPage>[]) {
   const pdfDocument = {
-    destroy,
     getPage: vi.fn(async (pageNumber: number) => pages[pageNumber - 1]),
     numPages: pages.length,
   };
@@ -63,7 +60,7 @@ function installPdfDocument(
     promise: Promise.resolve(pdfDocument),
   };
   pdfMocks.getDocument.mockReturnValue(loadingTask);
-  return { destroy, loadingTask, pdfDocument };
+  return { loadingTask, pdfDocument };
 }
 
 beforeAll(() => {
@@ -102,9 +99,31 @@ afterAll(() => {
 });
 
 describe("PdfPreviewViewer resource lifecycle", () => {
+  it("reports completion only after the final page, including a reloaded accepted PDF", async () => {
+    let finishLastPage!: () => void;
+    const lastPage = createPage({ renderPromise: new Promise<void>(resolve => { finishLastPage = resolve; }) });
+    installPdfDocument([createPage(), lastPage]);
+    const view = render(<PdfPreviewViewer {...viewerProps} />);
+    await waitFor(() => expect(lastPage.render).toHaveBeenCalledTimes(1));
+    expect(view.container.querySelector(".toolbar-status")).not.toHaveTextContent(/^\d+ pages?$/);
+    await act(async () => { finishLastPage(); });
+    expect(await screen.findByText("2 pages")).toBeVisible();
+    expect(screen.getAllByRole("img")).toHaveLength(2);
+
+    let finishAcceptedPage!: () => void;
+    const acceptedPage = createPage({ renderPromise: new Promise<void>(resolve => { finishAcceptedPage = resolve; }) });
+    installPdfDocument([acceptedPage]);
+    view.rerender(<PdfPreviewViewer {...viewerProps} url="/v1/artifacts/accepted/preview.pdf" />);
+    await waitFor(() => expect(acceptedPage.render).toHaveBeenCalledTimes(1));
+    expect(view.container.querySelector(".toolbar-status")).not.toHaveTextContent(/^\d+ pages?$/);
+    await act(async () => { finishAcceptedPage(); });
+    expect(await screen.findByText("1 page")).toBeVisible();
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+  });
+
   it("keeps the accessible page image and caption while mounted, then revokes its Blob URL", async () => {
     const page = createPage();
-    const { destroy } = installPdfDocument([page]);
+    const { loadingTask } = installPdfDocument([page]);
     const view = render(<PdfPreviewViewer {...viewerProps} />);
 
     expect(view.container.querySelector(".toolbar-status")).toHaveAttribute(
@@ -120,7 +139,7 @@ describe("PdfPreviewViewer resource lifecycle", () => {
     );
     await waitFor(() => {
       expect(page.cleanup).toHaveBeenCalledTimes(1);
-      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(loadingTask.destroy).toHaveBeenCalledTimes(1);
     });
     expect(revokeObjectURL).not.toHaveBeenCalled();
 
@@ -132,7 +151,7 @@ describe("PdfPreviewViewer resource lifecycle", () => {
   it("revokes completed pages and exposes the error state when a later page fails", async () => {
     const firstPage = createPage();
     const secondPage = createPage({ renderPromise: Promise.reject(new Error("page two failed")) });
-    const { destroy } = installPdfDocument([firstPage, secondPage]);
+    const { loadingTask } = installPdfDocument([firstPage, secondPage]);
     render(<PdfPreviewViewer {...viewerProps} />);
 
     expect(await screen.findByText("Preview failed")).toBeVisible();
@@ -141,31 +160,61 @@ describe("PdfPreviewViewer resource lifecycle", () => {
     await waitFor(() => {
       expect(firstPage.cleanup).toHaveBeenCalledTimes(1);
       expect(secondPage.cleanup).toHaveBeenCalledTimes(1);
-      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(loadingTask.destroy).toHaveBeenCalledTimes(1);
       expect(revokeObjectURL).toHaveBeenCalledWith("blob:pdf-page-1");
     });
   });
 
-  it("destroys the open document and cleans up the active page when rendering is cancelled", async () => {
+  it("cancels the active render, destroys its loading task, and cleans up the page on unmount", async () => {
     let rejectRender!: (error: Error) => void;
     const renderPromise = new Promise<void>((_resolve, reject) => {
       rejectRender = reject;
     });
-    const page = createPage({ renderPromise });
-    const { destroy, loadingTask } = installPdfDocument([page], () => {
-      rejectRender(new Error("render cancelled"));
+    const page = createPage({
+      renderPromise,
+      onCancel: () => {
+        rejectRender(new Error("render cancelled"));
+      },
     });
+    const { loadingTask } = installPdfDocument([page]);
     const view = render(<PdfPreviewViewer {...viewerProps} />);
     await waitFor(() => expect(page.render).toHaveBeenCalledTimes(1));
 
     view.unmount();
 
     await waitFor(() => {
-      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(page.render.mock.results[0]?.value.cancel).toHaveBeenCalledTimes(1);
+      expect(loadingTask.destroy).toHaveBeenCalledTimes(1);
       expect(page.cleanup).toHaveBeenCalledTimes(1);
     });
-    expect(loadingTask.destroy).not.toHaveBeenCalled();
     expect(createObjectURL).not.toHaveBeenCalled();
     expect(revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("revokes the previous preview before rendering a replacement URL", async () => {
+    const firstPage = createPage();
+    const first = installPdfDocument([firstPage]);
+    const view = render(<PdfPreviewViewer {...viewerProps} />);
+
+    expect(await screen.findByRole("img", { name: "Tailored resume page 1" })).toHaveAttribute(
+      "src",
+      "blob:pdf-page-1",
+    );
+    await waitFor(() => expect(first.loadingTask.destroy).toHaveBeenCalledTimes(1));
+
+    const secondPage = createPage();
+    const second = installPdfDocument([secondPage]);
+    view.rerender(<PdfPreviewViewer {...viewerProps} url="/v1/artifacts/resume/replacement.pdf" />);
+
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:pdf-page-1"));
+    expect(await screen.findByRole("img", { name: "Tailored resume page 1" })).toHaveAttribute(
+      "src",
+      "blob:pdf-page-2",
+    );
+    await waitFor(() => expect(second.loadingTask.destroy).toHaveBeenCalledTimes(1));
+    expect(first.loadingTask.destroy).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:pdf-page-2");
   });
 });

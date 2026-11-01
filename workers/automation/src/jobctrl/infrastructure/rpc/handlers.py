@@ -38,8 +38,11 @@ from jobctrl.infrastructure.materials import (
     SqliteLearningRecommendationReviewRepository,
     SqliteTailoringPolicyRepository,
     TailoringPolicyRevisionError,
+    TailoringPolicyStaleReviewError,
+    TailoringPolicyCommandConflictError,
 )
 from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
+from jobctrl.infrastructure.rpc.enrichment_retry import reset_enrichment
 from jobctrl.infrastructure.rpc.workflow_starter import WorkflowCanceler
 from jobctrl.infrastructure.runtime_identity import assert_expected_runtime
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -107,12 +110,7 @@ def _job_ids(params: dict[str, Any]) -> tuple[JobId, ...]:
     if not raw:
         return ()
     try:
-        return tuple(
-            dict.fromkeys(
-                canonical_job_id(str(item))
-                for item in raw
-            )
-        )
+        return tuple(dict.fromkeys(canonical_job_id(str(item)) for item in raw))
     except ValueError as exc:
         raise invalid_params(str(exc)) from exc
 
@@ -229,7 +227,6 @@ def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
             job_id=requested_job_id,
         )
     )
-    raw_judge_min_score = params.get("tailorJudgeMinScore")
     return build_preparation_workflow_spec(
         tenant_id=tenant_id,
         job_id=job_id,
@@ -244,11 +241,11 @@ def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
         min_score=int(params.get("minScore", 7)),
         workers=int(params.get("workers", 1)),
         validation_mode=str(params.get("validationMode", "normal")),
+        explicit_material_request=True,
         retailor=True,
         suppress_existing_artifacts=_bool_param(params, "suppressExistingArtifacts", default=False),
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
         tailor_judge_model=(str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None),
-        tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
@@ -266,7 +263,6 @@ def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
             job_id=requested_job_id,
         )
     )
-    raw_judge_min_score = params.get("tailorJudgeMinScore")
     return build_preparation_workflow_spec(
         tenant_id=tenant_id,
         job_id=job_id,
@@ -281,11 +277,11 @@ def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
         min_score=int(params.get("minScore", 7)),
         workers=int(params.get("workers", 1)),
         validation_mode=str(params.get("validationMode", "normal")),
+        explicit_material_request=True,
         retailor=False,
         allow_low_fit_override=_bool_param(params, "allowLowFitOverride", default=True),
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
         tailor_judge_model=(str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None),
-        tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
@@ -310,11 +306,9 @@ def analyze_job(params: dict[str, Any]) -> dict[str, Any]:
     conn = get_connection()
     job = _load_current_job_by_id(conn, tenant_id=tenant_id, job_id=job_id)
     if not (job.get("full_description") or job.get("description")):
-        raise invalid_params(
-            f"jobId {job_id} has no description to analyze; enrich it first"
-        )
+        raise invalid_params(f"jobId {job_id} has no description to analyze; enrich it first")
 
-    use_case = _build_analyze_use_case(conn=conn)
+    use_case = _build_analyze_use_case(conn=conn, tenant_id=tenant_id)
     outcome = use_case.execute(job=job, tenant_id=tenant_id, force=force)
     record = outcome.analysis
     return {
@@ -351,6 +345,230 @@ def provider_models(params: dict[str, Any]) -> dict[str, Any]:
     from jobctrl.infrastructure.llm.model_catalog import provider_model_catalog
 
     return provider_model_catalog()
+
+
+def map_extension_form(params):
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) - {
+        "tenantId",
+        "expectedAppDir",
+        "expectedDbPath",
+        "snapshotId",
+        "pageUrl",
+        "questions",
+        "expectedProfileVersion",
+    }:
+        raise invalid_params("Unknown form mapping parameter")
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.apply.form_mapping import map_saved_profile_form
+    from jobctrl.infrastructure.network.url_safety import validate_public_http_url
+
+    try:
+        if not validate_public_http_url(str(_require(params, "pageUrl"))).allowed:
+            raise invalid_params("unsafe_form_page_url")
+        return map_saved_profile_form(
+            init_db(),
+            tenant_id=_tenant_id(params),
+            snapshot_id=str(_require(params, "snapshotId")),
+            page_url=str(_require(params, "pageUrl")),
+            questions=_require(params, "questions"),
+            expected_profile_version=_require(params, "expectedProfileVersion"),
+        )
+    except DeterminationFailure as error:
+        raise invalid_params(error.code) from None
+
+
+def review_resume_edit(params):
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) - {"tenantId", "expectedAppDir", "expectedDbPath", "draftId", "revisionId", "operation"}:
+        raise invalid_params("Unknown resume edit review parameter")
+    from jobctrl.database import init_db
+    from jobctrl.infrastructure.materials.user_edit_review import review_saved_resume_edit, review_saved_edit_intent
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    operation = params.get("operation", "artifact")
+    if operation not in {"artifact", "intent"}:
+        raise invalid_params("Invalid resume edit review operation")
+    connection = init_db()
+    try:
+        result = (review_saved_edit_intent if operation == "intent" else review_saved_resume_edit)(
+            connection,
+            tenant_id=_tenant_id(params),
+            draft_id=str(_require(params, "draftId")),
+            revision_id=str(_require(params, "revisionId")),
+        )
+        connection.commit()
+        return result
+    except DeterminationFailure as error:
+        connection.commit()
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()
+
+
+def prepare_repeat_application_determinations(params):
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    from jobctrl.database import init_db
+    from jobctrl.domain.apply.repeat_application import prepare_repeat_application
+    from jobctrl.domain.identifiers import canonical_job_id
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    try:
+        assessment = prepare_repeat_application(
+            init_db(),
+            target_job_id=canonical_job_id(str(_require(params, "jobId"))),
+            tenant_id=TenantId(_tenant_id(params)),
+        )
+    except DeterminationFailure as error:
+        raise invalid_params(error.code) from None
+    return {"ok": True, "assessment": assessment}
+
+
+def profile_target_role_suggestions(params: dict[str, Any]) -> dict[str, Any]:
+    """Generate transient suggestions from the exact canonical profile version."""
+
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    expected_version = _require(params, "expectedProfileVersion")
+    maximum = params.get("maximumSuggestions", 3)
+    if not isinstance(expected_version, int) or isinstance(expected_version, bool) or expected_version < 1:
+        raise invalid_params("expectedProfileVersion must be a positive integer")
+    if not isinstance(maximum, int) or isinstance(maximum, bool) or not 1 <= maximum <= 5:
+        raise invalid_params("maximumSuggestions must be an integer from 1 to 5")
+
+    from jobctrl.infrastructure.profile.interpretation import PersistedCandidateInterpreter
+    from jobctrl.database import init_db
+    from jobctrl.infrastructure.profile.factory import get_profile_repository
+
+    snapshot = get_profile_repository().load_snapshot(TenantId(_tenant_id(params)))
+    if snapshot.version != expected_version:
+        raise invalid_params(f"stale_profile_version: expected {expected_version}, current {snapshot.version}")
+    with init_db() as connection:
+        return PersistedCandidateInterpreter(connection, tenant_id=_tenant_id(params)).suggest(snapshot, maximum)
+
+
+def profile_required_bullet_suggestions(params: dict[str, Any]) -> dict[str, Any]:
+    """Call the configured provider for a version-fenced, read-only inspection."""
+    import re
+    from jobctrl.domain.profile.required_bullet_coaching import (
+        coach_required_bullets,
+        normalize_source_text,
+    )
+    from jobctrl.infrastructure.profile.factory import get_profile_repository
+
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) - {
+        "tenantId",
+        "expectedAppDir",
+        "expectedDbPath",
+        "expectedProfileVersion",
+        "maximumSuggestions",
+        "sources",
+    }:
+        raise invalid_params("Unknown Required coaching parameter")
+    version = _require(params, "expectedProfileVersion")
+    maximum = _require(params, "maximumSuggestions")
+    sources = _require(params, "sources")
+    if type(version) is not int or version < 1 or type(maximum) is not int or not 1 <= maximum <= 24:
+        raise invalid_params("Invalid Required coaching version or maximum")
+    if not isinstance(sources, list) or not 1 <= len(sources) <= 512:
+        raise invalid_params("Invalid Required coaching sources")
+    repository = get_profile_repository()
+    saved_version, profile = repository.load_saved_resume(TenantId(_tenant_id(params)))
+    if saved_version != version:
+        raise invalid_params("stale_profile_version")
+    entries = profile["experience_entries"]
+    pins = profile.get("tailoring_rules", {}).get("required_bullets_by_experience_id", {})
+    references: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict) or set(source) != {
+            "reference",
+            "originalText",
+            "experienceTitle",
+            "experienceCompany",
+            "evidence",
+        }:
+            raise invalid_params("Invalid Required coaching source shape")
+        reference = source["reference"]
+        match = (
+            re.fullmatch(r"profile:v(\d+):experience\[(\d+)\]:bullet\[(\d+)\]:required\[(\d+)\]", reference)
+            if isinstance(reference, str)
+            else None
+        )
+        if not match or reference in references or int(match[1]) != version:
+            raise invalid_params("Invalid Required coaching reference")
+        references.add(reference)
+        try:
+            entry = entries[int(match[2])]
+            text = entry["bullets"][int(match[3])]
+            required = pins[entry["id"]][int(match[4])]
+            evidence = [
+                item
+                for item in entry["achievement_evidence"]
+                if normalize_source_text(item["source_text"]) == normalize_source_text(text)
+            ]
+            expected = {
+                "reference": reference,
+                "originalText": text,
+                "experienceTitle": entry["title"],
+                "experienceCompany": entry["company"],
+                "evidence": [
+                    {
+                        key: item[key]
+                        for key in ("id", "source_text", "metrics", "outcome", "evidence_strength", "user_confirmed")
+                    }
+                    for item in evidence
+                ],
+            }
+            if text != required or source != expected:
+                raise invalid_params("Required coaching source does not match saved profile")
+        except (KeyError, IndexError, TypeError) as exc:
+            raise invalid_params("Invalid Required coaching source") from exc
+
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.determinations import determination_dependencies, SqliteDeterminationRepository
+
+    connection = init_db()
+    try:
+        result, envelope = coach_required_bullets(
+            sources,
+            maximum=maximum,
+            profile_version=version,
+            entity_id="profile:required_bullets",
+            **determination_dependencies(connection, tenant_id=_tenant_id(params), lane="profile"),
+        )
+        if repository.load_saved_resume(TenantId(_tenant_id(params)))[0] != version:
+            raise invalid_params("stale_profile_version")
+        SqliteDeterminationRepository(connection).bind(
+            tenant_id=_tenant_id(params),
+            entity_kind="profile_coaching",
+            entity_id=envelope.entity_id,
+            entity_version=str(version),
+            determination_kind=envelope.kind,
+            determination_id=envelope.determination_id,
+        )
+        connection.commit()
+        return {"profileVersion": version, **result.model_dump(), "determination": envelope.model_dump()}
+    except DeterminationFailure as error:
+        return {"profileVersion": version, "failure": {"code": error.code}}
+    finally:
+        connection.close()
 
 
 def provider_verify(params: dict[str, Any]) -> dict[str, Any]:
@@ -393,9 +611,7 @@ def _browser_capabilities_payload() -> dict[str, object]:
     )
 
     detected_browsers = detect_supported_browsers()
-    detected_profiles = {
-        browser.id: detect_browser_profiles(browser.id) for browser in detected_browsers
-    }
+    detected_profiles = {browser.id: detect_browser_profiles(browser.id) for browser in detected_browsers}
 
     return {
         "capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()],
@@ -404,13 +620,9 @@ def _browser_capabilities_payload() -> dict[str, object]:
                 "id": browser.id,
                 "label": browser.label,
                 "defaultProfileAvailable": any(
-                    profile.directory_name == "Default"
-                    for profile in detected_profiles[browser.id]
+                    profile.directory_name == "Default" for profile in detected_profiles[browser.id]
                 ),
-                "profiles": [
-                    {"id": profile.id, "label": profile.label}
-                    for profile in detected_profiles[browser.id]
-                ],
+                "profiles": [{"id": profile.id, "label": profile.label} for profile in detected_profiles[browser.id]],
             }
             for browser in detected_browsers
         ],
@@ -490,9 +702,7 @@ def browser_profile_copy(params: dict[str, Any]) -> dict[str, object]:
             copy_detected_authenticated_linkedin_profile(
                 str(_require(params, "detectedBrowserId")),
                 detected_profile_id=(
-                    str(_require(params, "detectedProfileId"))
-                    if "detectedProfileId" in params
-                    else None
+                    str(_require(params, "detectedProfileId")) if "detectedProfileId" in params else None
                 ),
                 consent=True,
                 consent_method="explicit-ui-v1",
@@ -509,6 +719,15 @@ def browser_profile_copy(params: dict[str, Any]) -> dict[str, object]:
     except BrowserCapabilityError as exc:
         raise invalid_params("The selected browser profile could not be copied.") from exc
     return _browser_capabilities_payload()
+
+
+def check_posting_availability(params: dict[str, Any]) -> WorkflowStartSpec:
+    from jobctrl.enrichment.availability_workflow import availability_workflow_spec
+
+    try:
+        return availability_workflow_spec(params)
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
 
 
 def refresh_compensation(params: dict[str, Any]) -> WorkflowStartSpec:
@@ -606,8 +825,6 @@ def job_url_import(params: dict[str, Any]) -> WorkflowStartSpec:
 # ---------------------------------------------------------------------------
 
 
-
-
 def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a :class:`WorkflowStartSpec` for :class:`ApplyWorkflow`."""
     try:
@@ -680,7 +897,7 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
     import uuid
 
     from jobctrl.database import get_connection, load_job_with_enrichment
-    from jobctrl.domain.contact.outreach import OutreachDraftKind
+    from jobctrl.domain.contact.outreach import OutreachDraftKind, OutreachPublicationConflict
     from jobctrl.domain.contact.outreach_use_cases import (
         GenerateOutreachDraftUseCase,
         OutreachDraftInputError,
@@ -701,9 +918,23 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
     model = params.get("llmModel") or None
     try:
         kind = OutreachDraftKind(str(params.get("kind") or "intro_request"))
-    except ValueError:
-        kind = OutreachDraftKind.INTRO_REQUEST
+    except ValueError as exc:
+        raise invalid_params("Invalid outreach kind") from exc
 
+    from jobctrl.infrastructure.contact.offer_sources import OFFER_KINDS
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.runtime_identity import RuntimeIdentityMismatch
+
+    def check_offer_runtime(resolved_kind):
+        if resolved_kind.value in OFFER_KINDS and (not params.get("expectedAppDir") or not params.get("expectedDbPath")):
+            raise DeterminationFailure("offer_runtime_binding_required")
+        if params.get("expectedAppDir") or params.get("expectedDbPath"):
+            try:
+                assert_expected_runtime(expected_app_dir=params.get("expectedAppDir"), expected_db_path=params.get("expectedDbPath"))
+            except RuntimeIdentityMismatch:
+                raise DeterminationFailure("offer_runtime_mismatch") from None
+
+    check_offer_runtime(kind)
     conn = get_connection()
     try:
         profile = get_profile_repository().load_snapshot(tenant).as_dict()
@@ -713,7 +944,30 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
     publisher = get_default_publisher()
     contact_repo = SqliteContactRepository(conn, publisher=publisher)
     thread_repo = SqliteOutreachThreadRepository(conn, publisher=publisher)
+    from jobctrl.infrastructure.contact.offer_sources import load_offer_context, context_sources, OFFER_RUBRIC
+
+    existing = thread_repo.load(tenant, thread_id)
+    if edited_body and existing and not params.get("kind") and existing.latest_draft:
+        kind = existing.latest_draft.kind
+    check_offer_runtime(kind)
+    job_id = str(existing.job_id) if edited_body and existing and existing.job_id else params.get("jobId")
+    offer_context = load_offer_context(conn, tenant, job_id, kind.value, params.get("offerRevisionId"))
+    if offer_context:
+        def fence_offer_sources():
+            fresh = load_offer_context(conn, tenant, job_id, kind.value)
+            if fresh != offer_context:
+                raise DeterminationFailure("offer_sources_changed")
+            fresh_profile = get_profile_repository().load_snapshot(tenant).as_dict()
+            if fresh_profile != profile:
+                raise DeterminationFailure("offer_profile_changed")
+        thread_repo = SqliteOutreachThreadRepository(conn, publisher=publisher, before_save=fence_offer_sources)
+
     llm = get_llm_adapter()
+    from jobctrl.infrastructure.determinations import determination_dependencies
+    from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
+    from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
+
+    determination_deps = determination_dependencies(conn, tenant_id=tenant, lane="contact", adapter=llm)
     new_id = lambda: uuid.uuid4().hex  # noqa: E731 — trivial id seam
 
     try:
@@ -722,6 +976,11 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
                 repository=thread_repo,
                 contact_repository=contact_repo,
                 llm=llm,
+                claim_verifier=ModelClaimVerifier(**determination_deps),
+                quality_judge=ModelArtifactQualityJudge(**determination_deps),
+                preflight=determination_deps["preflight"],
+                source_context=offer_context, supplemental_sources=tuple(context_sources(offer_context)),
+                supplemental_rubric=OFFER_RUBRIC if offer_context else "",
                 new_id=new_id,
             ).execute(
                 tenant,
@@ -743,6 +1002,11 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
                 repository=thread_repo,
                 contact_repository=contact_repo,
                 llm=llm,
+                claim_verifier=ModelClaimVerifier(**determination_deps),
+                quality_judge=ModelArtifactQualityJudge(**determination_deps),
+                preflight=determination_deps["preflight"],
+                source_context=offer_context, supplemental_sources=tuple(context_sources(offer_context)),
+                supplemental_rubric=OFFER_RUBRIC if offer_context else "",
                 new_id=new_id,
             ).execute(
                 tenant,
@@ -754,6 +1018,18 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
                 application_role=application_role,
                 model=model,
             )
+    except OutreachPublicationConflict as exc:
+        draft = exc.proposal.latest_draft
+        return {
+            "outcome": "conflict",
+            "threadId": thread_id,
+            "unpublishedDraft": {
+                "bodyText": draft.body_text,
+                "kind": draft.kind.value,
+                "gateResults": draft.gate_results.to_read_model(),
+                "provenance": [claim.to_read_model() for claim in draft.provenance],
+            },
+        }
     except OutreachDraftInputError as exc:
         raise invalid_params(str(exc)) from exc
 
@@ -826,6 +1102,57 @@ def make_cancel_run(canceler: WorkflowCanceler):
     return cancel_run
 
 
+def render_cover_letter_pdf(params: dict[str, Any]) -> dict[str, Any]:
+    """Print the full source snapshot, never a browser-provided excerpt or HTML."""
+    import hashlib
+
+    from jobctrl.domain.materials.cover_letter_settings import (
+        MAX_SOURCE_BYTES, RENDERER_VERSION, validate_settings,
+    )
+    from jobctrl.infrastructure.materials.playwright_html_pdf import convert_cover_letter_text_to_pdf
+    from jobctrl.infrastructure.materials.cover_letter_files import read_owned_cover_file, require_cover_review_paths
+    from jobctrl import config
+
+    if set(params) != {"sourcePath", "pdfPath", "textSha256", "settings", "rendererVersion"}:
+        raise invalid_params("Invalid cover-letter render fields")
+    if params["rendererVersion"] != RENDERER_VERSION:
+        raise invalid_params("Unsupported cover-letter renderer")
+    try:
+        if not isinstance(params["settings"], dict):
+            raise ValueError("Cover-letter settings object required")
+        settings = validate_settings(params["settings"])
+        source = Path(params["sourcePath"])
+        output = Path(params["pdfPath"])
+        require_cover_review_paths(config.APP_DIR, source, output)
+        raw = read_owned_cover_file(config.APP_DIR, source, MAX_SOURCE_BYTES)
+        if len(raw) > MAX_SOURCE_BYTES or not raw.strip():
+            raise ValueError("Cover-letter source is empty or oversized")
+        if hashlib.sha256(raw).hexdigest() != params["textSha256"]:
+            raise ValueError("Cover-letter source changed")
+        text = raw.decode("utf-8", errors="strict")
+    except (OSError, ValueError, TypeError) as exc:
+        raise invalid_params("Cover-letter source or settings invalid") from exc
+    convert_cover_letter_text_to_pdf(text, params["pdfPath"], settings, workspace_root=config.APP_DIR)
+    # A successful subprocess acknowledgement must represent a readable PDF,
+    # not merely a file with PDF markers. No accepted state is written here.
+    from pypdf import PdfReader
+
+    from io import BytesIO
+
+    with BytesIO(read_owned_cover_file(config.APP_DIR, output, 32_000_000)) as stream:
+        document = PdfReader(stream, strict=True)
+        if document.is_encrypted or not document.pages:
+            raise ValueError("Cover-letter PDF output invalid")
+        for page in document.pages:
+            if page.mediabox.width <= 0 or page.mediabox.height <= 0:
+                raise ValueError("Cover-letter PDF output invalid")
+            # Resolve page content objects before acknowledging the render.
+            content = page.get_contents()
+            if content is not None:
+                content.get_data()
+    return {"status": "succeeded", "pdfPath": params["pdfPath"]}
+
+
 def render_resume_pdf(params: dict[str, Any]) -> dict[str, Any]:
     """Render pre-built resume HTML to a paginated PDF for the TS API.
 
@@ -850,19 +1177,21 @@ def render_resume_pdf(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def gmail_feedback_scan(params: dict[str, Any]) -> dict[str, Any]:
-    """Run the bounded Gmail outcome scan for the TS API.
+    """Run the bounded scan and return safe, typed failures to the TS API."""
 
-    The result dict passes through verbatim - auth failures travel as
-    ``{"ok": False, "message": ...}`` so the API's status mapping keeps the
-    same behavior it had over the old one-shot subprocess protocol.
-    """
+    import httpx
 
     assert_expected_runtime(
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
     )
     from jobctrl.config import DB_PATH
-    from jobctrl.infrastructure.gmail.feedback import scan_gmail_feedback
+    from jobctrl.infrastructure.gmail.auth import GmailAuthError
+    from jobctrl.infrastructure.gmail.client import GmailFeedbackInputError
+    from jobctrl.infrastructure.gmail.feedback import GmailFeedbackRecipientError, scan_gmail_feedback
+
+    def failure(code: str, status: str, message: str) -> dict[str, Any]:
+        return {"ok": False, "status": status, "failureCode": code, "message": message}
 
     kwargs: dict[str, Any] = {}
     recipient = str(params.get("recipientEmail") or "").strip()
@@ -875,15 +1204,43 @@ def gmail_feedback_scan(params: dict[str, Any]) -> dict[str, Any]:
     ):
         value = params.get(param_name)
         if value is not None:
-            kwargs[kwarg_name] = int(value)
+            try:
+                if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+                    raise ValueError
+                kwargs[kwarg_name] = int(value)
+            except (TypeError, ValueError, OverflowError):
+                return failure("invalid_scan_options", "invalid", "Gmail feedback scan options must be integers.")
     try:
         return scan_gmail_feedback(db_path=DB_PATH, **kwargs)
-    except Exception as exc:  # noqa: BLE001 - protocol boundary, see docstring
-        # scan_gmail_feedback raises on failure; only the deleted CLI main()
-        # converted exceptions into the ok:false envelope. Without this the
-        # RPC server flattens every failure to a generic "Internal error"
-        # and the API's message-based 400/503 mapping goes dead.
-        return {"ok": False, "message": str(exc)}
+    except GmailFeedbackRecipientError:
+        return failure(
+            "invalid_recipient", "invalid", "Gmail feedback scan requires a recipient email or candidate profile email."
+        )
+    except GmailFeedbackInputError:
+        return failure("invalid_search", "invalid", "Gmail feedback search parameters are invalid.")
+    except GmailAuthError:
+        return failure(
+            "gmail_auth_required", "unavailable", "Gmail authentication is required; reconnect Gmail and retry."
+        )
+    except httpx.TimeoutException:
+        return failure("gmail_timeout", "unavailable", "The Gmail feedback request timed out.")
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        if status_code == 401:
+            code = "gmail_auth_required"
+        elif status_code == 429:
+            code = "gmail_rate_limited"
+        elif status_code >= 500:
+            code = "gmail_provider_unavailable"
+        else:
+            code = "gmail_provider_error"
+        return failure(code, "unavailable", "The Gmail feedback request was rejected by the provider.")
+    except httpx.RequestError:
+        return failure(
+            "gmail_transport_error", "unavailable", "The Gmail feedback request could not reach the provider."
+        )
+    except Exception:  # noqa: BLE001 - do not expose provider or message contents over RPC
+        return failure("gmail_scan_failed", "blocked", "Gmail feedback scan failed.")
 
 
 def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:
@@ -894,9 +1251,7 @@ def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
     )
-    recommendations = SqliteLearningRecommendationRepository(
-        get_connection()
-    ).rederive_tailoring(
+    recommendations = SqliteLearningRecommendationRepository(get_connection()).rederive_tailoring(
         tenant_id,
         source_changes=None,
         rederived_at=datetime.now(UTC).isoformat(),
@@ -904,9 +1259,7 @@ def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "succeeded",
         "recommendationCount": len(recommendations),
-        "recommendationIds": [
-            recommendation.recommendation_id for recommendation in recommendations
-        ],
+        "recommendationIds": [recommendation.recommendation_id for recommendation in recommendations],
     }
 
 
@@ -923,9 +1276,7 @@ def review_learning_recommendation(params: dict[str, Any]) -> dict[str, Any]:
         expected_db_path=params.get("expectedDbPath"),
     )
     try:
-        review = SqliteLearningRecommendationReviewRepository(
-            get_connection()
-        ).review(
+        review = SqliteLearningRecommendationReviewRepository(get_connection()).review(
             tenant_id,
             recommendation_id=recommendation_id,
             decision=decision,
@@ -947,34 +1298,47 @@ def review_learning_recommendation(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
-    """Append a Materials policy revision that restores a prior version."""
+    """Append a reviewed restore or return the same command's receipt."""
 
-    tenant_id = TenantId(_tenant_id(params))
+    if set(params) - {"tenantId", "targetVersion", "expectedCurrentVersion", "commandId", "reasonCode", "expectedAppDir", "expectedDbPath"}:
+        raise invalid_params("unsupported tailoring policy restore parameter")
+    raw_tenant = _require(params, "tenantId")
+    if not isinstance(raw_tenant, str) or not raw_tenant.strip() or raw_tenant != raw_tenant.strip():
+        raise invalid_params("invalid tenantId")
+    tenant_id = TenantId(raw_tenant)
     target_version = _require(params, "targetVersion")
-    if (
-        not isinstance(target_version, int)
-        or isinstance(target_version, bool)
-        or target_version < 1
-    ):
-        raise invalid_params("targetVersion must be a positive integer")
+    expected_current_version = _require(params, "expectedCurrentVersion")
+    command_id = _require(params, "commandId")
+    reason = _require(params, "reasonCode")
     assert_expected_runtime(
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
     )
     try:
-        policy = SqliteTailoringPolicyRepository(get_connection()).rollback_to(
+        result = SqliteTailoringPolicyRepository(get_connection()).rollback_to(
             tenant_id,
             target_version=target_version,
-            reason="user_requested",
+            expected_current_version=expected_current_version,
+            command_id=command_id,
+            reason=reason,
             rolled_back_at=datetime.now(UTC).isoformat(),
         )
+    except TailoringPolicyStaleReviewError as exc:
+        raise invalid_params("tailoring_policy_stale_review") from exc
+    except TailoringPolicyCommandConflictError as exc:
+        raise invalid_params("tailoring_policy_command_conflict") from exc
     except TailoringPolicyRevisionError as exc:
         raise invalid_params(str(exc)) from exc
+    policy = result.policy
     return {
         "status": "succeeded",
         "context": "materials",
         "policyKind": "tailoring_rule",
         "policyVersion": policy.version,
+        "currentVersion": result.current_version,
+        "replayed": result.replayed,
+        "expectedCurrentVersion": expected_current_version,
+        "commandId": command_id,
         "rollbackOfVersion": policy.rollback_of_version,
         "rollbackReasonCode": policy.rollback_reason,
         "learnedRules": [
@@ -992,8 +1356,21 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
+    server.register("career_learning", career_learning, mode="sync")
+    server.register("material_locale_variants", material_locale_variants, mode="sync")
+    server.register("accepted_material_exports", accepted_material_exports, mode="sync")
+
+    server.register("screening_answers", screening_answers, mode="sync")
+    server.register("reset_enrichment", reset_enrichment, mode="sync")
+    server.register("map_extension_form", map_extension_form, mode="sync")
+    server.register("review_resume_edit", review_resume_edit, mode="sync")
+    server.register("prepare_repeat_application_determinations", prepare_repeat_application_determinations, mode="sync")
+    server.register("profile_required_bullet_suggestions", profile_required_bullet_suggestions, mode="sync")
     server.register("profile_import", profile_import, mode="workflow")
     server.register("job_url_import", job_url_import, mode="workflow")
+    from jobctrl.infrastructure.rpc.job_url_import_status import job_url_import_status
+
+    server.register("job_url_import_status", job_url_import_status, mode="sync")
     server.register("manual_capture_import", manual_capture_import, mode="workflow")
     # Workflow starters.
     server.register("run_stage", run_stage, mode="workflow")
@@ -1011,6 +1388,11 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("analyze_job", analyze_job, mode="sync")
     server.register("provider_status", provider_status, mode="sync")
     server.register("provider_models", provider_models, mode="sync")
+    server.register(
+        "profile_target_role_suggestions",
+        profile_target_role_suggestions,
+        mode="sync",
+    )
     server.register("provider_verify", provider_verify, mode="sync")
     server.register("browser_capabilities_list", browser_capabilities_list, mode="sync")
     server.register("browser_capability_enable", browser_capability_enable, mode="sync")
@@ -1028,7 +1410,9 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     )
     server.register("rollback_tailoring_policy", rollback_tailoring_policy, mode="sync")
     server.register("render_resume_pdf", render_resume_pdf, mode="sync")
+    server.register("render_cover_letter_pdf", render_cover_letter_pdf, mode="sync")
     server.register("gmail_feedback_scan", gmail_feedback_scan, mode="sync")
+    server.register("check_posting_availability", check_posting_availability, mode="workflow")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
     server.register("run_contact_research", run_contact_research, mode="workflow")
@@ -1038,3 +1422,96 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")
+
+
+def accepted_material_exports(params):
+    """Runtime-bound export/read operation; never changes Materials or Apply approval."""
+    if (set(params) != {"tenantId", "expectedAppDir", "expectedDbPath", "jobId", "request"}
+            or any(not isinstance(params[key], str) or not params[key]
+                   for key in ("tenantId", "expectedAppDir", "expectedDbPath", "jobId"))):
+        raise invalid_params("invalid_export_request")
+    assert_expected_runtime(expected_app_dir=params["expectedAppDir"], expected_db_path=params["expectedDbPath"])
+    from jobctrl.database import init_db
+    from jobctrl.domain.materials.editable_export import ExportFailure
+    from jobctrl.infrastructure.materials.accepted_export_api import operation
+    connection = init_db()
+    try:
+        return operation(connection, tenant_id=params["tenantId"], job_id=params["jobId"],
+                         root=params["expectedAppDir"], request=params["request"])
+    except ExportFailure as error:
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()
+
+
+def material_locale_variants(params):
+    """Runtime-bound, source-fenced locale workflow; generation never approves Apply."""
+    if set(params) != {"tenantId", "expectedAppDir", "expectedDbPath", "jobId", "request"}:
+        raise invalid_params("invalid_locale_request")
+    assert_expected_runtime(expected_app_dir=str(_require(params, "expectedAppDir")),
+                            expected_db_path=str(_require(params, "expectedDbPath")))
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.materials.locale_variants import operation
+    connection = init_db()
+    try:
+        return operation(connection, tenant_id=_tenant_id(params), job_id=str(_require(params, "jobId")),
+                         root=params["expectedAppDir"], request=params["request"])
+    except DeterminationFailure as error:
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()
+
+def career_learning(params):
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.career_learning import CareerLearningService
+
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) - {"tenantId", "expectedAppDir", "expectedDbPath", "command"}:
+        raise invalid_params("invalid_command")
+    connection = init_db()
+    try:
+        return CareerLearningService(connection, tenant_id=_tenant_id(params)).execute(params.get("command"))
+    except DeterminationFailure as error:
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()
+
+
+def screening_answers(params):
+    """Private local snapshots; runtime identity is mandatory at this boundary."""
+    from pydantic import ValidationError
+    from jobctrl.domain.apply.screening_answers import ScreeningAnswerService, ScreeningCommand
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.domain.materials.screening_answers import ScreeningAnswerGenerator
+    from jobctrl.infrastructure.determinations import determination_dependencies
+    from jobctrl.infrastructure.materials.screening_answers import ScreeningAnswerRepository
+    from jobctrl.llm_lanes import bind_llm_lane
+
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) - {"tenantId", "expectedAppDir", "expectedDbPath", "jobId", "command"}:
+        raise invalid_params("screening_unknown_parameter")
+    tenant, job = str(_require(params, "tenantId")), str(_require(params, "jobId"))
+    conn = get_connection()
+    repo = ScreeningAnswerRepository(conn)
+    try:
+        if "command" not in params:
+            return repo.read(tenant, job)
+        command = ScreeningCommand.model_validate(params["command"])
+        with bind_llm_lane("apply"):
+            generator = None
+            if command.action in {"draft", "edit", "reuse"}:
+                generator = ScreeningAnswerGenerator(**determination_dependencies(conn, tenant_id=tenant, lane="apply"))
+            result = ScreeningAnswerService(repo, generator).execute(tenant, job, command)
+        return {"ok": True, "jobId": job, "state": result}
+    except ValidationError:
+        raise invalid_params("screening_invalid_command") from None
+    except DeterminationFailure as failure:
+        raise invalid_params(failure.code) from None

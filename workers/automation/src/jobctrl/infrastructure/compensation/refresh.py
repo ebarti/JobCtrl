@@ -105,6 +105,7 @@ def refresh_compensation_facts(
         estimated_at=refreshed_at,
         limit=1 if job_id is not None else limit,
         job_id=job_id,
+        preserve_accepted_on_failure=bool(source_load.source_errors),
     )
 
     ProjectionBuilder(conn_factory=get_connection).refresh()
@@ -133,7 +134,7 @@ def _levels_fyi_targets(
     job_id: JobId | None,
     limit: int,
 ) -> tuple[LevelsFyiPublicTarget, ...]:
-    sql = "SELECT title, location FROM jobs WHERE tenant_id = ?"
+    sql = "SELECT job_id FROM jobs WHERE tenant_id = ?"
     params: list[Any] = [tenant_id]
     if job_id is not None:
         sql += " AND job_id = ?"
@@ -143,11 +144,20 @@ def _levels_fyi_targets(
         sql += " LIMIT ?"
         params.append(limit)
     rows = conn.execute(sql, params).fetchall()
-    return tuple(
-        LevelsFyiPublicTarget(
-            role_title=str(row["title"] or ""),
-            location=str(row["location"]) if row["location"] else None,
-        )
-        for row in rows
-        if row["title"]
-    )
+    from jobctrl.infrastructure.compensation.interpretation import job_interpretation_for_id
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    targets = []
+    for row in rows:
+        try:
+            interpretation = job_interpretation_for_id(conn, tenant_id, str(row["job_id"]))
+        except DeterminationFailure:
+            continue
+        for place in interpretation.places:
+            if place.country_code:
+                targets.append(
+                    LevelsFyiPublicTarget(
+                        interpretation.occupation_family.value, place.country_code, interpretation.seniority.value
+                    )
+                )
+    return tuple(targets)

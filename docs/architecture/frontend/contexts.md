@@ -18,8 +18,8 @@ ubiquitous language as-is and does not push back against the shape.
 There is **one frontend context folder per backend context** — Discovery,
 Enrichment, Profile, Scoring, Materials, Apply, Pipeline Orchestration,
 Operations, and Contact & Outreach. Views (Dashboard, Jobs, Artifacts, Apply
-Review, Runs, Pipelines, Discovery, Contacts, Debug) are **not** contexts; they
-are composers that live under `views/` (§3.10, §11).
+Review, Interviews, Runs, Pipelines, Discovery, Contacts, Debug) are **not**
+contexts; they are composers that live under `views/` (§3.10, §11).
 
 ## 3.1 Frontend Context Map
 
@@ -276,6 +276,22 @@ backend domain model [§4.5](../domain-model/tactical.md)):
   `MaterialsExhausted`) drive query-cache invalidation. The mutation
   resolves with `runId`; the UI shows "queued" until the corresponding
   events arrive (§7).
+- Resume document transforms live in `materials/lib/resume-document.ts`
+  (HTML/Plate normalization, serialization, signatures and semantic text
+  projection). `resume-provenance.ts` joins persisted source IDs and
+  `resume-comments.ts` places recorded anchors and builds bounded comment seeds.
+  `resume-formatting.ts` owns Plate formatting commands and link transforms;
+  `ResumePlateDocument.tsx` and `ResumeEditorToolbar.tsx` own presentation.
+  `ResumeAuditPins.tsx` composes these modules and retains HTML loading, draft
+  lifecycle, approval preparation and mounted-document PDF export. Its public
+  standalone editor and semantic text projection exports serve Profile and
+  Preferences. Feature contract types enter through the Operations ACL.
+- Interview prep commands and personal note saves stay Materials-owned, with
+  reusable selection/detail/prep/notes components and validated forms. Generated
+  prep remains visible while refresh fails; independently revisioned edits keep
+  their own factual-support labels and conflict handling. The public catalog
+  and private history/note read hooks stay in Operations. `/interviews` and Job
+  Detail compose the same public surfaces rather than maintaining two libraries.
 
 **What it does NOT own:**
 
@@ -400,6 +416,13 @@ the SSE subscription that fans events out to invalidate query keys.
 - Implement the **invalidation router** that consumes events and calls
   `queryClient.invalidateQueries({ queryKey })` (or `setQueryData(...)`
   for high-frequency events).
+- Expose loader prefetch/ensure helpers beside the read hooks in
+  `readQueries.ts`, accepting narrow structural dependencies. Operations owns
+  dashboard, activity, review queue, analytics, artifact, evidence-map and run
+  reads; Profile owns profile/settings reads; Outreach owns contact reads.
+  Routes pass validated/mapped inputs and await these helpers. Contexts do not
+  import routes, generated route trees or views. The Jobs effective-query
+  handoff remains view-owned with no loader.
 - Own _all_ projection-typed read hooks. The core set:
   `useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`,
   `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`,
@@ -415,10 +438,14 @@ the SSE subscription that fans events out to invalidate query keys.
   endpoint, so `useApplyRunsListQuery` derives runs from the dashboard
   summary via `select`, and per-run live events are patched onto
   `applyRunsKeys.detail(...)` by the invalidation router (§7.5).
-- Re-export projection and API response types (sourced from
-  `@jobctrl/domain-types` via `@jobctrl/contracts`) through
-  `contexts/operations/types.ts` so feature contexts and views can import
-  them from one place. (This is the frontend Anti-Corruption Layer — §6.5.)
+- Own frontend list-input refinements in `contexts/operations/types.ts`
+  (§6.5). Consumers import unchanged DTOs, schemas and constants directly from
+  `@jobctrl/contracts`, and domain vocabulary from `@jobctrl/domain-types`.
+- Expose catalog/card and job prep-history/note reads through the public
+  Operations kernel and tenant-first query keys. Global catalog reads must not
+  require a job detail query; optional job preparation is composed in a child
+  only after a canonical job is selected. No view calls `api.job("")` or depends
+  on a worker/provider merely to browse guidance.
 
 **What it does NOT own:**
 
@@ -430,7 +457,7 @@ the SSE subscription that fans events out to invalidate query keys.
 ## 3.10 Views (Composition Layer — NOT Bounded Contexts)
 
 The `views/` folder holds the sibling composers of `contexts/`, including
-`dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`,
+`dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `interviews/`, `runs/`,
 `pipelines/`, `discovery/`, `outreach/`, and `debug/`. They are _not_ bounded contexts;
 they are presentation composers. The dichotomy is intentional and binding:
 
@@ -451,8 +478,9 @@ another view (cross-view navigation goes through the URL).
 | View                  | Composition                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `views/dashboard/`    | `<KpiGrid>`, `<ConversionPanel>`, `<Funnel>`, `<SourceHealthCard>`, `<ApplyRunsCard>` (operations: `useDashboardSummaryQuery`), plus an outcome-suggestions section (operations: `useApplicationOutcomesQuery`; apply: `<OutcomeSuggestionsPanel>`). Funnel/ApplyRunsCard compose pipeline `<StageBadge>` and apply `<ApplyRunBadge>`.                                                                                                                                                |
-| `views/jobs/`         | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`; product filters bind to URL state), `<JobBulkActions>` (discovery: the Active / Deleted / Hidden Tabs plus delete / hide / restore / permanent-delete bulk mutations), legacy-named `<JobDetailDrawer>` rendered as a full `RouteWorkspace` (composes `<JobOverview>` + `<JobActions>` + `<StageTimeline>` + artifact status rows + `<EmployerAnalysisPanel>` + `<ApplyHistory>` + `<JobOutcomePanel>` + `<JobAuditHistory>`). |
+| `views/jobs/`         | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`; product filters, including the server-backed Job state filter, bind to URL state), `<JobBulkActions>` (discovery: state-qualified delete / hide / restore / unhide / permanent-delete bulk mutations), legacy-named `<JobDetailDrawer>` rendered as a full `RouteWorkspace` (composes `<JobOverview>` + `<JobActions>` + `<StageTimeline>` + artifact status rows + `<EmployerAnalysisPanel>` + `<ApplyHistory>` + `<JobOutcomePanel>` + `<JobAuditHistory>`). |
 | `views/artifacts/`    | `<ArtifactsTable>` (operations: `useArtifactsListQuery`), `<ArtifactFilterBar>` (URL-bound), `<ArtifactDetailPanel>` (operations: `useArtifactDetailQuery`; materials: `useOpenArtifactMutation`, `<TailoringExplanationSection>`); its summary/evidence/comparison audit precedes the full-width document preview. |
+| `views/interviews/` | Native searchable whole-catalog graph/list and selected-card workspace with URL-owned filters, mode, question, and optional canonical job. Questions groups matching cards by topic; Sources groups resources by author, with topic/author drill-down, pan/zoom, and Overview. Selecting a question updates the Answer/Rubric/Sources inspector without replacing the catalog map with its adjacency. Focused card connections and optional personal evidence are a separate layer; research attribution/editorial links never become accepted personal evidence. Composes Operations reads and Materials preparation/note forms; the Materials session store owns unsaved selection/order and private drafts. List exposes the same card actions. |
 | `views/apply-review/` | `<ApplyReviewView>` — the human apply-approval workstation. A left review queue (operations: `useApplyReviewQueueQuery`) sits beside one full-width sequence of decision, repeat-application evidence and one-attempt confirmation, materials, and other audit sections, including the live Plate resume editor (`<ResumePlateEditor>` from materials, wired to the apply-context draft/comment/reply/render mutations via `useResumeReviewDraftQuery`), grounding-risk + requirement audit panels, `<ApplyReviewDecisionControls>`, and `<CancelApplyButton>`. Repeat protection disables only live authorization while dry run remains available. The queue stacks above the review and decision controls wrap when the surface becomes narrow. |
 | `views/runs/`         | `<RunsView>` — unified workflow-runs browser. `<RunsTable>` (operations: `useWorkflowRunsListQuery`), `<RunsFilterBar>` (URL-bound), per-row `<CancelWorkflowRunButton>` ("Stop") and a Temporal Web-UI deep link; legacy-named `<WorkflowRunDrawer>` renders a full detail workspace at `/runs/$runId`.                                                                                                                                                                              |
 | `views/pipelines/`    | `<PipelinesView>` — reads `usePipelineOperationsQuery`, composes its workspace from the typed snapshot and `<StageTriggerPanel>` (global/batch stage triggers + `<CancelWorkflowRunButton>`). The workspace renders a live current-execution stage flow, exact outcome disclosure, source/reconciliation progress, collapsed sweep/global-backlog diagnostics, worker capacity, active work, explicit stop, and zero-inventory-gated replacement setup. |
@@ -470,7 +498,7 @@ forms, and timelines are imported from the contexts that own them.
 
 **Purpose:** Surface the `Contact` aggregate — keep recruiter / hiring-manager /
 referrer contact records per company or application, render every fact with its
-provenance, and import contacts from a CSV file — plus supervised research
+provenance, and import contacts from CSV or vCard text — plus supervised research
 (Phase 2) and the truthful outreach draft **review** surface (Phase 3). There is
 **no sending** in the UI: drafts terminate at an approved, copyable message, and
 the product never sends.
@@ -488,7 +516,7 @@ the product never sends.
 - Contact mutation hooks via `createOptimisticMutation` with real patchers + settle sets: `useCreateContactMutation`, `useUpdateContactMutation`, `useDeleteContactMutation`, `useImportContactsMutation`.
 - Query keys: `outreachKeys` (hierarchical, tenant-first), re-exported through `contexts/operations/queryKeys.ts`.
 - Handlers: `contexts/outreach/handlers.ts`, registered in the invalidation router.
-- Forms & store: TanStack Form + Zod `safeParse` (`contact-form`, `contact-import-wizard`); a Zustand `persist` store (`outreach-import-store`, key `jh:outreach-import`) for the multi-step CSV-import wizard.
+- Forms & store: TanStack Form + Zod `safeParse` (`contact-form`, `contact-import-wizard`); a Zustand `persist` store (`outreach-import-store`, key `jh:outreach-import`) for the multi-step CSV/vCard import wizard.
 - Components: `<ContactRoleBadge>` (legacy-named compact role status), `<ContactProvenanceList>` / `<ContactProvenanceSummary>` (render provenance for every fact — INV-2), the create / edit / delete / import buttons, and `<JobContactsPanel>` (composed into the Jobs detail workspace).
 - Outreach draft read + mutation hooks (Phase 3): `useOutreachThreadQuery`; `useGenerateDraftMutation`, `useReviseDraftMutation`, `useApproveDraftMutation`, `useRejectDraftMutation` (via `createOptimisticMutation` with real patchers + settle sets).
 - Draft review components (Phase 3): `<OutreachThreadPanel>` (the review surface), `<DraftGateResultsPanel>`, `<DraftClaimProvenanceList>`, `<DraftStatusBadge>`, the `<GenerateDraftButton>` / `<ApproveDraftButton>` / `<RejectDraftButton>` / `<CopyDraftButton>` actions, and the `revise-draft-form`.
@@ -512,6 +540,13 @@ truthfulness-gate outcome) and `<DraftClaimProvenanceList>` (claim → fact
 bindings), and the full **generation history** so a re-draft never hides a prior
 generation (INV-5). Approve stays disabled until the gates pass; editing opens the
 `revise-draft-form`, which submits a new generation that re-runs the gates.
+The revision mutation checks the worker's publication identity against the target
+thread and the matching submitted draft in its readback. A historical text match
+alone does not confirm the operation. If the acknowledgement is missing,
+malformed, times out or returns a server error, the recipient/job-owned editor retains
+submitted versions and later typing, exposes the unknown outcome, and requires
+a deliberate thread-history review before another submission. The earlier
+request can still complete after a read; no mutation is replayed automatically.
 **Copy-to-send goes through the `ClipboardPort`** (`usePorts().clipboard`, via
 `<CopyDraftButton>`, enabled only for an approved draft) — a user-initiated
 clipboard write, never `navigator.clipboard` directly and never a network send.

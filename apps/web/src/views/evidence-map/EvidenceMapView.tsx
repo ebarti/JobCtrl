@@ -9,6 +9,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { EvidenceStatusBadge } from "../../contexts/operations/components/EvidenceStatusBadge.js";
+import { CareerLearningPanel } from "../../contexts/operations/components/CareerLearningPanel.js";
 import {
   useEvidenceMapEntryQuery,
   useEvidenceMapQuery,
@@ -17,8 +18,9 @@ import type {
   EvidenceGap,
   EvidenceMapEntry,
   EvidenceUsageRef,
-} from "../../contexts/operations/types.js";
+} from "@jobctrl/contracts";
 import type { EvidenceMapSearch } from "../../routes/-evidence-map.search.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
 import {
@@ -331,6 +333,7 @@ function EvidenceEntryButton({
           </span>
         </span>
         <span className="evidence-entry-meta">
+          {entry.freshness.confirmationReviewRequired ? <StatusBadge tone="warn">Review required</StatusBadge> : null}
           <EvidenceStatusBadge
             type="strength"
             value={entry.freshness.evidenceStrength}
@@ -436,10 +439,10 @@ function EvidenceDetail({
             type="strength"
             value={freshness.evidenceStrength}
           />
-          <EvidenceStatusBadge
+          {freshness.confirmationReviewRequired ? <StatusBadge tone="warn">Confirmation review required</StatusBadge> : <EvidenceStatusBadge
             type="confirmation"
             value={freshness.userConfirmed}
-          />
+          />}
           <span className="evidence-meta-label" data-typography="metadata">
             <IconCalendar aria-hidden="true" />
             {compactDate(freshness.evidenceDateRange)}
@@ -633,6 +636,7 @@ export function EvidenceMapView() {
           evidenceMap.data ? `${filteredEntries.length} entries` : "loading"
         }
       />
+      <CareerLearningPanel />
       <section className="card full evidence-map-view">
         {errorMessage ? (
           <Alert className="evidence-map-error" variant="destructive">

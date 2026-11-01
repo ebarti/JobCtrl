@@ -181,20 +181,10 @@ const consumers = [
   padding: clamp(0.85rem, 2.5vw, 1.35rem);
   overflow: clip;
   border: 1px solid var(--profile-flow-border);
-  border-radius: 1.25rem;
-  background:
-    radial-gradient(
-      circle at 5% 5%,
-      color-mix(in srgb, var(--profile-flow-accent-soft) 82%, transparent),
-      transparent 34%
-    ),
-    radial-gradient(
-      circle at 96% 48%,
-      color-mix(in srgb, var(--vp-c-bg) 72%, transparent),
-      transparent 32%
-    ),
-    var(--profile-flow-panel);
-  box-shadow: 0 16px 44px color-mix(in srgb, var(--vp-c-text-1) 10%, transparent);
+  border-top: 3px solid var(--vp-c-text-1);
+  border-radius: var(--jh-doc-radius);
+  background: var(--vp-c-bg);
+  box-shadow: none;
   color: var(--profile-flow-text);
 }
 
@@ -203,7 +193,7 @@ const consumers = [
   --profile-flow-card: color-mix(in srgb, var(--vp-c-bg) 91%, var(--vp-c-brand-soft));
   --profile-flow-panel: color-mix(in srgb, var(--vp-c-bg-soft) 91%, var(--vp-c-brand-soft));
   --profile-flow-guard-soft: color-mix(in srgb, var(--vp-c-danger-soft) 62%, var(--vp-c-bg));
-  box-shadow: 0 18px 50px rgb(0 0 0 / 0.3);
+  box-shadow: none;
 }
 
 .candidate-profile-flow__caption {
@@ -253,9 +243,9 @@ const consumers = [
   min-inline-size: 0;
   padding: 0.9rem;
   border: 1px solid var(--profile-flow-border);
-  border-radius: 0.9rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--profile-flow-card);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--vp-c-text-1) 7%, transparent);
+  box-shadow: none;
 }
 
 .candidate-profile-flow__owner--facts {
@@ -317,7 +307,7 @@ const consumers = [
 .candidate-profile-flow__owner-icon {
   inline-size: 2.65rem;
   block-size: 2.65rem;
-  border-radius: 0.75rem;
+  border-radius: var(--jh-doc-radius);
 }
 
 .candidate-profile-flow__owner-icon :deep(svg) {
@@ -369,7 +359,7 @@ const consumers = [
 .candidate-profile-flow__policy-list li {
   padding: 0.22rem 0.48rem;
   border: 1px solid var(--profile-flow-border);
-  border-radius: 999px;
+  border-radius: var(--jh-doc-radius);
   background: var(--vp-c-bg);
   color: var(--profile-flow-muted);
   font-size: 0.7rem;
@@ -431,17 +421,15 @@ const consumers = [
   margin-inline: auto;
   padding: 0.85rem 0.95rem;
   border: 1px solid var(--profile-flow-accent);
-  border-radius: 0.95rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--vp-c-bg);
-  box-shadow:
-    inset 0 -0.18rem 0 var(--profile-flow-accent-soft),
-    0 8px 24px color-mix(in srgb, var(--vp-c-text-1) 8%, transparent);
+  box-shadow: none;
 }
 
 .candidate-profile-flow__snapshot-icon {
   inline-size: 2.9rem;
   block-size: 2.9rem;
-  border-radius: 0.82rem;
+  border-radius: var(--jh-doc-radius);
 }
 
 .candidate-profile-flow__snapshot-icon :deep(svg) {
@@ -466,7 +454,7 @@ const consumers = [
   align-items: center;
   padding: 0.28rem 0.5rem;
   border: 1px solid currentColor;
-  border-radius: 999px;
+  border-radius: var(--jh-doc-radius);
   background: var(--profile-flow-accent-soft);
   color: var(--profile-flow-accent);
   font-size: 0.68rem;
@@ -493,14 +481,14 @@ const consumers = [
   padding: 0.72rem;
   border: 1px solid var(--profile-flow-border);
   border-block-start: 0.18rem solid var(--profile-flow-accent);
-  border-radius: 0.78rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--profile-flow-card);
 }
 
 .candidate-profile-flow__consumer-icon {
   inline-size: 2.05rem;
   block-size: 2.05rem;
-  border-radius: 0.6rem;
+  border-radius: var(--jh-doc-radius);
 }
 
 .candidate-profile-flow__consumer-icon :deep(svg) {
@@ -526,14 +514,14 @@ const consumers = [
   align-items: center;
   padding: 0.8rem 0.9rem;
   border: 1px solid color-mix(in srgb, var(--profile-flow-guard) 68%, var(--vp-c-divider));
-  border-radius: 0.85rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--profile-flow-guard-soft);
 }
 
 .candidate-profile-flow__guard-icon {
   inline-size: 2.35rem;
   block-size: 2.35rem;
-  border-radius: 999px;
+  border-radius: var(--jh-doc-radius);
   background: var(--profile-flow-guard-soft);
   color: var(--profile-flow-guard);
 }
@@ -584,7 +572,7 @@ const consumers = [
 @media (max-width: 34rem) {
   .candidate-profile-flow {
     padding: 0.75rem;
-    border-radius: 1rem;
+    border-radius: var(--jh-doc-radius);
   }
 
   .candidate-profile-flow__caption > strong {

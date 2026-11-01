@@ -12,8 +12,8 @@ why a run failed at that stage.
 ## Discover
 
 Discover finds postings from configured sources, creates canonical job records
-and source observations, drains detail enrichment for jobs that pass the initial
-title/location filter, and then fans out per-job preparation. It owns source
+and source observations, drains detail enrichment for jobs admitted by the
+persisted intake determination, and then fans out per-job preparation. It owns source
 scheduling, source-quality feedback, canonical identity, dedupe, protected-source
 manual-capture queue entries, and posting hygiene. Scoring and Materials still
 own their own writes.
@@ -22,6 +22,14 @@ At workflow start, Discover creates one immutable execution reference from its
 tenant, deterministic workflow ID, and Temporal run ID. That exact identity is
 threaded through every stage below. Source-run IDs describe observations; they
 do not identify the Discover execution.
+
+Retained broad-board registry entries recover their provider board from the
+canonical source ID independently of the saved default board subset. Explicit
+selection therefore carries every runnable selected board through scheduling
+and provider-unit compilation. The family runner rejects missing or malformed
+board identity with `ConfigurationError` before provider dispatch; it never
+silently omits a board while retaining its allocated budget. Registry state,
+budgets and saved defaults are not rewritten during loading.
 
 `DiscoverWorkflow` decomposes into **four activities**, not one monolithic run:
 
@@ -73,9 +81,9 @@ Key facts about the four activities:
 
 - **`plan_discovery_sources`** compiles the plan (which source families to run,
   progress totals, and the starting job count) from the source registry, source
-  quality, and the global limit. Target roles from the profile become two query
-  kinds — exact queries (from saved role text) and recall queries (generated from
-  target-role intent, enforcing track and seniority before scoring).
+  quality, and the global limit. Literal saved roles and location/work-model controls
+  become board parameters without a model or a second approval. The captured
+  execution settings remain stable on retries. JobStreaming owns execution of supported provider search/filter parameters. Fetched, structurally valid postings proceed to canonical ingestion; no metadata-only model decides admission. Smart Extract first resolves arbitrary-site cards to full individual postings: cited page/extraction/qualification determinations establish the actual role, employer, description quality and saved location/work-model compatibility before canonical ingestion. Unknown captures remain in Manual Capture; confirmed mismatches remain outside Jobs with durable progress evidence. Accepted captures seed snapshots/enrichment and retain all three determination IDs. Archived Smart Extract captures use the same qualification. A private prepared-capture event receipt binds the qualified bytes to the original canonical insert. Interrupted publication resumes that owner without another observation or admission; snapshot, enrichment, accepted progress and completion commit together under a writer lock. Changed content, later observations, accepted enrichment, deletion, cancellation and superseded source activity attempts fence stale publication. Capture acknowledgement requires that completion or a recorded supersession. Source wrappers preserve typed determination failure retryability. Full-posting analysis/scoring assess role fit. Page or extraction determination failures retain typed `ApplicationError` values with their retry policy.
 - **`discovery_source_family`** runs *one* source family under
   `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
   window (crawls legitimately run long). Each family is isolated: a broad-board, ATS,
@@ -89,6 +97,45 @@ Key facts about the four activities:
   placeholder like `failed: failed`. With `limit > 0` the cap is a **new-job
   budget** — rediscoveries record observations but do not consume the budget, so
   exact-query duplicates never starve later recall queries or sources.
+  Bounded runs share tenant/workflow/run-scoped `DiscoveryNewJobAdmitted`
+  receipts across broad boards, ATS APIs, Workday, Smart Extract and archived
+  captures. Every canonical claim checks the complete frozen source plan and
+  writes its receipt under the same SQLite writer transaction as the new job,
+  source observation and execution membership. Independent connections therefore
+  arbitrate the final slot atomically. Global Jobs row-count changes carry no
+  admission authority. Family progress counts only that family's receipts;
+  reaching its source cap leaves the other sources' allowance available.
+  Dispatch forecasts the remaining run and source allowance from these receipts,
+  removes exhausted sources, and returns before scheduling a zero allowance.
+  That forecast reduces acquisition work; only the canonical writer transaction
+  authorizes an insert when producers race.
+  Zero remaining capacity refuses a new canonical insert, while an explicitly
+  unbounded user request has no bounded admission authority. Recovery may still
+  finish an already-admitted capture at the cap before fresh acquisition stops.
+  Recovery resolves the exact prior admission or prepared publication first;
+  an unprepared Smart Extract capture remains pending before browser/provider
+  setup once its run or source allowance is exhausted.
+  The current planner first records `DiscoveryResultPlanFrozen` in `job_events`,
+  binding the tenant/workflow/run, bounded or unbounded mode, cap, source-ID
+  allowances and an integrity digest. It stores no queries or private search
+  configuration. Retries retain the original cap and source allowances. A
+  marker cannot be created for an execution that already has source effects;
+  old `true` flags only budgeted broad boards and cannot establish all-family
+  authority. Source activities validate the marker before lifecycle/provider
+  effects; canonical writers validate it again under their writer transaction,
+  including cancellation, before publishing a new admission. Execution-scoped
+  canonical writers cannot bypass a bounded marker by omitting their budget.
+  An existing marker
+  cannot be rebound to a different cap or execution mode.
+  Older pending bounded activity inputs without a frozen execution plan fail
+  closed with a restart-after-upgrade configuration error before acquisition or
+  canonical persistence. Completed activity history replays unchanged; no plan
+  or admission receipts are reconstructed from historical job counts.
+
+  Cancellation prevents further ingestion. Workday checks again after acquisition
+  and before each card, retaining earlier accepted commits. Budgeted canonical
+  writers recheck the same cancellation signal inside the claim transaction.
+  The broad-board family persists source events before processing, so retries drain unfinished capture under the same execution/lease and exact identity fences without a new intake model call.
 
   The broad-board family further decomposes the immutable search plan into one
   query/location/board unit per JobStreaming stream. Each admitted lead is
@@ -107,13 +154,12 @@ Key facts about the four activities:
   they are not resumed. The internal `jobspy` family/source-ID name remains a
   compatibility key only.
 
-  For an integrated execution, every job-source acquisition is a bounded
-  live-browser task carrying the exact `DiscoveryExecutionRef`. JobStreaming's
-  provider sessions, canonical ATS/API and Workday clients, Smart Extract page
-  rendering, and each source policy's `robots.txt` fetch all delegate through
-  the API broker to the paired extension in the user's current Chrome profile.
-  The worker does not open a second browser, copy a profile, or fall back to a
-  direct transport. The broker is transient; source checkpoints and accepted
+  Each integrated acquisition retains the exact `DiscoveryExecutionRef`.
+  JobStreaming, canonical ATS/API, Workday and Smart Extract prefer the connected
+  extension after a bounded status check; offline setup selects guarded public
+  HTTP or anonymous Playwright. Neither mode consults robots.txt or copies a
+  profile. After acquisition starts, a failure never switches transport.
+  Connected requests delegate through the API broker to the selected extension. The broker is transient; source checkpoints and accepted
   observations remain the durable replay authority. One explicitly selected
   extension installation owns leases. Four background executors match the
   broker's four-task admission bound; overflow waits at worker admission rather
@@ -124,10 +170,9 @@ Key facts about the four activities:
   immediately before lease. HTTP/API tasks execute in the extension service
   worker with redirect following disabled; rendered-page tasks use tab-scoped
   DNR rules to block cross-origin main-frame redirects before dispatch, leaving
-  page-owned fetch/XHR under Chrome's normal policy. LinkedIn detail enrichment through the user's owner-authenticated
-  live session does not inherit the anonymous crawler's robots denial, but it
-  retains the same public-destination validation, pacing, request budget,
-  exact-origin, audit, and no-submit boundaries.
+  page-owned fetch/XHR under Chrome's normal policy. Both acquisition modes
+  retain their public-destination validation, pacing, request budget, audit and
+  no-submit boundaries.
 - **`discovery_enrichment`** drains detail enrichment (below) and then runs
   post-discovery hygiene.
 - **`discovery_preparation_fanout`** derives targets and starts per-job
@@ -204,13 +249,20 @@ Two truths correct the old diagram:
   `EnrichmentFailed` — those come from that unused use case and from the separate
   protected-source manual-capture snapshot path.
 
-Within `DiscoverWorkflow`, detail rendering uses only the paired extension in
-the current profile and the shared extraction cascade. It does not start the
-legacy Playwright browser or the separately consented copied-profile LinkedIn
-resolver, and it never clicks an apply control. The copied-profile resolver is
-retained only for standalone maintenance compatibility outside integrated
-Discovery. Application-target outcomes remain distinct from description
-confidence and cannot quarantine otherwise trustworthy posting content.
+Within `DiscoverWorkflow`, detail rendering prefers the selected paired
+extension in the current profile. If the setup availability probe reports it
+offline, the batch selects guarded anonymous Playwright before acquisition.
+An acquisition error never switches transports. Integrated Discovery does not
+start the separately consented copied-profile LinkedIn resolver or click an
+apply control; that resolver remains standalone maintenance compatibility.
+Both anonymous intake and batch capture wait for DOM content and retain a
+readable document after a typed retryable subresource timeout or DNS failure.
+The captured `DetailPage` then carries incomplete status evidence and its
+acquisition reason, so availability stays unknown. Failed documents, unsafe
+destinations and response-size violations still prevent extraction. The shared
+independent interpretation and description-quality gates remain authoritative.
+Application-target outcomes remain distinct from description confidence and
+cannot quarantine otherwise trustworthy posting content.
 Detail enrichment isolates faults at two levels. A crash while processing one
 site's batch is recorded in `site_errors`, healthy sites keep running, and the
 enrichment run ends `partial` rather than `failed`. Within a site, a single
@@ -236,12 +288,29 @@ the terminal fan-out step closes execution membership for phase and overall ETA
 calculation. Existing-backlog work remains visibly separate from jobs observed
 by this run even though both use the same preparation workflow implementation.
 
+A successful per-job Score activity also returns whether its accepted score's
+existing eligibility verdict blocks material preparation. If a later requested
+step is Tailor or Cover, the current workflow records that first material step
+as skipped and finishes without queueing a redundant material activity. Score
+already owns the canonical eligibility stage reconciliation. This workflow
+shortcut writes no stage or score state and cannot veto a newer accepted score
+or a separate material preparation. Explicit Tailor-only, Score-only and
+PDF-only requests retain their existing entry-point guards. Missing flags in
+older results retain the old path, and a Temporal patch marker preserves replay
+of histories that already scheduled the material check.
+
 Targets are derived in `pipeline/preparation.py` from stage state:
 
-- Jobs at `pending_score` get steps `["score","tailor","cover","pdf"]` keyed to
+- Jobs at `pending_score` get steps `["score","tailor","pdf"]` keyed to
   the current **scoring-policy** version.
 - Jobs at `pending_tailor` (meeting `min_score`) get steps
-  `["tailor","cover","pdf"]` keyed to the current **tailoring-policy** version.
+  `["tailor","pdf"]` keyed to the current **tailoring-policy** version.
+- Enabling `cover_letter_generation` inserts Cover before PDF. The saved choice
+  is frozen before dispatch and included in the preparation identity. The
+  [cover-letter policy](../materials.md#cover-letter-generation-policy) also
+  checks admission and automatic recovery.
+
+The following sequence includes the optional cover-letter route.
 
 ```mermaid
 sequenceDiagram
@@ -278,7 +347,13 @@ Behavior notes:
   approved material input.
 - Threshold changes are **live eligibility changes**, not scoring changes:
   lowering the threshold can derive new `tailor`/`cover`/`pdf` work from
-  persisted scores; raising it suppresses active artifacts. Neither path invokes
+  persisted scores; raising it suppresses active artifacts except generations
+  accepted under the explicit low-fit override. The accepted resume records a
+  literal boolean bound to its tenant/job/generation. Suppression honors that
+  flag only for the fit-floor branch; missing scores and current hard blockers
+  remain authoritative. Eligibility selection and suppression share the
+  reconciliation write transaction, serializing concurrent material approval. A replacement generation does not inherit the request.
+  Neither path invokes
   the scoring LLM. Scoring-policy and tailoring-policy changes never silently
   rescore or regenerate — that is what the explicit `rescore_*` / `retailor_*`
   actions are for.
@@ -311,10 +386,9 @@ subwork; explicit rescore actions are maintenance controls.
 The scoring path has three distinct parts, and it is worth being precise about
 which model machinery each uses:
 
-1. **Retrieval preselection is BM25-only.** `domain/scoring/retrieval.py`
-   implements BM25 lexical ranking with *optional* semantic reciprocal-rank
-   fusion, but the local build's default semantic adapter is a no-op (no hosted
-   embedding service), so ranking is lexical. `limit` applies after preselection.
+1. **Work ordering is mechanical.** `domain/scoring/retrieval.py` uses recency
+   and stable IDs. `limit` applies to that ordering; token overlap and BM25 do
+   not suppress jobs before model scoring.
 2. **Employer analysis is the mandatory front-half.** Before the fit score,
    scoring ensures a canonical employer analysis via
    `scoring/employer_analysis.py` / `scoring/scorer.py`. This is produced by the
@@ -360,19 +434,17 @@ resume generation, validation mode, retry/re-tailor decisions, and artifact
 registration; it never submits applications. In the product flow it is Discover
 subwork, with first-time manual tailoring exposed on the job detail page.
 
-The mechanism, in brief: one or more configured provider/model specs draft
-structured resume candidates; each candidate is validated independently against
-the profile contract, the rendered-text contract, and the tailoring quality
-plan; then `normal`/`strict` modes require a separate structured judge to return
-`PASS` at or above the configured threshold before approval (`lenient` skips the
-judge for low-cost local runs). Approved artifacts carry the selected generator,
-candidate summaries, judge model, judge score/verdict, prompt/schema versions,
-quality checks, and retry feedback as audit metadata; provider URLs and API keys
-are never persisted.
+Configured generators draft structured resume candidates with source anchors.
+Each candidate passes mechanical schema, ID, exact-value and rendering checks,
+then separate claim verification and quality judging. High-fit resumes also
+receive the six-persona determination. Typed model verdicts control acceptance;
+diagnostic scores and validation modes cannot bypass semantic verification.
+Approved artifacts carry the selected generator, candidate summaries,
+prompt/schema versions, model receipts, final line anchors and repair findings.
+Provider URLs and API keys are never persisted.
 
-Tailoring is where the fabrication gate and per-bullet claim grounding live.
-**For gate depth — the fabrication detector, claim-grounding, judge and
-adversarial personas, and repair loop — see [Resume Tailoring Logic](../tailoring.md).**
+For claim binding, the independent judge, adversarial personas and the repair
+loop, see [Resume Tailoring Logic](../tailoring.md).
 The Tailor stage emits `EmployerAnalyzed` (shared with scoring), `ResumeApproved`
 / `ResumeFailed`, and `BulletProvenanceRecorded`; successful tailoring proceeds
 into the Cover step. A terminal Tailor failure instead blocks unstarted Cover
@@ -467,6 +539,63 @@ recipient/attachment candidate. Terminal apply outcomes are
 `ApplicationFailed` (including the manual final-submit boundary), or
 `ApplyManualSkip` (manual-ATS skip).
 
+Manual Apply controls are canonical stage state plus durable event history.
+Manual Skip records `manualDisposition: "skip"`; that stop remains active across
+later local labels until a validated explicit reset or manual Applied resolution.
+The explicit reset records `resetAuthority=explicit_safe_apply_reset` and
+`manualSkipReleasedThroughEventId`, bound to the existing Skip event frontier
+under the same writer lock. Automatic reconciliation `StageReset` events and
+replayed older release frontiers cannot release the stop or a subsequent Skip.
+Older reset events without this provenance remain inspectable but cannot
+establish release authority; a fresh safe explicit reset is required.
+Selectors, readiness counts and the locked claim exclude manual Skip and any
+recorded submit intent for the exact tenant/job, independently of latest-run
+projections. Skip records its previous state in the event: a prior
+`needs_verification` remains a separate unresolved stop even without an intent
+receipt. Only retryable `DRY_RUN` skips remain automatically claimable.
+An Apply dispatch snapshots the tenant event frontier under the writer. A later
+manual Skip or explicit reset releasing it fences that dispatch for the affected
+job, including if the workflow had not claimed yet. New targeted requests after
+reset use the reset generation in their workflow identity. An older workflow with
+no frontier is fenced only for jobs with retained manual Skip history; standing
+workflows capture a fresh frontier after completing each poll.
+After availability refresh, admission rechecks the controls under the writer.
+An explicit reset acquires the writer and refuses submit intent, active ownership,
+Applied, Needs verification and nonmanual policy skips. The shared mixed-cohort
+reset rolls back all selected stages on refusal and retains caller transaction
+ownership. Accepted materials and historical events are unchanged.
+
+Skip is a local disposition; it neither dispatches provider cancellation nor
+asserts external completion. Final intent retains the existing run/stage fence
+and rechecks all durable tenant/job submit intents and unresolved skipped
+outcomes under that same writer lock. This also fences an inherited attempt
+that was admitted before earlier submission evidence became visible.
+Settlement holds the writer and rejects a stopped stage or a successor run;
+recovery reads running ownership under the writer as well. Restart recovery and
+manual Applied resolution retain the claimed attempt count. Original-run
+settlement evidence remains visible independently of Skip; the
+[Apply projector](../read-model.md#late-apply-settlement) retains a corroborated
+late email outcome or unresolved submission uncertainty. Durable intent remains
+a retry blocker even if a late terminal event is recorded after a local stop.
+An exact stopped owner can persist its original private agent observations and
+source-bound terminal determination. Skip before final-intent admission returns a
+local stop instead of an application failure; no new submission is authorized.
+
+Any admitted run retains its owner across local stage changes. For a launcher
+claim, reset requires matching `ApplyClaimSettled` or `ApplyCustodyRetired`
+evidence for that exact run and launcher. A stage label or `LockReleased` alone
+does not prove cleanup. Submit intent still blocks retry after settlement.
+
+Normal Apply startup and `apply --recover-stopped` check stopped claims using
+the existing source-owner lifetime or native custody recovery. A root process
+exit is not native descendant proof. Source recovery remains best effort, while
+installed recovery requires the exact native completion. Unknown custody remains
+blocked. Recovery does not reset the job or resolve current/older intent or prior
+Needs verification evidence. If verified native retirement finds an active
+Skip whose exact matching owner was left labeled running, and no conflicting
+intent or outcome exists, it restores the stopped stage in the retirement
+transaction; a separate explicit reset is still required.
+
 **Seven safety invariants, and the mechanisms that enforce them:**
 
 1. **No model-owned final browser commit.** The use case stops ordinary live
@@ -482,9 +611,31 @@ recipient/attachment candidate. Terminal apply outcomes are
    idempotently. Combined with the per-job workflow ID
    (`apply-{tenant}-{jobKey}` + `USE_EXISTING`, one live apply per job) and the
    **live retry policy of exactly one attempt**, an owned send is never silently
-   retried into a duplicate. A crash or provider exception after intent parks
-   the stage in `needs_verification`. Dry-runs, which submit nothing, get two
-   attempts.
+   retried into a duplicate. Gmail HTTP success requires a JSON object with a
+   nonblank string `id`; `threadId` is optional but strictly nonblank when
+   supplied. Other Message fields are discarded after strict JSON decoding;
+   nonstandard constants such as `NaN` and infinities invalidate the response.
+   The intent persists an
+   immutable tenant/job/run/intent/material-generation/candidate-fingerprint
+   binding before transport admission. The saga and SQLite writer both
+   validate confirmation against it. Confirmation and intent use unique event
+   idempotency keys; settlement takes the SQLite writer lock and checks current
+   ownership from the durable current run rather than a caller-supplied lookup
+   key. Missing identity resolves that owner; foreign identity is refused.
+   Confirmation, submitted fact and the owned stage commit in one
+   transaction, with keys scoped to tenant, job and run. A crash, malformed response or provider exception after intent
+   parks the stage in nonretryable `needs_verification`, unless a valid owned
+   confirmation was already persisted. Recovery can settle that receipt once
+   without another send. Recovery holds the writer lock while rechecking ownership,
+   terminal state and confirmation before parking. Late receipts cannot overwrite
+   a successor. Owned aggregate notifications wait for commit, including caller
+   transactions, and are discarded on rollback. Duplicate execution is refused
+   without settling or releasing the original operation. Child sequence numbers
+   are replay keys only when the immutable event identity matches; admission
+   acknowledgement loss reconciles the exact owned intent before checkpointing
+   uncertainty. Streaming assistant/tool text and determination excerpts remain
+   canonical rather than entering broad event delivery. Dry-runs,
+   which submit nothing, get two attempts.
 3. **Repeat-application protection.** Every live claim recomputes relationships
    from canonical job identity, accepted duplicate links, and confirmed
    application facts. Exact identity blocks by default; same employer plus a
@@ -543,10 +694,10 @@ API's `cancelJobAction`.
 `ContactResearchWorkflow` (Contact & Outreach) is not a pipeline stage — it is a
 user-started, supervised run that *proposes* contacts for review. The API mints a
 `taskId`, pre-creates a `queued` task so the UI can read it immediately, then
-dispatches `run_contact_research`. The workflow runs the shared spend preflight,
-then one source-family activity that fetches only policy-permitted, opted-in
+dispatches `run_contact_research`. One source-family activity fetches only policy-permitted, opted-in
 public pages through the merged politeness gateway and extracts candidates with a
-schema-driven LLM call. Candidates land `needs_review`; the user confirms them
+source-bound LLM determination. Each model call uses the shared contact-lane
+spend preflight. Candidates land `needs_review`; the user confirms them
 one at a time (a TypeScript-API state transition), which promotes a candidate
 into a stored `Contact` fact (INV-4).
 
@@ -569,7 +720,76 @@ sequenceDiagram
     Api->>Store: create contact fact and complete task
 ```
 
-Robots-denial, rate-limit, and budget-exhaustion are recorded as first-class
+Rate-limit, budget-exhaustion, and historical robots-denial are recorded as first-class
 `ResearchSourceAttempt` outcomes (the provenance of the search), never scrape
 errors. No candidate value ever enters an event or projection — only
 `contact_candidates.attributes_json` holds the proposed names/emails.
+
+Only an accepted empty determination yields `no_candidates`. Empty page content,
+provider unavailability or execution failure, spend denial and invalid output
+produce distinct source outcomes. The source attempt records the determination
+ID; its receipt binds the page fingerprint, model, lane, source identity and source spans without
+storing the page body or contact values. A failed inference publishes no new
+proposals and preserves an accepted review, including when another attempt wins
+while inference is in flight. Existing Temporal histories keep their original
+workflow preflight command; new histories preflight each determination.
+An overlapping failure records a source-attempt event and reports the attempt's
+failure in the workflow while retaining the accepted task's review state.
+A later successful retry clears current failure metadata and retains earlier
+source attempts as history.
+The detail reader validates the joined receipt and does not present a missing,
+foreign or inconsistent receipt, or a historical unrecorded empty result, as
+an accepted empty decision. Existing proposals remain readable.
+
+Each opted-in public page has a 2,000,000-byte response-body limit and a single
+20-second acquisition deadline covering host admission, DNS, redirects, headers
+and streamed body reads. Redirect hops release and reacquire the host slot and
+consume the existing request budget. The public-address checks and socket
+pinning still apply to every hop. A 429 or 503 installs its `Retry-After`
+cooldown before releasing the host slot, so already queued requests cannot
+start ahead of it. Size, deadline, redirect, HTTP and transport
+failures have separate source outcomes; none are interpreted as an empty page.
+Cancellation interrupts the active connection and host wait. The activity also
+checks cancellation after fetching and before model work, and after acquiring
+the SQLite writer fence before publishing an attempt. Resolver calls that
+ignore interruption cannot start a later connection, and a bounded worker pool
+limits how many such calls can remain outstanding. A short SQLite write fence
+prevents overlapping attempts from replacing published candidates or a
+successful no-candidate result; it does not hold a lock during fetch or model
+work. A failure alone does not prevent a concurrent successful attempt.
+The activity requires a clean, activity-owned database connection and buffers
+gateway outcomes until research has finished, so recording a rate limit does
+not hold a writer transaction during a later fetch or model call. Buffered
+outcomes flush only outside another transaction; other gateway consumers keep
+their existing explicit commit ownership.
+Company briefing uses the same acquisition boundary with its existing 1 MiB,
+10-second and one-redirect limits.
+
+## Availability Preflight
+
+Scoring, tailoring and cover entry points refresh active evidence older than six
+hours and permit usable content with unknown availability. Confirmed closure
+still stops preparation. Apply performs cheap local eligibility/approval checks
+before acquiring only its chosen candidate's evidence. Dry-run and bound
+human-reviewed Apply may proceed with unknown availability; unattended Apply
+requires active success within 15 minutes. Owned email intent rechecks the
+original posting and, for unknown evidence, the same exact review binding with a
+15-minute approval recency limit at claim, run and intent. This supervision rule
+is independent of the automation approval setting; refused candidates are skipped
+within the poll.
+Checks release short claim/reservation transactions before network I/O and fence
+the canonical posting again under the stage writer. Local refusals do not create
+evidence failures. Preclaim availability refusals consume no stage attempt. A
+submit-time availability refusal after an Apply run has started remains a
+retryable terminal failure and consumes that already-claimed attempt, without
+persisting submit intent or sending. Accepted content and artifacts
+survive failed refreshes. These gates grant no submission authority.
+
+
+## Semantic Determination Authority
+
+Search planning uses saved controls directly and JobStreaming executes provider filtering. Structured board/ATS listings proceed to canonical ingestion without a separate metadata-only intake model. Arbitrary-site Smart Extract links require the full-posting qualification described above. Semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
+
+See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+A running activity can become blocked when a semantic determination reports a provider-unavailable, spend-denied, or invalid-output status. It retains its distinct failure code and the last accepted artifact. A provider transport error follows the bounded retry path; no semantic fallback runs.

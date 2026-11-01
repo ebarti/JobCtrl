@@ -14,7 +14,7 @@ import { useWorkflowRunDetailQuery } from "../../contexts/operations/hooks/useWo
 import type {
   WorkflowRunDetail,
   WorkflowRunTimelineEvent,
-} from "../../contexts/operations/types.js";
+} from "@jobctrl/contracts";
 import { CancelWorkflowRunButton } from "../../contexts/pipeline/components/CancelWorkflowRunButton.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -204,7 +204,7 @@ function RunActions({ run }: { readonly run: WorkflowRunDetail }) {
         />
       ) : null}
       <a
-        aria-label={`Open workflow ${run.workflowId} in Temporal Web UI`}
+        aria-label={`View in Temporal: workflow ${run.workflowId}`}
         className={buttonVariants({ size: "sm", variant: "outline" })}
         data-typography="control"
         href={temporalWebUiWorkflowUrl(run.workflowId)}

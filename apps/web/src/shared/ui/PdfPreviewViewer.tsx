@@ -9,6 +9,7 @@ type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 type PdfLoadingTask = ReturnType<PdfJsModule["getDocument"]>;
 type PdfDocument = Awaited<PdfLoadingTask["promise"]>;
 type PdfPage = Awaited<ReturnType<PdfDocument["getPage"]>>;
+type PdfRenderTask = ReturnType<PdfPage["render"]>;
 type PdfViewport = ReturnType<PdfPage["getViewport"]>;
 
 interface RenderedPage {
@@ -102,6 +103,7 @@ export async function renderPdfPageToObjectUrl(
   renderViewport: PdfViewport,
   createCanvas: () => HTMLCanvasElement = () => window.document.createElement("canvas"),
   objectUrl: Pick<typeof URL, "createObjectURL" | "revokeObjectURL"> = URL,
+  onRenderTaskChange?: (task: PdfRenderTask | undefined) => void,
 ): Promise<RenderedPdfPageImage> {
   const canvas = createCanvas();
   const context = canvas.getContext("2d");
@@ -110,8 +112,10 @@ export async function renderPdfPageToObjectUrl(
   }
   canvas.width = Math.floor(renderViewport.width);
   canvas.height = Math.floor(renderViewport.height);
+  const renderTask = page.render({ canvas, canvasContext: context, viewport: renderViewport });
+  onRenderTaskChange?.(renderTask);
   try {
-    await page.render({ canvas, canvasContext: context, viewport: renderViewport }).promise;
+    await renderTask.promise;
     const blob = await canvasToPngBlob(canvas);
     const src = objectUrl.createObjectURL(blob);
     let active = true;
@@ -124,6 +128,7 @@ export async function renderPdfPageToObjectUrl(
       },
     };
   } finally {
+    onRenderTaskChange?.(undefined);
     // The Blob owns the encoded pixels after toBlob resolves. Release the
     // high-density canvas backing store immediately rather than retaining both.
     canvas.width = 0;
@@ -163,6 +168,7 @@ export function PdfPreviewViewer({
     let loadingTask: PdfLoadingTask | undefined;
     let document: PdfDocument | undefined;
     let destroyPromise: Promise<void> | undefined;
+    let activeRenderTask: PdfRenderTask | undefined;
     const pageImages = new Set<RenderedPdfPageImage>();
     const abortController = new AbortController();
     setState({ status: "loading", pages: [], message: loadingMessage });
@@ -171,9 +177,13 @@ export function PdfPreviewViewer({
       for (const image of pageImages) image.revoke();
       pageImages.clear();
     };
-    const destroyDocument = () => {
+    const cancelRender = () => {
+      activeRenderTask?.cancel();
+      activeRenderTask = undefined;
+    };
+    const destroyLoadingTask = () => {
       if (destroyPromise) return destroyPromise;
-      const pendingDestroy = document?.destroy() ?? loadingTask?.destroy();
+      const pendingDestroy = loadingTask?.destroy();
       if (!pendingDestroy) return Promise.resolve();
       destroyPromise = pendingDestroy.catch(() => undefined);
       return destroyPromise;
@@ -205,7 +215,15 @@ export function PdfPreviewViewer({
             if (cancelled) break;
             const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
             const renderViewport = page.getViewport({ scale: PDF_RENDER_SCALE * outputScale });
-            const image = await renderPdfPageToObjectUrl(page, renderViewport);
+            const image = await renderPdfPageToObjectUrl(
+              page,
+              renderViewport,
+              undefined,
+              undefined,
+              (task) => {
+                activeRenderTask = task;
+              },
+            );
             if (cancelled) {
               image.revoke();
               break;
@@ -240,7 +258,7 @@ export function PdfPreviewViewer({
           });
         }
       } finally {
-        await destroyDocument();
+        await destroyLoadingTask();
       }
     }
 
@@ -248,8 +266,9 @@ export function PdfPreviewViewer({
     return () => {
       cancelled = true;
       abortController.abort();
+      cancelRender();
       revokePageImages();
-      void destroyDocument();
+      void destroyLoadingTask();
     };
   }, [cacheKey, loadingMessage, url]);
 
@@ -323,6 +342,7 @@ export function PdfAuditPreviewViewer({
     let loadingTask: PdfLoadingTask | undefined;
     let document: PdfDocument | undefined;
     let destroyPromise: Promise<void> | undefined;
+    let activeRenderTask: PdfRenderTask | undefined;
     const pageImages = new Set<RenderedPdfPageImage>();
     const abortController = new AbortController();
     setState({ status: "loading", pages: [], message: loadingMessage });
@@ -331,9 +351,13 @@ export function PdfAuditPreviewViewer({
       for (const image of pageImages) image.revoke();
       pageImages.clear();
     };
-    const destroyDocument = () => {
+    const cancelRender = () => {
+      activeRenderTask?.cancel();
+      activeRenderTask = undefined;
+    };
+    const destroyLoadingTask = () => {
       if (destroyPromise) return destroyPromise;
-      const pendingDestroy = document?.destroy() ?? loadingTask?.destroy();
+      const pendingDestroy = loadingTask?.destroy();
       if (!pendingDestroy) return Promise.resolve();
       destroyPromise = pendingDestroy.catch(() => undefined);
       return destroyPromise;
@@ -369,7 +393,15 @@ export function PdfAuditPreviewViewer({
               ? renderedLinesFromLayoutBoxes(pageNumber, layoutBoxes)
               : pdfTextLines(pdfjs, (await page.getTextContent()).items, viewport, lineTargets);
             showProgress(`Rendering page ${pageNumber} of ${document.numPages}.`, pages);
-            const image = await renderPdfPageToObjectUrl(page, renderViewport);
+            const image = await renderPdfPageToObjectUrl(
+              page,
+              renderViewport,
+              undefined,
+              undefined,
+              (task) => {
+                activeRenderTask = task;
+              },
+            );
             if (cancelled) {
               image.revoke();
               break;
@@ -405,7 +437,7 @@ export function PdfAuditPreviewViewer({
           });
         }
       } finally {
-        await destroyDocument();
+        await destroyLoadingTask();
       }
     }
 
@@ -413,8 +445,9 @@ export function PdfAuditPreviewViewer({
     return () => {
       cancelled = true;
       abortController.abort();
+      cancelRender();
       revokePageImages();
-      void destroyDocument();
+      void destroyLoadingTask();
     };
   }, [cacheKey, layoutBoxes, lineTargets, loadingMessage, url]);
 

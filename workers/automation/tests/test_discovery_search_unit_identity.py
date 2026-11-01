@@ -32,12 +32,6 @@ def _spec() -> DiscoverySearchSpec:
         remote_only=True,
         country_indeed="spain",
         linkedin_fetch_description=True,
-        match_mode="recall",
-        target_track="engineering_leadership",
-        seniority_floor="director",
-        accept_locations=("Barcelona, Spain", "Europe"),
-        reject_locations=("United States",),
-        local_accept_locations=("Barcelona, Spain",),
     )
 
 
@@ -96,9 +90,7 @@ def test_accepted_receipts_use_canonical_job_id(search_db) -> None:
     assert unit is not None
     assert unit.accepted_jobs == 1
     assert unit.new_jobs == 1
-    receipt = search_db.execute(
-        "SELECT job_id, was_new FROM discovery_search_unit_jobs"
-    ).fetchone()
+    receipt = search_db.execute("SELECT job_id, was_new FROM discovery_search_unit_jobs").fetchone()
     assert tuple(receipt) == (str(job_id), 1)
 
 
@@ -116,6 +108,11 @@ def test_accepted_receipts_reject_url_shaped_identity(search_db) -> None:
             was_new=True,
         )
 
-    assert search_db.execute(
-        "SELECT COUNT(*) FROM discovery_search_unit_jobs"
-    ).fetchone()[0] == 0
+    assert search_db.execute("SELECT COUNT(*) FROM discovery_search_unit_jobs").fetchone()[0] == 0
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

@@ -2,7 +2,7 @@
 
 See ddd-target.md §4.5. Two services live here:
 
-  :class:`ContentValidator` — banned-word / fabrication / structural
+  :class:`ContentValidator` — schema and literal source binding
                               validation rules for tailored resumes and
                               cover letters. Replaces the legacy
                               ``scoring/validator.py`` module wholesale
@@ -18,11 +18,8 @@ and return value objects (:class:`ValidationResult`) or strings. Use
 cases are responsible for plumbing the snapshot in and the artifact
 out.
 
-Module-level helpers exposed for callers that previously imported them
-from ``scoring/validator.py`` (constants ``BANNED_WORDS`` /
-``LLM_LEAK_PHRASES`` / ``FABRICATION_WATCHLIST``, the
-``sanitize_text`` and ``normalize_profile_list`` functions). The legacy
-module is deleted; importers must update to this canonical home.
+Formatting helpers and source-ID checks are mechanical. Semantic claim support,
+voice, self-talk and prohibited claims belong to the separate verifier port.
 """
 
 from __future__ import annotations
@@ -32,11 +29,11 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from jobctrl.domain.materials.value_objects import ValidationResult
+from jobctrl.domain.ports.artifact_review import ValidationResult
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.profile.canonical_sources import experience_bullet_evidence_ids_by_role
 from jobctrl.resume_profile import (
     experience_updates_by_id,
-    get_achievement_evidence,
     get_education_entries,
     get_experience_entries,
     get_max_experience_bullets,
@@ -45,6 +42,8 @@ from jobctrl.resume_profile import (
     get_required_experience_entry_ids,
     get_required_skill_category_ids,
     get_resume_master,
+    get_selected_experience_entries,
+    get_selected_skill_categories,
     get_skill_categories,
     get_tailoring_policy,
     require_resume_master,
@@ -60,57 +59,6 @@ _OUTPUT_WHITESPACE_RE = re.compile(r"\s+")
 # ---------------------------------------------------------------------------
 # Universal constants (not personal data — moved verbatim from validator.py)
 # ---------------------------------------------------------------------------
-
-
-BANNED_WORDS: list[str] = [
-    "passionate", "dedicated", "committed to",
-    "utilizing", "utilize", "harnessing",
-    "spearheaded", "spearhead", "orchestrated", "championed", "pioneered",
-    "robust", "scalable solutions", "cutting-edge", "state-of-the-art", "best-in-class",
-    "proven track record", "track record of success", "demonstrated ability",
-    "strong communicator", "team player", "fast learner", "self-starter", "go-getter",
-    "synergy", "cross-functional collaboration", "holistic",
-    "transformative", "innovative solutions", "paradigm", "ecosystem",
-    "proactive", "detail-oriented", "highly motivated",
-    "seamless", "full lifecycle",
-    "deep understanding", "extensive experience", "comprehensive knowledge",
-    "thrives in", "excels at", "adept at", "well-versed in",
-    "i am confident", "i believe", "i am excited",
-    "plays a critical role", "instrumental in", "integral part of",
-    "strong track record", "eager to", "eager",
-    # Cover-letter-specific additions
-    "this demonstrates", "this reflects", "i have experience with",
-    "furthermore", "additionally", "moreover",
-]
-
-LLM_LEAK_PHRASES: list[str] = [
-    "i am sorry", "i apologize", "i will try", "let me try",
-    "i am at a loss", "i am truly sorry", "apologies for",
-    "i keep fabricating", "i will have to admit", "one final attempt",
-    "one last time", "if it fails again", "persistent errors",
-    "i am having difficulty", "i made an error", "my mistake",
-    "here is the corrected", "here is the revised", "here is the updated",
-    "here is my", "below is the", "as requested",
-    "note:", "disclaimer:", "important:",
-    "i have rewritten", "i have removed", "i have fixed",
-    "i have replaced", "i have updated", "i have corrected",
-    "per your feedback", "based on your feedback", "as per the instructions",
-    "the following resume", "the resume below",
-    "the following cover letter", "the letter below",
-]
-
-FABRICATION_WATCHLIST: set[str] = {
-    "c#", "c++", "golang", "rust", "ruby",
-    "kotlin", "swift", "scala", "matlab",
-    "spring", "django", "rails", "angular", "vue", "svelte",
-    "certified", "pmp", "scrum master", "aws certified",
-}
-
-_COVER_LETTER_CLOSING_RE = re.compile(
-    r"^(?:(?:best|sincerely|regards|kind regards|warm regards|thanks|thank you),?\s+)?"
-    r"[A-Z][A-Za-z .'-]{1,60}$",
-    re.IGNORECASE,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -146,23 +94,8 @@ def normalize_profile_list(items: object) -> list[str]:
     return normalized
 
 
-def _build_allowed_skill_terms(profile: dict) -> set[str]:
-    """Build the lowercase set of real skills from the canonical profile."""
-    allowed: set[str] = set()
-    for category in get_skill_categories(profile):
-        allowed.update(item.lower().strip() for item in normalize_profile_list(category.get("items", [])))
-    return allowed
-
-
 def _normalize_output_term(value: object) -> str:
     return _OUTPUT_WHITESPACE_RE.sub(" ", str(value or "")).strip().lower()
-
-
-def _contains_watch_term(text: str, term: str) -> bool:
-    """Return True when a fabrication-watch term appears as a real term match."""
-    if re.fullmatch(r"[a-z0-9 ]+", term):
-        return re.search(r"\b" + re.escape(term) + r"\b", text) is not None
-    return term in text
 
 
 def sanitize_text(text: str) -> str:
@@ -179,9 +112,7 @@ def sanitize_text(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _validate_master_json_fields(
-    data: dict, profile: dict, mode: str = "normal"
-) -> ValidationResult:
+def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal") -> ValidationResult:
     """Validate tailoring output against the canonical resume master schema."""
     errors: list[str] = []
     warnings: list[str] = []
@@ -213,11 +144,9 @@ def _validate_master_json_fields(
     all_experience_ids = {entry.get("id") for entry in experience_entries}
     required_experience_ids = set(get_required_experience_entry_ids(profile)) & all_experience_ids
     required_bullets_by_entry = get_required_bullets_by_experience_id(profile)
-    evidence_entry_ids = {
-        item["experience_entry_id"] for item in get_achievement_evidence(profile)
-    }
+    evidence_entry_ids = {ident for ident, evidence in experience_bullet_evidence_ids_by_role(profile).items() if evidence}
     required_skill_ids = set(get_required_skill_category_ids(profile))
-    max_bullets = get_max_experience_bullets(profile)
+    all_skill_ids = {category.get("id") for category in get_skill_categories(profile)}
 
     all_text_parts: list[str] = [executive_profile]
     seen_experience_ids: set[str] = set()
@@ -234,9 +163,20 @@ def _validate_master_json_fields(
             errors.append(f"Duplicate experience update: {entry_id}")
             continue
         seen_experience_ids.add(entry_id)
+        baseline_ids = {f"experience:{entry_id}:source:{index}" for index, bullet in
+                        enumerate(entry_by_id.get(entry_id, {}).get("bullets") or []) if str(bullet).strip()}
+        omission_records = data.get("experience_omissions", ())
+        if not isinstance(omission_records, (list, tuple)):
+            omission_records = ()
+        omission_ids = {row.get("evidence_id") for row in omission_records
+                        if isinstance(row, dict) and row.get("experience_entry_id") == entry_id
+                        and row.get("reason") == "clearly_inapplicable"}
+        all_baseline_omitted = bool(baseline_ids) and baseline_ids == omission_ids
         if not isinstance(bullets, list) or (
-            not bullets
-            and (entry_id in evidence_entry_ids or required_bullets_by_entry.get(entry_id))
+            not bullets and (
+                (entry_id in evidence_entry_ids and not all_baseline_omitted)
+                or required_bullets_by_entry.get(entry_id)
+            )
         ):
             errors.append(f"Experience update '{entry_id}' must include bullets")
             continue
@@ -247,26 +187,21 @@ def _validate_master_json_fields(
             if normalized_required and normalized_required not in seen_effective:
                 effective_bullets.append(required_bullet)
                 seen_effective.add(normalized_required)
+        max_bullets = get_max_experience_bullets(profile)
         if len(effective_bullets) > max_bullets:
             errors.append(f"Experience update '{entry_id}' exceeds {max_bullets} bullets")
         title = str(update.get("title") or "").strip()
         source_title = str(entry_by_id.get(entry_id, {}).get("title") or "").strip()
-        if title and title != source_title:
-            errors.append(
-                f"Unsupported title rewrite for '{entry_id}': use an empty title or the exact source title"
-            )
+        if title and title != source_title and not get_tailoring_policy(profile)["allow_title_reframing"]:
+            errors.append(f"Title rewriting is disabled for '{entry_id}' by the saved tailoring policy")
         all_text_parts.extend(str(bullet) for bullet in bullets)
 
     missing_experience_ids = required_experience_ids - seen_experience_ids
-    extra_experience_ids = seen_experience_ids - required_experience_ids
+    extra_experience_ids = seen_experience_ids - all_experience_ids
     if missing_experience_ids:
-        errors.append(
-            "Missing experience updates: " + ", ".join(sorted(missing_experience_ids))
-        )
+        errors.append("Missing experience updates: " + ", ".join(sorted(missing_experience_ids)))
     if extra_experience_ids:
-        errors.append(
-            "Unknown experience updates: " + ", ".join(sorted(extra_experience_ids))
-        )
+        errors.append("Unknown experience updates: " + ", ".join(sorted(extra_experience_ids)))
 
     seen_skill_ids: set[str] = set()
     for update in skill_updates:
@@ -285,46 +220,14 @@ def _validate_master_json_fields(
         if not isinstance(items, list) or not items:
             errors.append(f"Skill category update '{category_id}' must include items")
             continue
-        allowed_for_category = {
-            _normalize_output_term(item)
-            for category in get_skill_categories(profile)
-            if str(category.get("id") or "").strip() == category_id
-            for item in normalize_profile_list(category.get("items", []))
-        }
-        for item in items:
-            normalized_item = _normalize_output_term(item)
-            if normalized_item and normalized_item not in allowed_for_category:
-                errors.append(f"Fabricated skill: '{item}'")
         all_text_parts.extend(str(item) for item in items)
 
     missing_skill_ids = required_skill_ids - seen_skill_ids
-    extra_skill_ids = seen_skill_ids - required_skill_ids
+    extra_skill_ids = seen_skill_ids - all_skill_ids
     if missing_skill_ids:
         errors.append("Missing skill category updates: " + ", ".join(sorted(missing_skill_ids)))
     if extra_skill_ids:
         errors.append("Unknown skill category updates: " + ", ".join(sorted(extra_skill_ids)))
-
-    all_text = " ".join(all_text_parts).lower()
-
-    found_leaks = [p for p in LLM_LEAK_PHRASES if p in all_text]
-    if found_leaks:
-        errors.append(f"LLM self-talk: '{found_leaks[0]}'")
-
-    allowed_skills = _build_allowed_skill_terms(profile)
-    for fake in FABRICATION_WATCHLIST:
-        if len(fake) <= 2:
-            continue
-        if _contains_watch_term(all_text, fake) and fake not in allowed_skills:
-            errors.append(f"Fabricated skill: '{fake}'")
-
-    if mode != "lenient":
-        found_banned = [w for w in BANNED_WORDS if re.search(r"\b" + re.escape(w) + r"\b", all_text)]
-        if found_banned:
-            msg = f"Banned words: {', '.join(found_banned[:5])}"
-            if mode == "strict":
-                errors.append(msg)
-            else:
-                warnings.append(msg)
 
     if errors:
         return ValidationResult.failure(tuple(errors), warnings=tuple(warnings))
@@ -389,54 +292,9 @@ def _validate_master_tailored_resume(text: str, profile: dict) -> ValidationResu
 
 
 def _validate_cover_letter(text: str, mode: str = "normal") -> ValidationResult:
-    """Programmatic validation of a cover letter."""
-    errors: list[str] = []
-    warnings: list[str] = []
-    text_lower = text.lower()
-
-    # 1. Em / en dashes — always an error (sanitize_text should have caught these).
-    if "—" in text or "–" in text:
-        errors.append("Contains em dash or en dash.")
-
-    # 2. Banned words — severity depends on mode.
-    if mode != "lenient":
-        found = [w for w in BANNED_WORDS if re.search(r"\b" + re.escape(w) + r"\b", text_lower)]
-        if found:
-            msg = f"Banned words: {', '.join(found[:5])}"
-            if mode == "strict":
-                errors.append(msg)
-            else:
-                warnings.append(msg)
-
-    # 3. Word count.
-    words = len(text.split())
-    if mode == "strict" and words > 250:
-        errors.append(f"Too long ({words} words). Max 250.")
-    elif mode == "normal" and words > 275:
-        warnings.append(f"Long ({words} words). Target 250.")
-
-    # 4. LLM self-talk — always an error regardless of mode.
-    found_leaks = [p for p in LLM_LEAK_PHRASES if p in text_lower]
-    if found_leaks:
-        errors.append(f"LLM self-talk: '{found_leaks[0]}'")
-
-    # 5. Must start with "Dear" — always checked.
-    stripped = text.strip()
-    if not stripped.lower().startswith("dear"):
-        errors.append("Must start with 'Dear Hiring Manager,'")
-    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-    closing_line = lines[-1] if lines else ""
-    if (
-        len(lines) < 3
-        or len(closing_line.split()) > 6
-        or closing_line.endswith((".", "!", "?"))
-        or not _COVER_LETTER_CLOSING_RE.fullmatch(closing_line)
-    ):
-        errors.append("Must end with a short closing/sign-off line.")
-
-    if errors:
-        return ValidationResult.failure(tuple(errors), warnings=tuple(warnings))
-    return ValidationResult.success(warnings=tuple(warnings))
+    if not isinstance(text, str) or not text.strip():
+        return ValidationResult.failure(("empty_cover_letter",))
+    return ValidationResult.success()
 
 
 # ---------------------------------------------------------------------------
@@ -518,27 +376,17 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
     personal = profile.get("personal", {})
     tailoring_policy = get_tailoring_policy(profile)
     resume = get_resume_master(profile)
-    required_experience_ids = get_required_experience_entry_ids(profile)
-    required_skill_ids = get_required_skill_category_ids(profile)
     required_education_ids = set(
         get_resume_master(profile).get("tailoring_rules", {}).get("required_education_entry_ids", [])
     )
-    all_experience_entries = get_experience_entries(profile)
     all_education_entries = get_education_entries(profile)
-    all_skill_categories = get_skill_categories(profile)
-    experience_entries = [
-        entry
-        for entry in all_experience_entries
-        if not required_experience_ids or entry.get("id") in required_experience_ids
-    ] or all_experience_entries
+    experience_entries = get_selected_experience_entries(profile, data)
     education_entries = [
-        entry for entry in all_education_entries
+        entry
+        for entry in all_education_entries
         if not required_education_ids or entry.get("id") in required_education_ids
     ] or all_education_entries
-    skill_categories = [
-        category for category in all_skill_categories
-        if not required_skill_ids or category.get("id") in required_skill_ids
-    ] or all_skill_categories
+    skill_categories = get_selected_skill_categories(profile, data)
 
     experience_updates = experience_updates_by_id(data)
     skill_updates = {
@@ -550,17 +398,11 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
     lines: list[str] = []
     lines.append(personal.get("full_name", ""))
 
-    contact_parts: list[str] = []
-    if personal.get("email"):
-        contact_parts.append(personal["email"])
-    if personal.get("phone"):
-        contact_parts.append(personal["phone"])
-    if personal.get("website_url"):
-        contact_parts.append(personal["website_url"])
-    if personal.get("linkedin_url"):
-        contact_parts.append(personal["linkedin_url"])
-    if contact_parts:
-        lines.append(" | ".join(contact_parts))
+    from jobctrl.domain.materials.resume_document import contact_items_from_personal, contact_items_text
+
+    contact = contact_items_text(contact_items_from_personal(personal))
+    if contact:
+        lines.append(contact)
     lines.append("")
 
     lines.append("EXECUTIVE PROFILE")
@@ -610,15 +452,7 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
     return "\n".join(lines)
 
 
-__all__ = [
-    "BANNED_WORDS",
-    "ContentValidator",
-    "FABRICATION_WATCHLIST",
-    "LLM_LEAK_PHRASES",
-    "ResumeAssembler",
-    "normalize_profile_list",
-    "sanitize_text",
-]
+__all__ = ["ContentValidator", "ResumeAssembler", "normalize_profile_list", "sanitize_text"]
 
 
 # Suppress unused-import warning for ``Any``.

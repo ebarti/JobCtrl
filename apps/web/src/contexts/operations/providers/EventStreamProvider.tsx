@@ -5,7 +5,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -13,8 +12,10 @@ import {
 import type { DomainEventEnvelope, EventStreamStatus } from "../../../shared/ports/EventStreamPort.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import { applyRunsKeys } from "../applyRunsKeys.js";
 import { useInvalidationRouter } from "../hooks/useInvalidationRouter.js";
-import type { KnownDomainEvent, KnownDomainEventType } from "../types.js";
+import type { DomainEventUnion as KnownDomainEvent } from "@jobctrl/domain-types";
+import type { KnownDomainEventType } from "../types.js";
 
 interface EventStreamContextValue {
   readonly status: EventStreamStatus;
@@ -38,34 +39,57 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const router = useInvalidationRouter();
   const [status, setStatus] = useState<EventStreamStatus>(eventStream.status);
-  // §7.7 backstop is "on reconnect" — fire once we've previously been
-  // open and recover to open after a drop.  The first
-  // connecting→open of the session is the initial connection, not a
-  // reconnection, and must not invalidate.
-  const hadOpenRef = useRef(false);
-
   useEffect(() => {
     const subscription = eventStream.subscribe({ tenantId });
     setStatus(subscription.status);
-    // Reset on every (re-)subscription so a tenant switch behaves like
-    // a fresh first-connect rather than a reconnect.
-    hadOpenRef.current = subscription.status === "open";
+    let previousStatus = subscription.status;
+    let active = true;
+    const pendingReads = new Set<string>();
+
+    const reconcile = () => {
+      const tenant = { queryKey: ["tenant", tenantId] as const };
+      // Apply-run detail is a disabled, locally patched timeline with no
+      // canonical queryFn. Preserve live entries while refreshing the
+      // workflow-run read that supplies their persisted baseline.
+      const timelinePrefix = applyRunsKeys.details(tenantId);
+      const isTimeline = (key: readonly unknown[]) =>
+        timelinePrefix.every((segment, index) => key[index] === segment);
+      const unfinished = queryClient.getQueryCache().findAll({
+        ...tenant,
+        predicate: (query) => !isTimeline(query.queryKey)
+          && query.state.data === undefined && query.promise !== undefined,
+      });
+      const unfinishedSet = new Set(unfinished);
+      // Invalidation normally reuses a first fetch without data, and its
+      // eventual result clears the invalidation. Let each such read settle
+      // (route loaders may be awaiting it), then invalidate it independently.
+      // Already-cached reads can be reconciled immediately.
+      void queryClient.invalidateQueries({
+        ...tenant,
+        predicate: (query) => !isTimeline(query.queryKey) && !unfinishedSet.has(query),
+      });
+      for (const query of unfinished) {
+        if (pendingReads.has(query.queryHash)) continue;
+        pendingReads.add(query.queryHash);
+        const afterRead = () => {
+          pendingReads.delete(query.queryHash);
+          if (active && queryClient.getQueryCache().get(query.queryHash) === query) {
+            void queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true });
+          }
+        };
+        void query.promise?.then(afterRead, afterRead);
+      }
+    };
 
     const offStatus = subscription.onStatusChange((next) => {
       setStatus(next);
-      if (next !== "open") {
-        return;
+      if (next === "open" && previousStatus !== "open") {
+        reconcile();
       }
-      if (hadOpenRef.current) {
-        // A closed→open recovery may have missed events the
-        // EventSource couldn't resume via Last-Event-ID.  One-shot
-        // full invalidation pulls the cache back into line.
-        void queryClient.invalidateQueries();
-      } else {
-        hadOpenRef.current = true;
-      }
+      previousStatus = next;
     });
     const offEvent = subscription.on((envelope) => {
+      if (envelope.tenantId !== tenantId) return;
       if (!isKnownDomainEvent(envelope)) {
         telemetry.event("event-stream.unknown-event", {
           eventType: envelope.eventType,
@@ -74,7 +98,13 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
       }
       router.handle(envelope as unknown as KnownDomainEvent, queryClient);
     });
+    // Ports that are already open on subscription have the same read/stream
+    // gap as an asynchronous first connection.
+    if (previousStatus === "open") {
+      reconcile();
+    }
     return () => {
+      active = false;
       offEvent();
       offStatus();
       subscription.close();

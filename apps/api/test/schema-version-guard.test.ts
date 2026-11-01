@@ -18,6 +18,10 @@ import {
   EXACT_V7_SCHEMA_MANIFEST,
   EXACT_V8_SCHEMA_MANIFEST,
   EXACT_V9_SCHEMA_MANIFEST,
+  EXACT_V10_SCHEMA_MANIFEST,
+  EXACT_V11_SCHEMA_MANIFEST,
+  EXACT_V14_SCHEMA_MANIFEST,
+  EXACT_V15_SCHEMA_MANIFEST,
   hasExactV8SchemaManifest,
   hasExactV9SchemaManifest,
   schemaManifest,
@@ -32,7 +36,7 @@ function makeDbWithUserVersion(userVersion: number): { dbPath: string; cleanup: 
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
-function makeExactV9Database(): { dbPath: string; cleanup: () => void } {
+function makeExactDatabase(version: 14 | 15): { dbPath: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-exact-v9-"));
   const dbPath = path.join(dir, "jobs.db");
   const migrations = path.resolve(
@@ -43,7 +47,13 @@ function makeExactV9Database(): { dbPath: string; cleanup: () => void } {
   db.exec(fs.readFileSync(path.join(migrations, "schema_v7.sql"), "utf8"));
   db.exec(fs.readFileSync(path.join(migrations, "schema_v8.sql"), "utf8"));
   db.exec(fs.readFileSync(path.join(migrations, "schema_v9.sql"), "utf8"));
-  db.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
+  db.exec(fs.readFileSync(path.join(migrations, "schema_v10.sql"), "utf8"));
+  db.exec(fs.readFileSync(path.join(migrations, "schema_v11.sql"), "utf8"));
+  db.exec(fs.readFileSync(path.join(migrations, "schema_v12.sql"), "utf8"));
+  db.exec(fs.readFileSync(path.join(migrations, "schema_v13.sql"), "utf8"));
+  db.exec(fs.readFileSync(path.join(migrations, "schema_v14.sql"), "utf8"));
+  if (version === 15) db.exec(fs.readFileSync(path.join(migrations, "schema_v15.sql"), "utf8"));
+  db.pragma(`user_version = ${version}`);
   db.close();
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
@@ -58,7 +68,7 @@ function tableColumns(db: Database.Database, tableName: string): string[] {
 }
 
 describe("schema version guard at DB open", () => {
-  it.each([0, 6, 7, 8, 10])("refuses schema version %i before runtime writes", (userVersion) => {
+  it.each([0, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16])("refuses schema version %i before runtime writes", (userVersion) => {
     const { dbPath, cleanup } = makeDbWithUserVersion(userVersion);
     try {
       const token = "job" + "ctl";
@@ -87,8 +97,8 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("opens the exact v9 schema", () => {
-    const { dbPath, cleanup } = makeExactV9Database();
+  it("opens the exact v15 schema", () => {
+    const { dbPath, cleanup } = makeExactDatabase(15);
     try {
       openDatabase(dbPath).close();
       openReadOnlyDatabase(dbPath).close();
@@ -97,7 +107,24 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("rejects a merely stamped v9 database before runtime writes", () => {
+  it("refuses an exact v14 database without mutating its schema", () => {
+    const { dbPath, cleanup } = makeExactDatabase(14);
+    try {
+      const before = new Database(dbPath, { readonly: true });
+      const manifest = schemaManifest(before, 14);
+      before.close();
+      expect(manifest).toEqual(EXACT_V14_SCHEMA_MANIFEST);
+      expect(() => openDatabase(dbPath)).toThrow(IncompatibleSchemaVersionError);
+      expect(() => openReadOnlyDatabase(dbPath)).toThrow(IncompatibleSchemaVersionError);
+      const after = new Database(dbPath, { readonly: true });
+      try {
+        expect(after.pragma("user_version", { simple: true })).toBe(14);
+        expect(schemaManifest(after, 14)).toEqual(manifest);
+      } finally { after.close(); }
+    } finally { cleanup(); }
+  });
+
+  it("rejects a merely stamped v10 database before runtime writes", () => {
     const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
     try {
       expect(() => openDatabase(dbPath)).toThrow(IncompatibleSchemaManifestError);
@@ -114,7 +141,7 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("rejects a malformed v9 database without running legacy tombstone migration", () => {
+  it("rejects a malformed v10 database without running legacy tombstone migration", () => {
     const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
     try {
       const token = "job" + "ctl";
@@ -173,11 +200,39 @@ describe("schema version guard at DB open", () => {
     expect(pythonManifest).toContain("version=9,");
     expect(pythonManifest).toContain(`fingerprint="${EXACT_V9_SCHEMA_MANIFEST.fingerprint}",`);
     expect(EXACT_V9_SCHEMA_MANIFEST).toEqual({
-      version: SUPPORTED_SCHEMA_VERSION,
+      version: 9,
       objectCount: 272,
       tableCount: 117,
       fingerprint: "ee90d737238c162f34d69f5becf01f15897d4bbeb2c4b2c51d41526ec6343621",
     });
+    expect(pythonManifest).toContain(`fingerprint="${EXACT_V10_SCHEMA_MANIFEST.fingerprint}",`);
+    expect(EXACT_V10_SCHEMA_MANIFEST).toEqual({
+      version: 10,
+      objectCount: 274,
+      tableCount: 118,
+      fingerprint: "d5c1676fff6e81c987055bf4db6d725c582c74b834f4bf92c9eef3f5980f3641",
+    });
+    expect(pythonManifest).toContain(`fingerprint="${EXACT_V11_SCHEMA_MANIFEST.fingerprint}",`);
+    expect(EXACT_V11_SCHEMA_MANIFEST).toEqual({
+      version: 11,
+      objectCount: 274,
+      tableCount: 118,
+      fingerprint: "6a653761d23c9c17f4e8000f13d14003d265cc5739877063212991569564e542",
+    });
+  });
+
+  it("seals the same v15 manifest in both runtimes", () => {
+    const {dbPath, cleanup} = makeExactDatabase(15);
+    const db = new Database(dbPath);
+    try {
+      expect(schemaManifest(db, SUPPORTED_SCHEMA_VERSION)).toEqual(EXACT_V15_SCHEMA_MANIFEST);
+      const pythonManifest = fs.readFileSync(path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../../workers/automation/src/jobctrl/infrastructure/migrations/schema_manifest.py",
+      ), "utf8");
+      expect(pythonManifest).toContain(`fingerprint="${EXACT_V15_SCHEMA_MANIFEST.fingerprint}",`);
+    }
+    finally { db.close(); cleanup(); }
   });
 
   it("computes the exact v8 manifest from the frozen v7 schema plus v8 additions", () => {

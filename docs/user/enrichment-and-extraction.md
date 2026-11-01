@@ -24,34 +24,100 @@ posting detail to use it.” The current decision path is:
 2. **Verify active state independently.** Extraction quality and whether the job
    still appears active are separate findings, so a well-extracted but
    unverifiable posting is not silently treated as active.
-3. **Assign confidence from the posting-content evidence.** Description length
-   and extraction tier determine whether the posting text is trustworthy. An
-   application URL can strengthen structured extraction, but its absence never
-   downgrades an otherwise complete description:
-
-   | Extraction result | High | Medium | Low |
-   | --- | --- | --- | --- |
-   | JSON-LD | Application URL and at least 200 characters | At least 200 characters without the URL | Fewer than 200 characters |
-   | CSS selectors | Application URL and at least 400 characters | At least 200 characters | Fewer than 200 characters |
-   | LLM-assisted | — | At least 400 characters, with or without an application URL | Fewer than 400 characters |
-   | Other configured tier | — | At least 200 characters | Fewer than 200 characters |
-
-4. **Quarantine instead of guessing.** Unknown active state or low content
-   confidence without an override is held for review. An explicit operator
+   Availability requires current evidence bound to the exact posting. Historical
+   description text cannot prove closure. Login/challenge pages, HTTP access
+   failures, lost posting identity, invalid deadlines and conflicting current
+   signals remain unknown. A nonempty body alone cannot prove availability.
+3. **Determine content quality from the captured sources.** A model records
+   whether the description is usable and trustworthy, citing verbatim captured text
+   and explaining its confidence. Code validates those citations and the posting
+   identity. Description length and extraction tier do not set a trust verdict.
+   An absent provider, denied budget or invalid response blocks this determination
+   and preserves the last accepted snapshot.
+4. **Quarantine low-confidence content.** Low content confidence without an
+   override is held for review. An explicit operator
    override can admit a low-confidence snapshot and is persisted with the audit
-   trail; unknown active state remains quarantined. Application-target readiness
+   trail. Availability-only uncertainty does not create a content-review entry
+   or claim a tailoring quarantine; readable, trusted content can feed preparation. Application-target readiness
    is a separate fact, so a missing external application URL cannot quarantine
    readable posting content or block Tailor. A posting verified as closed,
    expired, or removed is recorded separately as `posting_inactive` rather than
    mislabeled as a low-confidence extraction.
-5. **Surface duplicate candidates from content evidence.** An exact description
-   hash is a `1.0` signal, the same normalized application URL is `0.95`, and
-   token-Jaccard content similarity must reach `0.85`. These signals propose a
-   duplicate for Discovery to resolve; Enrichment does not silently merge jobs.
+5. **Resolve duplicate identity.** Exact canonical fields or an identical full
+   content fingerprint can link duplicate representations. Semantic equivalence
+   requires a cited duplicate determination; token overlap does not merge jobs
+   or authorize reusing another posting's score.
 
 A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
 results from the rest of the source batch survive.
+
+An explicit enrichment retry from the web app or CLI keeps the last accepted
+description, application URL and attempt history while reopening extraction.
+It clears the failed stage's error and execution fields. The attempt counter
+is retained unless you request a reset or its budget was exhausted. Saved
+scores, approved materials and approvals remain intact; downstream preparation
+waits for enrichment to succeed again.
+
+On a public LinkedIn job-view page, anonymous acquisition can close the site's
+optional contextual sign-in dialog through its offered dismiss button before
+capturing. This is scoped to that known control and route. It does not sign in
+or submit a form; a required wall without that control remains captured as-is.
+Only an enabled, rendered control that cannot submit or reset a form is admitted.
+An unexpected navigation during dismissal or the remaining capture reads fails
+acquisition instead of retaining the original posting identity.
+
+LinkedIn's public guest description and authenticated job-detail layouts both
+have deterministic extraction rules. When the public description is present in
+the captured content, anonymous enrichment can save it without an LLM or an
+external application URL. Guest extraction selects the description's nested
+text block, excluding unrelated expandable content and show-more controls.
+Anonymous page collection removes page chrome, comments, noisy attributes and
+non-visible DOM subtrees before applying its 50,000-character HTML limit. Hidden
+sign-in dialogs therefore cannot crowd out a readable posting or its application
+links. Computed visibility comes from a copied DOM; collection does not change
+the page. Visible descendants that override an ancestor's `visibility: hidden`
+and visible inert content remain readable. JSON-LD and the full status evidence
+are collected separately; meaningful content beyond the HTML limit remains
+outside CSS and LLM extraction input.
+
+Anonymous browser acquisition bounds each public document or data response to
+2 MB. Browser-identified JavaScript and stylesheet dependencies have a separate
+16 MB limit so large career-site bundles can render. Public-address pinning,
+redirect validation, credential stripping, timeouts and read-only request
+restrictions apply to both limits. An oversized resource remains an acquisition
+failure and cannot establish a posting or availability verdict.
+
+Direct URL imports interpret the complete visible page capture, including
+posting details and current controls outside its main-content panel. For the
+description, the model selects a recorded source and contiguous line range;
+the application copies that span exactly and saves the selection, copied text
+and citation in the extraction receipt. Declared rich-text descriptions are
+normalized before selection, including an extra escaping layer. Literal technical
+angle brackets and code examples remain text; the original structured capture
+and source URL remain available as provenance. Capture includes up to eight visible
+public embedded pages, such as an employer's hosted application frame. Each
+source keeps its observed URL in the receipt, and relative links resolve against
+that source. Short fields retain verbatim-value and citation validation.
+
+A retryable subresource timeout or DNS failure can retain readable posting
+content for interpretation and quality review in both manual intake and
+anonymous batch enrichment. Both wait for the document's DOM content rather
+than the full asset load. Its availability evidence is
+explicitly incomplete, so the saved availability remains **unknown** with the
+acquisition reason. Main-document failures, unsafe destinations and resource
+size violations still prevent this partial capture from being accepted.
+Missing or incomplete embedded-page evidence also keeps availability unknown.
+Public structured posting data can also feed extraction and quality review
+when the model identifies the individual posting but cannot verify visual
+access. Its unknown access and availability remain in the audit. Explicit
+login/challenge pages and unidentified postings continue to require capture.
+
+A posting server's HTTP 429 or 503 response is recorded as a retryable
+acquisition deferral, including its HTTP status and cooldown, instead of an empty
+posting or extraction error. The batch continues with other targets under shared
+host pacing; a failed refresh preserves previously accepted content. The
+[crawl policy](discovery.md#crawl-politeness) defines server-directed waits.
 
 While the worker is running, unfinished enrichment and retryable failures are
 picked up automatically without a new discovery search. Recovery waits for
@@ -86,6 +152,100 @@ source and resumes Tailor without requiring browser access. Resolver exception
 details remain local diagnostics; the product surfaces only the stable outcome
 code, message, method, and retry policy.
 
+## Saved Posting Availability
+
+Job Detail shows **Posting availability**, with **Check availability** and
+**Inspect employer posting** actions. The latest attempt, last successful
+verification, next due time, reason, acquisition method and evidence remain
+separate. A recent successful check does not hide a later unknown result.
+Reading Jobs does not contact employers.
+
+While the local worker runs, visible saved postings are checked every 24
+hours when active and every seven days when unavailable. Unavailable jobs stay
+saved and can become active again. The first check is due immediately; startup
+and reconnect catch up in groups of at most 25. Hidden/deleted jobs, running
+applications and terminal application outcomes are excluded from automatic
+checks. Manual checks remain available for saved, inspectable jobs.
+
+A sweep checks its selected postings sequentially and is admitted at most once
+per minute. It stops claiming jobs when its automatic quota is exhausted and
+has a 20-minute work budget within the 30-minute activity limit. Cancellation
+stops the current acquisition and prevents later jobs from starting. Independent
+jobs can be checked concurrently. All checks share a
+limit of 100 posting acquisitions per hour per workspace; automatic sweeps may
+use at most 80, reserving 20 for foreground checks and preparation. Each check
+is charged once, including its bounded browser resources. Requests retain at
+least two seconds between starts and one in flight per actual host. Repeated
+clicks coalesce, and a job starts at most once a minute. Unknown employer
+observations retry automatically after five minutes, with increasing delays
+capped at 24 hours. An explicit check can retry after the one-minute job limit,
+but cannot bypass quotas, safety checks or host cooldowns. Local quota, pacing
+and contention refusals do not create unknown observations or increase evidence
+backoff. Only explicit commands record deferred request feedback, with unchanged
+refusals coalesced. Refusals preserve attempt and successful-verification clocks.
+Sleep, an offline machine or a stopped worker leaves the recorded times intact
+and can make a check overdue.
+
+Greenhouse and Lever (including Lever EU) are checked through exact posting
+APIs. Ashby contributes only a matching positive posting, including unlisted
+direct links; absence from a board cannot prove closure. Other supported pages
+use guarded public HTTP and a bounded anonymous browser fallback. Pairing the
+extension does not enable authenticated availability capture. Login,
+challenge, access-limited, malformed or identity-lost pages remain unknown;
+ordinary Discovery/Enrich extension selection keeps its own behavior.
+CSS-dependent status must be verified by the guarded renderer; hidden templates
+cannot close a posting. Blocked subresources and incomplete rendering remain
+unknown. Each outbound request has a 20-second total deadline and a full check
+has a cumulative 120-second posting-acquisition budget. Time spent in the
+independent page-interpretation model does not consume that network/browser
+budget. The original five-minute crash lease still caps the remaining deadline;
+model work cannot extend ownership, and cancellation or a changed posting stops
+fallback before a browser starts. Browser cleanup and all resource limits remain
+inside the acquisition deadline.
+
+The anonymous fallback checks popup and frame requests through the same host
+limits and URL checks. It blocks service workers and unsupported socket or
+worker connections; an attempted unsupported connection or a failed or unfollowed
+redirect on a document, job-data fetch, script, stylesheet or frame keeps availability
+unknown. Only passive assets such as images tolerate HTTP errors or local admission
+refusals without invalidating the status capture.
+Each check permits 12 posting/API requests and 64 browser resources, at most one
+million bytes per response and 12 million bytes in total.
+
+Scoring, tailoring and cover generation reuse a posting observation from the
+preceding six hours. They also reuse a trustworthy canonical posting capture
+from that window when its saved page interpretation and description-quality
+judgments match the current tenant, job, posting URL and exact description.
+This avoids fetching and interpreting the same posting again immediately after
+enrichment. Stale, quarantined, changed or unbound captures use the normal check;
+known closure and deletion still prevent preparation. Capture freshness uses its
+actual capture time, never a later metadata update.
+An unknown observation or captured availability verdict can be reused for
+preparation without another foreground request; it stays unknown, and its
+background retry schedule remains unchanged. Capture reuse creates no new
+availability observation and does not satisfy unattended Apply's separate gate.
+Preparation can proceed with usable content while availability stays unknown. Unknown is shown honestly and remains retryable; confirmed
+unavailable postings stop preparation. Dry-run rehearsals and human-reviewed
+Apply can also proceed when availability stays unknown, using the existing exact
+approval, material, profile, application-URL and rehearsal bindings, with the
+approval recorded within the preceding 15 minutes. Older approvals cannot accept
+a newly uncertain posting. Inspect the
+employer posting when evidence is uncertain; manual browser submission remains
+user-controlled. Unattended Apply requires active evidence within 15 minutes.
+Owned email submit intent rechecks the original posting and, for unknown
+availability, a bound human approval from the preceding 15 minutes. Checking availability grants no
+submission authority. A changed posting or confirmed closure stops every path.
+Failed checks preserve accepted content, scores, material
+generations, approvals and outcomes. Availability never hides/deletes a job or
+starts an application.
+
+```bash
+jobctrl check-availability 10000000-0000-4000-8000-000000000123
+```
+
+This checks one saved canonical job through the local worker and prints its
+recorded availability result. Replace the example ID with the selected JobId.
+
 ## What You Can See And Control
 
 Enrichment is internal work under the user-facing **Discover** stage, not a
@@ -97,6 +257,15 @@ separate primary page or pipeline stage. Its results remain inspectable:
   source and enrichment evidence, snapshot confidence or quarantine state,
   application URL, an explicit application-target outcome even when Enrich
   succeeded, and allow-listed audit history.
+  For an enriched canonical LinkedIn `/jobs/view/:id` posting with no verified application target, its
+  **Refresh application target** action checks the current page through the
+  connected extension. A successful check stores the validated public URL;
+  an unavailable browser or missing control records a separate outcome and
+  keeps the saved description, score, and materials intact. It never opens or
+  submits an application form.
+  The captured page must still identify the selected posting. The extension
+  checks browser-computed visibility and binds a control to the selected job
+  header; an unbound, hidden, or ambiguous control cannot supply its target.
 - `/discovery` owns source review, quarantined leads, locator candidates, and
   manual-capture decisions.
 - `/runs` shows the durable Discover and preparation workflows. A failed
@@ -106,13 +275,21 @@ separate primary page or pipeline stage. Its results remain inspectable:
 When a useful posting cannot be fetched safely, use manual capture rather than
 evading a site's controls. The current capture boundary accepts user-mediated
 URLs or content, including browser-extension captures, and preserves that
-origin as provenance. Integrated Discovery acquires detail pages through the
-paired extension in the user's current Chrome profile, so an existing same-site
-session may be used naturally; a page that remains inaccessible stays on the
-manual path.
+origin as provenance. Integrated Discovery prefers the connected extension in
+the user's current Chrome profile, so an existing same-site session may be used.
+Without it, acquisition uses anonymous access. Neither mode consults robots.txt;
+a page that remains inaccessible stays on the manual path.
 
 The Jobs page's **Import job** action applies the same boundary to one explicit
-public URL. A readable page is ingested immediately with its extracted title,
+public URL. It acknowledges the import promptly and follows its progress without
+holding one browser request open until all interpretation work finishes. Once
+an import is accepted, you can enter another URL in the same dialog; each import
+continues independently and has its own **View import run** link. A finished
+import offers **View job** without interrupting another entry. You can also
+close the dialog while imports run and find their progress in **Runs**. If a
+progress check is temporarily unavailable, the dialog keeps the accepted import
+pending and checks again; it does not submit another import or claim the work
+failed because the browser request timed out. A readable page is ingested immediately with its extracted title,
 employer, description, location, and posted salary evidence. A blocked or
 ambiguous page creates a pending Manual Capture item and never a fabricated
 "imported" job. Credential-bearing, private, loopback, and otherwise
@@ -124,10 +301,14 @@ PDF rendering. A missing separate application URL does not block that
 preparation. Quarantined or inactive captures do not start it, and URL import
 never starts Apply.
 
-LinkedIn enrichment uses the same selected extension installation in the
-user's currently running, signed-in Chrome profile. Because this is an explicit
-owner-authenticated read rather than an anonymous crawler, JobCtrl does not
-apply LinkedIn's anonymous `robots.txt` verdict to that page. Public-destination
+The extension renders LinkedIn jobs in an active tab inside an unfocused
+temporary window, allowing client-rendered descriptions to hydrate without
+moving focus. The task retains its exact-origin navigation guard and closes
+only its own tab on completion, failure, timeout or cancellation.
+
+When connected, LinkedIn enrichment uses the selected extension installation in
+the user's currently running, signed-in Chrome profile. Neither connected nor
+anonymous acquisition requests or evaluates `robots.txt`. Public-destination
 validation, exact-origin browser-task rules, per-host pacing, the shared run
 request budget, and audit history remain enforced. Recovery stops before the
 application form and cannot submit an application.
@@ -136,14 +317,17 @@ When that live extension connects, JobCtrl immediately continues the
 browser-conditioned Enrich → Score → Tailor → Cover path for affected LinkedIn
 jobs only; unrelated robots blocks and ordinary pending jobs are not
 retriggered, and another Discover run is not required. Job-scoped and bulk
-Enrich runs/retries check the extension before dispatch; retries check it before
-resetting any stage state or diagnostics. The outer Temporal Enrich entry binds
-its workflow/run identity to the extension before any legacy URL-repair branch
-can choose a transport, then reads through that live profile. It never launches
-Playwright, adopts a system executable, runs the legacy copied-profile pre-pass,
-or creates a browser-profile snapshot. Legacy
-blocked rows carrying the former copied-profile condition remain recoverable
-through the live extension. Legacy snapshots that coupled readable content to
+Enrich runs/retries remain available offline. Each site batch prefers the live
+extension after a bounded availability check, or selects anonymous Playwright
+before acquisition. Site and access failures never cause a transport switch.
+The outer Temporal Enrich entry retains its workflow/run identity on both
+paths, preserving leases, job ownership, and broker authorization. Integrated
+anonymous fallback never adopts a system executable, runs the legacy
+copied-profile pre-pass, or creates a browser-profile snapshot. Anonymous
+LinkedIn requests use the same no-robots policy. Historical robots-blocked
+rows remain retryable in either mode; their status and audit history are retained
+until the retry advances them. Legacy browser-conditioned rows also retain the
+connection-triggered recovery path. Legacy snapshots that coupled readable content to
 a missing application URL are repaired by appending a new immutable snapshot
 version and releasing only the stale `ENRICHMENT_QUARANTINED` Tailor blocker.
 This content-trust repair does not need a browser navigation and does not invent
@@ -214,11 +398,11 @@ user. The exact selector rules are owned by the
    posting details; “pending” means that usable detail is absent, not that a
    speculative placeholder result exists.
 3. **Acquire content safely.** Fetchers use public-destination validation,
-   crawl politeness, and per-source limits. Integrated Discovery delegates the
-   page to the paired extension in the current Chrome profile and uses Chrome's
-   own user agent for both the fetch and robots evaluation; it has no copied-
-   profile or Playwright fallback. Manual capture remains the fallback for
-   access that still requires the user.
+   crawl politeness, and per-source limits. Integrated Discovery prefers the
+   connected extension and its current Chrome user agent; when unavailable at
+   setup, it uses anonymous acquisition with JobCtrl's crawler identity and
+   same no-robots acquisition policy. Copied profiles remain outside integrated Discovery.
+   Manual capture handles access that still requires the user.
 4. **Persist detail and snapshot.** The worker stores description, URLs,
    attempts, active state, provenance, confidence, and snapshot audit records
    before later stages consume them.
@@ -241,3 +425,16 @@ user. The exact selector rules are owned by the
 | Workflow entry | Discover starts through the pipeline action routes documented in [Operations & Events API](../api/operations-and-events.md#starting-work). |
 | Live worker path | `workers/automation/src/jobctrl/pipeline/runner.py` and `workers/automation/src/jobctrl/enrichment/detail.py`, with fetch adapters under `workers/automation/src/jobctrl/infrastructure/enrichment/`. |
 | Deep architecture | [Stage Walkthrough → Detail Enrichment](../architecture/pipeline/stages.md#detail-enrichment), [Crawl Politeness](discovery.md#crawl-politeness), and [Storage](../architecture/storage.md). |
+
+
+## Semantic Determination Authority
+
+Page availability, individual-posting state and description quality use cited model determinations over the bound rendered page. HTTP status, exact ATS identity, URL safety and DOM visibility remain code. Automatic duplicate identity uses exact keys/full-content fingerprints; no token-Jaccard threshold merges jobs. Failed semantic checks preserve accepted snapshots and materials.
+
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+### Arbitrary-site discovery captures
+
+Smart Extract resolves listing cards through the same rendered and structured posting-source preparation as direct URL imports. Card titles, employer guesses and blank places are not canonical posting facts. Its full-posting qualification checks the extracted specific role, description and saved location/work-model scope before creating a Job, as described in [Discovery](discovery.md#how-target-search-controls-are-used). The accepted posting snapshot records the page, extraction and qualification determination IDs. That exact capture seeds enrichment; failed or uncertain qualification preserves existing accepted job content and creates no replacement job.
+
+For archived Smart Extract recovery, interrupted snapshot publication retains the exact qualified capture and determination references. Retry completes that capture without another page fetch or model call, while preserving newer accepted snapshots, enrichment and owner deletion. A publication failure leaves the archived item available for retry; canonical Job existence alone does not acknowledge it.

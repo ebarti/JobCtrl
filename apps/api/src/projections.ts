@@ -6,8 +6,8 @@
  * ``*_projections`` tables in SQLite so the read-model endpoints can
  * SELECT from a single denormalised source — no LEFT JOIN soup.
  *
- * Both the Python ProjectionBuilder and this TS refresher write to the
- * same tables with independent consumer-and-tenant watermarks in
+ * TypeScript exclusively owns job_detail_projections. Other shared families
+ * still have independent Python/TypeScript consumer-and-tenant watermarks in
  * ``event_watermarks``. Shared families derive from the canonical
  * aggregate tables (jobs, job_stage_states,
  * job_scores, job_materials, job_enrichments,
@@ -19,7 +19,9 @@
  * refresher reads the projection table directly and no longer
  * materialises it.
  */
-import { APPLY_URL_OUTCOME_CODES, PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
+import { isDeepStrictEqual } from "node:util";
+import { requiresLegacyEvidenceReview } from "./legacy-evidence-review.js";
+import { APPLY_URL_OUTCOME_CODES, EMPLOYER_ANALYSIS_PROMPT_VERSION, PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
 import type {
   ApplyUrlOutcomeCode,
   JobCompensationAuditMarketResponse,
@@ -33,6 +35,7 @@ import { normalizeJobLocation } from "./location-normalization.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
 import { fetchFailureFromStageMetadata } from "./fetch-failure.js";
+import { readArtifactLineAnchors, type ArtifactLineAnchor } from "./semantic-determinations.js";
 
 const STAGE_ORDER: readonly string[] = STAGES;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"] as const;
@@ -63,6 +66,7 @@ const CONTACT_RESEARCH_EVENT_TYPES = new Set([
   "ContactResearchTaskNeedsReview",
   "ContactResearchTaskCompleted",
   "ContactResearchTaskFailed",
+  "ContactResearchSourceAttemptFailed",
 ]);
 const OUTREACH_EVENT_TYPES = new Set([
   "OutreachDraftGenerated",
@@ -132,7 +136,7 @@ interface PipelineStepProjectionFold extends PipelineStepProjectionEvent {
   lastEventId: number;
   lastUpdatedAt: string;
 }
-const COMPENSATION_PROJECTION_VERSION = 3;
+const COMPENSATION_PROJECTION_VERSION = 4;
 const DEFAULT_MAX_ATTEMPTS: Record<string, number> = {
   discover: 1,
   enrich: 3,
@@ -681,18 +685,31 @@ function scheduleBackgroundDrain(dbPath: string, tenantId: string): void {
 
 /** One bounded fold pass; returns true when it stopped at the batch cap. */
 function runRefreshPass(db: SqliteDatabase, tenantId: string): boolean {
-  return db.transaction(() => runRefreshPassInTransaction(db, tenantId)).immediate();
+  return db.transaction(() => {
+    const sharedCapped = runRefreshPassInTransaction(db, tenantId);
+    const detailCapped = refreshJobDetailProjections(db, tenantId);
+    return sharedCapped || detailCapped;
+  }).immediate();
 }
 
 function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): boolean {
   const repairedDependencyJobs = reconcileDependencyBlockers(db, tenantId);
   const repairedCoverConflictJobs = reconcileObsoleteCoverGenerationConflicts(db, tenantId);
+  for (const jobId of new Set([...repairedDependencyJobs, ...repairedCoverConflictJobs])) {
+    rebuildJobDetailProjection(db, tenantId, jobId);
+  }
 
   // A runtime must never acknowledge events only the other runtime folds.
   // Runtime-first names cannot collide with legacy operations_projections
   // keys, including those suffixed by an opaque tenant ID such as python:local.
   const watermarkName = `typescript:${PROJECTION_WATERMARK_NAME}:${tenantId}`;
   const watermark = readWatermark(db, watermarkName);
+  // Existing workspaces can contain projections written before score/report
+  // publication became atomic. Refresh them once even when there is no event:
+  // an interrupted old publication may never have emitted one.
+  const scoreReportRepairName = `typescript:score-report-version-binding:${tenantId}`;
+  const scoreReportRepairPending = !getRow(db,
+    "SELECT 1 FROM event_watermarks WHERE projection_name = ?", [scoreReportRepairName]);
 
   let dirtyJobs = new Set<string>([...repairedDependencyJobs, ...repairedCoverConflictJobs]);
   let sourceQualityDirty = false;
@@ -753,6 +770,23 @@ function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): bool
   if (evidenceProjectionCount === 0) {
     evidenceUsageDirty = true;
   }
+  if (scoreReportRepairPending) {
+    evidenceUsageDirty = true;
+    for (const row of allRows<{ job_id: string }>(db,
+      `SELECT p.job_id FROM job_list_projections p
+        WHERE p.tenant_id = ? AND (
+          p.score_version IS NOT (SELECT MAX(s.version) FROM job_scores s
+            WHERE s.tenant_id = p.tenant_id AND s.job_id = p.job_id)
+          OR (EXISTS (SELECT 1 FROM job_requirement_fit_reports old
+               WHERE old.tenant_id = p.tenant_id AND old.job_id = p.job_id)
+              AND NOT EXISTS (SELECT 1 FROM job_requirement_fit_reports current
+               WHERE current.tenant_id = p.tenant_id AND current.job_id = p.job_id
+                 AND current.score_version = (SELECT MAX(s.version) FROM job_scores s
+                   WHERE s.tenant_id = p.tenant_id AND s.job_id = p.job_id)))
+        )`, [tenantId])) {
+      dirtyJobs.add(row.job_id);
+    }
+  }
 
   // First-run backfill: if the projection table is empty, force a full
   // sweep so jobs that pre-date event-driven writes still get projected.
@@ -780,6 +814,19 @@ function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): bool
     for (const job of missingProjectedJobs) {
       if (job.job_id) dirtyJobs.add(job.job_id);
     }
+  }
+  // Migration preserves projection rows and cursors; reconcile canonical target
+  // changes even when no new domain event follows the stopped-runtime cutover.
+  for (const jobId of staleApplicationUrlProjectionJobs(db, tenantId)) {
+    dirtyJobs.add(jobId);
+  }
+  // Locale exports use the native registry, independently of material generations.
+  // Reconcile their identities even when no pipeline event advances its cursor.
+  for (const row of allRows<{ job_id: string }>(db,
+    `SELECT DISTINCT a.job_id FROM job_artifacts a LEFT JOIN artifact_list_projections p
+     ON p.tenant_id=a.tenant_id AND p.artifact_id=CAST(a.artifact_id AS TEXT)
+     WHERE a.tenant_id=? AND a.stage='locale' AND (p.artifact_id IS NULL OR p.status<>a.status)`, [tenantId])) {
+    dirtyJobs.add(row.job_id);
   }
   for (const jobId of staleDeletedProjectionJobs(db, tenantId)) {
     dirtyJobs.add(jobId);
@@ -849,6 +896,9 @@ function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): bool
   }
   if (evidenceUsageDirty || dirtyJobs.size > 0) {
     rebuildEvidenceUsageProjection(db, tenantId);
+  }
+  if (scoreReportRepairPending) {
+    setWatermark(db, scoreReportRepairName, 0);
   }
 
   if (maxEventId > watermark) {
@@ -1152,6 +1202,7 @@ interface RequirementFitItemRow extends Record<string, unknown> {
 }
 
 interface InterviewPrepRow extends Record<string, unknown> {
+  generation_context_json: string | null;
   job_id: string;
   generation: number;
   status: string;
@@ -1165,6 +1216,7 @@ interface InterviewPrepRow extends Record<string, unknown> {
 }
 
 interface InterviewPrepItemRow extends Record<string, unknown> {
+  question_metadata_json: string | null;
   item_id: string;
   kind: string;
   title: string;
@@ -1215,6 +1267,7 @@ interface EvidenceMapEntryPayload {
     evidenceDateRange: string | null;
     evidenceStrength: string | null;
     userConfirmed: boolean;
+    confirmationReviewRequired?: boolean;
     claimConfidence: number | null;
     lastUsedAt: string | null;
   };
@@ -1265,9 +1318,9 @@ interface EvidenceGapPayload {
 function loadEmployerAnalysisJson(db: SqliteDatabase, tenantId: string, jobId: string): string | null {
   const row = getRow<EmployerAnalysisRow>(
     db,
-    `SELECT * FROM job_employer_analysis WHERE tenant_id = ? AND job_id = ?
+    `SELECT * FROM job_employer_analysis WHERE tenant_id = ? AND job_id = ? AND prompt_version = ?
       ORDER BY generation DESC LIMIT 1`,
-    [tenantId, jobId],
+    [tenantId, jobId, EMPLOYER_ANALYSIS_PROMPT_VERSION],
   );
   if (!row) return null;
   const generation = Number(row.generation);
@@ -1333,20 +1386,20 @@ function loadRequirementFitReportJson(
   db: SqliteDatabase,
   tenantId: string,
   jobId: string,
+  scoreVersion: number | null,
 ): string | null {
+  if (scoreVersion === null) return null;
   const row = getRow<RequirementFitReportRow>(
     db,
     `SELECT job_id, score_version, tenant_id, employer_analysis_generation,
             profile_snapshot_version, scoring_policy_version, formula_version,
             resolved_fit_score, fit_band, confidence, summary_json
        FROM job_requirement_fit_reports
-      WHERE tenant_id = ? AND job_id = ?
-      ORDER BY score_version DESC
+      WHERE tenant_id = ? AND job_id = ? AND score_version = ?
       LIMIT 1`,
-    [tenantId, jobId],
+    [tenantId, jobId, scoreVersion],
   );
   if (!row) return null;
-  const scoreVersion = Number(row.score_version);
   const items = allRows<RequirementFitItemRow>(
     db,
     `SELECT requirement_id, requirement_text, tier, weight, job_evidence_span,
@@ -1376,42 +1429,59 @@ function loadLatestRequirementFitBand(
   db: SqliteDatabase,
   tenantId: string,
   jobId: string,
+  scoreVersion: number | null,
 ): string | null {
+  if (scoreVersion === null) return null;
   const row = getRow<{ fit_band: string | null }>(
     db,
     `SELECT fit_band
        FROM job_requirement_fit_reports
-      WHERE tenant_id = ? AND job_id = ?
-      ORDER BY score_version DESC
+      WHERE tenant_id = ? AND job_id = ? AND score_version = ?
       LIMIT 1`,
-    [tenantId, jobId],
+    [tenantId, jobId, scoreVersion],
   );
   return nullableString(row?.fit_band);
 }
 
-function loadInterviewPrepJson(
+function loadInterviewPrepJson(db: SqliteDatabase, tenantId: string, jobId: string): string | null {
+  const row = getRow<{generation: number}>(db,
+    "SELECT generation FROM job_interview_prep WHERE tenant_id=? AND job_id=? AND status='accepted' ORDER BY generation DESC LIMIT 1",
+    [tenantId, jobId]);
+  if (!row) return null;
+  const model = loadInterviewPrepReadModel(db, tenantId, jobId, Number(row.generation));
+  return model === null ? null : JSON.stringify(model);
+}
+
+function parseInterviewMetadata(value: string | null): Record<string, unknown> | null {
+  if (value === null) return null;
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Invalid saved interview metadata");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+export function loadInterviewPrepReadModel(
   db: SqliteDatabase,
   tenantId: string,
   jobId: string,
-): string | null {
+  generation: number,
+): Record<string, unknown> | null {
   const row = getRow<InterviewPrepRow>(
     db,
     `SELECT job_id, generation, status, model, generated_at, gate_status,
             fabrication_findings_json, grounding_findings_json, judge_verdict,
-            warnings_json
+            warnings_json, generation_context_json
        FROM job_interview_prep
-      WHERE tenant_id = ? AND job_id = ? AND status = 'accepted'
-      ORDER BY generation DESC
-      LIMIT 1`,
-    [tenantId, jobId],
+      WHERE tenant_id = ? AND job_id = ? AND generation = ?`,
+    [tenantId, jobId, generation],
   );
   if (!row) return null;
-  const generation = Number(row.generation);
   const items = allRows<InterviewPrepItemRow>(
     db,
     `SELECT item_id, kind, title, generated_text, evidence_ids_json,
             requirement_ids_json, source_text_json, transform_type, control,
-            grounding_audit_json, warnings_json, position
+            grounding_audit_json, warnings_json, position, question_metadata_json
        FROM job_interview_prep_items
       WHERE tenant_id = ? AND job_id = ? AND generation = ?
       ORDER BY position ASC, item_id ASC`,
@@ -1423,6 +1493,8 @@ function loadInterviewPrepJson(
     status: row.status,
     generatedAt: row.generated_at,
     model: row.model ?? null,
+    generationContext: parseInterviewMetadata(row.generation_context_json),
+    staleReasons: row.generation_context_json === null ? ["legacy_unbound"] : [],
     gateAudit: {
       status: row.gate_status,
       fabricationFindings: parseStringList(parseJsonArray(row.fabrication_findings_json)),
@@ -1443,9 +1515,10 @@ function loadInterviewPrepJson(
       groundingAudit: parseStringList(parseJsonArray(item.grounding_audit_json)),
       warnings: parseStringList(parseJsonArray(item.warnings_json)),
       position: Number(item.position ?? 0),
+      questionMetadata: parseInterviewMetadata(item.question_metadata_json),
     })),
   };
-  return JSON.stringify(readModel);
+  return readModel;
 }
 
 function requirementFitAssessmentToReadModel(row: RequirementFitItemRow): Record<string, unknown> {
@@ -1492,6 +1565,10 @@ function requirementFitStatusToReadModel(value: Record<string, unknown>): Record
 
 function requirementContributionToReadModel(value: Record<string, unknown>): Record<string, unknown> {
   return {
+    ...(value.scope_source_id || value.scopeSourceId ? {
+      scope: stringField(value.scope),
+      scopeSourceId: stringField(value.scope_source_id ?? value.scopeSourceId),
+    } : {}),
     maxPoints: nullableNumber(value.max_points ?? value.maxPoints) ?? 0,
     awardedPoints: nullableNumber(value.awarded_points ?? value.awardedPoints) ?? 0,
     weightedImpact: nullableNumber(value.weighted_impact ?? value.weightedImpact) ?? 0,
@@ -1547,6 +1624,9 @@ function loadBulletProvenanceByArtifact(
     db,
     `SELECT * FROM job_bullet_provenance
       WHERE tenant_id = ? AND job_id = ?
+        AND generation = (SELECT MAX(a.generation) FROM job_materials_artifacts a
+          WHERE a.tenant_id = job_bullet_provenance.tenant_id AND a.job_id = job_bullet_provenance.job_id
+            AND a.artifact_id = job_bullet_provenance.artifact_id)
       ORDER BY generation, position, bullet_id`,
     [tenantId, jobId],
   );
@@ -1597,6 +1677,9 @@ function loadProvenanceAuxByArtifact(
     db,
     `SELECT artifact_id, coverage_json, voice_json FROM job_bullet_provenance
       WHERE tenant_id = ? AND job_id = ?
+        AND generation = (SELECT MAX(a.generation) FROM job_materials_artifacts a
+          WHERE a.tenant_id = job_bullet_provenance.tenant_id AND a.job_id = job_bullet_provenance.job_id
+            AND a.artifact_id = job_bullet_provenance.artifact_id)
       ORDER BY generation, position, bullet_id`,
     [tenantId, jobId],
   );
@@ -1618,7 +1701,6 @@ function normalizeVoicePassJson(value: string): string {
     accepted: parsed.accepted === true,
     model: typeof parsed.model === "string" ? parsed.model : "",
     prompt_version: typeof parsed.prompt_version === "string" ? parsed.prompt_version : "",
-    proxy_delta: record(parsed.proxy_delta),
     reason: typeof parsed.reason === "string" ? parsed.reason : "",
     summary_rejection_reason:
       typeof parsed.summary_rejection_reason === "string" ? parsed.summary_rejection_reason : "",
@@ -1633,10 +1715,9 @@ function rebuildEvidenceUsageProjection(db: SqliteDatabase, tenantId: string): v
   const gaps = new Map<string, EvidenceGapPayload>();
 
   loadProfileEvidenceEntries(db, tenantId, entries);
-  const skillEntriesByName = loadProfileSkillEntries(db, tenantId, entries);
+  loadProfileSkillEntries(db, tenantId, entries);
   attachResumeUsages(db, tenantId, entries);
   attachRequirementUsagesAndGaps(db, tenantId, entries, gaps);
-  attachSkillCoverageUsagesAndGaps(db, tenantId, skillEntriesByName, gaps);
 
   const insert = db.prepare(
     `INSERT INTO evidence_usage_projections (
@@ -1744,6 +1825,7 @@ function loadProfileEvidenceEntries(
         evidenceDateRange: nullableString(row.date_range),
         evidenceStrength: nullableString(row.evidence_strength),
         userConfirmed: Number(row.user_confirmed ?? 0) === 1,
+        confirmationReviewRequired: requiresLegacyEvidenceReview(db, tenantId, "default", row.entry_id, evidenceId),
         claimConfidence: nullableNumber(row.claim_confidence),
         lastUsedAt: null,
       },
@@ -1759,8 +1841,7 @@ function loadProfileSkillEntries(
   db: SqliteDatabase,
   tenantId: string,
   entries: Map<string, EvidenceMapEntryPayload>,
-): Map<string, EvidenceMapEntryPayload[]> {
-  const byName = new Map<string, EvidenceMapEntryPayload[]>();
+): void {
   const rows = allRows<{ category_id: string; item_index: number; item_text: string; label: string }>(
     db,
     `SELECT skills.category_id, skills.item_index, skills.item_text,
@@ -1801,12 +1882,7 @@ function loadProfileSkillEntries(
       gaps: [],
     };
     entries.set(skillId, entry);
-    const key = skillText.toLowerCase();
-    const existing = byName.get(key) ?? [];
-    existing.push(entry);
-    byName.set(key, existing);
   }
-  return byName;
 }
 
 function attachResumeUsages(
@@ -1814,6 +1890,7 @@ function attachResumeUsages(
   tenantId: string,
   entries: Map<string, EvidenceMapEntryPayload>,
 ): void {
+  const anchorsByArtifact = new Map<string, Map<string, ArtifactLineAnchor>>();
   const jobMetadata = jobMetadataJoinSql("provenance.job_id", "provenance.tenant_id");
   const lifecycle = jobLifecycleExclusionSql("provenance.job_id", "provenance.tenant_id");
   const rows = allRows<BulletProvenanceRow & { job_title: string | null; employer: string | null }>(
@@ -1838,6 +1915,18 @@ function attachResumeUsages(
     [tenantId],
   );
   for (const row of rows) {
+    const key = `${row.artifact_id}:${row.generation}`;
+    let anchors = anchorsByArtifact.get(key);
+    if (!anchors) {
+      const artifact = getRow<{artifact_type: string}>(db,
+        "SELECT artifact_type FROM job_materials_artifacts WHERE tenant_id=? AND job_id=? AND artifact_id=? AND generation=?",
+        [tenantId, row.job_id, row.artifact_id, row.generation]);
+      anchors = artifact ? readArtifactLineAnchors(db, tenantId, artifact.artifact_type,
+        row.artifact_id, Number(row.generation), row.job_id) : new Map();
+      anchorsByArtifact.set(key, anchors);
+    }
+    const anchor = anchors.get(row.bullet_id);
+    if (!anchor) continue;
     const usage: EvidenceUsagePayload = {
       kind: "resume_bullet",
       jobKey: row.job_id,
@@ -1856,7 +1945,7 @@ function attachResumeUsages(
       coverageState: null,
       occurredAt: nullableString(row.created_at),
     };
-    for (const evidenceId of parseStringList(parseJsonArray(row.evidence_ids_json))) {
+    for (const evidenceId of anchor.evidenceIds) {
       const entry = entries.get(evidenceId);
       if (!entry) continue;
       entry.resumeUsages.push(usage);
@@ -1891,10 +1980,10 @@ function attachRequirementUsagesAndGaps(
        ${jobMetadata.joinSql}${lifecycle.joinSql}
       WHERE items.tenant_id = ?${lifecycle.whereSql}
         AND items.score_version = (
-          SELECT MAX(report.score_version)
-            FROM job_requirement_fit_reports AS report
-           WHERE report.tenant_id = items.tenant_id
-             AND report.job_id = items.job_id
+          SELECT MAX(score.version)
+            FROM job_scores AS score
+           WHERE score.tenant_id = items.tenant_id
+             AND score.job_id = items.job_id
         )
       ORDER BY items.job_id, items.position, items.requirement_id`,
     [tenantId],
@@ -1953,97 +2042,6 @@ function attachRequirementUsagesAndGaps(
   }
 }
 
-function attachSkillCoverageUsagesAndGaps(
-  db: SqliteDatabase,
-  tenantId: string,
-  skillEntriesByName: Map<string, EvidenceMapEntryPayload[]>,
-  gaps: Map<string, EvidenceGapPayload>,
-): void {
-  const lifecycle = jobLifecycleExclusionSql("alp.job_id", "alp.tenant_id");
-  const rows = allRows<{
-    job_id: string;
-    job_title: string;
-    job_employer: string;
-    artifact_id: string;
-    generation: number | null;
-    coverage_audit_json: string | null;
-    created_at: string | null;
-  }>(
-    db,
-    `SELECT alp.job_id, alp.job_title, alp.job_employer, alp.artifact_id, alp.generation,
-            alp.coverage_audit_json, alp.created_at
-       FROM artifact_list_projections alp${lifecycle.joinSql}
-      WHERE alp.tenant_id = ?${lifecycle.whereSql}
-        AND alp.coverage_audit_json IS NOT NULL
-        AND TRIM(alp.coverage_audit_json) != ''`,
-    [tenantId],
-  );
-  for (const row of rows) {
-    const coverage = parseJsonObject(row.coverage_audit_json);
-    for (const state of ["covered", "declared"] as const) {
-      for (const keyword of parseStringList(coverage[state])) {
-        const skillEntries = skillEntriesByName.get(keyword.toLowerCase()) ?? [];
-        for (const entry of skillEntries) {
-          entry.coverageUsages.push({
-            kind: "skill_coverage",
-            jobKey: row.job_id,
-            jobTitle: nullableString(row.job_title),
-            employer: nullableString(row.job_employer),
-            artifactId: row.artifact_id,
-            bulletId: null,
-            generation: nullableNumber(row.generation),
-            generatedTextPreview: null,
-            scoreVersion: null,
-            requirementId: null,
-            requirementText: null,
-            requirementFitKind: null,
-            artifactCoverageState: null,
-            keyword,
-            coverageState: state,
-            occurredAt: nullableString(row.created_at),
-          });
-        }
-      }
-    }
-    for (const keyword of parseStringList(coverage.missing)) {
-      const gap: EvidenceGapPayload = {
-        gapId: `${row.job_id}#skill#${keyword.toLowerCase()}`,
-        kind: "missing_skill",
-        requirementId: null,
-        requirementText: keyword,
-        demandedSkill: keyword,
-        tier: null,
-        weight: null,
-        fitKind: null,
-        reason: "The generated coverage audit recorded this demanded skill as missing from shipped materials.",
-        jobRefs: [
-          {
-            kind: "skill_coverage",
-            jobKey: row.job_id,
-            jobTitle: nullableString(row.job_title),
-            employer: nullableString(row.job_employer),
-            artifactId: row.artifact_id,
-            bulletId: null,
-            generation: nullableNumber(row.generation),
-            generatedTextPreview: null,
-            scoreVersion: null,
-            requirementId: null,
-            requirementText: null,
-            requirementFitKind: null,
-            artifactCoverageState: null,
-            keyword,
-            coverageState: "missing",
-            occurredAt: nullableString(row.created_at),
-          },
-        ],
-      };
-      gaps.set(gap.gapId, gap);
-      for (const entry of skillEntriesByName.get(keyword.toLowerCase()) ?? []) {
-        entry.gaps.push(gap);
-      }
-    }
-  }
-}
 
 function parseAnalysisAgreement(value: string | null): {
   score: number;
@@ -2279,7 +2277,7 @@ function loadEnrichment(db: SqliteDatabase, tenantId: string, jobId: string): En
   if (!row) return empty;
   return {
     fullDescription: row.full_description,
-    applicationUrl: row.application_url,
+    applicationUrl: row.application_url || null,
     enrichedAt: row.enriched_at,
     currentStatus: row.current_status,
   };
@@ -2338,6 +2336,15 @@ function loadDeletedAt(db: SqliteDatabase, tenantId: string, jobId: string): str
     [tenantId, jobId],
   );
   return row ? nullableString(row.deleted_at) : null;
+}
+
+function staleApplicationUrlProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
+  return allRows<{ job_id: string }>(db, `
+    SELECT p.job_id FROM job_list_projections p
+    JOIN jobs j ON j.tenant_id = p.tenant_id AND j.job_id = p.job_id
+    LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+    WHERE p.tenant_id = ? AND p.application_url IS NOT NULLIF(e.application_url, '')
+  `, [tenantId]).map((row) => row.job_id);
 }
 
 function staleDeletedProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
@@ -2450,39 +2457,14 @@ function staleStageProjectionJobs(db: SqliteDatabase, tenantId: string): string[
 }
 
 function staleCompensationProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
-  const rows = allRows<{ job_id: string }>(
-    db,
-    `SELECT p.job_id
-       FROM job_list_projections p
-       LEFT JOIN job_detail_projections d
-         ON d.tenant_id = p.tenant_id
-        AND d.job_id = p.job_id
-      WHERE p.tenant_id = ?
-        AND (
-          (
-            CASE WHEN json_valid(p.compensation_summary_json)
-                 THEN CAST(json_extract(p.compensation_summary_json, '$.projectionVersion') AS INTEGER)
-            END
-          ) BETWEEN 1 AND ? - 1
-          OR (
-            CASE WHEN json_valid(d.compensation_summary_json)
-                 THEN CAST(json_extract(d.compensation_summary_json, '$.projectionVersion') AS INTEGER)
-            END
-          ) BETWEEN 1 AND ? - 1
-          OR (
-            CASE WHEN json_valid(d.compensation_audit_json)
-                 THEN CAST(json_extract(d.compensation_audit_json, '$.projectionVersion') AS INTEGER)
-            END
-          ) BETWEEN 1 AND ? - 1
-        )`,
-    [
-      tenantId,
-      COMPENSATION_PROJECTION_VERSION,
-      COMPENSATION_PROJECTION_VERSION,
-      COMPENSATION_PROJECTION_VERSION,
-    ],
-  );
-  return rows.map((row) => row.job_id).filter(Boolean);
+  return allRows<{ job_id: string }>(db, `
+    SELECT job_id FROM job_list_projections
+    WHERE tenant_id = ? AND (
+      CASE WHEN json_valid(compensation_summary_json)
+        THEN CAST(json_extract(compensation_summary_json, '$.projectionVersion') AS INTEGER)
+      END
+    ) BETWEEN 1 AND ? - 1
+  `, [tenantId, COMPENSATION_PROJECTION_VERSION]).map((row) => row.job_id);
 }
 
 interface StageRow extends Record<string, unknown> {
@@ -2667,6 +2649,178 @@ function jobListStage(stage: string | null | undefined, hasResume = false): "dis
   return stage === "apply" || (stage === "cover" && hasResume) ? "apply" : "discover";
 }
 
+/** First cutover family: only TypeScript materializes job detail. */
+export function jobDetailWatermarkName(tenantId: string): string {
+  return `typescript:job_detail_projections:v1:${tenantId}`;
+}
+
+/**
+ * Explicit startup/migration/operator repair. Canonical rows are the authority,
+ * including jobs predating events and updates whose event was never persisted.
+ * Publication, orphan cleanup and the independent family cursor are atomic.
+ * This scan is deliberately separate from the bounded incremental consumer.
+ */
+export function repairJobDetailProjections(db: SqliteDatabase, tenantId = "local"): void {
+  db.transaction(() => {
+    const jobs = allRows<{ job_id: string }>(db,
+      "SELECT job_id FROM jobs WHERE tenant_id = ?", [tenantId]);
+    for (const { job_id: jobId } of jobs) rebuildJobDetailProjection(db, tenantId, jobId);
+    db.prepare(`DELETE FROM job_detail_projections
+      WHERE tenant_id = ? AND NOT EXISTS (
+        SELECT 1 FROM jobs j WHERE j.tenant_id = job_detail_projections.tenant_id
+          AND j.job_id = job_detail_projections.job_id
+      )`).run(tenantId);
+    const latest = getRow<{ id: number }>(db,
+      "SELECT COALESCE(MAX(event_id), 0) AS id FROM job_events WHERE tenant_id = ?", [tenantId]);
+    setWatermark(db, jobDetailWatermarkName(tenantId), latest?.id ?? 0);
+  }).immediate();
+}
+
+/** One tenant-filtered event batch; a settled family takes no writer lock. */
+export function refreshJobDetailProjections(db: SqliteDatabase, tenantId = "local"): boolean {
+  const name = jobDetailWatermarkName(tenantId);
+  const cursor = getRow<{ last_event_id: number }>(db,
+    "SELECT last_event_id FROM event_watermarks WHERE projection_name = ?", [name]);
+  if (!cursor) {
+    // Existing v14 installations need one canonical snapshot before incremental
+    // consumption. Do not inherit either runtime's operations cursor.
+    repairJobDetailProjections(db, tenantId);
+    return false;
+  }
+  if (!getRow(db, "SELECT 1 FROM job_events WHERE tenant_id = ? AND event_id > ? LIMIT 1",
+    [tenantId, cursor.last_event_id])) return false;
+  return db.transaction(() => {
+    const watermark = readWatermark(db, name);
+    const events = allRows<{ event_id: number; job_id: string | null }>(db,
+      `SELECT event_id, job_id FROM job_events WHERE tenant_id = ? AND event_id > ?
+       ORDER BY event_id LIMIT ?`, [tenantId, watermark, REFRESH_EVENT_BATCH_LIMIT]);
+    for (const jobId of new Set(events.flatMap((event) => event.job_id ? [event.job_id] : []))) {
+      rebuildJobDetailProjection(db, tenantId, jobId);
+    }
+    const last = events.at(-1);
+    if (last) setWatermark(db, name, last.event_id);
+    return events.length === REFRESH_EVENT_BATCH_LIMIT;
+  }).immediate();
+}
+
+/**
+ * Read-after-write for a requested job even when unrelated events fill a batch.
+ * Repairs list and detail together so score metadata and requirement evidence
+ * describe the same canonical decision even if Python missed its notification.
+ * Work is keyed to one job; neither consumer cursor advances past other events.
+ * Returns whether the caller must reread its previously selected list row.
+ */
+export function ensureJobDetailProjection(db: SqliteDatabase, tenantId: string, jobId: string): boolean {
+  const row = getRow<{ last_updated_at: string; score_version: number | null;
+    employer_analysis_json: string | null; compensation_summary_json: string | null;
+    compensation_audit_json: string | null; requirement_fit_report_json: string | null }>(db,
+    "SELECT * FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?", [tenantId, jobId]);
+  const obsolete = row && (
+    (row.employer_analysis_json !== null &&
+      parseProjectionJsonRecord(row.employer_analysis_json)?.prompt_version !== EMPLOYER_ANALYSIS_PROMPT_VERSION) ||
+    parseProjectionJsonRecord(row.compensation_summary_json)?.projectionVersion !== COMPENSATION_PROJECTION_VERSION ||
+    parseProjectionJsonRecord(row.compensation_audit_json)?.projectionVersion !== COMPENSATION_PROJECTION_VERSION ||
+    (row.requirement_fit_report_json !== null &&
+      parseProjectionJsonRecord(row.requirement_fit_report_json)?.scoreVersion !== row.score_version)
+  );
+  const list = getRow<{ score_version: number | null; compensation_summary_json: string | null }>(db,
+    "SELECT score_version, compensation_summary_json FROM job_list_projections WHERE tenant_id = ? AND job_id = ?",
+    [tenantId, jobId]);
+  // Shared list reconciliation can refresh compensation without a new event.
+  // Compare values because Python and TypeScript serialize JSON differently.
+  const changedCompensation = row && list && !isDeepStrictEqual(
+    parseProjectionJsonRecord(row.compensation_summary_json),
+    parseProjectionJsonRecord(list.compensation_summary_json),
+  );
+  const oldestCursor = Math.min(readWatermark(db, jobDetailWatermarkName(tenantId)),
+    readWatermark(db, `typescript:${PROJECTION_WATERMARK_NAME}:${tenantId}`));
+  const pending = getRow(db,
+    "SELECT 1 FROM job_events WHERE tenant_id = ? AND job_id = ? AND event_id > ? LIMIT 1",
+    [tenantId, jobId, oldestCursor]);
+  const changedStage = row && getRow(db,
+    `SELECT 1 FROM job_stage_states WHERE tenant_id = ? AND job_id = ?
+       AND julianday(updated_at) > COALESCE(julianday(?), -1) LIMIT 1`,
+    [tenantId, jobId, row.last_updated_at]);
+  if (!row || !list || row.score_version !== list.score_version || obsolete || pending || changedStage || changedCompensation) {
+    db.transaction(() => {
+      rebuildJobProjections(db, tenantId, jobId);
+      rebuildJobDetailProjection(db, tenantId, jobId);
+    }).immediate();
+    return true;
+  }
+  return false;
+}
+
+function rebuildJobDetailProjection(db: SqliteDatabase, tenantId: string, jobId: string): void {
+  const job = getRow<Record<string, unknown>>(db,
+    "SELECT * FROM jobs WHERE tenant_id = ? AND job_id = ?", [tenantId, jobId]);
+  if (!job) {
+    db.prepare("DELETE FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?").run(tenantId, jobId);
+    return;
+  }
+  const score = loadLatestScore(db, tenantId, jobId);
+  const employerAnalysisJson = loadEmployerAnalysisJson(db, tenantId, jobId);
+  const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobId, score.version);
+  const interviewPrepJson = loadInterviewPrepJson(db, tenantId, jobId);
+  const enrichment = loadEnrichment(db, tenantId, jobId);
+  const stages = loadStages(db, tenantId, jobId);
+  const description = stringField(job.description);
+  const fullDescription = enrichment.fullDescription ?? stringField(job.full_description);
+  const scoreReasoning = score.reasoning;
+  const scoreBreakdownJson = score.breakdown ? JSON.stringify(score.breakdown) : null;
+  const scoreKeywordsJson = JSON.stringify(score.keywords);
+  const compensationProjection = buildCompensationProjection(db, tenantId, jobId);
+  const lastUpdatedAt = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO job_detail_projections (
+       tenant_id, job_id, description_preview, compensation_summary_json,
+       compensation_audit_json, score_breakdown_json, score_keywords_json,
+       score_reasoning, score_version, scored_at,
+       score_criteria_json, score_trace_json, score_correction_json,
+       stages_json, employer_analysis_json, requirement_fit_report_json,
+       interview_prep_json,
+       last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(tenant_id, job_id) DO UPDATE SET
+       description_preview    = excluded.description_preview,
+       compensation_summary_json = excluded.compensation_summary_json,
+       compensation_audit_json = excluded.compensation_audit_json,
+       score_breakdown_json   = excluded.score_breakdown_json,
+       score_keywords_json    = excluded.score_keywords_json,
+       score_reasoning        = excluded.score_reasoning,
+       score_version          = excluded.score_version,
+       scored_at              = excluded.scored_at,
+       score_criteria_json    = excluded.score_criteria_json,
+       score_trace_json       = excluded.score_trace_json,
+       score_correction_json  = excluded.score_correction_json,
+       stages_json            = excluded.stages_json,
+       employer_analysis_json = excluded.employer_analysis_json,
+       requirement_fit_report_json = excluded.requirement_fit_report_json,
+       interview_prep_json    = excluded.interview_prep_json,
+       last_updated_at        = excluded.last_updated_at`,
+  ).run(
+    tenantId,
+    jobId,
+    previewText(fullDescription || description, 6000),
+    compensationProjection.summaryJson,
+    compensationProjection.auditJson,
+    scoreBreakdownJson,
+    scoreKeywordsJson,
+    scoreReasoning,
+    score.version,
+    score.scoredAt,
+    score.criteriaJson,
+    score.traceJson,
+    score.correctionJson,
+    JSON.stringify(stages),
+    employerAnalysisJson,
+    requirementFitReportJson,
+    interviewPrepJson,
+    lastUpdatedAt,
+  );
+
+}
+
 function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: string): void {
   const job = getRow<Record<string, unknown>>(
     db,
@@ -2675,10 +2829,6 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
   );
   if (!job) {
     db.prepare("DELETE FROM job_list_projections WHERE tenant_id = ? AND job_id = ?").run(
-      tenantId,
-      jobId,
-    );
-    db.prepare("DELETE FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?").run(
       tenantId,
       jobId,
     );
@@ -2692,10 +2842,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
   const score = loadLatestScore(db, tenantId, jobId);
   const materials = loadLatestMaterials(db, tenantId, jobId);
   const materialAnalytics = loadMaterialAnalytics(db, tenantId, jobId);
-  const employerAnalysisJson = loadEmployerAnalysisJson(db, tenantId, jobId);
-  const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobId);
-  const requirementFitBand = fitBand(loadLatestRequirementFitBand(db, tenantId, jobId));
-  const interviewPrepJson = loadInterviewPrepJson(db, tenantId, jobId);
+  const requirementFitBand = fitBand(loadLatestRequirementFitBand(db, tenantId, jobId, score.version));
   const enrichment = loadEnrichment(db, tenantId, jobId);
   const apply = loadLatestApplyRun(db, tenantId, jobId);
   const deletedAt = loadDeletedAt(db, tenantId, jobId);
@@ -2703,7 +2850,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
 
   const title = stringField(job.title) || "Untitled";
   const site = stringField(job.site);
-  const applicationUrl = enrichment.applicationUrl ?? nullableString(job.application_url);
+  const applicationUrl = enrichment.applicationUrl;
   const employer = stringField(job.company).trim() || "Unknown company";
 
   const firstActionable =
@@ -2852,54 +2999,6 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
     lastUpdatedAt,
   );
 
-  db.prepare(
-    `INSERT INTO job_detail_projections (
-       tenant_id, job_id, description_preview, compensation_summary_json,
-       compensation_audit_json, score_breakdown_json, score_keywords_json,
-       score_reasoning, score_version, scored_at,
-       score_criteria_json, score_trace_json, score_correction_json,
-       stages_json, employer_analysis_json, requirement_fit_report_json,
-       interview_prep_json,
-       last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(tenant_id, job_id) DO UPDATE SET
-       description_preview    = excluded.description_preview,
-       compensation_summary_json = excluded.compensation_summary_json,
-       compensation_audit_json = excluded.compensation_audit_json,
-       score_breakdown_json   = excluded.score_breakdown_json,
-       score_keywords_json    = excluded.score_keywords_json,
-       score_reasoning        = excluded.score_reasoning,
-       score_version          = excluded.score_version,
-       scored_at              = excluded.scored_at,
-       score_criteria_json    = excluded.score_criteria_json,
-       score_trace_json       = excluded.score_trace_json,
-       score_correction_json  = excluded.score_correction_json,
-       stages_json            = excluded.stages_json,
-       employer_analysis_json = excluded.employer_analysis_json,
-       requirement_fit_report_json = excluded.requirement_fit_report_json,
-       interview_prep_json    = excluded.interview_prep_json,
-       last_updated_at        = excluded.last_updated_at`,
-  ).run(
-    tenantId,
-    jobId,
-    previewText(fullDescription || description, 6000),
-    compensationProjection.summaryJson,
-    compensationProjection.auditJson,
-    scoreBreakdownJson,
-    scoreKeywordsJson,
-    scoreReasoning,
-    score.version,
-    score.scoredAt,
-    score.criteriaJson,
-    score.traceJson,
-    score.correctionJson,
-    JSON.stringify(stages),
-    employerAnalysisJson,
-    requirementFitReportJson,
-    interviewPrepJson,
-    lastUpdatedAt,
-  );
-
   db.prepare("DELETE FROM artifact_list_projections WHERE tenant_id = ? AND job_id = ?").run(
     tenantId,
     jobId,
@@ -2956,6 +3055,9 @@ function loadLayoutBoxesByArtifact(
             left_pct, top_pct, width_pct, height_pct
        FROM job_material_layout_boxes
       WHERE tenant_id = ? AND job_id = ?
+        AND generation = (SELECT MAX(a.generation) FROM job_materials_artifacts a
+          WHERE a.tenant_id = job_material_layout_boxes.tenant_id AND a.job_id = job_material_layout_boxes.job_id
+            AND a.artifact_id = job_material_layout_boxes.artifact_id)
       ORDER BY artifact_id, page_number, box_index`,
     [tenantId, jobId],
   );
@@ -3044,12 +3146,8 @@ function compensationAuditPosted(
     const { jobKey: _jobKey, ...fact } = response.fact;
     return { ...response, fact: { ...fact, jobId } };
   }
-  return {
-    ok: true,
-    recordStatus: "not_recorded",
-    jobId,
-    legacyRawSalary: response.legacyRawSalary,
-  };
+  return {ok:true,recordStatus:response.recordStatus,jobId,legacyRawSalary:response.legacyRawSalary,
+    ...(response.recordStatus==="unavailable" ? {failureCode:response.failureCode} : {})} as JobCompensationAuditPostedResponse;
 }
 
 function compensationAuditMarket(
@@ -3060,6 +3158,7 @@ function compensationAuditMarket(
     const { jobKey: _jobKey, ...estimate } = response.estimate;
     return { ...response, estimate: { ...estimate, jobId } };
   }
+  if (response.recordStatus === "unavailable") return {ok: true, recordStatus: "unavailable", jobId, failureCode: response.failureCode};
   return { ok: true, recordStatus: "not_requested", jobId };
 }
 
@@ -3081,6 +3180,7 @@ function buildCompensationSummary(
     posted: {
       sourceKind: "posted",
       recordStatus: posted.recordStatus,
+      ...(posted.recordStatus === "unavailable" ? {failureCode:posted.failureCode} : {}),
       parseState: posted.recordStatus === "recorded" ? posted.fact.parseState : null,
       confidence: posted.recordStatus === "recorded" ? posted.fact.confidence : "none",
       warningCount: postedWarnings,
@@ -3092,6 +3192,7 @@ function buildCompensationSummary(
       benchmarkKind:
         market.recordStatus === "recorded" ? market.estimate.benchmarkLineage?.kind ?? null : null,
       recordStatus: market.recordStatus,
+      ...(market.recordStatus === "unavailable" ? {failureCode: market.failureCode} : {}),
       estimateState: market.recordStatus === "recorded" ? market.estimate.estimateState : "not_requested",
       confidenceBand: market.recordStatus === "recorded" ? market.estimate.confidenceBand : "none",
       confidenceScore: market.recordStatus === "recorded" ? market.estimate.confidenceScore : null,
@@ -3275,7 +3376,7 @@ function collectArtifacts(
     }>(
       db,
       `SELECT artifact_id, artifact_type, status, path, created_at, size_bytes, generation, metadata_json
-       FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ?`,
+       FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ? ORDER BY generation DESC`,
       [tenantId, jobId],
     );
     for (const row of rows) {
@@ -3725,7 +3826,7 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
   );
   const dryRuns = Number(dryRunsRow?.c ?? 0);
 
-  // Funnel — read per-job stage rows from job_detail_projections.
+  // Funnel uses canonical stages, independently of the detail-family cursor.
   const funnelCounts: Record<
     string,
     { stage: string; total: number; succeeded: number; running: number; pending: number; blocked: number; failed: number }
@@ -3742,18 +3843,7 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
     };
   }
   for (const row of active) {
-    const detail = getRow<{ stages_json: string }>(
-      db,
-      "SELECT stages_json FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?",
-      [tenantId, row.job_id],
-    );
-    if (!detail || !detail.stages_json) continue;
-    let stages: Array<{ stage: string; state: string }> = [];
-    try {
-      stages = JSON.parse(detail.stages_json) as Array<{ stage: string; state: string }>;
-    } catch {
-      continue;
-    }
+    const stages = loadStages(db, tenantId, row.job_id);
     for (const stage of stages) {
       const counts = funnelCounts[stage.stage];
       if (!counts) continue;

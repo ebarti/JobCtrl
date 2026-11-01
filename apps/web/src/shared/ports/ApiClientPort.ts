@@ -1,3 +1,5 @@
+import type { PostedCompensationFactResponse, MarketCompensationEstimateResponse } from "@jobctrl/contracts";
+import type { OfferReadResponse, SaveOfferTerms, RecordOfferDecision } from "@jobctrl/contracts";
 import type {
   ActionRunResponse,
   ActivityEventResponse,
@@ -16,6 +18,10 @@ import type {
   ArtifactOpenResponse,
   ArtifactSummary,
   BulkJobMutationRequest,
+  BulkPermanentDeleteRequest,
+  PreparePermanentDeleteSelectionRequest,
+  PreparePermanentDeleteSelectionResponse,
+  ReviewableJobsResponse,
   BulkRunPendingPreparationRequest,
   BulkRunPendingPreparationResponse,
   BulkRetryFailedRequest,
@@ -49,8 +55,11 @@ import type {
   OutreachThreadResponse,
   GenerateOutreachDraftRequest,
   ReviseOutreachDraftRequest,
+  ReviseOutreachDraftResponse,
   RejectOutreachDraftRequest,
   LogOutreachSendRequest,
+  LogOutreachSendResponse,
+  LlmLane,
   ScheduleFollowUpRequest,
   DueFollowUpsResponse,
   CredentialKey,
@@ -75,6 +84,15 @@ import type {
   ExtensionCapabilityTokenResponse,
   EvidenceMapResponse,
   GenerateInterviewPrepRequest,
+  InterviewCatalogQuery,
+  InterviewCatalogResponse,
+  InterviewQuestionResponse,
+  InterviewPrepHistoryQuery,
+  InterviewPrepHistoryResponse,
+  InterviewNotesQuery,
+  InterviewNotesResponse,
+  SaveInterviewQuestionNoteRequest,
+  SaveInterviewQuestionNoteResponse,
   GenerateMaterialsRequest,
   JobDetail,
   EnsureCurrentResumeMaterialsRequest,
@@ -87,6 +105,8 @@ import type {
   JobSummary,
   JobUrlImportRequest,
   JobUrlImportResponse,
+  JobUrlImportExecution,
+  JobUrlImportStatusResponse,
   LearningRecommendationEvidenceListQuery,
   LearningRecommendationEvidenceListResponse,
   TailoringPolicyRevisionListQuery,
@@ -106,6 +126,10 @@ import type {
   ProfileConfigResponse,
   ProfileImportRequest,
   ProfileImportResponse,
+  RequiredBulletSuggestionRequest,
+  RequiredBulletSuggestionResponse,
+  TargetRoleSuggestionRequest,
+  TargetRoleSuggestionResponse,
   ProfileUpdateRequest,
   ProviderModelCatalogResponse,
   ProviderStatusResponse,
@@ -169,6 +193,15 @@ export interface ApiHealthResponse {
     dailyBudgetUsd: number;
     remainingUsd: number | null;
     unlimited: boolean;
+    lanes: Record<LlmLane, {
+      status: "ok" | "over_budget";
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      tokenLimit: number;
+      remainingTokens: number | null;
+      unlimited: boolean;
+    }>;
     message: string;
   };
   worker: {
@@ -238,6 +271,7 @@ export interface ApiClientPort extends EndpointClientMethods {
   ): Promise<QuarantineDecisionResponse>;
   manualCaptureQueue(): Promise<ManualCaptureListResponse>;
   importJobUrl(body: JobUrlImportRequest): Promise<JobUrlImportResponse>;
+  jobUrlImportStatus(execution: JobUrlImportExecution): Promise<JobUrlImportStatusResponse>;
   importManualCapture(
     itemId: string,
     body: ManualCaptureImportRequest,
@@ -257,6 +291,7 @@ export interface ApiClientPort extends EndpointClientMethods {
     jobKey: string,
     body: ApplyReviewDecisionRequest,
   ): Promise<ApplyReviewDecisionResponse>;
+  checkRepeatApplication(jobKey:string):Promise<RepeatApplicationOverrideResponse>;
   confirmRepeatApplication(
     jobKey: string,
     body: RepeatApplicationOverrideRequest,
@@ -294,6 +329,12 @@ export interface ApiClientPort extends EndpointClientMethods {
     body?: Partial<EnsureCurrentResumeMaterialsRequest>,
   ): Promise<EnsureCurrentResumeMaterialsResponse>;
   applicationOutcomes(): Promise<ApplicationOutcomeListResponse>;
+  postedCompensationFact(jobId: string): Promise<PostedCompensationFactResponse>;
+  marketCompensationEstimate(jobId: string): Promise<MarketCompensationEstimateResponse>;
+  jobOffer(jobId: string): Promise<OfferReadResponse>;
+  saveOfferTerms(jobId: string, body: SaveOfferTerms): Promise<OfferReadResponse>;
+  recordOfferDecision(jobId: string, body: RecordOfferDecision): Promise<OfferReadResponse>;
+
   jobApplicationOutcomes(jobKey: string): Promise<JobApplicationOutcomeListResponse>;
   recordManualApplicationOutcome(
     jobKey: string,
@@ -305,12 +346,14 @@ export interface ApiClientPort extends EndpointClientMethods {
   ): Promise<OutcomeSuggestionDecisionResponse>;
 
   jobs(query?: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
+  reviewableJobs(query?: Partial<JobListQuery>): Promise<ReviewableJobsResponse>;
   job(jobKey: string): Promise<JobDetail>;
   evidenceMap(): Promise<EvidenceMapResponse>;
   deleteJob(jobKey: string, body?: DeleteJobRequest): Promise<JobMutationResponse>;
   deleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   permanentlyDeleteJob(jobKey: string): Promise<JobMutationResponse>;
-  permanentlyDeleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
+  permanentlyDeleteJobs(body: BulkPermanentDeleteRequest): Promise<JobMutationResponse>;
+  preparePermanentDeleteSelection(body: PreparePermanentDeleteSelectionRequest): Promise<PreparePermanentDeleteSelectionResponse>;
   restoreJob(jobKey: string): Promise<JobMutationResponse>;
   restoreJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   hideJob(jobKey: string, body?: DeleteJobRequest): Promise<JobMutationResponse>;
@@ -334,12 +377,14 @@ export interface ApiClientPort extends EndpointClientMethods {
   retailorCurrentPolicy(body: BulkRetailorCurrentPolicyRequest): Promise<ActionRunResponse>;
 
   workflowRuns(query?: Partial<WorkflowRunsListQuery>): Promise<PaginatedResponse<WorkflowRunSummary>>;
-  workflowRun(runId: string): Promise<WorkflowRunDetail>;
+  workflowRun(runId: string, jobId?: string): Promise<WorkflowRunDetail>;
   cancelWorkflowRun(runId: string): Promise<ActionRunResponse>;
 
   artifacts(query?: Partial<ArtifactListQuery>): Promise<PaginatedResponse<ArtifactSummary>>;
   artifact(artifactId: string): Promise<ArtifactDetail>;
+  downloadMaterialDocx(artifactId: string): Promise<Blob>;
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: number | string): string;
+  coverLetterPreviewPdfUrl(jobId: string, previewId: string): string;
   artifactPreviewHtmlUrl(artifactId: string, cacheKey?: number | string): string;
   openArtifact(artifactId: string): Promise<ArtifactOpenResponse>;
 
@@ -347,6 +392,10 @@ export interface ApiClientPort extends EndpointClientMethods {
   profilePreviewPdfUrl(cacheKey?: number | string): string;
   profilePreviewHtmlUrl(cacheKey?: number | string): string;
   updateProfile(body: ProfileUpdateRequest): Promise<ProfileConfigResponse>;
+  targetRoleSuggestions(body: TargetRoleSuggestionRequest): Promise<TargetRoleSuggestionResponse>;
+  requiredBulletSuggestions(
+    body: RequiredBulletSuggestionRequest,
+  ): Promise<RequiredBulletSuggestionResponse>;
   importResume(body: ProfileImportRequest): Promise<ProfileImportResponse>;
 
   settings(): Promise<SettingsResponse>;
@@ -393,7 +442,7 @@ export interface ApiClientPort extends EndpointClientMethods {
   reviseOutreachDraft(
     threadId: string,
     body: ReviseOutreachDraftRequest,
-  ): Promise<OutreachThreadResponse>;
+  ): Promise<ReviseOutreachDraftResponse>;
   approveOutreachDraft(threadId: string, draftId: string): Promise<OutreachThreadResponse>;
   rejectOutreachDraft(
     threadId: string,
@@ -403,7 +452,7 @@ export interface ApiClientPort extends EndpointClientMethods {
   logOutreachSend(
     threadId: string,
     body: LogOutreachSendRequest,
-  ): Promise<OutreachThreadResponse>;
+  ): Promise<LogOutreachSendResponse>;
   scheduleOutreachFollowUp(
     threadId: string,
     body?: ScheduleFollowUpRequest,
@@ -415,6 +464,11 @@ export interface ApiClientPort extends EndpointClientMethods {
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse>;
   runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse>;
   generateMaterials(jobKey: string, body?: Partial<GenerateMaterialsRequest>): Promise<ActionRunResponse>;
+  interviewCatalog: EndpointClientMethods["interviewCatalog"];
+  interviewQuestion: EndpointClientMethods["interviewQuestion"];
+  interviewPrepHistory: EndpointClientMethods["interviewPrepHistory"];
+  interviewNotes: EndpointClientMethods["interviewNotes"];
+  saveInterviewNote: EndpointClientMethods["saveInterviewNote"];
   generateInterviewPrep(jobKey: string, body?: Partial<GenerateInterviewPrepRequest>): Promise<ActionRunResponse>;
   applyJob(jobKey: string, body?: Partial<ApplyJobRequest>): Promise<ActionRunResponse>;
   cancelJobAction(jobKey: string, body?: CancelJobActionRequest): Promise<ActionRunResponse>;

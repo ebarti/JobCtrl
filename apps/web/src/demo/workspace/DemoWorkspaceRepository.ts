@@ -11,7 +11,6 @@ import {
   DEMO_WORKSPACE_EVENT_LOG_LIMIT,
   DEMO_WORKSPACE_SCHEMA_VERSION,
   systemDemoWorkspaceClock,
-  type DemoPendingScenario,
   type DemoWorkspaceReceipt,
   type DemoWorkspaceClock,
   type DemoWorkspaceCommit,
@@ -36,6 +35,7 @@ import {
   type DemoWorkspaceStore,
   type DemoWorkspaceTransaction,
 } from "./storage.js";
+import { advanceLifecycleRevisions } from "./lifecycleRevisions.js";
 
 const KNOWN_DOMAIN_EVENT_TYPES = new Set<string>(DOMAIN_EVENT_TYPES);
 
@@ -254,7 +254,7 @@ export class DemoWorkspaceRepository {
           );
         }
 
-        const draft = clone(current);
+        const draft = clone(withCurrentSettingsDefaults(current));
         const appendedEvents: DomainEventUnion[] = [];
         const context: DemoWorkspaceMutationContext = {
           putBlob: (blobId, value) => {
@@ -294,6 +294,7 @@ export class DemoWorkspaceRepository {
         const next: DemoWorkspaceSnapshot = {
           ...draft,
           revision,
+          ...advanceLifecycleRevisions(current, draft, appendedEvents, revision),
           lastEventSequence: current.lastEventSequence + appendedEvents.length,
           eventLog: nextEventLog,
           updatedAt: this.clock.now().toISOString(),
@@ -355,26 +356,6 @@ export class DemoWorkspaceRepository {
       await this.fallbackFromUnavailable(this.authoritativeSnapshot);
       return this.store.readBlob(blobId);
     }
-  }
-
-  async queueScenario(
-    pending: DemoPendingScenario,
-  ): Promise<DemoWorkspaceCommit> {
-    return this.mutate(
-      (draft) => {
-        if (
-          draft.pendingScenarios.some(
-            (scenario) => scenario.scenarioId === pending.scenarioId,
-          )
-        ) {
-          throw new Error(
-            `Demo scenario ${pending.scenarioId} is already pending.`,
-          );
-        }
-        (draft.pendingScenarios as DemoPendingScenario[]).push(pending);
-      },
-      { expectedResetEpoch: pending.resetEpoch },
-    );
   }
 
   async reset(): Promise<DemoWorkspaceCommit> {
@@ -513,15 +494,13 @@ export class DemoWorkspaceRepository {
       if (stored.schemaVersion >= DEMO_WORKSPACE_SCHEMA_VERSION) {
         return stored;
       }
+      const { pendingScenarios: _discardedOperations, ...savedState } = stored as DemoWorkspaceSnapshot & { pendingScenarios?: unknown };
       const migrated: DemoWorkspaceSnapshot = {
-        ...stored,
+        ...savedState,
         schemaVersion: DEMO_WORKSPACE_SCHEMA_VERSION,
         revision: stored.revision + 1,
         eventLog: stored.eventLog ?? [],
         blobIds: optionalBlobIds(stored) ?? migratedBlobIds,
-        // P1 stored only a deadline and cannot recover the bounded command or
-        // projection transform required by the P3 state machine.
-        pendingScenarios: [],
         updatedAt: this.clock.now().toISOString(),
       };
       transaction.putSnapshot(migrated);
@@ -680,12 +659,13 @@ export class DemoWorkspaceRepository {
     const copiedBlobIds = declaredBlobIds.filter((blobId) =>
       durableBlobs.has(blobId),
     );
-    const memorySnapshot: DemoWorkspaceSnapshot = {
-      ...snapshot,
+    const { pendingScenarios: _discardedOperations, ...savedState } = snapshot as DemoWorkspaceSnapshot & { pendingScenarios?: unknown };
+    const memorySnapshot = withCurrentSettingsDefaults({
+      ...savedState,
       schemaVersion: DEMO_WORKSPACE_SCHEMA_VERSION,
       eventLog: snapshot.eventLog ?? [],
       blobIds: copiedBlobIds,
-    };
+    });
     if (this.channel) {
       this.channel.removeEventListener("message", this.onChannelMessage);
       this.channel.close();
@@ -707,23 +687,25 @@ export class DemoWorkspaceRepository {
   }
 
   private async readAuthoritativeSnapshot(): Promise<DemoWorkspaceSnapshot> {
-    const snapshot = await this.store.readSnapshot();
-    if (!snapshot) {
+    const stored = await this.store.readSnapshot();
+    if (!stored) {
       throw new Error("Demo workspace disappeared after initialization.");
     }
-    const upgrade = workspaceUpgrade(snapshot);
+    const upgrade = workspaceUpgrade(stored);
     if (upgrade) {
       this.setUpgrade(upgrade);
       throw new DemoWorkspaceUpgradeRequiredError(upgrade);
     }
+    const snapshot = withCurrentSettingsDefaults(stored);
     this.adoptAuthoritativeSnapshot(snapshot, false);
     return snapshot;
   }
 
   private adoptAuthoritativeSnapshot(
-    snapshot: DemoWorkspaceSnapshot,
+    stored: DemoWorkspaceSnapshot,
     advanceWatermark: boolean,
   ): void {
+    const snapshot = withCurrentSettingsDefaults(stored);
     this.authoritativeSnapshot = snapshot;
     this.receiptsSnapshot = snapshot.state.receipts;
     for (const listener of this.receiptListeners) {
@@ -869,7 +851,8 @@ export class DemoWorkspaceRepository {
     }
   }
 
-  private setReady(snapshot: DemoWorkspaceSnapshot): DemoWorkspaceReady {
+  private setReady(stored: DemoWorkspaceSnapshot): DemoWorkspaceReady {
+    const snapshot = withCurrentSettingsDefaults(stored);
     this.authoritativeSnapshot = snapshot;
     this.installChannel();
     const ready: DemoWorkspaceReady = {
@@ -957,9 +940,43 @@ export class DemoWorkspaceRepository {
         routeData: materialized.routeData,
         receipts: materialized.receipts,
       },
-      pendingScenarios: [],
     };
   }
+}
+
+/** Additive defaults interpret retained current-seed state without a read-time commit. */
+function withCurrentSettingsDefaults(
+  snapshot: DemoWorkspaceSnapshot,
+): DemoWorkspaceSnapshot {
+  if (
+    snapshot.schemaVersion > DEMO_WORKSPACE_SCHEMA_VERSION ||
+    snapshot.seedVersion !== DEMO_SEED.seedVersion
+  ) {
+    return snapshot;
+  }
+  let response = snapshot.state.readModel.settings;
+  for (const key of ["resumeVoicePolish", "coverLetterGeneration"] as const) {
+    const hasValue = Object.hasOwn(response.settings, key);
+    const hasMetadata = Object.hasOwn(response.effectiveSettings, key);
+    if (hasValue && hasMetadata) continue;
+    // Preserve an existing value, including malformed values for schema validation.
+    const value = hasValue
+      ? response.settings[key]
+      : hasMetadata ? response.effectiveSettings[key]?.value : false;
+    response = {
+      ...response,
+      settings: hasValue ? response.settings : { ...response.settings, [key]: value },
+      effectiveSettings: hasMetadata ? response.effectiveSettings : {
+        ...response.effectiveSettings,
+        [key]: { value, source: hasValue ? "persisted" : "default", activation: "next_workflow", editable: true },
+      },
+    };
+  }
+  if (response === snapshot.state.readModel.settings) return snapshot;
+  return {
+    ...snapshot,
+    state: { ...snapshot.state, readModel: { ...snapshot.state.readModel, settings: response } },
+  };
 }
 
 export const DEMO_WORKSPACE_TENANT = LOCAL_TENANT;

@@ -12,13 +12,6 @@ import pytest
 from jobctrl import config
 from jobctrl.discovery import manual_capture_import as manual_capture_import_cli
 from jobctrl.database import close_connection, get_jobs_by_stage, init_db
-from jobctrl.domain.discovery import (
-    AtsKind,
-    JobMetadata,
-    PostingUrl,
-    SearchStrategy,
-    Source,
-)
 from jobctrl.domain.discovery.scheduler import DiscoveryScheduler
 from jobctrl.domain.discovery.source_registry import (
     SourceKind,
@@ -28,24 +21,50 @@ from jobctrl.domain.discovery.source_registry import (
     WORKDAY_API_POLICY,
 )
 from jobctrl.domain.identifiers import generate_job_id
-from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.enrichment.detail import _record_posting_snapshot_from_cascade
 from jobctrl.infrastructure.discovery.production_wiring import (
     ManualCaptureImport,
     _manual_capture_posting,
-    _posting_acceptance_policy,
-    build_discovery_acceptance_report,
-    import_manual_capture_item,
-    retire_invalid_canonical_ats_jobs,
-    retire_invalid_source_jobs,
+    import_manual_capture_item as production_manual_import,
     run_deterministic_source_locator,
-    run_scheduled_ats_sources,
+    run_scheduled_ats_sources as production_ats_sources,
     seed_discovery_control_queues,
     seed_source_registry_controls,
 )
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobctrl.pipeline import runner
 from jobctrl.state import record_job_event
+
+
+def run_scheduled_ats_sources(conn, sources, **kwargs):
+
+    cfg = kwargs["search_cfg"]
+    cfg.setdefault("confirmed_targets", {"profile_version": 1, "roles": ["Synthetic target"]})
+    return production_ats_sources(conn, sources, **kwargs)
+
+
+def import_manual_capture_item(conn, capture, **kwargs):
+
+    cfg = {"confirmed_targets": {"profile_version": 1, "roles": ["Synthetic target"]}}
+    from unittest.mock import patch
+
+    with patch("jobctrl.config.load_search_config", return_value=cfg):
+        return production_manual_import(conn, capture, **kwargs)
+
+
+@pytest.fixture(autouse=True)
+def page_models(monkeypatch):
+    from tests.page_fakes import interpreter
+
+    monkeypatch.setattr("jobctrl.enrichment.detail.build_page_interpreter", lambda *args, **kwargs: interpreter())
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.enrichment.page_interpretation.build_page_interpreter",
+        lambda *args, **kwargs: interpreter(),
+    )
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.discovery.production_wiring.build_page_interpreter",
+        lambda *args, **kwargs: interpreter(),
+    )
 
 
 def _insert_v7_job(
@@ -139,10 +158,7 @@ def _barcelona_registry():
                     "kind": "ats_api",
                     "display_name": "Barcelona Tech Greenhouse",
                     "priority": "canonical",
-                    "seed_url": (
-                        "https://boards-api.greenhouse.io/v1/boards/"
-                        "barcelonatech/jobs"
-                    ),
+                    "seed_url": ("https://boards-api.greenhouse.io/v1/boards/barcelonatech/jobs"),
                     "board_token": "barcelonatech",
                     "ats_kind": "greenhouse",
                     "company": "Barcelona Tech",
@@ -162,10 +178,7 @@ def _barcelona_registry():
                     "kind": "ats_api",
                     "display_name": "PlatformOps Ashby",
                     "priority": "canonical",
-                    "seed_url": (
-                        "https://api.ashbyhq.com/posting-api/job-board/"
-                        "platformops"
-                    ),
+                    "seed_url": ("https://api.ashbyhq.com/posting-api/job-board/platformops"),
                     "board_name": "platformops",
                     "ats_kind": "ashby",
                     "company": "PlatformOps",
@@ -243,9 +256,7 @@ def _fake_ats_http(url: str, **_kwargs: Any) -> Any:
                 {
                     "id": 101,
                     "title": "Director of Engineering",
-                    "absolute_url": (
-                        "https://boards.greenhouse.io/barcelonatech/jobs/101"
-                    ),
+                    "absolute_url": ("https://boards.greenhouse.io/barcelonatech/jobs/101"),
                     "location": {"name": "Barcelona, Spain"},
                     "company_name": "Barcelona Tech",
                     "content": "<p>Lead engineering delivery for Barcelona teams.</p>",
@@ -281,55 +292,6 @@ def _fake_ats_http_with_lever_failure(url: str, **kwargs: Any) -> Any:
     if "lever" in url:
         raise TimeoutError("lever unavailable")
     return _fake_ats_http(url, **kwargs)
-
-
-def test_posting_acceptance_policy_uses_title_location_evidence_for_remote_roles() -> None:
-    policy = _posting_acceptance_policy(
-        {
-            "queries": [{"query": "Software Engineer", "tier": 1}],
-            "locations": [{"location": "Remote"}],
-            "location_accept": ["Remote", "Spain", "European Union", "EU", "EMEA"],
-            "location_reject_non_remote": ["India", "Poland", "United States"],
-            "ats_max_tier": 1,
-        }
-    )
-
-    rejected = policy(
-        ScrapedJobPosting(
-            posting_url=PostingUrl(value="https://jobs.ashbyhq.com/acai/india"),
-            source=Source(board="ashby"),
-            metadata=JobMetadata(
-                title="Senior Software Engineer (India)",
-                description="Build distributed systems.",
-                location="Remote",
-            ),
-            strategy=SearchStrategy.WORKDAY_API,
-            source_id="ashby:acai",
-            source_native_id="india",
-            canonical_url="https://jobs.ashbyhq.com/acai/india",
-            ats_kind=AtsKind.ASHBY,
-        )
-    )
-    accepted = policy(
-        ScrapedJobPosting(
-            posting_url=PostingUrl(value="https://jobs.ashbyhq.com/acai/spain"),
-            source=Source(board="ashby"),
-            metadata=JobMetadata(
-                title="Senior Software Engineer",
-                description="Build distributed systems.",
-                location="Spain (Remote)",
-            ),
-            strategy=SearchStrategy.WORKDAY_API,
-            source_id="ashby:acai",
-            source_native_id="spain",
-            canonical_url="https://jobs.ashbyhq.com/acai/spain",
-            ats_kind=AtsKind.ASHBY,
-        )
-    )
-
-    assert rejected.accepted is False
-    assert "location_mismatch" in rejected.rejection_reasons
-    assert accepted.accepted is True
 
 
 def _manual_capture_html() -> str:
@@ -464,9 +426,7 @@ def test_worker_auto_approves_parseable_sources_from_broad_board_observations(
         "policy_id": "ats_api_canonical",
         "seed_url": "https://boards.greenhouse.io/acme/jobs/123",
     }
-    pending_candidates = conn.execute(
-        "SELECT COUNT(*) FROM source_locator_candidates"
-    ).fetchone()[0]
+    pending_candidates = conn.execute("SELECT COUNT(*) FROM source_locator_candidates").fetchone()[0]
     assert pending_candidates == 0
 
 
@@ -528,9 +488,7 @@ def test_worker_queue_seeding_preserves_dismissed_manual_actions(
             (item_id,),
         ).fetchone()["retry_context_json"]
     )
-    assert retry_context["manual_capture_provenance"]["source_kind"] == (
-        "user_mediated_capture"
-    )
+    assert retry_context["manual_capture_provenance"]["source_kind"] == ("user_mediated_capture")
 
 
 def test_canonical_ats_scheduler_routes_postings_through_discovery_use_case(
@@ -550,16 +508,8 @@ def test_canonical_ats_scheduler_routes_postings_through_discovery_use_case(
 
     assert result["new_jobs"] == 3
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 3
-    assert (
-        conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
-        == 3
-    )
-    ats_kinds = {
-        row["ats_kind"]
-        for row in conn.execute(
-            "SELECT ats_kind FROM job_canonical_identities"
-        ).fetchall()
-    }
+    assert conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0] == 3
+    ats_kinds = {row["ats_kind"] for row in conn.execute("SELECT ats_kind FROM job_canonical_identities").fetchall()}
     assert ats_kinds == {"greenhouse", "lever", "ashby"}
     expected_urls = {
         "https://boards.greenhouse.io/barcelonatech/jobs/101",
@@ -592,9 +542,7 @@ def test_canonical_ats_scheduler_routes_postings_through_discovery_use_case(
     ).fetchall()
     assert {row["url"] for row in stage_rows} == expected_urls
     assert {row["state"] for row in stage_rows} == {"succeeded"}
-    assert {
-        row["url"] for row in get_jobs_by_stage(conn, "pending_score", limit=0)
-    } == expected_urls
+    assert {row["url"] for row in get_jobs_by_stage(conn, "pending_score", limit=0)} == expected_urls
 
 
 def test_canonical_ats_scheduler_fetches_each_source_once_then_filters_queries(
@@ -634,7 +582,7 @@ def test_canonical_ats_scheduler_fetches_each_source_once_then_filters_queries(
     assert "https://boards-api.greenhouse.io/v1/boards/barcelonatech/jobs?content=true" in calls
 
 
-def test_canonical_ats_scheduler_rejects_empty_descriptions(
+def test_ats_ingests_a_listing_without_an_intake_model_or_description_fetch(
     conn: sqlite3.Connection,
 ) -> None:
     registry = _barcelona_registry()
@@ -664,430 +612,14 @@ def test_canonical_ats_scheduler_rejects_empty_descriptions(
         http=http,
     )
 
-    assert result["new_jobs"] == 2
+    assert result["new_jobs"] == 3
     row = conn.execute(
         "SELECT 1 FROM jobs WHERE url = ?",
         ("https://boards.greenhouse.io/barcelonatech/jobs/101",),
     ).fetchone()
-    assert row is None
+    assert row is not None
+    assert conn.execute("SELECT count(*) FROM semantic_determinations").fetchone()[0] == 0
 
-
-def test_discovery_hygiene_retires_existing_invalid_canonical_ats_rows(
-    conn: sqlite3.Connection,
-) -> None:
-    rows = [
-        (
-            "https://boards.greenhouse.io/acme/jobs/valid",
-            "Director of Engineering",
-            "Barcelona, Spain",
-            "Lead engineering teams in Barcelona.",
-        ),
-        (
-            "https://boards.greenhouse.io/acme/jobs/empty-description",
-            "Director of Engineering",
-            "Barcelona, Spain",
-            "",
-        ),
-        (
-            "https://boards.greenhouse.io/acme/jobs/sales",
-            "Sales Director",
-            "Work from Home - Spain",
-            "Lead enterprise sales teams.",
-        ),
-        (
-            "https://boards.greenhouse.io/acme/jobs/india",
-            "Engineering Manager",
-            "India, Remote",
-            "Lead engineering teams.",
-        ),
-    ]
-    for index, (url, title, location, description) in enumerate(rows):
-        job_id = _insert_v7_job(
-            conn,
-            url=url,
-            title=title,
-            company="Acme",
-            description=description,
-            location=location,
-            site="Acme",
-            strategy="workday_api",
-            discovered_at="2026-05-20T00:00:00+00:00",
-        )
-        conn.execute(
-            """
-            INSERT INTO job_canonical_identities (
-                tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            ("local", job_id, url, "greenhouse", f"gh-{index}", 1.0, "2026-05-20T00:00:00+00:00"),
-        )
-        _insert_source_observation(
-            conn,
-            observation_id=f"obs-{index}",
-            job_id=job_id,
-            source_id="greenhouse:acme",
-            source_native_id=f"gh-{index}",
-            url=url,
-            observed_at="2026-05-20T00:00:00+00:00",
-        )
-    conn.commit()
-
-    result = retire_invalid_canonical_ats_jobs(
-        conn,
-        search_cfg=_search_cfg(),
-        run_id="hygiene:test",
-    )
-
-    assert result["retired_jobs"] == 3
-    deleted = _deleted_reasons_by_url(conn)
-    assert "https://boards.greenhouse.io/acme/jobs/valid" not in deleted
-    assert "missing_description" in deleted["https://boards.greenhouse.io/acme/jobs/empty-description"]
-    assert "title_mismatch" in deleted["https://boards.greenhouse.io/acme/jobs/sales"]
-    assert "location_mismatch" in deleted["https://boards.greenhouse.io/acme/jobs/india"]
-    event_count = conn.execute(
-        "SELECT COUNT(*) FROM job_events WHERE event_type = 'JobDeleted'"
-    ).fetchone()[0]
-    assert event_count == 3
-
-
-def test_discovery_hygiene_retires_ashby_business_travel_portugal_rows(
-    conn: sqlite3.Connection,
-) -> None:
-    bad_url = "https://jobs.ashbyhq.com/Perk/ad419744-c6e3-4cb6-94bf-8c6eb5e645c0"
-    good_url = "https://jobs.ashbyhq.com/PlatformOps/engineering-manager"
-    rows = [
-        (
-            bad_url,
-            "Senior Business Travel Consultant - Spanish speaking - Remote",
-            "Portugal (Remote)",
-            "Deliver VIP business travel service for executives.",
-            "perk-travel",
-        ),
-        (
-            good_url,
-            "Engineering Manager",
-            "Barcelona, Spain (Remote)",
-            "Lead engineering teams in Barcelona.",
-            "platform-eng",
-        ),
-    ]
-    for url, title, location, description, native_id in rows:
-        job_id = _insert_v7_job(
-            conn,
-            url=url,
-            title=title,
-            company="Perk",
-            description=description,
-            location=location,
-            site="jobs.ashbyhq.com",
-            strategy="workday_api",
-            discovered_at="2026-05-25T21:35:55+00:00",
-        )
-        conn.execute(
-            """
-            INSERT INTO job_canonical_identities (
-                tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            ("local", job_id, url, "ashby", native_id, 0.9, "2026-05-25T21:35:55+00:00"),
-        )
-        _insert_source_observation(
-            conn,
-            observation_id=f"obs-{native_id}",
-            job_id=job_id,
-            source_id="ashby:perk",
-            source_native_id=native_id,
-            url=url,
-            observed_at="2026-05-25T21:35:55+00:00",
-        )
-    conn.commit()
-
-    result = retire_invalid_source_jobs(
-        conn,
-        search_cfg={
-            "queries": [
-                {
-                    "query": "Engineering Manager",
-                    "tier": 1,
-                    "match_mode": "recall",
-                    "generated_from": "target_roles",
-                }
-            ],
-            "locations": [{"location": "Spain"}, {"location": "European Union"}],
-            "location_accept": ["Spain", "European Union", "EU", "EMEA"],
-            "location_reject_non_remote": ["United States", "USA", "US only"],
-            "ats_max_tier": 1,
-        },
-        run_id="hygiene:ashby-perk",
-    )
-
-    assert result["retired_jobs"] == 1
-    deleted = _deleted_reasons_by_url(conn)
-    assert good_url not in deleted
-    assert "title_mismatch" in deleted[bad_url]
-    assert "location_mismatch" in deleted[bad_url]
-
-
-def test_discovery_hygiene_retires_invalid_jobspy_rows(
-    conn: sqlite3.Connection,
-) -> None:
-    rows = [
-        (
-            "https://www.linkedin.com/jobs/view/valid-head-engineering",
-            "Head of Engineering",
-            "Barcelona, Spain",
-            "Lead engineering teams in Barcelona.",
-            "jobspy:linkedin",
-        ),
-        (
-            "https://www.linkedin.com/jobs/view/head-school-biomedical",
-            "Head of School - School of Biomedical Engineering",
-            "Barcelona, Spain",
-            "Lead an academic biomedical engineering school.",
-            "jobspy:linkedin",
-        ),
-        (
-            "https://www.linkedin.com/jobs/view/us-engineering-manager",
-            "Engineering Manager",
-            "United States (Remote)",
-            "Lead engineering teams.",
-            "jobspy:linkedin",
-        ),
-    ]
-    for index, (url, title, location, description, source_id) in enumerate(rows):
-        job_id = _insert_v7_job(
-            conn,
-            url=url,
-            title=title,
-            company="LinkedInCo",
-            description=description,
-            location=location,
-            site="linkedin",
-            strategy="jobspy",
-            discovered_at="2026-05-20T00:00:00+00:00",
-        )
-        _insert_source_observation(
-            conn,
-            observation_id=f"jobspy-obs-{index}",
-            job_id=job_id,
-            source_id=source_id,
-            source_native_id=f"li-{index}",
-            url=url,
-            observed_at="2026-05-20T00:00:00+00:00",
-        )
-    conn.commit()
-
-    result = retire_invalid_source_jobs(
-        conn,
-        search_cfg={
-            "queries": [
-                {"query": "Head of Engineering", "tier": 1},
-                {
-                    "query": "engineering manager",
-                    "tier": 1,
-                    "match_mode": "recall",
-                    "generated_from": "target_roles",
-                },
-            ],
-            "locations": [{"location": "Spain"}],
-            "location_accept": ["Spain", "Barcelona, Spain"],
-            "location_reject_non_remote": ["United States", "USA", "US only"],
-        },
-        run_id="hygiene:jobspy",
-    )
-
-    assert result["retired_jobs"] == 2
-    deleted = _deleted_reasons_by_url(conn)
-    assert "https://www.linkedin.com/jobs/view/valid-head-engineering" not in deleted
-    assert "title_mismatch" in deleted["https://www.linkedin.com/jobs/view/head-school-biomedical"]
-    assert "location_mismatch" in deleted["https://www.linkedin.com/jobs/view/us-engineering-manager"]
-
-
-def test_discovery_hygiene_retains_jobspy_listing_leads_without_descriptions(
-    conn: sqlite3.Connection,
-) -> None:
-    rows = [
-        (
-            "https://www.linkedin.com/jobs/view/valid-head-engineering",
-            "Head of Engineering",
-            "Barcelona, Spain",
-            "Lead engineering teams in Barcelona.",
-        ),
-        (
-            "https://www.linkedin.com/jobs/view/none-description",
-            "Head of Engineering",
-            "Barcelona, Spain",
-            "None",
-        ),
-        (
-            "https://www.linkedin.com/jobs/view/pandas-na-description",
-            "Head of Engineering",
-            "Barcelona, Spain",
-            "<NA>",
-        ),
-        (
-            "https://www.linkedin.com/jobs/view/nan-description",
-            "Head of Engineering",
-            "Barcelona, Spain",
-            "nan",
-        ),
-        (
-            "https://www.linkedin.com/jobs/view/enrichment-sentinel-with-fallback",
-            "Head of Engineering",
-            "Barcelona, Spain",
-            "Lead engineering teams in Barcelona.",
-        ),
-    ]
-    job_ids_by_url: dict[str, str] = {}
-    for index, (url, title, location, description) in enumerate(rows):
-        job_id = _insert_v7_job(
-            conn,
-            url=url,
-            title=title,
-            company="LinkedInCo",
-            description=description,
-            location=location,
-            site="linkedin",
-            strategy="jobspy",
-            discovered_at="2026-05-20T00:00:00+00:00",
-        )
-        job_ids_by_url[url] = job_id
-        _insert_source_observation(
-            conn,
-            observation_id=f"jobspy-sentinel-obs-{index}",
-            job_id=job_id,
-            source_id="jobspy:linkedin",
-            source_native_id=f"li-sentinel-{index}",
-            url=url,
-            observed_at="2026-05-20T00:00:00+00:00",
-        )
-    conn.execute(
-        """
-        INSERT INTO job_enrichments (
-            job_id, tenant_id, current_status, full_description, updated_at
-        ) VALUES (?, ?, ?, ?, ?)
-        """,
-        (
-            job_ids_by_url[
-                "https://www.linkedin.com/jobs/view/enrichment-sentinel-with-fallback"
-            ],
-            "local",
-            "success",
-            "<NA>",
-            "2026-05-20T00:00:00+00:00",
-        ),
-    )
-    conn.commit()
-
-    result = retire_invalid_source_jobs(
-        conn,
-        search_cfg={
-            "queries": [{"query": "Head of Engineering", "tier": 1}],
-            "locations": [{"location": "Spain"}],
-            "location_accept": ["Spain", "Barcelona, Spain"],
-        },
-        run_id="hygiene:serialized-null",
-    )
-
-    assert result["retired_jobs"] == 0
-    deleted = _deleted_reasons_by_url(conn)
-    assert not deleted
-
-
-def test_discovery_hygiene_applies_to_workday_and_smart_extract_rows(
-    conn: sqlite3.Connection,
-) -> None:
-    rows = [
-        (
-            "https://acme.wd1.myworkdayjobs.com/jobs/valid-engineering-manager",
-            "Engineering Manager",
-            "Madrid, Spain",
-            "Lead engineering teams in Spain.",
-            "Acme",
-            "workday_api",
-            "workday:acme",
-        ),
-        (
-            "https://acme.wd1.myworkdayjobs.com/jobs/customer-success",
-            "Customer Success Manager",
-            "Madrid, Spain",
-            "Lead customer success teams.",
-            "Acme",
-            "workday_api",
-            "workday:acme",
-        ),
-        (
-            "https://wellfound.com/jobs/valid-head-engineering",
-            "Head of Engineering",
-            "Spain",
-            "Lead engineering teams at a startup.",
-            "Wellfound",
-            "api_response",
-            "smart_extract:wellfound",
-        ),
-        (
-            "https://wellfound.com/jobs/us-head-engineering",
-            "Head of Engineering",
-            "United States (Remote)",
-            "Lead engineering teams at a startup.",
-            "Wellfound",
-            "smart_extract",
-            "smart_extract:wellfound",
-        ),
-        (
-            "https://wellfound.com/jobs/missing-description",
-            "Head of Engineering",
-            "Spain",
-            "",
-            "Wellfound",
-            "static",
-            "smart_extract:wellfound",
-        ),
-    ]
-    for index, (url, title, location, description, site, strategy, source_id) in enumerate(rows):
-        job_id = _insert_v7_job(
-            conn,
-            url=url,
-            title=title,
-            company=site,
-            description=description,
-            location=location,
-            site=site,
-            strategy=strategy,
-            discovered_at="2026-05-20T00:00:00+00:00",
-        )
-        _insert_source_observation(
-            conn,
-            observation_id=f"source-family-obs-{index}",
-            job_id=job_id,
-            source_id=source_id,
-            source_native_id=f"native-{index}",
-            url=url,
-            observed_at="2026-05-20T00:00:00+00:00",
-        )
-    conn.commit()
-
-    result = retire_invalid_source_jobs(
-        conn,
-        search_cfg={
-            "queries": [
-                {"query": "Head of Engineering", "tier": 1},
-                {"query": "Engineering Manager", "tier": 1},
-            ],
-            "locations": [{"location": "Spain"}],
-            "location_accept": ["Spain", "Madrid, Spain"],
-            "location_reject_non_remote": ["United States", "USA", "US only"],
-        },
-        run_id="hygiene:families",
-    )
-
-    assert result["retired_jobs"] == 3
-    deleted = _deleted_reasons_by_url(conn)
-    assert "https://acme.wd1.myworkdayjobs.com/jobs/valid-engineering-manager" not in deleted
-    assert "https://wellfound.com/jobs/valid-head-engineering" not in deleted
-    assert "title_mismatch" in deleted["https://acme.wd1.myworkdayjobs.com/jobs/customer-success"]
-    assert "location_mismatch" in deleted["https://wellfound.com/jobs/us-head-engineering"]
-    assert "missing_description" in deleted["https://wellfound.com/jobs/missing-description"]
 
 
 def test_canonical_ats_limit_counts_new_jobs_not_existing_observations(
@@ -1141,10 +673,7 @@ def test_canonical_ats_scheduler_preserves_successes_when_one_source_fails(
     assert result["failed_sources"] == ["lever:leadershipco"]
     assert result["failed_source_ids"] == ["lever:leadershipco"]
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
-    assert (
-        conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
-        == 2
-    )
+    assert conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0] == 2
     failed_event = conn.execute(
         """
         SELECT payload_json
@@ -1165,9 +694,7 @@ def test_runner_records_partial_ats_source_without_losing_successes(
     registry = _barcelona_registry()
     schedule = DiscoveryScheduler().plan(registry=registry)
     ats_sources = tuple(
-        source
-        for source in schedule.for_kinds(SourceKind.ATS_API)
-        if not source.source_id.startswith("workday:")
+        source for source in schedule.for_kinds(SourceKind.ATS_API) if not source.source_id.startswith("workday:")
     )
 
     def run_ats(run_id: str | None = None) -> dict[str, Any]:
@@ -1367,9 +894,7 @@ def test_enrichment_snapshot_success_uses_observed_source_id(
 
     assert observed_source_stats["detail_success_count"] == 1
     assert display_site_stats is None
-    assert json.loads(snapshot_event["payload_json"])["source_id"] == (
-        "greenhouse:barcelona-tech"
-    )
+    assert json.loads(snapshot_event["payload_json"])["source_id"] == ("greenhouse:barcelona-tech")
 
 
 def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(
@@ -1432,9 +957,7 @@ def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(
         (item_id,),
     ).fetchone()
     assert tuple(manual_row)[0:2] == ("imported", 1)
-    provenance = json.loads(manual_row["retry_context_json"])[
-        "manual_capture_provenance"
-    ]
+    provenance = json.loads(manual_row["retry_context_json"])["manual_capture_provenance"]
     assert provenance["source_kind"] == "user_mediated_capture"
 
 
@@ -1488,9 +1011,7 @@ def test_manual_capture_import_preserves_extension_capture_provenance(
         """,
         (item_id,),
     ).fetchone()
-    provenance = json.loads(manual_row["retry_context_json"])[
-        "manual_capture_provenance"
-    ]
+    provenance = json.loads(manual_row["retry_context_json"])["manual_capture_provenance"]
     assert provenance["source_kind"] == "user_mediated_capture"
     assert provenance["source_id"] == "manual_capture:extension"
     assert provenance["capture_mode"] == "current_page"
@@ -1513,6 +1034,9 @@ def test_manual_capture_import_cli_routes_api_bridge_through_worker_pipeline(
         """,
         ("manual:protected-board",),
     ).fetchone()["item_id"]
+
+    cfg = {"confirmed_targets": {"profile_version": 1, "roles": ["Synthetic target"]}}
+    monkeypatch.setattr(config, "load_search_config", lambda: cfg)
     close_connection(db_path)
     monkeypatch.setattr(
         sys,
@@ -1538,16 +1062,17 @@ def test_manual_capture_import_cli_routes_api_bridge_through_worker_pipeline(
     result = json.loads(captured.out)
     assert result["jobId"]
     assert result["promotedToJobEnrichment"] is True
-    assert result["retryContext"]["manual_capture_provenance"]["source_kind"] == (
-        "user_mediated_capture"
-    )
+    assert result["retryContext"]["manual_capture_provenance"]["source_kind"] == ("user_mediated_capture")
     verify_conn = sqlite3.connect(db_path)
     verify_conn.row_factory = sqlite3.Row
     try:
-        assert result["jobId"] == verify_conn.execute(
-            "SELECT job_id FROM jobs WHERE url = ?",
-            ("https://login.protected.example/jobs/vp-engineering",),
-        ).fetchone()["job_id"]
+        assert (
+            result["jobId"]
+            == verify_conn.execute(
+                "SELECT job_id FROM jobs WHERE url = ?",
+                ("https://login.protected.example/jobs/vp-engineering",),
+            ).fetchone()["job_id"]
+        )
         assert (
             verify_conn.execute(
                 "SELECT strategy FROM jobs WHERE url = ?",
@@ -1620,61 +1145,7 @@ def test_worker_queue_reseeding_preserves_imported_manual_capture_provenance(
     ).fetchone()
     reseeded_context = json.loads(manual_row["retry_context_json"])
     assert manual_row["status"] == "imported"
-    assert reseeded_context["manual_capture_provenance"] == (
-        imported_context["manual_capture_provenance"]
-    )
-
-
-def test_barcelona_spain_tech_leadership_acceptance_report_is_end_to_end(
-    conn: sqlite3.Connection,
-) -> None:
-    registry = _barcelona_registry()
-    seed_discovery_control_queues(conn, registry)
-    schedule = DiscoveryScheduler().plan(registry=registry)
-    run_scheduled_ats_sources(
-        conn,
-        schedule.for_kinds(SourceKind.ATS_API),
-        search_cfg=_search_cfg(),
-        run_id="acceptance:ats",
-        http=_fake_ats_http,
-    )
-    item_id = conn.execute(
-        "SELECT item_id FROM manual_capture_queue WHERE status = 'pending'"
-    ).fetchone()["item_id"]
-    import_manual_capture_item(
-        conn,
-        ManualCaptureImport(
-            item_id=item_id,
-            capture_mode="saved_html",
-            captured_url="https://login.protected.example/jobs/vp-engineering",
-            content_text=_manual_capture_html(),
-            future_manual_action_required=True,
-        ),
-    )
-
-    ProjectionBuilder(conn_factory=lambda: conn).refresh()
-
-    fixture = json.loads(
-        (
-            Path(__file__).parent
-            / "fixtures"
-            / "discovery_barcelona_acceptance.json"
-        ).read_text(encoding="utf-8")
-    )
-    report = build_discovery_acceptance_report(conn).to_dict()
-    assert report["scenario"] == fixture["scenario"]
-    assert report["lead_yield"] == fixture["minimums"]["lead_yield"]
-    assert set(report["candidate_sources"]) >= set(fixture["expected_sources"])
-    assert report["manual_action_count"] == fixture["minimums"]["manual_action_count"]
-    assert (
-        report["canonical_verification_rate"]
-        == fixture["minimums"]["canonical_verification_rate"]
-    )
-    assert report["duplicate_count"] == 0
-    assert report["quarantine_count"] == 0
-    assert report["source_quality_updates"] >= fixture["minimums"]["source_quality_updates"]
-    assert report["scoring_handoff_count"] == fixture["minimums"]["scoring_handoff_count"]
-    assert report["details"]["locator_candidates"] == 1
+    assert reseeded_context["manual_capture_provenance"] == (imported_context["manual_capture_provenance"])
 
 
 def test_live_browser_ats_failure_preserves_other_sources(
@@ -1689,17 +1160,25 @@ def test_live_browser_ats_failure_preserves_other_sources(
         if "lever.co" in url:
             return retryable_page_failure()
         return {
-            "status": "succeeded", "finalUrl": url, "statusCode": 200,
-            "contentType": "application/json", "bodyText": json.dumps(_fake_ats_http(url)),
+            "status": "succeeded",
+            "finalUrl": url,
+            "statusCode": 200,
+            "contentType": "application/json",
+            "bodyText": json.dumps(_fake_ats_http(url)),
         }
 
     broker = FixtureBrowserBroker(tmp_path, result_for)
     monkeypatch.setattr(production_wiring, "LiveChromeDiscoveryClient", broker.client)
     schedule = DiscoveryScheduler().plan(registry=_barcelona_registry())
     result = run_scheduled_ats_sources(
-        conn, schedule.for_kinds(SourceKind.ATS_API), search_cfg=_search_cfg(), run_id="fixture-ats",
+        conn,
+        schedule.for_kinds(SourceKind.ATS_API),
+        search_cfg=_search_cfg(),
+        run_id="fixture-ats",
         gateway=offline_gateway(),
-        discovery_execution=DiscoveryExecutionRef(tenant_id="local", workflow_id="fixture-ats", temporal_run_id="fixture-run"),
+        discovery_execution=DiscoveryExecutionRef(
+            tenant_id="local", workflow_id="fixture-ats", temporal_run_id="fixture-run"
+        ),
     )
     assert result["new_jobs"] == 2
     assert result["failed_sources"] == ["lever:leadershipco"]

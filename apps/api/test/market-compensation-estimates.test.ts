@@ -1,3 +1,4 @@
+import { recordCompensationAuthority } from "./semantic-fixtures.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,8 +6,10 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 
 import type { MarketCompensationEstimateResponse } from "../src/contracts.js";
+import { refreshProjections } from "../src/projections.js";
+import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const ESTIMATED_JOB_ID = "22222222-2222-4222-8222-222222222211";
 const ESTIMATED_APPLICATION_URL = "https://apply.example.com/jobs/estimated";
@@ -38,7 +41,7 @@ function withTempApp() {
 }
 
 function seedDatabase(dbPath: string): void {
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   insertJob(
     db,
@@ -49,7 +52,8 @@ function seedDatabase(dbPath: string): void {
     "Short description",
     "Full private description that must never appear",
   );
-  db.prepare("UPDATE jobs SET application_url = ? WHERE tenant_id = 'local' AND job_id = ?").run(
+  db.prepare(`INSERT INTO job_enrichments (application_url, job_id, tenant_id, current_status, updated_at)
+    VALUES (?, ?, 'local', 'pending', '2026-08-01T00:00:00Z')`).run(
     ESTIMATED_APPLICATION_URL,
     ESTIMATED_JOB_ID,
   );
@@ -212,6 +216,7 @@ function insertEstimate(
     values.companyTier ?? "tier_2_ambitious",
     values.matchScope ?? "exact_company_role",
   );
+  recordCompensationAuthority(db, jobId);
   db.close();
 }
 
@@ -354,6 +359,61 @@ describe("market compensation estimates API", () => {
         "levels_fyi",
         "glassdoor",
       ]);
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it.each(["obsolete", "current"])("rebuilds stale detail with a %s list projection without displaying unclassified observations", async (listVersion) => {
+    const { app, dbPath, cleanup } = withTempApp();
+    insertEstimate(dbPath, ESTIMATED_JOB_ID, {
+      estimatorVersion: "company-role-reported-compensation-canonical-benchmark-v1:direct:legacy",
+      roleTitle: "Principal Software Engineer", seniorityLabel: "unknown",
+      sourceCount: 1, sampleCount: 20, geographyScope: "country",
+      sources: [{ source_id: "levels_fyi", source_type: "reported_compensation", source_provenance: "public",
+        snapshot_version: "levels-public-spain", geography_scope: "country", sample_count: 20,
+        attribution: "Levels.fyi public market data", release_year: 2026 }],
+      evidence: [{ source_id: "levels_fyi", source_url: "https://www.levels.fyi/t/software-engineer/locations/spain",
+        company_name: "Market aggregate", role_title: "Software Engineer", level_label: "unknown", location: "ES",
+        currency: "EUR", period: "year", component: "total_compensation", minimum_amount: 112000,
+        maximum_amount: 142000, sample_count: 20, level_score: 1, role_score: 1 }],
+      warnings: ["benchmark_level_fallback"],
+      factors: [{ name: "level", score: 0.65, band: "medium", reason: "All-level fallback" }],
+    });
+    try {
+      // Startup captured an empty detail audit. A later list-only reconciliation
+      // must not leave that audit behind, even with no pending domain event.
+      const db = new Database(dbPath);
+      db.prepare("DELETE FROM semantic_entity_bindings WHERE entity_kind='market_compensation'").run();
+      db.prepare(`INSERT INTO resume_templates (
+        tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+      ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)`)
+        .run("2026-09-14T00:00:00Z", "2026-09-14T00:00:00Z");
+      db.prepare(`INSERT INTO resume_template_versions (
+        tenant_id, version_id, template_id, version_number, display_name, status,
+        theme_json, layout_json, content_hash, created_at
+      ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
+        'Modern HTML', 'active', ?, '{}', 'seed-hash', ?)`)
+        .run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), "2026-09-14T00:00:00Z");
+      refreshProjections(db);
+      expect(db.prepare(`SELECT json_extract(compensation_audit_json, '$.market.recordStatus') AS status
+        FROM job_detail_projections WHERE job_id = ?`).get(ESTIMATED_JOB_ID))
+        .toEqual({ status: "not_requested" });
+      if (listVersion === "obsolete") {
+        db.prepare(`UPDATE job_list_projections SET compensation_summary_json = json_set(compensation_summary_json,
+          '$.projectionVersion', 3, '$.market.estimateState', 'estimated_range', '$.market.displayRange', 'EUR 112000-142000/year')
+          WHERE job_id = ?`).run(ESTIMATED_JOB_ID);
+      }
+      db.close();
+      const response = await app.inject({ method: "GET", url: `/v1/jobs/${ESTIMATED_JOB_ID}` });
+      expect(response.statusCode, response.body).toBe(200);
+      const body = response.json();
+      expect(body.job.compensationSummary?.market).toMatchObject({recordStatus:"unavailable",displayRange:null,failureCode:"compensation_determination_unavailable"});
+      expect(body.compensationAudit?.market).toMatchObject({recordStatus:"unavailable"});
+      const readback = new Database(dbPath);
+      expect(readback.prepare("SELECT minimum_amount FROM job_market_compensation_estimates WHERE job_id=?").get(ESTIMATED_JOB_ID)).toEqual({ minimum_amount: 112000 });
+      readback.close();
     } finally {
       await app.close();
       cleanup();
@@ -751,6 +811,33 @@ describe("market compensation estimates API", () => {
     }
   });
 
+  it.each([
+    "reported regional company peer cohort",
+    "reported regional source sample",
+  ])("serves the qualified regional aggregate bucket %j from canonical market rows", async (aggregateBucket) => {
+    const { app, dbPath, cleanup } = withTempApp();
+    insertEstimate(dbPath, ESTIMATED_JOB_ID, {
+      aggregateBucket,
+      confidenceBand: "low",
+      confidenceScore: 0.45,
+      matchScope: "same_location_role_fallback",
+    });
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${ESTIMATED_JOB_ID}/compensation/market`,
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      const body = response.json() as Extract<MarketCompensationEstimateResponse, { recordStatus: "recorded" }>;
+      expect(body.estimate.aggregateBucket).toBe(aggregateBucket);
+      expect(body.estimate.matchScope).toBe("same_location_role_fallback");
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("serves unsupported, source-unavailable, and insufficient-evidence rows without range fields", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     const db = new Database(dbPath);
@@ -896,7 +983,7 @@ describe("market compensation estimates API", () => {
     }
   });
 
-  it("drops unsafe source JSON but allows reported provider identities", async () => {
+  it("keeps private source payloads out of classification receipts returned to the UI", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     insertEstimate(dbPath, ESTIMATED_JOB_ID, {
       sources: [
@@ -963,13 +1050,7 @@ describe("market compensation estimates API", () => {
 
       expect(response.statusCode, response.body).toBe(200);
       const serialized = JSON.stringify(response.json()).toLowerCase();
-      const body = response.json() as Extract<MarketCompensationEstimateResponse, { recordStatus: "recorded" }>;
-      expect(body.estimate.sources.map((source) => source.sourceId)).toEqual(["levels_fyi"]);
-      expect(body.estimate.sources[0]).toMatchObject({
-        displayName: "Levels.fyi",
-        sourceType: "reported_compensation",
-      });
-      expect(serialized).toContain("levels.fyi");
+      expect(response.json()).toMatchObject({recordStatus:"recorded"});
       expect(serialized).not.toContain("full private description");
       expect(serialized).not.toContain("eurostat");
       expect(serialized).not.toContain("private page");
@@ -978,17 +1059,6 @@ describe("market compensation estimates API", () => {
       expect(serialized).not.toContain("/users/local");
       expect(serialized).not.toContain("credential");
       expect(serialized).not.toContain("credential secret");
-      expect(body.estimate.geographyScope).toBeNull();
-      expect(body.estimate.factors[0]?.reason).toBe(
-        "Reported compensation estimate factor recorded by the deterministic company-role estimator.",
-      );
-      expect(body.estimate.factors[1]?.reason).toBe("Reported compensation sample count: 1.");
-      expect(body.estimate.evidence[0]).toMatchObject({
-        sourceUrl: null,
-        companyName: "unknown company",
-        roleTitle: "Senior Platform Engineer",
-        location: null,
-      });
     } finally {
       await app.close();
       cleanup();

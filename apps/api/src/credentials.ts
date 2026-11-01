@@ -17,6 +17,23 @@ import {
   SecretCredentialKeys,
 } from "./contracts.js";
 import { isRecord, readConfigObject, updateConfigObject } from "./config-file.js";
+import {
+  CredentialMutationLockError,
+  CredentialMutationPendingError,
+  withCredentialMutationLock,
+  type CredentialMutationGuard,
+} from "./credential-mutation-lock.js";
+import type { ProcessIdentityReader } from "./credential-process-identity.js";
+import {
+  createLinuxSecretServiceRunner,
+  createWindowsCredentialManagerRunner,
+  nativeCredentialMaxBytes,
+  nativeCredentialValueSupported,
+  nativeStoreKind,
+  NATIVE_CREDENTIAL_COMMAND_TIMEOUT_MS,
+  WINDOWS_CREDENTIAL_COMMAND_TIMEOUT_MS,
+  type NativeCredentialCommandRunner,
+} from "./native-credential-store.js";
 
 export const KEYCHAIN_SERVICE = "JobCtrl";
 export const KEYCHAIN_SECURITY_BINARY = "/usr/bin/security";
@@ -25,7 +42,7 @@ export const KEYCHAIN_REQUIRES_WORKER_RESTART = true as const;
 /** Hard ceiling for every macOS `security` invocation, mirrored by the Python runtime. */
 export const KEYCHAIN_COMMAND_TIMEOUT_MS = 2_000;
 
-const MAX_CAPTURED_OUTPUT_CHARS = CREDENTIAL_VALUE_MAX_LENGTH + 2;
+const MAX_CAPTURED_OUTPUT_CHARS = CREDENTIAL_VALUE_MAX_LENGTH * 8 + 4_096;
 const CONFIRMED_NOT_FOUND_MESSAGES = new Set([
   "The specified item could not be found.",
   "The specified item could not be found in the keychain.",
@@ -68,6 +85,7 @@ export interface SecurityCommandResult {
 export interface SecurityCommandOptions {
   sensitiveInput?: string;
   timeoutMs: number;
+  onSpawn?: (pid: number, isRunning?: () => boolean) => Promise<void>;
 }
 
 export type SecurityCommandRunner = (
@@ -88,10 +106,12 @@ interface SecurityOutputStream {
 }
 
 export interface SecurityChildProcess {
+  readonly pid?: number;
   readonly stdin: SecurityInputStream;
   readonly stdout: SecurityOutputStream;
   readonly stderr: SecurityOutputStream;
   on(event: "error", listener: (error: Error) => void): unknown;
+  on(event: "exit", listener: (code: number | null) => void): unknown;
   on(event: "close", listener: (code: number | null) => void): unknown;
   kill(signal: NodeJS.Signals): boolean;
 }
@@ -103,18 +123,23 @@ export type SecurityProcessSpawner = (
 ) => SecurityChildProcess;
 
 export type CredentialStoreFailureReason =
+  | "busy"
+  | "ownership_unverified"
   | "operational_failure"
   | "partial_failure"
   | "unsupported_platform";
 
 const CREDENTIAL_STORE_MESSAGES: Record<CredentialStoreFailureReason, string> =
   {
+    busy: "Another credential update is in progress. Retry after it finishes.",
+    ownership_unverified:
+      "Credential update ownership could not be verified. Restore process inspection or verify the previous helper has exited before clearing its coordination record.",
     unsupported_platform:
-      "macOS Keychain credential editing is unavailable on this platform.",
+      "Native credential storage is unavailable on this platform.",
     operational_failure:
-      "macOS Keychain is temporarily unavailable. Unlock Keychain Access and retry.",
+      "The native credential store is temporarily unavailable. Unlock it and retry.",
     partial_failure:
-      "Credential update failed and Keychain recovery was incomplete. Provider credentials may be partially updated; inspect Keychain before retrying.",
+      "Credential update failed and native-store recovery was incomplete. Provider credentials may be partially updated; inspect the native credential store before retrying.",
   };
 
 export class CredentialStoreUnavailableError extends Error {
@@ -137,6 +162,18 @@ export class CredentialManagedByEnvironmentError extends Error {
   }
 }
 
+export class CredentialValueUnsupportedError extends Error {
+  readonly key: SecretCredentialKey;
+  readonly maxBytes: number;
+
+  constructor(key: SecretCredentialKey, maxBytes: number) {
+    super(`This credential exceeds the native store's secure ${maxBytes}-byte input limit.`);
+    this.name = "CredentialValueUnsupportedError";
+    this.key = key;
+    this.maxBytes = maxBytes;
+  }
+}
+
 class SecurityCommandRunnerError extends Error {
   constructor(message: string) {
     super(message);
@@ -144,12 +181,21 @@ class SecurityCommandRunnerError extends Error {
   }
 }
 
+class SecurityCommandTimeoutError extends SecurityCommandRunnerError {}
+class CredentialMutationUncertainError extends Error {}
+
 export interface KeychainCredentialStoreOptions {
   platform?: NodeJS.Platform;
   runSecurity?: SecurityCommandRunner;
+  runNative?: NativeCredentialCommandRunner;
   commandTimeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   configPath?: string;
+  service?: string;
+  /** Isolated coordinator path and timeout for synthetic tests. */
+  mutationLockPath?: string;
+  mutationLockTimeoutMs?: number;
+  processIdentityReader?: ProcessIdentityReader;
 }
 
 type KeychainSnapshot =
@@ -159,18 +205,41 @@ type KeychainSnapshot =
 export class KeychainCredentialStore implements CredentialStore {
   private readonly platform: NodeJS.Platform;
   private readonly runSecurity: SecurityCommandRunner;
+  private readonly runNative: NativeCredentialCommandRunner | null;
   private readonly commandTimeoutMs: number;
   private readonly env: NodeJS.ProcessEnv;
   private readonly configPath: string;
+  private readonly service: string;
+  private readonly mutationLockPath: string | undefined;
+  private readonly mutationLockTimeoutMs: number | undefined;
+  private readonly processIdentityReader: ProcessIdentityReader | undefined;
+  private activeMutationGuard: CredentialMutationGuard | undefined;
 
   constructor(options: KeychainCredentialStoreOptions = {}) {
     this.platform = options.platform ?? process.platform;
     this.runSecurity = options.runSecurity ?? defaultSecurityCommandRunner;
+    this.runNative = options.runNative ?? (
+      this.platform === "linux"
+        ? createLinuxSecretServiceRunner()
+        : this.platform === "win32"
+          ? createWindowsCredentialManagerRunner(options.env ?? process.env)
+          : null
+    );
     this.commandTimeoutMs = normalizeTimeout(
-      options.commandTimeoutMs ?? KEYCHAIN_COMMAND_TIMEOUT_MS,
+      options.commandTimeoutMs ?? (
+        this.platform === "darwin"
+          ? KEYCHAIN_COMMAND_TIMEOUT_MS
+          : this.platform === "win32"
+            ? WINDOWS_CREDENTIAL_COMMAND_TIMEOUT_MS
+          : NATIVE_CREDENTIAL_COMMAND_TIMEOUT_MS
+      ),
     );
     this.env = options.env ?? process.env;
     this.configPath = options.configPath ?? defaultConfigPath(this.env);
+    this.service = options.service ?? KEYCHAIN_SERVICE;
+    this.mutationLockPath = options.mutationLockPath;
+    this.mutationLockTimeoutMs = options.mutationLockTimeoutMs;
+    this.processIdentityReader = options.processIdentityReader;
   }
 
   async list(): Promise<CredentialsResponse> {
@@ -181,14 +250,14 @@ export class KeychainCredentialStore implements CredentialStore {
     for (const key of ProviderConfigurationKeys) {
       configured.set(key, Boolean(providerConfiguration[key]?.trim()));
     }
-    const keychainConfigured = this.supported
+    const nativeConfigured = this.supported
       ? await Promise.all(SecretCredentialKeys.map((key) => this.inspect(key)))
       : SecretCredentialKeys.map(() => null);
     SecretCredentialKeys.forEach((key, index) => {
-      configured.set(key, keychainConfigured[index] ?? null);
+      configured.set(key, nativeConfigured[index] ?? null);
     });
     const unavailableReason = this.supported
-      ? keychainConfigured.some((value) => value === null)
+      ? nativeConfigured.some((value) => value === null)
         ? "inspection_failed" as const
         : null
       : "unsupported_platform" as const;
@@ -199,28 +268,52 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   async set(key: CredentialKey, value: string): Promise<CredentialsResponse> {
-    if (isProviderConfigurationKey(key)) {
-      this.updateProviderConfiguration([{ operation: "set", key, value }]);
-      return this.list();
+    if (isSecretCredentialKey(key)) {
+      this.ensureNotEnvironmentManaged(key);
+      this.ensureSupported();
+      this.ensureValueSupported(key, value);
     }
-    this.ensureNotEnvironmentManaged(key);
-    this.ensureSupported();
-    await this.setWithoutInspection(key, value as SecretCredentialKey);
-    return this.list();
+    return this.withMutationLock(async () => {
+      if (isProviderConfigurationKey(key)) {
+        this.updateProviderConfiguration([{ operation: "set", key, value }]);
+        return this.list();
+      }
+      this.ensureNotEnvironmentManaged(key);
+      this.ensureSupported();
+      await this.setWithoutInspection(key, value as SecretCredentialKey);
+      return this.list();
+    });
   }
 
   async delete(key: CredentialKey): Promise<CredentialsResponse> {
-    if (isProviderConfigurationKey(key)) {
-      this.updateProviderConfiguration([{ operation: "delete", key }]);
-      return this.list();
+    if (isSecretCredentialKey(key)) {
+      this.ensureNotEnvironmentManaged(key);
+      this.ensureSupported();
     }
-    this.ensureNotEnvironmentManaged(key);
-    this.ensureSupported();
-    await this.deleteWithoutInspection(key as SecretCredentialKey);
-    return this.list();
+    return this.withMutationLock(async () => {
+      if (isProviderConfigurationKey(key)) {
+        this.updateProviderConfiguration([{ operation: "delete", key }]);
+        return this.list();
+      }
+      this.ensureNotEnvironmentManaged(key);
+      this.ensureSupported();
+      await this.deleteWithoutInspection(key as SecretCredentialKey);
+      return this.list();
+    });
   }
 
   async applyBatch(
+    operations: readonly CredentialBatchOperation[],
+  ): Promise<CredentialsResponse> {
+    const capturedOperations = operations.map((operation) => ({ ...operation }));
+    this.validateSecretOperations(capturedOperations.filter(
+      (operation): operation is CredentialBatchOperation & { key: SecretCredentialKey } =>
+        isSecretCredentialKey(operation.key),
+    ));
+    return this.withMutationLock(() => this.applyBatchLocked(capturedOperations));
+  }
+
+  private async applyBatchLocked(
     operations: readonly CredentialBatchOperation[],
   ): Promise<CredentialsResponse> {
     const secretOperations = operations.filter(
@@ -231,33 +324,101 @@ export class KeychainCredentialStore implements CredentialStore {
       (operation): operation is CredentialBatchOperation & { key: ProviderConfigurationKey } =>
         isProviderConfigurationKey(operation.key),
     );
-    for (const operation of secretOperations) {
-      this.ensureNotEnvironmentManaged(operation.key);
-    }
-    if (secretOperations.length > 0) {
-      this.ensureSupported();
-    }
+    this.validateSecretOperations(secretOperations);
     const snapshots = new Map<SecretCredentialKey, KeychainSnapshot>();
     for (const operation of secretOperations) {
       if (!snapshots.has(operation.key)) {
         snapshots.set(operation.key, await this.snapshot(operation.key));
       }
     }
+    for (const [key, snapshot] of snapshots) {
+      if (snapshot.configured) this.ensureValueSupported(key, snapshot.value);
+    }
 
+    let successfulOperations = 0;
     try {
       for (const operation of secretOperations) {
         await this.applyOperation(operation);
+        successfulOperations += 1;
       }
       if (configurationOperations.length > 0) {
         this.updateProviderConfiguration(configurationOperations);
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof CredentialMutationPendingError || error instanceof CredentialMutationUncertainError) throw error;
+      if (error instanceof CredentialMutationLockError && error.reason === "unverified" && successfulOperations === 0) throw error;
       const restored = await this.restoreSnapshots(snapshots);
       throw new CredentialStoreUnavailableError(
         restored ? "operational_failure" : "partial_failure",
       );
     }
     return this.list();
+  }
+
+  private validateSecretOperations(
+    operations: readonly (CredentialBatchOperation & { key: SecretCredentialKey })[],
+  ): void {
+    for (const operation of operations) this.ensureNotEnvironmentManaged(operation.key);
+    if (operations.length > 0) this.ensureSupported();
+    for (const operation of operations) {
+      if (operation.operation === "set") this.ensureValueSupported(operation.key, operation.value);
+    }
+  }
+
+  private async withMutationLock<T>(action: () => Promise<T>): Promise<T> {
+    try {
+      return await withCredentialMutationLock(async (guard) => {
+        this.activeMutationGuard = guard;
+        try { return await action(); } finally { this.activeMutationGuard = undefined; }
+      }, {
+        ...(this.mutationLockPath === undefined ? {} : { path: this.mutationLockPath }),
+        ...(this.mutationLockTimeoutMs === undefined ? {} : { timeoutMs: this.mutationLockTimeoutMs }),
+        ...(this.processIdentityReader === undefined ? {} : { readIdentity: this.processIdentityReader }),
+      });
+    } catch (error) {
+      if (error instanceof CredentialMutationPendingError || error instanceof CredentialMutationUncertainError) {
+        throw new CredentialStoreUnavailableError("partial_failure");
+      }
+      if (error instanceof CredentialMutationLockError) {
+        throw new CredentialStoreUnavailableError(
+          error.reason === "busy" ? "busy" : error.reason === "unverified" ? "ownership_unverified" : "operational_failure",
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async startMutation<T>(run: (onSpawn: (pid: number, isRunning?: () => boolean) => Promise<void>) => Promise<T>): Promise<T> {
+    if (!this.activeMutationGuard) throw new CredentialStoreUnavailableError("operational_failure");
+    let marker: Awaited<ReturnType<CredentialMutationGuard["begin"]>>;
+    try {
+      marker = await this.activeMutationGuard.begin();
+    } catch (error) {
+      if (error instanceof CredentialMutationLockError || error instanceof CredentialMutationUncertainError) throw error;
+      throw new CredentialStoreUnavailableError("operational_failure");
+    }
+    let childRegistered = false;
+    let registration: Promise<void> | undefined;
+    try {
+      const pending = run((pid, isRunning) => {
+        childRegistered = true;
+        registration = marker.started(pid, isRunning);
+        return registration;
+      });
+      return pending.then(
+        (value) => { marker.clear(); return value; },
+        (error: unknown) => { marker.clear(); throw error; },
+      );
+    } catch {
+      if (registration) await registration.catch(() => undefined);
+      // No child can receive mutation input before registration. If a runner
+      // throws after registration, leave the PID marker to fence successors.
+      if (!childRegistered) {
+        try { marker.clear(); } catch { /* Preserve an unverified marker. */ }
+      }
+      if (childRegistered) throw new CredentialMutationUncertainError();
+      throw new CredentialStoreUnavailableError("operational_failure");
+    }
   }
 
   private async applyOperation(
@@ -271,16 +432,14 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   private async snapshot(key: SecretCredentialKey): Promise<KeychainSnapshot> {
-    const result = await this.execute([
-      "find-generic-password",
-      "-s",
-      KEYCHAIN_SERVICE,
-      "-a",
-      keychainAccount(key),
-      "-w",
-    ]);
+    const result = await this.executeNative("read", key);
     if (result.code === 0) {
-      const value = stripTerminalLineEnding(result.stdout);
+      const value = this.platform === "darwin"
+        ? parseMacosTypedPassword(result.stderr)
+        : result.stdout;
+      if (value === null) {
+        throw new CredentialStoreUnavailableError("operational_failure");
+      }
       if (!CredentialUpdateRequestSchema.safeParse({ key, value }).success) {
         throw new CredentialStoreUnavailableError("operational_failure");
       }
@@ -303,7 +462,8 @@ export class KeychainCredentialStore implements CredentialStore {
         } else {
           await this.deleteWithoutInspection(key);
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof CredentialMutationPendingError || error instanceof CredentialMutationUncertainError) throw error;
         restored = false;
       }
     }
@@ -311,31 +471,23 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   private async setWithoutInspection(key: SecretCredentialKey, value: string): Promise<void> {
-    const result = await this.execute(
-      [
-        "add-generic-password",
-        "-s",
-        KEYCHAIN_SERVICE,
-        "-a",
-        keychainAccount(key),
-        "-U",
-        "-w",
-      ],
-      value,
-    );
+    this.ensureValueSupported(key, value);
+    const result = await this.executeNative("set", key, value);
     if (result.code !== 0) {
       throw new CredentialStoreUnavailableError("operational_failure");
     }
   }
 
+  private ensureValueSupported(key: SecretCredentialKey, value: string): void {
+    if (nativeCredentialValueSupported(this.platform, value)) return;
+    throw new CredentialValueUnsupportedError(
+      key,
+      nativeCredentialMaxBytes(this.platform) ?? CREDENTIAL_VALUE_MAX_LENGTH,
+    );
+  }
+
   private async deleteWithoutInspection(key: SecretCredentialKey): Promise<void> {
-    const result = await this.execute([
-      "delete-generic-password",
-      "-s",
-      KEYCHAIN_SERVICE,
-      "-a",
-      keychainAccount(key),
-    ]);
+    const result = await this.executeNative("delete", key);
     if (result.code !== 0 && !isConfirmedNotFound(result)) {
       throw new CredentialStoreUnavailableError("operational_failure");
     }
@@ -343,13 +495,7 @@ export class KeychainCredentialStore implements CredentialStore {
 
   private async inspect(key: SecretCredentialKey): Promise<boolean | null> {
     try {
-      const result = await this.execute([
-        "find-generic-password",
-        "-s",
-        KEYCHAIN_SERVICE,
-        "-a",
-        keychainAccount(key),
-      ]);
+      const result = await this.executeNative("inspect", key);
       if (result.code === 0) {
         return true;
       }
@@ -359,17 +505,75 @@ export class KeychainCredentialStore implements CredentialStore {
     }
   }
 
+  /** Private-value seam for migration and owned native QA only. */
+  async readForInternalUse(key: SecretCredentialKey): Promise<string | null> {
+    this.ensureSupported();
+    const snapshot = await this.snapshot(key);
+    return snapshot.configured ? snapshot.value : null;
+  }
+
+  private async executeNative(
+    operation: "inspect" | "read" | "set" | "delete",
+    key: SecretCredentialKey,
+    value?: string,
+  ): Promise<SecurityCommandResult> {
+    if (this.platform === "darwin") {
+      const args = operation === "set"
+        ? ["add-generic-password", "-s", this.service, "-a", keychainAccount(key), "-U", "-w"]
+        : operation === "delete"
+          ? ["delete-generic-password", "-s", this.service, "-a", keychainAccount(key)]
+          : [
+              "find-generic-password",
+              "-s",
+              this.service,
+              "-a",
+              keychainAccount(key),
+              ...(operation === "read" ? ["-g"] : []),
+            ];
+      return this.execute(args, value, operation === "set" || operation === "delete");
+    }
+    if (!this.runNative) {
+      throw new CredentialStoreUnavailableError("unsupported_platform");
+    }
+    let pending: Promise<SecurityCommandResult> | undefined;
+    try {
+      const command = { key, operation, service: this.service, ...(value === undefined ? {} : { value }) };
+      pending = operation === "set" || operation === "delete"
+        ? this.startMutation((onSpawn) => this.runNative!(command, this.commandTimeoutMs, { onSpawn }))
+        : this.runNative(command, this.commandTimeoutMs);
+      const result = await withTimeout(
+        pending,
+        this.commandTimeoutMs,
+      );
+      if (!isSecurityCommandResult(result)) {
+        throw new SecurityCommandRunnerError("Native credential command returned an invalid result.");
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof CredentialMutationUncertainError || error instanceof CredentialMutationLockError) throw error;
+      if (pending && error instanceof SecurityCommandTimeoutError && (operation === "set" || operation === "delete")) {
+        throw new CredentialMutationPendingError(pending);
+      }
+      throw new CredentialStoreUnavailableError("operational_failure");
+    }
+  }
+
   private async execute(
     args: string[],
     sensitiveInput?: string,
+    mutating = false,
   ): Promise<SecurityCommandResult> {
     let pending: Promise<SecurityCommandResult>;
     try {
-      pending = this.runSecurity(args, {
+      const options = {
         ...(sensitiveInput === undefined ? {} : { sensitiveInput }),
         timeoutMs: this.commandTimeoutMs,
-      });
-    } catch {
+      };
+      pending = mutating
+        ? this.startMutation((onSpawn) => this.runSecurity(args, { ...options, onSpawn }))
+        : this.runSecurity(args, options);
+    } catch (error) {
+      if (error instanceof CredentialMutationUncertainError || error instanceof CredentialMutationLockError) throw error;
       throw new CredentialStoreUnavailableError("operational_failure");
     }
 
@@ -381,13 +585,17 @@ export class KeychainCredentialStore implements CredentialStore {
         );
       }
       return result;
-    } catch {
+    } catch (error) {
+      if (error instanceof CredentialMutationLockError || error instanceof CredentialMutationUncertainError) throw error;
+      if (mutating && error instanceof SecurityCommandTimeoutError) {
+        throw new CredentialMutationPendingError(pending);
+      }
       throw new CredentialStoreUnavailableError("operational_failure");
     }
   }
 
   private get supported(): boolean {
-    return this.platform === "darwin";
+    return nativeStoreKind(this.platform) !== null;
   }
 
   private response(
@@ -397,7 +605,9 @@ export class KeychainCredentialStore implements CredentialStore {
     return {
       ok: true,
       store: {
-        kind: "config_and_macos_keychain",
+        kind: "config_and_native_credential_store",
+        nativeStore: nativeStoreKind(this.platform),
+        maxSecretBytes: nativeCredentialMaxBytes(this.platform),
         available: unavailableReason === null,
         unavailableReason,
         requiresWorkerRestart: KEYCHAIN_REQUIRES_WORKER_RESTART,
@@ -406,7 +616,7 @@ export class KeychainCredentialStore implements CredentialStore {
         key,
         label: LABELS[key],
         configured: configured.get(key) ?? null,
-        storage: isProviderConfigurationKey(key) ? "config" as const : "keychain" as const,
+        storage: isProviderConfigurationKey(key) ? "config" as const : "native_store" as const,
         effectiveSource: this.effectiveSource(key, configured.get(key) ?? null),
         editable: isProviderConfigurationKey(key)
           ? true
@@ -423,7 +633,7 @@ export class KeychainCredentialStore implements CredentialStore {
       return configured ? "config" : "absent";
     }
     if (this.environmentOwned(key)) return "environment";
-    if (configured === true) return "keychain";
+    if (configured === true) return "native_store";
     if (configured === false) return "absent";
     return "inspection_unknown";
   }
@@ -460,6 +670,8 @@ export class KeychainCredentialStore implements CredentialStore {
     });
   }
 }
+
+export { KeychainCredentialStore as NativeCredentialStore };
 
 type ProviderConfigurationValues = Partial<Record<ProviderConfigurationKey, string>>;
 
@@ -600,9 +812,13 @@ export function createSecurityCommandRunner(
         return;
       }
 
+      const mutating = args[0] === "add-generic-password" || args[0] === "delete-generic-password";
       let child: SecurityChildProcess;
       try {
-        child = spawnSecurity(KEYCHAIN_SECURITY_BINARY, args, {
+        child = spawnSecurity(mutating ? "/bin/sh" : KEYCHAIN_SECURITY_BINARY, mutating
+          ? ["-c", 'guard=$(/bin/dd bs=1 count=1 2>/dev/null); [ "$guard" = 1 ] || exit 1; exec "$@"',
+              "jobctrl-credential-helper", KEYCHAIN_SECURITY_BINARY, ...args]
+          : args, {
           stdio: ["pipe", "pipe", "pipe"],
         });
       } catch {
@@ -613,6 +829,11 @@ export function createSecurityCommandRunner(
       }
 
       let settled = false;
+      let failure: Error | undefined;
+      let registrationPending = false;
+      let closed = false;
+      let exited = false;
+      let exitCode: number | null = null;
       let stdout = "";
       let stderr = "";
       const timeoutMs = normalizeTimeout(options.timeoutMs);
@@ -625,10 +846,17 @@ export function createSecurityCommandRunner(
           // The sanitized command failure remains authoritative.
         }
         try {
-          child.kill("SIGKILL");
+          if (!exited && !closed) child.kill("SIGKILL");
         } catch {
           // The sanitized command failure remains authoritative.
         }
+      };
+
+      const failAfterExit = (message: string, cause?: unknown): void => {
+        if (settled || failure) return;
+        failure = cause instanceof CredentialMutationLockError ? cause : new SecurityCommandRunnerError(message);
+        if (timeout) clearTimeout(timeout);
+        terminateChild();
       };
 
       const settle = (action: () => void): boolean => {
@@ -642,6 +870,13 @@ export function createSecurityCommandRunner(
         action();
         return true;
       };
+      const settleAfterClose = (): void => {
+        if (!closed || registrationPending) return;
+        settle(() => {
+          if (failure) reject(failure);
+          else resolve({ code: exitCode ?? 1, stderr: stderr.trim(), stdout });
+        });
+      };
 
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
@@ -652,52 +887,49 @@ export function createSecurityCommandRunner(
         stderr = appendBounded(stderr, chunk);
       });
       child.on("error", () => {
-        settle(() => {
-          terminateChild();
-          reject(
-            new SecurityCommandRunnerError("Keychain command could not start."),
-          );
-        });
+        failAfterExit("Keychain command could not start.");
       });
+      child.on("exit", () => { exited = true; });
       child.on("close", (code) => {
-        settle(() =>
-          resolve({
-            code: code ?? 1,
-            stderr: stderr.trim(),
-            stdout,
-          }),
-        );
+        closed = true;
+        exitCode = code;
+        settleAfterClose();
       });
 
       child.stdin.on("error", () => {
-        settle(() => {
-          terminateChild();
-          reject(
-            new SecurityCommandRunnerError("Keychain command input failed."),
-          );
-        });
+        failAfterExit("Keychain command input failed.");
       });
 
       timeout = setTimeout(() => {
-        settle(() => {
-          terminateChild();
-          reject(new SecurityCommandRunnerError("Keychain command timed out."));
-        });
+        failAfterExit("Keychain command timed out.");
       }, timeoutMs);
 
-      try {
-        if (sensitiveInput === undefined) {
+      const sendInput = (): void => {
+        if (settled || failure || closed) return;
+        try {
+        if (mutating) {
+          child.stdin.end(`1${sensitiveInput === undefined ? "" : keychainPromptInput(sensitiveInput)}`, "utf8");
+        } else if (sensitiveInput === undefined) {
           child.stdin.end();
         } else {
           child.stdin.end(keychainPromptInput(sensitiveInput), "utf8");
         }
-      } catch {
-        settle(() => {
-          terminateChild();
-          reject(
-            new SecurityCommandRunnerError("Keychain command input failed."),
+        } catch { failAfterExit("Keychain command input failed."); }
+      };
+      if (mutating && options.onSpawn) {
+        try {
+          if (!child.pid) throw new CredentialMutationLockError("unverified");
+          registrationPending = true;
+          void options.onSpawn(child.pid, () => !closed && !exited).then(
+            () => { registrationPending = false; sendInput(); settleAfterClose(); },
+            (error: unknown) => { registrationPending = false; failAfterExit("Keychain helper identity is unavailable.", error); settleAfterClose(); },
           );
-        });
+        } catch (error) {
+          registrationPending = false;
+          failAfterExit("Keychain helper identity is unavailable.", error);
+        }
+      } else {
+        sendInput();
       }
     });
 }
@@ -737,12 +969,16 @@ function validSensitiveInputContract(
   return (
     args.length === 7 &&
     args[1] === "-s" &&
-    args[2] === KEYCHAIN_SERVICE &&
+    validCredentialService(args[2]) &&
     args[3] === "-a" &&
     args[5] === "-U" &&
     args.at(-1) === "-w" &&
     parsedInput.success
   );
+}
+
+function validCredentialService(value: string | undefined): boolean {
+  return value === KEYCHAIN_SERVICE || /^JobCtrl-QA-[0-9a-f-]{36}$/i.test(value ?? "");
 }
 
 function keychainPromptInput(sensitiveInput: string): string {
@@ -751,12 +987,20 @@ function keychainPromptInput(sensitiveInput: string): string {
   return `${sensitiveInput}\n${sensitiveInput}\n`;
 }
 
-function stripTerminalLineEnding(value: string): string {
-  return value.endsWith("\r\n")
-    ? value.slice(0, -2)
-    : value.endsWith("\n")
-      ? value.slice(0, -1)
-      : value;
+function parseMacosTypedPassword(stderr: string): string | null {
+  const line = stderr.split(/\r?\n/u).find((entry) => entry.startsWith("password: "));
+  if (!line) return null;
+  const payload = line.slice("password: ".length);
+  const hex = /^0x([0-9a-f]+)(?:\s|$)/iu.exec(payload)?.[1];
+  if (hex) {
+    const bytes = Buffer.from(hex, "hex");
+    const decoded = bytes.toString("utf8");
+    return Buffer.from(decoded, "utf8").equals(bytes) ? decoded : null;
+  }
+  if (!payload.startsWith('"') || !payload.endsWith('"')) return null;
+  // `security -g` does not escape embedded ASCII quotes. Strip only the
+  // unambiguous outer delimiter; binary/backslash-bearing values use 0x form.
+  return payload.slice(1, -1);
 }
 
 function isSecurityCommandResult(
@@ -798,7 +1042,7 @@ function withTimeout<T>(pending: Promise<T>, timeoutMs: number): Promise<T> {
         return;
       }
       settled = true;
-      reject(new SecurityCommandRunnerError("Keychain command timed out."));
+      reject(new SecurityCommandTimeoutError("Keychain command timed out."));
     }, timeoutMs);
 
     void pending.then(
@@ -810,13 +1054,14 @@ function withTimeout<T>(pending: Promise<T>, timeoutMs: number): Promise<T> {
         clearTimeout(timeout);
         resolve(value);
       },
-      () => {
+      (error: unknown) => {
         if (settled) {
           return;
         }
         settled = true;
         clearTimeout(timeout);
-        reject(new SecurityCommandRunnerError("Keychain command failed."));
+        reject(error instanceof CredentialMutationLockError || error instanceof CredentialMutationUncertainError
+          ? error : new SecurityCommandRunnerError("Keychain command failed."));
       },
     );
   });

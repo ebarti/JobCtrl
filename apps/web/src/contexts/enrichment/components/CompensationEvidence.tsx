@@ -18,8 +18,11 @@ import type {
   PostedCompensationWarning,
 } from "@jobctrl/contracts";
 
+import type { DeterminationEnvelope } from "@jobctrl/contracts";
+
 import { Empty } from "../../../shared/ui/empty.js";
 import { Button } from "../../../shared/ui/button.js";
+import { ContextHelp } from "../../../shared/ui/context-help.js";
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { useRefreshCompensationMutation } from "../hooks/useRefreshCompensationMutation.js";
 
@@ -216,6 +219,7 @@ function marketReliabilityText(market: JobMarketCompensationSummary): string {
 }
 
 function postedAuthorityText(posted: JobPostedCompensationSummary): string {
+  if (posted.recordStatus === "unavailable") return "posted interpretation unavailable";
   if (
     posted.recordStatus === "recorded" &&
     posted.parseState === "parsed_range"
@@ -391,16 +395,18 @@ export function CompensationSummaryStrip({
 function DetailRow({
   label,
   value,
+  help,
 }: {
   readonly label: string;
   readonly value: string | number | null | undefined;
+  readonly help?: string;
 }) {
   if (value === null || value === undefined || value === "") {
     return null;
   }
   return (
     <div>
-      <dt>{label}</dt>
+      <dt>{label}{help ? <ContextHelp label={label} description={help} /> : null}</dt>
       <dd>{value}</dd>
     </div>
   );
@@ -521,7 +527,7 @@ function SourceTrail({
   }
   return (
     <div className="compensation-source-trail">
-      <h4>Reported source trail</h4>
+      <h4 aria-label="Reported source trail">Reported source trail <ContextHelp label="Reported source trail" description="The provider snapshots and release periods recorded with this market assessment. Source counts and samples describe available evidence, not the probability that the estimate is correct." /></h4>
       <ul>
         {sources.map((source) => (
           <li key={`${source.sourceId}:${source.snapshotVersion}`}>
@@ -575,9 +581,7 @@ function factorExplanation(
       return `No direct ${company} salary record matched; broader market evidence provides ${score} support.`;
     }
   }
-  if (factor.name === "level") {
-    return `The job was classified as ${formatToken(estimate.seniorityLabel) || "an unknown level"}; selected records provide ${score} seniority support.`;
-  }
+  if (factor.name === "level") return factor.reason;
   if (factor.name === "role") {
     return `Selected records provide ${score} support for ${estimate.roleTitle || "this role"}.`;
   }
@@ -621,7 +625,7 @@ function FactorList({
   }
   return (
     <div className="compensation-factor-list">
-      <h4>Reliability factors</h4>
+      <h4 aria-label="Reliability factors">Reliability factors <ContextHelp label="Reliability factors" description="Stored support scores for company, role, level, location, and freshness. Overall reliability is capped by the weakest critical match; these percentages are not probabilities that the salary is correct." /></h4>
       <ul>
         {factors.map((factor) => (
           <li key={factor.name}>
@@ -736,6 +740,7 @@ function MarketAssessmentDetails({
           <DetailRow
             label="Reliability"
             value={`${formatToken(market.confidenceBand)} · ${score}`}
+            help="A recorded confidence band and support score for the selected market benchmark. This measures evidence and match quality, not the chance that an amount is the actual offer."
           />
           <DetailRow label="Role" value={estimate.roleTitle} />
           <DetailRow
@@ -758,6 +763,7 @@ function MarketAssessmentDetails({
           <DetailRow
             label="Confidence interval"
             value={market.displayConfidenceInterval}
+            help="A stored interval for the market estimate when available. It reflects the estimator's evidence range, not an employer-posted salary or offer."
           />
         </dl>
         <BenchmarkLineage lineage={lineage} />
@@ -899,10 +905,11 @@ function BenchmarkLineage({
       <header>
         <div>
           <span className="eyebrow">Benchmark authority</span>
-          <h4>
+          <h4 aria-label={lineage.kind === "direct" ? "Direct country benchmark" : "Geographic extrapolation bridge"}>
             {lineage.kind === "direct"
               ? "Direct country benchmark"
               : "Geographic extrapolation bridge"}
+            <ContextHelp label="Benchmark authority" description="A direct benchmark uses matched role and geography evidence. An extrapolated benchmark adjusts an anchor geography using recorded cost-of-living and company evidence; inspect the inputs and review bounds below." />
           </h4>
         </div>
         <StatusBadge tone={lineage.kind === "direct" ? "ok" : boundTone}>
@@ -966,9 +973,11 @@ function BenchmarkLineage({
 function PostedPanel({
   posted,
   fact,
+  determination,
 }: {
   readonly posted: JobPostedCompensationSummary;
   readonly fact: JobCompensationAuditPostedFact | null;
+  readonly determination: DeterminationEnvelope | null;
 }) {
   const hasPostedRange =
     posted.recordStatus === "recorded" && Boolean(posted.displayRange);
@@ -987,12 +996,13 @@ function PostedPanel({
       className="compensation-panel compensation-result-card compensation-posted-card"
     >
       <header className="compensation-result-header">
-        <h4 className="eyebrow" data-typography="label">
+        <h4 aria-label="Employer posted" className="eyebrow" data-typography="label">
           Employer posted
+          <ContextHelp label="Employer posted compensation" description="A model interprets compensation in the saved posting and cites its source. An unavailable interpretation requires a refresh before a structured range can be displayed." />
         </h4>
         <b className="compensation-result-value">
           {posted.displayRange ||
-            (posted.recordStatus === "recorded"
+            (posted.recordStatus === "unavailable" ? "Posted interpretation unavailable" : posted.recordStatus === "recorded"
               ? "No safe amount extracted"
               : "Not stated")}
         </b>
@@ -1000,6 +1010,7 @@ function PostedPanel({
           {hasPostedRange ? "stated in posting" : "no posted range"}
         </StatusBadge>
       </header>
+      {posted.recordStatus === "unavailable" ? <p role="status">Refresh compensation to retry the interpretation. Reason: {posted.failureCode}.</p> : null}
       {hasPostedRange ? (
         <p className="compensation-result-explanation">
           {amountIsEquity
@@ -1038,7 +1049,9 @@ function PostedPanel({
               <DetailRow
                 label="Extraction certainty"
                 value={formatToken(fact.confidence)}
+                help="The model's certainty in its cited interpretation of the saved posting."
               />
+              {determination ? <><DetailRow label="Determination" value={determination.determination_id} /><DetailRow label="Model" value={`${determination.provider} / ${determination.model}`} /><DetailRow label="Prompt version" value={determination.prompt_version} /><DetailRow label="Input fingerprint" value={determination.input_fingerprint} /></> : null}
             </dl>
             {"sourceText" in fact && fact.sourceText ? (
               <blockquote className="compensation-posting-excerpt">
@@ -1079,9 +1092,23 @@ function MarketPanel({
   const evidenceCoverage = estimate
     ? `${plural(evidenceCount, "evidence record")} ${evidenceCount === 1 ? "was" : "were"} reviewed across ${plural(providerCount, "provider")}${sampleCount === null ? "" : `, representing ${plural(sampleCount, "reported sample")}`}`
     : `Detailed evidence records are unavailable in this projection${providerCount ? `; the summary records ${plural(providerCount, "provider")}` : ""}${sampleCount === null ? "" : ` and ${plural(sampleCount, "reported sample")}`}`;
+  // The persisted aggregate bucket is the source of truth for the regional
+  // comparison header and copy; company names and match scope are not inferred.
+  const peerCohort = estimate?.aggregateBucket === "reported regional company peer cohort";
+  const unidentifiedEmployers = estimate?.aggregateBucket === "reported regional source sample";
+  const cohortCompanies = estimate && peerCohort
+    ? [...new Set(estimate.evidence.map((row) => row.companyName))].join(", ") : "";
+  const cohortLocations = estimate ? [...new Set(estimate.evidence.map((row) => row.location).filter(Boolean))].join("; ") : "";
+  const cohortSources = estimate ? [...new Set(estimate.sources.map((source) => source.displayName))].join(", ") : "";
+  const unmatchedLevel = estimate?.estimateState === "insufficient_evidence" &&
+    estimate.insufficientReasons.some((reason) => reason.code === "weak_level_match")
+    ? estimate.factors.find((factor) => factor.name === "level")?.reason : null;
   const benchmarkKind = lineage?.kind ?? market.benchmarkKind;
-  const benchmarkBasis =
-    benchmarkKind === "extrapolated"
+  const benchmarkBasis = unidentifiedEmployers
+    ? `Reported compensation from ${cohortSources}${cohortLocations ? ` in ${cohortLocations}` : ""}. Employers are not identified for every report. This limited source sample is a regional comparison and may not represent the wider market.`
+    : peerCohort
+    ? `Reported compensation at ${cohortCompanies}${cohortLocations ? ` in ${cohortLocations}` : ""}. This limited company cohort is a regional comparator; it may overrepresent high-paying employers.`
+    : benchmarkKind === "extrapolated"
       ? "Derived from a matched role-family benchmark in another geography with an auditable adjustment."
       : benchmarkKind === "direct"
         ? "Based on a direct benchmark for the matched role family and geography."
@@ -1094,7 +1121,10 @@ function MarketPanel({
     estimate && isLegacyMarketAssessment(estimate)
       ? " This is a stored legacy assessment; refresh this job to use the current role and level classifier."
       : "";
-  const outcome = hasRange
+  const outcome = market.recordStatus === "unavailable"
+    ? {value:"Market interpretation unavailable",badge:"unavailable",tone:"warn" as const,
+       explanation:`Refresh compensation to record the missing model determinations. ${market.failureCode ?? "compensation_determination_unavailable"}.`}
+    : hasRange
     ? {
         value: market.displayRange,
         badge: `${formatToken(market.confidenceBand)} reliability`,
@@ -1110,7 +1140,7 @@ function MarketPanel({
             estimate === null
               ? `${evidenceCoverage}. The recorded outcome did not include a trustworthy numeric range.`
               : evidenceCount > 0
-                ? `${evidenceCoverage}, but the evidence did not meet the threshold for a trustworthy numeric range.${legacyNote}`
+                ? `${evidenceCoverage}. ${unmatchedLevel || "The evidence did not meet the threshold for a trustworthy numeric range."}${legacyNote}`
                 : `Available evidence did not meet the threshold for a trustworthy numeric range. See the reasons below.${legacyNote}`,
         }
       : market.estimateState === "source_unavailable"
@@ -1142,8 +1172,9 @@ function MarketPanel({
       className="compensation-panel compensation-result-card compensation-market-card"
     >
       <header className="compensation-result-header">
-        <h4 className="eyebrow" data-typography="label">
-          Market salary estimate
+        <h4 aria-label={(peerCohort || unidentifiedEmployers) && hasRange ? "Regional salary comparison" : "Market salary estimate"} className="eyebrow" data-typography="label">
+          {(peerCohort || unidentifiedEmployers) && hasRange ? "Regional salary comparison" : "Market salary estimate"}
+          <ContextHelp label="Market salary estimate" description="A reported-compensation benchmark selected by role, level, geography, and available sources. A numeric range appears only for an estimated-range result; insufficient evidence, unavailable sources, unsupported input, and not requested remain distinct outcomes." />
         </h4>
         <b className="compensation-result-value">{outcome.value}</b>
         <StatusBadge tone={outcome.tone}>{outcome.badge}</StatusBadge>
@@ -1158,6 +1189,9 @@ function MarketPanel({
             sampleCount={market.sampleCount}
           />
           <MarketAssessmentDetails market={market} estimate={estimate} />
+          {estimate.determinations.length ? <details><summary>Classification sources</summary>
+            {estimate.determinations.map(row => <details key={row.determination_id}><summary>{row.kind.replaceAll("_", " ")} · {row.provider} · {row.model}</summary><p>{row.prompt_version} · input {row.input_fingerprint}</p><pre>{JSON.stringify(row.result, null, 2)}</pre></details>)}
+          </details> : <p>No recorded classification sources.</p>}
         </div>
       ) : null}
     </article>
@@ -1171,8 +1205,9 @@ function RawPostedFallbackPanel({ value }: { readonly value: string }) {
       className="compensation-panel compensation-result-card compensation-posted-card"
     >
       <header className="compensation-result-header">
-        <h4 className="eyebrow" data-typography="label">
+        <h4 aria-label="Employer posted" className="eyebrow" data-typography="label">
           Employer posted
+          <ContextHelp label="Unparsed posted compensation" description="Raw salary text captured from the posting without a structured extraction. Refresh to parse it before treating it as a comparable pay range." />
         </h4>
         <b className="compensation-result-value">{value}</b>
         <StatusBadge tone="muted">unparsed posting value</StatusBadge>
@@ -1223,7 +1258,7 @@ export function CompensationAuditSection({
         aria-label="Compensation evidence"
       >
         <div className="compensation-audit-heading">
-          <h3>Compensation</h3>
+          <h3 aria-label="Compensation">Compensation <ContextHelp label="Compensation" description="Employer-posted pay and separately researched market evidence. No evidence recorded means neither a parsed posted amount nor a market assessment is available for this job." /></h3>
           {jobId ? <CompensationRefreshControl jobId={jobId} /> : null}
         </div>
         <Empty title="No compensation evidence recorded." />
@@ -1254,6 +1289,7 @@ export function CompensationAuditSection({
             posted: {
               sourceKind: "posted" as const,
               recordStatus: audit.posted.recordStatus,
+              ...(audit.posted.recordStatus === "unavailable" ? {failureCode: audit.posted.failureCode} : {}),
               parseState:
                 audit.posted.recordStatus === "recorded"
                   ? audit.posted.fact.parseState
@@ -1272,6 +1308,7 @@ export function CompensationAuditSection({
             market: {
               sourceKind: "reported_company_role_market" as const,
               recordStatus: audit.market.recordStatus,
+              ...(audit.market.recordStatus === "unavailable" ? {failureCode:audit.market.failureCode} : {}),
               benchmarkKind:
                 audit.market.recordStatus === "recorded"
                   ? (audit.market.estimate.benchmarkLineage?.kind ?? null)
@@ -1313,7 +1350,7 @@ export function CompensationAuditSection({
   const marketEstimate =
     audit?.market.recordStatus === "recorded" ? audit.market.estimate : null;
   const rawPostedFallback =
-    effectiveSummary?.posted.displayRange || postedFact
+    effectiveSummary?.posted.recordStatus === "unavailable" || effectiveSummary?.posted.displayRange || postedFact
       ? null
       : effectiveSummary?.legacyRawSalary || fallbackSalary || null;
 
@@ -1323,7 +1360,7 @@ export function CompensationAuditSection({
       aria-label="Compensation evidence"
     >
       <div className="compensation-audit-heading">
-        <h3>Compensation</h3>
+        <h3 aria-label="Compensation">Compensation <ContextHelp label="Compensation" description="Compare saved employer-posted compensation with a separately researched market benchmark. Market ranges have source, match, and reliability limits; neither is an offer guarantee." /></h3>
         {jobId ? <CompensationRefreshControl jobId={jobId} /> : null}
       </div>
       {effectiveSummary ? (
@@ -1331,7 +1368,7 @@ export function CompensationAuditSection({
           {rawPostedFallback ? (
             <RawPostedFallbackPanel value={rawPostedFallback} />
           ) : (
-            <PostedPanel posted={effectiveSummary.posted} fact={postedFact} />
+            <PostedPanel posted={effectiveSummary.posted} fact={postedFact} determination={audit?.posted.recordStatus === "recorded" ? audit.posted.determination : null} />
           )}
           <MarketPanel
             market={effectiveSummary.market}

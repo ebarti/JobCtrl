@@ -1,9 +1,26 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 const ROW_CHECKBOX_SELECTOR =
   "[role='checkbox'][aria-label^='Select ']:not([aria-label='Select all rows on this page'])";
 
-test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to Deleted tab → restore", async ({
+async function showOnlyJobState(
+  page: Page,
+  state: "Active" | "Deleted" | "Hidden",
+): Promise<void> {
+  await page
+    .getByRole("button", { name: /filter job state column/i })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Job state filter" });
+  const values = dialog.getByLabel("Job state values");
+  for (const option of ["Active", "Deleted", "Hidden"] as const) {
+    const checkbox = values.getByRole("checkbox", { name: option });
+    if ((await checkbox.isChecked()) !== (option === state)) await checkbox.click();
+  }
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(dialog).toBeHidden();
+}
+
+test("Bulk soft-delete + restore: select 3 → delete → filter Deleted → restore", async ({
   page,
 }) => {
   page.on("dialog", (dialog) => void dialog.accept());
@@ -46,15 +63,10 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
     page.getByText(new RegExp(`${rowsToSelect} selected`)),
   ).toHaveCount(0, { timeout: 15_000 });
 
-  const queueTabs = page.getByRole("tablist", { name: "Job queues" });
-  const deletedTab = queueTabs.getByRole("tab", { name: "Deleted" });
-  await expect(queueTabs.getByRole("tab", { name: "Active" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await deletedTab.click();
-  await expect(deletedTab).toHaveAttribute("aria-selected", "true");
-  await expect(page).toHaveURL(/deleted=deleted/);
+  await showOnlyJobState(page, "Deleted");
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("jobStates"))
+    .toBe('["deleted"]');
 
   const deletedRowCheckboxes = page.locator(ROW_CHECKBOX_SELECTOR);
   await expect(deletedRowCheckboxes.first()).toBeVisible({ timeout: 30_000 });
@@ -73,14 +85,13 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
   });
 });
 
-test("Job operations menu hides a selected job and exposes it in the Hidden queue", async ({
+test("Job operations menu hides a selected job and exposes it through the Hidden filter", async ({
   page,
 }) => {
   page.on("dialog", (dialog) => void dialog.accept());
 
   await page.goto("/jobs");
-  const activeTab = page.getByRole("tab", { name: "Active" });
-  await expect(activeTab).toHaveAttribute("aria-selected", "true", {
+  await expect(page.getByText(/Director of Platform Engineering/i)).toBeVisible({
     timeout: 30_000,
   });
 
@@ -111,10 +122,10 @@ test("Job operations menu hides a selected job and exposes it in the Hidden queu
     page.getByRole("checkbox", { name: selectedRowLabel }),
   ).toHaveCount(0, { timeout: 15_000 });
 
-  const hiddenTab = page.getByRole("tab", { name: "Hidden" });
-  await hiddenTab.click();
-  await expect(hiddenTab).toHaveAttribute("aria-selected", "true");
-  await expect(page).toHaveURL(/deleted=hidden/);
+  await showOnlyJobState(page, "Hidden");
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("jobStates"))
+    .toBe('["hidden"]');
 
   const hiddenCheckbox = page.getByRole("checkbox", {
     name: selectedRowLabel,
@@ -129,8 +140,10 @@ test("Job operations menu hides a selected job and exposes it in the Hidden queu
   });
   await unhideSelected.click();
   await expect(unhideSelected).toHaveCount(0, { timeout: 15_000 });
-  await activeTab.click();
-  await expect(activeTab).toHaveAttribute("aria-selected", "true");
+  await showOnlyJobState(page, "Active");
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("jobStates"))
+    .toBe('["active"]');
   await expect(
     page.getByRole("checkbox", { name: selectedRowLabel }),
   ).toBeVisible({ timeout: 15_000 });

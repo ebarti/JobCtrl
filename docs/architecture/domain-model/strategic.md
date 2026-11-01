@@ -241,11 +241,10 @@ PDFs) for jobs that pass the scoring threshold.
 
 **Responsibilities:**
 - Generate tailored resumes from profile + job description via LLM
-- Validate tailored content (banned words, fabrication, structural integrity)
-- Optionally run LLM-as-judge for quality assessment
-- Run deterministic tailoring quality checks for unsupported metrics, keyword
-  stuffing, stock-phrase warnings, weak seniority alignment, and missing evidence
-- Run adversarial review for high-fit jobs after normal validation and judge pass
+- Verify final claims through a persisted, cited model determination
+- Run an independent model quality judge with typed line findings
+- Validate schemas, IDs, quotations, exact values and version fences
+- Preserve accepted artifacts during failed refreshes
 - Generate cover letters
 - Render documents to PDF (resume via HTML/CSS + Playwright; cover letter via
   HTML/Playwright)
@@ -264,6 +263,15 @@ require a tailored resume, and each stage renders the PDFs it owns. Grouping the
 in one context lets the aggregate enforce these dependencies directly rather
 than through cross-aggregate eventual consistency. LLM calls, file I/O, and DB
 writes remain adapter concerns.
+
+Materials also owns explicit job-specific interview preparation and independent
+revisioned question notes. The shared catalog is authored public guidance;
+prepared outlines retain canonical evidence and generation-time input context;
+notes retain user-statement/edit status. The Interviews page is a composing
+view over Materials commands and Operations reads. Neither notes nor generated
+prep promotes facts to Profile, changes fit or Apply, or introduces a practice
+aggregate. The [Materials interview contract](../materials.md#stored-interview-preparation)
+owns selection, format gates, provenance, history, privacy, and maturity.
 
 ---
 
@@ -476,7 +484,7 @@ context; it owns a person/relationship concept that none of the other eight own.
 
 **Responsibilities:**
 - Own the `Contact` aggregate and its provenance-bearing attributes.
-- Create, update, CSV-import, and soft-delete contacts; every stored fact carries provenance (INV-2).
+- Create, update, CSV/vCard-import, and soft-delete contacts; every stored fact carries provenance (INV-2).
 - Emit contact domain events (`ContactCreated`, `ContactUpdated`, `ContactAttributeRecorded`, `ContactDeleted`) carrying only identifiers, kinds, provenance metadata, and timestamps.
 - Own the `OutreachThread` aggregate (Phase 3): generate truthful, reviewable outreach drafts under the reused materials truthfulness gate stack (INV-5), keep the last approved draft readable across re-drafts, and emit draft-lifecycle events (`OutreachDraftGenerated`, `OutreachDraftRevised`, `OutreachDraftApproved`, `OutreachDraftRejected`).
 - Record user-attested sends and manage follow-ups (Phase 4): a thread reaches "sent" ONLY via an `OutreachSendLog` over an approved draft (`OutreachSendLogged`), and a surfaced-only `FollowUpSchedule` (derived from the application lifecycle) emits `FollowUpScheduled` / `FollowUpCompleted` / `FollowUpDismissed` and feeds the `due_follow_up_projections` read model. The system never sends — logging is a recorded fact and follow-ups are never auto-acted (INV-1).
@@ -497,3 +505,10 @@ canonical write side (`contact_attributes.value_json`); event payloads,
 projections, logs, and telemetry carry only safe references.
 
 ---
+
+
+## Semantic Determination Authority
+
+Each bounded context owns its determinations: Enrichment job/page interpretation, Profile extraction/interpretation, Materials claim verification. Interview and Outreach call shared ports. TS read models join accepted determination/anchor IDs and perform no semantic inference. Strict schemas, source binding and arithmetic remain code.
+
+See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

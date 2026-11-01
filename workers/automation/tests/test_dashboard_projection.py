@@ -40,8 +40,8 @@ def _seed_job(conn: sqlite3.Connection, url: str, *, site: str = "ExampleCo") ->
         """
         INSERT INTO jobs (
             tenant_id, job_id, url, title, site, strategy, location, salary,
-            discovered_at, application_url, description
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            discovered_at, description
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             LOCAL_TENANT,
@@ -53,7 +53,6 @@ def _seed_job(conn: sqlite3.Connection, url: str, *, site: str = "ExampleCo") ->
             "Remote",
             "",
             now,
-            url,
             "desc",
         ),
     )
@@ -65,6 +64,11 @@ def _seed_job(conn: sqlite3.Connection, url: str, *, site: str = "ExampleCo") ->
         ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?)
         """,
         (LOCAL_TENANT, job_id, url, now, now),
+    )
+    conn.execute(
+        "INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,updated_at) "
+        "VALUES (?,?,'pending',?,?)",
+        (str(LOCAL_TENANT), str(job_id), url, now),
     )
     conn.commit()
     return job_id

@@ -105,8 +105,8 @@ def test_salary_preference_never_blocks_actionable_downstream_stages(
         conn,
         tenant_id=_TENANT_A,
         job_id=_JOB_ID,
-        eligibility_status="blocked",
-        hard_blockers=["posted compensation appears below profile minimum"],
+        eligibility_status="warning",
+        hard_blockers=[],
         now="2024-01-02T00:00:00+00:00",
     )
 
@@ -133,7 +133,6 @@ def test_salary_reason_is_demoted_but_other_hard_blockers_still_block(
         job_id=_JOB_ID,
         eligibility_status="blocked",
         hard_blockers=[
-            "posted compensation appears below profile minimum",
             "candidate requires sponsorship",
         ],
     )
@@ -278,13 +277,9 @@ def test_score_threshold_skip_is_explicit_idempotent_and_reversible(
     for stage in ("tailor", "cover", "apply"):
         assert rows[stage]["state"] == "skipped"
         assert rows[stage]["error_code"] == "MIN_SCORE"
-        assert rows[stage]["error_message"] == (
-            "Fit score 6/10 is below the materials threshold 7/10."
-        )
+        assert rows[stage]["error_message"] == ("Fit score 6/10 is below the materials threshold 7/10.")
         assert rows[stage]["retryable"] == 0
-        assert rows[stage]["next_action"] == (
-            "Lower the materials threshold or record a higher current score."
-        )
+        assert rows[stage]["next_action"] == ("Lower the materials threshold or record a higher current score.")
         assert '"reason": "score_below_threshold"' in rows[stage]["metadata_json"]
 
     assert (
@@ -316,12 +311,8 @@ def test_score_threshold_skip_is_explicit_idempotent_and_reversible(
         == 3
     )
     rows = _stage_rows(conn, tenant_id=_TENANT_A, job_id=_JOB_ID)
-    assert {rows[stage]["state"] for stage in ("tailor", "cover", "apply")} == {
-        "blocked"
-    }
-    assert {
-        rows[stage]["error_code"] for stage in ("tailor", "cover", "apply")
-    } == {"SCORE_ELIGIBILITY_BLOCKED"}
+    assert {rows[stage]["state"] for stage in ("tailor", "cover", "apply")} == {"blocked"}
+    assert {rows[stage]["error_code"] for stage in ("tailor", "cover", "apply")} == {"SCORE_ELIGIBILITY_BLOCKED"}
 
     assert (
         reconcile_score_eligibility_blockers(
@@ -412,12 +403,8 @@ def test_batch_score_threshold_reconciliation_uses_latest_current_score(
 
     assert changed == 3
     rows = _stage_rows(conn, tenant_id=_TENANT_A, job_id=_JOB_ID)
-    assert {rows[stage]["state"] for stage in ("tailor", "cover", "apply")} == {
-        "skipped"
-    }
-    assert {
-        rows[stage]["error_code"] for stage in ("tailor", "cover", "apply")
-    } == {"MIN_SCORE"}
+    assert {rows[stage]["state"] for stage in ("tailor", "cover", "apply")} == {"skipped"}
+    assert {rows[stage]["error_code"] for stage in ("tailor", "cover", "apply")} == {"MIN_SCORE"}
 
 
 def test_score_threshold_skip_preserves_owned_work_and_unrelated_failures(

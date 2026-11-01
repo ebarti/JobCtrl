@@ -10,7 +10,7 @@ import {
 } from "../../../test/fixtures/projections.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { FakePdfExportPort, buildTestPorts } from "../../../test/testPorts.js";
-import { resumeSemanticTextChangesFromPlateValues } from "../../materials/components/ResumeAuditPins.js";
+import { ResumeStandalonePlateEditor, resumeSemanticTextChangesFromPlateValues } from "../../materials/components/ResumeAuditPins.js";
 import { ProfileEditor } from "./ProfileEditor.js";
 import { resumeTemplatePreviewStyle } from "./ResumeTemplatePanel.js";
 
@@ -30,6 +30,64 @@ function semanticBullet(
 }
 
 describe("<ProfileEditor>", () => {
+  it.each(["Backspace", "Delete"])("uses a new native title selection before %s even while Slate still has the click caret", async (key) => {
+    const original = "Autosaved Title A";
+    const changes = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      `<main class="resume-page"><div data-resume-line-number="5" data-resume-profile-field="experience:race-role-5:title">${original}</div></main>`,
+      { headers: { "content-type": "text/html" } },
+    )));
+    renderWithProviders(<ResumeStandalonePlateEditor
+      htmlUrl="/synthetic/preview.html"
+      pdfFilename="synthetic.pdf"
+      title="Baseline resume editor"
+      onSemanticTextChange={changes}
+    />);
+    const editor = await screen.findByRole("textbox", { name: "Baseline resume editor editor" });
+    const leaf = await screen.findByText(original);
+    const field = leaf.closest('[data-resume-profile-field]')!;
+    Object.defineProperty(editor, "isContentEditable", { configurable: true, value: true });
+    Object.defineProperty(field, "isContentEditable", { configurable: true, value: true });
+    editor.focus();
+    const selection = document.getSelection()!;
+    const caret = document.createRange();
+    caret.setStart(leaf.firstChild!, 8);
+    caret.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(caret);
+    fireEvent.click(leaf);
+    await waitFor(() => expect(field).toHaveClass("jobctrl-selected-line"));
+    expect(editor).toHaveFocus();
+
+    // Native selectionchange is throttled by Slate. The user's next key may
+    // arrive before it publishes this expanded range to the editor model.
+    const range = document.createRange();
+    range.selectNodeContents(field);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const nativeInput = fireEvent.keyDown(editor, { key, code: key, keyCode: key === "Backspace" ? 8 : 46,
+      which: key === "Backspace" ? 8 : 46 });
+    if (nativeInput) fireEvent(editor, new InputEvent("beforeinput", {
+      inputType: key === "Backspace" ? "deleteContentBackward" : "deleteContentForward",
+      bubbles: true, cancelable: true,
+    }));
+
+    await waitFor(() => expect(editor.textContent?.replace(/\uFEFF/gu, "")).toBe(""));
+    await waitFor(() => expect(changes).toHaveBeenLastCalledWith([
+      { semanticId: "experience:race-role-5:title", baselineTexts: [original], plateTexts: [] },
+    ]));
+  });
+
+  it("retains baseline field IDs across an edited and split rendered bullet list", () => {
+    const baseline = [{type: "resume_block", className: "resume-bullets", children: semanticBullet(["Original user text."])}];
+    const current = [{type: "resume_block", className: "resume-bullets", children: [
+      ...semanticBullet(["Edited user text."]),
+      {type: "resume_block", tagName: "li", children: [{text: "Inserted user text."}]},
+    ]}];
+    expect(resumeSemanticTextChangesFromPlateValues(baseline, current)).toEqual([
+      {semanticId: "experience:exp-1:bullet:1", baselineTexts: ["Original user text."], plateTexts: ["Edited user text.", "Inserted user text."]},
+    ]);
+  });
   it("derives deletion, digit, punctuation, and split deltas from the Plate model", () => {
     expect(
       resumeSemanticTextChangesFromPlateValues(

@@ -1,3 +1,6 @@
+import { OutreachPublicationConflictSchema } from "./outreach-publication.js";
+import { DeterminationCitationSchema, DeterminationEnvelopeSchema, FormSnapshotSchema, FormMappingResponseSchema, ResumeEditReviewSchema, ResumeEditIntentReviewSchema } from "./semantic-determinations.js";
+import { CoverLetterSettingsSchema, COVER_LETTER_RENDERER_VERSION } from "./cover-letter.js";
 /**
  * JSON-RPC 2.0 wire envelope + JobCtrl method schemas.
  *
@@ -6,8 +9,14 @@
  * worker over the local subprocess transport (target §6.5).
  */
 import { z } from "zod";
+import { CareerLearningParamsSchema, CareerLearningResponseSchema } from "./career-learning.js";
+import { AcceptedMaterialExportRequestSchema, AcceptedMaterialExportsSchema, MaterialLocaleRequestSchema } from "./schemas.js";
+import { GenerateInterviewPrepRequestSchema, refineInterviewEvidenceSelection } from "./interview.js";
 
 import {
+  ProviderStatusResultSchema, ProviderModelCatalogResultSchema, CodexVerifyResultSchema,
+  BrowserCapabilitiesResultSchema, BrowserCapabilityEnableRequestSchema, BrowserProfileCopyRequestSchema, BrowserCapabilityIds,
+  ScreeningCommandSchema, ScreeningReadResponseSchema, ScreeningWriteResponseSchema,
   DEFAULT_PIPELINE_LLM_MODEL,
   JobUrlImportUrlSchema,
   LearningRecommendationIdSchema,
@@ -16,6 +25,9 @@ import {
   MANUAL_CAPTURE_MODE_VALUES,
   STAGES,
   TailoringPolicyLearnedRuleSchema,
+  TailoringPolicyRestoreCommandIdSchema,
+  MaterialLocaleHistorySchema,
+  TargetRoleSuggestionResultSchema,
 } from "./schemas.js";
 
 /* ------------------------------------------------------------------ codes */
@@ -69,6 +81,11 @@ export type JsonRpcResponse = z.infer<typeof JsonRpcResponseSchema>;
 /* ------------------------------------------------------------------ methods */
 
 export const RpcMethods = {
+  CareerLearning: "career_learning",
+  ResetEnrichment: "reset_enrichment",
+  MaterialLocaleVariants: "material_locale_variants",
+  AcceptedMaterialExports: "accepted_material_exports",
+  ScreeningAnswers: "screening_answers",
   RunStage: "run_stage",
   RescoreJob: "rescore_job",
   RescoreJobsNotOnCurrentScoringPolicy: "rescore_jobs_not_on_current_scoring_policy",
@@ -77,12 +94,14 @@ export const RpcMethods = {
   RetailorCurrentPolicy: "retailor_current_policy",
   AnalyzeJob: "analyze_job",
   RefreshCompensation: "refresh_compensation",
+  CheckPostingAvailability: "check_posting_availability",
   GenerateInterviewPrep: "generate_interview_prep",
   RunContactResearch: "run_contact_research",
   GenerateOutreachDraft: "generate_outreach_draft",
   Apply: "apply",
   ProfileImport: "profile_import",
   JobUrlImport: "job_url_import",
+  JobUrlImportStatus: "job_url_import_status",
   ManualCaptureImport: "manual_capture_import",
   CancelRun: "cancel_run",
   ProviderStatus: "provider_status",
@@ -96,7 +115,13 @@ export const RpcMethods = {
   ReviewLearningRecommendation: "review_learning_recommendation",
   RollbackTailoringPolicy: "rollback_tailoring_policy",
   RenderResumePdf: "render_resume_pdf",
+  RenderCoverLetterPdf: "render_cover_letter_pdf",
   GmailFeedbackScan: "gmail_feedback_scan",
+  ProfileRequiredBulletSuggestions: "profile_required_bullet_suggestions",
+  MapExtensionForm: "map_extension_form",
+  ReviewResumeEdit: "review_resume_edit",
+  PrepareRepeatApplicationDeterminations: "prepare_repeat_application_determinations",
+  ProfileTargetRoleSuggestions: "profile_target_role_suggestions",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 
@@ -107,6 +132,62 @@ const CanonicalJobIdParam = z
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     "jobId must be a canonical lowercase UUID",
   );
+
+/** Enrichment reset plus companion stages in the same atomic bulk retry. */
+export const ResetEnrichmentParamsSchema = z.object({
+  tenantId: TenantParam,
+  expectedAppDir: z.string().trim().min(1),
+  expectedDbPath: z.string().trim().min(1),
+  targets: z.array(z.object({ jobId: CanonicalJobIdParam, stage: z.enum(STAGES) }).strict()).min(1),
+  resetAttempts: z.boolean().default(false),
+  onlyFailed: z.boolean().default(false),
+}).strict().refine((value) => value.targets.some((target) => target.stage === "enrich"), {
+  message: "An enrichment target is required.",
+});
+export const ResetEnrichmentResultSchema = z.object({
+  resets: z.array(z.object({
+    jobId: CanonicalJobIdParam, jobUrl: z.string().min(1), stage: z.enum(STAGES),
+  }).strict()).min(1),
+}).strict();
+
+export const ProfileTargetRoleSuggestionsParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1),
+    expectedDbPath: z.string().trim().min(1),
+    expectedProfileVersion: z.number().int().positive(),
+    maximumSuggestions: z.number().int().min(1).max(5).default(3),
+  })
+  .strict();
+export type ProfileTargetRoleSuggestionsParams = z.infer<
+  typeof ProfileTargetRoleSuggestionsParamsSchema
+>;
+
+export const ProfileRequiredBulletSuggestionsParamsSchema = z.object({
+  tenantId: TenantParam,
+  expectedAppDir: z.string().trim().min(1),
+  expectedDbPath: z.string().trim().min(1),
+  expectedProfileVersion: z.number().int().positive(),
+  maximumSuggestions: z.number().int().min(1).max(24),
+  sources: z.array(z.object({
+    reference: z.string().min(1).max(240),
+    originalText: z.string().min(1).max(2_000),
+    experienceTitle: z.string().min(1).max(160),
+    experienceCompany: z.string().min(1).max(160),
+    evidence: z.array(z.object({
+      id: z.string(), source_text: z.string(), metrics: z.array(z.string()), outcome: z.string(),
+      evidence_strength: z.enum(["draft", "inferred", "supported", "verified"]), user_confirmed: z.boolean(),
+    }).strict()),
+  }).strict()).min(1).max(512),
+}).strict().refine((params) => JSON.stringify(params.sources).length <= 32_000, "Coaching sources exceed payload limit");
+export type ProfileRequiredBulletSuggestionsParams = z.infer<typeof ProfileRequiredBulletSuggestionsParamsSchema>;
+
+export const RequiredBulletModelResultSchema = z.union([z.object({
+  profileVersion:z.number().int().positive(),
+  determination:DeterminationEnvelopeSchema,
+  citations:z.array(DeterminationCitationSchema).min(1),rationale:z.string().min(1),
+  suggestions:z.array(z.object({reference:z.string().min(1).max(240),kind:z.enum(["grammar","relevance","achievement_framing","missing_evidence"]),guidance:z.string().trim().min(1).max(500),proposedText:z.string().min(1).max(2000).nullable(),citations:z.array(DeterminationCitationSchema).min(1)}).strict()).max(24),
+}).strict(),z.object({profileVersion:z.number().int().positive(),failure:z.object({code:z.enum(["provider_unavailable","provider_error","budget_denied","malformed_json","schema_violation","foreign_source_id","non_verbatim_quote","mismatched_value","duplicate_finding","suggestion_limit_exceeded","source_payload_exceeded","cache_binding_invalid","cache_lock_unavailable","persistence_error"])}).strict()}).strict()]);
 
 /* --- complex commands (delegated to Python JSON-RPC / Temporal) ---------- */
 
@@ -131,12 +212,30 @@ export const RunStageParamsSchema = z
     llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.number().min(0).max(1).optional(),
     continuous: z.boolean().default(false),
+    sourceIds: z.array(z.string().trim().min(1).max(160)).max(50).optional(),
+    reason: z.string().trim().max(400).optional(),
+    awaitResult: z.boolean().optional(),
+    refreshApplyUrl: z.boolean().optional(),
   })
   .strict()
   .refine((params) => !("jobId" in params && "jobIds" in params), {
     message: "provide jobId or jobIds, not both",
+  })
+  .refine((params) => !params.sourceIds || new Set(params.sourceIds).size === params.sourceIds.length, {
+    message: "sourceIds must be unique",
+    path: ["sourceIds"],
+  })
+  .refine((params) => !params.sourceIds?.length || (params.stages ?? [params.stage]).includes("discover"), {
+    message: "sourceIds can only be used when running discover",
+    path: ["sourceIds"],
+  })
+  .refine((params) => !params.refreshApplyUrl || (
+    (params.stages ?? [params.stage]).every((stage) => stage === "enrich")
+    && params.jobId !== undefined && !params.jobIds?.length && params.limit === 1
+  ), {
+    message: "refreshApplyUrl requires one selected Enrich job and limit 1",
+    path: ["refreshApplyUrl"],
   });
 export type RunStageParams = z.infer<typeof RunStageParamsSchema>;
 
@@ -180,7 +279,7 @@ export const JobUrlImportParamsSchema = z
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
     url: JobUrlImportUrlSchema,
-    awaitResult: z.literal(true),
+    awaitResult: z.boolean().optional(),
   })
   .strict();
 export type JobUrlImportParams = z.infer<typeof JobUrlImportParamsSchema>;
@@ -293,7 +392,6 @@ export const TailorJobParamsSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.number().min(0).max(1).optional(),
   })
   .strict();
 export type TailorJobParams = z.infer<typeof TailorJobParamsSchema>;
@@ -329,6 +427,19 @@ export const AnalyzeJobResultSchema = z
   .strict();
 export type AnalyzeJobResult = z.infer<typeof AnalyzeJobResultSchema>;
 
+export const CheckPostingAvailabilityParamsSchema = z.object({
+  tenantId: TenantParam,
+  jobId: CanonicalJobIdParam,
+  expectedAppDir: z.string().trim().min(1),
+  expectedDbPath: z.string().trim().min(1),
+}).strict();
+
+export const AvailabilityWorkflowStartSchema = z.object({
+  runId: z.string().min(1),
+  workflowId: z.string().min(1),
+  firstExecutionRunId: z.string().min(1).nullish(),
+}).strict();
+
 export const RefreshCompensationParamsSchema = z
   .object({
     tenantId: TenantParam,
@@ -346,7 +457,7 @@ export const RefreshCompensationParamsSchema = z
   });
 export type RefreshCompensationParams = z.infer<typeof RefreshCompensationParamsSchema>;
 
-export const RefreshCompensationResultSchema = z
+export const RefreshCompensationSyncResultSchema = z
   .object({
     ok: z.literal(true),
     status: z.literal("succeeded"),
@@ -368,13 +479,14 @@ export type RefreshCompensationResult = z.infer<typeof RefreshCompensationResult
 
 export const GenerateInterviewPrepParamsSchema = z
   .object({
+    ...GenerateInterviewPrepRequestSchema.shape,
     tenantId: TenantParam,
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
     jobId: CanonicalJobIdParam,
     llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
   })
-  .strict();
+  .strict().superRefine(refineInterviewEvidenceSelection);
 export type GenerateInterviewPrepParams = z.infer<typeof GenerateInterviewPrepParamsSchema>;
 
 /**
@@ -423,7 +535,8 @@ export const GenerateOutreachDraftParamsSchema = z
     threadId: z.string().trim().min(1).max(200),
     contactId: z.string().trim().min(1).max(200).optional(),
     jobId: z.string().trim().min(1).max(2000).nullish(),
-    kind: z.enum(["intro_request", "follow_up"]).default("intro_request"),
+    kind: z.enum(["intro_request", "follow_up", "offer_negotiation", "offer_clarification", "offer_acceptance", "offer_decline"]).optional(),
+    offerRevisionId: z.uuid().optional(),
     editedBodyText: z.string().trim().min(1).max(8000).optional(),
     applicationRole: z.string().trim().max(200).optional(),
     llmModel: z.string().trim().min(1).max(120).optional(),
@@ -435,18 +548,19 @@ export const GenerateOutreachDraftParamsSchema = z
   });
 export type GenerateOutreachDraftParams = z.infer<typeof GenerateOutreachDraftParamsSchema>;
 
-export const GenerateOutreachDraftResultSchema = z
+const PublishedOutreachDraftResultSchema = z
   .object({
     threadId: z.string(),
     contactId: z.string(),
     jobId: z.string().nullable(),
     draftId: z.string(),
     generation: z.number().int().nonnegative(),
-    kind: z.enum(["intro_request", "follow_up"]),
+    kind: z.enum(["intro_request", "follow_up", "offer_negotiation", "offer_clarification", "offer_acceptance", "offer_decline"]),
     status: z.enum(["candidate", "approved", "rejected", "superseded"]),
     gatePassed: z.boolean(),
   })
   .strict();
+export const GenerateOutreachDraftResultSchema = z.union([PublishedOutreachDraftResultSchema, OutreachPublicationConflictSchema]);
 export type GenerateOutreachDraftResult = z.infer<typeof GenerateOutreachDraftResultSchema>;
 
 export const RetailorJobParamsSchema = z
@@ -460,7 +574,6 @@ export const RetailorJobParamsSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.number().min(0).max(1).optional(),
   })
   .strict();
 export type RetailorJobParams = z.infer<typeof RetailorJobParamsSchema>;
@@ -477,7 +590,6 @@ export const RetailorCurrentPolicyParamsSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.number().min(0).max(1).optional(),
   })
   .strict();
 export type RetailorCurrentPolicyParams = z.infer<typeof RetailorCurrentPolicyParamsSchema>;
@@ -504,13 +616,14 @@ export type ApplyParams = z.infer<typeof ApplyParamsSchema>;
 // SSE / dashboard wiring stays compatible) plus ``workflowId`` and
 // ``firstExecutionRunId``. ``workflowId`` is a duplicate of ``runId`` for
 // the apply path today but the field stays for forward compatibility with
-// future workflows whose run id and workflow id diverge. NOT ``.strict()``
-// because future Temporal versions may add more identifiers.
+// future workflows whose run id and workflow id diverge. Preserve additional
+// identity metadata and awaited payloads instead of silently stripping them.
 export const ApplyResultSchema = z.object({
-  runId: z.string(),
-  workflowId: z.string().optional(),
-  firstExecutionRunId: z.string().optional(),
-});
+  runId: z.string().min(1),
+  workflowId: z.string().min(1).optional(),
+  firstExecutionRunId: z.string().min(1).nullish(),
+  result: z.unknown().optional(),
+}).passthrough();
 export type ApplyResult = z.infer<typeof ApplyResultSchema>;
 
 // NOTE: rescore_job / tailor_job / retailor_job / retailor_current_policy /
@@ -525,6 +638,9 @@ export const CancelRunParamsSchema = z
   .object({
     tenantId: TenantParam,
     runId: z.string().min(1),
+    requestedBy: z.string().trim().min(1).max(160).optional(),
+    source: z.string().trim().min(1).max(80).optional(),
+    reason: z.string().max(500).nullable().optional(),
   })
   .strict();
 export type CancelRunParams = z.infer<typeof CancelRunParamsSchema>;
@@ -651,10 +767,13 @@ export type ReviewLearningRecommendationResult = z.infer<
 
 export const RollbackTailoringPolicyParamsSchema = z
   .object({
-    tenantId: TenantParam,
+    tenantId: z.string().min(1).refine((value) => value.trim() === value),
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
     targetVersion: z.number().int().positive(),
+    expectedCurrentVersion: z.number().int().positive(),
+    commandId: TailoringPolicyRestoreCommandIdSchema,
+    reasonCode: z.literal("user_requested"),
   })
   .strict();
 export type RollbackTailoringPolicyParams = z.infer<
@@ -667,6 +786,10 @@ export const RollbackTailoringPolicyResultSchema = z
     context: z.literal("materials"),
     policyKind: z.literal("tailoring_rule"),
     policyVersion: z.number().int().positive(),
+    currentVersion: z.number().int().positive(),
+    replayed: z.boolean(),
+    expectedCurrentVersion: z.number().int().positive(),
+    commandId: TailoringPolicyRestoreCommandIdSchema,
     rollbackOfVersion: z.number().int().positive(),
     rollbackReasonCode: z.literal("user_requested"),
     learnedRules: z.array(TailoringPolicyLearnedRuleSchema).max(5),
@@ -684,6 +807,12 @@ export const RenderResumePdfParamsSchema = z
   })
   .strict();
 export type RenderResumePdfParams = z.infer<typeof RenderResumePdfParamsSchema>;
+export const RenderCoverLetterPdfParamsSchema = z.object({
+  sourcePath: z.string().min(1), pdfPath: z.string().min(1),
+  textSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  settings: CoverLetterSettingsSchema,
+  rendererVersion: z.literal(COVER_LETTER_RENDERER_VERSION),
+}).strict();
 
 export const RenderResumePdfResultSchema = z
   .object({
@@ -706,9 +835,7 @@ export const GmailFeedbackScanParamsSchema = z
 export type GmailFeedbackScanParams = z.infer<typeof GmailFeedbackScanParamsSchema>;
 
 // The scan result deliberately passes through: the TS caller sanitizes the
-// payload field-by-field, and auth failures travel as { ok: false, message }
-// so the route's status mapping stays behavior-identical to the old
-// subprocess protocol.
+// payload field-by-field and maps safe failure codes to the HTTP response.
 export const GmailFeedbackScanResultSchema = z.object({ ok: z.boolean() }).passthrough();
 export type GmailFeedbackScanResult = z.infer<typeof GmailFeedbackScanResultSchema>;
 
@@ -720,6 +847,7 @@ export const ProfileImportParamsSchema = z
     pdfPath: z.string().min(1),
     importProfile: z.boolean().default(true),
     importStyle: z.boolean().default(true),
+    awaitResult: z.boolean().optional(),
   })
   .strict();
 export type ProfileImportParams = z.infer<typeof ProfileImportParamsSchema>;
@@ -746,10 +874,203 @@ export type LocalActionResult = z.infer<typeof LocalActionResultSchema>;
 
 /* ----------------------------------------------------------------- helpers */
 
-export function buildJsonRpcRequest<P extends Record<string, unknown>>(
-  method: RpcMethod,
-  params: P,
+export function buildJsonRpcRequest<M extends ContractRpcMethod>(
+  method: M,
+  params: RpcParams<NoInfer<M>>,
   id: JsonRpcId = 1,
 ): JsonRpcRequest {
-  return { jsonrpc: "2.0", method, params, id } satisfies JsonRpcRequest;
+  return { jsonrpc: "2.0", method, params: parseRpcParams(method, params), id } satisfies JsonRpcRequest;
+}
+
+export const MaterialLocaleParamsSchema = z.object({
+  tenantId: z.string().min(1), expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
+  jobId: z.string().uuid(), request: MaterialLocaleRequestSchema,
+}).strict();
+export const AcceptedMaterialExportParamsSchema = z.object({
+  tenantId: z.string().min(1), expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
+  jobId: z.string().uuid(), request: AcceptedMaterialExportRequestSchema,
+}).strict();
+export const ScreeningAnswersParamsSchema = z.object({
+  tenantId: z.string().min(1), expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
+  jobId: z.string().min(1).max(160), command: ScreeningCommandSchema.optional(),
+}).strict();
+export const ScreeningAnswersResultSchema = z.union([ScreeningReadResponseSchema, ScreeningWriteResponseSchema]);
+
+/** Serialized dataclasses returned by workflow_specs.workflow_result_to_dict.
+ * A pipeline result has no `status` field; failures live in stages_failed/failure.
+ */
+export const JobPipelineWorkflowResultSchema = z.object({
+  stages_completed: z.array(z.enum(STAGES)),
+  stages_failed: z.array(z.enum(STAGES)),
+  failure: z.string().nullable(),
+  error_code: z.string().nullable(),
+}).strict();
+export type JobPipelineWorkflowResult = z.infer<typeof JobPipelineWorkflowResultSchema>;
+
+export const DiscoverWorkflowResultSchema = z.object({
+  families_completed: z.array(z.string()),
+  families_failed: z.array(z.string()),
+  preparation_started: z.number().int().nonnegative(),
+  enrichment_status: z.string(),
+  enrichment_site_errors: z.record(z.string(), z.unknown()),
+  compensation_refresh_status: z.string(),
+  compensation_estimates_written: z.number().int().nonnegative(),
+  compensation_refresh_warnings: z.array(z.string()),
+  failure: z.string().nullable(),
+  error_code: z.string().nullable(),
+}).strict();
+export type DiscoverWorkflowResult = z.infer<typeof DiscoverWorkflowResultSchema>;
+
+export const RunStageWorkflowResultSchema = z.union([
+  JobPipelineWorkflowResultSchema,
+  DiscoverWorkflowResultSchema,
+]);
+export const RunStageResultSchema = z.union([
+  ApplyResultSchema.extend({ result: RunStageWorkflowResultSchema.optional() }),
+  LocalActionResultSchema,
+]);
+export type RunStageResult = z.infer<typeof RunStageResultSchema>;
+
+export const ProfileImportWorkflowResultSchema = z.object({
+  status: z.enum(["succeeded", "failed"]),
+  draft: z.record(z.string(), z.unknown()),
+  error: z.string().nullable(),
+  error_code: z.string().nullable(),
+}).strict();
+export const ProfileImportResultSchema = ApplyResultSchema.extend({
+  result: ProfileImportWorkflowResultSchema.optional(),
+});
+export type ProfileImportWorkflowResult = z.infer<typeof ProfileImportWorkflowResultSchema>;
+export type ProfileImportResult = z.infer<typeof ProfileImportResultSchema>;
+
+export const JobUrlImportResultSchema = ApplyResultSchema.extend({
+  result: JobUrlImportWorkflowResultSchema.optional(),
+});
+export const JobUrlImportStatusParamsSchema = z.object({
+  tenantId: TenantParam,
+  expectedAppDir: z.string().trim().min(1),
+  expectedDbPath: z.string().trim().min(1),
+  workflowId: z.string().min(1).max(180),
+  executionId: z.string().uuid(),
+}).strict();
+export const JobUrlImportStatusResultSchema = z.object({
+  workflowId: z.string().min(1).max(180),
+  executionId: z.string().uuid(),
+  status: z.enum(["pending", "succeeded", "failed", "canceled", "timed_out", "terminated"]),
+  result: JobUrlImportWorkflowResultSchema.optional(),
+}).strict().refine((value) => (value.status === "succeeded") === (value.result !== undefined), {
+  message: "only completed import executions carry a result",
+});
+export const ManualCaptureImportResultSchema = ApplyResultSchema.extend({
+  result: ManualCaptureImportWorkflowResultSchema,
+});
+export const RefreshCompensationResultSchema = z.union([
+  RefreshCompensationSyncResultSchema,
+  ApplyResultSchema,
+]);
+
+const RuntimeBindingSchema = z.object({
+  tenantId: TenantParam, expectedAppDir: z.string().trim().min(1), expectedDbPath: z.string().trim().min(1),
+}).strict();
+const EmptyRpcParamsSchema = z.object({}).strict();
+export const MapExtensionFormParamsSchema = RuntimeBindingSchema.extend({
+  ...FormSnapshotSchema.shape, expectedProfileVersion: z.number().int().positive(),
+});
+export const ReviewResumeEditParamsSchema = RuntimeBindingSchema.extend({
+  draftId: z.string().min(1), revisionId: z.string().min(1), operation: z.enum(["artifact", "intent"]).optional(),
+});
+
+/** Parameter/result relationships for the methods with schemas owned here.
+ * This describes dispatch responses, not the synchronous activity payloads of
+ * workflow-start methods. The API enforces these contracts before sending and
+ * consuming a response. Python default handler registration owns the inventory.
+ */
+export const RpcContracts = {
+  [RpcMethods.CareerLearning]: { params: CareerLearningParamsSchema, result: CareerLearningResponseSchema },
+  [RpcMethods.AcceptedMaterialExports]: { params: AcceptedMaterialExportParamsSchema, result: AcceptedMaterialExportsSchema },
+  [RpcMethods.ResetEnrichment]: { params: ResetEnrichmentParamsSchema, result: ResetEnrichmentResultSchema },
+  [RpcMethods.ProviderStatus]: { params: z.object({ provider: z.enum(["codex", "claude", "google"]).optional() }).strict(), result: ProviderStatusResultSchema },
+  [RpcMethods.ProviderModels]: { params: EmptyRpcParamsSchema, result: ProviderModelCatalogResultSchema },
+  [RpcMethods.ProviderVerify]: { params: z.object({ provider: z.literal("codex") }).strict(), result: CodexVerifyResultSchema },
+  [RpcMethods.BrowserCapabilitiesList]: { params: EmptyRpcParamsSchema, result: BrowserCapabilitiesResultSchema },
+  [RpcMethods.BrowserCapabilityEnable]: { params: z.union(BrowserCapabilityEnableRequestSchema.options.map(schema => schema.extend({ capabilityId: z.enum(BrowserCapabilityIds) }))), result: BrowserCapabilitiesResultSchema },
+  [RpcMethods.BrowserCapabilityDisable]: { params: z.object({ capabilityId: z.enum(BrowserCapabilityIds) }).strict(), result: BrowserCapabilitiesResultSchema },
+  [RpcMethods.BrowserProfileCopy]: { params: BrowserProfileCopyRequestSchema, result: BrowserCapabilitiesResultSchema },
+  [RpcMethods.MapExtensionForm]: { params: MapExtensionFormParamsSchema, result: FormMappingResponseSchema },
+  [RpcMethods.ReviewResumeEdit]: { params: ReviewResumeEditParamsSchema, result: z.union([ResumeEditReviewSchema, ResumeEditIntentReviewSchema]) },
+  [RpcMethods.PrepareRepeatApplicationDeterminations]: { params: RuntimeBindingSchema.extend({ jobId: CanonicalJobIdParam }), result: z.object({ ok: z.literal(true), assessment: z.object({ status: z.enum(["clear", "blocked", "confirmation_required", "override_ready", "override_consumed"]), summary: z.string(), evidenceFingerprint: z.string().nullable(), evaluatedAt: z.string(), matches: z.array(z.record(z.string(), z.unknown())), override: z.record(z.string(), z.unknown()).nullable(), auditTrail: z.array(z.record(z.string(), z.unknown())) }).strict() }).strict() },
+  [RpcMethods.RunStage]: { params: RunStageParamsSchema, result: RunStageResultSchema },
+  [RpcMethods.RescoreJob]: { params: RescoreJobParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.RescoreJobsNotOnCurrentScoringPolicy]: { params: RescoreJobsNotOnCurrentScoringPolicyParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.TailorJob]: { params: TailorJobParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.RetailorJob]: { params: RetailorJobParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.RetailorCurrentPolicy]: { params: RetailorCurrentPolicyParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.Apply]: { params: ApplyParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.ProfileImport]: { params: ProfileImportParamsSchema, result: ProfileImportResultSchema },
+  [RpcMethods.JobUrlImport]: { params: JobUrlImportParamsSchema, result: JobUrlImportResultSchema },
+  [RpcMethods.JobUrlImportStatus]: { params: JobUrlImportStatusParamsSchema, result: JobUrlImportStatusResultSchema },
+  [RpcMethods.ManualCaptureImport]: { params: ManualCaptureImportParamsSchema, result: ManualCaptureImportResultSchema },
+  [RpcMethods.RefreshCompensation]: { params: RefreshCompensationParamsSchema, result: RefreshCompensationResultSchema },
+  [RpcMethods.CheckPostingAvailability]: { params: CheckPostingAvailabilityParamsSchema, result: AvailabilityWorkflowStartSchema },
+  [RpcMethods.GenerateInterviewPrep]: { params: GenerateInterviewPrepParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.RunContactResearch]: { params: RunContactResearchParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.AnalyzeJob]: { params: AnalyzeJobParamsSchema, result: AnalyzeJobResultSchema },
+  [RpcMethods.CancelRun]: { params: CancelRunParamsSchema, result: CancelRunResultSchema },
+  [RpcMethods.GenerateOutreachDraft]: { params: GenerateOutreachDraftParamsSchema, result: GenerateOutreachDraftResultSchema },
+  [RpcMethods.RederiveLearningRecommendations]: { params: RederiveLearningRecommendationsParamsSchema, result: RederiveLearningRecommendationsResultSchema },
+  [RpcMethods.ReviewLearningRecommendation]: { params: ReviewLearningRecommendationParamsSchema, result: ReviewLearningRecommendationResultSchema },
+  [RpcMethods.RollbackTailoringPolicy]: { params: RollbackTailoringPolicyParamsSchema, result: RollbackTailoringPolicyResultSchema },
+  [RpcMethods.RenderResumePdf]: { params: RenderResumePdfParamsSchema, result: RenderResumePdfResultSchema },
+  [RpcMethods.RenderCoverLetterPdf]: { params: RenderCoverLetterPdfParamsSchema, result: RenderResumePdfResultSchema },
+  [RpcMethods.GmailFeedbackScan]: { params: GmailFeedbackScanParamsSchema, result: GmailFeedbackScanResultSchema },
+  [RpcMethods.ProfileRequiredBulletSuggestions]: { params: ProfileRequiredBulletSuggestionsParamsSchema, result: RequiredBulletModelResultSchema },
+  [RpcMethods.ProfileTargetRoleSuggestions]: { params: ProfileTargetRoleSuggestionsParamsSchema, result: TargetRoleSuggestionResultSchema },
+  [RpcMethods.MaterialLocaleVariants]: { params: MaterialLocaleParamsSchema, result: MaterialLocaleHistorySchema },
+  [RpcMethods.ScreeningAnswers]: { params: ScreeningAnswersParamsSchema, result: ScreeningAnswersResultSchema },
+} as const satisfies Record<RpcMethod, { params: z.ZodType; result: z.ZodType }>;
+
+export type ContractRpcMethod = keyof typeof RpcContracts;
+export type RpcParams<M extends ContractRpcMethod> = M extends ContractRpcMethod
+  ? keyof z.input<(typeof RpcContracts)[M]["params"]> extends never
+    ? Record<string, never> : z.input<(typeof RpcContracts)[M]["params"]>
+  : never;
+export type RpcResult<M extends ContractRpcMethod> = z.output<(typeof RpcContracts)[M]["result"]>;
+
+/** A contract failure is distinct from a failed transport or worker error envelope. */
+export class RpcContractError extends Error {
+  constructor(readonly method: ContractRpcMethod, readonly phase: "params" | "result") {
+    super(`Invalid JSON-RPC ${phase} for '${method}'.`);
+    this.name = "RpcContractError";
+  }
+}
+
+export function parseRpcParams<M extends ContractRpcMethod>(method: M, params: unknown): RpcParams<M> {
+  const schema = RpcContracts[method]?.params;
+  if (!schema) throw new RpcContractError(method, "params");
+  const parsed = schema.safeParse(params);
+  if (!parsed.success) throw new RpcContractError(method, "params");
+  return parsed.data as RpcParams<M>;
+}
+
+export type RpcResponse<M extends ContractRpcMethod> = Omit<JsonRpcResponse, "result"> & { result?: RpcResult<M> };
+
+export function parseRpcResponse<M extends ContractRpcMethod>(method: M, params: RpcParams<M>, response: unknown): RpcResponse<M> {
+  const envelope = JsonRpcResponseSchema.safeParse(response);
+  if (!envelope.success) throw new RpcContractError(method, "result");
+  if (envelope.data.error) return envelope.data as RpcResponse<M>;
+  const parsed = RpcContracts[method].result.safeParse(envelope.data.result);
+  if (!parsed.success) throw new RpcContractError(method, "result");
+  if ((method === "run_stage" || method === "profile_import") && "awaitResult" in params && params.awaitResult === true) {
+    const stages = "stages" in params ? params.stages : undefined;
+    // workflow_specs._stage_list deduplicates explicit stages and gives them
+    // precedence over stage. Select the result family without rewriting input.
+    const discover = stages?.length ? stages.every(stage => stage === "discover") : "stage" in params && params.stage === "discover";
+    const awaited = method === "run_stage" ? ApplyResultSchema.extend({ result: discover ? DiscoverWorkflowResultSchema : JobPipelineWorkflowResultSchema }) : ApplyResultSchema.extend({ result: ProfileImportWorkflowResultSchema });
+    if (!awaited.safeParse(parsed.data).success) throw new RpcContractError(method, "result");
+  }
+  if (method === "review_resume_edit") {
+    const schema = "operation" in params && params.operation === "intent" ? ResumeEditIntentReviewSchema : ResumeEditReviewSchema;
+    if (!schema.safeParse(parsed.data).success) throw new RpcContractError(method, "result");
+  }
+  return { ...envelope.data, result: parsed.data } as RpcResponse<M>;
 }

@@ -68,7 +68,7 @@ func buildSealedV9Candidate(candidate launchContext, pair databasePair, journalI
 	var receipt sealedV9CandidateReceipt
 	if err := decodeSingleJSON(output, &receipt); err != nil ||
 		receipt.SchemaVersion != 1 || receipt.Status != "ready" ||
-		receipt.UserVersion != currentJobCtrlSchemaVersion || receipt.JobCount < 0 || receipt.TableCount < 1 ||
+		receipt.UserVersion != v9JobCtrlSchemaVersion || receipt.JobCount < 0 || receipt.TableCount < 1 ||
 		!validSHA256(receipt.SourceDataDigest) || !validSHA256(receipt.CandidateDataDigest) ||
 		receipt.SourceDataDigest != receipt.CandidateDataDigest || !validSHA256(receipt.CandidateSHA256) {
 		cleanupV9Candidate(candidate.Instance.StateDir, journalID)
@@ -85,7 +85,7 @@ func buildSealedV9Candidate(candidate launchContext, pair databasePair, journalI
 		return "", errors.New("sealed v9 candidate digest verification failed")
 	}
 	version, versionErr := sqliteUserVersion(python, path)
-	if versionErr != nil || version != currentJobCtrlSchemaVersion {
+	if versionErr != nil || version != v9JobCtrlSchemaVersion {
 		cleanupV9Candidate(candidate.Instance.StateDir, journalID)
 		return "", errors.New("sealed v9 candidate schema verification failed")
 	}
@@ -116,6 +116,9 @@ func installSealedV9Candidate(candidate launchContext, candidatePath string) err
 		return errors.New("v9 activation candidate is not an owner-private regular file")
 	}
 	live := filepath.Join(candidate.Instance.StateDir, "jobctrl.db")
+	if err := checkDatabasePublication(live); err != nil {
+		return err
+	}
 	liveInfo, err := os.Lstat(live)
 	if err != nil || !liveInfo.Mode().IsRegular() || liveInfo.Mode()&os.ModeSymlink != 0 {
 		return errors.New("live database is not a regular file")
@@ -127,7 +130,7 @@ func installSealedV9Candidate(candidate launchContext, candidatePath string) err
 		return err
 	}
 	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
-	if version, err := sqliteUserVersion(python, live); err != nil || version != currentJobCtrlSchemaVersion {
+	if version, err := sqliteUserVersion(python, live); err != nil || version != v9JobCtrlSchemaVersion {
 		return errors.New("installed v9 database did not reopen at the exact schema version")
 	}
 	return nil

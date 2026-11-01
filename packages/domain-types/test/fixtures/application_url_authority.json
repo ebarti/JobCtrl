@@ -1,0 +1,68 @@
+{
+  "cases": [
+    {
+      "name": "legacy-only",
+      "jobId": "89100000-0000-4000-8000-000000000001",
+      "legacy": "https://apply.example.test/legacy",
+      "enrichment": null,
+      "expected": "https://apply.example.test/legacy"
+    },
+    {
+      "name": "canonical-wins",
+      "jobId": "89100000-0000-4000-8000-000000000002",
+      "legacy": "https://apply.example.test/retained-alias",
+      "enrichment": {
+        "applicationUrl": "https://apply.example.test/canonical",
+        "status": "enriched"
+      },
+      "expected": "https://apply.example.test/canonical"
+    },
+    {
+      "name": "empty-canonical",
+      "jobId": "89100000-0000-4000-8000-000000000003",
+      "legacy": "https://apply.example.test/promoted",
+      "enrichment": {
+        "applicationUrl": "",
+        "status": "failed"
+      },
+      "expected": "https://apply.example.test/promoted"
+    },
+    {
+      "name": "missing-target",
+      "jobId": "89100000-0000-4000-8000-000000000004",
+      "legacy": null,
+      "enrichment": null,
+      "expected": null
+    },
+    {
+      "name": "canonical-only",
+      "jobId": "89100000-0000-4000-8000-000000000005",
+      "legacy": "",
+      "enrichment": {
+        "applicationUrl": "https://apply.example.test/only-canonical",
+        "status": "enriched"
+      },
+      "expected": "https://apply.example.test/only-canonical"
+    },
+    {
+      "name": "verbatim-url",
+      "jobId": "89100000-0000-4000-8000-000000000006",
+      "legacy": "https://apply.example.test/Case?token=A%2FB&x=1#form",
+      "enrichment": {
+        "applicationUrl": null,
+        "status": "pending"
+      },
+      "expected": "https://apply.example.test/Case?token=A%2FB&x=1#form"
+    },
+    {
+      "name": "empty-target",
+      "jobId": "89100000-0000-4000-8000-000000000007",
+      "legacy": null,
+      "enrichment": {
+        "applicationUrl": "",
+        "status": "pending"
+      },
+      "expected": null
+    }
+  ]
+}

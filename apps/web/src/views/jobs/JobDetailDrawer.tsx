@@ -1,17 +1,23 @@
+import { OfferCommunication } from "../../contexts/outreach/index.js";
+import { useOfferQuery } from "../../contexts/operations/hooks/useOfferQuery.js";
+import { CompanyBriefingPanel } from "../../contexts/materials/components/CompanyBriefingPanel.js";
+import { ScreeningAnswerLibrary } from "../../contexts/materials/components/ScreeningAnswerLibrary.js";
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobctrl/contracts";
 import { IconArrowLeft, IconChevronDown } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import {
   InterviewReflectionPanel,
   JobOutcomePanel,
 } from "../../contexts/apply/components/ApplicationOutcomes.js";
+import { PostingAvailability } from "../../contexts/enrichment/index.js";
 import { CompensationAuditSection } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { JobContactsPanel } from "../../contexts/outreach/components/JobContactsPanel.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
+import { AcceptedMaterialExports, MaterialLocaleVariants } from "../../contexts/materials/index.js";
 import {
   EmployerAnalysisPanel,
   type EmployerAnalysisEvidenceReference,
@@ -22,11 +28,15 @@ import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHi
 import { useDiscoverySettingsQuery } from "../../contexts/operations/hooks/useDiscoverySettingsQuery.js";
 import { useEvidenceMapQuery } from "../../contexts/operations/hooks/useEvidenceMapQuery.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
-import type { EvidenceMapEntry } from "../../contexts/operations/types.js";
+import type { ArtifactSummary, EvidenceMapEntry } from "@jobctrl/contracts";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
+import { RetryStageButton } from "../../contexts/pipeline/components/RetryStageButton.js";
+import { RetryStatusNotice } from "../../contexts/pipeline/components/RetryStatusNotice.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
 import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
+import { ContextHelp } from "../../shared/ui/context-help.js";
+import { DisclosureSection } from "../../shared/ui/disclosure-section.js";
 import { Empty } from "../../shared/ui/empty.js";
 import {
   Popover,
@@ -45,7 +55,12 @@ export interface JobDetailDrawerProps {
   onClose: () => void;
 }
 
-type JobDetailMobileSection = "overview" | "diagnostics";
+interface JobDetailSectionDefinition {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly content: ReactNode;
+}
 
 function detailErrorTitle(error: unknown): string {
   if (error instanceof JobCtrlApiError && error.status === 404) {
@@ -66,10 +81,66 @@ function canRunCurrentStage(stage: StageSummary | undefined): boolean {
   return Boolean(stage && !["queued", "running"].includes(stage.state));
 }
 
+function isLinkedInPosting(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === "https:"
+      && (url.hostname === "linkedin.com" || url.hostname === "www.linkedin.com")
+      && /^\/jobs\/view\/[^/]+\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function evidenceReferenceExcerpt(entry: EvidenceMapEntry): string | null {
   const excerpt =
     entry.story?.outcome ?? entry.story?.action ?? entry.story?.scope ?? null;
   return excerpt && excerpt !== entry.title ? excerpt : null;
+}
+
+function groupJobArtifacts(artifacts: readonly ArtifactSummary[]) {
+  const accepted: ArtifactSummary[] = [];
+  const other: ArtifactSummary[] = [];
+  const superseded: ArtifactSummary[] = [];
+  for (const artifact of artifacts) {
+    if (artifact.status === "active" || artifact.status === "approved") {
+      accepted.push(artifact);
+    } else if (artifact.status === "superseded") {
+      superseded.push(artifact);
+    } else {
+      other.push(artifact);
+    }
+  }
+  accepted.sort((left, right) => {
+    const generationDifference = (right.generation ?? -1) - (left.generation ?? -1);
+    if (generationDifference) return generationDifference;
+    const leftTime = Date.parse(left.createdAt ?? "") || 0;
+    const rightTime = Date.parse(right.createdAt ?? "") || 0;
+    return rightTime - leftTime;
+  });
+  return { accepted, other, superseded };
+}
+
+function JobArtifactRow({ artifact }: { readonly artifact: ArtifactSummary }) {
+  return (
+    <div className="mini-row job-artifact-row">
+      <ArtifactStatusBadge status={artifact.status} />
+      <span>
+        {artifact.type}
+        {artifact.generation != null ? ` · Generation ${artifact.generation}` : null}
+        <ContextHelp label={`${artifact.type} artifact`} description={`This saved material is ${artifact.status}${artifact.generation == null ? "" : ` in generation ${artifact.generation}`}. Its status comes from the artifact lifecycle record. ${artifact.status === "missing" ? "No file is available to open." : "Open it to inspect the material."} Superseded versions remain available in the history disclosure.`} />
+      </span>
+      <OpenArtifactButton
+        artifactId={artifact.artifactId}
+        className={buttonVariants({ size: "sm", variant: "outline" })}
+        disabled={artifact.status === "missing"}
+      />
+      <details className="job-artifact-technical-details">
+        <summary data-typography="control">Technical details</summary>
+        <code data-typography="code">{artifact.localPath}</code>
+      </details>
+    </div>
+  );
 }
 
 function JobAuditHistorySection({
@@ -89,7 +160,7 @@ function JobAuditHistorySection({
           </StatusBadge>
         </summary>
         <div className="job-audit-history-detail">
-          <h3 data-typography="component-title">Audit history</h3>
+          <h3 aria-label="Audit history" data-typography="component-title">Audit history <ContextHelp label="Audit history" description="Recorded job events and technical changes. They show what happened in the local workflow; an event is not proof that an external application was submitted." /></h3>
           <JobAuditHistory entries={entries} />
         </div>
       </details>
@@ -97,18 +168,22 @@ function JobAuditHistorySection({
   );
 }
 
-function RequirementFitMissingCallout({ jobId }: { readonly jobId: string }) {
+function RequirementFitMissingCallout({
+  jobId,
+  outdated,
+}: { readonly jobId: string; readonly outdated: boolean }) {
+  const title = outdated ? "Requirement fit is outdated" : "Requirement fit not assessed";
   return (
     <section
       className="section requirement-fit-missing"
-      aria-label="Requirement fit not assessed"
+      aria-label={title}
     >
       <div>
-        <h3>Requirement fit not assessed</h3>
+        <h3 aria-label={title}>{title} <ContextHelp label="Requirement fit status" description="The stored requirement-level score is absent or belongs to an earlier analysis or score version. Re-score to assess current requirements; prior score and materials remain available for review." /></h3>
         <p className="muted">
-          This job has employer requirements, but the stored score predates
-          requirement-level fit. Re-score it to produce candidate fit, score
-          impact, and tailoring actions for each requirement.
+          {outdated
+            ? "The saved requirement fit belongs to a different employer-analysis generation or score version. Re-score this job to assess the current requirements; the previous score and materials remain available for review."
+            : "This job has employer requirements, but the stored score predates requirement-level fit. Re-score it to produce candidate fit, score impact, and tailoring actions for each requirement."}
         </p>
       </div>
       <RescoreJobButton
@@ -121,10 +196,13 @@ function RequirementFitMissingCallout({ jobId }: { readonly jobId: string }) {
 }
 
 export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
-  const [mobileSection, setMobileSection] =
-    useState<JobDetailMobileSection>("overview");
   const [commandsOpen, setCommandsOpen] = useState(false);
+  const [sectionsOpen, setSectionsOpen] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const jumpTarget = useRef<string | null>(null);
+  const pendingJumpFocus = useRef<string | null>(null);
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
+  const offer = useOfferQuery(jobId);
   const evidenceMap = useEvidenceMapQuery();
   const evidenceEntriesById = useMemo(() => {
     const entries = new Map<string, EvidenceMapEntry>();
@@ -156,9 +234,160 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   const currentSubstage = detail?.stages.find(
     (stage) => stage.stage === detail.job.currentSubstage,
   );
+  const artifactGroups = groupJobArtifacts(detail?.artifacts ?? []);
+  const sections: JobDetailSectionDefinition[] = detail ? [
+    {
+      id: "description",
+      title: "Description",
+      description: "Captured posting text",
+      content: <section className="section job-detail-description">
+        <div className="job-detail-section-heading">
+          <h3 aria-label="Description">Description <ContextHelp label="Description" description="Saved text captured from the original job posting. It may differ from the live posting after capture; use the original posting link to verify current wording." /></h3>
+          <span data-typography="label">Original posting text</span>
+        </div>
+        <JobDescription text={detail.job.descriptionPreview} />
+      </section>,
+    },
+    {
+      id: "fit-evidence",
+      title: "Fit & evidence",
+      description: "Assessment, requirement fit, and apply concerns",
+      content: <>
+        <JobAuditTriage detail={detail} />
+        {detail.employerAnalysis && !detail.requirementFitReport ? (
+          <RequirementFitMissingCallout
+            jobId={detail.job.jobKey}
+            outdated={detail.job.scoreAnalysisFreshness?.status === "outdated"}
+          />
+        ) : null}
+      </>,
+    },
+    {
+      id: "preparation",
+      title: "Preparation diagnostics",
+      description: "Saved workflow stages and application target",
+      content: <>
+        <PostingAvailability jobId={detail.job.jobKey} postingUrl={detail.job.url} availability={detail.job.availability} />
+        <Section title="Preparation diagnostics" help="Saved preparation stage states and diagnostic messages. A failed, blocked, or exhausted stage calls for review; these stages do not by themselves submit an application.">
+          <StageTimeline jobId={detail.job.jobKey} detailQueryId={jobId} postingUrl={detail.job.url} stages={preparationStages(detail.stages)} />
+        </Section>
+        {!detail.job.applicationUrl && isLinkedInPosting(detail.job.url)
+          && detail.stages.some((stage) => stage.stage === "enrich" && stage.state === "succeeded") ? (
+          <section className="section requirement-fit-missing" aria-label="Application target refresh">
+            <div>
+              <h3 aria-label="Application target unavailable">Application target unavailable <ContextHelp label="Application target" description="A verified destination link was not saved for this posting. Refresh attempts to locate a target; the saved description, score, and materials remain available even if none is found." /></h3>
+              <p className="muted">Check the current posting for an application link. The saved description, score, and materials stay available if the check finds no verified target.</p>
+              {detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message ? (
+                <p className="muted">{detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message}</p>
+              ) : null}
+            </div>
+            <RetryStageButton jobId={detail.job.jobKey} detailQueryId={jobId} stage="enrich" runAfter refreshApplyUrl label="Refresh application target" />
+          </section>
+        ) : null}
+      </>,
+    },
+    {
+      id: "artifacts",
+      title: "Artifacts",
+      description: "Accepted materials and lifecycle history",
+      content: <Section title="Artifacts" help="Generated job materials and their canonical lifecycle statuses. Accepted versions appear first, newest generation first; only records marked superseded are in the disclosure. Failed or draft refreshes never erase an accepted material.">
+        {detail.artifacts.length ? <>
+          {[...artifactGroups.accepted, ...artifactGroups.other].map((artifact) => <JobArtifactRow artifact={artifact} key={artifact.artifactId} />)}
+          {artifactGroups.superseded.length ? (
+            <details className="job-artifact-history">
+              <summary data-typography="control">Superseded artifacts ({artifactGroups.superseded.length})</summary>
+              {artifactGroups.superseded.map((artifact) => <JobArtifactRow artifact={artifact} key={artifact.artifactId} />)}
+            </details>
+          ) : null}
+        </> : <Empty title="No artifacts recorded." />}
+        <AcceptedMaterialExports key={detail.job.jobKey} jobId={detail.job.jobKey} />
+      </Section>,
+    },
+    {
+      id: "compensation",
+      title: "Compensation",
+      description: "Posted pay and market evidence",
+      content: <CompensationAuditSection jobId={detail.job.jobKey} summary={detail.job.compensationSummary} audit={detail.compensationAudit} fallbackSalary={detail.job.salary} />,
+    },
+    {
+      id: "locales",
+      title: "Locale variants",
+      description: "Independently reviewed resume and letter translations",
+      content: <MaterialLocaleVariants jobId={detail.job.jobKey} />,
+    },
+    {
+      id: "role-analysis",
+      title: "Role Analysis",
+      description: "Employer interpretation and requirement evidence",
+      content: <><EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section job-detail-role-analysis" requirementFitReport={detail.requirementFitReport} resolveEvidenceReference={resolveEvidenceReference} /><CompanyBriefingPanel briefing={detail.companyBriefing} /></>,
+    },
+    {
+      id: "screening-answers",
+      title: "Screening answers",
+      description: "Reviewed library and application history",
+      content: <ScreeningAnswerLibrary jobId={detail.job.jobKey} />,
+    },
+    {
+      id: "interview",
+      title: "Interview prep",
+      description: "Practice material and reflections",
+      content: <InterviewPrepPanel jobId={detail.job.jobKey} prep={detail.interviewPrep} requirements={detail.employerAnalysis?.requirements ?? []} resolveEvidenceReference={resolveEvidenceReference} reflectionContent={detail.interviewPrep ? <InterviewReflectionPanel jobId={detail.job.jobKey} prepGeneration={detail.interviewPrep.generation} /> : null} />,
+    },
+    {
+      id: "apply-history",
+      title: "Apply history",
+      description: "Recorded attempts and dry runs",
+      content: <Section title="Apply history" help="Recorded apply runs for this job, including dry runs and their status. Open a run to inspect its details; a dry run is not a submission."><ApplyHistory jobId={detail.job.jobKey} /></Section>,
+    },
+    {
+      id: "outcomes",
+      title: "Application outcomes",
+      description: "Recorded follow-up outcomes",
+      content: <Section title="Application outcomes" help="Manually recorded or suggested follow-up outcomes for this job. Suggested outcomes need review before acceptance, and an empty timeline means none are recorded here."><JobOutcomePanel jobId={detail.job.jobKey} />{offer.data?.currentTerms ? <OfferCommunication key={`${jobId}:${offer.data.currentTerms.revisionId}`} jobId={jobId} revisionId={offer.data.currentTerms.revisionId} /> : null}</Section>,
+    },
+    {
+      id: "contacts",
+      title: "Contacts",
+      description: "People and outreach research linked to this job",
+      content: <JobContactsPanel jobId={detail.job.jobKey} {...(detail.job.company ? { employer: detail.job.company } : {})} />,
+    },
+    {
+      id: "audit",
+      title: "Audit history",
+      description: "Recorded job events and technical changes",
+      content: <JobAuditHistorySection entries={detail.auditHistory} />,
+    },
+  ] : [];
+
+  function jumpToSection(id: string) {
+    jumpTarget.current = id;
+    pendingJumpFocus.current = id;
+    setExpandedSections((current) => ({ ...current, [id]: true }));
+    setSectionsOpen(false);
+  }
+
+  function focusJumpTarget(id: string) {
+    const section = document.getElementById(`job-detail-${id}`);
+    const trigger = section?.querySelector<HTMLButtonElement>("[data-slot='collapsible-trigger']");
+    if (!section || !trigger) return;
+    const topbarBottom = document.querySelector<HTMLElement>(".topbar")?.getBoundingClientRect().bottom ?? 0;
+    section.style.setProperty("--job-detail-topbar-bottom", `${Math.max(0, topbarBottom)}px`);
+    section.scrollIntoView?.({ block: "start" });
+    trigger.focus({ preventScroll: true });
+  }
+
+  useLayoutEffect(() => {
+    const id = pendingJumpFocus.current;
+    if (sectionsOpen || !id || !expandedSections[id]) return;
+    pendingJumpFocus.current = null;
+    // Move focus as soon as the section has expanded. The popover's closing
+    // animation may finish after the user has already moved to another control.
+    focusJumpTarget(id);
+  }, [expandedSections, sectionsOpen]);
 
   return (
     <div className="route-page route-page--job-detail" aria-label="Job details">
+      <RetryStatusNotice jobId={detail?.job.jobKey ?? jobId} detailQueryId={jobId} />
       {errorMessage ? <Empty title={errorMessage} /> : null}
       {!detail && !errorMessage ? <Empty title="Loading job." /> : null}
       {detail ? (
@@ -166,7 +395,6 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
           aria-label="Job details"
           className="job-detail-workspace"
           contentLabel="Job evidence and analysis"
-          inspectorLabel="Job progress, materials, and history"
           header={
             <div className="job-detail-workspace__header">
               <Button
@@ -232,6 +460,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   >
                     <JobActions
                       jobId={detail.job.jobKey}
+                      detailQueryId={jobId}
                       currentStage={detail.job.currentSubstage}
                       canRetryStage={canRetryStage(currentSubstage)}
                       canRunCurrentStage={canRunCurrentStage(currentSubstage)}
@@ -246,142 +475,74 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 </Popover>
               </div>
               <JobOverview detail={detail} />
-              <div
-                className="job-detail-mobile-sections"
-                aria-label="Job detail section"
-                role="group"
-              >
-                <Button
-                  aria-controls="job-detail-overview-panel"
-                  aria-pressed={mobileSection === "overview"}
-                  data-selected={
-                    mobileSection === "overview" ? "true" : "false"
-                  }
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setMobileSection("overview")}
+              <Popover open={sectionsOpen} onOpenChange={(open) => {
+                if (open) jumpTarget.current = null;
+                setSectionsOpen(open);
+              }}>
+                <PopoverTrigger asChild>
+                  <Button className="job-detail-sections-trigger" size="sm" type="button" variant="outline">
+                    Sections
+                    <IconChevronDown aria-hidden="true" data-icon="inline-end" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  aria-label="Job detail sections"
+                  className="job-detail-sections-menu"
+                  onCloseAutoFocus={(event) => {
+                    if (jumpTarget.current) {
+                      event.preventDefault();
+                      jumpTarget.current = null;
+                    }
+                  }}
+                  side="top"
+                  sideOffset={8}
                 >
-                  Summary and evidence
-                </Button>
-                <Button
-                  aria-controls="job-detail-diagnostics-panel"
-                  aria-pressed={mobileSection === "diagnostics"}
-                  data-selected={
-                    mobileSection === "diagnostics" ? "true" : "false"
-                  }
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setMobileSection("diagnostics")}
-                >
-                  Progress and history
-                </Button>
-              </div>
-            </div>
-          }
-          inspector={
-            <div
-              className="job-detail-workspace__inspector"
-              data-mobile-active={
-                mobileSection === "diagnostics" ? "true" : "false"
-              }
-              id="job-detail-diagnostics-panel"
-            >
-              <Section title="Preparation diagnostics">
-                <StageTimeline
-                  jobId={detail.job.jobKey}
-                  postingUrl={detail.job.url}
-                  stages={preparationStages(detail.stages)}
-                />
-              </Section>
-              <Section title="Active artifacts">
-                {detail.artifacts.length ? (
-                  detail.artifacts.map((artifact) => (
-                    <div
-                      className="mini-row job-artifact-row"
-                      key={artifact.artifactId}
-                    >
-                      <ArtifactStatusBadge status={artifact.status} />
-                      <span>{artifact.type}</span>
-                      <OpenArtifactButton
-                        artifactId={artifact.artifactId}
-                        className={buttonVariants({
-                          size: "sm",
-                          variant: "outline",
-                        })}
-                        disabled={artifact.status === "missing"}
-                      />
-                      <details className="job-artifact-technical-details">
-                        <summary data-typography="control">
-                          Technical details
-                        </summary>
-                        <code data-typography="code">{artifact.localPath}</code>
-                      </details>
-                    </div>
-                  ))
-                ) : (
-                  <Empty title="No active apply-ready artifacts." />
-                )}
-              </Section>
-              <Section title="Apply history">
-                <ApplyHistory jobId={detail.job.jobKey} />
-              </Section>
-              <Section title="Application outcomes">
-                <JobOutcomePanel jobId={detail.job.jobKey} />
-              </Section>
-              <JobContactsPanel
-                jobId={detail.job.jobKey}
-                {...(detail.job.company
-                  ? { employer: detail.job.company }
-                  : {})}
-              />
-              <JobAuditHistorySection entries={detail.auditHistory} />
+                  <nav aria-label="Job detail sections">
+                    {sections.map((section) => (
+                      <Button
+                        aria-controls={`job-detail-${section.id}`}
+                        aria-expanded={expandedSections[section.id] ?? false}
+                        key={section.id}
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                        onClick={() => jumpToSection(section.id)}
+                      >
+                        {section.title}
+                      </Button>
+                    ))}
+                  </nav>
+                  <div className="job-detail-sections-menu__bulk">
+                    <Button size="sm" type="button" variant="outline" onClick={() => {
+                      setExpandedSections(Object.fromEntries(sections.map((section) => [section.id, true])));
+                      setSectionsOpen(false);
+                    }}>Expand all</Button>
+                    <Button size="sm" type="button" variant="outline" onClick={() => {
+                      setExpandedSections(Object.fromEntries(sections.map((section) => [section.id, false])));
+                      setSectionsOpen(false);
+                    }}>Collapse all</Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           }
         >
-          <div
-            className="job-detail-workspace__content"
-            data-mobile-active={mobileSection === "overview" ? "true" : "false"}
-            id="job-detail-overview-panel"
-          >
-            <JobAuditTriage detail={detail} />
-            <CompensationAuditSection
-              jobId={detail.job.jobKey}
-              summary={detail.job.compensationSummary}
-              audit={detail.compensationAudit}
-              fallbackSalary={detail.job.salary}
-            />
-            <section className="section job-detail-description">
-              <div className="job-detail-section-heading">
-                <h3>Description</h3>
-                <span data-typography="label">Original posting text</span>
-              </div>
-              <JobDescription text={detail.job.descriptionPreview} />
-            </section>
-            {detail.employerAnalysis && !detail.requirementFitReport ? (
-              <RequirementFitMissingCallout jobId={detail.job.jobKey} />
-            ) : null}
-            <EmployerAnalysisPanel
-              analysis={detail.employerAnalysis}
-              className="section job-detail-role-analysis"
-              requirementFitReport={detail.requirementFitReport}
-              resolveEvidenceReference={resolveEvidenceReference}
-            />
-            <InterviewPrepPanel
-              jobId={detail.job.jobKey}
-              prep={detail.interviewPrep}
-              requirements={detail.employerAnalysis?.requirements ?? []}
-              resolveEvidenceReference={resolveEvidenceReference}
-              reflectionContent={
-                detail.interviewPrep ? (
-                  <InterviewReflectionPanel
-                    jobId={detail.job.jobKey}
-                    prepGeneration={detail.interviewPrep.generation}
-                  />
-                ) : null
-              }
-            />
+          <div className="job-detail-workspace__content">
+            {sections.map((section, index) => (
+              <DisclosureSection
+                className="job-detail-major-section"
+                description={section.description}
+                headingLevel={2}
+                id={`job-detail-${section.id}`}
+                key={section.id}
+                onOpenChange={(open) => setExpandedSections((current) => ({ ...current, [section.id]: open }))}
+                open={expandedSections[section.id] ?? false}
+                title={`${String(index + 1).padStart(2, "0")} · ${section.title}`}
+              >
+                {section.content}
+              </DisclosureSection>
+            ))}
           </div>
         </RouteWorkspace>
       ) : null}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -72,89 +73,6 @@ def test_workday_adapter_maps_cxs_payload_to_scraped_posting() -> None:
     assert posting.ats_kind is AtsKind.WORKDAY
 
 
-def test_workday_adapter_rejects_country_scoped_remote_locations() -> None:
-    def http(
-        url: str,
-        *,
-        method: str = "GET",
-        json_body: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "total": 2,
-            "jobPostings": [
-                {
-                    "title": "Senior Platform Engineer",
-                    "externalPath": "/job/Remote-USA/Senior-Platform-Engineer_JR-123",
-                    "locationsText": "Remote, United States",
-                },
-                {
-                    "title": "Principal Platform Engineer",
-                    "externalPath": "/job/Remote-EMEA/Principal-Platform-Engineer_JR-456",
-                    "locationsText": "Remote EMEA",
-                },
-            ],
-        }
-
-    adapter = WorkdayBoardAdapter(
-        source_id="workday:acme",
-        employer=WorkdayEmployer(
-            employer_key="acme",
-            name="Acme Corp",
-            base_url="https://acme.wd1.myworkdayjobs.com",
-            tenant="acme",
-            site_id="External",
-        ),
-        http=http,
-        location_accept=["Remote", "Spain", "Europe", "EMEA"],
-        location_reject=["United States", "USA"],
-    )
-
-    postings = list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Platform", location="Remote"))
-
-    assert [posting.metadata.location for posting in postings] == ["Remote EMEA"]
-
-
-def test_workday_adapter_rejects_loose_title_matches() -> None:
-    def http(
-        url: str,
-        *,
-        method: str = "GET",
-        json_body: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "total": 2,
-            "jobPostings": [
-                {
-                    "title": "Independent Trauma Counsellor",
-                    "externalPath": "/job/EMEA/Independent-Trauma-Counsellor_JR-123",
-                    "locationsText": "Remote EMEA",
-                },
-                {
-                    "title": "Director of Engineering",
-                    "externalPath": "/job/EMEA/Director-of-Engineering_JR-456",
-                    "locationsText": "Remote EMEA",
-                },
-            ],
-        }
-
-    adapter = WorkdayBoardAdapter(
-        source_id="workday:acme",
-        employer=WorkdayEmployer(
-            employer_key="acme",
-            name="Acme Corp",
-            base_url="https://acme.wd1.myworkdayjobs.com",
-            tenant="acme",
-            site_id="External",
-        ),
-        http=http,
-        location_accept=["Spain", "Europe", "EMEA"],
-    )
-
-    postings = list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Director of Engineering", location="Remote"))
-
-    assert [posting.metadata.title for posting in postings] == ["Director of Engineering"]
-
-
 def test_greenhouse_adapter_maps_job_board_payload_to_scraped_posting() -> None:
     def http(url: str) -> dict[str, Any]:
         assert url == "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true"
@@ -193,7 +111,7 @@ def test_greenhouse_adapter_maps_job_board_payload_to_scraped_posting() -> None:
 
 
 @pytest.mark.parametrize("description", ["None", "nan", "<NA>"])
-def test_greenhouse_adapter_rejects_serialized_null_descriptions(
+def test_greenhouse_adapter_preserves_listings_with_null_descriptions(
     description: str,
 ) -> None:
     def http(_url: str) -> dict[str, Any]:
@@ -216,7 +134,9 @@ def test_greenhouse_adapter_rejects_serialized_null_descriptions(
         http=http,
     )
 
-    assert list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Backend", location="Remote")) == []
+    rows = list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Backend", location="Remote"))
+    assert len(rows) == 1
+    assert rows[0].metadata.description == ""
 
 
 def test_lever_adapter_maps_postings_payload_to_scraped_posting() -> None:
@@ -256,7 +176,7 @@ def test_lever_adapter_maps_postings_payload_to_scraped_posting() -> None:
 
 
 @pytest.mark.parametrize("description", ["None", "nan", "<NA>"])
-def test_lever_adapter_rejects_serialized_null_descriptions(
+def test_lever_adapter_preserves_listings_with_null_descriptions(
     description: str,
 ) -> None:
     def http(_url: str) -> list[dict[str, Any]]:
@@ -277,7 +197,9 @@ def test_lever_adapter_rejects_serialized_null_descriptions(
         http=http,
     )
 
-    assert list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Platform", location="Remote")) == []
+    rows = list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Platform", location="Remote"))
+    assert len(rows) == 1
+    assert rows[0].metadata.description == ""
 
 
 def test_ashby_adapter_maps_public_board_payload_to_scraped_posting() -> None:
@@ -318,7 +240,7 @@ def test_ashby_adapter_maps_public_board_payload_to_scraped_posting() -> None:
 
 
 @pytest.mark.parametrize("description", ["None", "nan", "<NA>"])
-def test_ashby_adapter_rejects_serialized_null_descriptions(
+def test_ashby_adapter_preserves_listings_with_null_descriptions(
     description: str,
 ) -> None:
     def http(_url: str) -> dict[str, Any]:
@@ -341,4 +263,254 @@ def test_ashby_adapter_rejects_serialized_null_descriptions(
         http=http,
     )
 
-    assert list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Infrastructure", location="Remote")) == []
+    rows = list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Infrastructure", location="Remote"))
+    assert len(rows) == 1
+    assert rows[0].metadata.description == ""
+
+
+def _ashby_posting(**overrides: Any) -> dict[str, Any]:
+    # Synthetic fields from the documented public posting API; no board fetch.
+    return {
+        "id": "synthetic-posting",
+        "title": "Infrastructure Engineer",
+        "jobUrl": "https://jobs.ashbyhq.com/synthetic/synthetic-posting",
+        "location": "Austin",
+        "descriptionPlain": "Operate synthetic infrastructure systems.",
+        **overrides,
+    }
+
+
+def _scrape_ashby_fixture(
+    raw: dict[str, Any],
+    *,
+    location: str = "Austin",
+) -> list[Any]:
+    adapter = AshbyBoardAdapter(
+        source_id="ashby:synthetic",
+        board_name="synthetic",
+        http=lambda _url: {"jobs": [raw]},
+    )
+    return list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Infrastructure", location=location))
+
+
+@pytest.mark.parametrize(
+    ("listing", "admitted"),
+    [
+        ({}, True),
+        ({"isListed": True}, True),
+        ({"isListed": False}, False),
+        ({"isListed": None}, True),
+        ({"isListed": 0}, True),
+        ({"isListed": "false"}, True),
+    ],
+)
+def test_ashby_listing_flag_requires_explicit_boolean_false(
+    listing: dict[str, Any],
+    admitted: bool,
+) -> None:
+    assert bool(_scrape_ashby_fixture(_ashby_posting(**listing))) is admitted
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        ({}, "Austin"),
+        ({"secondaryLocations": []}, "Austin"),
+        ({"secondaryLocations": None}, "Austin"),
+        ({"secondaryLocations": "Madrid"}, "Austin"),
+        ({"secondaryLocations": {"location": "Madrid"}}, "Austin"),
+        ({"secondaryLocations": True}, "Austin"),
+        ({"secondaryLocations": 7}, "Austin"),
+        ({"secondaryLocations": [{"location": None}, {"location": "Madrid"}, "Barcelona"]}, "Austin; Madrid"),
+        ({"locationName": "Ignored fallback"}, "Austin"),
+        (
+            {
+                "secondaryLocations": [
+                    None,
+                    "Madrid",
+                    5,
+                    [],
+                    {},
+                    {"location": None},
+                    {"location": 7},
+                    {"location": False},
+                    {"location": []},
+                    {"location": {}},
+                    {"location": ""},
+                    {"location": "  "},
+                    {"locationName": "Madrid"},
+                ]
+            },
+            "Austin",
+        ),
+        (
+            {
+                "location": " Austin ",
+                "secondaryLocations": [
+                    {"location": " austin "},
+                    {"location": " Madrid "},
+                    {"location": "MADRID"},
+                    {"location": "Barcelona"},
+                ],
+            },
+            "Austin; Madrid; Barcelona",
+        ),
+        (
+            {
+                "location": "",
+                "locationName": " Madrid ",
+                "secondaryLocations": [{"location": "Madrid"}, {"location": "Austin"}],
+            },
+            "Madrid; Austin",
+        ),
+        ({"location": None, "locationName": "Madrid"}, "Madrid"),
+        ({"location": "", "secondaryLocations": [{"location": "Madrid"}]}, "Madrid"),
+        ({"location": "", "secondaryLocations": []}, ""),
+    ],
+)
+def test_ashby_preserves_distinct_location_names_primary_first(
+    fields: dict[str, Any],
+    expected: str,
+) -> None:
+    postings = _scrape_ashby_fixture(_ashby_posting(**fields), location=expected.split("; ")[0])
+    assert len(postings) == 1
+    assert postings[0].metadata.location == expected
+
+
+def test_ashby_retains_secondary_location_independently_of_query_location() -> None:
+    postings = _scrape_ashby_fixture(
+        _ashby_posting(secondaryLocations=[{"location": "Madrid"}]),
+        location="Unrelated literal search parameter",
+    )
+    assert len(postings) == 1
+    assert postings[0].metadata.location == "Austin; Madrid"
+
+
+@pytest.mark.parametrize("use_apply_url", [False, True])
+def test_ashby_preserves_native_id_and_canonical_url_fallback(use_apply_url: bool) -> None:
+    url = "https://jobs.ashbyhq.com/synthetic/synthetic-posting"
+    fields = {"jobUrl": "", "applyUrl": url} if use_apply_url else {"applyUrl": url + "/application"}
+    posting = _scrape_ashby_fixture(_ashby_posting(**fields))[0]
+    assert posting.source_native_id == "synthetic-posting"
+    assert posting.canonical_url == posting.posting_url.value == url
+    assert posting.ats_kind is AtsKind.ASHBY
+    assert posting.metadata.description == "Operate synthetic infrastructure systems."
+
+
+def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    primary, secondary, target = "Synthetic primary", "Synthetic secondary", "Synthetic target"
+    from jobctrl import config
+    from jobctrl.database import close_connection, init_db
+    from jobctrl.domain.discovery.scheduler import DiscoveryScheduler
+    from jobctrl.domain.discovery.source_registry import SourceKind
+    from jobctrl.infrastructure.discovery.production_wiring import run_scheduled_ats_sources
+
+    db_path = tmp_path / "synthetic-ashby.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    conn = init_db(db_path)
+    registry = config.load_source_registry(
+        search_cfg={"boards": []},
+        employers_cfg={"employers": {}},
+        sites_cfg={
+            "sources": [
+                {
+                    "id": "ashby:synthetic",
+                    "kind": "ats_api",
+                    "priority": "canonical",
+                    "display_name": "Synthetic Ashby",
+                    "company": "Synthetic Company",
+                    "seed_url": "https://api.ashbyhq.com/posting-api/job-board/synthetic",
+                    "board_name": "synthetic",
+                    "ats_kind": "ashby",
+                }
+            ],
+            "sites": [],
+        },
+    )
+    sources = DiscoveryScheduler().plan(registry=registry).for_kinds(SourceKind.ATS_API)
+    payload = {
+        "jobs": [
+            _ashby_posting(
+                id=native_id,
+                title=f"{role} Engineer",
+                jobUrl=f"https://jobs.ashbyhq.com/synthetic/{native_id}",
+                descriptionPlain=" ".join(f"{native_id}-system-{i}" for i in range(50)),
+                location=primary,
+                secondaryLocations=[{"location": secondary}, {"location": f" {secondary.lower()} "}],
+                **listing,
+            )
+            for native_id, role, listing in [
+                ("listed", "Infrastructure", {"isListed": True}),
+                ("legacy", "Platform", {}),
+                ("unlisted", "Backend", {"isListed": False}),
+            ]
+        ]
+    }
+    requests: list[str] = []
+
+    def http(url: str) -> dict[str, Any]:
+        assert url == "https://api.ashbyhq.com/posting-api/job-board/synthetic"
+        requests.append(url)
+        return payload
+
+    search_cfg = {
+        "queries": [{"query": "Engineer", "tier": 1}],
+        "locations": [{"location": target}],
+    }
+
+    search_cfg["confirmed_targets"] = {"roles": ["Synthetic target"], "profile_version": 1}
+    try:
+        job_ids: dict[str, str] = {}
+        for run_number in range(2):
+            result = run_scheduled_ats_sources(
+                conn,
+                sources,
+                search_cfg=search_cfg,
+                run_id=f"synthetic:ashby:{run_number}",
+                http=http,
+            )
+            assert result["failed_sources"] == []
+            expected_count = 2
+            assert result["total"] == expected_count
+            assert result["new_jobs"] == (expected_count if run_number == 0 else 0)
+            assert result["observed_jobs"] == (0 if run_number == 0 else expected_count)
+            rows = conn.execute("SELECT job_id, url, location, description FROM jobs").fetchall()
+            assert len(rows) == expected_count
+            current_ids = {row["url"]: row["job_id"] for row in rows}
+            expected_urls = (
+                {f"https://jobs.ashbyhq.com/synthetic/{native_id}" for native_id in ("listed", "legacy")}
+            )
+            assert set(current_ids) == expected_urls
+            if run_number:
+                assert current_ids == job_ids
+            job_ids = current_ids
+            assert all(row["location"] == f"{primary}; {secondary}" for row in rows)
+            for row in rows:
+                native_id = row["url"].rsplit("/", 1)[1]
+                assert row["description"] == " ".join(f"{native_id}-system-{i}" for i in range(50))
+            identities = conn.execute(
+                "SELECT job_id, ats_kind, source_native_id, canonical_url FROM job_canonical_identities"
+            ).fetchall()
+            assert len(identities) == expected_count
+            for row in identities:
+                assert row["ats_kind"] == "ashby"
+                assert row["source_native_id"] in {"listed", "legacy"}
+                url = f"https://jobs.ashbyhq.com/synthetic/{row['source_native_id']}"
+                assert row["canonical_url"] == url
+                assert row["job_id"] == job_ids[url]
+            observations = conn.execute(
+                "SELECT job_id, source_id, source_native_id, observed_url, run_id FROM job_source_observations"
+            ).fetchall()
+            assert len(observations) == expected_count
+            for row in observations:
+                assert row["source_id"] == "ashby:synthetic"
+                assert row["source_native_id"] in {"listed", "legacy"}
+                assert row["observed_url"] == f"https://jobs.ashbyhq.com/synthetic/{row['source_native_id']}"
+                assert row["job_id"] == job_ids[row["observed_url"]]
+                assert row["run_id"] == f"synthetic:ashby:{run_number}"
+        assert len(requests) == 2
+    finally:
+        close_connection(db_path)

@@ -59,10 +59,10 @@ the upstream advances its watermark before redelivery.
 **Mitigations:**
 - The 30s "connection lost — events paused" UI banner (§7.7) makes the
   failure visible to the user.
-- On reconnect, the `EventStreamProvider` triggers a one-shot
-  `queryClient.invalidateQueries()` (full cache invalidation) as a
-  backstop; `Last-Event-ID` covers the common case, the full
-  invalidation covers the long-gap case.
+- On first open and reconnect, the `EventStreamProvider` reconciles the
+  current tenant's cached reads once. An unfinished initial read settles before
+  its own invalidation, preserving route-loader callers while ensuring a later
+  canonical refresh. `Last-Event-ID` covers the common reconnect case.
 - The endpoint sets `X-Accel-Buffering: no` (§7.1) to disable nginx /
   proxy buffering at the edge.
 - The client periodically receives `event: heartbeat` (every 30s)
@@ -72,19 +72,18 @@ the upstream advances its watermark before redelivery.
 
 ### R4. Route-loader prefetch racing with mutations
 
-A loader-driven `ensureQueryData(...)` runs before navigation
-finalizes; a mutation invalidating the same key mid-navigation can
-cause the loader to return a stale snapshot.
+Context-owned loader helpers and observers share tenant-first keys/read functions.
+Most loaders await best-effort `prefetchQuery`; Activity detail uses
+`ensureQueryData`, which returns accepted cached data even when stale and does
+not request background revalidation. Observer freshness/refetch policies,
+mutation settlement and exhaustive SSE invalidation reconcile the cache.
+Failed refreshes retain accepted query data while exposing the error.
 
-**Mitigations:**
-- Loaders use `ensureQueryData`, not `fetchQuery` — `ensureQueryData`
-  honors stale state and triggers a background refetch when needed.
-- Mutations that change a route's data set explicitly call
-  `router.invalidate()` after the mutation settles, forcing the affected
-  routes' loaders to re-run.
-- Mutations have a `meta: { affectsRoutes: ['/jobs', '/dashboard'] }`
-  field consumed by a small middleware that calls `router.invalidate()`
-  for the affected routes.
+There is no route-affecting mutation metadata middleware or automatic
+`router.invalidate()` settlement layer. Adding one would require a separate
+implementation and verification of navigation/mutation races. Routes delegate
+reads to Operations, Profile or Outreach and never gain API/QueryClient access.
+Jobs has no loader; its effective-query ownership remains in the Jobs view.
 
 ### R5. `exactOptionalPropertyTypes` adoption surfaces latent bugs
 
@@ -221,16 +220,14 @@ The frontend's domain language is `JobId` per backend domain model [§4.1](../do
 client still accepts `jobKey: string` for compatibility:
 `apiClient.deleteJob(jobKey: string, ...)`.
 
-**Mitigations:**
-- The frontend ACL (§6.5) is the single mapping site:
-  `useDeleteJobMutation({ jobId })` calls `apiClient.deleteJob(jobId, ...)`
-  with the `JobId` value passed as the API's currently-named `jobKey`
-  parameter. When the backend rename lands, only the ACL changes; every
-  call site is already on `jobId: JobId`.
-- A `JobId` value is brand-typed (`string & { __brand: "JobId" }`) so
-  passing a raw string fails TypeScript at the boundary — the developer
-  must explicitly construct via `createJobId(...)` from
-  `@jobctrl/domain-types`.
+**Compatibility:**
+- Context-owned mutation hooks pass job identifiers to the API-client port.
+  `contexts/operations/types.ts` keeps `JobId = string` for existing route and
+  client inputs; it does not brand or convert identifiers. The canonical domain
+  package separately owns the branded `JobId` and its constructor.
+- Canonical DTOs are imported directly (§6.5). A client parameter rename must
+  update the affected port and callers; a transparent type alias cannot isolate
+  that change.
 
 ### R14. Materials-set generation invalidation under concurrent re-tailoring
 
@@ -254,11 +251,11 @@ first's reconciliation.
 
 | Term | Context | Definition |
 |---|---|---|
-| **ACL (Frontend)** | Architecture | The thin Anti-Corruption Layer in `contexts/operations/types.ts` that re-exports backend projection types into frontend code. Provides a single point to refine or override types as the frontend evolves. |
+| **Frontend input refinements** | Architecture | `contexts/operations/types.ts` owns partial list inputs, readonly Jobs stage selections and UI sentinels. Unchanged DTOs, schemas and constants come directly from their canonical packages (§6.5). |
 | **ApiClientPort** | Frontend (Hexagonal) | The interface through which feature code reaches the backend HTTP API. Local adapter wraps `@jobctrl/api-client`; hosted adapter adds JWT injection. |
 | **AppliedAction** | Frontend (Apply context) | UI affordance to manually mark a job as applied without running the apply automation. Surfaces `MarkAppliedUseCase`. |
 | **ApplyRunBadge** | Frontend (Apply context) | Legacy-named status component that renders a compact dot/glyph plus text in dashboard ledgers and run detail workspaces to summarize an `ApplyRun`'s current `SubmissionResult`. |
-| **ApplyRunTimeline** | Frontend (Apply context) | Live-updating timeline of `ApplyRunEvent` rows; updates via SSE `setQueryData` (not `invalidate`) for high-frequency events. |
+| **ApplyRunTimeline** | Frontend (Apply context) | Combines workflow history, the selected run's persisted Apply history, and live Apply events; run-scoped event IDs reconcile durable and live copies. |
 | **AppShell** | Frontend (Layout) | The persistent chrome around the route content: a grouped left rail (14 destinations in 5 groups via `SideRail`) that users can collapse to accessible icons on desktop with the choice persisted in `jh:ui-preferences`; mobile uses a separate navigation sheet. A slim topbar provides the desktop rail trigger, global job search that navigates to `/jobs?q=…`, density and theme toggles, and inline connection-status dot/glyph plus text. Lives in `shared/layout/AppShell.tsx`. |
 | **Bounded Context (Frontend)** | Architecture | A folder under `contexts/` mirroring a backend bounded context (one of the nine: Discovery, Enrichment, Profile, Scoring, Materials, Apply, Pipeline, Operations, Contact & Outreach). Owns its query keys (where applicable), hooks, components, forms, selectors, and event handlers. Imports from `shared/` and from other contexts' *components* only. |
 | **CacheKey (Profile HTML)** | Frontend (Profile) | A monotonically increasing token derived from the profile mutation count, appended as `?v=...` to the Profile baseline resume HTML preview URL to refresh the Plate editor after each profile mutation. |
@@ -272,7 +269,7 @@ first's reconciliation.
 | **DomainEvent (Frontend mirror)** | Operations | The event taxonomy streamed via SSE. In `@jobctrl/domain-types` this is a **plain TypeScript** discriminated union `DomainEventUnion`; `DomainEvent<T, P>` is the generic base, `DomainEventType` the discriminant union, and `DOMAIN_EVENT_TYPES` the canonical runtime array. No Zod. |
 | **Detail Route** | Frontend (Routing) | A child route (e.g., `routes/jobs.$jobId.tsx`) that renders a full `RouteWorkspace` with a back action. URL-owned list state survives so returning restores the underlying list. |
 | **Enrichment (Frontend)** | Frontend (Bounded Context) | The frontend folder mirroring backend Job Enrichment. Owns `useEnrichmentRetryMutation`, the compensation-refresh mutations, the compensation-evidence components, and the enrichment/compensation invalidation handlers. |
-| **Event-Handler Parity Test** | Frontend (Testing) | The local Vitest parity test that iterates the `DomainEventType` union and asserts a handler is registered for every variant in `contexts/operations/invalidation-router.ts`. Backstops the compile-time `Record<DomainEventType, InvalidationHandler>` typing (the CI-enforced half, via `pnpm -r check`); web Vitest is not yet CI-gated (CI gating tracked in `docs/backlog.md`). Mirrors backend `scripts/check-domain-type-parity.py`. |
+| **Event-Handler Parity Test** | Frontend (Testing) | The Vitest parity test that iterates the `DomainEventType` union and asserts a handler is registered for every variant in `contexts/operations/invalidation-router.ts`. Backstops the compile-time `Record<DomainEventType, InvalidationHandler>` typing; both typechecking and web Vitest run in CI. Mirrors backend `scripts/check-domain-type-parity.py`. |
 | **EventStreamPort** | Frontend (Hexagonal) | Port abstracting the SSE connection. Local adapter is `SseEventStreamAdapter`; hosted alternative is `WebSocketEventStreamAdapter`. |
 | **EventStreamProvider** | Frontend (Provider) | Component mounted in `__root.tsx` that opens the event-stream subscription, wires it to the invalidation router, and exposes connection status. |
 | **FeatureFlagPort** | Frontend (Hexagonal) | Port for feature gating. Local adapter is `StaticFeatureFlagAdapter` (always returns defaults); hosted adapter is backend-served via `apiClient.featureFlags()` and cached in Query. The seam exists today; no flags ship now. |
@@ -280,11 +277,11 @@ first's reconciliation.
 | **InvalidationRouter** | Frontend (Operations) | Pure function mapping `DomainEvent` to a list of cache operations (`invalidateQueries` / `setQueryData`). The single contract surface between the backend's event taxonomy and the frontend's query cache. |
 | **JobActions** | Frontend (Pipeline composer) | Toolbar component composing per-stage / per-action buttons (`<RetryStageButton />`, `<GenerateMaterialsButton />`, `<ApplyButton />`, `<MarkAppliedButton />`, etc.). |
 | **JobDetailDrawer** | Frontend (Jobs view) | Legacy filename/component name for the full `RouteWorkspace` in `views/jobs/` that opens when a job is selected. It composes the header ledger, ruled evidence sections, inspector, score, stages, artifacts, apply history, and actions from the contexts that own each. It is not a detached drawer or side sheet. |
-| **JobId** | Domain (shared) | The system-generated stable identifier for a job per backend domain model [§3.1](../domain-model/strategic.md) / [§4.1](../domain-model/tactical.md). Branded type (`string & { __brand: "JobId" }`) constructed via `createJobId(...)` from `@jobctrl/domain-types`. The frontend uses `JobId` as its domain term throughout; the API client's currently-named `jobKey: string` parameter is a transport detail mapped at the ACL boundary ([§6.5](../domain-model/integration.md)). |
+| **JobId** | Domain (shared) | The stable job identifier. `@jobctrl/domain-types` owns the branded domain type and `createJobId(...)`; frontend Operations retains `JobId = string` for existing URL and API-client compatibility (§6.5 / R13). |
 | **JobsTable** | Frontend (Jobs view) | The shared data-grid instance in `views/jobs/JobsTable.tsx` rendering the jobs list; receives data from `useJobsListQuery` (Operations) and column cell components from `contexts/scoring/`, `contexts/pipeline/`, etc. |
 | **KPI** | Frontend (Dashboard) | A top-line metric in the dashboard's continuous ruled ledger. |
 | **LayerSeparation** | Frontend (Modeling) | The architectural rule that every datum lives in exactly one of three layers: server (Query), URL (Router), or client (Zustand/Context). See §2.1. |
-| **Loader (Route)** | Frontend (Routing) | A function on a TanStack Router route that prefetches data via `queryClient.ensureQueryData(...)` before the component renders. |
+| **Loader (Route)** | Frontend (Routing) | A function on a TanStack Router route that maps validated URL inputs and delegates reads to its owning context before the component renders. |
 | **LOCAL_TENANT** | Domain (shared) | The singleton `TenantId` used in local mode. Threaded through every query key and SSE subscription. |
 | **MutationInvalidationStrategy** | Frontend (Operations) | The hybrid policy: optimistic updates for synchronous mutations; SSE-driven invalidation for async (202) mutations. See §8.3. |
 | **OpenInOsPort** | Frontend (Hexagonal) | Port for "open this artifact in the OS default app" — a local-only feature. The hosted adapter returns "Unsupported" and the UI offers a download instead. |
@@ -303,7 +300,7 @@ first's reconciliation.
 | **Shared Data Grid (`FilterableDataGrid`)** | Frontend (UI Primitive) | The custom table primitive in `shared/ui/filterable-data-grid.tsx`, used by the jobs, artifacts, runs, and debug/activity tables via per-view `DataGridColumn<T>[]` column models. Provides sort, per-column filter, pagination, row selection, and row activation. `@tanstack/react-table` is a types-only dependency (`RowSelectionState` / `SortingState`); the shadcn `data-table.tsx` wrapper is unused. |
 | **SseEventStreamAdapter** | Frontend (Adapter) | Concrete `EventStreamPort` implementation using the browser's `EventSource` API against `GET /v1/events/stream`. |
 | **StageBadge** | Frontend (Pipeline context) | Legacy-named status component rendering a `StageState` as a compact dot/glyph plus text via exhaustive `switch` on `state.kind`. Located in `contexts/pipeline/components/StageBadge.tsx`; it is not a colored pill. |
-| **Stage-State Parity Test** | Frontend (Testing) | The local Vitest parity test that iterates `STAGE_STATE_KINDS` and asserts `<StageBadge>` renders a non-default arm for every kind. Backstops the exhaustive `switch` on `state.kind`. (Web Vitest is not yet CI-gated; CI gating tracked in `docs/backlog.md`.) |
+| **Stage-State Parity Test** | Frontend (Testing) | The Vitest parity test that iterates `STAGE_STATE_KINDS` and asserts `<StageBadge>` renders a non-default arm for every kind. Backstops the exhaustive `switch` on `state.kind` and runs in the web Vitest CI suite. |
 | **StageTimeline** | Frontend (Pipeline context) | Vertical list of stages for a job, rendered from `JobDetailProjection.stages`. |
 | **StoragePort** | Frontend (Hexagonal) | Port abstracting persistent client-side storage. Local adapter is `localStorage`; hosted alternative is IndexedDB. |
 | **TanStack Form** | Frontend (Library) | Headless form library with field-level subscriptions, used for all forms (profile, settings, credentials, wizard). |

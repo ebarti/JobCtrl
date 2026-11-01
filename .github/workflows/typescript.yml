@@ -1,178 +1,45 @@
 name: TypeScript CI
-
-on:
-  push:
-    branches: ["main"]
-    paths:
-      - "apps/**"
-      - "packages/**"
-      - "workers/**"
-      - "scripts/**"
-      - "pnpm-lock.yaml"
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - ".github/workflows/typescript.yml"
-  pull_request:
-    paths:
-      - "apps/**"
-      - "packages/**"
-      - "workers/**"
-      - "scripts/**"
-      - "pnpm-lock.yaml"
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - ".github/workflows/typescript.yml"
+'on':
   workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: typescript-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-
 jobs:
   api:
-    name: API checks and tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.21.1
-          cache: pnpm
-      - name: Install locked dependencies
-        run: corepack pnpm install --frozen-lockfile
-      - name: Check shared contracts and API
-        run: |
-          corepack pnpm --filter @jobctrl/contracts check
-          corepack pnpm --filter @jobctrl/api-client check
-          corepack pnpm --filter @jobctrl/domain-types check
-          corepack pnpm api:check
-      - name: Test shared domain types
-        run: corepack pnpm --filter @jobctrl/domain-types test
-      - name: Test API
-        run: corepack pnpm api:test
-
-  web:
-    name: Web unit, types, and build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.21.1
-          cache: pnpm
-      - name: Install locked dependencies
-        run: corepack pnpm install --frozen-lockfile
-      - name: Check web
-        run: corepack pnpm web:check
-      - name: Test web
-        run: corepack pnpm web:test
-      - name: Test public web types
-        run: corepack pnpm web:test-d
-      - name: Build web
-        run: corepack pnpm web:build
-
-  storybook:
-    name: Storybook build and browser tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.21.1
-          cache: pnpm
-      - name: Install locked dependencies
-        run: corepack pnpm install --frozen-lockfile
-      - name: Build Storybook
-        run: corepack pnpm web:storybook:build
-      - name: Install Playwright Chromium
-        run: corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
-      - name: Test Storybook
-        run: corepack pnpm web:storybook:test
-
-  e2e:
-    name: Web end-to-end
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.21.1
-          cache: pnpm
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-      - name: Set up pinned uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          version: 0.11.7
-          enable-cache: true
-          cache-dependency-glob: workers/automation/uv.lock
-      - name: Install locked dependencies
-        run: |
-          corepack pnpm install --frozen-lockfile
-          uv --project workers/automation sync --locked --all-extras
-      - name: Install Playwright browsers
-        run: |
-          corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
-          uv --project workers/automation run --locked --all-extras playwright install chromium
-      - name: Test web end-to-end
-        run: corepack pnpm web:e2e
-
-  extension:
-    name: Browser extension
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.21.1
-          cache: pnpm
-      - name: Install locked dependencies
-        run: corepack pnpm install --frozen-lockfile
-      - name: Install Playwright Chromium
-        run: corepack pnpm --filter @jobctrl/extension exec playwright install --with-deps chromium
-      - name: Check, test, build, and exercise extension
-        run: |
-          corepack pnpm extension:check
-          corepack pnpm extension:test
-          corepack pnpm extension:build
-          corepack pnpm extension:e2e
+    name: Manual API
+    uses: "./.github/workflows/ci-backend.yml"
+    with:
+      api: true
+      python: false
+      head_privacy: true
+      distribution: false
+      edge: false
+  frontend:
+    name: Manual web
+    uses: "./.github/workflows/ci-frontend.yml"
+    with:
+      web: true
+      storybook: false
+      e2e: false
+      extension: false
+      docs: false
+      demo: false
+  support:
+    name: Manual support
+    uses: "./.github/workflows/ci-frontend.yml"
+    with:
+      web: false
+      storybook: true
+      e2e: false
+      extension: true
+      docs: false
+      demo: false
+  browser:
+    name: Manual browser
+    uses: "./.github/workflows/ci-frontend.yml"
+    with:
+      web: false
+      storybook: false
+      e2e: true
+      extension: false
+      docs: false
+      demo: false

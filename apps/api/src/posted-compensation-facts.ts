@@ -4,6 +4,7 @@ import type {
   PostedCompensationWarning,
   PostedCompensationWarningCode,
 } from "./contracts.js";
+import { readBoundDetermination } from "./semantic-determinations.js";
 import { getRow, type SqliteDatabase } from "./db.js";
 
 type JobSalaryRow = {
@@ -91,11 +92,14 @@ export function getPostedCompensationFact(
   if (!row) {
     return notRecorded(job);
   }
-  return {
-    ok: true,
-    recordStatus: "recorded",
-    fact: mapFactRow(row),
-  };
+  try {
+    const determination=readBoundDetermination(db,tenantId,"posted_compensation",jobId,row.source_hash,"posted_compensation");
+    const result=determination?.result as Record<string,unknown>|undefined;
+    if (!determination || !result || ["parse_state","currency","period","component","minimum_amount","maximum_amount","confidence"].some(key=>result[key]!==row[key as keyof PostedCompensationFactRow])) throw new Error("posted_compensation_binding_invalid");
+    return {ok:true,recordStatus:"recorded",fact:mapFactRow(row),determination};
+  } catch {
+    return {ok:true,recordStatus:"unavailable",jobKey:jobId,legacyRawSalary:nullableText(job.salary),failureCode:"posted_compensation_determination_unavailable"};
+  }
 }
 
 function notRecorded(job: JobSalaryRow): PostedCompensationFactResponse {

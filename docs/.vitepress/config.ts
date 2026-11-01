@@ -77,11 +77,9 @@ function structuredDataHeadForPage(relativePath: string): HeadConfig[] {
 // browsing docs/); the site's homepage is the hero landing page in index.md.
 const UNPUBLISHED_PREFIXES = ["docs/plans/", "docs/incidents/"];
 const UNPUBLISHED_FILES = new Set([
-  "docs/backlog.md",
   "docs/claims-ledger.md",
   "docs/decisions.md",
   "docs/delivered.md",
-  "docs/publish-checklist.md",
   "docs/README.md",
   "docs/requirements.md",
 ]);
@@ -166,8 +164,11 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Discovery & Sources", link: "/user/discovery" },
       { text: "Enrichment & Extraction", link: "/user/enrichment-and-extraction" },
       { text: "Scoring", link: "/user/scoring-and-employer-analysis" },
+      { text: "Company briefings", link: "/user/company-briefings" },
       { text: "Materials & Tailoring", link: "/user/materials-and-tailoring" },
+      { text: "Reviewed Locale Variants", link: "/user/locale-variants" },
       { text: "Apply", link: "/user/apply" },
+      { text: "Screening Answers", link: "/user/screening-answers" },
       { text: "Outcomes & Feedback", link: "/user/outcomes-and-feedback" },
       { text: "Contacts & Outreach", link: "/user/contacts-and-outreach" },
       { text: "Compensation Evidence", link: "/user/compensation-evidence" },
@@ -196,6 +197,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Contributor Start", link: "/developer/" },
       { text: "Repository & Ownership Map", link: "/developer/repository-and-ownership-map" },
       { text: "Local Development", link: "/local-development" },
+      { text: "Releasing JobCtrl", link: "/developer/releasing" },
       { text: "Documentation Standards", link: "/developer/documentation-standards" },
       {
         text: "Reliability & QA",
@@ -203,6 +205,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
         items: [
           { text: "What To Run", link: "/local-reliability-qa" },
           { text: "Regression Catalog", link: "/developer/qa/regression-catalog" },
+          { text: "Doctor Diagnostic Coverage", link: "/developer/qa/doctor-diagnostics" },
           { text: "Browser Smoke", link: "/developer/qa/browser-smoke" },
           { text: "Frontend QA", link: "/developer/qa/frontend" },
           { text: "First-Run Validation", link: "/developer/first-run-ttfv" },
@@ -234,6 +237,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
         items: [
           { text: "Concepts & Ownership", link: "/architecture/data-events-and-projections" },
           { text: "Storage Authority", link: "/architecture/storage" },
+          { text: "Application URL Authority Inventory", link: "/architecture/application-url-authority" },
           { text: "Apply Feedback Projection", link: "/architecture/read-model" },
         ],
       },
@@ -243,7 +247,9 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
         items: [
           { text: "Scoring Policy", link: "/architecture/scoring" },
           { text: "Employer Analysis & Materials Audit", link: "/architecture/materials" },
+          { text: "Reviewed Screening Answers", link: "/architecture/reviewed-screening-answers" },
           { text: "Tailoring Contract", link: "/architecture/tailoring" },
+          { text: "Material Locale Variants", link: "/architecture/material-locale-variants" },
         ],
       },
       { text: "Contracts, Types & API Boundaries", link: "/architecture/contracts-types-and-api-boundaries" },
@@ -307,7 +313,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
 /**
  * Rewrites markdown links that resolve outside the published docs set
  * (repo-root files like ../README.md, or intentionally unpublished internal
- * docs like plans/ and backlog.md) into absolute GitHub URLs, so the deployed
+ * docs like plans/ and claims-ledger.md) into absolute GitHub URLs, so the deployed
  * site never ships a relative link that 404s. Links inside the published set
  * are left for VitePress to resolve and dead-link-check as usual.
  */
@@ -344,7 +350,7 @@ export default withMermaid(
       ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
       ["link", { rel: "apple-touch-icon", sizes: "180x180", href: "/apple-touch-icon.png" }],
       ["link", { rel: "icon", type: "image/png", sizes: "512x512", href: "/assets/brand/app-icon.png" }],
-      ["meta", { name: "theme-color", content: "#6d28d9" }],
+      ["meta", { name: "theme-color", content: "#171717" }],
     ],
     transformHead: ({ pageData, title, description }) => {
       const canonicalUrl = canonicalUrlForPage(pageData.relativePath);
@@ -370,11 +376,9 @@ export default withMermaid(
     srcExclude: [
       "plans/**",
       "incidents/**",
-      "backlog.md",
       "claims-ledger.md",
       "decisions.md",
       "delivered.md",
-      "publish-checklist.md",
       "README.md",
       "requirements.md",
     ],
@@ -382,6 +386,21 @@ export default withMermaid(
     lastUpdated: true,
     rewrites: PAGE_REWRITES,
     vite: {
+      css: {
+        postcss: {
+          plugins: [{
+            postcssPlugin: "jobctrl-docs-product-theme",
+            Rule(rule) {
+              // The shared product tokens use data-theme; VitePress applies
+              // .dark before first paint. Adapt the selector at build time.
+              if (rule.selector === ':root[data-theme="dark"]' &&
+                  rule.source?.input.file?.replaceAll("\\", "/").endsWith("/apps/web/src/styles/tokens.css")) {
+                rule.selector = ":root.dark";
+              }
+            },
+          }],
+        },
+      },
       // The workspace-wide esbuild override (security pin) refuses to lower
       // destructuring to Vite 5's default legacy browser targets; a modern
       // floor keeps those transforms no-ops for this developer-facing site.
@@ -410,7 +429,11 @@ export default withMermaid(
       },
     },
     themeConfig: {
-      logo: { src: "/assets/brand/app-icon.png", alt: "JobCtrl" },
+      logo: {
+        light: "/assets/brand/app-mark-light.svg",
+        dark: "/assets/brand/app-mark-dark.svg",
+        alt: "JobCtrl",
+      },
       siteTitle: 'Job<span class="jh-site-title-accent">Ctrl</span>',
       // There is one guide. Search, theme controls, and the repository link
       // remain in the header; the sidebar owns all documentation navigation.

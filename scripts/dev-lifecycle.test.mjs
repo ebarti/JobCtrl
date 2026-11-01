@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -14,8 +15,18 @@ async function createHarness() {
   const binDir = path.join(temporaryRoot, "bin");
   const homeDir = path.join(temporaryRoot, "home");
   const devDir = path.join(temporaryRoot, "dev");
+  const fixtureLauncher = path.join(temporaryRoot, "scripts/dev");
+  const eventsPath = path.join(temporaryRoot, "events.log");
+  const failBuildPath = path.join(temporaryRoot, "fail-build");
   await mkdir(binDir, { recursive: true });
   await mkdir(homeDir, { recursive: true });
+  await mkdir(path.dirname(fixtureLauncher), { recursive: true });
+  await copyFile(launcher, fixtureLauncher);
+  await copyFile(path.join(root, "scripts/dev-schema-check.py"), path.join(temporaryRoot, "scripts/dev-schema-check.py"));
+  await mkdir(path.join(temporaryRoot, "workers/automation/src"), { recursive: true });
+  await symlink(path.join(root, "workers/automation/src/jobctrl"), path.join(temporaryRoot, "workers/automation/src/jobctrl"));
+  await chmod(fixtureLauncher, 0o755);
+  await writeFile(eventsPath, "");
 
   const fakeCorepack = path.join(binDir, "corepack");
   await writeFile(
@@ -26,18 +37,41 @@ set -euo pipefail
 [[ "\${1:-}" == "pnpm" ]] && shift
 arguments=" $* "
 
+if [[ "$arguments" == " extension:build " ]]; then
+  echo "build:$PWD" >> "$JOBCTRL_TEST_EVENTS"
+  for file in "$JOBCTRL_DEV_DIR"/pids/*.pid; do
+    [[ -f "$file" ]] || continue
+    pid=$(cat "$file")
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "build-alive:\${file##*/}:$pid" >> "$JOBCTRL_TEST_EVENTS"
+    fi
+  done
+  [[ ! -f "$JOBCTRL_TEST_FAIL_BUILD" ]] || exit 23
+  echo "build-complete" >> "$JOBCTRL_TEST_EVENTS"
+  exit 0
+fi
+
 if [[ "$arguments" == *" wrangler d1 migrations apply "* ]]; then
   exit 0
 fi
 
+echo "launch:$(basename "$0"):$*" >> "$JOBCTRL_TEST_EVENTS"
 if [[ "$arguments" == *" vitepress dev docs "* ]]; then
   echo "Local: http://127.0.0.1:\${JOBCTRL_DOCS_PORT}/"
 elif [[ "$arguments" == *" wrangler dev "* ]]; then
   echo "Ready on http://127.0.0.1:\${JOBCTRL_DEMO_API_PORT}/"
 elif [[ "$arguments" == *" exec vite "* ]]; then
-  echo "Local: http://127.0.0.1:\${JOBCTRL_DEMO_WEB_PORT}/"
+  if [[ "\${VITE_JOBCTRL_APP_MODE:-}" == "demo" ]]; then
+    echo "Local: http://127.0.0.1:\${JOBCTRL_DEMO_WEB_PORT}/"
+  else
+    echo "Local: http://127.0.0.1:\${JOBCTRL_WEB_PORT}/"
+  fi
+elif [[ "$arguments" == " --filter @jobctrl/api dev " ]]; then
+  echo "API ready"
+elif [[ "$arguments" == *" server start-dev "* || "$arguments" == *" run jobctrl worker "* ]]; then
+  echo "Ready"
 else
-  echo "unexpected corepack invocation: $*" >&2
+  echo "unexpected fixture invocation: $*" >&2
   exit 64
 fi
 
@@ -45,13 +79,48 @@ exec sleep 300
 `,
   );
   await chmod(fakeCorepack, 0o755);
+  for (const name of ["pnpm", "temporal", "uv"]) {
+    await copyFile(fakeCorepack, path.join(binDir, name));
+  }
+  // Product ownership is exercised by the native source-controller tests;
+  // these shell fixtures stay in their own temporary process tree.
+  await writeFile(path.join(binDir, "go"), `#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == "-C" && "$3" == "run" && "$4" == "./cmd/jobctrl-source" ]]
+if [[ "$5" == "stop" || "$5" == "switch" ]]; then
+  controller="$JOBCTRL_DEV_DIR/pids/source-controller.pid"
+  if [[ -f "$controller" ]]; then
+    pid=$(cat "$controller")
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 100); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.05
+    done
+    rm -f "$controller"
+  fi
+  exit 0
+fi
+[[ "$5" != "verify" ]] || exit 0
+[[ "$5" == "run" ]]
+root="$6"
+shift 6
+export JOBCTRL_DEV_INNER=1
+echo "$$" > "$JOBCTRL_DEV_DIR/pids/source-controller.pid"
+exec "$root/scripts/dev" run "$@"
+`);
+  await chmod(path.join(binDir, "go"), 0o755);
+  await writeFile(path.join(binDir, "curl"), "#!/usr/bin/env bash\nexit 1\n");
+  await chmod(path.join(binDir, "curl"), 0o755);
 
   const env = {
-    ...process.env,
     PATH: `${binDir}:${process.env.PATH ?? ""}`,
     HOME: homeDir,
     JOBCTRL_USER_ENV_PATH: path.join(temporaryRoot, "missing.env"),
+    JOBCTRL_DIR: path.join(temporaryRoot, "app"),
     JOBCTRL_DEV_DIR: devDir,
+    JOBCTRL_TEST_EVENTS: eventsPath,
+    JOBCTRL_TEST_FAIL_BUILD: failBuildPath,
+    JOBCTRL_WEB_PORT: "45173",
     JOBCTRL_DOCS_PORT: "44174",
     JOBCTRL_DEMO_API_PORT: "48787",
     JOBCTRL_DEMO_WEB_PORT: "45174",
@@ -62,29 +131,103 @@ exec sleep 300
     JOBCTRL_STOP_WAIT_INTERVAL_SECONDS: "0.01",
   };
 
-  const run = (...args) =>
-    execFileSync(launcher, args, {
-      cwd: root,
+  const runResult = (...args) =>
+    spawnSync(fixtureLauncher, args, {
+      cwd: homeDir,
       env,
       encoding: "utf8",
       timeout: 10_000,
     });
 
+  const run = (...args) => {
+    const result = runResult(...args);
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    return result.stdout;
+  };
+
   const runForegroundUntilReady = (...args) =>
-    spawnSync(launcher, args, {
-      cwd: root,
-      env,
-      encoding: "utf8",
-      timeout: 1_500,
-      killSignal: "SIGINT",
+    new Promise((resolve, reject) => {
+      const child = spawn(fixtureLauncher, args, {
+        cwd: homeDir,
+        env,
+        detached: true,
+      });
+      const targets = args.length > 1 ? args.slice(1) : ["temporal", "api", "web", "worker"];
+      const readiness = {
+        temporal: "[temporal] Ready",
+        api: "[api] API ready",
+        web: "[web] Local:",
+        worker: "[worker] Ready",
+        docs: "[docs] Local:",
+        "demo-api": "[demo-api] Ready on",
+        "demo-web": "[demo-web] Local:",
+      };
+      let stdout = "";
+      let stderr = "";
+      let stopping = false;
+      const signalGroup = (signal) => {
+        try {
+          process.kill(-child.pid, signal);
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      };
+      const deadline = setTimeout(() => {
+        signalGroup("SIGKILL");
+        reject(new Error(`Foreground fixture did not start and stop within 10s:\n${stdout}\n${stderr}`));
+      }, 10_000);
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk;
+        if (!stopping && stdout.includes("dev: foreground run active;") &&
+            targets.every((name) => stdout.includes(readiness[name]))) {
+          stopping = true;
+          // Ctrl-C reaches the foreground process group. Stop as soon as the
+          // supervisor and all synthetic services are ready, then prove cleanup.
+          signalGroup("SIGINT");
+        }
+      });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.once("error", (error) => {
+        clearTimeout(deadline);
+        reject(error);
+      });
+      child.once("close", (status, signal) => {
+        clearTimeout(deadline);
+        if (!stopping) {
+          reject(new Error(`Foreground fixture exited before readiness:\n${stdout}\n${stderr}`));
+          return;
+        }
+        resolve({ status, signal, stdout, stderr });
+      });
     });
 
   return {
     run,
+    runResult,
     runForegroundUntilReady,
+    temporaryRoot,
+    events: () => readFile(eventsPath, "utf8"),
+    async waitForLaunches(count) {
+      let events;
+      for (let attempt = 0; attempt < 200; attempt++) {
+        events = await readFile(eventsPath, "utf8");
+        if (events.split("\n").filter((event) => event.startsWith("launch:")).length >= count) {
+          return events;
+        }
+        await delay(25);
+      }
+      assert.fail(`Expected ${count} fixture launches:\n${events}`);
+    },
+    clearEvents: () => writeFile(eventsPath, ""),
+    failBuild: () => writeFile(failBuildPath, "fail"),
+    pid: (name) => readFile(path.join(devDir, "pids", `${name}.pid`), "utf8"),
+    logPath: (name) => path.join(devDir, "logs", `${name}.log`),
     async cleanup() {
       try {
-        run("stop", "docs", "demo-api", "demo-web");
+        run("stop", "temporal", "api", "web", "worker", "docs", "demo-api", "demo-web");
       } catch {
         // The assertion failure is more useful than cleanup output.
       }
@@ -92,6 +235,109 @@ exec sleep 300
     },
   };
 }
+
+test("default startup keeps the diagnostic interface when the database needs an upgrade", async () => {
+  const harness = await createHarness();
+  try {
+    const appDir = path.join(harness.temporaryRoot, "app");
+    await mkdir(appDir, { recursive: true });
+    const seed = spawnSync("python3", ["-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('pragma user_version=14'); c.close()", path.join(appDir, "jobctrl.db")]);
+    assert.equal(seed.status, 0);
+    assert.match(harness.run("start"), /incompatible workspace database/);
+    const events = await harness.waitForLaunches(2);
+    assert.match(events, /--filter @jobctrl\/api dev/);
+    assert.match(events, /exec vite/);
+    assert.doesNotMatch(events, /server start-dev|run jobctrl worker/);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("an explicit worker start refuses an incompatible database", async () => {
+  const harness = await createHarness();
+  try {
+    const appDir = path.join(harness.temporaryRoot, "app");
+    await mkdir(appDir, { recursive: true });
+    const database = path.join(appDir, "jobctrl.db");
+    const seed = spawnSync("python3", ["-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('pragma user_version=14'); c.close()", database]);
+    assert.equal(seed.status, 0);
+    const before = await readFile(database);
+    const result = harness.runResult("run", "worker");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /workspace database needs a compatible upgrade/);
+    assert.doesNotMatch(await harness.events(), /launch:/);
+    assert.deepEqual(await readFile(database), before);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("a source start does not kill an unverified tracked process", { skip: process.platform !== "darwin" }, async () => {
+  const harness = await createHarness();
+  const previous = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+  try {
+    const pidDir = path.join(harness.temporaryRoot, "dev", "pids");
+    await mkdir(pidDir, { recursive: true });
+    await writeFile(path.join(pidDir, "api.pid"), String(previous.pid));
+    const result = harness.runResult("run", "api");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /unverified previous api process/);
+    process.kill(previous.pid, 0);
+    assert.doesNotMatch(await harness.events(), /launch:/);
+  } finally {
+    previous.kill("SIGTERM");
+    await rm(path.join(harness.temporaryRoot, "dev", "pids", "api.pid"), { force: true });
+    await harness.cleanup();
+  }
+});
+
+test("source startup does not connect its web app to another responding API", async () => {
+  const harness = await createHarness();
+  try {
+    const curl = path.join(harness.temporaryRoot, "bin", "curl");
+    await writeFile(curl, "#!/usr/bin/env bash\nexit 0\n");
+    await chmod(curl, 0o755);
+    const result = harness.runResult("start");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /another API is responding/);
+    assert.doesNotMatch(await harness.events(), /launch:/);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("source startup shares the installed Temporal path, preserves legacy history, and refuses ambiguity", async () => {
+  const harness = await createHarness();
+  try {
+    const appDir = path.join(harness.temporaryRoot, "app");
+    const legacy = path.join(appDir, "temporal", "temporal.db");
+    const native = path.join(appDir, "temporal.db");
+    harness.run("start", "temporal");
+    assert.match(await harness.waitForLaunches(1), new RegExp(native.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    harness.run("stop", "temporal");
+    await harness.clearEvents();
+    await mkdir(path.dirname(legacy), { recursive: true });
+    await writeFile(legacy, "legacy history");
+    harness.run("start", "temporal");
+    assert.ok((await harness.waitForLaunches(1)).includes(legacy));
+    harness.run("stop", "temporal");
+    await writeFile(native, "installed history");
+    const refused = harness.runResult("start", "temporal");
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /conflicting Temporal histories/);
+    assert.equal(await readFile(legacy, "utf8"), "legacy history");
+    assert.equal(await readFile(native, "utf8"), "installed history");
+    await rm(native);
+    await writeFile(`${native}-wal`, "orphaned companion");
+    const orphaned = harness.runResult("start", "temporal");
+    assert.notEqual(orphaned.status, 0);
+    assert.match(orphaned.stderr, /orphaned SQLite companions/);
+    assert.equal(await readFile(`${native}-wal`, "utf8"), "orphaned companion");
+    assert.equal(await readFile(legacy, "utf8"), "legacy history");
+  } finally {
+    await harness.cleanup();
+  }
+});
 
 test("package scripts expose foreground and detached docs/demo lifecycle commands", async () => {
   const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
@@ -173,10 +419,113 @@ test("demo detached lifecycle owns both API and web processes", { timeout: 30_00
 test("foreground demo API advances from migrations to the long-lived server", async () => {
   const harness = await createHarness();
   try {
-    const result = harness.runForegroundUntilReady("run", "demo-api");
-    assert.equal(result.error?.code, "ETIMEDOUT");
+    const result = await harness.runForegroundUntilReady("run", "demo-api");
+    assert.equal(result.status, 130, `${result.stdout}\n${result.stderr}`);
     assert.match(result.stdout, /\[demo-api\] Ready on http:\/\/127\.0\.0\.1:48787\//);
     assert.match(harness.run("status", "demo-api"), /^demo-api\s+down\s+-/m);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+for (const mode of ["run", "start", "restart"]) {
+  for (const targets of [[], ["api", "web"]]) {
+    test(`${mode} ${targets.join(" ") || "default fleet"} builds the extension once before replacing processes`, { timeout: 30_000 }, async () => {
+      const harness = await createHarness();
+      try {
+        harness.run("start", "api", "web");
+        await harness.waitForLaunches(2);
+        const previousPids = await Promise.all([harness.pid("api"), harness.pid("web")]);
+        await harness.clearEvents();
+
+        let output;
+        if (mode === "run") {
+          const result = await harness.runForegroundUntilReady(mode, ...targets);
+          assert.equal(result.status, 130, `${result.stdout}\n${result.stderr}`);
+          output = result.stdout;
+        } else {
+          output = harness.run(mode, ...targets);
+        }
+
+        const events = (await harness.waitForLaunches(targets.length || 4)).trim().split("\n");
+        assert.deepEqual(events.filter((event) => event.startsWith("build:")), [
+          `build:${harness.temporaryRoot}`,
+        ]);
+        for (const [index, name] of ["api", "web"].entries()) {
+          assert.ok(events.includes(`build-alive:${name}.pid:${previousPids[index].trim()}`));
+        }
+        const completed = events.indexOf("build-complete");
+        const launches = events.flatMap((event, index) => event.startsWith("launch:") ? [index] : []);
+        assert.ok(completed >= 0);
+        assert.ok(launches.length >= (targets.length || 4));
+        assert.ok(launches.every((index) => index > completed), events.join("\n"));
+        assert.ok(output.includes(`extension: ${harness.temporaryRoot}/dist/extension`));
+        assert.match(output, /chrome:\/\/extensions.*Developer mode.*Load unpacked/);
+        assert.match(output, /click Reload.*reload open application tabs/);
+      } finally {
+        await harness.cleanup();
+      }
+    });
+  }
+
+  test(`${mode} preserves existing processes and logs when the extension build fails`, { timeout: 30_000 }, async () => {
+    const harness = await createHarness();
+    try {
+      harness.run("start", "api", "web");
+      await harness.waitForLaunches(2);
+      const previousPids = await Promise.all([harness.pid("api"), harness.pid("web")]);
+      for (const name of ["api", "web"]) {
+        await writeFile(harness.logPath(name), `previous ${name} log\n`);
+      }
+      await harness.clearEvents();
+      await harness.failBuild();
+
+      const failed = harness.runResult(mode, "api", "web");
+      assert.equal(failed.error, undefined);
+      assert.notEqual(failed.status, 0);
+      assert.match(failed.stderr, /extension build failed; existing processes were left running/);
+      assert.doesNotMatch(failed.stdout, /stopped|stopping previous|started \(|running in foreground|Load unpacked/);
+      for (const [index, name] of ["api", "web"].entries()) {
+        assert.equal(await harness.pid(name), previousPids[index]);
+        process.kill(Number(previousPids[index].trim()), 0);
+        assert.equal(await readFile(harness.logPath(name), "utf8"), `previous ${name} log\n`);
+        await assert.rejects(readFile(`${harness.logPath(name)}.1`), { code: "ENOENT" });
+      }
+      const events = await harness.events();
+      assert.equal(events.split("\n").filter((event) => event.startsWith("build:")).length, 1);
+      assert.doesNotMatch(events, /launch:|build-complete/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test(`${mode} skips the extension for component sets without product web`, { timeout: 30_000 }, async () => {
+    const harness = await createHarness();
+    try {
+      await harness.failBuild();
+      const targets = ["temporal", "api", "worker", "docs", "demo-api", "demo-web"];
+      if (mode === "run") {
+        const result = await harness.runForegroundUntilReady(mode, ...targets);
+        assert.equal(result.status, 130, `${result.stdout}\n${result.stderr}`);
+        assert.match(result.stdout, /foreground run active/);
+      } else {
+        assert.match(harness.run(mode, ...targets), /demo-web: (started|http:)/);
+      }
+      assert.doesNotMatch(await harness.waitForLaunches(targets.length), /build:/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+}
+
+test("status, stop, list, and help do not build the extension", async () => {
+  const harness = await createHarness();
+  try {
+    await harness.failBuild();
+    for (const mode of ["status", "stop", "list", "help"]) {
+      harness.run(mode);
+    }
+    assert.equal(await harness.events(), "");
   } finally {
     await harness.cleanup();
   }

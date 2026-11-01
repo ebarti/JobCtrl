@@ -33,21 +33,12 @@ from jobctrl.domain.scoring.policy import (
     WeightedScoreDimension,
 )
 from jobctrl.domain.scoring.services import (
-    ConstraintChecker,
     EligibilityChecker,
     ScoreParser,
     ScoreParseResult,
 )
-from jobctrl.domain.scoring.retrieval import (
-    DisabledEmbeddingIndex,
-    HybridSearchIndex,
-    PostingDocument,
-    RetrievedJobCandidate,
-    SearchQuery,
-    normalize_text,
-    preselect_jobs_for_scoring,
-    tokenize_text,
-)
+from jobctrl.domain.scoring.retrieval import preselect_jobs_for_scoring
+
 from jobctrl.domain.scoring.requirement_fit import (
     RequirementFitSignals,
     derive_requirement_fit_signals,
@@ -79,18 +70,10 @@ __all__ = [
     "ResolvedScore",
     "ScoringPolicy",
     "WeightedScoreDimension",
-    "ConstraintChecker",
     "EligibilityChecker",
     "ScoreParser",
     "ScoreParseResult",
-    "DisabledEmbeddingIndex",
-    "HybridSearchIndex",
-    "PostingDocument",
-    "RetrievedJobCandidate",
-    "SearchQuery",
-    "normalize_text",
     "preselect_jobs_for_scoring",
-    "tokenize_text",
     "RequirementFitSignals",
     "derive_requirement_fit_signals",
     "requirement_fit_value",

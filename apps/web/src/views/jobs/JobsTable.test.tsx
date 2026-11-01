@@ -4,7 +4,7 @@ import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JobSummary } from "../../contexts/operations/types.js";
+import type { JobSummary } from "@jobctrl/contracts";
 import {
   makeJobsPage,
   sampleJob,
@@ -145,7 +145,7 @@ describe("<JobsTable>", () => {
     expect(activationButton).toHaveTextContent("View details");
     expect(activationButton).toHaveAttribute(
       "aria-label",
-      `Open job ${sampleJob.title} at ${sampleJob.company}`,
+      `Open job ${sampleJob.title} at ${sampleJob.company}: View details`,
     );
     expect(rowForTitle(expiredJob.title)).toHaveTextContent("Posting expired");
   });
@@ -219,7 +219,7 @@ describe("<JobsTable>", () => {
     ).toBeInTheDocument();
     expect(
       within(list).getByRole("button", {
-        name: `Open job ${sampleJob.title} at Acme Corp`,
+        name: `Open job ${sampleJob.title} at Acme Corp: View details`,
       }),
     ).not.toHaveClass("row-activation-focus-only");
   });
@@ -236,6 +236,29 @@ describe("<JobsTable>", () => {
 
     expect(screen.getByText("pending")).toBeInTheDocument();
     expect(screen.getByText("tailor stage")).toBeInTheDocument();
+  });
+
+  it("derives Job state from tombstones with hidden precedence", () => {
+    const active = { ...sampleJob, jobKey: "active", title: "Active row" };
+    const deleted = {
+      ...sampleJob,
+      jobKey: "deleted",
+      title: "Deleted row",
+      deletedAt: "2026-09-19T10:00:00.000Z",
+    };
+    const hidden = {
+      ...sampleJob,
+      jobKey: "hidden",
+      title: "Hidden row",
+      deletedAt: "2026-09-19T10:00:00.000Z",
+      hiddenAt: "2026-09-20T10:00:00.000Z",
+    };
+
+    renderJobsTable([active, deleted, hidden]);
+
+    expect(within(rowForTitle("Active row")).getByText("Active")).toBeInTheDocument();
+    expect(within(rowForTitle("Deleted row")).getByText("Deleted")).toBeInTheDocument();
+    expect(within(rowForTitle("Hidden row")).getByText("Hidden")).toBeInTheDocument();
   });
 
   it("renders separate compensation scan columns", () => {

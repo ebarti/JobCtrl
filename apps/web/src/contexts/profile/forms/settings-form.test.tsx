@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -7,13 +8,20 @@ import {
   sampleSettingsResponse,
 } from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
-import { renderWithProviders } from "../../../test/render.js";
+import { createTestQueryClient, renderWithProviders } from "../../../test/render.js";
+import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
+import { profileKeys } from "../queryKeys.js";
 import {
   SettingsForm,
 } from "./settings-form.js";
-import type { SettingsResponse } from "../../operations/types.js";
+import type { SettingsResponse, SettingsUpdateRequest } from "@jobctrl/contracts";
 import { DiscoveryAutomationSettingsForm } from "../../discovery/components/DiscoveryAutomationSettingsPanel.js";
 import type { DiscoverySettingsResponse } from "@jobctrl/contracts";
+
+function SettingsQueryHost() {
+  const settings = useSettingsQuery().data;
+  return settings ? <SettingsForm initial={settings.settings} effectiveSettings={settings.effectiveSettings} /> : null;
+}
 
 describe("<SettingsForm>", () => {
   afterEach(() => {
@@ -131,6 +139,122 @@ describe("<SettingsForm>", () => {
       pipelineInternalConcurrency: 3,
       workerActivitySlots: 4,
     });
+  });
+
+  it("keeps a rejected settings draft without repeated autosaves and retries after a new edit", async () => {
+    vi.useFakeTimers();
+    let fail = true;
+    let saved = structuredClone(sampleSettingsResponse);
+    const updateSettings = vi.fn(async (request: SettingsUpdateRequest): Promise<SettingsResponse> => {
+      if (fail) throw new Error("Synthetic settings save failed");
+      saved = {
+        ok: true,
+        settings: { ...saved.settings, applyConcurrency: request.applyConcurrency ?? saved.settings.applyConcurrency },
+        effectiveSettings: sampleSettingsResponse.effectiveSettings,
+        paths: sampleSettingsResponse.paths,
+      };
+      return saved;
+    });
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(profileKeys.settings(LOCAL_TENANT), saved);
+    renderWithProviders(<SettingsQueryHost />, {
+      queryClient,
+      ports: buildTestPorts({ api: { updateSettings, settings: async () => saved } }),
+    });
+
+    const concurrency = screen.getByLabelText("Concurrent applications");
+    fireEvent.change(concurrency, { target: { value: "3" } });
+    for (let period = 0; period < 4; period++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    }
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(concurrency).toHaveValue(3);
+    expect(screen.getByText("Could not save settings. Review the fields and try again.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+
+    fail = false;
+    fireEvent.change(concurrency, { target: { value: "5" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(updateSettings).toHaveBeenCalledTimes(2);
+    expect(updateSettings.mock.calls[1]![0].applyConcurrency).toBe(5);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(concurrency).toHaveValue(5);
+    expect(screen.getByText("Settings saved.")).toBeInTheDocument();
+  });
+
+  it("does not autosave an unchanged draft after a failed manual save, and resets the attempt on discard", async () => {
+    vi.useFakeTimers();
+    const updateSettings = vi.fn(async () => { throw new Error("Synthetic settings save failed"); });
+    renderWithProviders(<SettingsForm
+      initial={sampleSettingsResponse.settings}
+      effectiveSettings={sampleSettingsResponse.effectiveSettings}
+    />, { ports: buildTestPorts({ api: { updateSettings } }) });
+
+    const concurrency = screen.getByLabelText("Concurrent applications");
+    fireEvent.change(concurrency, { target: { value: "3" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    for (let period = 0; period < 4; period++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    }
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(concurrency).toHaveValue(3);
+    expect(screen.getByText("Could not save settings. Review the fields and try again.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(concurrency).toHaveValue(2);
+    fireEvent.change(concurrency, { target: { value: "3" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(updateSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not overlap a delayed failed autosave and saves newer settings", async () => {
+    vi.useFakeTimers();
+    let rejectFirst: ((error: Error) => void) | undefined;
+    let saved = structuredClone(sampleSettingsResponse);
+    const updateSettings = vi.fn()
+      .mockImplementationOnce(() => new Promise<SettingsResponse>((_resolve, reject) => {
+        rejectFirst = reject;
+      }))
+      .mockImplementationOnce(async (request: SettingsUpdateRequest) => {
+        saved = {
+          ok: true,
+          settings: { ...saved.settings, applyConcurrency: request.applyConcurrency ?? saved.settings.applyConcurrency },
+          effectiveSettings: sampleSettingsResponse.effectiveSettings,
+          paths: sampleSettingsResponse.paths,
+        };
+        return saved;
+      });
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(profileKeys.settings(LOCAL_TENANT), saved);
+    renderWithProviders(<SettingsQueryHost />, {
+      queryClient,
+      ports: buildTestPorts({ api: { updateSettings, settings: async () => saved } }),
+    });
+
+    const concurrency = screen.getByLabelText("Concurrent applications");
+    fireEvent.change(concurrency, { target: { value: "3" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    fireEvent.change(concurrency, { target: { value: "5" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(concurrency).toHaveValue(5);
+
+    await act(async () => {
+      rejectFirst?.(new Error("Synthetic delayed settings failure"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(concurrency).toHaveValue(5);
+    expect(screen.getByText("Could not save settings. Review the fields and try again.")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(updateSettings).toHaveBeenCalledTimes(2);
+    expect(updateSettings.mock.calls[1]![0].applyConcurrency).toBe(5);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(concurrency).toHaveValue(5);
+    expect(screen.getByText("Settings saved.")).toBeInTheDocument();
   });
 
   it("keeps newer execution edits when an autosave response returns for an older snapshot", async () => {
@@ -260,6 +384,27 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
       applyApprovalRequired: true,
       minFitScore: 9,
     });
+  });
+
+  it("keeps a failed automation draft visible without repeating its autosave", async () => {
+    vi.useFakeTimers();
+    const updateDiscoverySettings = vi.fn(async () => {
+      throw new Error("Synthetic automation save failed");
+    });
+    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleDiscoverySettingsResponse} />, {
+      ports: buildTestPorts({ api: { updateDiscoverySettings } }),
+    });
+
+    const minimumScore = screen.getByLabelText("Minimum fit score");
+    fireEvent.change(minimumScore, { target: { value: "9" } });
+    for (let period = 0; period < 4; period++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    }
+    expect(updateDiscoverySettings).toHaveBeenCalledTimes(1);
+    expect(minimumScore).toHaveValue(9);
+    expect(screen.getByText("Synthetic automation save failed")).toBeInTheDocument();
+    expect(screen.getByText("Could not autosave changes. Your draft is still unsaved; try again.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
   });
 
   it("warns when live apply approval is disabled", async () => {

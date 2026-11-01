@@ -1,5 +1,4 @@
 import {
-  ApplyJobRequestSchema,
   MarkJobActionRequestSchema,
   type ActionRunResponse,
   type ArtifactOpenResponse,
@@ -29,7 +28,6 @@ import type {
 
 export const DEMO_INITIAL_EXTERNAL_REHEARSAL_OPERATIONS = [
   "openArtifact",
-  "applyJob",
   "markApplied",
 ] as const satisfies readonly (keyof ApiClientPort)[];
 
@@ -101,7 +99,6 @@ export class DemoExternalRehearsalExecutor {
 
   private readonly handlers: ExternalHandlers = {
     openArtifact: (artifactId) => this.openArtifact(artifactId),
-    applyJob: (jobKey, body) => this.applyJob(jobKey, body),
     markApplied: (jobKey, body) => this.markApplied(jobKey, body),
   };
 
@@ -163,132 +160,6 @@ export class DemoExternalRehearsalExecutor {
     }
 
     return { ok: true, artifact: structuredClone(artifact), opened: true, path: previewUrl };
-  }
-
-  private async applyJob(
-    jobKey: string,
-    body?: Parameters<ApiClientPort["applyJob"]>[1],
-  ): Promise<ActionRunResponse> {
-    const request = ApplyJobRequestSchema.parse(body ?? {});
-    const now = this.clock.now().toISOString();
-    const runId = this.createId("apply-run");
-    const actionId = this.createId("apply-action");
-    const receipt = this.receipt({
-      kind: "application",
-      operation: "applyJob",
-      entityType: "job",
-      entityId: jobKey,
-      runId,
-      wouldHaveDone: "Run application automation against the selected job.",
-      didNotDo: "No browser automation, ATS, form, account, employer, or application destination was accessed; only a simulated dry-run was recorded.",
-    });
-
-    await this.commit((draft, context) => {
-      const job = requireJob(draft, jobKey);
-      appendWorkflowRun(draft, {
-        workflowId: runId,
-        runId,
-        workflowType: "ApplyWorkflow",
-        jobKey,
-        title: job.title,
-        company: job.company,
-        status: "dry_run_complete",
-        result: "dry_run",
-        dryRun: true,
-        model: "simulated",
-        startedAt: now,
-        finishedAt: now,
-        durationMs: 0,
-      }, {
-        errorCode: null,
-        errorMessage: null,
-        retryable: false,
-        inputSummary: { simulated: true, operation: "applyJob", dryRun: true },
-        temporalRunId: null,
-        events: [
-          { eventType: "ApplyRunStarted", occurredAt: now, status: "in_progress", message: "Application rehearsal started." },
-          { eventType: "ApplyRunEventRecorded", occurredAt: now, status: "dry_run_complete", message: "No application was submitted." },
-        ],
-      });
-
-      const queueItem = draft.state.readModel.apply.queue.items.find((item) => item.jobKey === jobKey);
-      if (queueItem) {
-        queueItem.latestApplyRun = {
-          runId,
-          status: "dry_run_complete",
-          result: "dry_run",
-          dryRun: true,
-          startedAt: now,
-          finishedAt: now,
-        };
-        queueItem.approvalGate.dryRunEvidence = {
-          runId,
-          coverage: "full",
-          finishedAt: now,
-          blockedChannels: [],
-        };
-      }
-      const applyRuns = draft.state.readModel.dashboard.summary.applyRuns;
-      applyRuns.unshift({
-        runId,
-        jobKey,
-        title: job.title,
-        company: job.company,
-        status: "dry_run_complete",
-        dryRun: true,
-        startedAt: now,
-        events: [
-          { at: now, type: "dry_run", level: "info", message: "No application submitted." },
-        ],
-      });
-      appendReceipt(draft, receipt);
-      context.appendDomainEvent({
-        ...createApplyRunStarted(LOCAL_TENANT, {
-          jobId: jobKey,
-          runId,
-          workerId: "demo-rehearsal",
-          model: "simulated",
-          dryRun: true,
-          startedAt: now,
-        }),
-        occurredAt: now,
-      });
-      context.appendDomainEvent({
-        ...createApplyRunEventRecorded(LOCAL_TENANT, {
-          runId,
-          event: {
-            type: "dry_run_complete",
-            level: "info",
-            simulated: true,
-            externalEffectOccurred: false,
-          },
-        }),
-        occurredAt: now,
-      });
-      recomputeDemoOperationalProjections(draft);
-    });
-
-    return {
-      ok: true,
-      runId,
-      workflowId: runId,
-      actionId,
-      action: "apply",
-      status: "dry_run_complete",
-      jobKey,
-      command: {
-        action: "apply",
-        jobKey,
-        dryRun: true,
-        headless: false,
-        limit: request.limit,
-        model: "simulated",
-        runId,
-      },
-      result: { simulated: true, externalEffectOccurred: false, result: "dry_run" },
-      eventCursor: null,
-      message: "Dry-run rehearsal completed; no application was submitted.",
-    };
   }
 
   private async markApplied(

@@ -1,25 +1,39 @@
 """Provider-routed local implementation of the model-neutral ``LlmPort``.
 
-Claude, Codex, and Google use their pinned agent SDKs so one authenticated
-provider can service both plain chat and schema-constrained core pipeline calls.
+Claude, Codex, and Google execute their pinned SDKs through agent-runtime-kit
+so one authenticated provider serves plain chat and schema-constrained calls.
 Raw OpenAI keys are Codex CLI enrollment input, never a direct model route.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
+import os
+from pathlib import Path
 import threading
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import ProxyHandler, Request, build_opener
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol
 
-from jobctrl.domain.ports.llm import LlmMessage
-from jobctrl.infrastructure.llm.codex_turn import run_codex_turn
-from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, provider_exception_error
+from jobctrl.domain.ports.llm import LlmFailure, LlmMessage
+from jobctrl.infrastructure.llm.provider_availability import provider_route_available, record_provider_failure
+from jobctrl.infrastructure.llm.provider_errors import (
+    ProviderCallError, provider_exception_error, raise_on_claude_failure,
+)
+
 _DEFAULT_MODEL_SENTINELS = {"", "default"}
 _ROUTED_PROVIDERS = {"claude", "codex", "gemini", "google"}
+_LIVE_SMOKE_PROVIDER_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_PROVIDER_URL"
+_LIVE_SMOKE_TOKEN_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_TOKEN"
+_LIVE_SMOKE_APP_DIR_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_APP_DIR"
+_LIVE_SMOKE_BOOTSTRAP_VALIDATED_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED"
+_LIVE_SMOKE_MARKER = ".jobctrl-e2e-owned.json"
 
 
 class SdkControlNormalizationWarning(RuntimeWarning):
@@ -55,15 +69,10 @@ def _normalize_unsupported_sdk_controls(
     the request or smuggling unsupported flags through private interfaces.
     """
 
-    controls = [
-        name
-        for name, value in (("temperature", temperature), ("max_tokens", max_tokens))
-        if value is not None
-    ]
+    controls = [name for name, value in (("temperature", temperature), ("max_tokens", max_tokens)) if value is not None]
     if controls:
         warnings.warn(
-            f"{provider} agent SDK does not support {', '.join(controls)}; "
-            "normalized to provider SDK defaults",
+            f"{provider} agent SDK does not support {', '.join(controls)}; normalized to provider SDK defaults",
             SdkControlNormalizationWarning,
             stacklevel=3,
         )
@@ -90,6 +99,138 @@ class _Backend(Protocol):
     def chat_json(self, messages: list[dict[str, str]], **kwargs: Any) -> dict: ...
 
 
+class LiveWorkerSmokeBackend:
+    """Loopback-only provider boundary for the opt-in live-worker smoke.
+
+    The smoke still runs the production workflow, activities, lifecycle, and
+    projection code. Only the external model call terminates here. Enabling the
+    backend requires the exact capability token from an independently allocated
+    browser-test workspace, so a partial or copied environment fails closed.
+    """
+
+    provider_id = "live-worker-smoke"
+
+    def __init__(self, *, model: str | None = None) -> None:
+        self._url, self._token = _live_worker_smoke_provider_config(required=True)
+        self.model = model or "live-worker-smoke-fixture"
+
+    def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
+        value = self._request(
+            {
+                "operation": "chat",
+                "model": self.model,
+                "messages": messages,
+                "controls": _fixture_controls(kwargs),
+            }
+        )
+        text = value.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError("Live-worker smoke provider returned no text")
+        return text
+
+    def chat_json(self, messages: list[dict[str, str]], **kwargs: Any) -> dict:
+        value = self._request(
+            {
+                "operation": "chat_json",
+                "model": self.model,
+                "messages": messages,
+                "controls": _fixture_controls(kwargs),
+            }
+        )
+        result = value.get("json")
+        if not isinstance(result, dict):
+            raise RuntimeError("Live-worker smoke provider returned no JSON object")
+        return result
+
+    def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        request = Request(
+            self._url,
+            data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            # Ignore ambient proxy configuration. The fixture is an owned
+            # loopback capability and must never be redirected elsewhere.
+            with build_opener(ProxyHandler({})).open(request, timeout=60) as response:
+                value = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Live-worker smoke provider failed: {exc}") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError("Live-worker smoke provider returned an invalid envelope")
+        return value
+
+
+def _fixture_controls(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Keep the fixture request bounded without serializing a full schema."""
+
+    return {
+        "temperature": kwargs.get("temperature"),
+        "maxTokens": kwargs.get("max_tokens"),
+        "thinkingBudget": kwargs.get("thinking_budget"),
+        "structured": isinstance(kwargs.get("response_schema"), dict),
+        "schemaTitle": (kwargs.get("response_schema") or {}).get("title"),
+    }
+
+
+def _live_worker_smoke_provider_config(
+    *,
+    required: bool = False,
+) -> tuple[str, str] | None:
+    values = {
+        _LIVE_SMOKE_PROVIDER_ENV: os.environ.get(_LIVE_SMOKE_PROVIDER_ENV, "").strip(),
+        _LIVE_SMOKE_TOKEN_ENV: os.environ.get(_LIVE_SMOKE_TOKEN_ENV, "").strip(),
+        _LIVE_SMOKE_APP_DIR_ENV: os.environ.get(_LIVE_SMOKE_APP_DIR_ENV, "").strip(),
+    }
+    if any(values.values()) and (
+        os.environ.get("JOBCTRL_LIVE_WORKER_SMOKE_BOOTSTRAP") != "1"
+        or os.environ.get(_LIVE_SMOKE_BOOTSTRAP_VALIDATED_ENV) != "1"
+    ):
+        raise RuntimeError("Live-worker smoke provider requires validated credential-free bootstrap")
+    if not any(values.values()):
+        if required:
+            raise RuntimeError("Live-worker smoke provider is not configured")
+        return None
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        raise RuntimeError("Incomplete live-worker smoke provider configuration: " + ", ".join(missing))
+
+    provider_url = values[_LIVE_SMOKE_PROVIDER_ENV]
+    token = values[_LIVE_SMOKE_TOKEN_ENV]
+    configured_app_dir = Path(values[_LIVE_SMOKE_APP_DIR_ENV]).resolve(strict=True)
+    runtime_app_dir = Path(os.environ.get("JOBCTRL_DIR", "")).resolve(strict=True)
+    if configured_app_dir != runtime_app_dir:
+        raise RuntimeError("Live-worker smoke workspace does not match JOBCTRL_DIR")
+
+    parsed = urlsplit(provider_url)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError("Live-worker smoke provider must be an uncredentialed loopback HTTP URL")
+
+    marker_path = configured_app_dir / _LIVE_SMOKE_MARKER
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Live-worker smoke workspace marker is unavailable") from exc
+    if (
+        not isinstance(marker, dict)
+        or marker.get("appDir") != str(configured_app_dir)
+        or marker.get("token") != token
+        or len(token) != 64
+    ):
+        raise RuntimeError("Live-worker smoke capability does not own this workspace")
+    return provider_url, token
+
+
 def _parse_model_spec(model: str | None) -> tuple[str | None, str | None, str]:
     """Parse an opaque model spec into provider/model plus a safe cache label."""
 
@@ -114,9 +255,14 @@ def _parse_model_spec(model: str | None) -> tuple[str | None, str | None, str]:
 
 
 def _resolve_default_model_spec(default_model: str | None) -> tuple[str | None, str | None, str]:
-    """Resolve an explicit workflow model or the provider-neutral default."""
+    """Resolve an explicit workflow choice before the saved default route."""
 
-    return _parse_model_spec(default_model)
+    parsed = _parse_model_spec(default_model)
+    if parsed[2] == "default" and _live_worker_smoke_provider_config() is None:
+        from jobctrl.infrastructure.scoring.criteria_provider import read_default_llm_model
+
+        return _parse_model_spec(read_default_llm_model())
+    return parsed
 
 
 def _run_sync(awaitable: Awaitable[Any]) -> Any:
@@ -130,11 +276,16 @@ def _run_sync(awaitable: Awaitable[Any]) -> Any:
     result: list[Any] = []
     failure: list[BaseException] = []
 
-    def runner() -> None:
+    context = contextvars.copy_context()
+
+    def run_in_context() -> None:
         try:
             result.append(asyncio.run(awaitable))
         except BaseException as exc:  # noqa: BLE001 - re-raise on caller thread
             failure.append(exc)
+
+    def runner() -> None:
+        context.run(run_in_context)
 
     thread = threading.Thread(target=runner, name="jobctrl-llm-sdk", daemon=True)
     thread.start()
@@ -146,11 +297,7 @@ def _run_sync(awaitable: Awaitable[Any]) -> Any:
 
 def _prompt_parts(messages: list[dict[str, str]]) -> tuple[str, str]:
     systems = [item["content"] for item in messages if item["role"] == "system"]
-    turns = [
-        f"{item['role'].upper()}:\n{item['content']}"
-        for item in messages
-        if item["role"] != "system"
-    ]
+    turns = [f"{item['role'].upper()}:\n{item['content']}" for item in messages if item["role"] != "system"]
     return "\n\n".join(systems), "\n\n".join(turns)
 
 
@@ -200,7 +347,7 @@ class ClaudeSdkBackend:
         thinking_budget: int | None,
     ) -> str | dict:
         from jobctrl.infrastructure.analysis.claude_analysis_adapter import (
-            _aiter,
+            _collect_sdk_messages,
             _load_options_factory,
             _load_sdk_query,
             _structured_output_from_messages,
@@ -232,9 +379,7 @@ class ClaudeSdkBackend:
         )
         if thinking_budget is not None:
             kwargs["thinking"] = (
-                {"type": "disabled"}
-                if thinking_budget == 0
-                else {"type": "enabled", "budget_tokens": thinking_budget}
+                {"type": "disabled"} if thinking_budget == 0 else {"type": "enabled", "budget_tokens": thinking_budget}
             )
         if response_schema is not None:
             kwargs["output_format"] = {"type": "json_schema", "schema": response_schema}
@@ -246,20 +391,24 @@ class ClaudeSdkBackend:
                 "thinking_budget": thinking_budget,
             },
             scope_name="jobctrl.llm.claude",
+            response_schema=response_schema,
         ) as record:
-            iterator = await _aiter(query_fn(prompt=prompt, options=options_factory(**kwargs)))
-            sdk_messages = [message async for message in iterator]
+            sdk_messages = await _collect_sdk_messages(
+                query_fn, prompt=prompt, options=options_factory(**kwargs), model=self.model,
+                operation="chat_json" if response_schema else "chat",
+                record_cancelled_usage=record,
+            )
+            input_tokens, output_tokens = _usage_from_messages(sdk_messages)
+            record("", input_tokens=input_tokens, output_tokens=output_tokens)
+            raise_on_claude_failure(
+                sdk_messages, model=self.model, operation="chat_json" if response_schema else "chat",
+            )
             value: str | dict
             if response_schema is not None:
                 value = _structured_output_from_messages(sdk_messages)
             else:
                 value = _claude_text(sdk_messages)
-            input_tokens, output_tokens = _usage_from_messages(sdk_messages)
-            record(
-                json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            )
+            record(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
             return value
 
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
@@ -298,6 +447,12 @@ class CodexSdkBackend:
 
     provider_id = "codex"
 
+    @property
+    def instruction_profile(self) -> str:
+        from jobctrl.infrastructure.llm.task_instructions import CODEX_TASK_INSTRUCTION_PROFILE
+
+        return CODEX_TASK_INSTRUCTION_PROFILE
+
     def __init__(
         self,
         *,
@@ -308,6 +463,9 @@ class CodexSdkBackend:
         from jobctrl.infrastructure.analysis.codex_analysis_adapter import CODEX_ANALYSIS_MODEL
 
         self.model = model or CODEX_ANALYSIS_MODEL
+        from jobctrl.infrastructure.scoring.criteria_provider import read_codex_reasoning_effort
+
+        self.reasoning_effort = read_codex_reasoning_effort(self.model)
         self._async_codex_factory = async_codex_factory
         self._approval_mode_factory = approval_mode_factory
 
@@ -339,37 +497,40 @@ class CodexSdkBackend:
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        effort = "high" if thinking_budget is None else _reasoning_level_from_budget(thinking_budget)
+        effort = self.reasoning_effort or ("high" if thinking_budget is None else _reasoning_level_from_budget(thinking_budget))
         if effort == "minimal":
             effort = "low"
         factory = self._async_codex_factory or _load_async_codex_factory()
         approval = self._approval_mode_factory or _deny_all_approval_mode
         operation = "chat_json" if response_schema is not None else "chat"
         schema_fingerprint = _schema_fingerprint(response_schema)
+        output_schema = strict_json_schema(response_schema) if response_schema is not None else None
+        from jobctrl.infrastructure.llm.task_instructions import CODEX_TASK_INSTRUCTIONS
         with llm_generation_span(
             model=self.model,
             messages=messages,
             params={"structured": response_schema is not None, "effort": effort},
             scope_name="jobctrl.llm.codex",
             schema_fingerprint=schema_fingerprint,
+            instruction_profile=self.instruction_profile,
+            response_schema=output_schema,
+            runtime_instructions=CODEX_TASK_INSTRUCTIONS,
+            runtime_prompt=combined,
         ) as record:
             try:
-                async with factory() as codex:
-                    thread = await codex.thread_start(
-                        approval_mode=approval(),
-                        model=self.model,
-                        config={"model_reasoning_effort": effort},
-                    )
-                    run_kwargs: dict[str, Any] = {"effort": effort}
-                    if response_schema is not None:
-                        run_kwargs["output_schema"] = strict_json_schema(response_schema)
-                    outcome = await run_codex_turn(
-                        thread,
-                        combined,
-                        model=self.model,
-                        operation=operation,
-                        run_kwargs=run_kwargs,
-                    )
+                from jobctrl.infrastructure.llm.agent_runtime_codex import call_codex_runtime
+
+                outcome = await call_codex_runtime(
+                    factory=factory, approval=approval, model=self.model, effort=effort,
+                    prompt=combined, operation=operation,
+                    output_schema=output_schema,
+                    record_usage=lambda input_tokens, output_tokens: record(
+                        "", input_tokens=input_tokens, output_tokens=output_tokens,
+                    ),
+                    record_usage_details=lambda cached, reasoning: record(
+                        "", cached_input_tokens=cached, reasoning_output_tokens=reasoning,
+                    ),
+                )
             except ProviderCallError:
                 raise
             except Exception as exc:  # noqa: BLE001 - normalize only the provider boundary
@@ -380,11 +541,12 @@ class CodexSdkBackend:
                     error=exc,
                 ) from exc
             record(
-                outcome.final_response,
+                outcome.text,
                 input_tokens=outcome.input_tokens,
                 output_tokens=outcome.output_tokens,
+                runtime_metadata=outcome.runtime_metadata,
             )
-            return outcome.final_response
+            return outcome.text
 
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         return _run_sync(
@@ -466,9 +628,7 @@ class GoogleSdkBackend:
         config_kwargs: dict[str, Any] = {
             "model": self.model,
             "system_instructions": system_prompt,
-            "capabilities": types_module.CapabilitiesConfig(
-                enabled_tools=[types_module.BuiltinTools.FINISH]
-            ),
+            "capabilities": types_module.CapabilitiesConfig(enabled_tools=[types_module.BuiltinTools.FINISH], enable_subagents=False),
             "policies": [],
             "workspaces": [],
             "save_dir": _runtime_subdir("llm-sessions"),
@@ -514,29 +674,29 @@ class GoogleSdkBackend:
                 "thinking_budget": thinking_budget,
             },
             scope_name="jobctrl.llm.google",
+            response_schema=response_schema,
         ) as record:
-            async with agent_factory(config_factory(**config_kwargs)) as agent:
-                response = await agent.chat(prompt)
-                async for _chunk in response.chunks:
-                    pass
-                value: str | dict
-                if response_schema is not None:
-                    value = await response.structured_output()
-                    if isinstance(value, str):
-                        value = json.loads(value)
-                    if not isinstance(value, dict):
-                        raise RuntimeError("Google structured output was not a JSON object")
-                else:
-                    value = await response.text()
-                    if not value:
-                        raise RuntimeError("Google SDK returned no final text result")
-                usage = getattr(response, "usage_metadata", None)
-            input_tokens, output_tokens = _usage_from_metadata(usage)
-            record(
-                json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
+            from jobctrl.infrastructure.llm.agent_runtime_antigravity import call_antigravity_runtime
+
+            outcome = await call_antigravity_runtime(
+                factory=agent_factory, config=config_factory(**config_kwargs), types=types_module,
+                model=self.model, prompt=prompt, output_schema=response_schema,
+                record_usage=lambda i, o: record("", input_tokens=i, output_tokens=o),
             )
+            input_tokens, output_tokens = _usage_from_metadata(outcome.usage)
+            record("", input_tokens=input_tokens, output_tokens=output_tokens)
+            value: str | dict
+            if response_schema is not None:
+                value = outcome.structured
+                if isinstance(value, str):
+                    value = json.loads(value)
+                if not isinstance(value, dict):
+                    raise RuntimeError("Google structured output was not a JSON object")
+            else:
+                value = outcome.text
+                if not value:
+                    raise RuntimeError("Google SDK returned no final text result")
+            record(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
             return value
 
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
@@ -570,18 +730,25 @@ class GoogleSdkBackend:
 
 
 def _default_provider() -> str:
+    if _live_worker_smoke_provider_config() is not None:
+        return LiveWorkerSmokeBackend.provider_id
     from jobctrl.infrastructure.setup_probes import ready_llm_providers
 
-    ready = ready_llm_providers()
+    ready = tuple(provider for provider in ready_llm_providers() if provider_route_available(provider))
     if not ready:
-        raise RuntimeError(
-            "No core LLM provider is ready. Authenticate Claude, Codex, or Google."
-        )
+        raise RuntimeError("No core LLM provider is ready. Authenticate Claude, Codex, or Google.")
     return ready[0]
 
 
 def _make_backend(provider: str | None, model: str | None) -> _Backend:
     selected = provider or _default_provider()
+    smoke_config = _live_worker_smoke_provider_config()
+    if smoke_config is not None:
+        if selected != LiveWorkerSmokeBackend.provider_id:
+            raise RuntimeError("Live-worker smoke refuses non-fixture provider selection")
+        return LiveWorkerSmokeBackend(model=model)
+    if selected == LiveWorkerSmokeBackend.provider_id:
+        raise RuntimeError("Live-worker smoke provider is not configured")
     if selected == "claude":
         return ClaudeSdkBackend(model=model)
     if selected == "codex":
@@ -599,7 +766,9 @@ def _effective_default_selection(
     """Resolve the provider/model facts that determine a new adapter default."""
 
     provider, selected_model, label = _resolve_default_model_spec(default_model)
-    selected_provider = provider or default_provider or _default_provider()
+    selected_provider = provider or (
+        default_provider if default_provider and provider_route_available(default_provider) else None
+    ) or _default_provider()
     if label == "default":
         from jobctrl.infrastructure.scoring.criteria_provider import read_preferred_model
 
@@ -624,7 +793,9 @@ class LlmAdapter:
             self._clients: dict[str, Any] = {"default": client}
             self._default_selection: tuple[str, str | None] | None = None
             self._injected = True
+            self._pinned = False
             return
+        self._pinned = _resolve_default_model_spec(default_model)[2] != "default"
         provider, selected_model = _resolved_default or _effective_default_selection(
             default_model,
             default_provider=default_provider,
@@ -654,6 +825,14 @@ class LlmAdapter:
     def provider_id(self) -> str:
         return self._provider_id
 
+    @property
+    def reasoning_effort(self) -> str | None:
+        return getattr(self._client, "reasoning_effort", None)
+
+    @property
+    def instruction_profile(self) -> str | None:
+        return getattr(self._client, "instruction_profile", None)
+
     def _client_for_model(self, model: str | None) -> Any:
         provider, selected_model, label = _parse_model_spec(model)
         if label == "default":
@@ -666,6 +845,22 @@ class LlmAdapter:
         backend = _make_backend(provider, selected_model)
         self._clients[label] = backend
         return backend
+
+    def _invoke(self, operation: str, client: Any, payload: list[dict], kwargs: dict, *, pinned: bool) -> Any:
+        provider = str(getattr(client, "provider_id", "injected"))
+        selected_model = getattr(client, "model", None)
+        if not self._injected and not provider_route_available(provider, selected_model):
+            # The workflow retry must bind a fresh provider/model fingerprint.
+            raise LlmFailure("provider_unavailable" if pinned else "provider_error")
+        try:
+            return getattr(client, operation)(payload, **kwargs)
+        except Exception as error:
+            if not self._injected:
+                record_provider_failure(
+                    provider, selected_model, error,
+                    default_model=client is self._client and self._default_selection == (provider, None),
+                )
+            raise
 
     @staticmethod
     def _kwargs(
@@ -695,14 +890,15 @@ class LlmAdapter:
     ) -> str:
         client = self._client_for_model(model)
         payload = [{"role": message.role, "content": message.content} for message in messages]
-        return client.chat(
-            payload,
-            **self._kwargs(
+        return self._invoke(
+            "chat", client, payload,
+            self._kwargs(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 response_schema=response_schema,
                 thinking_budget=thinking_budget,
             ),
+            pinned=self._pinned or _parse_model_spec(model)[2] != "default",
         )
 
     def chat_json(
@@ -717,14 +913,15 @@ class LlmAdapter:
     ) -> dict:
         client = self._client_for_model(model)
         payload = [{"role": message.role, "content": message.content} for message in messages]
-        return client.chat_json(
-            payload,
-            **self._kwargs(
+        return self._invoke(
+            "chat_json", client, payload,
+            self._kwargs(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 response_schema=response_schema,
                 thinking_budget=thinking_budget,
             ),
+            pinned=self._pinned or _parse_model_spec(model)[2] != "default",
         )
 
     def ask(self, prompt: str, **kwargs: Any) -> str:
@@ -740,14 +937,22 @@ def get_llm_adapter() -> LlmAdapter:
     global _singleton, _singleton_default_provider
     with _lock:
         if _singleton is None:
-            _singleton_default_provider = _default_provider()
-            _singleton = LlmAdapter(default_provider=_singleton_default_provider)
+            _singleton = LlmAdapter()
+            _singleton_default_provider = _singleton.provider_id
         elif not getattr(_singleton, "_injected", True):
             selection = _effective_default_selection(
                 default_provider=_singleton_default_provider,
             )
-            if selection != _singleton._default_selection:
+            from jobctrl.infrastructure.scoring.criteria_provider import read_codex_reasoning_effort
+
+            effort_changed = any(
+                getattr(backend, "provider_id", None) == "codex"
+                and getattr(backend, "reasoning_effort", None) != read_codex_reasoning_effort(backend.model)
+                for backend in tuple(_singleton._clients.values())
+            )
+            if selection != _singleton._default_selection or effort_changed:
                 _singleton = LlmAdapter(_resolved_default=selection)
+                _singleton_default_provider = selection[0]
         return _singleton
 
 
@@ -756,12 +961,16 @@ def reset_llm_adapter() -> None:
     with _lock:
         _singleton = None
         _singleton_default_provider = None
+    from jobctrl.infrastructure.llm.provider_availability import reset_provider_availability
+
+    reset_provider_availability()
 
 
 __all__ = [
     "ClaudeSdkBackend",
     "CodexSdkBackend",
     "GoogleSdkBackend",
+    "LiveWorkerSmokeBackend",
     "LlmAdapter",
     "SdkControlNormalizationWarning",
     "get_llm_adapter",

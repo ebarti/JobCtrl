@@ -99,18 +99,14 @@ class JobEnrichment:
     def __post_init__(self) -> None:
         if self.current_status not in _VALID_STATUSES:
             raise ValueError(
-                f"JobEnrichment.current_status must be one of {_VALID_STATUSES!r}, "
-                f"got {self.current_status!r}"
+                f"JobEnrichment.current_status must be one of {_VALID_STATUSES!r}, got {self.current_status!r}"
             )
         if not isinstance(self.attempts, tuple):
             raise ValueError("JobEnrichment.attempts must be a tuple")
 
         running_attempts = [a for a in self.attempts if a.running]
         if len(running_attempts) > 1:
-            raise ValueError(
-                "JobEnrichment may have AT MOST one Running attempt "
-                f"(found {len(running_attempts)})"
-            )
+            raise ValueError(f"JobEnrichment may have AT MOST one Running attempt (found {len(running_attempts)})")
 
         # Numbering must be monotonic 1..N (per §4.2 attempt_number is
         # monotonic per aggregate).
@@ -124,17 +120,11 @@ class JobEnrichment:
         # Terminal-state coherence
         if self.current_status == EnrichmentLifecycle.ENRICHED:
             if self.full_description is None:
-                raise ValueError(
-                    "JobEnrichment.full_description must be set when status == enriched"
-                )
+                raise ValueError("JobEnrichment.full_description must be set when status == enriched")
             if self.enriched_at is None or not self.enriched_at.strip():
-                raise ValueError(
-                    "JobEnrichment.enriched_at must be set when status == enriched"
-                )
+                raise ValueError("JobEnrichment.enriched_at must be set when status == enriched")
             if self.extraction_tier is None:
-                raise ValueError(
-                    "JobEnrichment.extraction_tier must be set when status == enriched"
-                )
+                raise ValueError("JobEnrichment.extraction_tier must be set when status == enriched")
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -173,13 +163,9 @@ class JobEnrichment:
         extraction round.
         """
         if self.current_status == EnrichmentLifecycle.ENRICHED:
-            raise ValueError(
-                "JobEnrichment is already enriched; call reset() before starting again"
-            )
+            raise ValueError("JobEnrichment is already enriched; call reset() before starting again")
         if any(a.running for a in self.attempts):
-            raise ValueError(
-                "JobEnrichment already has a Running attempt; finish it first"
-            )
+            raise ValueError("JobEnrichment already has a Running attempt; finish it first")
         next_number = len(self.attempts) + 1
         attempt = EnrichmentAttempt(
             attempt_number=next_number,
@@ -213,10 +199,7 @@ class JobEnrichment:
         record honest.
         """
         if not self.attempts or not self.attempts[-1].running:
-            raise ValueError(
-                "succeed_attempt called without a Running attempt; "
-                "call start_attempt first"
-            )
+            raise ValueError("succeed_attempt called without a Running attempt; call start_attempt first")
         last = self.attempts[-1]
         finalised = EnrichmentAttempt(
             attempt_number=last.attempt_number,
@@ -251,10 +234,7 @@ class JobEnrichment:
         preserved on the failed record.
         """
         if not self.attempts or not self.attempts[-1].running:
-            raise ValueError(
-                "fail_attempt called without a Running attempt; "
-                "call start_attempt first"
-            )
+            raise ValueError("fail_attempt called without a Running attempt; call start_attempt first")
         last = self.attempts[-1]
         finalised = EnrichmentAttempt(
             attempt_number=last.attempt_number,
@@ -272,19 +252,15 @@ class JobEnrichment:
         )
 
     def reset(self, *, reset_at: str) -> "JobEnrichment":
-        """Discard the success state so a fresh extraction round can start.
+        """Start a fresh extraction round while retaining the last accepted content.
 
         Used by orchestration when the user explicitly retries an
         already-enriched job. The attempt history is preserved (audit
-        trail) — only the terminal-state fields are cleared.
+        trail), and a failed refresh leaves the accepted content available.
         """
         return replace(
             self,
             current_status=EnrichmentLifecycle.PENDING,
-            full_description=None,
-            application_url=None,
-            enriched_at=None,
-            extraction_tier=None,
             updated_at=reset_at,
         )
 
@@ -311,9 +287,7 @@ class JobEnrichment:
         apply URL is not an enrichment failure.
         """
         if self.current_status != EnrichmentLifecycle.ENRICHED:
-            raise ValueError(
-                "record_apply_url_recovery requires an enriched aggregate"
-            )
+            raise ValueError("record_apply_url_recovery requires an enriched aggregate")
         resolved = isinstance(result, ApplicationUrl)
         attempt = EnrichmentAttempt(
             attempt_number=len(self.attempts) + 1,
@@ -368,15 +342,9 @@ class JobEnrichment:
             "job_id": str(self.job_id),
             "current_status": self.current_status,
             "attempts": [a.to_dict() for a in self.attempts],
-            "full_description": (
-                self.full_description.text if self.full_description else None
-            ),
-            "application_url": (
-                self.application_url.value if self.application_url else None
-            ),
+            "full_description": (self.full_description.text if self.full_description else None),
+            "application_url": (self.application_url.value if self.application_url else None),
             "enriched_at": self.enriched_at,
-            "extraction_tier": (
-                self.extraction_tier.value if self.extraction_tier else None
-            ),
+            "extraction_tier": (self.extraction_tier.value if self.extraction_tier else None),
             "updated_at": self.updated_at,
         }

@@ -5,7 +5,6 @@ from __future__ import annotations
 from jobctrl.domain.materials.claim_grounding import (
     GROUNDED_COVERAGE_BASIS,
     bullet_id_for_claim_location,
-    enrich_provenance_requirements,
     ground_claim_mappings,
 )
 from jobctrl.domain.materials.provenance import BulletProvenance
@@ -24,6 +23,9 @@ def _mapping(
 ) -> GeneratedClaimMapping:
     return GeneratedClaimMapping(
         claim_id=claim_id,
+        line_id=bullet_id_for_claim_location(location) or "unknown",
+        reason="Explicit generator anchor",
+        transform_type="rephrase",
         location=location,
         text=text,
         claim_label="evidence_reframed",
@@ -74,10 +76,7 @@ def test_location_maps_summary_sentence_aliases_to_the_profile_line() -> None:
     assert bullet_id_for_claim_location("executive_profile.sentences[1]") == "executive_profile#0"
     assert bullet_id_for_claim_location("summary.sentence[2]") == "executive_profile#0"
     assert bullet_id_for_claim_location("profile.summary[3]") == "executive_profile#0"
-    assert (
-        bullet_id_for_claim_location("profile.executive_profile.sentence[1]")
-        == "executive_profile#0"
-    )
+    assert bullet_id_for_claim_location("profile.executive_profile.sentence[1]") == "executive_profile#0"
 
 
 def test_location_maps_dotted_profile_ids() -> None:
@@ -103,12 +102,11 @@ def test_summary_sentence_claim_grounds_via_location_without_cross_binding() -> 
     )
 
     assert grounding.grounded_requirement_ids == ("r1",)
-    assert grounding.bindings[0].via == "location"
+    assert grounding.bindings[0].via == "line_id"
     assert grounding.bindings[0].bullet_ids == ("executive_profile#0",)
 
-    enriched = enrich_provenance_requirements(rows, grounding)
-    assert enriched[0].requirement_ids == ("r1",)
-    assert enriched[1].requirement_ids == ()
+    assert grounding.requirement_ids_for_bullet(rows[0].bullet_id) == ("r1",)
+    assert grounding.requirement_ids_for_bullet(rows[1].bullet_id) == ()
 
 
 def test_dotted_skill_category_claim_grounds_via_location() -> None:
@@ -118,7 +116,7 @@ def test_dotted_skill_category_claim_grounds_via_location() -> None:
     )
 
     assert grounding.grounded_requirement_ids == ("r1",)
-    assert grounding.bindings[0].via == "location"
+    assert grounding.bindings[0].via == "line_id"
     assert grounding.bindings[0].bullet_ids == ("skills:node.js#0",)
 
 
@@ -131,20 +129,8 @@ def test_claim_grounds_via_location_when_shipped_line_carries_its_text() -> None
     assert grounding.basis == GROUNDED_COVERAGE_BASIS
     assert grounding.grounded_requirement_ids == ("r1",)
     assert grounding.claimed_only_requirement_ids == ()
-    assert grounding.bindings[0].via == "location"
+    assert grounding.bindings[0].via == "line_id"
     assert grounding.bindings[0].bullet_ids == ("experience:acme#0",)
-
-
-def test_claim_stays_grounded_to_voice_reworded_line_via_prior_text() -> None:
-    """Voice keeps bullet identity 1:1; the claim binds the pre-voice wording."""
-    grounding = ground_claim_mappings(
-        (_mapping(),),
-        (("experience:acme#0", "Drove Python API dependability end to end."),),
-        prior_lines=(("experience:acme#0", "Owned Python API reliability."),),
-    )
-
-    assert grounding.grounded_requirement_ids == ("r1",)
-    assert grounding.bindings[0].via == "location_prior_text"
 
 
 def test_claim_for_policy_swapped_summary_is_ungrounded() -> None:
@@ -166,7 +152,7 @@ def test_claim_for_policy_swapped_summary_is_ungrounded() -> None:
 
     assert grounding.grounded_requirement_ids == ()
     assert grounding.claimed_only_requirement_ids == ("r1",)
-    assert grounding.ungrounded[0].reason == "text_not_in_shipped_resume"
+    assert grounding.ungrounded[0].reason == "non_verbatim_claim"
 
 
 def test_claim_at_dropped_location_is_ungrounded_with_location_reason() -> None:
@@ -177,20 +163,6 @@ def test_claim_at_dropped_location_is_ungrounded_with_location_reason() -> None:
 
     assert grounding.grounded_requirement_ids == ()
     assert grounding.ungrounded[0].reason == "location_not_shipped"
-
-
-def test_claim_with_drifted_location_grounds_via_text_scan_fallback() -> None:
-    grounding = ground_claim_mappings(
-        (_mapping(location="unknown.surface", text="Owned Python API reliability."),),
-        (
-            ("experience:acme#0", "Unrelated line."),
-            ("experience:acme#1", "Owned Python API reliability, cutting p99 latency."),
-        ),
-    )
-
-    assert grounding.grounded_requirement_ids == ("r1",)
-    assert grounding.bindings[0].via == "text_scan"
-    assert grounding.bindings[0].bullet_ids == ("experience:acme#1",)
 
 
 def test_skill_item_claim_binds_the_rendered_category_line() -> None:
@@ -214,6 +186,9 @@ def test_smart_punctuation_in_claim_text_still_binds_sanitized_shipped_line() ->
 def test_non_requirement_claims_never_participate_in_coverage() -> None:
     mapping = GeneratedClaimMapping(
         claim_id="claim_pin",
+        line_id="experience:acme#0",
+        reason="Explicit pinned anchor",
+        transform_type="pinned",
         location="experience.acme.bullets[0]",
         text="Pinned bullet.",
         claim_label="pinned",
@@ -223,31 +198,6 @@ def test_non_requirement_claims_never_participate_in_coverage() -> None:
 
     assert grounding.bindings == ()
     assert grounding.ungrounded == ()
-
-
-def test_enrichment_adds_requirement_links_but_never_evidence_ids() -> None:
-    """Claim evidence must NOT reach provenance rows (the #216 stuffing vector).
-
-    Keyword coverage credits a planned keyword only when its bullet carries a
-    BUILDER-bound evidence FK; if enrichment injected the claim's evidence id,
-    an unrelated claim would launder every keyword in its bullet into
-    ``covered``. Requirement links union; evidence ids stay byte-identical.
-    """
-    rows = (
-        _row("experience:acme#0", "Owned Python API reliability.", requirement_ids=("r9",)),
-        _row("experience:acme#1", "Unrelated shipped line."),
-    )
-    grounding = ground_claim_mappings(
-        (_mapping(requirement_ids=("r1", "r2"), evidence_ids=("ev1",)),),
-        tuple((row.bullet_id, row.generated_text) for row in rows),
-    )
-
-    enriched = enrich_provenance_requirements(rows, grounding)
-
-    assert enriched[0].requirement_ids == ("r1", "r2", "r9")
-    assert enriched[0].evidence_ids == ()
-    assert enriched[1].requirement_ids == ()
-    assert enriched[1].evidence_ids == ()
 
 
 def test_grounding_metadata_is_inspectable_for_the_audit_trail() -> None:
@@ -273,7 +223,7 @@ def test_grounding_metadata_is_inspectable_for_the_audit_trail() -> None:
             "claim_id": "claim_1",
             "requirement_ids": ["r1"],
             "bullet_ids": ["experience:acme#0"],
-            "via": "location",
+            "via": "line_id",
         }
     ]
     assert metadata["ungrounded_claims"] == [
@@ -285,3 +235,12 @@ def test_grounding_metadata_is_inspectable_for_the_audit_trail() -> None:
         }
     ]
     assert metadata["claimed_only_requirement_ids"] == ["r2"]
+
+
+def test_claim_containing_shipped_excerpt_and_invented_suffix_is_not_grounded():
+    grounding = ground_claim_mappings(
+        (_mapping(text="Exact shipped excerpt. Unrecorded additional content."),),
+        (("experience:acme#0", "Exact shipped excerpt."),),
+    )
+    assert grounding.bindings == ()
+    assert grounding.ungrounded[0].reason == "non_verbatim_claim"

@@ -8,6 +8,8 @@ browser behavior, and visual consistency catch different failures.
 | Layer | Command |
 | --- | --- |
 | TypeScript | `corepack pnpm web:check` |
+| Frontend boundaries | `corepack pnpm web:lint` |
+| Boundary regression controls | `corepack pnpm web:lint:test` |
 | Unit, hook, component, a11y | `corepack pnpm --filter @jobctrl/web test` |
 | Type-level contracts | `corepack pnpm --filter @jobctrl/web test-d` |
 | Production bundle | `corepack pnpm web:build` |
@@ -18,17 +20,61 @@ browser behavior, and visual consistency catch different failures.
 
 - Colocated Vitest/RTL/MSW tests prove selectors, query keys, hooks, mutations,
   forms, components, rollback, and critical/serious axe checks.
+- For a bounded API request and retained Outreach revision, run
+  `apps/api/test/api-client-timeout.test.ts` and the Outreach revision form and
+  hook tests. Use synthetic stalled header, success-body and error-body streams;
+  also exercise missing or mismatched publication identity, a matching historical
+  draft, and a server error after a committed revision using
+  `apps/api/test/outreach-postcommit-failure.test.ts`. Verify an
+  unconfirmed write retains both submitted and later text, settles pending state,
+  requires deliberate review and never automatically resubmits. Explicit 4xx
+  conflicts retain their conflict handling.
 - Type-level tests prove the public inferred shapes of read hooks and contracts.
+- The boundary lint proves the documented context/view dependency direction,
+  Operations read-kernel access, browser-capability ports, and context-owned
+  API/query/store usage from TypeScript syntax, resolved symbols and capability
+  provenance. Weak/missing generated declarations and casts cannot authorize
+  direct route/view API or QueryClient access. The
+  TypeScript CI web job blocks on it; see
+  [automated boundary checks](../../architecture/frontend/state-and-ports.md#automated-boundary-checks).
+- Boundary regressions allow canonical DTO/schema/constant imports without
+  exemptions while rejecting independent API-client, Query/Zustand, browser-port,
+  dependency and barrel violations. Real generated-route controls require
+  actionable boundary diagnostics independently of compiler diagnostics. Capability/dependency exemptions still need
+  reasons and stale-entry controls. Canonical-import changes retain the full web
+  suite: inspect Jobs paging, saved-view inputs, optimistic rollback, SSE,
+  event/stage parity and list/detail route composition coverage.
 - Playwright uses a real API plus seeded SQLite fixtures to prove route and
   realtime behavior without a live worker or model.
+- `shipped-fit-lifecycle.spec.ts` reads canonical final-fit metadata through the
+  real review-queue API. It distinguishes post-voice gate findings from audits
+  recorded after acceptance, retains the original gate and provenance coverage,
+  and keeps historical judge-claimed coverage visibly separate from grounded
+  coverage. Its fixture restores the original metadata after each case.
+- Resume review uses complementary session, browser and persistence checks.
+  `useApplyReviewSession.test.ts` owns tenant/job/material fences, independent
+  comment/revision ordering, overlapping saves, stale cache publications,
+  normalized acknowledgements and approval preparation.
+  `artifact-comparison.spec.ts` drives the real Plate editor and Apply session
+  through multiline paste, autosave/reload, delayed acknowledgements, conflicts,
+  failed render and recovery before dry-run authorization. Its save/render/model
+  HTTP responses are controlled, and its attachments retain the submitted
+  documents and observed transition order.
+  `apps/api/test/resume-review-drafts.test.ts`, `resume-templates.test.ts`,
+  `apply-audit.test.ts` and the application-feedback suites own canonical SQLite,
+  accepted-artifact bytes, revision conflicts and approval/audit preservation.
+  Browser response controls do not establish those persistence guarantees or
+  live provider behavior.
 - Storybook proves state/variant rendering and shared accessibility behavior.
 
-## Rhea And Base UI Contracts
+## Visual And Base UI Contracts
 
-The current frontend preset is `base-rhea`: Geist product type, JetBrains Mono
-for technical text, the 10px semantic radius scale, capped 24px cards, neutral
-chart ramps, violet primary/focus tokens, and domain status rendered as an
-icon/dot plus text rather than a colored capsule. Contrast calculations,
+The frontend retains `base-rhea` component ancestry with the Swiss timetable
+visual contract in `DESIGN.md`: Helvetica Neue/Helvetica/Arial product type, JetBrains Mono technical
+text, square geometry, neutral chart ramps, monochrome primary/focus tokens,
+and red/amber state accents. Domain status uses an icon/dot plus text rather
+than a colored capsule, and filled score/count markers pair explicit foreground
+and background tokens. Contrast calculations,
 focused primitive behavior, and the rendered token-foundation browser gate own
 those outcomes; route code should consume semantic tokens instead of
 introducing local substitutes.

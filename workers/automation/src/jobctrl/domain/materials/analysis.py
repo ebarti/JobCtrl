@@ -32,26 +32,64 @@ Locked decisions realised here:
 from __future__ import annotations
 
 import hashlib
+from jobctrl.domain.taxonomy_codes import SeniorityCode
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jobctrl.domain.identifiers import JobId
-from jobctrl.domain.materials.analysis_eeo_screen import EeoScreenHit
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+
+if TYPE_CHECKING:
+    from jobctrl.domain.determinations import DeterminationFailure
+
+
+@dataclass(frozen=True)
+class EeoScreenHit:
+    """One requirement/keyword dropped by the EEO red-flag screen (audit data)."""
+
+    kind: str  # "requirement" | "keyword"
+    ref_id: str  # requirement id or keyword text
+    category: str  # protected-class category, e.g. "age" | "gender"
+    matched_text: str  # the offending phrase that triggered the drop
+
+    def describe(self) -> str:
+        return (
+            f"{self.kind} {self.ref_id!r} dropped (EEO {self.category}): "
+            f"matched protected-attribute signal {self.matched_text!r}"
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "kind": self.kind,
+            "ref_id": self.ref_id,
+            "category": self.category,
+            "matched_text": self.matched_text,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, str]) -> EeoScreenHit:
+        return cls(
+            kind=str(data.get("kind") or ""),
+            ref_id=str(data.get("ref_id") or ""),
+            category=str(data.get("category") or ""),
+            matched_text=str(data.get("matched_text") or ""),
+        )
+
 
 # Bump whenever the analysis system prompt changes so stale cached analyses are
 # recomputed rather than silently served (D-12). The cache key combines this
 # with the JD snapshot hash and the SDK-set version.
-PROMPT_VERSION = "employer-analysis-v2"
+PROMPT_VERSION = "employer-analysis-v4-determinations"
 
 # Identifies the default ensemble model/SDK set. Bump when the default leg set
 # or model ids change so the cache invalidates (D-12). The config.json
 # ``analysis_legs`` setting records intentional degraded-mode choices, so cache
 # keys also reflect those choices.
-SDK_SET_VERSION = "claude+codex+antigravity-v2-synth-default"
+SDK_SET_VERSION = "claude+codex+antigravity-v3-verified-single-synth-default"
 
 RequirementTier = Literal["must_have", "nice_to_have"]
 RequirementCoverageScope = Literal[
@@ -77,7 +115,7 @@ class ReasonedKeyword(BaseModel):
     ``is_orphan`` (allowed, but surfaced as audit data).
     """
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     keyword: str
     evidence_span: str = Field(
@@ -95,7 +133,7 @@ class ReasonedKeyword(BaseModel):
 class Requirement(BaseModel):
     """One employer requirement, classified and weighted (D-14)."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     id: str
     text: str
@@ -132,19 +170,22 @@ class JobAnalysis(BaseModel):
     ``analysis_grounding.validate_evidence_spans``.
     """
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     role_framing: str = Field(
         ...,
         description="How the role is framed — what the team is hiring this person to do.",
     )
-    inferred_seniority: str = Field(
+    inferred_seniority: SeniorityCode = Field(
         ...,
         description="Inferred level read from scope/ownership/leadership signals, not one token.",
     )
     ideal_candidate_narrative: str = Field(
         ...,
-        description="'What they're really looking for' — the role's center of gravity (D-16).",
+        description=(
+            "Describe only the candidate capabilities and role needs. "
+            "Never narrate expert/model agreement, draft reconciliation, or how this profile was determined."
+        ),
     )
     requirements: list[Requirement] = Field(default_factory=list)
     keywords: list[ReasonedKeyword] = Field(default_factory=list)
@@ -154,9 +195,7 @@ class JobAnalysis(BaseModel):
         """Flag keywords whose ``requirement_ref`` does not resolve (D-17)."""
         valid_ids = {req.id for req in self.requirements}
         for keyword in self.keywords:
-            keyword.is_orphan = (
-                keyword.requirement_ref is None or keyword.requirement_ref not in valid_ids
-            )
+            keyword.is_orphan = keyword.requirement_ref is None or keyword.requirement_ref not in valid_ids
         return self
 
     @property
@@ -217,7 +256,7 @@ class AnalysisAgreement:
     first-class audit data, surfaced for review, never silently resolved.
     """
 
-    score: float = 0.0
+    score: float | None = None
     flagged_requirements: tuple[str, ...] = ()
     flagged_keywords: tuple[str, ...] = ()
 
@@ -232,7 +271,7 @@ class AnalysisAgreement:
     def from_dict(cls, data: dict[str, Any] | None) -> AnalysisAgreement:
         data = data or {}
         return cls(
-            score=float(data.get("score") or 0.0),
+            score=float(data["score"]) if data.get("score") is not None else None,
             flagged_requirements=tuple(str(item) for item in (data.get("flagged_requirements") or ())),
             flagged_keywords=tuple(str(item) for item in (data.get("flagged_keywords") or ())),
         )
@@ -253,7 +292,9 @@ def compute_snapshot_hash(jd_snapshot: str) -> str:
     return hashlib.sha256(jd_snapshot.encode("utf-8")).hexdigest()
 
 
-def cache_key(snapshot_hash: str, *, prompt_version: str = PROMPT_VERSION, sdk_set_version: str = SDK_SET_VERSION) -> str:
+def cache_key(
+    snapshot_hash: str, *, prompt_version: str = PROMPT_VERSION, sdk_set_version: str = SDK_SET_VERSION
+) -> str:
     """Return the canonical cache key string for an analysis."""
     return f"{snapshot_hash}:{prompt_version}:{sdk_set_version}"
 
@@ -297,6 +338,8 @@ class EmployerAnalysis:
     # empty is the clean case. Persisted as canonical audit data (never a blob).
     eeo_screen_hits: tuple[EeoScreenHit, ...] = ()
     created_at: str = field(default_factory=_utc_now)
+    determination_ids: dict[str, str] = field(default_factory=dict)
+    line_anchors: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         if self.generation < 1:
@@ -345,6 +388,8 @@ class EmployerAnalysis:
         prompt_version: str = PROMPT_VERSION,
         sdk_set_version: str = SDK_SET_VERSION,
         created_at: str | None = None,
+        determination_ids: dict[str, str] | None = None,
+        line_anchors: tuple[dict[str, Any], ...] = (),
     ) -> EmployerAnalysis:
         return cls(
             tenant_id=tenant_id,
@@ -360,6 +405,8 @@ class EmployerAnalysis:
             legs_attempted=legs_attempted,
             eeo_screen_hits=eeo_screen_hits,
             created_at=created_at or _utc_now(),
+            determination_ids=determination_ids or {},
+            line_anchors=line_anchors,
         )
 
     def to_read_model(self) -> dict[str, Any]:
@@ -387,8 +434,7 @@ class EmployerAnalysis:
             "requirements": [req.model_dump() for req in self.canonical.requirements],
             "keywords": [kw.model_dump() for kw in self.canonical.keywords],
             "sub_analyses": [
-                {"model_id": draft.model_id, **draft.model_dump(exclude={"model_id"})}
-                for draft in self.sub_analyses
+                {"model_id": draft.model_id, **draft.model_dump(exclude={"model_id"})} for draft in self.sub_analyses
             ],
             "failures": [failure.to_dict() for failure in self.failures],
         }
@@ -408,6 +454,8 @@ class EnsembleOutcome:
     failures: tuple[AnalysisFailure, ...]
     agreement: AnalysisAgreement
     legs_attempted: int
+    verification_ids: dict[str, str] = field(default_factory=dict)
+    agreement_determination_id: str | None = None
 
 
 class EnsembleError(RuntimeError):
@@ -417,9 +465,13 @@ class EnsembleError(RuntimeError):
     degraded; only zero surviving drafts is a hard error surfaced to the user.
     """
 
-    def __init__(self, message: str, failures: tuple[AnalysisFailure, ...]) -> None:
+    def __init__(
+        self, message: str, failures: tuple[AnalysisFailure, ...], *,
+        determination_failure: DeterminationFailure | None = None,
+    ) -> None:
         super().__init__(message)
         self.failures = failures
+        self.determination_failure = determination_failure
 
 
 __all__ = [

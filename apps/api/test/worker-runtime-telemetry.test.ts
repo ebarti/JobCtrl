@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { readWorkerRuntimeTelemetry } from "../src/worker-runtime-telemetry.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const fixtures: Fixture[] = [];
 
@@ -17,6 +17,116 @@ afterEach(() => {
 });
 
 describe("worker runtime telemetry", () => {
+  it("distinguishes refused, accepting, unknown and stale blocking admissions", () => {
+    const fixture = createFixture();
+    const now = new Date("2026-07-14T10:00:30.000Z");
+    const base = { configuredSlots: 4, activeSlots: 0, executorThreads: 6, details: [] };
+    insertHeartbeat(fixture, {
+      ...base, workerId: "blocked", lastSeenAt: "2026-07-14T10:00:20.000Z",
+      queueObservation: {
+        ...availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+        blockingExecutor: {
+          version: 1, unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 4,
+          generationLimit: 3, nextSubmission: "refusing",
+          controlNextSubmission: "accepting", controlUnfinishedCalls: 0,
+        },
+      },
+    });
+    insertHeartbeat(fixture, {
+      ...base, workerId: "accepting", lastSeenAt: "2026-07-14T10:00:21.000Z",
+      queueObservation: {
+        ...availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+        blockingExecutor: {
+          version: 1, unfinishedRetiredGenerations: 1, unfinishedRetiredCalls: 1,
+          generationLimit: 3, nextSubmission: "accepting",
+          controlNextSubmission: "refusing", controlUnfinishedCalls: 2,
+        },
+      },
+    });
+    insertHeartbeat(fixture, {
+      ...base, workerId: "old", lastSeenAt: "2026-07-14T10:00:22.000Z",
+      queueObservation: availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+    });
+    insertHeartbeat(fixture, {
+      ...base, workerId: "stale", lastSeenAt: "2026-07-14T09:50:00.000Z",
+      queueObservation: {
+        ...availableObservation("2026-07-14T09:49:59.000Z", 0, 1),
+        blockingExecutor: {
+          version: 1, unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 3,
+          generationLimit: 3, nextSubmission: "refusing",
+        },
+      },
+    });
+    const snapshot = readWorkerRuntimeTelemetry(fixture.dbPath, { now });
+    expect(snapshot.availableSlots).toBe(12);
+    expect(snapshot.blockingExecutor).toEqual({
+      acceptingWorkers: 1, refusingWorkers: 1, unknownWorkers: 1,
+      unfinishedRetiredGenerations: 4, unfinishedRetiredCalls: 5,
+      controlAcceptingWorkers: 1, controlRefusingWorkers: 1,
+      controlUnknownWorkers: 1, controlUnfinishedCalls: 2,
+    });
+    expect(snapshot.staleWorkerCount).toBe(1);
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET task_queue_observation_json = ? WHERE worker_id = ?")
+      .run(JSON.stringify({
+        ...availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+        blockingExecutor: {
+          version: 1, unfinishedRetiredGenerations: 2, unfinishedRetiredCalls: 2,
+          generationLimit: 3, nextSubmission: "accepting",
+          controlNextSubmission: "accepting", controlUnfinishedCalls: 0,
+        },
+      }), "blocked");
+    expect(readWorkerRuntimeTelemetry(fixture.dbPath, { now }).blockingExecutor).toEqual({
+      acceptingWorkers: 2, refusingWorkers: 0, unknownWorkers: 1,
+      unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 3,
+      controlAcceptingWorkers: 1, controlRefusingWorkers: 1,
+      controlUnknownWorkers: 1, controlUnfinishedCalls: 2,
+    });
+  });
+
+  it("does not infer healthy admission from a malformed heartbeat extension", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      workerId: "malformed", lastSeenAt: "2026-07-14T10:00:20.000Z",
+      configuredSlots: 4, activeSlots: 0, executorThreads: 6, details: [],
+      queueObservation: {
+        ...availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+        blockingExecutor: {
+          version: 1, unfinishedRetiredGenerations: 4, unfinishedRetiredCalls: 0,
+          generationLimit: 3, nextSubmission: "accepting",
+        },
+      },
+    });
+    expect(readWorkerRuntimeTelemetry(fixture.dbPath, {
+      now: new Date("2026-07-14T10:00:30.000Z"),
+    }).blockingExecutor).toEqual({
+      acceptingWorkers: 0, refusingWorkers: 0, unknownWorkers: 1,
+      unfinishedRetiredGenerations: 0, unfinishedRetiredCalls: 0,
+      controlAcceptingWorkers: 0, controlRefusingWorkers: 0,
+      controlUnknownWorkers: 1, controlUnfinishedCalls: 0,
+    });
+  });
+  it.each([
+    `prepare-auto-local-apply-${"a".repeat(24)}`,
+    `prepare-auto-local-score-${"a".repeat(23)}`,
+    `prepare-auto-local-score-${"a".repeat(25)}`,
+    `prepare-auto-local-score-${"A".repeat(24)}`,
+    `prepare-auto-local-score-${"a".repeat(24)}\n`,
+    "https://example.test/private?token=secret",
+  ])("rejects an invalid recovery workflow reference %s", (workflowRef) => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      workerId: "worker-a", lastSeenAt: "2026-07-14T10:00:20.000Z",
+      configuredSlots: 4, activeSlots: 1, executorThreads: 6,
+      details: [{ ...activeDetails(1, 0)[0], workflowRef }],
+      queueObservation: availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+    });
+    const result = readWorkerRuntimeTelemetry(fixture.dbPath, { now: new Date("2026-07-14T10:00:30.000Z") });
+    expect(result.status).toBe("available");
+    expect(result.activeSlots).toBe(1);
+    expect(result.activeDetails).toEqual([]);
+  });
+
   it("sums exact multi-process capacity without deriving busy slots from 20 details", () => {
     const fixture = createFixture();
     const now = new Date("2026-07-14T10:00:30.000Z");
@@ -65,6 +175,65 @@ describe("worker runtime telemetry", () => {
       status: "available",
       observedAt: "2026-07-14T10:00:24.000Z",
       activity: { approximateBacklogCount: 7, pollerCount: 2 },
+    });
+  });
+
+  it("includes URL intake alongside scoring without leaking private import identity", () => {
+    const fixture = createFixture();
+    const now = new Date("2026-07-14T10:00:30.000Z");
+    const privateUrl = "https://example.test/private-import?token=private-canary";
+    const imports = activeDetails(4, 0).map((detail) => ({
+      ...detail,
+      activityType: "job_url_import",
+      operationalRef: { ...detail.operationalRef as Record<string, unknown>, kind: "job-url-import" },
+      workflowRef: null,
+      ignoredPayload: privateUrl,
+    }));
+    insertHeartbeat(fixture, {
+      workerId: "worker-a", lastSeenAt: "2026-07-14T10:00:20.000Z",
+      configuredSlots: 8, activeSlots: 5, executorThreads: 10,
+      details: [...imports, ...activeDetails(1, 4)],
+      counts: { job_url_import: 4, score_job: 1 },
+      queueObservation: availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+    });
+    const snapshot = readWorkerRuntimeTelemetry(fixture.dbPath, { now });
+    expect(snapshot).toMatchObject({
+      status: "available", activeSlots: 5, activeDetailsTotal: 5,
+      activeDetailsTruncated: false, activeCountsByType: { job_url_import: 4, score_job: 1 },
+    });
+    expect(snapshot.activeDetails.filter((detail) => detail.activityType === "job_url_import")).toHaveLength(4);
+    expect(JSON.stringify(snapshot)).not.toContain(privateUrl);
+    expect(snapshot.activeDetails[0]).toMatchObject({
+      activityType: "job_url_import", workflowRef: null,
+      operationalRef: { kind: "job-url-import" },
+    });
+  });
+
+  it("reports saved-posting checks alongside scoring instead of an unexplained occupied slot", () => {
+    const fixture = createFixture();
+    const now = new Date("2026-07-14T10:00:30.000Z");
+    const availability = {
+      ...activeDetails(1, 1)[0],
+      activityType: "check_saved_posting_availability",
+      operationalRef: { kind: "saved-posting-availability", opaqueId: `op_${"1".repeat(24)}` },
+      workflowRef: null,
+    };
+    insertHeartbeat(fixture, {
+      workerId: "worker-a",
+      lastSeenAt: "2026-07-14T10:00:20.000Z",
+      configuredSlots: 4,
+      activeSlots: 2,
+      executorThreads: 6,
+      details: [...activeDetails(1, 0), availability],
+      counts: { score_job: 1, check_saved_posting_availability: 1 },
+      queueObservation: availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+    });
+    expect(readWorkerRuntimeTelemetry(fixture.dbPath, { now })).toMatchObject({
+      status: "available",
+      activeSlots: 2,
+      activeDetailsTotal: 2,
+      activeDetails: [expect.objectContaining({ activityType: "score_job" }), availability],
+      activeCountsByType: { score_job: 1, check_saved_posting_availability: 1 },
     });
   });
 
@@ -255,7 +424,7 @@ interface Fixture {
 function createFixture(): Fixture {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-worker-runtime-"));
   const dbPath = path.join(directory, "jobctrl.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   const fixture = { directory, dbPath, db };
   fixtures.push(fixture);

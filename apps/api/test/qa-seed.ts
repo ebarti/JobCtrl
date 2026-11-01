@@ -1,13 +1,16 @@
+import { recordArtifactAuthority, recordModelDecision } from "./semantic-fixtures.js";
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "../src/contracts.js";
 
 import { writeProfileConfig } from "../src/profile-store.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 export interface QaWorkspace {
   appDir: string;
@@ -39,6 +42,75 @@ export const QA_PLATFORM_JOB_ID = qaJobId(QA_PLATFORM_JOB_URL);
 export const QA_RISK_JOB_URL = "https://linkedin.com/jobs/view/qa-risk-manager";
 export const QA_RISK_JOB_ID = qaJobId(QA_RISK_JOB_URL);
 const QA_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
+const QA_SHIPPED_SUMMARY = "Owned platform reliability improvements for incident response.";
+
+export type QaShippedFitLifecycle = "post_voice_shipped" | "post_acceptance_audit";
+
+function shippedFitMetadata(lifecycle: QaShippedFitLifecycle): Record<string, unknown> {
+  return {
+    lifecycle,
+    fit_score: {
+      // r1 is the only must-have and supplies 0.9 of the total 1.6 weight.
+      score: lifecycle === "post_voice_shipped" ? 6 : 5,
+      must_have_coverage: lifecycle === "post_voice_shipped" ? 1 : 0.5,
+      covered_requirement_ids: ["r1"],
+      uncovered_requirement_ids: ["r2"],
+      claimed_only_requirement_ids: ["r2"],
+      // The historical post-acceptance audit did not record grounded coverage.
+      ...(lifecycle === "post_voice_shipped" ? { coverage_basis: "grounded_shipped_text_v1" } : {}),
+    },
+    passed: false,
+    gate_thresholds: { min_fit_score: 7, must_have_coverage: 0.8 },
+    warnings: lifecycle === "post_voice_shipped"
+      ? ["Shipped grounded must-have coverage 100% (fit 6/10) is below the revision gate (80% / 7)."]
+      : ["Recorded after acceptance; this audit did not influence the accepted resume."],
+  };
+}
+
+/** Switch the owned seed's currently accepted resume audit, retaining history.
+ * Cover-letter formatting carries resume slots forward into later material sets.
+ */
+export function seedQaShippedFitLifecycle(dbPath: string, lifecycle: QaShippedFitLifecycle): () => void {
+  const db = new Database(dbPath);
+  const originals: Array<{ table: string; rowid: number; metadata_json: string }> = [];
+  try {
+    db.transaction(() => {
+      const accepted = db.prepare(`SELECT max(generation) AS generation FROM job_materials_artifacts
+        WHERE tenant_id = 'local' AND job_id = ? AND artifact_type IN ('tailored_resume', 'resume_pdf')
+          AND status = 'approved' AND superseded_at IS NULL`).get(QA_PLATFORM_JOB_ID) as { generation: number | null };
+      if (accepted.generation === null) throw new Error("Expected an accepted synthetic resume.");
+      for (const table of ["job_materials", "job_materials_artifacts"]) {
+        const rows = db.prepare(
+          `SELECT rowid, metadata_json FROM ${table} WHERE tenant_id = 'local' AND job_id = ? AND generation = ?`,
+        ).all(QA_PLATFORM_JOB_ID, accepted.generation) as Array<{ rowid: number; metadata_json: string }>;
+        for (const row of rows) {
+          const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+          if (!metadata.post_generation_fit) continue;
+          originals.push({ table, ...row });
+          metadata.post_generation_fit_final = shippedFitMetadata(lifecycle);
+          db.prepare(`UPDATE ${table} SET metadata_json = ? WHERE rowid = ?`)
+            .run(JSON.stringify(metadata), row.rowid);
+        }
+      }
+      if (originals.length !== 3) throw new Error("Expected the seeded material and both resume artifacts.");
+    })();
+  } finally {
+    db.close();
+  }
+  return () => {
+    const restoreDb = new Database(dbPath);
+    try {
+      restoreDb.transaction(() => {
+        for (const row of originals) {
+          restoreDb.prepare(`UPDATE ${row.table} SET metadata_json = ? WHERE rowid = ?`)
+            .run(row.metadata_json, row.rowid);
+        }
+      })();
+    } finally {
+      restoreDb.close();
+    }
+  };
+}
 
 export function createQaPdfBytes(title: string): Buffer {
   const safeTitle = title
@@ -70,7 +142,7 @@ export function createQaPdfBytes(title: string): Buffer {
   return Buffer.from(pdf, "ascii");
 }
 
-const QA_PROFILE = {
+export const QA_PROFILE = {
   schema_version: 2,
   personal: {
     full_name: "John Doe",
@@ -163,7 +235,7 @@ const QA_RESUME_HTML = `<!doctype html>
       <h1 data-resume-layout-target="personal:full_name" data-resume-line-number="1">John Doe</h1>
       <p data-resume-layout-target="personal:contact" data-resume-line-number="2">john.doe@example.com | Remote City</p>
       <h2>Profile</h2>
-      <p data-resume-layout-target="summary" data-resume-line-number="3">Platform and security engineering leader for QA validation.</p>
+      <p data-resume-layout-target="summary" data-resume-line-number="3">${QA_SHIPPED_SUMMARY}</p>
       <h2>Experience</h2>
       <p data-resume-layout-target="experience:qa_platform" data-resume-line-number="4"><strong>Director of Platform Engineering, QA Systems</strong></p>
       <ul>
@@ -224,212 +296,222 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
   const resumeHtml = path.join(artifactDir, "gitlab-platform-resume.html");
   const coverTxt = path.join(artifactDir, "gitlab-platform-cover.txt");
   const coverPdf = path.join(artifactDir, "gitlab-platform-cover.pdf");
-  fs.writeFileSync(resumeTxt, "QA tailored resume");
-  fs.writeFileSync(resumePdf, createQaPdfBytes("QA tailored resume"));
+  fs.writeFileSync(resumeTxt, QA_SHIPPED_SUMMARY);
+  fs.writeFileSync(resumePdf, createQaPdfBytes(QA_SHIPPED_SUMMARY));
   fs.writeFileSync(resumeHtml, QA_RESUME_HTML);
   fs.writeFileSync(coverTxt, "QA cover letter");
   fs.writeFileSync(coverPdf, createQaPdfBytes("QA cover letter"));
 
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
-  writeProfileConfig(db, {
-    profile: QA_PROFILE,
-    style: QA_RESUME_STYLE,
-    templateText: QA_RESUME_TEMPLATE,
-  });
-  seedBuiltInResumeTemplate(db);
+  try {
+    // API and browser checks consume a complete, independently owned workspace.
+    db.transaction(() => {
+      writeProfileConfig(db, {
+        profile: QA_PROFILE,
+        style: QA_RESUME_STYLE,
+        templateText: QA_RESUME_TEMPLATE,
+      });
+      seedBuiltInResumeTemplate(db);
 
-  // INSPECT-01: a current worker heartbeat so the generate-materials route's
-  // worker-readiness gate passes in E2E. ``app_dir``/``db_path`` must match the
-  // API runtime (resolved paths) and ``last_seen_at`` must be within the 45s
-  // staleness window, so it is written relative to "now" at seed time.
-  seedWorkerHeartbeat(db, dbPath);
+      // INSPECT-01: a current worker heartbeat so the generate-materials route's
+      // worker-readiness gate passes in E2E. ``app_dir``/``db_path`` must match the
+      // API runtime (resolved paths) and ``last_seen_at`` must be within the 45s
+      // staleness window, so it is written relative to "now" at seed time.
+      seedWorkerHeartbeat(db, dbPath);
 
-  insertJob(db, {
-    url: QA_PLATFORM_JOB_URL,
-    applicationUrl: QA_PLATFORM_JOB_URL,
-    title: "Director of Platform Engineering",
-    company: "GitLab",
-    site: "Greenhouse",
-    strategy: "qa",
-    location: "Remote, United States",
-    fitScore: 9,
-    description: "GitLab platform leadership role.",
-    fullDescription: "Lead platform security, reliability, and developer experience programs.",
-  });
-  insertJob(db, {
-    url: "https://talent.com/view?id=qa-marketing-director",
-    title: "Director of Marketing",
-    site: "Talent.com",
-    strategy: "qa",
-    location: "Remote, Louisiana",
-    fitScore: null,
-    description: "Marketing role intentionally below target.",
-  });
-  insertJob(db, {
-    url: QA_RISK_JOB_URL,
-    title: "Senior Engineering Manager - Risk",
-    site: "linkedin",
-    strategy: "qa",
-    location: "USA, Remote",
-    fitScore: 8,
-    description: "Risk platform leadership role.",
-  });
-  insertJob(db, {
-    url: "https://motorolasolutions.com/careers/qa-command-center",
-    title: "Command Center Solutions Project Manager",
-    site: "Motorola Solutions",
-    strategy: "qa",
-    location: "Florida Remote Work",
-    fitScore: 5,
-    description: "Project management role.",
-  });
+      insertJob(db, {
+        url: QA_PLATFORM_JOB_URL,
+        applicationUrl: QA_PLATFORM_JOB_URL,
+        title: "Director of Platform Engineering",
+        company: "GitLab",
+        site: "Greenhouse",
+        strategy: "qa",
+        location: "Remote, United States",
+        fitScore: 9,
+        description: "GitLab platform leadership role.",
+        fullDescription: "Lead platform security, reliability, and developer experience programs.",
+      });
+      insertJob(db, {
+        url: "https://talent.com/view?id=qa-marketing-director",
+        title: "Director of Marketing",
+        site: "Talent.com",
+        strategy: "qa",
+        location: "Remote, Louisiana",
+        fitScore: null,
+        description: "Marketing role intentionally below target.",
+      });
+      insertJob(db, {
+        url: QA_RISK_JOB_URL,
+        title: "Senior Engineering Manager - Risk",
+        site: "linkedin",
+        strategy: "qa",
+        location: "USA, Remote",
+        fitScore: 8,
+        description: "Risk platform leadership role.",
+      });
+      insertJob(db, {
+        url: "https://motorolasolutions.com/careers/qa-command-center",
+        title: "Command Center Solutions Project Manager",
+        site: "Motorola Solutions",
+        strategy: "qa",
+        location: "Florida Remote Work",
+        fitScore: 5,
+        description: "Project management role.",
+      });
 
-  for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
-    insertStage(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", stage, "succeeded");
+      for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
+        insertStage(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", stage, "succeeded");
+      }
+      insertStage(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "apply", "pending");
+      insertStage(db, "https://talent.com/view?id=qa-marketing-director", "discover", "succeeded");
+      insertStage(db, "https://talent.com/view?id=qa-marketing-director", "enrich", "pending");
+      insertStage(db, "https://linkedin.com/jobs/view/qa-risk-manager", "discover", "succeeded");
+      insertStage(db, "https://linkedin.com/jobs/view/qa-risk-manager", "enrich", "succeeded");
+      insertStage(db, "https://linkedin.com/jobs/view/qa-risk-manager", "score", "failed", "LLM_ERROR");
+      insertStage(db, "https://motorolasolutions.com/careers/qa-command-center", "discover", "succeeded");
+      insertStage(db, "https://motorolasolutions.com/careers/qa-command-center", "enrich", "succeeded");
+      insertStage(db, "https://motorolasolutions.com/careers/qa-command-center", "score", "succeeded");
+      insertStage(db, "https://motorolasolutions.com/careers/qa-command-center", "tailor", "blocked", "MIN_SCORE");
+
+      seedPipelineOperations(db, dbPath);
+      seedContacts(db);
+      seedContactResearch(db);
+      if (options.includeDocumentationAnalytics) {
+        seedOutcomeAnalytics(db);
+      }
+      seedDiscoverySources(db);
+      seedOutreachThread(db);
+
+      insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "tailored_resume_txt", resumeTxt);
+      insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "tailored_resume_pdf", resumePdf);
+      insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "cover_letter_txt", coverTxt);
+      insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "cover_letter_pdf", coverPdf);
+      insertArtifact(db, "https://linkedin.com/jobs/view/qa-risk-manager", "tailored_resume_pdf", path.join(artifactDir, "missing.pdf"));
+      insertRequirementFitAuditFixture(db, {
+        coverPdf,
+        coverTxt,
+        resumeHtml,
+        resumePdf,
+        resumeTxt,
+      });
+      recordArtifactAuthority(db,{"ev-platform":QA_SHIPPED_SUMMARY});
+      const qualityId=recordModelDecision(db,"artifact_quality",QA_PLATFORM_JOB_ID,{verdict:"pass",score:0.9,findings:[],evidence_corrections:[],rationale:"Explicit synthetic model quality review"});
+      const accepted=db.prepare("SELECT artifact_id,metadata_json FROM job_materials_artifacts WHERE tenant_id='local' AND job_id=? AND artifact_type IN ('tailored_resume','resume_pdf')").all(QA_PLATFORM_JOB_ID) as Array<{artifact_id:string;metadata_json:string}>;
+      for(const artifact of accepted)db.prepare("UPDATE job_materials_artifacts SET metadata_json=? WHERE tenant_id='local' AND artifact_id=?").run(JSON.stringify({...JSON.parse(artifact.metadata_json),quality_determination_id:qualityId}),artifact.artifact_id);
+      seedResumeReviewDraft(db);
+      seedLearningPolicyFixture(db);
+
+      insertEvent(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "apply", "info", "QA apply run queued");
+      insertEvent(db, "https://linkedin.com/jobs/view/qa-risk-manager", "score", "error", "QA score action failed");
+      insertEvent(db, "https://motorolasolutions.com/careers/qa-command-center", "tailor", "info", "QA tailor blocked by fit score");
+      db.prepare(
+        "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        "qa-run-1",
+        QA_PLATFORM_JOB_ID,
+        "Director of Platform Engineering",
+        "Greenhouse",
+        "finished",
+        "succeeded",
+        1,
+        QA_NOW,
+      );
+
+      // `listWorkflowRuns` now reads the unified `workflow_run_projections` table
+      // (Python-sole-writer at runtime, folded from the `Workflow*` lifecycle
+      // events). `qa-run-1` therefore needs a row here to appear on /runs; the
+      // job title/employer/model/mode are hydrated via the LEFT JOIN to the
+      // `apply_run_projections` row seeded above. These direct INSERTs simulate
+      // the Python writer inside the QA test database — the sole-writer rule
+      // governs runtime code, not test seeds.
+      const qaRunTemporalRunId = "qa-run-1-temporal-0001";
+      const qaRunFinishedAt = "2026-05-04T12:00:04+00:00";
+      const qaRunInputSummary = {
+        jobUrl: QA_PLATFORM_JOB_URL,
+        dryRun: true,
+        continuous: false,
+        limit: 1,
+      };
+      db.prepare(
+        `INSERT INTO workflow_run_projections (
+          workflow_id, tenant_id, workflow_type, status, input_summary_json,
+          retryable, started_at, finished_at, duration_ms, temporal_run_id, events_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "qa-run-1",
+        "local",
+        "ApplyWorkflow",
+        "succeeded",
+        JSON.stringify(qaRunInputSummary),
+        0,
+        QA_NOW,
+        qaRunFinishedAt,
+        4000,
+        qaRunTemporalRunId,
+        JSON.stringify([
+          {
+            eventType: "WorkflowStarted",
+            occurredAt: QA_NOW,
+            status: "in_progress",
+            message: "Apply workflow started (dry-run)",
+          },
+          {
+            eventType: "WorkflowCompleted",
+            occurredAt: qaRunFinishedAt,
+            status: "succeeded",
+            message: "Apply workflow completed",
+          },
+        ]),
+      );
+
+      // Canonical lifecycle events behind the projection above. Workflow events
+      // carry no job_id (stage "workflow"); identity travels in the camelCase
+      // payload, matching `infrastructure/temporal/finalize.py`. Seeding these
+      // keeps the run drawer timeline and the activity/SSE stream consistent with
+      // a real finalize + reconcile.
+      const insertWorkflowEvent = db.prepare(
+        `INSERT INTO job_events (
+           tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+         ) VALUES ('local', ?, 1, ?, ?, ?, ?, ?, ?)`,
+      );
+      insertWorkflowEvent.run(
+        null,
+        "workflow",
+        "WorkflowStarted",
+        "info",
+        "Apply workflow started (dry-run)",
+        QA_NOW,
+        JSON.stringify({
+          workflowId: "qa-run-1",
+          workflowType: "ApplyWorkflow",
+          status: "in_progress",
+          inputSummary: qaRunInputSummary,
+          startedAt: QA_NOW,
+          temporalRunId: qaRunTemporalRunId,
+        }),
+      );
+      insertWorkflowEvent.run(
+        null,
+        "workflow",
+        "WorkflowCompleted",
+        "info",
+        "Apply workflow completed",
+        qaRunFinishedAt,
+        JSON.stringify({
+          workflowId: "qa-run-1",
+          workflowType: "ApplyWorkflow",
+          status: "succeeded",
+          finishedAt: qaRunFinishedAt,
+          durationMs: 4000,
+          temporalRunId: qaRunTemporalRunId,
+        }),
+      );
+    })();
+  } finally {
+    db.close();
   }
-  insertStage(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "apply", "pending");
-  insertStage(db, "https://talent.com/view?id=qa-marketing-director", "discover", "succeeded");
-  insertStage(db, "https://talent.com/view?id=qa-marketing-director", "enrich", "pending");
-  insertStage(db, "https://linkedin.com/jobs/view/qa-risk-manager", "discover", "succeeded");
-  insertStage(db, "https://linkedin.com/jobs/view/qa-risk-manager", "enrich", "succeeded");
-  insertStage(db, "https://linkedin.com/jobs/view/qa-risk-manager", "score", "failed", "LLM_ERROR");
-  insertStage(db, "https://motorolasolutions.com/careers/qa-command-center", "discover", "succeeded");
-  insertStage(db, "https://motorolasolutions.com/careers/qa-command-center", "enrich", "succeeded");
-  insertStage(db, "https://motorolasolutions.com/careers/qa-command-center", "score", "succeeded");
-  insertStage(db, "https://motorolasolutions.com/careers/qa-command-center", "tailor", "blocked", "MIN_SCORE");
-
-  seedPipelineOperations(db, dbPath);
-  seedContacts(db);
-  seedContactResearch(db);
-  if (options.includeDocumentationAnalytics) {
-    seedOutcomeAnalytics(db);
-  }
-  seedDiscoverySources(db);
-  seedOutreachThread(db);
-
-  insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "tailored_resume_txt", resumeTxt);
-  insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "tailored_resume_pdf", resumePdf);
-  insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "cover_letter_txt", coverTxt);
-  insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "cover_letter_pdf", coverPdf);
-  insertArtifact(db, "https://linkedin.com/jobs/view/qa-risk-manager", "tailored_resume_pdf", path.join(artifactDir, "missing.pdf"));
-  insertRequirementFitAuditFixture(db, {
-    coverPdf,
-    coverTxt,
-    resumeHtml,
-    resumePdf,
-    resumeTxt,
-  });
-  seedResumeReviewDraft(db);
-  seedLearningPolicyFixture(db);
-
-  insertEvent(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "apply", "info", "QA apply run queued");
-  insertEvent(db, "https://linkedin.com/jobs/view/qa-risk-manager", "score", "error", "QA score action failed");
-  insertEvent(db, "https://motorolasolutions.com/careers/qa-command-center", "tailor", "info", "QA tailor blocked by fit score");
-  db.prepare(
-    "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    "qa-run-1",
-    QA_PLATFORM_JOB_ID,
-    "Director of Platform Engineering",
-    "Greenhouse",
-    "finished",
-    "succeeded",
-    1,
-    QA_NOW,
-  );
-
-  // `listWorkflowRuns` now reads the unified `workflow_run_projections` table
-  // (Python-sole-writer at runtime, folded from the `Workflow*` lifecycle
-  // events). `qa-run-1` therefore needs a row here to appear on /runs; the
-  // job title/employer/model/mode are hydrated via the LEFT JOIN to the
-  // `apply_run_projections` row seeded above. These direct INSERTs simulate
-  // the Python writer inside the QA test database — the sole-writer rule
-  // governs runtime code, not test seeds.
-  const qaRunTemporalRunId = "qa-run-1-temporal-0001";
-  const qaRunFinishedAt = "2026-05-04T12:00:04+00:00";
-  const qaRunInputSummary = {
-    jobUrl: QA_PLATFORM_JOB_URL,
-    dryRun: true,
-    continuous: false,
-    limit: 1,
-  };
-  db.prepare(
-    `INSERT INTO workflow_run_projections (
-      workflow_id, tenant_id, workflow_type, status, input_summary_json,
-      retryable, started_at, finished_at, duration_ms, temporal_run_id, events_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    "qa-run-1",
-    "local",
-    "ApplyWorkflow",
-    "succeeded",
-    JSON.stringify(qaRunInputSummary),
-    0,
-    QA_NOW,
-    qaRunFinishedAt,
-    4000,
-    qaRunTemporalRunId,
-    JSON.stringify([
-      {
-        eventType: "WorkflowStarted",
-        occurredAt: QA_NOW,
-        status: "in_progress",
-        message: "Apply workflow started (dry-run)",
-      },
-      {
-        eventType: "WorkflowCompleted",
-        occurredAt: qaRunFinishedAt,
-        status: "succeeded",
-        message: "Apply workflow completed",
-      },
-    ]),
-  );
-
-  // Canonical lifecycle events behind the projection above. Workflow events
-  // carry no job_id (stage "workflow"); identity travels in the camelCase
-  // payload, matching `infrastructure/temporal/finalize.py`. Seeding these
-  // keeps the run drawer timeline and the activity/SSE stream consistent with
-  // a real finalize + reconcile.
-  const insertWorkflowEvent = db.prepare(
-    `INSERT INTO job_events (
-       tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
-     ) VALUES ('local', ?, 1, ?, ?, ?, ?, ?, ?)`,
-  );
-  insertWorkflowEvent.run(
-    null,
-    "workflow",
-    "WorkflowStarted",
-    "info",
-    "Apply workflow started (dry-run)",
-    QA_NOW,
-    JSON.stringify({
-      workflowId: "qa-run-1",
-      workflowType: "ApplyWorkflow",
-      status: "in_progress",
-      inputSummary: qaRunInputSummary,
-      startedAt: QA_NOW,
-      temporalRunId: qaRunTemporalRunId,
-    }),
-  );
-  insertWorkflowEvent.run(
-    null,
-    "workflow",
-    "WorkflowCompleted",
-    "info",
-    "Apply workflow completed",
-    qaRunFinishedAt,
-    JSON.stringify({
-      workflowId: "qa-run-1",
-      workflowType: "ApplyWorkflow",
-      status: "succeeded",
-      finishedAt: qaRunFinishedAt,
-      durationMs: 4000,
-      temporalRunId: qaRunTemporalRunId,
-    }),
-  );
-  db.close();
 }
 
 function seedBuiltInResumeTemplate(db: Database.Database): void {
@@ -479,7 +561,7 @@ function insertCanonicalMaterials(
     `INSERT INTO job_materials (
       tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
     ) VALUES ('local', ?, ?, ?, ?, ?, ?)`,
-  ).run(QA_PLATFORM_JOB_ID, 1, "approved", QA_NOW, QA_NOW, requirementLedMetadata);
+  ).run(QA_PLATFORM_JOB_ID, 1, "resume_approved", QA_NOW, QA_NOW, requirementLedMetadata);
   const insert = db.prepare(
     `INSERT INTO job_materials_artifacts (
       tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
@@ -565,17 +647,23 @@ function requirementLedAuditMetadata(): Record<string, unknown> {
     full_profile: "FULL PROFILE SECRET",
     local_path: "/private/secret-resume.pdf",
     quality_plan: {
+      requirement_directives: [
+        { requirement_id: "r1", requirement_text: "Lead platform reliability improvements across critical services." },
+        { requirement_id: "r2", requirement_text: "Improve developer experience and incident-response practices." },
+      ],
       target_profile: {
         requirements: [
           {
             requirement_id: "r1",
             text_excerpt: "Lead platform reliability improvements across critical services.",
             tier: "must_have",
+            weight: 0.9,
           },
           {
             requirement_id: "r2",
             text_excerpt: "Improve developer experience and incident-response practices.",
             tier: "nice_to_have",
+            weight: 0.7,
           },
         ],
       },
@@ -598,7 +686,7 @@ function requirementLedAuditMetadata(): Record<string, unknown> {
         section: "experience",
         label: "Director of Platform Engineering",
         source_text: ["FULL PROFILE SECRET source bullet"],
-        tailored_text: ["Owned platform reliability improvements for incident response."],
+        tailored_text: [QA_SHIPPED_SUMMARY],
         evidence_ids: ["ev-platform"],
         requirement_ids: ["r1"],
         coverage_edge_ids: ["edge-r1-ev-platform"],
@@ -639,6 +727,7 @@ function requirementLedAuditMetadata(): Record<string, unknown> {
         review_blockers: ["claim-draft: draft_requires_confirmation"],
       },
     },
+    post_generation_fit_final: shippedFitMetadata("post_voice_shipped"),
     bullet_limit_overflows: [
       {
         experience_entry_id: "qa_platform",
@@ -663,11 +752,11 @@ function insertEmployerAnalysis(db: Database.Database): void {
     QA_PLATFORM_JOB_ID,
     1,
     "qa-snapshot",
-    "employer-analysis-v1",
+    EMPLOYER_ANALYSIS_PROMPT_VERSION,
     "qa-sdk-set",
     "qa-cache-key",
     "Platform engineering leader",
-    "Director / senior engineering leadership",
+    "director",
     "A senior platform leader who improves developer experience, reliability, and incident response across teams.",
     JSON.stringify([
       {
@@ -688,13 +777,11 @@ function insertEmployerAnalysis(db: Database.Database): void {
     JSON.stringify([
       {
         keyword: "platform reliability",
-        requirement_id: "r1",
         evidence_span: "Lead platform security, reliability",
         rationale: "Critical operating domain for the role.",
       },
       {
         keyword: "developer experience",
-        requirement_id: "r2",
         evidence_span: "developer experience programs",
         rationale: "The posting asks for developer-experience improvements.",
       },
@@ -825,17 +912,17 @@ function insertBulletProvenance(db: Database.Database): void {
   ).run(
     QA_PLATFORM_JOB_ID,
     1,
-    "summary-1",
+    "summary",
     "qa-platform-resume-text",
     "summary",
     "qa_platform",
     JSON.stringify(["ev-platform"]),
     JSON.stringify(["r1"]),
     JSON.stringify(["platform reliability"]),
-    "rephrased",
+    "rephrase",
     "rephrase_allowed",
     "Reframed the bullet toward platform reliability.",
-    "Owned platform reliability improvements for incident response.",
+    QA_SHIPPED_SUMMARY,
     1,
     QA_NOW,
   );
@@ -1921,10 +2008,10 @@ function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {
 function insertJob(db: Database.Database, job: QaJobSeed): void {
   db.prepare(
     `INSERT INTO jobs (
-      url, tenant_id, job_id, title, company, site, strategy, location, salary, discovered_at, application_url,
+      url, tenant_id, job_id, title, company, site, strategy, location, salary, discovered_at,
       description, full_description, detail_scraped_at, fit_score, score_reasoning,
       scored_at, tailored_resume_path, tailored_at
-    ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     job.url,
     qaJobId(job.url),
@@ -1935,7 +2022,6 @@ function insertJob(db: Database.Database, job: QaJobSeed): void {
     job.location ?? "Remote",
     "",
     QA_NOW,
-    job.applicationUrl ?? job.url,
     job.description ?? "QA job description",
     job.fullDescription ?? job.description ?? "QA job description",
     QA_NOW,
@@ -1945,6 +2031,7 @@ function insertJob(db: Database.Database, job: QaJobSeed): void {
     null,
     null,
   );
+  seedApplicationUrl(db, "local", qaJobId(job.url), job.applicationUrl ?? job.url);
 }
 
 function qaJobId(jobUrl: string): string {

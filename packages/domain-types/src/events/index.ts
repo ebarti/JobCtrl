@@ -26,6 +26,9 @@ export {
   type SourceLocationCandidateDiscoveredPayload,
   type SourceLocationCandidateDiscovered,
   createSourceLocationCandidateDiscovered,
+  type SourceLocationCandidateReviewedPayload,
+  type SourceLocationCandidateReviewed,
+  createSourceLocationCandidateReviewed,
   type SourceLocationCandidatePromotedPayload,
   type SourceLocationCandidatePromoted,
   createSourceLocationCandidatePromoted,
@@ -68,6 +71,10 @@ export {
 } from "./discovery.js";
 
 export {
+  type JobAvailabilityObserved,
+  createJobAvailabilityObserved,
+  type AvailabilityLeaseChanged,
+  createAvailabilityLeaseChanged,
   type ActiveStateValue,
   type ContentDuplicateCandidateDetected,
   type ContentDuplicateCandidateDetectedPayload,
@@ -157,6 +164,9 @@ export {
   type InterviewPrepFailedPayload,
   type InterviewPrepFailed,
   createInterviewPrepFailed,
+  type InterviewQuestionNoteSavedPayload,
+  type InterviewQuestionNoteSaved,
+  createInterviewQuestionNoteSaved,
 } from "./interview.js";
 
 export {
@@ -183,6 +193,9 @@ export {
   type EmailApplicationCandidateRecordedPayload,
   type EmailApplicationCandidateRecorded,
   createEmailApplicationCandidateRecorded,
+  type DryRunCompletedPayload,
+  type DryRunCompleted,
+  createDryRunCompleted,
   type ApplicationSubmittedPayload,
   type ApplicationSubmitted,
   createApplicationSubmitted,
@@ -204,6 +217,8 @@ export {
   createApplyReviewDecisionRecorded,
   type ApplicationOutcomeKindValue,
   type ApplicationOutcomeSourceValue,
+  type OfferRecordChanged,
+  createOfferRecordChanged,
   type ApplicationOutcomeRecordedPayload,
   type ApplicationOutcomeRecorded,
   createApplicationOutcomeRecorded,
@@ -350,6 +365,9 @@ export {
   type ContactResearchTaskFailedPayload,
   type ContactResearchTaskFailed,
   createContactResearchTaskFailed,
+  type ContactResearchSourceAttemptFailedPayload,
+  type ContactResearchSourceAttemptFailed,
+  createContactResearchSourceAttemptFailed,
   type OutreachDraftGeneratedPayload,
   type OutreachDraftGenerated,
   createOutreachDraftGenerated,
@@ -393,6 +411,7 @@ import type {
   DiscoveryFeedbackRecorded,
   SourceLocationCandidateDiscovered,
   SourceLocationCandidatePromoted,
+  SourceLocationCandidateReviewed,
   SourceRegistryEntryCreated,
   SourceRegistryEntryUpdated,
   SourceStateChanged,
@@ -401,6 +420,8 @@ import type {
   ContentDuplicateCandidateDetected,
   EnrichmentFailed,
   JobActiveStateChanged,
+  JobAvailabilityObserved,
+  AvailabilityLeaseChanged,
   JobEnriched,
   PostingContentSnapshotCaptured,
   PostingContentSnapshotFailed,
@@ -422,7 +443,7 @@ import type {
   TailorRetailorRequested,
   JobResumeTemplateAssigned,
 } from "./materials.js";
-import type { InterviewPrepFailed, InterviewPrepGenerated } from "./interview.js";
+import type { InterviewPrepFailed, InterviewPrepGenerated, InterviewQuestionNoteSaved } from "./interview.js";
 import type {
   PreparationWorkItemCompleted,
   PreparationWorkItemFailed,
@@ -432,6 +453,7 @@ import type {
 import type {
   ApplicationEmailFeedbackIngested,
   ApplicationFailed,
+  DryRunCompleted,
   ApplicationSubmitted,
   EmailApplicationCandidateRecorded,
   ApplyRunEventRecorded,
@@ -439,6 +461,7 @@ import type {
   ApplySubmitIntended,
   ApplyReviewDecisionRecorded,
   ApplicationOutcomeRecorded,
+  OfferRecordChanged,
   OutcomeSuggestionDecided,
 } from "./apply.js";
 import type {
@@ -481,6 +504,7 @@ import type {
   ContactResearchTaskNeedsReview,
   ContactResearchTaskCompleted,
   ContactResearchTaskFailed,
+  ContactResearchSourceAttemptFailed,
   OutreachDraftGenerated,
   OutreachDraftRevised,
   OutreachDraftApproved,
@@ -508,6 +532,7 @@ export type DomainEventUnion =
   | DiscoveryFeedbackRecorded
   | SourceLocationCandidateDiscovered
   | SourceLocationCandidatePromoted
+  | SourceLocationCandidateReviewed
   | SourceRegistryEntryCreated
   | SourceRegistryEntryUpdated
   | SourceStateChanged
@@ -516,6 +541,8 @@ export type DomainEventUnion =
   | PostingContentSnapshotCaptured
   | PostingContentSnapshotFailed
   | JobActiveStateChanged
+  | JobAvailabilityObserved
+  | AvailabilityLeaseChanged
   | ContentDuplicateCandidateDetected
   | JobScored
   | ScoreCorrected
@@ -529,6 +556,7 @@ export type DomainEventUnion =
   | BulletProvenanceRecorded
   | InterviewPrepGenerated
   | InterviewPrepFailed
+  | InterviewQuestionNoteSaved
   | TailorRetailorRequested
   | TailoredArtifactsSuppressed
   | ResumeTemplateVersionSaved
@@ -545,10 +573,12 @@ export type DomainEventUnion =
   | ApplyRunEventRecorded
   | EmailApplicationCandidateRecorded
   | ApplicationEmailFeedbackIngested
+  | DryRunCompleted
   | ApplicationSubmitted
   | ApplicationFailed
   | ApplyReviewDecisionRecorded
   | ApplicationOutcomeRecorded
+  | OfferRecordChanged
   | OutcomeSuggestionDecided
   | StageStarted
   | StageCompleted
@@ -585,6 +615,7 @@ export type DomainEventUnion =
   | ContactResearchTaskNeedsReview
   | ContactResearchTaskCompleted
   | ContactResearchTaskFailed
+  | ContactResearchSourceAttemptFailed
   | OutreachDraftGenerated
   | OutreachDraftRevised
   | OutreachDraftApproved
@@ -612,6 +643,7 @@ export const DOMAIN_EVENT_TYPES = [
   "DuplicateJobLinkRejected",
   "DiscoveryFeedbackRecorded",
   "SourceLocationCandidateDiscovered",
+  "SourceLocationCandidateReviewed",
   "SourceLocationCandidatePromoted",
   "SourceRegistryEntryCreated",
   "SourceRegistryEntryUpdated",
@@ -621,6 +653,8 @@ export const DOMAIN_EVENT_TYPES = [
   "PostingContentSnapshotCaptured",
   "PostingContentSnapshotFailed",
   "JobActiveStateChanged",
+  "JobAvailabilityObserved",
+  "AvailabilityLeaseChanged",
   "ContentDuplicateCandidateDetected",
   "JobScored",
   "ScoreCorrected",
@@ -634,6 +668,7 @@ export const DOMAIN_EVENT_TYPES = [
   "BulletProvenanceRecorded",
   "InterviewPrepGenerated",
   "InterviewPrepFailed",
+  "InterviewQuestionNoteSaved",
   "TailorRetailorRequested",
   "TailoredArtifactsSuppressed",
   "ResumeTemplateVersionSaved",
@@ -650,10 +685,12 @@ export const DOMAIN_EVENT_TYPES = [
   "ApplyRunEventRecorded",
   "EmailApplicationCandidateRecorded",
   "ApplicationEmailFeedbackIngested",
+  "DryRunCompleted",
   "ApplicationSubmitted",
   "ApplicationFailed",
   "ApplyReviewDecisionRecorded",
   "ApplicationOutcomeRecorded",
+  "OfferRecordChanged",
   "OutcomeSuggestionDecided",
   "StageStarted",
   "StageCompleted",
@@ -690,6 +727,7 @@ export const DOMAIN_EVENT_TYPES = [
   "ContactResearchTaskNeedsReview",
   "ContactResearchTaskCompleted",
   "ContactResearchTaskFailed",
+  "ContactResearchSourceAttemptFailed",
   "OutreachDraftGenerated",
   "OutreachDraftRevised",
   "OutreachDraftApproved",
@@ -710,3 +748,5 @@ type AssertEnumExhaustive = [DomainEventType] extends [EnumeratedDomainEventType
 
 const _assertExhaustive: AssertEnumExhaustive = true;
 void _assertExhaustive;
+
+export { applyEventReferences, isPrivateApplyEvent } from "./apply-privacy.js";

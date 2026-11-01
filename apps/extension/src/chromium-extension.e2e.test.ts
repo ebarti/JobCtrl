@@ -1,12 +1,12 @@
-import { chromium, type BrowserContext, type Page, type Request, type Route, type Worker } from "@playwright/test";
+import { type BrowserContext, type Page, type Request, type Route, type Worker } from "@playwright/test";
 import fs from "node:fs";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
-const DIST = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../dist/extension");
+import { launchExtensionContext } from "./chromium-extension-test-context.js";
 const LOOPBACK_ORIGIN = "http://127.0.0.1:8766";
 
 interface RecordedRequest {
@@ -36,7 +36,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     const jobUrl = "https://careers.jobctrl.test/removed-job";
     try {
       context = await launchExtensionContext(userDataDir);
-      if (!context) return;
       await context.route("https://careers.jobctrl.test/**", (route) => route.fulfill({
         status, contentType: "text/html", body: "<!doctype html><title>Unavailable role</title><main>Job not found</main>",
       }));
@@ -58,7 +57,7 @@ describe("Chromium loaded extension privacy boundary", () => {
     }
   }, 60_000);
 
-  it("captures a cold LinkedIn SDUI detail that hydrates after twelve seconds in an inactive tab", async () => {
+  it("captures a cold LinkedIn SDUI detail in an unfocused window and removes the owned tab", async () => {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-rendered-e2e-"));
     let api: FakeLoopbackApi | null = null;
     let context: BrowserContext | null = null;
@@ -66,17 +65,34 @@ describe("Chromium loaded extension privacy boundary", () => {
     const description = "Design and operate reliable distributed systems. ".repeat(10);
     try {
       context = await launchExtensionContext(userDataDir);
-      if (!context) return;
       // Public-shaped fixture only: no real site, profile, or account is used.
       await context.route("https://www.linkedin.com/**", async (route) => {
         await route.fulfill({ contentType: "text/html", body: `<!doctype html><title>Fixture role</title>
           <main><div id="JobDetails_AboutTheJob_123" componentkey="JobDetails_AboutTheJob_123"><h2>About the job</h2></div></main>
-          <script>setTimeout(() => { document.querySelector('#JobDetails_AboutTheJob_123').append(${JSON.stringify(description)}); }, 15_000);</script>` });
+          <script>setTimeout(() => { if (!document.hidden) document.querySelector('#JobDetails_AboutTheJob_123').append(${JSON.stringify(description)}); }, 15_000);</script>` });
       });
       api = await installFakeLoopbackApi(context, jobUrl, 45_000, "rendered_page");
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const controller = await context.newPage();
       await controller.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+      await controller.bringToFront();
+      // Playwright emulates focus for attached pages. This fixture verifies the
+      // actual window API/lifecycle and capture; native visibility is separately
+      // verified without page attachment in the required live product probe.
+      const before = await worker.evaluate(async () => {
+        type WindowInfo = { id: number; focused: boolean };
+        const windows = chrome.windows as unknown as {
+          getAll(): Promise<WindowInfo[]>;
+          getLastFocused(): Promise<WindowInfo>;
+          onCreated: { addListener(listener: (window: WindowInfo) => void): void };
+          onFocusChanged: { addListener(listener: (id: number) => void): void };
+        };
+        const probe = { created: [] as WindowInfo[], focusEvents: [] as number[] };
+        (globalThis as unknown as { windowProbe: typeof probe }).windowProbe = probe;
+        windows.onCreated.addListener((window) => probe.created.push({ id: window.id, focused: window.focused }));
+        windows.onFocusChanged.addListener((id) => probe.focusEvents.push(id));
+        return { ids: (await windows.getAll()).map((window) => window.id), focusedId: (await windows.getLastFocused()).id };
+      });
       await sendExtensionMessage(controller, { type: "saveToken", token: "rendered-fixture-token" });
 
       await waitFor(() => api?.discoveryCompletions.length === 1, 50_000);
@@ -87,6 +103,18 @@ describe("Chromium loaded extension privacy boundary", () => {
         bodyHtml: expect.stringContaining('id="JobDetails_AboutTheJob_123"'),
       } });
       expect(context.pages().some((page) => page.url() === jobUrl)).toBe(false);
+      const after = await worker.evaluate(async () => {
+        const windows = chrome.windows as unknown as {
+          getAll(): Promise<Array<{ id: number }>>;
+          getLastFocused(): Promise<{ id: number }>;
+        };
+        const probe = (globalThis as unknown as { windowProbe: { created: Array<{ id: number; focused: boolean }>; focusEvents: number[] } }).windowProbe;
+        return { ...probe, ids: (await windows.getAll()).map((window) => window.id), focusedId: (await windows.getLastFocused()).id };
+      });
+      expect(after.created).toEqual([{ id: expect.any(Number), focused: false }]);
+      expect(after.focusEvents).not.toContain(after.created[0]!.id);
+      expect(after.focusedId).toBe(before.focusedId);
+      expect(after.ids.sort()).toEqual(before.ids.sort());
     } finally {
       await api?.close();
       await context?.close();
@@ -102,7 +130,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     try {
       source = await startFakeDiscoverySource();
       context = await launchExtensionContext(userDataDir);
-      if (!context) return;
       const jobUrl = `${source.baseUrl.replace("careers.jobctrl.test", "www.linkedin.com")}/jobs/view/cross-origin-fixture`;
       api = await installFakeLoopbackApi(context, jobUrl, 15_000, "rendered_page");
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
@@ -131,9 +158,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     try {
       source = await startFakeDiscoverySource();
       context = await launchExtensionContext(userDataDir);
-      if (!context) {
-        return;
-      }
       api = await installFakeLoopbackApi(context, `${source.baseUrl}/api/jobs`);
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const extensionId = new URL(worker.url()).host;
@@ -166,7 +190,7 @@ describe("Chromium loaded extension privacy boundary", () => {
       expect(await sendExtensionMessage(controller, { type: "getStatus" })).toMatchObject({
         ok: true,
         status: "ready",
-        protocolVersion: 1,
+        protocolVersion: 3,
         paired: true,
         apiReady: true,
         discoverySelected: true,
@@ -202,6 +226,9 @@ describe("Chromium loaded extension privacy boundary", () => {
       expect(autofill).toMatchObject({ ok: true, status: "review_opened", suggestions: 1, missing: 0 });
       expect(await applicationPage.locator("input[name='email']").inputValue()).toBe("");
       await expectPageText(applicationPage, "Profile value ready");
+      await applicationPage.getByRole("button",{name:"Fill selected",exact:true}).click();
+      expect(await applicationPage.locator("input[name='email']").inputValue()).toBe("jordan@example.com");
+      await expectPageText(applicationPage,"Filled 1 field. Review the form before submitting.");
 
       expect(api.requests.map((request) => `${request.method} ${request.path}`)).toContain("POST /v1/extension/captures");
       expect(api.requests.map((request) => `${request.method} ${request.path}`)).toContain(
@@ -236,7 +263,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     try {
       source = await startFakeDiscoverySource();
       context = await launchExtensionContext(userDataDir);
-      if (!context) return;
       api = await installFakeLoopbackApi(context, `${source.baseUrl}/hang`, 1_000);
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const controller = await context.newPage();
@@ -266,7 +292,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     try {
       source = await startFakeDiscoverySource();
       context = await launchExtensionContext(userDataDir);
-      if (!context) return;
       api = await installFakeLoopbackApi(context, `${source.baseUrl}/redirect-private`, 60_000, mode);
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const controller = await context.newPage();
@@ -285,34 +310,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     }
   }, 60_000);
 });
-
-async function launchExtensionContext(userDataDir: string): Promise<BrowserContext | null> {
-  try {
-    return await chromium.launchPersistentContext(userDataDir, {
-      headless: false,
-      args: [
-        `--disable-extensions-except=${DIST}`,
-        `--load-extension=${DIST}`,
-        "--host-resolver-rules=MAP careers.jobctrl.test 127.0.0.1, MAP www.linkedin.com 127.0.0.1",
-      ],
-    });
-  } catch (error) {
-    if (isHeadedBrowserUnavailable(error)) {
-      console.warn(`Skipping headed Chromium extension e2e: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }
-    throw error;
-  }
-}
-
-function isHeadedBrowserUnavailable(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.includes("Missing X server") ||
-    message.includes("no DISPLAY") ||
-    message.includes("Host system is missing dependencies")
-  );
-}
 
 async function sendExtensionMessage(page: Page, message: unknown): Promise<unknown> {
   return page.evaluate(
@@ -446,9 +443,10 @@ async function installFakeLoopbackApi(
       return;
     }
     if (requestUrl.pathname === "/v1/extension/captures") {
+      const body = request.postDataJSON() as { captureId: string };
       await json(route, {
         ok: true,
-        itemId: "extension-capture-1",
+        itemId: `extension:${createHash("sha256").update(body.captureId).digest("hex").slice(0, 32)}`,
         jobKey: "synthetic-job",
         importedAt: "2026-07-05T10:00:00Z",
         provenance: {
@@ -458,6 +456,11 @@ async function installFakeLoopbackApi(
           futureManualActionRequired: false,
         },
       }, headers);
+      return;
+    }
+    if (requestUrl.pathname === "/v1/extension/autofill/mapping") {
+      const snapshot=request.postDataJSON() as {snapshotId:string;questions:Array<{question_id:string}>};
+      await json(route,{ok:true,snapshotId:snapshot.snapshotId,profileVersion:1,determinationId:"synthetic-model-receipt",mappings:snapshot.questions.map((question,index)=>({question_id:question.question_id,decision:index===0?"mapped":"unmapped",fact_id:index===0?"personal.email":null,value:index===0?"jordan@example.com":"",option_id:null,citations:[],rationale:"Explicit synthetic model decision"}))},headers);
       return;
     }
     if (requestUrl.pathname === "/v1/extension/autofill/profile") {

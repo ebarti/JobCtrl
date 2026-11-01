@@ -3,7 +3,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { compensationKeys } from "../compensationKeys.js";
-import type { CompensationSourceRegistryResponse } from "../types.js";
+import type { CompensationSourceRegistryResponse } from "@jobctrl/contracts";
 
 export function useCompensationSourcePolicyQuery(): UseQueryResult<CompensationSourceRegistryResponse> {
   const tenantId = useTenantId();

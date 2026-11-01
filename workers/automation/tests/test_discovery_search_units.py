@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 from jobstreaming import CheckpointConflictError, SearchCheckpoint, build_search_request
 
-from jobctrl.database import SchemaMigrationRequiredError, close_connection, init_db
+from jobctrl.database import SCHEMA_VERSION, SchemaMigrationRequiredError, close_connection, init_db
 from jobctrl.domain.discovery import (
     AtsKind,
     CanonicalJobIdentity,
@@ -60,12 +60,6 @@ def _spec(*, query: str = "Director of Engineering") -> DiscoverySearchSpec:
         remote_only=True,
         country_indeed="spain",
         linkedin_fetch_description=True,
-        match_mode="recall",
-        target_track="engineering_leadership",
-        seniority_floor="director",
-        accept_locations=("Barcelona, Spain", "Europe"),
-        reject_locations=("United States",),
-        local_accept_locations=("Barcelona, Spain",),
     )
 
 
@@ -155,6 +149,25 @@ def test_checkpoint_save_is_compare_and_swap_and_reclaim_fences_old_owner(search
     assert current.lease_owner == "activity-attempt-2"
     assert current.lease_attempt == 2
     assert current.lease_epoch == second_lease.epoch
+
+
+def test_same_owner_claim_reentry_returns_the_active_lease_and_rejects_a_competing_owner(
+    search_db,
+) -> None:
+    """Document why multiple claim loops cannot safely share one activity identity."""
+
+    repository = SqliteDiscoverySearchUnitRepository(search_db)
+    execution = _execution()
+    repository.plan_units(execution, [_spec(), _spec(query="VP Engineering")])
+
+    first = repository.claim_next(execution, "shared-owner", 1)
+    reentered = repository.claim_next(execution, "shared-owner", 1)
+
+    assert first is not None
+    assert reentered == first
+    assert repository.list_units(execution)[1].state == "pending"
+    with pytest.raises(StaleDiscoverySearchUnitLease):
+        repository.claim_next(execution, "competing-owner", 1)
 
 
 def test_retryable_failure_defers_cursor_reset_until_reclaimed(search_db) -> None:
@@ -250,9 +263,7 @@ def test_unacknowledged_cursor_reset_intent_does_not_clear_on_reclaim(
         reset_checkpoint=True,
         terminal=False,
     )
-    repository.checkpoint_store(reclaimed).save(
-        still_present.model_copy(update={"revision": 1})
-    )
+    repository.checkpoint_store(reclaimed).save(still_present.model_copy(update={"revision": 1}))
     next_attempt = repository.claim_next(execution, "attempt-3", 3)
     assert next_attempt is not None
     assert repository.reset_checkpoint_if_requested(next_attempt) is True
@@ -275,7 +286,7 @@ def test_v4_search_unit_tables_require_an_explicit_v7_upgrade(
     conn.commit()
     close_connection(db_path)
 
-    with pytest.raises(SchemaMigrationRequiredError, match="exact schema v9"):
+    with pytest.raises(SchemaMigrationRequiredError, match=f"exact schema v{SCHEMA_VERSION}"):
         init_db(db_path)
 
 
@@ -687,7 +698,7 @@ def test_mid_event_supersession_is_fenced_and_retry_repairs_audit_rows(
             """,
             (str(LOCAL_TENANT), "https://example.test/jobs/mid-event"),
         ).fetchone()[0]
-        == 4
+        == 3
     )
     assert search_units.execution_counts(execution) == {
         "accepted": 1,
@@ -713,7 +724,11 @@ def test_compensation_event_rechecks_fence_after_fact_commit(search_db) -> None:
     search_units.plan_units(execution, [_spec()])
     first_lease = search_units.claim_next(execution, "attempt-1", 1)
     assert first_lease is not None
-    compensation = SqlitePostedCompensationRepository(search_db)
+    from tests.compensation_fakes import pay_extractor
+
+    compensation = SqlitePostedCompensationRepository(
+        search_db, extractor=pay_extractor(search_db, minimum=150000, maximum=150000)
+    )
     reclaimed: list = []
 
     def supersede_before_event() -> None:
@@ -736,7 +751,7 @@ def test_compensation_event_rechecks_fence_after_fact_commit(search_db) -> None:
             "SELECT COUNT(*) FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_id = ?",
             (str(LOCAL_TENANT), job_id),
         ).fetchone()[0]
-        == 1
+        == 0
     )
     assert (
         search_db.execute(
@@ -761,3 +776,10 @@ def test_compensation_event_rechecks_fence_after_fact_commit(search_db) -> None:
         ).fetchone()[0]
         == 1
     )
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

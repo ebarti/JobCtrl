@@ -1,8 +1,11 @@
-import { LOCAL_TENANT, type DomainEventUnion } from "@jobctrl/domain-types";
-import { QueryClient, type QueryKey } from "@tanstack/react-query";
+// @vitest-environment node
+
+import { LOCAL_TENANT, createTenantId, createAvailabilityLeaseChanged, createJobUpdated, type DomainEventUnion } from "@jobctrl/domain-types";
+import { QueryClient, QueryObserver, type QueryKey } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { eventByType } from "../../test/fixtures/events.js";
+import { parseDomainEvent } from "../../shared/ports/lib/parseDomainEvent.js";
 import { activityKeys } from "./activityKeys.js";
 import { analyticsKeys } from "./analyticsKeys.js";
 import { applyReviewKeys } from "./applyReviewKeys.js";
@@ -11,11 +14,14 @@ import { artifactsKeys } from "./artifactsKeys.js";
 import { dashboardKeys } from "./dashboardKeys.js";
 import { digestKeys } from "./digestKeys.js";
 import { invalidationRouter } from "./invalidation-router.js";
+import { interviewKeys } from "./interviewKeys.js";
+import { evidenceMapKeys } from "./evidenceMapKeys.js";
 import { jobsKeys } from "./jobsKeys.js";
 import { outcomesKeys } from "./outcomesKeys.js";
 import { workflowRunsKeys } from "./workflowRunsKeys.js";
 import { discoveryKeys } from "../discovery/queryKeys.js";
 import { pipelineKeys } from "../pipeline/queryKeys.js";
+import { materialsKeys } from "../materials/queryKeys.js";
 import { profileKeys } from "../profile/queryKeys.js";
 import { outreachKeys } from "../outreach/queryKeys.js";
 
@@ -36,14 +42,17 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
     digestKeys.all(LOCAL_TENANT),
   ],
-  JobUpdated: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  JobUpdated: [
+    evidenceMapKeys.learning(LOCAL_TENANT),interviewKeys.history(LOCAL_TENANT, JOB_ID), dashboardKeys.summary(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
   JobDeleted: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
     digestKeys.all(LOCAL_TENANT),
   ],
   JobRestored: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
@@ -81,11 +90,13 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   CanonicalJobIdentityResolved: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
   ],
   DuplicateJobLinked: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
@@ -104,6 +115,10 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   SourceLocationCandidateDiscovered: [
+    discoveryKeys.sourceLocator(LOCAL_TENANT),
+    discoveryKeys.sourceRegistry(LOCAL_TENANT),
+  ],
+  SourceLocationCandidateReviewed: [
     discoveryKeys.sourceLocator(LOCAL_TENANT),
     discoveryKeys.sourceRegistry(LOCAL_TENANT),
   ],
@@ -126,6 +141,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   JobEnriched: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
@@ -138,6 +154,8 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   PostingContentSnapshotCaptured: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
+    interviewKeys.history(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
   ],
@@ -145,8 +163,9 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
   ],
+  AvailabilityLeaseChanged: [],
+  JobAvailabilityObserved: [jobsKeys.detail(LOCAL_TENANT, JOB_ID), jobsKeys.lists(LOCAL_TENANT)],
   JobActiveStateChanged: [
-    jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
@@ -180,9 +199,11 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   ResumeApproved: [
+    materialsKeys.locales(LOCAL_TENANT, JOB_ID),
+    materialsKeys.exports(LOCAL_TENANT, JOB_ID),
+    interviewKeys.history(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
-    artifactsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   ResumeFailed: [
@@ -191,6 +212,8 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   CoverLetterGenerated: [
+    materialsKeys.locales(LOCAL_TENANT, JOB_ID),
+    materialsKeys.exports(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     artifactsKeys.lists(LOCAL_TENANT),
@@ -207,18 +230,22 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
-  EmployerAnalyzed: [jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  EmployerAnalyzed: [
+    interviewKeys.history(LOCAL_TENANT, JOB_ID),jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
   BulletProvenanceRecorded: [
     artifactsKeys.detail(LOCAL_TENANT, ARTIFACT_ID),
     artifactsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
   ],
   InterviewPrepGenerated: [
+    interviewKeys.history(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
+  InterviewQuestionNoteSaved: [interviewKeys.note(LOCAL_TENANT, JOB_ID, "B11")],
   InterviewPrepFailed: [
+    interviewKeys.history(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
@@ -235,6 +262,8 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   TailoredArtifactsSuppressed: [
+    materialsKeys.locales(LOCAL_TENANT, JOB_ID),
+    materialsKeys.exports(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     artifactsKeys.lists(LOCAL_TENANT),
@@ -258,6 +287,8 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     applyReviewKeys.all(LOCAL_TENANT),
   ],
   ResumeTemplateRefreshCompleted: [
+    materialsKeys.locales(LOCAL_TENANT, JOB_ID),
+    materialsKeys.exports(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     artifactsKeys.lists(LOCAL_TENANT),
@@ -337,6 +368,16 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     analyticsKeys.all(LOCAL_TENANT),
   ],
   EmailApplicationCandidateRecorded: [applyReviewKeys.queue(LOCAL_TENANT)],
+  DryRunCompleted: [
+    applyRunsKeys.lists(LOCAL_TENANT),
+    applyRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+    applyReviewKeys.queue(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
   ApplicationSubmitted: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
@@ -363,6 +404,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
     digestKeys.all(LOCAL_TENANT),
   ],
+  OfferRecordChanged: [outcomesKeys.detail(LOCAL_TENANT, JOB_ID), jobsKeys.detail(LOCAL_TENANT, JOB_ID), outreachKeys.threads(LOCAL_TENANT)],
   ApplicationOutcomeRecorded: [
     outcomesKeys.lists(LOCAL_TENANT),
     outcomesKeys.detail(LOCAL_TENANT, JOB_ID),
@@ -432,8 +474,8 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     digestKeys.all(LOCAL_TENANT),
     pipelineKeys.operations(LOCAL_TENANT),
   ],
-  ProfileUpdated: [profileKeys.profile(LOCAL_TENANT)],
-  ProfileImported: [profileKeys.profile(LOCAL_TENANT)],
+  ProfileUpdated: [profileKeys.profile(LOCAL_TENANT), evidenceMapKeys.list(LOCAL_TENANT), interviewKeys.jobs(LOCAL_TENANT), jobsKeys.details(LOCAL_TENANT), jobsKeys.lists(LOCAL_TENANT)],
+  ProfileImported: [profileKeys.profile(LOCAL_TENANT), evidenceMapKeys.list(LOCAL_TENANT), interviewKeys.jobs(LOCAL_TENANT), jobsKeys.details(LOCAL_TENANT)],
   WorkflowStarted: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
@@ -508,6 +550,10 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     outreachKeys.researchTask(LOCAL_TENANT, "research-2"),
     outreachKeys.researchTaskLists(LOCAL_TENANT),
   ],
+  ContactResearchSourceAttemptFailed: [
+    outreachKeys.researchTask(LOCAL_TENANT, "research-1"),
+    outreachKeys.researchTaskLists(LOCAL_TENANT),
+  ],
   OutreachDraftGenerated: [
     outreachKeys.thread(LOCAL_TENANT, "thread-1"),
     outreachKeys.threads(LOCAL_TENANT),
@@ -550,6 +596,164 @@ describe("invalidationRouter", () => {
   let queryClient: QueryClient;
   let invalidateSpy: ReturnType<typeof vi.spyOn>;
   let setQueryDataSpy: ReturnType<typeof vi.spyOn>;
+
+  it("refreshes persisted job-scoped availability deferral feedback without treating host leases as job state", async () => {
+    const client = new QueryClient();
+    const invalidations = vi.spyOn(client, "invalidateQueries");
+    invalidationRouter.handle(createAvailabilityLeaseChanged(LOCAL_TENANT, {
+      jobId: JOB_ID, status: "deferred", reason: "retry_backoff",
+    }), client);
+    expect(invalidations).toHaveBeenCalledWith({ queryKey: jobsKeys.detail(LOCAL_TENANT, JOB_ID) });
+    expect(invalidations).toHaveBeenCalledWith({ queryKey: jobsKeys.lists(LOCAL_TENANT) });
+  });
+
+  it.each([0, null])("refreshes only the submitted run details from launcher SSE (worker %s)", async (workerId) => {
+    // Independent wire fixture: launcher lifecycle fields are not camelized by SSE.
+    const parsed = parseDomainEvent({
+      eventType: "ApplicationSubmitted",
+      data: JSON.stringify({
+        tenantId: LOCAL_TENANT,
+        occurredAt: "2026-09-12T10:00:00Z",
+        payload: {
+          tenantId: LOCAL_TENANT,
+          jobId: JOB_ID,
+          run_id: RUN_ID,
+          result: "applied",
+          finished_at: "2026-09-12T10:00:00Z",
+          duration_ms: 4000,
+          worker_id: workerId,
+          model: "test-model",
+        },
+      }),
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error("Expected a valid launcher SSE envelope");
+    expect(parsed.envelope.payload).toMatchObject({ run_id: RUN_ID, worker_id: workerId });
+    expect(parsed.envelope.payload).not.toHaveProperty("runId");
+
+    const client = new QueryClient();
+    const invalidations = vi.spyOn(client, "invalidateQueries");
+    const otherTenant = createTenantId("other-tenant");
+    const targetKeys = [
+      applyRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+      workflowRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+    ];
+    const unrelatedKeys = [
+      applyRunsKeys.detail(LOCAL_TENANT, "other-run"),
+      workflowRunsKeys.detail(LOCAL_TENANT, "other-run"),
+      applyRunsKeys.detail(otherTenant, RUN_ID),
+      workflowRunsKeys.detail(otherTenant, RUN_ID),
+    ];
+    const reads = [...targetKeys, ...unrelatedKeys].map((queryKey) => {
+      const queryFn = vi.fn(async () => ({ status: "applied" }));
+      const observer = new QueryObserver(client, {
+        queryKey,
+        queryFn,
+        initialData: { status: "in_progress" },
+        staleTime: Infinity,
+      });
+      return { queryKey, queryFn, unsubscribe: observer.subscribe(() => {}) };
+    });
+    const broaderKeys = [
+      jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+      jobsKeys.lists(LOCAL_TENANT),
+      applyRunsKeys.lists(LOCAL_TENANT),
+      workflowRunsKeys.lists(LOCAL_TENANT),
+      dashboardKeys.summary(LOCAL_TENANT),
+      analyticsKeys.all(LOCAL_TENANT),
+    ];
+    for (const key of broaderKeys) client.setQueryData(key, { cached: true });
+
+    try {
+      // Match EventStreamProvider's dispatch of the parsed wire envelope.
+      invalidationRouter.handle(parsed.envelope as unknown as DomainEventUnion, client);
+      for (const key of targetKeys) {
+        expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+      }
+      for (const key of broaderKeys) {
+        expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+      }
+      for (const [filters] of invalidations.mock.calls) {
+        expect(filters?.queryKey).not.toContain(undefined);
+      }
+      await vi.waitFor(() => {
+        for (const key of targetKeys) {
+          expect(client.getQueryData(key)).toEqual({ status: "applied" });
+        }
+      });
+      for (const read of reads.slice(0, targetKeys.length)) {
+        expect(read.queryFn).toHaveBeenCalledTimes(1);
+      }
+      for (const read of reads.slice(targetKeys.length)) {
+        expect(read.queryFn).not.toHaveBeenCalled();
+        expect(client.getQueryState(read.queryKey)?.isInvalidated).toBe(false);
+        expect(client.getQueryData(read.queryKey)).toEqual({ status: "in_progress" });
+      }
+    } finally {
+      for (const read of reads) read.unsubscribe();
+      client.clear();
+    }
+  });
+
+  it("refreshes shared company briefings in job detail and the current tenant digest", () => {
+    const client = new QueryClient();
+    const detailKey = jobsKeys.detail(LOCAL_TENANT, JOB_ID);
+    const digestKey = digestKeys.all(LOCAL_TENANT);
+    const otherDigestKey = digestKeys.all(createTenantId("other-tenant"));
+    for (const key of [detailKey, digestKey, otherDigestKey]) {
+      client.setQueryData(key, { cached: true });
+    }
+
+    invalidationRouter.handle(createJobUpdated(LOCAL_TENANT, {
+      jobId: JOB_ID,
+      changedFields: { companyBriefing: { companyId: "company-synthetic" } },
+    }), client);
+
+    expect(client.getQueryState(detailKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(digestKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(otherDigestKey)?.isInvalidated).toBe(false);
+    client.clear();
+  });
+
+  it("refreshes an open research review after an overlapping source attempt fails", async () => {
+    const client = new QueryClient();
+    const key = outreachKeys.researchTask(LOCAL_TENANT, "research-1");
+    const before = { candidates: [{ candidateId: "candidate-1" }], sourceAttempts: [{ outcome: "allowed" }] };
+    const after = { ...before, sourceAttempts: [...before.sourceAttempts, { outcome: "provider_unavailable" }] };
+    const queryFn = vi.fn().mockResolvedValue(after);
+    const observer = new QueryObserver(client, { queryKey: key, queryFn, initialData: before, staleTime: Infinity });
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      const event = eventByType.ContactResearchSourceAttemptFailed;
+      const parsed = parseDomainEvent({ eventType: event.eventType, data: JSON.stringify(event) });
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) throw new Error(parsed.reason);
+      invalidationRouter.handle(parsed.envelope as unknown as DomainEventUnion, client);
+      await vi.waitFor(() => expect(client.getQueryData(key)).toEqual(after));
+      expect(queryFn).toHaveBeenCalledTimes(1);
+      expect(client.getQueryData<typeof after>(key)?.candidates).toEqual(before.candidates);
+    } finally {
+      unsubscribe();
+      client.clear();
+    }
+  });
+
+  it("keeps dry-run completion separate from submission and other runs", () => {
+    const client = new QueryClient();
+    const event = eventByType.DryRunCompleted;
+    const jobKey = jobsKeys.detail(LOCAL_TENANT, JOB_ID);
+    const analyticsKey = analyticsKeys.all(LOCAL_TENANT);
+    const otherRunKey = applyRunsKeys.detail(LOCAL_TENANT, "other-run");
+    client.setQueryData(jobKey, { status: "ready", appliedAt: null });
+    client.setQueryData(analyticsKey, { submitted: 0 });
+    client.setQueryData(otherRunKey, { status: "in_progress" });
+    invalidationRouter.handle(event, client);
+    expect(client.getQueryData(jobKey)).toEqual({ status: "ready", appliedAt: null });
+    expect(client.getQueryState(jobKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(analyticsKey)?.isInvalidated).toBe(false);
+    expect(client.getQueryState(otherRunKey)?.isInvalidated).toBe(false);
+    client.clear();
+  });
 
   beforeEach(() => {
     queryClient = new QueryClient();

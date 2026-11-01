@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,7 +7,10 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/projections.js", () => ({ refreshProjections: vi.fn() }));
+vi.mock("../src/projections.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/projections.js")>(),
+  refreshProjections: vi.fn(),
+}));
 vi.mock("../src/repeat-application.js", () => ({
   evaluateRepeatApplication: vi.fn(() => ({ blocked: false, matches: [] })),
 }));
@@ -21,8 +26,10 @@ import {
   recordManualApplicationOutcome,
 } from "../src/application-feedback.js";
 import { InputError } from "../src/write-model.js";
-import { hasExactV9SchemaManifest } from "../src/schema-manifest.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { hasExactV15SchemaManifest } from "../src/schema-manifest.js";
+import { initializeExactDatabase } from "./exact-schema.js";
+
+import { recordOutcomeDecision } from "./semantic-fixtures.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000071";
 const JOB_URL = "https://jobs.example.test/application-feedback";
@@ -39,7 +46,7 @@ afterEach(() => {
 function seededDatabase(): Database.Database {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-application-feedback-v7-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
   cleanups.push(() => {
@@ -49,9 +56,10 @@ function seededDatabase(): Database.Database {
 
   for (const tenantId of ["local", OTHER_TENANT]) {
     db.prepare(
-      `INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at, application_url)
-       VALUES (?, ?, ?, 'Feedback Engineer', 'Example', '2026-07-31T12:00:00Z', ?)`,
-    ).run(tenantId, JOB_ID, `${JOB_URL}/${tenantId}`, JOB_URL);
+      `INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at)
+       VALUES (?, ?, ?, 'Feedback Engineer', 'Example', '2026-07-31T12:00:00Z')`,
+    ).run(tenantId, JOB_ID, `${JOB_URL}/${tenantId}`);
+    seedApplicationUrl(db, tenantId, JOB_ID, JOB_URL);
     db.prepare(
       `INSERT INTO job_list_projections (
          tenant_id, job_id, title, employer, source, application_url, fit_score,
@@ -80,9 +88,10 @@ function seedSuggestion(db: Database.Database, suggestionId: string, suggestedKi
        rationale, status, created_at
      ) VALUES ('local', ?, ?, ?, ?, 0.9, ?, 'pending', '2026-07-31T12:06:00Z')`,
   ).run(suggestionId, JOB_ID, evidenceId, suggestedKind, PRIVATE_RATIONALE);
+  recordOutcomeDecision(db,suggestionId,`message-${suggestionId}`,suggestedKind,0.9,PRIVATE_BODY);
 }
 
-describe("application feedback exact v7 identity", () => {
+describe("application feedback exact current identity", () => {
   it("keeps queue and outcome reads tenant-isolated when tenants share a canonical job id", () => {
     const db = seededDatabase();
     db.prepare(
@@ -91,7 +100,7 @@ describe("application feedback exact v7 identity", () => {
        ) VALUES (?, 'other-outcome', ?, 'rejection', 'manual', '2026-07-31T12:01:00Z', '2026-07-31T12:01:00Z')`,
     ).run(OTHER_TENANT, JOB_ID);
 
-    const manual = recordManualApplicationOutcome(db, JOB_ID, {
+    const manual = recordManualApplicationOutcome(db, JOB_ID, { requestId: crypto.randomUUID(),
       kind: "interview",
       note: PRIVATE_NOTE,
       occurredAt: "2026-07-31T12:02:00Z",
@@ -109,7 +118,7 @@ describe("application feedback exact v7 identity", () => {
     expect(queue.items[0]?.jobKey).toBe(JOB_ID);
   });
 
-  it("accepts, corrects, and ignores exact-v7 suggestions without exposing private text in events", () => {
+  it("accepts, corrects, and ignores exact-current suggestions without exposing private text in events", () => {
     const db = seededDatabase();
     seedSuggestion(db, "accept", "interview");
     seedSuggestion(db, "correct", "unknown");
@@ -141,13 +150,13 @@ describe("application feedback exact v7 identity", () => {
     expect(events.map((event) => event.payload_json).join("\n")).not.toContain(PRIVATE_RATIONALE);
   });
 
-  it("does not mutate the exact-v7 schema and refuses an invalid job id", () => {
+  it("does not mutate the exact-current schema and refuses an invalid job id", () => {
     const db = seededDatabase();
-    expect(hasExactV9SchemaManifest(db)).toBe(true);
+    expect(hasExactV15SchemaManifest(db)).toBe(true);
 
     expect(() =>
-      recordManualApplicationOutcome(db, "not-a-canonical-job-id", { kind: "interview" }),
+      recordManualApplicationOutcome(db, "not-a-canonical-job-id", { requestId: crypto.randomUUID(), kind: "interview" }),
     ).toThrow(InputError);
-    expect(hasExactV9SchemaManifest(db)).toBe(true);
+    expect(hasExactV15SchemaManifest(db)).toBe(true);
   });
 });

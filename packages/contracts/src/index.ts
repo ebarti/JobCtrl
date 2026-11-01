@@ -1,4 +1,5 @@
 export * from "./schemas.js";
+export * from "./cover-letter.js";
 export * from "./rpc.js";
 export * from "./endpoint-spec.js";
 export * from "./demo-fixture-contract.js";
@@ -26,3 +27,14 @@ export {
   PROJECTION_WATERMARK_NAME,
   type ProjectionTable,
 } from "@jobctrl/domain-types";
+
+export * from "./interview.js";
+
+export * from "./semantic-determinations.js";
+export { isCurrentDeterminationVersion, validDeterminationResult } from "./semantic-result-schemas.js";
+
+export * from "./company-briefings.js";
+export * from "./career-learning.js";
+export * from "./offers.js";
+
+export * from "./outreach-publication.js";

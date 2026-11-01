@@ -1,15 +1,21 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
+import { demoContactFingerprint } from "./contact-fingerprint.js";
 import {
   ActivityListQuerySchema,
+  InterviewCatalogSchema,
+  InterviewCatalogQuerySchema,
+  InterviewNotesQuerySchema,
+  InterviewPrepHistoryQuerySchema,
+  SaveInterviewQuestionNoteRequestSchema,
+  type InterviewQuestionNote,
   ArtifactListQuerySchema,
   ContactListQuerySchema,
   ContactResearchListQuerySchema,
-  ENDPOINTS,
   JobListQuerySchema,
   WorkflowRunsListQuerySchema,
   compareJobs,
   compareValues,
-  filterJob as sharedFilterJob,
+  effectiveJobStages,
   paginate,
   timestampAtOrAfter,
   timestampBefore,
@@ -19,13 +25,19 @@ import {
   type JobCompensationSummary,
   type JobSummary,
   type PaginatedResponse,
+  type RequiredBulletSuggestionRequest,
+  type RequiredBulletSuggestionResponse,
   type WorkflowRunSummary,
 } from "@jobctrl/contracts";
+
+import { createInterviewQuestionNoteSaved, LOCAL_TENANT } from "@jobctrl/domain-types";
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import type { TelemetryPort } from "../shared/ports/TelemetryPort.js";
 import { isDemoArtifactUrl } from "./artifacts.js";
 import type { ApiClientResponse, DemoReadModel } from "./contracts.js";
+import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
+import { filterDemoJob } from "./job-filter.js";
 import {
   DemoLocalCommandExecutor,
   type DemoBrowserLocalCommand,
@@ -37,31 +49,9 @@ import {
   type DemoInitialExternalRehearsalOperation,
 } from "./DemoExternalRehearsalExecutor.js";
 import { DemoCapabilityError } from "./ports.js";
-import {
-  DemoScenarioEngine,
-  type DemoScenarioEngineOptions,
-} from "./DemoScenarioEngine.js";
 import type { DemoWorkspaceRepository } from "./workspace/DemoWorkspaceRepository.js";
 
 type CacheKey = number | string | undefined;
-
-const CLOSED_ACTIVE_STATES = new Set([
-  "closed",
-  "expired",
-  "removed",
-  "location_incompatible",
-]);
-
-const IN_MEMORY_JOB_SORT_FIELDS = new Set([
-  "source",
-  "compensation_min_eur",
-  "compensation_max_eur",
-  "compensation_posted",
-  "compensation_market",
-  "compensation_confidence",
-  "compensation_warnings",
-  "apply_status",
-]);
 
 export class DemoResourceNotFoundError extends JobCtrlApiError {
   readonly code: string;
@@ -76,15 +66,13 @@ export class DemoResourceNotFoundError extends JobCtrlApiError {
 }
 
 export interface DemoApiClientAdapterOptions extends DemoLocalCommandExecutorOptions {
-  readonly scenario?: DemoScenarioEngineOptions;
   readonly external?: DemoExternalRehearsalExecutorOptions;
   readonly telemetry?: TelemetryPort;
 }
 
-/** Browser-local adapter for reads, local commands, and deterministic scenarios. */
+/** Browser-local adapter for saved examples and authored local commands. */
 export class DemoApiClientAdapter implements ApiClientPort {
   private readonly localCommands: DemoLocalCommandExecutor;
-  private readonly scenarios: DemoScenarioEngine;
   private readonly externalRehearsals: DemoExternalRehearsalExecutor;
   private readonly telemetry: TelemetryPort | undefined;
 
@@ -94,13 +82,6 @@ export class DemoApiClientAdapter implements ApiClientPort {
   ) {
     this.localCommands = new DemoLocalCommandExecutor(workspace, options);
     this.telemetry = options.telemetry;
-    this.scenarios = new DemoScenarioEngine(
-      workspace,
-      options.scenario ?? {
-        ...(options.clock ? { clock: options.clock } : {}),
-        ...(options.createId ? { createId: options.createId } : {}),
-      },
-    );
     this.externalRehearsals = new DemoExternalRehearsalExecutor(
       workspace,
       options.external ?? {
@@ -112,19 +93,19 @@ export class DemoApiClientAdapter implements ApiClientPort {
     Object.assign(
       this,
       Object.fromEntries(
-        Object.values(ENDPOINTS)
-          .filter((endpoint) => endpoint.demo.class === "unavailable")
-          .map((endpoint) => [endpoint.name, this.unsupported(endpoint.name)]),
+        Object.entries(DEMO_CAPABILITY_MANIFEST)
+          .filter(([, capability]) => capability.class === "unavailable")
+          .map(([method]) => [method, this.unsupported(method as keyof ApiClientPort)]),
       ),
     );
   }
 
   initialize(): Promise<void> {
-    return this.scenarios.initialize();
+    return Promise.resolve();
   }
 
   dispose(): void {
-    this.scenarios.dispose();
+    this.localCommands.dispose();
   }
 
   health() {
@@ -282,6 +263,12 @@ export class DemoApiClientAdapter implements ApiClientPort {
     );
   }
 
+  jobOffer = this.unsupported("jobOffer");
+  saveOfferTerms = this.unsupported("saveOfferTerms");
+  recordOfferDecision = this.unsupported("recordOfferDecision");
+  postedCompensationFact = this.unsupported("postedCompensationFact");
+  marketCompensationEstimate = this.unsupported("marketCompensationEstimate");
+
   applicationOutcomes() {
     return this.read((model) => model.analytics.outcomes);
   }
@@ -299,13 +286,34 @@ export class DemoApiClientAdapter implements ApiClientPort {
   ): Promise<ApiClientResponse<"jobs">> {
     const normalized = JobListQuerySchema.parse(query);
     const source = await this.read((model) => model.jobs.list.items);
+    return this.projectJobs(source, normalized);
+  }
+
+  async reviewableJobs(
+    query: Parameters<ApiClientPort["reviewableJobs"]>[0] = {},
+  ): ReturnType<ApiClientPort["reviewableJobs"]> {
+    const normalized = JobListQuerySchema.parse(query);
+    const snapshot = await this.workspace.snapshot();
+    const source = structuredClone(snapshot.state.readModel.jobs.list.items);
+    const page = this.projectJobs(source, normalized);
     const q = normalized.q.toLowerCase();
-    const items = source.filter((job) => filterJob(job, normalized, q));
+    const matching = source.filter((job) => filterDemoJob(job, normalized, q) && (job.deletedAt || job.hiddenAt));
+    const observationId = this.localCommands.observePermanentDeleteSelection(
+      snapshot,
+      matching.map((job) => job.jobKey),
+      page.items.filter((job) => job.deletedAt || job.hiddenAt).map((job) => job.jobKey),
+    );
+    return { ...page, observationId };
+  }
+
+  private projectJobs(
+    source: JobSummary[],
+    normalized: ReturnType<typeof JobListQuerySchema.parse>,
+  ): ApiClientResponse<"jobs"> {
+    const q = normalized.q.toLowerCase();
+    const items = source.filter((job) => filterDemoJob(job, normalized, q));
     items.sort((left, right) =>
-      compareJobs(left, right, normalized.sort, normalized.dir, {
-        normalizeSqlText:
-          !normalized.q && !IN_MEMORY_JOB_SORT_FIELDS.has(normalized.sort),
-      }),
+      compareJobs(left, right, normalized.sort, normalized.dir),
     );
     return paginate(
       items,
@@ -316,6 +324,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
       {
         q: normalized.q,
         stage: normalized.stage ?? "",
+        stages: effectiveJobStages(normalized),
         state: normalized.state ?? "",
         source: normalized.source,
         company: normalized.company,
@@ -325,6 +334,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
         discoveredSince: normalized.discoveredSince ?? null,
         scoredSince: normalized.scoredSince ?? null,
         deleted: normalized.deleted,
+        jobStates: normalized.jobStates ?? null,
       },
     );
   }
@@ -335,6 +345,90 @@ export class DemoApiClientAdapter implements ApiClientPort {
 
   evidenceMap() {
     return this.read((model) => model.evidence);
+  }
+
+  async interviewCatalog(query: Parameters<ApiClientPort["interviewCatalog"]>[0] = {}) {
+    const parsed = InterviewCatalogQuerySchema.parse(query);
+    const shared = await import("../../../../workers/automation/src/jobctrl/assets/interview/catalog.v1.json");
+    const catalog = InterviewCatalogSchema.parse(shared.default);
+    const needle = parsed.search?.toLowerCase() ?? "";
+    const questions = catalog.questions.filter((question) =>
+      (!parsed.topic || question.topic === parsed.topic || catalog.topics.find((topic) => topic.id === parsed.topic)?.questionIds.includes(question.id)) &&
+      (!parsed.role || question.roleLenses.includes(parsed.role)) &&
+      (!parsed.answerFormat || question.answerFormats.includes(parsed.answerFormat)) &&
+      (!parsed.source || question.sources.includes(parsed.source) || catalog.sources.find((source) => source.id === parsed.source)?.questionIds.includes(question.id)) &&
+      (!needle || [question.id, question.title, question.intent, question.answer].join(" ").toLowerCase().includes(needle)));
+    return { ok: true as const, catalog: { ...catalog, questions: questions.slice((parsed.page - 1) * parsed.pageSize, parsed.page * parsed.pageSize) }, page: parsed.page, pageSize: parsed.pageSize, total: questions.length };
+  }
+
+  async interviewQuestion(questionId: string) {
+    const { catalog } = await this.interviewCatalog();
+    if (catalog.retiredQuestions.some((question) => question.id === questionId)) throw new JobCtrlApiError(410, "retired_question", "This question identifier is retired.");
+    const question = catalog.questions.find((card) => card.id === questionId);
+    if (!question) throw new DemoResourceNotFoundError("unknown_question", questionId);
+    return { ok: true as const, catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest }, question };
+  }
+
+  async interviewPrepHistory(jobKey: string, query: Parameters<ApiClientPort["interviewPrepHistory"]>[1] = {}) {
+    const parsed = InterviewPrepHistoryQuerySchema.parse(query);
+    const job = await this.job(jobKey);
+    const generations = job.interviewPrep && (!parsed.generation || parsed.generation === job.interviewPrep.generation) ? [job.interviewPrep] : [];
+    return { ok: true as const, jobId: jobKey, generations: generations.slice((parsed.page - 1) * parsed.pageSize, parsed.page * parsed.pageSize), page: parsed.page, pageSize: parsed.pageSize, total: generations.length };
+  }
+
+  async interviewNotes(jobKey: string, query: Parameters<ApiClientPort["interviewNotes"]>[1] = {}) {
+    const parsed = InterviewNotesQuerySchema.parse(query);
+    await this.job(jobKey);
+    const byQuestion = await this.read((model) => model.materials.interviewNotes?.[jobKey] ?? {});
+    const rows = Object.entries(byQuestion).filter(([questionId]) => !parsed.questionId || parsed.questionId === questionId).flatMap(([, notes]) => parsed.history ? [...notes] : notes.slice(-1)).sort((a, b) => b.revision - a.revision);
+    return { ok: true as const, jobId: jobKey, notes: rows.slice((parsed.page - 1) * parsed.pageSize, parsed.page * parsed.pageSize), page: parsed.page, pageSize: parsed.pageSize, total: rows.length };
+  }
+
+  async saveInterviewNote(jobKey: string, body: Parameters<ApiClientPort["saveInterviewNote"]>[1]) {
+    const parsed = SaveInterviewQuestionNoteRequestSchema.parse(body);
+    const { catalog } = await this.interviewCatalog();
+    let saved: InterviewQuestionNote | undefined;
+    await this.workspace.mutate((draft, context) => {
+      if (!Object.hasOwn(draft.state.readModel.jobs.details, jobKey)) throw new DemoResourceNotFoundError("job_not_found", jobKey);
+      const materials = draft.state.readModel.materials;
+      const all = materials.interviewNotes ?? {};
+      const jobNotes = all[jobKey] ?? {};
+      const revisions = jobNotes[parsed.questionId] ?? [];
+      const current = revisions.at(-1);
+      if ((current?.revision ?? 0) !== parsed.expectedRevision) throw new JobCtrlApiError(409, "Another saved note revision exists.", "interview_note_revision_conflict", { currentNote: current ?? null });
+      let sourceGeneration = parsed.sourceGeneration === undefined ? current?.sourceGeneration ?? null : parsed.sourceGeneration;
+      let bindings: InterviewQuestionNote["bindings"] = null;
+      const prep = draft.state.readModel.jobs.details[jobKey]?.interviewPrep;
+      if (sourceGeneration !== null) {
+        const context = prep?.generation === sourceGeneration ? prep.generationContext : null;
+        const selected = context?.selectedQuestions.find((question) => question.questionId === parsed.questionId);
+        if (!context || !selected || context.jobContext.jobId !== jobKey || !context.selectedQuestionIds.includes(parsed.questionId) || selected.snapshot.id !== parsed.questionId || selected.snapshot.cardRevision !== selected.cardRevision || selected.snapshot.cardDigest !== selected.cardDigest) {
+          if (current && parsed.sourceGeneration === undefined && prep?.generation !== sourceGeneration) sourceGeneration = null;
+          else throw new JobCtrlApiError(400, "The preparation does not retain this question.", "invalid_interview_note_source");
+        } else bindings = { catalogBinding: context.catalogBinding, cardRevision: selected.cardRevision, cardDigest: selected.cardDigest, contextDigest: context.contextDigest };
+      }
+      if (sourceGeneration === null) {
+        const question = catalog.questions.find((card) => card.id === parsed.questionId);
+        if (question) bindings = { catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest }, cardRevision: question.cardRevision, cardDigest: question.cardDigest, contextDigest: null };
+        else if (!current) throw new JobCtrlApiError(catalog.retiredQuestions.some((card) => card.id === parsed.questionId) ? 410 : 404, "Question guidance is unavailable.", "unknown_question");
+      }
+      if (parsed.bindings) {
+        for (const key of ["cardRevision", "cardDigest", "contextDigest"] as const) if (parsed.bindings[key] !== undefined && parsed.bindings[key] !== (bindings?.[key] ?? null)) throw new JobCtrlApiError(400, "The supplied bindings do not match the retained source.", "invalid_interview_note_bindings");
+        const claim = parsed.bindings.catalogBinding;
+        const actual = bindings?.catalogBinding ?? null;
+        if (claim !== undefined && (claim === null ? actual !== null : !actual || claim.catalogRevision !== actual.catalogRevision || claim.catalogDigest !== actual.catalogDigest)) throw new JobCtrlApiError(400, "The supplied catalog does not match the retained source.", "invalid_interview_note_bindings");
+      }
+      const note: InterviewQuestionNote = {
+        jobId: jobKey, questionId: parsed.questionId, revision: parsed.expectedRevision + 1, noteText: parsed.noteText,
+        factualSupport: parsed.factualSupport ?? "unverified_user_statement", editStatus: "user_edited", sourceGeneration,
+        bindings, updatedAt: new Date().toISOString(),
+      };
+      Object.assign(materials, { interviewNotes: { ...all, [jobKey]: { ...jobNotes, [parsed.questionId]: [...revisions, note] } } });
+      context.appendDomainEvent(createInterviewQuestionNoteSaved(LOCAL_TENANT, { jobId: jobKey, questionId: note.questionId, revision: note.revision, sourceGeneration: note.sourceGeneration, updatedAt: note.updatedAt }));
+      saved = note;
+    });
+    if (!saved) throw new Error("Note save did not return a revision.");
+    return { ok: true as const, note: saved };
   }
 
   async workflowRuns(
@@ -418,6 +512,13 @@ export class DemoApiClientAdapter implements ApiClientPort {
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: CacheKey): string {
     return artifactPreviewUrl(this.workspace, artifactId, "pdf", cacheKey);
   }
+  coverLetterPreviewPdfUrl(): string {
+    throw new Error("Cover-letter rendering requires the local renderer.");
+  }
+
+  async downloadMaterialDocx(_artifactId: string): Promise<Blob> {
+    throw new DemoCapabilityError("acceptedMaterialExports");
+  }
 
   artifactPreviewHtmlUrl(artifactId: string, cacheKey?: CacheKey): string {
     return artifactPreviewUrl(this.workspace, artifactId, "html", cacheKey);
@@ -425,6 +526,15 @@ export class DemoApiClientAdapter implements ApiClientPort {
 
   profile() {
     return this.read((model) => model.profile.config);
+  }
+
+  targetRoleSuggestions = this.unsupported("targetRoleSuggestions");
+
+  async requiredBulletSuggestions(
+    body: RequiredBulletSuggestionRequest,
+  ): Promise<RequiredBulletSuggestionResponse> {
+    void body;
+    throw new DemoCapabilityError("requiredBulletSuggestions");
   }
 
   profilePreviewPdfUrl(cacheKey?: CacheKey): string {
@@ -556,12 +666,14 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return response;
   }
 
-  contact(contactId: string) {
-    return this.detail(
+  async contact(contactId: string) {
+    const detail = await this.detail(
       (model) => model.contacts.details,
       contactId,
       "contact_not_found",
     );
+    detail.contact.fingerprint = await demoContactFingerprint(detail.contact);
+    return detail;
   }
 
   async researchTasks(
@@ -623,14 +735,16 @@ export class DemoApiClientAdapter implements ApiClientPort {
   promoteSourceLocatorCandidate = this.local("promoteSourceLocatorCandidate");
   rejectSourceLocatorCandidate = this.local("rejectSourceLocatorCandidate");
   decideDiscoveryQuarantine = this.local("decideDiscoveryQuarantine");
-  importManualCapture = this.local("importManualCapture");
+  importManualCapture = this.unsupported("importManualCapture");
   importJobUrl = this.unsupported("importJobUrl");
+  jobUrlImportStatus = this.unsupported("jobUrlImportStatus");
   dismissManualCapture = this.local("dismissManualCapture");
   recordDiscoveryFeedback = this.local("recordDiscoveryFeedback");
   decideRoleMatchFeedbackSuggestion = this.local(
     "decideRoleMatchFeedbackSuggestion",
   );
   decideApplyReview = this.local("decideApplyReview");
+  checkRepeatApplication = this.unsupported("checkRepeatApplication");
   confirmRepeatApplication = this.unsupported("confirmRepeatApplication");
   createResumeReviewDraft = this.local("createResumeReviewDraft");
   saveResumeReviewDraftRevision = this.local("saveResumeReviewDraftRevision");
@@ -648,6 +762,11 @@ export class DemoApiClientAdapter implements ApiClientPort {
   deleteJobs = this.local("deleteJobs");
   permanentlyDeleteJob = this.local("permanentlyDeleteJob");
   permanentlyDeleteJobs = this.local("permanentlyDeleteJobs");
+  preparePermanentDeleteSelection(
+    request: Parameters<ApiClientPort["preparePermanentDeleteSelection"]>[0],
+  ): ReturnType<ApiClientPort["preparePermanentDeleteSelection"]> {
+    return this.localCommands.preparePermanentDeleteSelection(request);
+  }
   restoreJob = this.local("restoreJob");
   restoreJobs = this.local("restoreJobs");
   hideJob = this.local("hideJob");
@@ -658,19 +777,19 @@ export class DemoApiClientAdapter implements ApiClientPort {
   runPendingPreparation = this.unsupported("runPendingPreparation");
   correctScore = this.local("correctScore");
   resetStaleScoresForRescore = this.local("resetStaleScoresForRescore");
-  rescoreJob = this.simulated("rescoreJob");
+  rescoreJob = this.unsupported("rescoreJob");
   refreshCompensation = this.unsupported("refreshCompensation");
   refreshAllCompensation = this.unsupported("refreshAllCompensation");
   rescoreJobsNotOnCurrentScoringPolicy = this.unsupported(
     "rescoreJobsNotOnCurrentScoringPolicy",
   );
-  retailorJob = this.simulated("retailorJob");
+  retailorJob = this.unsupported("retailorJob");
   tailorJob = this.unsupported("tailorJob");
   retailorCurrentPolicy = this.unsupported("retailorCurrentPolicy");
   cancelWorkflowRun = this.local("cancelWorkflowRun");
   openArtifact = this.rehearsed("openArtifact");
   updateProfile = this.local("updateProfile");
-  importResume = this.local("importResume");
+  importResume = this.unsupported("importResume");
   updateSettings = this.local("updateSettings");
   extensionCapabilityToken = this.unsupported("extensionCapabilityToken");
   discoveryBrowserBridgeStatus = this.unsupported(
@@ -701,11 +820,11 @@ export class DemoApiClientAdapter implements ApiClientPort {
   scheduleOutreachFollowUp = this.local("scheduleOutreachFollowUp");
   completeOutreachFollowUp = this.local("completeOutreachFollowUp");
   dismissOutreachFollowUp = this.local("dismissOutreachFollowUp");
-  retryStage = this.simulated("retryStage");
-  runJobStage = this.simulated("runJobStage");
+  retryStage = this.unsupported("retryStage");
+  runJobStage = this.unsupported("runJobStage");
   generateMaterials = this.unsupported("generateMaterials");
   generateInterviewPrep = this.unsupported("generateInterviewPrep");
-  applyJob = this.rehearsed("applyJob");
+  applyJob = this.unsupported("applyJob");
   cancelJobAction = this.local("cancelJobAction");
   markApplied = this.rehearsed("markApplied");
   markSkipped = this.local("markSkipped");
@@ -744,15 +863,6 @@ export class DemoApiClientAdapter implements ApiClientPort {
   ): ApiClientPort[TMethod] {
     return ((...args: Parameters<ApiClientPort[TMethod]>) =>
       this.localCommands.execute(method, args)) as ApiClientPort[TMethod];
-  }
-
-  private simulated<
-    TMethod extends import("./contracts.js").DemoSimulatedAsyncOperation,
-  >(method: TMethod): ApiClientPort[TMethod] {
-    return ((...args: Parameters<ApiClientPort[TMethod]>) =>
-      this.trackDemoAction(method, () =>
-        this.scenarios.execute(method, args),
-      )) as unknown as ApiClientPort[TMethod];
   }
 
   private rehearsed<TMethod extends DemoInitialExternalRehearsalOperation>(
@@ -943,22 +1053,6 @@ function profilePreviewUrl(
 function withCacheKey(url: `/demo/${string}`, cacheKey?: CacheKey): string {
   if (cacheKey === undefined || cacheKey === "") return url;
   return `${url}?v=${encodeURIComponent(String(cacheKey))}`;
-}
-
-function filterJob(
-  job: JobSummary,
-  query: ReturnType<typeof JobListQuerySchema.parse>,
-  normalizedQuery: string,
-): boolean {
-  const closed = CLOSED_ACTIVE_STATES.has(job.activeState);
-  if (query.deleted === "active" && (job.deletedAt || job.hiddenAt || closed))
-    return false;
-  if (query.deleted === "closed" && (job.deletedAt || job.hiddenAt || !closed))
-    return false;
-  if (query.deleted === "deleted" && (!job.deletedAt || job.hiddenAt))
-    return false;
-  if (query.deleted === "hidden" && !job.hiddenAt) return false;
-  return sharedFilterJob(job, query, normalizedQuery);
 }
 
 function filterWorkflowRun(

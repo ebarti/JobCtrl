@@ -2,10 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const INSTALLATION_ID = "00000000-0000-4000-8000-000000000099";
@@ -17,16 +19,17 @@ afterEach(() => {
   }
 });
 
-function fixture() {
+function fixture(overrides: Partial<Parameters<typeof buildApp>[0]> = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-browser-bridge-"));
   dirs.push(dir);
   const dbPath = path.join(dir, "jobctrl.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const app = buildApp({
     appDir: dir,
     dbPath,
     configPath: path.join(dir, "config.json"),
     jobUrlValidator: async () => ({ allowed: true }),
+    ...overrides,
   });
   const token = fs.readFileSync(path.join(dir, "extension-capability-token"), "utf8").trim();
   return { app, token, dir };
@@ -60,34 +63,39 @@ describe("live Discovery browser routes", () => {
     }
   });
 
-  it("rejects a Discovery launch before dispatch when the live extension is offline", async () => {
-    const { app } = fixture();
+  it.each([true, false])("dispatches offline Discovery only with a healthy worker (%s)", async (healthy) => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "fixture-discovery" }));
+    const { app, dir } = fixture({ actionDispatcher: dispatch, requireHealthyWorkerForActions: true });
+    if (healthy) {
+      const dbPath = path.join(dir, "jobctrl.db");
+      const db = new Database(dbPath);
+      db.exec(`CREATE TABLE IF NOT EXISTS worker_runtime_heartbeats (
+        worker_id TEXT PRIMARY KEY, component TEXT NOT NULL, pid INTEGER NOT NULL,
+        hostname TEXT NOT NULL, app_dir TEXT NOT NULL, db_path TEXT NOT NULL,
+        task_queue TEXT NOT NULL, started_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
+        max_concurrent_activities INTEGER, activity_executor_max_workers INTEGER
+      )`);
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO worker_runtime_heartbeats (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at, max_concurrent_activities, activity_executor_max_workers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run("fixture-worker", "temporal-worker", 1234, "localhost", dir, dbPath, "jobctrl-default", now, now, 8, 10);
+      db.close();
+    }
     try {
-      const response = await app.inject({
-        method: "POST",
-        url: "/v1/pipeline/actions/run-stage",
-        payload: { stages: ["discover"], limit: 1 },
-      });
-
-      expect(response.statusCode).toBe(503);
-      expect(response.json()).toMatchObject({
-        ok: false,
-        error: "discovery_extension_unavailable",
-      });
-      expect(response.json().message).toContain("current Chrome profile");
-      expect(response.json().message).toContain("does not use a copied profile");
-
-      const compositeResponse = await app.inject({
-        method: "POST",
-        url: "/v1/pipeline/actions/run-stage",
-        payload: { stages: ["score", "discover"], limit: 1 },
-      });
-      expect(compositeResponse.statusCode).toBe(503);
-      expect(compositeResponse.json()).toMatchObject({
-        ok: false,
-        error: "discovery_extension_unavailable",
-      });
-
+      const status = await app.inject({ method: "GET", url: "/v1/discovery/browser-extension/status" });
+      expect(status.json()).toMatchObject({ connected: false });
+      for (const stages of [["discover"], ["score", "discover"]]) {
+        const response = await app.inject({
+          method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages, limit: 1 },
+        });
+        expect(response.statusCode, response.body).toBe(healthy ? 202 : 503);
+        if (healthy) {
+          expect(dispatch).toHaveBeenLastCalledWith(expect.objectContaining({ stages }), expect.anything());
+        } else {
+          expect(response.json()).toMatchObject({ ok: false, error: "worker_runtime_unavailable" });
+          expect(dispatch).not.toHaveBeenCalled();
+        }
+      }
+      expect(dispatch).toHaveBeenCalledTimes(healthy ? 2 : 0);
     } finally {
       await app.close();
     }
@@ -447,7 +455,7 @@ describe("live Discovery browser routes", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-browser-selection-race-"));
     dirs.push(dir);
     const dbPath = path.join(dir, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     let validationCount = 0;
     let releaseLeaseValidation: () => void = () => undefined;
     const leaseValidationGate = new Promise<void>((resolve) => {
@@ -553,7 +561,7 @@ describe("live Discovery browser routes", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-browser-result-selection-race-"));
     dirs.push(dir);
     const dbPath = path.join(dir, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     let validationCount = 0;
     let releaseResultValidation: () => void = () => undefined;
     const resultValidationGate = new Promise<void>((resolve) => {
@@ -708,7 +716,7 @@ describe("live Discovery browser routes", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-browser-rebind-"));
     dirs.push(dir);
     const dbPath = path.join(dir, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     let validationCount = 0;
     const app = buildApp({
       appDir: dir,

@@ -7,6 +7,7 @@ import json
 import time
 
 import httpx
+import pytest
 
 from jobctrl.infrastructure.gmail.auth import (
     GMAIL_SEND_SCOPE,
@@ -168,6 +169,9 @@ def test_gmail_client_reads_message_body(monkeypatch) -> None:
 
 
 def test_gmail_client_sends_email_application_with_attachment(monkeypatch, tmp_path) -> None:
+    from email import policy
+    from email.parser import BytesParser
+
     monkeypatch.setattr("jobctrl.infrastructure.gmail.client.get_access_token", lambda: "token")
     monkeypatch.setattr(
         "jobctrl.infrastructure.gmail.client.load_token",
@@ -175,6 +179,8 @@ def test_gmail_client_sends_email_application_with_attachment(monkeypatch, tmp_p
     )
     attachment = tmp_path / "resume.pdf"
     attachment.write_bytes(b"%PDF")
+    approved_bytes = attachment.read_bytes()
+    attachment.write_bytes(b"unapproved replacement")
     seen: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -190,13 +196,40 @@ def test_gmail_client_sends_email_application_with_attachment(monkeypatch, tmp_p
         to_email="apply@example.com",
         subject="Application for Staff Engineer",
         body="Hello",
-        attachment_path=str(attachment),
+        attachment_bytes=approved_bytes,
         attachment_name="resume.pdf",
     )
 
     assert result == {"id": "m1", "threadId": "t1"}
     assert seen["auth"] == "Bearer token"
     assert seen["raw"]
+    raw = str(seen["raw"])
+    message = BytesParser(policy=policy.default).parsebytes(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+    part, = message.iter_attachments()
+    assert part.get_payload(decode=True) == approved_bytes
+
+
+@pytest.mark.parametrize("data", [None, b"", bytearray(b"mutable"), memoryview(b"mutable")])
+def test_owned_sender_refuses_missing_or_mutable_bytes_without_path_fallback(tmp_path, data) -> None:
+    from dataclasses import replace
+    from jobctrl.domain.ports.apply import EmailApplicationCandidate, EmailApplicationOperation
+    from jobctrl.infrastructure.apply.email_sender import GmailEmailApplicationSender
+
+    class UnexpectedClient:
+        def send_email_application(self, **kwargs):
+            raise AssertionError("Unvalidated bytes cannot reach the Gmail client")
+
+    attachment = tmp_path / "readable.pdf"
+    attachment.write_bytes(b"unapproved path fallback")
+    candidate = EmailApplicationCandidate(
+        recipient_email="apply@example.test", subject="Synthetic", body="Synthetic",
+        attachment_artifact_id="synthetic-pdf", attachment_name="resume.pdf", attachment_path=str(attachment),
+        attachment_bytes=data,
+    )
+    operation = EmailApplicationOperation("local", "job-1", "run-1", "email:run-1", "1",
+                                          replace(candidate, attachment_bytes=None).fingerprint())
+    with pytest.raises(ValueError, match="bytes were not authorized"):
+        GmailEmailApplicationSender(client=UnexpectedClient()).send_email_application(candidate, operation=operation)
 
 
 def test_gmail_client_refuses_send_without_send_scope(monkeypatch, tmp_path) -> None:
@@ -213,7 +246,7 @@ def test_gmail_client_refuses_send_without_send_scope(monkeypatch, tmp_path) -> 
             to_email="apply@example.com",
             subject="Application",
             body="Hello",
-            attachment_path=str(attachment),
+            attachment_bytes=attachment.read_bytes(),
             attachment_name="resume.pdf",
         )
     except GmailAuthError as exc:
@@ -490,3 +523,37 @@ def test_mcp_server_rejects_raw_gmail_tool_names() -> None:
 
     assert response["error"]["code"] == -32000
     assert "Unknown Gmail tool" in response["error"]["message"]
+
+
+def test_email_sender_rechecks_confirmation_and_exact_candidate_binding():
+    from dataclasses import replace
+    import pytest
+    from jobctrl.domain.ports.apply import EmailApplicationCandidate, EmailApplicationOperation
+    from jobctrl.infrastructure.apply.email_sender import GmailEmailApplicationSender
+    from jobctrl.infrastructure.gmail.client import GmailSendError
+
+    candidate = EmailApplicationCandidate("apply@example.com", "Subject", "Synthetic body", "artifact-1", "resume.pdf", "/owned/resume.pdf", b"synthetic attachment")
+    assert candidate.fingerprint() == replace(candidate, attachment_bytes=None).fingerprint()
+    operation = EmailApplicationOperation("local", "job-1", "run-1", "email:run-1", "1", candidate.fingerprint())
+    class Client:
+        def __init__(self):
+            self.calls = 0
+            self.result = {"id": "m1"}
+        def send_email_application(self, **_kwargs):
+            self.calls += 1
+            return self.result
+    client = Client()
+    sender = GmailEmailApplicationSender(client=client)
+    with pytest.raises(ValueError, match="binding_mismatch"):
+        sender.send_email_application(replace(candidate, body="different candidate"), operation=operation)
+    assert client.calls == 0
+    for payload in ({}, {"id": 1}, {"id": ""}, {"id": "m1", "threadId": None}, []):
+        client.result = payload
+        with pytest.raises(GmailSendError, match="invalid_confirmation"):
+            sender.send_email_application(candidate, operation=operation)
+    client.result = {"id": "m1", "payload": {"body": "private-provider-canary"}}
+    receipt = sender.send_email_application(candidate, operation=operation)
+    assert receipt.confirms(operation)
+    assert receipt.thread_id is None
+    assert "private-provider-canary" not in str(receipt)
+    assert client.calls == 6

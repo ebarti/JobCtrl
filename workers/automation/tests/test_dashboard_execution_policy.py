@@ -28,19 +28,21 @@ def test_saved_execution_policy_ignores_legacy_environment_values(tmp_path, monk
         "JOBCTRL_APPLY_TIMEOUT_SECONDS": "60",
     }.items():
         monkeypatch.setenv(key, value)
-    _dashboard(tmp_path, monkeypatch, {
-        "analysis_legs": ["claude", "google"],
-        "tailoring_generator_models": ["claude:sonnet", "codex:gpt-5.5"],
-        "tailoring_judge_model": "claude:opus",
-        "tailoring_judge_min_score": 0.9,
-        "apply_max_budget_usd": 0,
-        "apply_timeout_seconds": 1200,
-    })
+    _dashboard(
+        tmp_path,
+        monkeypatch,
+        {
+            "analysis_legs": ["claude", "google"],
+            "tailoring_generator_models": ["claude:sonnet", "codex:gpt-5.5"],
+            "tailoring_judge_model": "claude:opus",
+            "apply_max_budget_usd": 0,
+            "apply_timeout_seconds": 1200,
+        },
+    )
 
     assert setup_probes.enabled_analysis_legs() == ("claude", "antigravity")
     assert config.get_tailoring_generator_models() == ("claude:sonnet", "codex:gpt-5.5")
     assert config.get_tailoring_judge_model() == "claude:opus"
-    assert config.get_tailoring_judge_min_score() == 0.9
     assert config.get_apply_max_budget_usd() == 0
     assert config.get_apply_timeout_seconds() == 1200
 
@@ -49,10 +51,8 @@ def test_explicit_tailoring_request_stays_ahead_of_legacy_environment_and_saved_
     _dashboard(tmp_path, monkeypatch, {"tailoring_generator_models": ["claude:sonnet"]})
     monkeypatch.setenv("TAILORING_GENERATOR_MODELS", "codex:gpt-5.5")
 
-    policy = _build_llm_policy(tailor_models=("google:gemini-2.5-pro",), tailor_judge_min_score=0.7)
-
+    policy = _build_llm_policy(tailor_models=("google:gemini-2.5-pro",), llm_model=None)
     assert policy.candidate_models == ("google:gemini-2.5-pro",)
-    assert policy.judge_min_score == 0.7
 
 
 def test_discovery_automation_save_preserves_existing_search_settings(tmp_path, monkeypatch) -> None:
@@ -61,7 +61,7 @@ def test_discovery_automation_save_preserves_existing_search_settings(tmp_path, 
     monkeypatch.setattr(config, "DB_PATH", db_path)
 
     existing = config._default_discovery_search_config()
-    existing["boards"] = ["greenhouse"]
+    existing["boards"] = ["glassdoor"]
     existing["automation"] = {"min_fit_score": 9}
     config._save_discovery_search_config_to_db(existing)
 
@@ -75,7 +75,7 @@ def test_discovery_automation_save_preserves_existing_search_settings(tmp_path, 
         "auto_apply": True,
         "apply_approval_required": False,
     }
-    assert config._load_discovery_search_config_from_db()["boards"] == ["greenhouse"]
+    assert config._load_discovery_search_config_from_db()["boards"] == ["glassdoor"]
 
 
 def test_disabling_discovery_automation_keeps_approval_fail_closed(tmp_path, monkeypatch) -> None:

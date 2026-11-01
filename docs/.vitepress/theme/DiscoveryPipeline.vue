@@ -156,12 +156,12 @@ const stages: readonly DiscoveryStage[] = [
   --discovery-muted: var(--vp-c-text-2);
   --discovery-local: var(--vp-c-brand-1);
   --discovery-local-soft: var(--vp-c-brand-soft);
-  --discovery-network: #b45309;
-  --discovery-network-soft: #fffbeb;
-  --discovery-stored: #047857;
-  --discovery-stored-soft: #ecfdf5;
-  --discovery-next: #6d28d9;
-  --discovery-next-soft: #f5f3ff;
+  --discovery-network: var(--warning-text);
+  --discovery-network-soft: var(--vp-c-bg-soft);
+  --discovery-stored: var(--vp-c-text-1);
+  --discovery-stored-soft: var(--vp-c-bg-soft);
+  --discovery-next: var(--vp-c-text-1);
+  --discovery-next-soft: var(--vp-c-bg-soft);
   position: relative;
   display: grid;
   gap: 1rem;
@@ -170,23 +170,21 @@ const stages: readonly DiscoveryStage[] = [
   padding: clamp(0.9rem, 2.5vw, 1.35rem);
   overflow: hidden;
   border: 1px solid var(--discovery-border);
-  border-radius: 1.2rem;
-  background:
-    radial-gradient(circle at 94% 3%, color-mix(in oklab, var(--discovery-network-soft), transparent 24%), transparent 28%),
-    radial-gradient(circle at 4% 94%, color-mix(in oklab, var(--discovery-stored-soft), transparent 28%), transparent 32%),
-    var(--discovery-panel);
-  box-shadow: 0 16px 42px color-mix(in srgb, #0f172a 10%, transparent);
+  border-top: 3px solid var(--vp-c-text-1);
+  border-radius: var(--jh-doc-radius);
+  background: var(--vp-c-bg);
+  box-shadow: none;
   color: var(--discovery-text);
 }
 
 :global(.dark) .discovery-pipeline {
-  --discovery-network: #fbbf24;
-  --discovery-network-soft: color-mix(in oklab, #78350f, var(--vp-c-bg) 58%);
-  --discovery-stored: #34d399;
-  --discovery-stored-soft: color-mix(in oklab, #064e3b, var(--vp-c-bg) 52%);
-  --discovery-next: #c4b5fd;
-  --discovery-next-soft: color-mix(in oklab, #4c1d95, var(--vp-c-bg) 62%);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 0.28);
+  --discovery-network: var(--warning-text);
+  --discovery-network-soft: var(--vp-c-bg-soft);
+  --discovery-stored: var(--vp-c-text-1);
+  --discovery-stored-soft: var(--vp-c-bg-soft);
+  --discovery-next: var(--vp-c-text-1);
+  --discovery-next-soft: var(--vp-c-bg-soft);
+  box-shadow: none;
 }
 
 .discovery-pipeline__caption {
@@ -242,7 +240,7 @@ const stages: readonly DiscoveryStage[] = [
   min-block-size: 1.85rem;
   padding-inline: 0.62rem;
   border: 1px solid currentColor;
-  border-radius: 999px;
+  border-radius: var(--jh-doc-radius);
   background: var(--discovery-card);
   font-size: 0.7rem;
   font-weight: 750;
@@ -289,7 +287,7 @@ const stages: readonly DiscoveryStage[] = [
   place-items: center;
   margin-block-start: 0.7rem;
   border: 1px solid currentColor;
-  border-radius: 0.72rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--discovery-local-soft);
   color: var(--discovery-local);
   font-size: 0.67rem;
@@ -307,9 +305,9 @@ const stages: readonly DiscoveryStage[] = [
   padding: 0.72rem 0.78rem;
   border: 1px solid var(--discovery-border);
   border-inline-start: 3px solid var(--discovery-local);
-  border-radius: 0.85rem;
+  border-radius: var(--jh-doc-radius);
   background: color-mix(in oklab, var(--discovery-card), transparent 1%);
-  box-shadow: 0 5px 16px color-mix(in srgb, #0f172a 6%, transparent);
+  box-shadow: none;
 }
 
 .discovery-pipeline__icon {
@@ -318,7 +316,7 @@ const stages: readonly DiscoveryStage[] = [
   block-size: 2.35rem;
   place-items: center;
   border: 1px solid currentColor;
-  border-radius: 0.7rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--discovery-local-soft);
   color: var(--discovery-local);
 }
@@ -351,7 +349,7 @@ const stages: readonly DiscoveryStage[] = [
   min-block-size: 1.55rem;
   padding-inline: 0.48rem;
   border: 1px solid currentColor;
-  border-radius: 999px;
+  border-radius: var(--jh-doc-radius);
   color: var(--discovery-local);
   font-size: 0.63rem;
   font-weight: 800;
@@ -366,7 +364,7 @@ const stages: readonly DiscoveryStage[] = [
 
 .discovery-pipeline__details > span {
   padding: 0.18rem 0.4rem;
-  border-radius: 0.4rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--discovery-panel);
   color: var(--discovery-muted);
   font-size: 0.65rem;
@@ -450,7 +448,7 @@ const stages: readonly DiscoveryStage[] = [
 @media (max-width: 38rem) {
   .discovery-pipeline {
     padding: 0.75rem;
-    border-radius: 1rem;
+    border-radius: var(--jh-doc-radius);
   }
 
   .discovery-pipeline__card {
@@ -483,7 +481,7 @@ const stages: readonly DiscoveryStage[] = [
     inline-size: 1.95rem;
     block-size: 1.95rem;
     margin-block-start: 0.72rem;
-    border-radius: 0.62rem;
+    border-radius: var(--jh-doc-radius);
     font-size: 0.62rem;
   }
 }

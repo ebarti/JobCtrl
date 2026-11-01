@@ -1,3 +1,4 @@
+import { LocalStorageAdapter } from "../src/shared/adapters/local/LocalStorageAdapter.js";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
 import { JobCtrlApiClient } from "@jobctrl/api-client";
@@ -25,7 +26,9 @@ import type { Ports } from "../src/shared/providers/PortsProvider.js";
 
 class FakeSubscription implements EventStreamSubscription {
   private readonly handlers = new Set<(event: DomainEventEnvelope) => void>();
-  private readonly statusHandlers = new Set<(status: EventStreamStatus) => void>();
+  private readonly statusHandlers = new Set<
+    (status: EventStreamStatus) => void
+  >();
   private current: EventStreamStatus = "open";
 
   on(handler: (event: DomainEventEnvelope) => void): () => void {
@@ -80,6 +83,13 @@ class InMemoryStoragePort implements StoragePort {
   remove(key: string): void {
     this.map.delete(key);
   }
+  async transact<T>(
+    key: string,
+    operation: (current: string | null) => { result: T; write?: string },
+    signal?: AbortSignal,
+  ): Promise<T> {
+    return new LocalStorageAdapter().transact(key, operation, signal);
+  }
 }
 
 class StorySessionPort implements SessionPort {
@@ -118,7 +128,11 @@ class StoryOpenInOsPort implements OpenInOsPort {
 class StoryTelemetryPort implements TelemetryPort {
   event(_name: string, _payload?: Record<string, unknown>): void {}
   error(_err: unknown, _payload?: Record<string, unknown>): void {}
-  timing(_name: string, _durationMs: number, _payload?: Record<string, unknown>): void {}
+  timing(
+    _name: string,
+    _durationMs: number,
+    _payload?: Record<string, unknown>,
+  ): void {}
 }
 
 class StoryFeatureFlagPort implements FeatureFlagPort {
@@ -130,6 +144,7 @@ class StoryFeatureFlagPort implements FeatureFlagPort {
 export function buildStoryPorts(): Ports {
   return {
     api: new JobCtrlApiClient(),
+    artifactDownload: { downloadDocx: async () => {} },
     eventStream: new StoryEventStreamPort(),
     storage: new InMemoryStoragePort(),
     session: new StorySessionPort(),

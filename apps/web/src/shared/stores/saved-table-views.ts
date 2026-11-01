@@ -1,9 +1,9 @@
 import {
   JOB_APPLY_STATUS_FILTERS,
   JOB_SORT_FIELDS,
+  JOB_STATES,
   STAGES,
   STAGE_STATES,
-  type JobSortField,
   type SavedTableView,
   type SavedTableViewDensity,
   type SavedTableViewGridFilters,
@@ -17,7 +17,7 @@ import {
   type StateStorage,
 } from "zustand/middleware";
 
-export const SAVED_TABLE_VIEW_STORE_VERSION = 2;
+export const SAVED_TABLE_VIEW_STORE_VERSION = 4;
 export const SAVED_TABLE_VIEW_SCHEMA_VERSION = 1;
 export const DEFAULT_SAVED_TABLE_VIEW_ID = "default";
 export const JOBS_TABLE_ID = "jobs" satisfies TableId;
@@ -26,6 +26,7 @@ export const JOBS_TABLE_COLUMN_IDS = [
   "fit_score",
   "title",
   "company",
+  "job_state",
   "source",
   "compensation_min_eur",
   "compensation_max_eur",
@@ -39,6 +40,39 @@ export const JOBS_TABLE_COLUMN_IDS = [
   "discovered_at",
   "apply_status",
 ] as const;
+
+export const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
+  "source",
+  "compensation_min_eur",
+  "compensation_max_eur",
+  "compensation_market",
+  "compensation_confidence",
+  "compensation_warnings",
+  "resume_template",
+  "discovered_at",
+] as const;
+
+export const DISCOVERY_SOURCES_TABLE_ID = "discovery-sources" satisfies TableId;
+export const DISCOVERY_SOURCE_COLUMN_IDS = [
+  "displayName",
+  "sourceId",
+  "type",
+  "state",
+  "priority",
+  "recommendedState",
+  "observedJobs",
+  "newJobs",
+  "lastRunCompletedAt",
+  "consecutiveFailures",
+  "activeVerificationRate",
+  "fullDescriptionSuccessRate",
+  "applyUrlSuccessRate",
+  "duplicateRate",
+  "politeness",
+  "actions",
+] as const;
+export const DISCOVERY_SOURCE_SORT_COLUMN_IDS =
+  DISCOVERY_SOURCE_COLUMN_IDS.filter((columnId) => columnId !== "actions");
 
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
 const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;
@@ -59,6 +93,7 @@ type KnownTableConfig = {
   defaultHiddenColumnIds: readonly string[];
   defaultSort: SavedTableView["sort"];
   defaultUrlFilters: SavedTableViewUrlFilters;
+  sortableColumnIds: readonly string[];
 };
 
 const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
@@ -66,11 +101,7 @@ const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
     tableId: JOBS_TABLE_ID,
     columnIds: JOBS_TABLE_COLUMN_IDS,
     fixedLeadingColumnIds: ["select"],
-    defaultHiddenColumnIds: [
-      "source",
-      "compensation_warnings",
-      "resume_template",
-    ],
+    defaultHiddenColumnIds: DEFAULT_JOBS_HIDDEN_COLUMN_IDS,
     defaultSort: { columnId: "discovered_at", direction: "desc" },
     defaultUrlFilters: {
       q: "",
@@ -80,6 +111,24 @@ const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
       deleted: "active",
       pageSize: 50,
     },
+    sortableColumnIds: JOB_SORT_FIELDS,
+  },
+  [DISCOVERY_SOURCES_TABLE_ID]: {
+    tableId: DISCOVERY_SOURCES_TABLE_ID,
+    columnIds: DISCOVERY_SOURCE_COLUMN_IDS,
+    fixedLeadingColumnIds: [],
+    defaultHiddenColumnIds: [],
+    defaultSort: { columnId: "displayName", direction: "asc" },
+    defaultUrlFilters: {
+      sourceFilters: {
+        state: {
+          operator: "contains",
+          text: "",
+          selectedValues: ["active"],
+        },
+      },
+    },
+    sortableColumnIds: DISCOVERY_SOURCE_SORT_COLUMN_IDS,
   },
 };
 
@@ -154,11 +203,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function migrateSavedTableViewsState(
+function migrateLegacyTemplateVisibility(
   value: unknown,
   persistedVersion: number,
 ): unknown {
-  if (persistedVersion >= SAVED_TABLE_VIEW_STORE_VERSION || !isRecord(value)) {
+  if (persistedVersion >= 2 || !isRecord(value)) {
     return value;
   }
   const activeViewIdByTable = isRecord(value["activeViewIdByTable"])
@@ -188,6 +237,83 @@ export function migrateSavedTableViewsState(
           ...jobsPresentation["columns"],
           hidden: [...jobsPresentation["columns"]["hidden"], "resume_template"],
         },
+      },
+    },
+  };
+}
+
+export function migrateSavedTableViewsState(
+  value: unknown,
+  persistedVersion: number,
+): unknown {
+  const migrated = migrateLegacyTemplateVisibility(value, persistedVersion);
+  const hiddenMigrated = (() => {
+    if (persistedVersion >= 3 || !isRecord(migrated)) return migrated;
+    const active = migrated["activeViewIdByTable"];
+    const presentations = migrated["presentationByTable"];
+    if (
+      !isRecord(active) ||
+      active[JOBS_TABLE_ID] !== DEFAULT_SAVED_TABLE_VIEW_ID ||
+      !isRecord(presentations)
+    )
+      return migrated;
+    const presentation = presentations[JOBS_TABLE_ID];
+    if (!isRecord(presentation) || !isRecord(presentation["columns"]))
+      return migrated;
+    const columns = presentation["columns"];
+    const oldHidden = ["source", "compensation_warnings", "resume_template"];
+    const hidden = columns["hidden"];
+    // A customized Default is a user choice, just like a named view.
+    if (
+      !Array.isArray(hidden) ||
+      hidden.length !== oldHidden.length ||
+      !oldHidden.every((id) => hidden.includes(id)) ||
+      ![
+        JOBS_TABLE_COLUMN_IDS,
+        JOBS_TABLE_COLUMN_IDS.filter((id) => id !== "job_state"),
+      ].some(
+        (order) => JSON.stringify(columns["order"]) === JSON.stringify(order),
+      ) ||
+      !isRecord(columns["widths"]) ||
+      Object.keys(columns["widths"]).length > 0
+    )
+      return migrated;
+    return {
+      ...migrated,
+      presentationByTable: {
+        ...presentations,
+        [JOBS_TABLE_ID]: {
+          ...presentation,
+          columns: { ...columns, hidden: [...DEFAULT_JOBS_HIDDEN_COLUMN_IDS] },
+        },
+      },
+    };
+  })();
+
+  if (persistedVersion >= 4 || !isRecord(hiddenMigrated)) return hiddenMigrated;
+  const active = hiddenMigrated["activeViewIdByTable"];
+  const presentations = hiddenMigrated["presentationByTable"];
+  if (
+    !isRecord(active) ||
+    active[JOBS_TABLE_ID] !== DEFAULT_SAVED_TABLE_VIEW_ID ||
+    !isRecord(presentations)
+  )
+    return hiddenMigrated;
+  const presentation = presentations[JOBS_TABLE_ID];
+  if (!isRecord(presentation) || !isRecord(presentation["columns"]))
+    return hiddenMigrated;
+  const columns = presentation["columns"];
+  const legacyOrder = JOBS_TABLE_COLUMN_IDS.filter((id) => id !== "job_state");
+  if (JSON.stringify(columns["order"]) !== JSON.stringify(legacyOrder)) {
+    return hiddenMigrated;
+  }
+  return {
+    ...hiddenMigrated,
+    presentationByTable: {
+      ...presentations,
+      [JOBS_TABLE_ID]: {
+        ...presentation,
+        columns: { ...columns, order: [...JOBS_TABLE_COLUMN_IDS] },
       },
     },
   };
@@ -280,15 +406,18 @@ function normalizeSort(
   if (
     typeof columnId === "string" &&
     config.columnIds.includes(columnId) &&
-    isOneOf(columnId, JOB_SORT_FIELDS) &&
+    config.sortableColumnIds.includes(columnId) &&
     (direction === "asc" || direction === "desc")
   ) {
-    return { columnId: columnId as JobSortField, direction };
+    return { columnId, direction };
   }
   return config.defaultSort;
 }
 
-function normalizeUrlFilters(value: unknown): SavedTableViewUrlFilters {
+function normalizeUrlFilters(
+  value: unknown,
+  config: KnownTableConfig,
+): SavedTableViewUrlFilters {
   const source = isRecord(value) ? value : {};
   const next: SavedTableViewUrlFilters = {};
   if (typeof source["q"] === "string") next.q = source["q"];
@@ -299,6 +428,13 @@ function normalizeUrlFilters(value: unknown): SavedTableViewUrlFilters {
   }
   if (isOneOf(source["deleted"], JOB_DELETED_VIEW_FILTERS)) {
     next.deleted = source["deleted"];
+  }
+  if (Array.isArray(source["jobStates"])) {
+    const rawJobStates = source["jobStates"];
+    const jobStates = JOB_STATES.filter((jobState) =>
+      rawJobStates.includes(jobState),
+    );
+    if (jobStates.length) next.jobStates = jobStates;
   }
   for (const key of ["pageSize", "minFitScore", "maxFitScore"] as const) {
     const numeric = Number(source[key]);
@@ -311,6 +447,9 @@ function normalizeUrlFilters(value: unknown): SavedTableViewUrlFilters {
     if (typeof timestamp === "string" && timestamp.trim()) {
       next[key] = timestamp.trim();
     }
+  }
+  if (source["sourceFilters"] !== undefined) {
+    next.sourceFilters = normalizeGridFilters(source["sourceFilters"], config);
   }
   return next;
 }
@@ -423,7 +562,7 @@ function normalizeSnapshot(
     columns: normalizeColumns(value.columns, config),
     density: normalizeDensity(value.density),
     sort: normalizeSort(value.sort, config),
-    urlFilters: normalizeUrlFilters(value.urlFilters),
+    urlFilters: normalizeUrlFilters(value.urlFilters, config),
     gridFilters: normalizeGridFilters(value.gridFilters, config),
     grouping: normalizeGrouping(value.grouping, config),
     colorRules: normalizeColorRules(value.colorRules, config),
@@ -464,7 +603,7 @@ function normalizeView(
     columns: normalizeColumns(value["columns"], config),
     density: normalizeDensity(value["density"]),
     sort: normalizeSort(value["sort"], config),
-    urlFilters: normalizeUrlFilters(value["urlFilters"]),
+    urlFilters: normalizeUrlFilters(value["urlFilters"], config),
     gridFilters: normalizeGridFilters(value["gridFilters"], config),
     grouping: normalizeGrouping(value["grouping"], config),
     colorRules: normalizeColorRules(value["colorRules"], config),

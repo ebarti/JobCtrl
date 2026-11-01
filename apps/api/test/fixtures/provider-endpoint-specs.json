@@ -1,0 +1,236 @@
+{
+  "providerStatus": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "providers": {
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "codex",
+                  "claude",
+                  "google"
+                ]
+              },
+              "configured": {
+                "type": "boolean"
+              },
+              "ready": {
+                "type": "boolean"
+              },
+              "mode": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 240
+              }
+            },
+            "required": [
+              "provider",
+              "configured",
+              "ready",
+              "mode"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "providers",
+        "ok"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "providerModels": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "providers": {
+          "minItems": 3,
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "codex",
+                  "claude",
+                  "google"
+                ]
+              },
+              "configured": {
+                "type": "boolean"
+              },
+              "ready": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string",
+                "const": "live"
+              },
+              "models": {
+                "maxItems": 512,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "isDefault": {
+                      "type": "boolean"
+                    },
+                    "supportedReasoningEfforts": {
+                      "maxItems": 32,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "reasoningEffort": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 40
+                          },
+                          "description": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 240
+                          }
+                        },
+                        "required": [
+                          "reasoningEffort"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "defaultReasoningEffort": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 40
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "displayName"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": [
+              "provider",
+              "configured",
+              "ready",
+              "source",
+              "models"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "providers",
+        "ok"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "verifyCodexProvider": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "verification": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "const": "codex"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "connected",
+                "not_configured",
+                "failed"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
+          "required": [
+            "provider",
+            "ok",
+            "status",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "ok",
+        "verification"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

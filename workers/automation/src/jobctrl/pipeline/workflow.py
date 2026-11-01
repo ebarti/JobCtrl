@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import timedelta
 from typing import Any
 
@@ -13,6 +13,7 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.infrastructure.temporal.control import execute_control_activity
     from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
     from jobctrl.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
     from jobctrl.domain.identifiers import JobId, canonical_job_id
@@ -66,11 +67,11 @@ class JobPipelineWorkflowInput:
     limit: int = 0
     validation_mode: str = "normal"
     dry_run: bool = False
+    refresh_apply_url: bool = False
     rescore: bool = False
     retailor: bool = False
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
     job_id: JobId | None = None
     job_ids: tuple[JobId, ...] = ()
     # Independently frozen ``pending_cover`` backlog for a resolved global
@@ -90,6 +91,7 @@ class JobPipelineWorkflowInput:
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     continuous: bool = False
     automatic_recovery: bool = False
+    dispatch_frontier: int | None = None
 
     def __post_init__(self) -> None:
         if self.job_id is not None:
@@ -137,6 +139,10 @@ _COVER_RETRY = RetryPolicy(
     non_retryable_error_types=_NON_RETRYABLE_ERROR_TYPES,
 )
 _DEFAULT_TIMEOUT = timedelta(minutes=30)
+# Model stages own several sequential generation, verification, and bounded
+# correction calls. Give the whole stage the existing long-work ceiling;
+# worker-loss detection remains governed by the separate heartbeat timeout.
+_MODEL_ACTIVITY_TIMEOUT = timedelta(hours=6)
 _MAX_SELECTED_BATCH_TIMEOUT = timedelta(hours=6)
 _SELECTED_BATCH_TIMEOUT_PATCH = "pipeline-selected-batch-timeout-v1"
 # Discovery does long-running external crawls and owns source-level retry,
@@ -335,9 +341,7 @@ def _resolved_material_dispatch_job_ids(
         # ``job_ids`` holds the frozen Tailor backlog in these runs; Cover
         # unions its own frozen backlog with the subset Tailor approved. A
         # ``None`` derived value means Tailor no-opped on an empty cohort.
-        return _canonical_job_ids(
-            (*payload.cover_job_ids, *(derived_preparation_job_ids or ()))
-        )
+        return _canonical_job_ids((*payload.cover_job_ids, *(derived_preparation_job_ids or ())))
     # Cover is the only requested material stage: its frozen backlog rides in
     # ``job_ids`` like any other single-cohort selection.
     return _canonical_job_ids((*payload.cover_job_ids, *_selected_job_ids(payload)))
@@ -385,7 +389,7 @@ async def _cancel_material_stage_state(
 
     if not workflow.patched("pipeline-material-cancellation-v1"):
         return
-    await workflow.execute_activity(
+    await execute_control_activity(
         cancel_preparation_state_activity,
         CancelPreparationStateInput(
             tenant_id=payload.tenant_id,
@@ -425,7 +429,6 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 validation_mode=payload.validation_mode,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
-                tailor_judge_min_score=payload.tailor_judge_min_score,
                 source_ids=payload.source_ids,
                 llm_model=payload.llm_model,
             ),
@@ -442,6 +445,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 workers=payload.workers,
                 limit=payload.limit,
                 dry_run=payload.dry_run,
+                refresh_apply_url=payload.refresh_apply_url,
                 job_ids=_selected_job_ids(payload),
                 workflow_id=workflow_id,
                 workflow_run_id=workflow_run_id,
@@ -468,7 +472,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 workflow_id=activity_owner,
                 recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
             ),
-            start_to_close_timeout=_activity_timeout(payload),
+            start_to_close_timeout=_activity_timeout(payload, stage=stage),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=replace(_SCORE_RETRY, maximum_attempts=1) if payload.automatic_recovery else _SCORE_RETRY,
         )
@@ -486,20 +490,16 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 dry_run=payload.dry_run,
                 retailor=payload.retailor,
                 job_ids=_selected_job_ids(payload),
-                current_policy_only=(
-                    payload.tailor_current_policy_only
-                    and not payload.material_selection_resolved
-                ),
+                current_policy_only=(payload.tailor_current_policy_only and not payload.material_selection_resolved),
                 suppress_existing_artifacts=payload.suppress_existing_artifacts,
                 allow_low_fit_override=payload.allow_low_fit_override,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
-                tailor_judge_min_score=payload.tailor_judge_min_score,
                 llm_model=payload.llm_model,
                 workflow_id=activity_owner,
                 recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
             ),
-            start_to_close_timeout=_activity_timeout(payload),
+            start_to_close_timeout=_activity_timeout(payload, stage=stage),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=replace(_TAILOR_RETRY, maximum_attempts=1) if payload.automatic_recovery else _TAILOR_RETRY,
         )
@@ -519,28 +519,35 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 llm_model=payload.llm_model,
                 workflow_id=activity_owner,
                 recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
+                allow_low_fit_override=payload.allow_low_fit_override,
             ),
-            start_to_close_timeout=_activity_timeout(payload),
+            start_to_close_timeout=_activity_timeout(payload, stage=stage),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=replace(_COVER_RETRY, maximum_attempts=1) if payload.automatic_recovery else _COVER_RETRY,
         )
     if stage == "apply":
         apply_job_id = _apply_child_job_id(payload)
+        child_input = ApplyWorkflowInput(
+            tenant_id=payload.tenant_id,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+            job_id=apply_job_id,
+            dry_run=payload.dry_run,
+            headless=payload.headless,
+            model=payload.model,
+            min_score=payload.min_score,
+            workers=payload.workers,
+            limit=payload.limit,
+            continuous=payload.continuous,
+            dispatch_frontier=payload.dispatch_frontier,
+        )
+        if not workflow.patched('pipeline-apply-dispatch-frontier-v1'):
+            legacy_child = asdict(child_input)
+            legacy_child.pop('dispatch_frontier')
+            child_input = legacy_child
         return await workflow.execute_child_workflow(
             ApplyWorkflow.run,
-            ApplyWorkflowInput(
-                tenant_id=payload.tenant_id,
-                expected_app_dir=payload.expected_app_dir,
-                expected_db_path=payload.expected_db_path,
-                job_id=apply_job_id,
-                dry_run=payload.dry_run,
-                headless=payload.headless,
-                model=payload.model,
-                min_score=payload.min_score,
-                workers=payload.workers,
-                limit=payload.limit,
-                continuous=payload.continuous,
-            ),
+            child_input,
             id=f"{workflow.info().workflow_id}-apply",
         )
     raise ApplicationError(
@@ -550,15 +557,27 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
 
 
 async def _check_spend(payload: JobPipelineWorkflowInput) -> None:
-    await workflow.execute_activity(
-        check_spend_budget,
-        SpendBudgetInput(tenant_id=payload.tenant_id),
-        start_to_close_timeout=timedelta(seconds=30),
-        retry_policy=RetryPolicy(maximum_attempts=1),
-    )
+    lane_by_stage = {
+        "discover": "discovery",
+        "enrich": "enrichment",
+        "score": "scoring",
+        "tailor": "tailoring",
+        "cover": "tailoring",
+        "apply": "apply",
+    }
+    lanes = tuple(dict.fromkeys(lane_by_stage[stage] for stage in payload.stages if stage in lane_by_stage))
+    for lane in lanes:
+        await execute_control_activity(
+            check_spend_budget,
+            SpendBudgetInput(tenant_id=payload.tenant_id, lane=lane),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
 
 
-def _activity_timeout(payload: JobPipelineWorkflowInput) -> timedelta:
+def _activity_timeout(payload: JobPipelineWorkflowInput, *, stage: str | None = None) -> timedelta:
+    if stage in {"score", "tailor", "cover"}:
+        return _MODEL_ACTIVITY_TIMEOUT
     if len(_selected_job_ids(payload)) <= 1:
         return _DEFAULT_TIMEOUT
     if not workflow.patched(_SELECTED_BATCH_TIMEOUT_PATCH):

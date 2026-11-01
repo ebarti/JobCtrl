@@ -12,11 +12,33 @@ participate; this page owns how that accepted input becomes a fit decision.
 For a shorter conceptual introduction, read
 [Evidence-based Job Fit Scoring](../guides/evidence-based-job-fit-scoring.md).
 
+Before a new scoring attempt, JobCtrl reuses a posting observation or a
+trustworthy, source-bound canonical capture from the last six hours. Missing,
+changed or older evidence uses the normal availability check. Usable content can
+proceed while availability stays unknown; confirmed unavailable postings stop
+new provider work while preserving the accepted score and evidence. Use Job
+Detail’s **Check availability** to retry; see
+[saved posting availability](enrichment-and-extraction.md#saved-posting-availability).
+
+Scoring also uses your saved exact-title exclusions as part of its source
+context. If those saved settings cannot be read or the exclusions are damaged,
+the attempt stops before checking the posting or starting model work. Your
+previous score and evidence remain available. Check workspace access and retry;
+if data is damaged, preserve the workspace and consult
+[Back Up And Restore](data-and-safety.md#back-up-and-restore).
+Reusing an existing score does not need to read those settings; posting
+availability and work ownership are still checked.
+
 ## How The Score Is Calculated
 
 JobCtrl does not ask a model for one opaque number and save it. The model
 classifies the evidence for each posting requirement; versioned, deterministic
 code turns those classifications into the persisted 1–10 score.
+
+Each distinct saved job has its own assessment and recorded evidence, even if
+another job has similar posting text. Repeating an unchanged assessment for the
+same job can reuse its recorded decision; scoring a different job can require
+another model call.
 
 When Discovery supplies explicit requirements, the calculation works like
 this:
@@ -26,14 +48,15 @@ this:
    from 0 to 1, and tier: must-have or nice-to-have. The structured scorer
    returns those fields with its assessment.
 2. **Classify the returned evidence.** A matched or transferable row must carry
-   at least one non-empty Candidate Profile evidence ID. The current parser
-   checks that an ID is present, but it does not yet verify that every returned
-   ID exists in the saved profile or reconcile every returned requirement
-   field with the accepted analysis. The formula therefore resolves the
-   scorer's validated structured response; inspect the evidence links, and
-   treat any **Unavailable evidence** label as a reason to correct or re-score.
+   at least one supplied Candidate Profile evidence ID. Strict determination
+   validation rejects foreign requirement/evidence IDs and unsupported quotes.
+   Scoring joins each requirement to its recorded scope in the accepted job
+   interpretation, retaining the determination ID with its contribution.
+   It does not infer scope from wording. Inspect the evidence links, and treat
+   any **Unavailable evidence** label as a reason to correct or re-score.
 3. **Apply evidence credit and requirement priority.** The current
-   `requirement-fit-v1` formula uses these values:
+   `requirement-fit-v2-scoped` formula uses these values for requirements whose
+   recorded scope is **resume** (candidate capabilities):
 
    | Evidence classification | Credit |
    | --- | ---: |
@@ -42,7 +65,12 @@ this:
    | Transferable evidence | 60% |
    | Missing, blocked, or not assessed | 0% |
 
-   A must-have requirement counts **1.25×** its saved weight; a nice-to-have
+   Eligibility, logistics and employer conditions remain assessed and visible,
+   with zero contribution to both the numerator and denominator. Their unmet
+   or unconfirmed status does not lower capability fit. Eligibility warnings
+   and hard blockers still control downstream readiness separately.
+
+   A must-have capability requirement counts **1.25×** its saved weight; a nice-to-have
    counts **1.0×**. JobCtrl then calculates weighted coverage and maps it to the
    1–10 scale:
 
@@ -56,10 +84,16 @@ this:
    places before JobCtrl totals them.
 
    Rounding is to the nearest whole number, with halves rounded up, and the
-   result is limited to 1–10. If any requirement is classified as blocked, the
+   result is limited to 1–10. If a capability requirement is classified as blocked, the
    final score is capped at 4 after the weighted calculation.
 4. **Assign the display band.** Scores 9–10 are **Excellent**, 7–8 **Strong**,
    5–6 **Plausible**, 3–4 **Stretch**, and 1–2 **Poor**.
+
+Missing or foreign scope bindings, an unrecorded interpretation source, or a
+posting with no weighted capability requirements cannot create a replacement
+score. Failed refreshes preserve the accepted score. Historical `requirement-fit-v1`
+reports keep their original calculation until an explicit successful rescore;
+that earlier formula included every requirement and capped any blocked row.
 
 For example, suppose a must-have with weight `1.0` is a direct match and a
 nice-to-have with weight `0.5` has transferable evidence:
@@ -74,6 +108,12 @@ Coverage is `1.55 / 1.75 = 0.886`, so the score is
 shows the persisted assessment, evidence links, and contribution for every
 row. Resolved profile evidence is the support you can audit; an unavailable
 reference is not proof of a match.
+
+Job Detail also shows the saved weighted coverage beside the score, including
+the recorded blocking requirements and the formula's cap when applicable. This
+context remains visible while the detail sections are collapsed. It appears
+only for the matching job and score version; a manual correction keeps its own
+explanation instead of being attributed to the earlier requirement report.
 
 ### When Requirement Rows Are Unavailable
 
@@ -128,6 +168,15 @@ surfaces rather than looking for a separate scoring page:
   evidence attached to a requirement resolves through the Evidence map into its
   title and a useful source excerpt; unresolved references are labeled
   unavailable, with the raw storage key kept under **Technical details**.
+  Each requirement's **Show evidence / Hide evidence** control operates
+  independently. Every requirement starts expanded, including matched,
+  transferable, missing, blocked, and unassessed requirements. The title, tier,
+  importance, and match status remain visible when collapsed.
+  A new analysis generation resets these defaults; ordinary page updates preserve
+  your open cards. Fit evidence must match the current analysis and requirement.
+  Resume coverage must separately match the requirement recorded when that
+  resume was generated. If that source identity is unavailable or changed,
+  coverage is marked **not recorded** while the accepted resume remains available.
 - `/evidence-map` works in the opposite direction: it shows where a profile
   achievement or skill was used by requirement-fit and generated materials.
 - `/settings` owns scoring and target guidance. Guidance influences subsequent
@@ -145,6 +194,22 @@ offers bounded current-policy maintenance for selected or outdated scores.
 A correction and a re-score are different: correction records your reviewed
 decision; re-score runs the current scoring pipeline and creates a new model-
 derived version.
+Resetting stale scores prepares their stages for another run; it does not run
+scoring. The suggested `jobctrl score --rescore` command starts the scoring
+queue for eligible enriched jobs, including jobs with existing scores; it is not
+limited to the selected reset jobs. It uses the normal provider and budget checks.
+If employer analysis changes after the last assessment, Job Detail labels the
+requirement fit outdated and offers a per-job re-score. The earlier score and
+accepted materials stay available while the new assessment runs. Jobs with an
+analysis but no saved requirement assessment are labeled not assessed instead.
+
+
+The ideal-candidate narrative describes the candidate's capabilities and the
+role's needs directly. Explanations of expert agreement or how the profile was
+determined belong in the analysis audit metadata. Generation rejects such
+process commentary and re-asks before accepting a new record. Old analyses
+remain readable; a supported analysis refresh replaces invalid prose only after
+its replacement passes validation, preserving the previous generation on failure.
 
 Low confidence means the evidence needs review, not that the fit is necessarily
 low. A high score with evidence you cannot personally support is likewise a
@@ -163,6 +228,12 @@ does not rewrite historical score versions.
 scoring work. It supplements the target-search titles owned by Discovery; it
 does not add, remove, or rename those search targets.
 
+A profile change can start preparation while other jobs are still running.
+Those jobs keep their current execution; the continuation processes other
+eligible work. If you cancel or reset a job, the older execution cannot replace
+its successor's result. A real scoring failure stays visible while accepted
+results for other jobs remain saved.
+
 ## Source Of Truth And Ownership
 
 - **The posting snapshot owns employer claims.** Analysis evidence spans must
@@ -171,8 +242,8 @@ does not add, remove, or rename those search targets.
 - **The Candidate Profile owns candidate claims.** Scoring receives an immutable
   profile snapshot; neither analysis nor scoring can add experience or skills.
 - **Discovery supplies the canonical requirement reading.** It records role
-  framing, requirements, priorities, keywords, posting evidence, synthesis,
-  and generation identity. Scoring and Tailoring consume that accepted record;
+  framing, requirements, priorities, keywords, posting evidence, canonicalization
+  policy and generation identity. Scoring and Tailoring consume that accepted record;
   its perspective and recovery rules stay in
   [Discovery](discovery.md#employer-analysis-perspectives).
 - **Scoring owns the decision record.** Versioned `job_scores` rows hold the
@@ -201,8 +272,8 @@ not for an employer ranking people.
 
 1. **Start with an enriched posting.** Scoring only consumes the usable job
    record and its captured content.
-2. **Preselect work.** Local hybrid retrieval narrows a bounded scoring pool;
-   lexical retrieval continues to work when no embedding adapter is enabled.
+2. **Order work.** A bounded scoring pool uses recency and stable IDs. Vocabulary
+   overlap does not decide which jobs are scored.
 3. **Consume the accepted employer analysis.** Discovery preparation supplies
    the evidence-linked requirement reading; scoring does not create a parallel
    interpretation of the posting.
@@ -215,7 +286,25 @@ not for an employer ranking people.
 6. **Correct or evolve deliberately.** A user correction creates a new score
    version and a calibration anchor. A new scoring policy can mark comparable
    older scores stale, but it does not silently replace them; an explicit
-   re-score adopts the current policy.
+   re-score adopts the current policy. Resetting stale work keeps the saved
+   score visible and marked stale until a matching replacement is committed.
+   Failed or canceled work, or reuse of the saved score, does not clear the
+   warning. A later policy change remains visible if an older assessment finishes.
+   Reset leaves queued or running scoring alone. Wait for it to finish, then
+   retry the reset if the score is still stale; an already-pending score is
+   ready for scoring. Reset only targets active jobs: hidden, deleted, or
+   inactive postings retain their saved scores and warnings. Unhide or restore
+   a job, or wait until the posting is active again, before retrying its reset.
+   A manual correction also retains any existing warning.
+7. **Review profile edits on request.** Saving your profile does not update scores
+   or regenerate materials. Jobs indicate when your saved score predates the
+   profile. **Update score** first asks your configured scoring model whether the
+   edits could affect this job. If they are insignificant, the score and original
+   date stay unchanged and the model's reason is available in score controls.
+   Significant edits trigger normal scoring. A failed comparison preserves the
+   saved score and reports the failure; older scores without comparison inputs
+   cannot be declared current. A scoring-policy change separately requires a new
+   assessment.
 
 ## Implementation And API Pointers
 
@@ -226,3 +315,51 @@ not for an employer ranking people.
 | Worker implementation | `workers/automation/src/jobctrl/scoring/` (`employer_analysis.py`, `scorer.py`) and `workers/automation/src/jobctrl/domain/scoring/`; canonical analysis gates and persistence live under `workers/automation/src/jobctrl/domain/materials/analysis*` and `workers/automation/src/jobctrl/infrastructure/materials/employer_analysis_repository.py`. |
 | Product components | `apps/web/src/contexts/scoring/`, `apps/web/src/contexts/materials/components/EmployerAnalysisPanel.tsx`, and the Jobs detail/triage views. |
 | Deep architecture | [Scoring](../architecture/scoring.md), [Materials → Canonical Employer Analysis](../architecture/materials.md#canonical-employer-analysis), and [Stage Walkthrough → Score](../architecture/pipeline/stages.md#score). |
+
+
+## Semantic Determination Authority
+
+Scoring work limits use recency and stable IDs. The model supplies typed blockers with spans and requirement verdicts bound to canonical IDs; code resolves only weights, caps and bands. Posting constraints, seniority, geography and requirement scope come from the accepted job interpretation. No prose reclassification or lexical retrieval decides eligibility.
+
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+## Optional company context
+
+[Company briefings](company-briefings.md) add separately dated public context beside Role Analysis. They are explicitly configured and refreshed, shared across confirmed company/job links, and do not change fit scores or posting requirements.
+
+## Selected-job demand and learning milestones
+
+Open **Selected-job demand and learning milestones** on `/evidence-map`. Name a
+cohort, choose its selection date, select up to 30 saved jobs and optionally
+record aspirations. **Review selected cohort** makes no model call. It shows
+unique selected identities, descriptions available for analysis, missing
+descriptions, exact duplicate application-identity groups (shared URL and identical posting content) and usable confirmed
+achievement sources. Repeated selections and shared recorded application URLs plus exact title/employer/description content
+count once; duplicates with different identities may remain. The selection date
+labels your cohort, not the publication dates of its postings.
+
+**Compare reviewed postings** sends the reviewed descriptions and unique,
+confirmed, supported/verified achievement evidence to the configured model in
+the Profile accounting lane. The saved comparison identifies its profile
+version, source snapshots, verbatim posting and achievement citations,
+provider/model, prompt/schema versions and determination fingerprint. Counts
+refer only to distinct analyzed postings in this cohort. Missing evidence means
+no confirmed support was found in these sources; it does not establish inability
+or a market-wide skills statistic. Declared skills and aspirations cannot serve
+as confirmed evidence.
+
+Choose each proposed learning or evidence-building milestone explicitly. Its
+origin retains the exact cohort revision, comparison, citations, completion
+criterion and selection time. Save progress and a completion-evidence statement
+or artifact reference; completion requires a nonempty statement. Status changes
+retain a revision history. These statements remain user-attested activity, never
+a readiness score or an automatic skill, Profile, fit, materials or Apply update.
+Confirm any new achievement through the existing Candidate Profile review flow.
+
+Profile/posting changes mark historical comparisons for review. Refreshing a
+cohort can change its selected jobs and aspirations; previously chosen milestones
+retain their original sources and show that the cohort changed. A failed
+refresh or stale revision preserves the last accepted comparison and your draft.
+The interface shows up to 20 recent cohorts, 100 milestones and 50 recent
+activity revisions per milestone; older records remain in local storage.
+The browser-only demo explains that this capability requires a local workspace.

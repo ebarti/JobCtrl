@@ -1,3 +1,4 @@
+import { refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
 import { test, expect } from "@playwright/test";
 import { checkA11y, injectAxe } from "axe-playwright";
 
@@ -9,8 +10,12 @@ const bullets = [
 
 test.skip(process.env["JOBCTRL_E2E_ISOLATED"] !== "1", "Requires the owned, no-subprocess API fixture");
 
+test.beforeEach(() => {
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") refreshE2eWorkerHeartbeat();
+});
+
 for (const viewport of ["desktop", "@mobile"]) {
-  test(`Profile bullet ordering preserves evidence and required status through autosave, reload, and preview ${viewport}`, async ({ page, baseURL }, testInfo) => {
+test(`Profile bullet ordering preserves evidence and required status through autosave, reload, and preview ${viewport}`, async ({ page, baseURL }, testInfo) => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => {
@@ -24,7 +29,11 @@ for (const viewport of ["desktop", "@mobile"]) {
     const entryId = entry.id;
     const headers = { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" };
     entry.bullets = bullets;
-    entry.achievement_evidence = [];
+    entry.achievement_evidence = bullets.map((source_text, index) => ({
+      id: `owned-bullet-order-${index}`, source_text, scope: "", action: source_text,
+      tools: [], metrics: [], outcome: "", evidence_strength: "draft",
+      claim_confidence: 1, user_confirmed: true, tags: [],
+    }));
     fixture.resume.tailoring_rules.required_bullets_by_experience_id[entryId] = [bullets[0]];
     try {
       const seededResponse = await page.request.patch("/v1/profile", { headers, data: { profile: fixture } });

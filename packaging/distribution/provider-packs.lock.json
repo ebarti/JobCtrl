@@ -6,40 +6,28 @@
   "packs": [
     {
       "id": "claude-agent-sdk",
-      "version": "0.2.115",
+      "version": "0.2.121",
       "owner": "Anthropic PBC",
       "source": "https://pypi.org/project/claude-agent-sdk/",
       "license": "MIT AND LicenseRef-Anthropic-Commercial-Terms",
       "redistribution": "official-download",
       "isolation": "independent-site-packages",
       "exactPackages": [
-        "attrs",
         "cffi",
         "claude-agent-sdk",
         "cryptography",
         "httpx-sse",
-        "jsonschema",
-        "jsonschema-specifications",
         "mcp",
         "pycparser",
         "pydantic-settings",
         "pyjwt",
         "python-multipart",
-        "referencing",
-        "rpds-py",
         "sniffio",
         "sse-starlette",
         "starlette",
         "uvicorn"
       ],
       "wheels": [
-        {
-          "package": "attrs",
-          "version": "26.1.0",
-          "url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl",
-          "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
-          "sizeBytes": 67548
-        },
         {
           "package": "cffi",
           "version": "2.0.0",
@@ -49,17 +37,17 @@
         },
         {
           "package": "claude-agent-sdk",
-          "version": "0.2.115",
-          "url": "https://files.pythonhosted.org/packages/a4/43/609755e7ec7c8031c05f89442154d86f55856a64d234f90845b8035c7ffb/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_arm64.whl",
-          "sha256": "8ca9eea21ed6b1b7d6b35c5bac368210214b36028c68046231ca4ea545854e80",
-          "sizeBytes": 71306972
+          "version": "0.2.121",
+          "url": "https://files.pythonhosted.org/packages/ca/3b/16325094d09ca5fbfb92cab11c6f01ff072f4077879ecfcf0004464da3c5/claude_agent_sdk-0.2.121-py3-none-macosx_11_0_arm64.whl",
+          "sha256": "6d4707c4626434e75c35f350e66312d8447221c97208f1775d4b4c6542b8d2f2",
+          "sizeBytes": 71735241
         },
         {
           "package": "cryptography",
-          "version": "49.0.0",
-          "url": "https://files.pythonhosted.org/packages/19/2a/5bb823f5bedcf80718cea7fbc95ec5515cca3769633c4b01a32be7f30e7c/cryptography-49.0.0-cp39-abi3-macosx_11_0_arm64.whl",
-          "sha256": "ec5e529fb80935c94fe7b729f9972b50e351a0e6b50aa294fd5cabb109fcc29a",
-          "sizeBytes": 4025947
+          "version": "50.0.2",
+          "url": "https://files.pythonhosted.org/packages/23/ad/ac987755d00e1e64273760228d2635ae38dae2be83e3c6e0d3289d91dec3/cryptography-50.0.2-cp39-abi3-macosx_11_0_arm64.whl",
+          "sha256": "0ec5f09541743261e66e291b4a0cbf0fb2997aeaab6d9e9c740b9dba1b58d1c2",
+          "sizeBytes": 3943588
         },
         {
           "package": "httpx-sse",
@@ -69,25 +57,11 @@
           "sizeBytes": 8960
         },
         {
-          "package": "jsonschema",
-          "version": "4.26.0",
-          "url": "https://files.pythonhosted.org/packages/69/90/f63fb5873511e014207a475e2bb4e8b2e570d655b00ac19a9a0ca0a385ee/jsonschema-4.26.0-py3-none-any.whl",
-          "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce",
-          "sizeBytes": 90630
-        },
-        {
-          "package": "jsonschema-specifications",
-          "version": "2025.9.1",
-          "url": "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl",
-          "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe",
-          "sizeBytes": 18437
-        },
-        {
           "package": "mcp",
-          "version": "1.28.1",
-          "url": "https://files.pythonhosted.org/packages/e2/5e/d118fce19f87a2e7d8101c35c8ae0ec289098a4df0ff244cec23e415aca0/mcp-1.28.1-py3-none-any.whl",
-          "sha256": "2726bca5e7193f61c5dde8b12500a6de2d9acf6d1a1c0be9e8c2e706437991df",
-          "sizeBytes": 222620
+          "version": "1.30.0",
+          "url": "https://files.pythonhosted.org/packages/f5/f4/e58bc33317c92a0203664daaf00bf6f41166cc0149e5d6870a03f7cd004a/mcp-1.30.0-py3-none-any.whl",
+          "sha256": "666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0",
+          "sizeBytes": 234581
         },
         {
           "package": "pycparser",
@@ -105,10 +79,10 @@
         },
         {
           "package": "pyjwt",
-          "version": "2.13.0",
-          "url": "https://files.pythonhosted.org/packages/a3/5e/ecf12fdb62546d64385c158514e9b2b671f7832108ef2ecd2020ce0af2d1/pyjwt-2.13.0-py3-none-any.whl",
-          "sha256": "66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728",
-          "sizeBytes": 31274
+          "version": "2.15.0",
+          "url": "https://files.pythonhosted.org/packages/e8/55/40e45bf052ee8ee12a4dfd785519660f8effa7b065442b91646ec6828619/pyjwt-2.15.0-py3-none-any.whl",
+          "sha256": "7a3742debf6b879e912dbb9819ceec1594be812452b78c5f2e2dfc56564954f8",
+          "sizeBytes": 33680
         },
         {
           "package": "python-multipart",
@@ -116,20 +90,6 @@
           "url": "https://files.pythonhosted.org/packages/e1/04/e8135ebd1ad02c56ec633277529b2602ff99ff634be76cdba5744cf554fd/python_multipart-0.0.32-py3-none-any.whl",
           "sha256": "ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23",
           "sizeBytes": 30042
-        },
-        {
-          "package": "referencing",
-          "version": "0.37.0",
-          "url": "https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl",
-          "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231",
-          "sizeBytes": 26766
-        },
-        {
-          "package": "rpds-py",
-          "version": "2026.5.1",
-          "url": "https://files.pythonhosted.org/packages/a3/43/35e3f136343aef451e545ce8c38d36c2f93c0ed88703db8b64ba2b205c68/rpds_py-2026.5.1-cp312-cp312-macosx_11_0_arm64.whl",
-          "sha256": "58b1d94308ddf0b1982f61f2eb54bf92997c9ece8a8093ef014250f4a517906c",
-          "sizeBytes": 345775
         },
         {
           "package": "sniffio",
@@ -163,7 +123,7 @@
     },
     {
       "id": "codex-provider-runtime",
-      "version": "0.144.4",
+      "version": "0.163.0",
       "owner": "OpenAI",
       "source": "https://pypi.org/project/openai-codex-cli-bin/",
       "license": "Apache-2.0",
@@ -176,17 +136,17 @@
       "wheels": [
         {
           "package": "openai-codex",
-          "version": "0.144.4",
-          "url": "https://files.pythonhosted.org/packages/17/35/5d2a13e38d91278019f18757ac10426d2649b7ec6f031818c792f64559e9/openai_codex-0.144.4-py3-none-any.whl",
-          "sha256": "de1513a6e94b9a8d7728a3b74298bc1469428ade10ba0ef2d5db47dd1cb606f5",
-          "sizeBytes": 76244
+          "version": "0.163.0",
+          "url": "https://files.pythonhosted.org/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+          "sha256": "d151e3ff8188bc2c07a962855d598b93bf87a49ec3440810e45a5f2e1167d99e",
+          "sizeBytes": 99039
         },
         {
           "package": "openai-codex-cli-bin",
-          "version": "0.144.4",
-          "url": "https://files.pythonhosted.org/packages/65/eb/64c180514a2cc3e2500e486813f5a8d7f7e349342e9bebd78d99ddd9791a/openai_codex_cli_bin-0.144.4-py3-none-macosx_11_0_arm64.whl",
-          "sha256": "05db505a9c7f020f58b70837a94e00d32a50086986c267bcc44ea97b573d4a05",
-          "sizeBytes": 116474758
+          "version": "0.163.0",
+          "url": "https://files.pythonhosted.org/packages/d1/c2/a26dc89782bb9fd94d6efeee1d22677084aba89c28fcb34c4699e490dfb1/openai_codex_cli_bin-0.163.0-py3-none-macosx_11_0_arm64.whl",
+          "sha256": "dd0e6570930167f0e15ec94c5fb494a4a5a9dceb0a97113176c7b47c826cda05",
+          "sizeBytes": 125132575
         }
       ]
     },
@@ -200,7 +160,6 @@
       "isolation": "independent-site-packages",
       "exactPackages": [
         "absl-py",
-        "attrs",
         "cffi",
         "cryptography",
         "distro",
@@ -208,8 +167,6 @@
         "google-auth",
         "google-genai",
         "httpx-sse",
-        "jsonschema",
-        "jsonschema-specifications",
         "mcp",
         "pyasn1",
         "pyasn1-modules",
@@ -217,8 +174,6 @@
         "pydantic-settings",
         "pyjwt",
         "python-multipart",
-        "referencing",
-        "rpds-py",
         "sniffio",
         "sse-starlette",
         "starlette",
@@ -235,13 +190,6 @@
           "sizeBytes": 135750
         },
         {
-          "package": "attrs",
-          "version": "26.1.0",
-          "url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl",
-          "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
-          "sizeBytes": 67548
-        },
-        {
           "package": "cffi",
           "version": "2.0.0",
           "url": "https://files.pythonhosted.org/packages/df/a2/781b623f57358e360d62cdd7a8c681f074a71d445418a776eef0aadb4ab4/cffi-2.0.0-cp312-cp312-macosx_11_0_arm64.whl",
@@ -250,10 +198,10 @@
         },
         {
           "package": "cryptography",
-          "version": "49.0.0",
-          "url": "https://files.pythonhosted.org/packages/19/2a/5bb823f5bedcf80718cea7fbc95ec5515cca3769633c4b01a32be7f30e7c/cryptography-49.0.0-cp39-abi3-macosx_11_0_arm64.whl",
-          "sha256": "ec5e529fb80935c94fe7b729f9972b50e351a0e6b50aa294fd5cabb109fcc29a",
-          "sizeBytes": 4025947
+          "version": "50.0.2",
+          "url": "https://files.pythonhosted.org/packages/23/ad/ac987755d00e1e64273760228d2635ae38dae2be83e3c6e0d3289d91dec3/cryptography-50.0.2-cp39-abi3-macosx_11_0_arm64.whl",
+          "sha256": "0ec5f09541743261e66e291b4a0cbf0fb2997aeaab6d9e9c740b9dba1b58d1c2",
+          "sizeBytes": 3943588
         },
         {
           "package": "distro",
@@ -271,10 +219,10 @@
         },
         {
           "package": "google-auth",
-          "version": "2.53.0",
-          "url": "https://files.pythonhosted.org/packages/4a/c9/db44165ba7c581268c6d46017ef63339110378305062830104fc7fa144cb/google_auth-2.53.0-py3-none-any.whl",
-          "sha256": "6e7449917c599b35126a99ec268ec6880301f2fea41dce198fe8fd83ff642b68",
-          "sizeBytes": 246071
+          "version": "2.62.0",
+          "url": "https://files.pythonhosted.org/packages/eb/a3/87fe9b7203ec2e56ea6a57c75e6d632eaf9487c7f7978cdad1d801bee0af/google_auth-2.62.0-py3-none-any.whl",
+          "sha256": "4ff4319aeb4ad128409759d397a9fcafad126d0031d241cc0dd6b9a00b43e3f3",
+          "sizeBytes": 267911
         },
         {
           "package": "google-genai",
@@ -291,25 +239,11 @@
           "sizeBytes": 8960
         },
         {
-          "package": "jsonschema",
-          "version": "4.26.0",
-          "url": "https://files.pythonhosted.org/packages/69/90/f63fb5873511e014207a475e2bb4e8b2e570d655b00ac19a9a0ca0a385ee/jsonschema-4.26.0-py3-none-any.whl",
-          "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce",
-          "sizeBytes": 90630
-        },
-        {
-          "package": "jsonschema-specifications",
-          "version": "2025.9.1",
-          "url": "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl",
-          "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe",
-          "sizeBytes": 18437
-        },
-        {
           "package": "mcp",
-          "version": "1.28.1",
-          "url": "https://files.pythonhosted.org/packages/e2/5e/d118fce19f87a2e7d8101c35c8ae0ec289098a4df0ff244cec23e415aca0/mcp-1.28.1-py3-none-any.whl",
-          "sha256": "2726bca5e7193f61c5dde8b12500a6de2d9acf6d1a1c0be9e8c2e706437991df",
-          "sizeBytes": 222620
+          "version": "1.30.0",
+          "url": "https://files.pythonhosted.org/packages/f5/f4/e58bc33317c92a0203664daaf00bf6f41166cc0149e5d6870a03f7cd004a/mcp-1.30.0-py3-none-any.whl",
+          "sha256": "666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0",
+          "sizeBytes": 234581
         },
         {
           "package": "pyasn1",
@@ -341,10 +275,10 @@
         },
         {
           "package": "pyjwt",
-          "version": "2.13.0",
-          "url": "https://files.pythonhosted.org/packages/a3/5e/ecf12fdb62546d64385c158514e9b2b671f7832108ef2ecd2020ce0af2d1/pyjwt-2.13.0-py3-none-any.whl",
-          "sha256": "66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728",
-          "sizeBytes": 31274
+          "version": "2.15.0",
+          "url": "https://files.pythonhosted.org/packages/e8/55/40e45bf052ee8ee12a4dfd785519660f8effa7b065442b91646ec6828619/pyjwt-2.15.0-py3-none-any.whl",
+          "sha256": "7a3742debf6b879e912dbb9819ceec1594be812452b78c5f2e2dfc56564954f8",
+          "sizeBytes": 33680
         },
         {
           "package": "python-multipart",
@@ -352,20 +286,6 @@
           "url": "https://files.pythonhosted.org/packages/e1/04/e8135ebd1ad02c56ec633277529b2602ff99ff634be76cdba5744cf554fd/python_multipart-0.0.32-py3-none-any.whl",
           "sha256": "ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23",
           "sizeBytes": 30042
-        },
-        {
-          "package": "referencing",
-          "version": "0.37.0",
-          "url": "https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl",
-          "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231",
-          "sizeBytes": 26766
-        },
-        {
-          "package": "rpds-py",
-          "version": "2026.5.1",
-          "url": "https://files.pythonhosted.org/packages/a3/43/35e3f136343aef451e545ce8c38d36c2f93c0ed88703db8b64ba2b205c68/rpds_py-2026.5.1-cp312-cp312-macosx_11_0_arm64.whl",
-          "sha256": "58b1d94308ddf0b1982f61f2eb54bf92997c9ece8a8093ef014250f4a517906c",
-          "sizeBytes": 345775
         },
         {
           "package": "sniffio",

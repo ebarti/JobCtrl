@@ -21,8 +21,18 @@ An asynchronous start returns `202 Accepted` with run/workflow identity after
 Temporal accepts the workflow. Eligibility no-ops and synchronous commands use
 `200`; invalid input or a failed start returns an error.
 
+The stale-score reset response and its `ScoreRescoreRequested` event provide
+`jobctrl score --rescore` as `nextAction`. That explicit command operates on the
+eligible scoring queue; the reset itself does not dispatch scoring.
+
 `POST /v1/jobs/:jobKey/actions/retry-stage` has two distinct commands. A plain
-reset (`runAfter: false`) is local and synchronous. A reset-and-run
+reset (`runAfter: false`) is local and synchronous. Enrichment resets cross the
+local Python RPC boundary and acknowledge the committed application-service
+transaction with the same `200` reset response; Temporal and a healthy activity
+worker are not required for reset-only. A mixed bulk retry containing Enrich
+uses that same transaction for the complete cohort. See
+[ownership and preservation](../architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
+A reset-and-run
 (`runAfter: true`) checks worker readiness before the reset; on
 `503 worker_runtime_unavailable`, the failed/blocked stage and its event history
 are preserved exactly so a dispatch precondition cannot erase retry evidence.
@@ -118,6 +128,14 @@ calculation: unresolved current jobs or swept backlog can keep a successful
 Discover workflow in `draining`, while a closed membership with failed or
 inconsistent planning/terminal steps produces `completed_with_issues`.
 
+A valid eligibility hold can be a completed job outcome while its canonical
+Tailor/Cover stage counts remain `blocked`. This requires an exact successful
+preparation receipt, its current successful Score owner and accepted score,
+matching non-retryable eligibility-gate provenance, and no unresolved score
+staleness. Such holds do not contribute unfinished ETA or contention demand.
+Missing/foreign evidence, later scores or owners, reset work, generic and
+retryable blocks remain unresolved; a recorded PDF lifecycle takes precedence.
+
 While the selected execution's `family:jobspy` source step is running,
 `sourceFamilies.providerProgress` may expose the latest normalized
 JobStreaming traversal observation: `site`, `phase`, `unit`, completed and
@@ -146,12 +164,28 @@ The operations reader derives the expected application directory from the
 configured database path, filters heartbeats to that resolved database/app-dir
 identity, selects the Temporal task queue named by the newest matching
 heartbeat, and aggregates fresh schema-valid rows from that queue.
-`configuredSlots`, `activeSlots`, and `availableSlots` count every activity
-slot. The active-item inventory is a separate, bounded diagnostic view: only
+`configuredSlots`, `activeSlots`, and `availableSlots` aggregate activity
+slots for fresh workers. Active slots count every activity, including kinds
+without displayed details. `blockingExecutor` separately aggregates fresh
+workers accepting, refusing, or reporting unknown blocking-work admission and the reported
+unfinished retired generations and calls. Old or malformed worker reports are
+unknown; the reported totals cover known workers only. Free Temporal slots do
+not guarantee stage admission, and unfinished calls are not confirmed stopped.
+Short controls report their own accepting, refusing, unknown and unfinished-call
+counts, independent of stage admission.
+The active-item inventory is a separate, bounded diagnostic view: only
 allowlisted activity kinds are displayed, the oldest 20 items are returned, and
 `activeItemsTotal` / `activeItemsTruncated` distinguish exact allowlisted
 cardinality from the bounded list. A worker may therefore have more active
-slots than visible items.
+slots than visible items. `activeItemsTotal = 0` alone does not prove that the
+shared pool is idle. `capacity.activeSlots` counts fresh workers only; when
+`staleWorkerCount` is positive, that sum is a lower bound and global occupancy
+is unknown. Stale heartbeats alone do not prove a worker exited.
+The inventory does not require a selected Discover
+execution: fresh standalone activity retains its safe operational references,
+and fresh idle inventory returns `0` / `false`. Selected execution projections
+only enrich matching runtime items. Stale or unavailable telemetry keeps the
+total and truncation marker `null`.
 
 The worker interceptor does not inspect activity arguments. Displayed
 identifiers are either validated safe workflow/run references or non-reversible
@@ -174,10 +208,17 @@ The snapshot has explicit freshness/capacity/task-queue variants, so callers
 must render stale, unsupported, and unavailable data honestly. Its estimator
 version is `pipeline-eta-v1`. Every numeric ETA requires fresh capacity, at
 least five successful duration samples for each relevant remaining stage, and
-bounded shared-queue contention. The overall ETA additionally waits for
-execution membership to close; per-stage and source-family ETAs can estimate
-their already-known scoped backlog while membership remains open. A null
-provider total never becomes a synthetic remaining-page count; the
+bounded shared-queue contention. A stale peer on that queue leaves its activity
+and admission unconfirmed, so contention is unbounded even when another worker
+reports fresh capacity. The overall ETA additionally waits for execution
+membership to close; per-stage and source-family ETAs can estimate their
+already-known scoped backlog while membership remains open.
+An empty selected stage or source scope remains provisional until membership
+closes; it cannot report `no_work` merely because its current demand is zero.
+Positive scoped demand can still receive a range with sufficient bounded evidence.
+The web view marks cached overall, stage, and source-family ETAs stale after a failed snapshot
+refresh until a later read succeeds. A null provider total never becomes a
+synthetic remaining-page count; the
 source-family range can instead use recent whole-family projection durations
 and the observed source concurrency when runtime inventory and queue telemetry
 are bounded. Dormant global rows outside the selected execution do not count as
@@ -185,7 +226,7 @@ live source contention until queued or active. The estimator uses recent
 canonical stage/projection durations, reports a low/high range, confidence,
 basis, sample size, timestamp, and caveat, and rounds outward.
 Otherwise the response returns a typed `calibrating`, `paused`, `stale`, or
-`unavailable` reason such as `membership_open` (overall ETA only),
+`unavailable` reason such as `membership_open` (overall or an empty selected scope),
 `worker_unavailable`, `budget_exceeded`, `telemetry_stale`, or
 `contention_unbounded`. The range is an operational estimate, not a completion
 promise.
@@ -202,6 +243,18 @@ and task-queue observations are runtime telemetry, not domain events.
 `GET /v1/workflow-runs` lists all workflow types. `GET
 /v1/workflow-runs/:runId` returns the projection-backed detail and timeline.
 `POST /v1/workflow-runs/:runId/actions/cancel` requests Temporal cancellation.
+
+For Apply workflows, `applyEvents` separately reports durable Apply rows for
+the selected tenant, job and run, including the source row ID and optional
+monotonic run-event ID. It contains only type, time, level and message, never
+the stored payload. `events` continues to describe workflow lifecycle history.
+The optional `jobId` query parameter lets the job timeline recover its history
+while the Apply projection lags; a durable start must confirm the association.
+The lookup uses the tenant/job event index and never scans other jobs' events.
+For a durable Apply saga row with a run-event ID, the stream sends a safe
+`ApplyRunEventRecorded` summary before its original event frame. Only the
+original frame advances the SSE cursor, so an interruption between the frames
+replays the summary. The summary contains no stored event payload.
 
 Run detail separates `failureDiagnostics.automaticRetryable` from
 `failureDiagnostics.manualRecoveryAvailable`; the latter means an operator can
@@ -272,11 +325,23 @@ an event row never silently replaces the event view with a job redirect.
 `GET /v1/health` distinguishes API process health from worker readiness. A
 command that requires the worker must fail clearly when the JSON-RPC/Temporal
 path is unavailable; the API must not manufacture a successful queued state.
+If startup finds an incompatible database version or schema manifest, a
+diagnostic-only API returns HTTP 503 with `database_migration_required` for
+supported older versions or `database_schema_incompatible` otherwise. It
+includes the observed and expected schema versions without database paths, and
+refuses product API routes. The web topbar distinguishes that response from a
+generic connection failure. The API must be restarted after the workspace is
+upgraded or repaired.
 
 `POST /v1/_internal/rpc` is the internal dispatch boundary. Public browser code
 uses typed product routes rather than calling arbitrary worker methods.
 
 ## Server-Sent Events
+
+Archived Smart Extract recovery uses private `ArchivedSmartPostingPrepared`
+receipts to retain an interrupted capture. These receipts are not streamed;
+completion/source-owner events contain only references, with no captured source
+body or model envelopes.
 
 `GET /v1/events/stream` tails durable tenant-scoped events and frames them as
 typed Server-Sent Events. The client:
@@ -286,10 +351,45 @@ typed Server-Sent Events. The client:
 3. invalidates or safely patches the cache, and
 4. lets projection reads reconcile the UI.
 
-Event IDs support reconnect replay; keepalives preserve quiet connections. See
-the [frontend realtime design](../architecture/frontend/realtime.md) for cache
-behavior and the [complete SSE contract](complete-contract.md#server-sent-events-—-get-v1eventsstream)
+Event IDs support reconnect replay; keepalives preserve quiet connections. A
+database access or query failure sends an `error` event without database details,
+pauses heartbeat claims, and retries database access every five seconds while
+keeping each subscriber's tenant and cursor. A successful poll of the same
+database resumes delivery and sends a heartbeat. If a database change is
+detected, the stream sends a reset for the native reconnect cursor and remains
+degraded instead of applying the old cursor to a different history. The UI shows the
+stopped-runtime recovery and reload steps. A caller that supplied `?since` must
+discard that URL cursor when creating a fresh subscription. A tab that never
+received the reset frame cannot establish continuity across an offline restore.
+Path checks cannot verify the SQLite handle if the path changes A → B → A during
+first admission, so that unsupported live replacement can emit the wrong history
+without a warning. Stop JobCtrl before restoring or replacing the database, then
+restart it and reload the page.
+An absent database at first connection remains a quiet stream. See the [frontend realtime design](../architecture/frontend/realtime.md)
+for cache behavior and the [complete SSE contract](complete-contract.md#server-sent-events-—-get-v1eventsstream)
 for framing and precedence rules.
+
+`EmailApplicationCandidateRecorded` invalidates Apply Review using its run
+reference. The canonical preview stays available through the review queue.
+Direct email events, `AgentResult`, `AssistantText`, `ToolUse`,
+`ApplyTerminalDetermination` and their `ApplyRunEventRecorded` wrappers expose
+references/status only, including on reconnect replay of historical rows.
+Historical `ApplicationFailed` reasons/results carrying the exact owned-email
+ambiguity code are bounded, including the former colon-delimited exception
+suffix. Broad activity, workflow/Apply timelines and needs-verification stage
+messages follow the same privacy policy; canonical review keeps its candidate.
+Recipients, subjects, bodies, attachment names, provider identifiers and raw
+provider errors are omitted from broad delivery. A malformed send confirmation
+produces no `ApplicationSubmitted` invalidation. Owned email success notifications
+are emitted only after confirmation, submitted fact and stage commit together;
+a rolled-back settlement emits no success invalidation. The owning run may
+publish wrappers for its exact durable records after that commit; a successor
+or a changed event cannot publish under the prior owner's authority.
+
+`DryRunCompleted` refreshes apply history, run reads, the review queue, job reads
+and Dashboard from projections. It means the dry-run finished without submitting;
+it does not apply `ApplicationSubmitted` semantics or update submission analytics.
+See the [dry-run event payload](complete-contract.md#dry-run-completion).
 
 The browser patches a tenant-scoped cache row only when the event carries
 enough canonical data to do so truthfully. That includes active job detail,
@@ -309,3 +409,19 @@ because a generation event arrived.
 | HTTP, operations snapshot, JSON-RPC, and SSE transport | `apps/api` |
 | Durable workflows and activities | `workers/automation` |
 | Browser cache and invalidation | `apps/web/src/contexts/operations` |
+
+The existing digest returns optional `companyBriefings` summaries (at most five), linking saved company context to canonical JobIds. It does not change acknowledgement semantics or initiate refresh. Internal `CompanyBriefingRecorded` events are withheld from SSE; reference-only `JobUpdated` events notify linked job/digest readers. See [Company Briefings](complete-contract.md#company-briefings).
+
+## Provider Operations And Workflow Boundaries
+
+Provider status, model catalogs and explicit Codex verification are synchronous
+registered feature handlers. Their [compatibility contract](profile-and-settings.md#provider-endpoint-compatibility)
+keeps provider readiness separate from Temporal action-worker readiness. They
+do not start or resume a workflow, emit settlement markers, refresh accepted
+materials or change approvals. Existing Discover/profile entry, handoff,
+checks, recovery and settlement remain covered by their owning workflow tests.
+
+The provider tests use a synthetic dispatcher; the workflow compatibility tests
+use the synthetic handles described in the
+[architecture reference](../architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration).
+Neither seam establishes live Temporal persistence or provider authentication.

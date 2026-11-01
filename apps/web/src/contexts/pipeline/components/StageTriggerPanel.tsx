@@ -66,7 +66,7 @@ import { useSettingsPolicyQuery } from "../../operations/hooks/useSettingsPolicy
 import type {
   DashboardSummary,
   SourceRegistryEntrySummary,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 import { CancelWorkflowRunButton } from "./CancelWorkflowRunButton.js";
 import { useRunPipelineStagesMutation } from "../hooks/useRunPipelineStagesMutation.js";
 import { useUpdatePipelineInternalConcurrencyMutation } from "../hooks/useUpdatePipelineInternalConcurrencyMutation.js";
@@ -556,7 +556,7 @@ function applyModelValue(model: string): (typeof APPLY_MODEL_OPTIONS)[number] {
 
 export interface StageTriggerPanelProps {
   readonly stagePanels?: Partial<Record<PipelineRunStage, ReactNode>>;
-  readonly stageRunBlockReasons?: Partial<Record<PipelineRunStage, string>>;
+  readonly stageRunBlockReasons?: Partial<Record<PipelineRunStage, ReactNode>>;
 }
 
 export function StageTriggerPanel({
@@ -641,7 +641,9 @@ export function StageTriggerPanel({
     progressWorkflowRunId(visibleStageProgress);
   const headerMeta = runStages.isPending
     ? "starting"
-    : (runStages.data?.status ?? (runStages.error ? "failed" : "ready"));
+    : stageRunBlockReason
+      ? "waiting"
+      : (runStages.data?.status ?? (runStages.error ? "failed" : "ready"));
   const activeStagePanel = stagePanels[activeStage] ?? null;
   const workerUnhealthy =
     health.isPending ||
@@ -653,11 +655,6 @@ export function StageTriggerPanel({
       ? `JobCtrl automation worker health check failed: ${health.error.message}`
       : (health.data?.worker.message ??
         "JobCtrl automation worker health is unavailable.");
-  const discoveryExtensionBlocked =
-    controls.discoverySource &&
-    (discoveryBrowserBridge.isPending ||
-      discoveryBrowserBridge.isError ||
-      discoveryBrowserBridge.data?.connected !== true);
 
   useEffect(() => {
     if (!settings.data || synchronizedInternalConcurrency.current) return;
@@ -706,11 +703,7 @@ export function StageTriggerPanel({
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (
-      !runAvailability.available ||
-      stageRunBlockReason ||
-      discoveryExtensionBlocked
-    ) return;
+    if (!runAvailability.available || stageRunBlockReason) return;
     const workers = boundedInternalConcurrency(internalConcurrency);
     setInternalConcurrency(String(workers));
     try {
@@ -720,16 +713,8 @@ export function StageTriggerPanel({
     }
     const workerSnapshot = await health.refetch();
     if (workerSnapshot.data?.worker.status !== "healthy") return;
-    if (controls.discoverySource) {
-      const bridgeSnapshot = await discoveryBrowserBridge.refetch();
-      if (bridgeSnapshot.data?.connected !== true) return;
-    }
     setSubmittedStage(activeStage);
     setSubmittedAt(Date.now());
-    const tailorJudgeMinScore =
-      controls.tailorModels && config.tailorJudgeMinScore.trim()
-        ? decimalValue(config.tailorJudgeMinScore, 0.82)
-        : undefined;
     runStages.mutate({
       stages: [activeStage],
       limit: controls.limit ? numberValue(config.limit, 25) : 25,
@@ -750,7 +735,6 @@ export function StageTriggerPanel({
       tailorJudgeModel: controls.tailorModels
         ? config.tailorJudgeModel.trim() || undefined
         : undefined,
-      ...(tailorJudgeMinScore === undefined ? {} : { tailorJudgeMinScore }),
       headless: controls.headless ? config.headless : false,
       model: controls.applyModel ? selectedApplyModel : "default",
       continuous: controls.continuous ? config.continuous : false,
@@ -825,7 +809,7 @@ export function StageTriggerPanel({
                 render={
                   <Button
                     id={fieldId("sources")}
-                    aria-label="Sources"
+                    aria-label={`Sources: ${selectedDiscoverySourceLabel}`}
                     aria-describedby={fieldId("sources-summary")}
                     className="w-full justify-between overflow-hidden font-normal"
                     type="button"
@@ -1035,24 +1019,6 @@ export function StageTriggerPanel({
                 }
               />
             </Field>
-            <Field className="field">
-              <FieldLabel htmlFor={fieldId("tailor-judge-min-score")}>
-                Minimum judge score
-              </FieldLabel>
-              <Input
-                id={fieldId("tailor-judge-min-score")}
-                name="tailor-judge-min-score"
-                min={0}
-                max={1}
-                step={0.01}
-                type="number"
-                placeholder="env/default"
-                value={config.tailorJudgeMinScore}
-                onChange={(event) =>
-                  patchConfig({ tailorJudgeMinScore: event.target.value })
-                }
-              />
-            </Field>
           </>
         ) : null}
       </div>
@@ -1117,6 +1083,24 @@ export function StageTriggerPanel({
         ) : null}
       </div>
 
+      {controls.discoverySource && runAvailability.available ? (
+        <p
+          className="status-line"
+          id={discoveryExtensionReasonId}
+          role="status"
+          aria-label="Extension connection"
+        >
+          {discoveryBrowserBridge.isPending
+            ? "Checking the optional Chrome extension. Discovery can run with anonymous access."
+            : discoveryBrowserBridge.isError
+              ? "Extension status unavailable. Discovery and Enrich can run with anonymous access."
+              : discoveryBrowserBridge.data?.connected === true
+                ? "Connected extension preferred for Discovery and Enrich in your current Chrome profile."
+                : "Extension offline. Discovery and Enrich can run with anonymous access."}
+          {" "}
+          <a href="/settings/browser">Browser settings</a>.
+        </p>
+      ) : null}
       <div className="stage-trigger-actions">
         <Button
           aria-describedby={
@@ -1124,16 +1108,15 @@ export function StageTriggerPanel({
               ? unavailableReasonId
               : stageRunBlockReason
                 ? blockedReasonId
-                : discoveryExtensionBlocked
+                : controls.discoverySource
                   ? discoveryExtensionReasonId
-                : undefined
+                  : undefined
           }
           disabled={
             runStages.isPending ||
             workerUnhealthy ||
             !runAvailability.available ||
-            Boolean(stageRunBlockReason) ||
-            discoveryExtensionBlocked
+            Boolean(stageRunBlockReason)
           }
           type="submit"
         >
@@ -1144,10 +1127,6 @@ export function StageTriggerPanel({
             ? health.isPending
               ? "Checking worker"
               : "Worker unavailable"
-            : discoveryExtensionBlocked
-              ? discoveryBrowserBridge.isPending
-                ? "Checking extension"
-                : "Extension offline"
             : runStages.isPending
               ? `Starting ${labelForStage(statusStage)}`
               : `Run ${labelForStage(activeStage)}`}
@@ -1181,17 +1160,6 @@ export function StageTriggerPanel({
             role="status"
           >
             {stageRunBlockReason}
-          </span>
-        ) : discoveryExtensionBlocked ? (
-          <span
-            className="status-line danger-action"
-            data-typography="body"
-            id={discoveryExtensionReasonId}
-            role="alert"
-          >
-            Discovery requires the paired JobCtrl extension in your current
-            Chrome profile. Open Chrome, then verify the connection in{" "}
-            <a href="/settings/browser">Browser settings</a>.
           </span>
         ) : workerUnhealthy ? (
           <span

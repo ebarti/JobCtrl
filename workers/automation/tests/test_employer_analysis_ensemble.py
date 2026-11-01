@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+import jobctrl.llm as legacy_llm
 from jobctrl.domain.materials.analysis import (
     EnsembleError,
     JobAnalysis,
@@ -31,7 +32,8 @@ from jobctrl.infrastructure.analysis.claude_analysis_adapter import (
     ClaudeAnalysisSynthesizer,
 )
 from jobctrl.infrastructure.analysis.codex_analysis_adapter import CodexAnalysisAdapter
-from jobctrl.infrastructure.analysis.ensemble import compute_agreement, run_ensemble
+from jobctrl.infrastructure.analysis.ensemble import run_ensemble as _run_ensemble
+from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
 
 pytestmark = pytest.mark.asyncio
 
@@ -100,6 +102,7 @@ class ResultMessage:
 class _FakeClaudeOptions:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
+        self.__dict__.update(kwargs)
 
 
 def _isolated_sdk_options() -> dict[str, object]:
@@ -183,6 +186,52 @@ class _FakeAsyncCodex:
         return self.thread
 
 
+class _CloseFailureStream:
+    def __init__(self, turn_id: str) -> None:
+        self._turn_id = turn_id
+        self._yielded = False
+
+    def __aiter__(self) -> _CloseFailureStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._yielded:
+            raise StopAsyncIteration
+        self._yielded = True
+        return SimpleNamespace(
+            payload=SimpleNamespace(
+                turn_id=self._turn_id,
+                token_usage=SimpleNamespace(total=SimpleNamespace(input_tokens=17, output_tokens=9)),
+            )
+        )
+
+    async def aclose(self) -> None:
+        raise RuntimeError("synthetic close failure")
+
+
+class _CloseFailureHandle:
+    id = "turn-close-failure"
+
+    def stream(self) -> _CloseFailureStream:
+        return _CloseFailureStream(self.id)
+
+
+class _CloseFailureThread:
+    async def turn(self, prompt: str, **kwargs: Any) -> _CloseFailureHandle:
+        return _CloseFailureHandle()
+
+
+class _CloseFailureCodex:
+    async def __aenter__(self) -> _CloseFailureCodex:
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        return None
+
+    async def thread_start(self, **kwargs: Any) -> _CloseFailureThread:
+        return _CloseFailureThread()
+
+
 # --------------------------------------------------------------------------- #
 # Adapter tests
 # --------------------------------------------------------------------------- #
@@ -224,8 +273,10 @@ class TestClaudeAdapter:
             return _gen()
 
         adapter = ClaudeAnalysisAdapter(query_fn=query, options_factory=_FakeClaudeOptions)
-        with pytest.raises(RuntimeError, match="retries exhausted"):
+        with pytest.raises(ProviderCallError) as raised:
             await adapter.draft("system", JD)
+        assert raised.value.code == "schema_validation_failed"
+        assert raised.value.envelope.additional_detail_code == "error_max_structured_output_retries"
 
     async def test_draft_opens_generation_span_with_model_and_tokens(self, in_memory_exporter) -> None:
         adapter = ClaudeAnalysisAdapter(
@@ -246,13 +297,13 @@ class TestClaudeAdapter:
         attrs = dict(span.attributes or {})
         assert attrs["langfuse.observation.type"] == "generation"
         assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"
-        # input = 1200 fresh + 50 cache_read; cache tokens count toward input processed.
-        assert attrs["gen_ai.usage.input_tokens"] == 1250
+        # Cached input is a subset of provider input and is not added twice.
+        assert attrs["gen_ai.usage.input_tokens"] == 1200
         assert attrs["gen_ai.usage.output_tokens"] == 340
         assert json.loads(attrs["langfuse.observation.usage_details"]) == {
-            "input_tokens": 1250,
+            "input_tokens": 1200,
             "output_tokens": 340,
-            "total_tokens": 1590,
+            "total_tokens": 1540,
         }
 
     async def test_draft_span_omits_tokens_when_sdk_reports_no_usage(self, in_memory_exporter) -> None:
@@ -280,8 +331,10 @@ class TestClaudeAdapter:
             return _gen()
 
         adapter = ClaudeAnalysisAdapter(query_fn=query, options_factory=_FakeClaudeOptions)
-        with pytest.raises(RuntimeError, match="retries exhausted"):
+        with pytest.raises(ProviderCallError) as raised:
             await adapter.draft("system", JD)
+        assert raised.value.code == "schema_validation_failed"
+        assert raised.value.envelope.additional_detail_code == "error_max_structured_output_retries"
 
         spans = in_memory_exporter.get_finished_spans()
         assert len(spans) == 1
@@ -333,6 +386,16 @@ class TestClaudeSynthesizer:
 
 
 class TestCodexAdapter:
+    @pytest.mark.parametrize("effort", ["low", "xhigh", "max"])
+    async def test_saved_model_effort_reaches_draft_thread_turn_and_telemetry(self, monkeypatch, in_memory_exporter, effort):
+        monkeypatch.setattr("jobctrl.infrastructure.scoring.criteria_provider.read_config_settings", lambda _path=None: {"codex_reasoning_efforts": {"gpt-6.1-sol": effort}})
+        fake = _FakeAsyncCodex(json.dumps(_grounded_dict()))
+        adapter = CodexAnalysisAdapter(async_codex_factory=lambda: fake)
+        await adapter.draft("system", JD)
+        assert fake.thread.runs[0]["effort"] == effort
+        assert fake.thread_start_calls[0]["config"]["model_reasoning_effort"] == effort
+        assert dict(in_memory_exporter.get_finished_spans()[0].attributes)["gen_ai.request.reasoning_effort"] == effort
+
     async def test_parses_final_response_into_typed_draft(self) -> None:
         adapter = CodexAnalysisAdapter(
             model="gpt-5.4",
@@ -349,6 +412,7 @@ class TestCodexAdapter:
         run_kwargs = fake.thread.runs[0]
         assert run_kwargs["effort"] == "high"
         assert run_kwargs["output_schema"]["type"] == "object"
+        assert fake.thread_start_calls[0]["ephemeral"] is True
         assert fake.thread_start_calls[0]["config"] == {"model_reasoning_effort": "high"}
         assert fake.thread_start_calls[0]["approval_mode"].value == "deny_all"
         assert "sandbox" not in fake.thread_start_calls[0]
@@ -377,6 +441,31 @@ class TestCodexAdapter:
         assert attrs["gen_ai.usage.input_tokens"] == 800
         assert attrs["gen_ai.usage.output_tokens"] == 210
 
+    async def test_records_usage_before_stream_close_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        spend: list[dict[str, Any]] = []
+        monkeypatch.setattr(legacy_llm, "enforce_spend_budget", lambda _lane=None: None)
+        monkeypatch.setattr(legacy_llm, "record_llm_spend", lambda **kwargs: spend.append(kwargs))
+        adapter = CodexAnalysisAdapter(
+            model="gpt-5.5",
+            async_codex_factory=_CloseFailureCodex,
+        )
+
+        with pytest.raises(ProviderCallError) as raised:
+            await adapter.draft("system", JD)
+
+        assert raised.value.envelope.category == "provider_exception"
+        assert spend == [
+            {
+                "input_tokens": 17,
+                "output_tokens": 9,
+                "model": "gpt-5.5",
+                "lane": "discovery",
+            }
+        ]
+
 
 # --------------------------------------------------------------------------- #
 # Stub ports for the ensemble (no SDK at all)
@@ -389,6 +478,7 @@ class _StubDraftAdapter:
         self._returns = returns
         self._raises = raises
         self.calls = 0
+        self.prompts: list[str] = []
 
     @property
     def model_id(self) -> str:
@@ -396,6 +486,7 @@ class _StubDraftAdapter:
 
     async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:
         self.calls += 1
+        self.prompts.append(system_prompt)
         if self._raises is not None:
             raise self._raises
         analysis = JobAnalysis.model_validate(self._returns)
@@ -406,9 +497,13 @@ class _StubSynthesizer:
     def __init__(self, *, returns: dict | None = None) -> None:
         self._returns = returns or _grounded_dict()
         self.received_drafts: tuple[JobAnalysisDraft, ...] = ()
+        self.prompts: list[str] = []
 
-    async def reconcile(self, system_prompt: str, *, drafts: tuple[JobAnalysisDraft, ...], jd_snapshot: str) -> JobAnalysis:
+    async def reconcile(
+        self, system_prompt: str, *, drafts: tuple[JobAnalysisDraft, ...], jd_snapshot: str
+    ) -> JobAnalysis:
         self.received_drafts = drafts
+        self.prompts.append(system_prompt)
         return JobAnalysis.model_validate(self._returns)
 
 
@@ -418,6 +513,21 @@ class _StubSynthesizer:
 
 
 class TestEnsemble:
+    @pytest.mark.parametrize("code", ["provider_error", "budget_denied", "cache_binding_invalid", "persistence_error"])
+    async def test_verifier_operational_failure_does_not_redraft_on_the_same_bound_attempt(self, code) -> None:
+        from jobctrl.domain.determinations import DeterminationFailure
+        from jobctrl.infrastructure.analysis.ensemble import _draft_with_retry
+
+        adapter = _StubDraftAdapter("synthetic", returns=_grounded_dict())
+
+        def unavailable(_analysis):
+            raise DeterminationFailure(code)
+
+        with pytest.raises(DeterminationFailure, match=code):
+            await _draft_with_retry(adapter, system_prompt="sys", jd_snapshot=JD,
+                                    max_retries=2, verify_prose=unavailable)
+        assert adapter.calls == 1
+
     async def test_all_legs_succeed_produces_full_outcome(self) -> None:
         adapters = (
             _StubDraftAdapter("claude-opus-4-8", returns=_grounded_dict("claude")),
@@ -454,7 +564,8 @@ class TestEnsemble:
         assert len(outcome.drafts) == 1
         assert len(outcome.failures) == 1
         assert outcome.failures[0].model_id == "gpt-5.4"
-        assert "codex app-server down" in outcome.failures[0].error
+        assert outcome.failures[0].error == "RuntimeError"
+        assert outcome.failures[0].raw_output is None
         assert outcome.legs_attempted == 2  # degraded: 1/2
 
     async def test_fabricated_span_leg_is_retried_then_recorded_as_failure(self) -> None:
@@ -471,10 +582,16 @@ class TestEnsemble:
             max_leg_retries=2,
         )
         assert bad.calls == 3  # initial + 2 retries before giving up
+        assert bad.prompts[0] == "sys"
+        assert all('"ref_id": "r1"' in prompt and '"span": "ten years of Rust"' in prompt for prompt in bad.prompts[1:])
+        assert all("untrusted data" in prompt for prompt in bad.prompts[1:])
+        assert all('"ideal_candidate_narrative":' in prompt for prompt in bad.prompts[1:])
+        assert all("untrusted candidate" in prompt for prompt in bad.prompts[1:])
         assert len(outcome.drafts) == 1
         assert outcome.failures[0].model_id == "gpt-5.4"
         # The grounding violation is captured as raw audit output.
-        assert "not found verbatim" in (outcome.failures[0].raw_output or "")
+        assert outcome.failures[0].error == "GroundingError"
+        assert outcome.failures[0].raw_output is None
 
     async def test_all_legs_fail_raises_ensemble_error(self) -> None:
         adapters = (
@@ -497,13 +614,10 @@ class TestEnsemble:
         # quote the ASCII-hyphen form. The ensemble must GROUND (formatting-
         # tolerant) AND snap every persisted span to the JD's verbatim text so the
         # drafts + canonical are content-exact / copy-paste-findable (D-15).
-        jd = (
-            "Head of Security Operations. You will run a high‑availability SOC "
-            "and own incident response end to end."
-        )
+        jd = "Head of Security Operations. You will run a high‑availability SOC and own incident response end to end."
         ascii_hyphen = {
             "role_framing": "Run the SOC.",
-            "inferred_seniority": "head",
+            "inferred_seniority": "director",
             "ideal_candidate_narrative": "A hands-on SOC leader.",
             "requirements": [
                 {
@@ -541,34 +655,61 @@ class TestEnsemble:
         # Synthesizer fabricates a span -> ensemble re-asks then propagates.
         fabricated = _grounded_dict()
         fabricated["keywords"][0]["evidence_span"] = "Rust async runtime"  # not in JD
+        synthesizer = _StubSynthesizer(returns=fabricated)
         with pytest.raises(Exception):  # GroundingError after retries
             await run_ensemble(
                 "sys",
                 JD,
-                adapters=(_StubDraftAdapter("claude-opus-4-8", returns=_grounded_dict()),),
-                synthesizer=_StubSynthesizer(returns=fabricated),
+                adapters=(
+                    _StubDraftAdapter("claude-opus-4-8", returns=_grounded_dict()),
+                    _StubDraftAdapter("gpt-6.1-sol", returns=_grounded_dict()),
+                ),
+                synthesizer=synthesizer,
                 synthesizer_system_prompt="synth-sys",
                 max_leg_retries=1,
             )
+        assert synthesizer.prompts[0] == "synth-sys"
+        assert '"span": "Rust async runtime"' in synthesizer.prompts[1]
+        assert '"ideal_candidate_narrative":' in synthesizer.prompts[1]
 
 
 class TestAgreement:
-    async def test_single_draft_agreement_is_one(self) -> None:
-        draft = JobAnalysisDraft(model_id="claude-opus-4-8", **_grounded_dict())
-        agreement = compute_agreement((draft,))
-        assert agreement.score == 1.0
+    pass
 
-    async def test_divergent_drafts_flag_non_unanimous_items(self) -> None:
-        a = _grounded_dict()
-        b = _grounded_dict()
-        # b drops Kafka and adds a unique keyword -> divergence flagged.
-        b["requirements"] = [b["requirements"][0]]
-        b["keywords"] = [
-            {"keyword": "payments", "evidence_span": "own the payments platform", "requirement_ref": "r1"}
-        ]
-        draft_a = JobAnalysisDraft(model_id="claude-opus-4-8", **a)
-        draft_b = JobAnalysisDraft(model_id="gpt-5.4", **b)
-        agreement = compute_agreement((draft_a, draft_b))
-        assert 0.0 <= agreement.score < 1.0
-        assert "kafka" in agreement.flagged_requirements
-        assert {"go", "payments"}.issubset(set(agreement.flagged_keywords))
+
+# Domain prose legitimately names models, assessments, analyses, drafts and
+# experts as the candidate's own work. Only narration about producing the
+# profile is process commentary.
+
+
+async def run_ensemble(*args, **kwargs):
+    from tests.test_analysis_determinations import Model
+    from tests.test_semantic_determinations import Repository
+    from jobctrl.domain.materials.analysis_agreement import ModelAnalysisAgreementJudge
+    from jobctrl.domain.materials.analyze_use_case import AnalyzeJobUseCase
+    from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
+    from jobctrl.domain.determinations import Source
+
+    deps = dict(
+        llm=Model(),
+        repository=Repository(),
+        tenant_id="local",
+        provider="synthetic",
+        model="synthetic",
+        lane="enrichment",
+        preflight=lambda: None,
+    )
+    verifier = ModelClaimVerifier(**deps)
+    kwargs.update(
+        entity_id="synthetic-ensemble",
+        agreement_judge=ModelAnalysisAgreementJudge(**deps),
+        verify_prose=lambda analysis: verifier.verify(
+            artifact_kind="employer_analysis",
+            entity_id="synthetic-ensemble",
+            lines=AnalyzeJobUseCase._analysis_lines(analysis),
+            evidence=[],
+            requirements=[Source(source_id="posting", text=args[1])],
+            rubric={},
+        ),
+    )
+    return await _run_ensemble(*args, **kwargs)

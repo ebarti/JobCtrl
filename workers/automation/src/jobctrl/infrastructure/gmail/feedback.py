@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -13,13 +12,20 @@ from datetime import datetime, timedelta, timezone
 from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import urlparse
 
-from jobctrl.infrastructure.gmail.client import GmailClient
+from jobctrl.database import close_connection, open_exact_v15_database
+from jobctrl.infrastructure.migrations.schema_manifest import (
+    EXACT_V15_MANIFEST,
+    SchemaManifestError,
+    assert_exact_manifest,
+)
+from jobctrl.domain.events.base import DomainEvent
+from jobctrl.domain.ports.events import EventHandler, EventPublisher, Subscription
+from jobctrl.infrastructure.gmail.client import GmailClient, GmailFeedbackInputError, validate_feedback_recipient
+from jobctrl.state import record_job_event
 
 TENANT_ID = "local"
 PROVIDER = "gmail"
-LINK_THRESHOLD = 0.7
 DEFAULT_LIMIT = 25
 DEFAULT_MAX_RESULTS_PER_ANCHOR = 5
 DEFAULT_WINDOW_DAYS = 45
@@ -27,43 +33,19 @@ MAX_LIMIT = 100
 MAX_RESULTS_PER_ANCHOR = 20
 MAX_WINDOW_DAYS = 180
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{1,64}")
-_ATS_HINTS = {
-    "ashby",
-    "greenhouse",
-    "icims",
-    "lever",
-    "smartrecruiters",
-    "workable",
-    "workday",
-}
-_OUTCOME_TERMS = (
-    "application",
-    "applied",
-    "applying",
-    "assessment",
-    "bounced",
-    "challenge",
-    "interview",
-    "offer",
-    "received",
-    "recruiter",
-    "rejection",
-    "submitted",
-    "undeliverable",
-)
-
 
 class GmailFeedbackError(RuntimeError):
     """Raised when a bounded feedback scan cannot run safely."""
+
+
+class GmailFeedbackRecipientError(GmailFeedbackError):
+    """A scan has no valid recipient for its bounded search."""
 
 
 class GmailFeedbackClient(Protocol):
     def search_feedback_emails(
         self,
         *,
-        query: str,
         to_email: str,
         after: datetime,
         before: datetime,
@@ -75,9 +57,27 @@ class GmailFeedbackClient(Protocol):
         """Read a full Gmail message after metadata has been linked."""
 
 
+class _BufferedEventPublisher:
+    """Hold notifications until the linked-message transaction commits."""
+
+    def __init__(self) -> None:
+        self.events: list[DomainEvent] = []
+
+    def publish(self, event: DomainEvent) -> None:
+        self.events.append(event)
+
+    def subscribe(
+        self,
+        _event_type: str | None,
+        _handler: EventHandler,
+    ) -> Subscription:
+        raise RuntimeError("buffered event publisher does not accept subscriptions")
+
+
 @dataclass(frozen=True)
 class ApplicationAnchor:
-    job_key: str
+    job_id: str
+    job_url: str
     title: str
     company: str
     application_url: str
@@ -106,6 +106,7 @@ def scan_gmail_feedback(
     limit: int = DEFAULT_LIMIT,
     max_results_per_anchor: int = DEFAULT_MAX_RESULTS_PER_ANCHOR,
     window_days: int = DEFAULT_WINDOW_DAYS,
+    determination_dependencies_override=None,
 ) -> dict[str, Any]:
     """Scan Gmail metadata for known application anchors and store linked evidence."""
 
@@ -123,18 +124,34 @@ def scan_gmail_feedback(
         default=DEFAULT_WINDOW_DAYS,
     )
 
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=10000")
-    gmail = client or GmailClient()
+    conn = open_exact_v15_database(db_path)
     try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=10000")
+        conn.execute("PRAGMA foreign_keys=ON")
+        if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise GmailFeedbackError("Gmail feedback scan requires SQLite foreign-key enforcement.")
+
+        gmail = client or GmailClient()
         ensure_application_feedback_tables(conn)
         recipient = (recipient_email or _profile_email(conn)).strip().lower()
-        if not recipient or not _EMAIL_RE.match(recipient):
-            raise GmailFeedbackError(
+        try:
+            validate_feedback_recipient(recipient)
+        except GmailFeedbackInputError:
+            raise GmailFeedbackRecipientError(
                 "Gmail feedback scan requires a recipient email or candidate profile email."
-            )
+            ) from None
 
+        from jobctrl.infrastructure.determinations import determination_dependencies, SqliteDeterminationRepository
+        from jobctrl.domain.feedback.message_interpretation import ModelMessageInterpreter
+        from jobctrl.domain.determinations import DeterminationFailure
+
+        interpreter = ModelMessageInterpreter(
+            **(
+                determination_dependencies_override
+                or determination_dependencies(conn, tenant_id=TENANT_ID, lane="enrichment")
+            )
+        )
         anchors = _load_application_anchors(conn, limit=bounded_limit)
         summary = {
             "ok": True,
@@ -152,11 +169,7 @@ def scan_gmail_feedback(
         for anchor in anchors:
             after = anchor.anchor_at
             before = anchor.anchor_at + timedelta(days=bounded_window_days)
-            query = _anchor_query(anchor)
-            if not query:
-                continue
             metadata_items = gmail.search_feedback_emails(
-                query=query,
                 to_email=recipient,
                 after=after,
                 before=before,
@@ -165,14 +178,9 @@ def scan_gmail_feedback(
             summary["searchedMessageCount"] += len(metadata_items)
 
             for metadata in metadata_items:
-                decision = _link_metadata(
-                    anchor=anchor,
-                    metadata=metadata,
-                    recipient_email=recipient,
-                    after=after,
-                    before=before,
-                )
-                if not decision.linked:
+                recipients = {address.lower() for address in _email_addresses(_text(metadata.get("to")))}
+                received_at = _message_datetime(metadata)
+                if recipient not in recipients or received_at is None or not after <= received_at <= before:
                     summary["unlinkedCandidateCount"] += 1
                     continue
 
@@ -184,39 +192,118 @@ def scan_gmail_feedback(
                     summary["duplicateMessageCount"] += 1
                     continue
 
-                full_message = gmail.read_email(message_id=message_id)
-                evidence = _store_linked_message(
-                    conn=conn,
-                    anchor=anchor,
-                    metadata=metadata,
-                    full_message=full_message,
-                    decision=decision,
-                    linked_at=now,
+                eligible = {
+                    item.job_id: item
+                    for item in anchors
+                    if item.anchor_at <= received_at <= item.anchor_at + timedelta(days=bounded_window_days)
+                }
+                applications = {
+                    ident: {
+                        "job_id": item.job_id,
+                        "job_url": item.job_url,
+                        "title": item.title,
+                        "company": item.company,
+                        "application_url": item.application_url,
+                        "applied_at": _iso(item.anchor_at),
+                    }
+                    for ident, item in eligible.items()
+                }
+                try:
+                    link, link_envelope = interpreter.link(
+                        message_id=message_id, headers=metadata, applications=applications
+                    )
+                    if link.decision != "linked":
+                        summary["unlinkedCandidateCount"] += 1
+                        continue
+                    linked_anchor = eligible[link.application_id]
+                    full_message = gmail.read_email(message_id=message_id)
+                    # Provider identity, recipient and date are mechanical fences.
+                    if _text(full_message.get("id") or message_id) != message_id:
+                        raise DeterminationFailure("message_identity_changed")
+                    full_recipients = {
+                        address.lower()
+                        for address in _email_addresses(_text(full_message.get("to") or metadata.get("to")))
+                    }
+                    if recipient not in full_recipients:
+                        raise DeterminationFailure("message_recipient_changed")
+                    text = "\n".join(
+                        _text(full_message.get(key) or metadata.get(key)) for key in ("subject", "snippet", "body_text")
+                    )
+                    outcome, outcome_envelope = interpreter.outcome(message_id=message_id, text=text)
+                except DeterminationFailure as error:
+                    summary["ok"] = False
+                    summary["status"] = "unavailable" if error.code == "provider_unavailable" else "blocked"
+                    summary["failureCode"] = error.code
+                    continue
+                decision = LinkDecision(
+                    linked=True,
+                    confidence=link.confidence,
+                    signals=("recipient", "time_window", "determination:" + link_envelope.determination_id),
                 )
-                classification = classify_outcome(
-                    subject=evidence["subject"] or "",
-                    snippet=evidence["snippet"] or "",
-                    body_text=_text(full_message.get("body_text")),
+                classification = Classification(
+                    kind=outcome.kind, confidence=outcome.confidence, rationale=outcome.rationale
                 )
-                suggestion = _store_suggestion(
-                    conn=conn,
-                    anchor=anchor,
-                    evidence_id=evidence["evidenceId"],
-                    provider_message_id=message_id,
-                    classification=classification,
-                    created_at=now,
-                )
-                _record_safe_event(
-                    conn,
-                    job_key=anchor.job_key,
-                    evidence_id=evidence["evidenceId"],
-                    suggestion_id=suggestion["suggestionId"],
-                    classification=classification,
-                    link_confidence=evidence["linkConfidence"],
-                    signals=decision.signals,
-                    occurred_at=now,
-                )
-                conn.commit()
+                publisher = _BufferedEventPublisher()
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    if not _job_exists(conn, linked_anchor.job_id):
+                        conn.rollback()
+                        summary["unlinkedCandidateCount"] += 1
+                        continue
+                    if _provider_message_exists(conn, message_id):
+                        conn.rollback()
+                        summary["duplicateMessageCount"] += 1
+                        continue
+
+                    evidence = _store_linked_message(
+                        conn=conn,
+                        anchor=linked_anchor,
+                        metadata=metadata,
+                        full_message=full_message,
+                        decision=decision,
+                        linked_at=now,
+                    )
+                    suggestion = _store_suggestion(
+                        conn=conn,
+                        anchor=linked_anchor,
+                        evidence_id=evidence["evidenceId"],
+                        provider_message_id=message_id,
+                        classification=classification,
+                        created_at=now,
+                    )
+                    _record_safe_event(
+                        conn,
+                        job_id=linked_anchor.job_id,
+                        evidence_id=evidence["evidenceId"],
+                        suggestion_id=suggestion["suggestionId"],
+                        classification=classification,
+                        link_confidence=evidence["linkConfidence"],
+                        signals=decision.signals,
+                        occurred_at=now,
+                        publisher=publisher,
+                    )
+                    SqliteDeterminationRepository(conn).bind(
+                        tenant_id=TENANT_ID,
+                        entity_kind="message",
+                        entity_id=message_id,
+                        entity_version=link_envelope.input_fingerprint,
+                        determination_kind="message_link",
+                        determination_id=link_envelope.determination_id,
+                    )
+                    SqliteDeterminationRepository(conn).bind(
+                        tenant_id=TENANT_ID,
+                        entity_kind="outcome_suggestion",
+                        entity_id=suggestion["suggestionId"],
+                        entity_version=outcome_envelope.input_fingerprint,
+                        determination_kind="message_outcome",
+                        determination_id=outcome_envelope.determination_id,
+                    )
+                    conn.commit()
+                except BaseException:
+                    if conn.in_transaction:
+                        conn.rollback()
+                    raise
+                _publish_committed_events(publisher)
 
                 summary["linkedEvidenceCount"] += 1
                 if suggestion["created"]:
@@ -224,7 +311,7 @@ def scan_gmail_feedback(
                 summary["evidence"].append(
                     {
                         "evidenceId": evidence["evidenceId"],
-                        "jobKey": anchor.job_key,
+                        "jobId": linked_anchor.job_id,
                         "providerMessageId": message_id,
                         "linkConfidence": evidence["linkConfidence"],
                     }
@@ -233,186 +320,23 @@ def scan_gmail_feedback(
                     {
                         "suggestionId": suggestion["suggestionId"],
                         "evidenceId": evidence["evidenceId"],
-                        "jobKey": anchor.job_key,
+                        "jobId": linked_anchor.job_id,
                         "kind": classification.kind,
                         "confidence": classification.confidence,
+                        "determinationId": outcome_envelope.determination_id,
                     }
                 )
 
         return summary
     finally:
-        conn.close()
+        close_connection(db_path)
 
 
 def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
-    """Create the feedback tables with the TypeScript API's table shape."""
-
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS application_review_decisions (
-          tenant_id    TEXT NOT NULL DEFAULT 'local',
-          decision_id  TEXT NOT NULL,
-          job_key      TEXT NOT NULL,
-          decision     TEXT NOT NULL,
-          reason       TEXT,
-          decided_by   TEXT NOT NULL DEFAULT 'user',
-          decided_at   TEXT NOT NULL,
-          materials_generation INTEGER,
-          profile_version INTEGER,
-          application_url TEXT,
-          partial_override_run_id TEXT,
-          email_recipient TEXT,
-          email_attachment_artifact_id TEXT,
-          PRIMARY KEY (tenant_id, decision_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
-          ON application_review_decisions(tenant_id, job_key, decided_at DESC);
-
-        CREATE TABLE IF NOT EXISTS application_outcomes (
-          tenant_id     TEXT NOT NULL DEFAULT 'local',
-          outcome_id    TEXT NOT NULL,
-          job_key       TEXT NOT NULL,
-          kind          TEXT NOT NULL,
-          source        TEXT NOT NULL,
-          note          TEXT,
-          occurred_at   TEXT NOT NULL,
-          recorded_at   TEXT NOT NULL,
-          suggestion_id TEXT,
-          evidence_id   TEXT,
-          created_by    TEXT NOT NULL DEFAULT 'user',
-          PRIMARY KEY (tenant_id, outcome_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_application_outcomes_job
-          ON application_outcomes(tenant_id, job_key, occurred_at DESC, recorded_at DESC);
-
-        CREATE TABLE IF NOT EXISTS application_email_evidence (
-          tenant_id            TEXT NOT NULL DEFAULT 'local',
-          evidence_id          TEXT NOT NULL,
-          job_key              TEXT NOT NULL,
-          provider             TEXT NOT NULL DEFAULT 'gmail',
-          provider_message_id  TEXT NOT NULL,
-          provider_thread_id   TEXT,
-          from_address         TEXT,
-          to_addresses_json    TEXT NOT NULL DEFAULT '[]',
-          subject              TEXT,
-          snippet              TEXT,
-          received_at          TEXT,
-          linked_at            TEXT NOT NULL,
-          link_confidence      REAL NOT NULL DEFAULT 0,
-          link_signals_json    TEXT NOT NULL DEFAULT '[]',
-          body_text            TEXT,
-          body_sha256          TEXT,
-          body_stored_at       TEXT,
-          PRIMARY KEY (tenant_id, evidence_id),
-          UNIQUE (tenant_id, provider, provider_message_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_application_email_evidence_job
-          ON application_email_evidence(tenant_id, job_key, received_at DESC);
-
-        CREATE TABLE IF NOT EXISTS application_outcome_suggestions (
-          tenant_id          TEXT NOT NULL DEFAULT 'local',
-          suggestion_id      TEXT NOT NULL,
-          job_key            TEXT NOT NULL,
-          evidence_id        TEXT,
-          suggested_kind     TEXT NOT NULL,
-          confidence         REAL NOT NULL DEFAULT 0,
-          rationale          TEXT NOT NULL DEFAULT '',
-          status             TEXT NOT NULL DEFAULT 'pending',
-          created_at         TEXT NOT NULL,
-          decided_at         TEXT,
-          decision           TEXT,
-          decision_reason    TEXT,
-          decided_outcome_id TEXT,
-          PRIMARY KEY (tenant_id, suggestion_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_job
-          ON application_outcome_suggestions(tenant_id, job_key, status, created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_status
-          ON application_outcome_suggestions(tenant_id, status, created_at DESC);
-        """
-    )
-    _ensure_columns(
-        conn,
-        "application_review_decisions",
-        {
-            "materials_generation": "INTEGER",
-            "profile_version": "INTEGER",
-            "application_url": "TEXT",
-            "partial_override_run_id": "TEXT",
-            "email_recipient": "TEXT",
-            "email_attachment_artifact_id": "TEXT",
-        },
-    )
-
-
-def classify_outcome(*, subject: str, snippet: str, body_text: str) -> Classification:
-    """Classify linked application email evidence with deterministic v1 rules."""
-
-    haystack = " ".join([subject, snippet, body_text]).lower()
-    rules: tuple[tuple[str, float, str, tuple[str, ...]], ...] = (
-        (
-            "bounced",
-            0.95,
-            "Delivery failure language indicates the application email bounced.",
-            ("undeliverable", "delivery status notification", "address not found", "bounced"),
-        ),
-        (
-            "offer",
-            0.95,
-            "Offer language indicates a positive application outcome.",
-            ("pleased to offer", "offer letter", "employment offer", "congratulations"),
-        ),
-        (
-            "rejection",
-            0.9,
-            "Rejection language indicates the employer is not moving forward.",
-            (
-                "not moving forward",
-                "not selected",
-                "unfortunately",
-                "pursue other candidates",
-                "after careful consideration",
-            ),
-        ),
-        (
-            "interview",
-            0.9,
-            "Interview scheduling language indicates an interview outcome.",
-            ("interview", "schedule a call", "availability", "meet with", "technical screen"),
-        ),
-        (
-            "assessment",
-            0.88,
-            "Assessment language indicates a test or take-home step.",
-            ("assessment", "coding challenge", "take-home", "take home", "online test"),
-        ),
-        (
-            "applied_confirmation",
-            0.9,
-            "Application confirmation language indicates the submission was received.",
-            (
-                "application received",
-                "thank you for applying",
-                "thanks for applying",
-                "we received your application",
-                "application has been submitted",
-            ),
-        ),
-        (
-            "recruiter_reply",
-            0.82,
-            "Recruiter reply language indicates direct follow-up from recruiting.",
-            ("recruiter", "talent acquisition", "thanks for reaching out", "next steps"),
-        ),
-    )
-    for kind, confidence, rationale, terms in rules:
-        if any(term in haystack for term in terms):
-            return Classification(kind=kind, confidence=confidence, rationale=rationale)
-    return Classification(
-        kind="unknown",
-        confidence=0.25,
-        rationale="No deterministic outcome language matched this linked email.",
-    )
+    """Validate the current feedback owner without creating or altering schema."""
+    if conn.execute("PRAGMA user_version").fetchone()[0] != EXACT_V15_MANIFEST.version:
+        raise SchemaManifestError("Gmail feedback requires the exact current database schema")
+    assert_exact_manifest(conn, EXACT_V15_MANIFEST)
 
 
 def _store_linked_message(
@@ -435,11 +359,10 @@ def _store_linked_message(
     to_addresses = _email_addresses(_text(full_message.get("to") or metadata.get("to")))
     thread_id = _nullable_text(full_message.get("threadId") or metadata.get("threadId"))
     linked_at_text = _iso(linked_at)
-
     conn.execute(
         """
         INSERT INTO application_email_evidence (
-            tenant_id, evidence_id, job_key, provider, provider_message_id,
+            tenant_id, evidence_id, job_id, provider, provider_message_id,
             provider_thread_id, from_address, to_addresses_json, subject, snippet,
             received_at, linked_at, link_confidence, link_signals_json,
             body_text, body_sha256, body_stored_at
@@ -448,7 +371,7 @@ def _store_linked_message(
         (
             TENANT_ID,
             evidence_id,
-            anchor.job_key,
+            anchor.job_id,
             PROVIDER,
             message_id,
             thread_id,
@@ -484,19 +407,19 @@ def _store_suggestion(
 ) -> dict[str, Any]:
     suggestion_id = _stable_id(
         "gmail-suggestion",
-        f"{anchor.job_key}|{provider_message_id}|{classification.kind}",
+        f"{anchor.job_id}|{provider_message_id}|{classification.kind}",
     )
     cursor = conn.execute(
         """
         INSERT OR IGNORE INTO application_outcome_suggestions (
-            tenant_id, suggestion_id, job_key, evidence_id, suggested_kind,
+            tenant_id, suggestion_id, job_id, evidence_id, suggested_kind,
             confidence, rationale, status, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             TENANT_ID,
             suggestion_id,
-            anchor.job_key,
+            anchor.job_id,
             evidence_id,
             classification.kind,
             classification.confidence,
@@ -511,147 +434,84 @@ def _store_suggestion(
 def _record_safe_event(
     conn: sqlite3.Connection,
     *,
-    job_key: str,
+    job_id: str,
     evidence_id: str,
     suggestion_id: str,
     classification: Classification,
     link_confidence: float,
     signals: tuple[str, ...],
     occurred_at: datetime,
+    publisher: EventPublisher,
 ) -> None:
     if not _table_exists(conn, "job_events"):
         return
-    columns = _columns(conn, "job_events")
-    payload = {
-        "tenantId": TENANT_ID,
-        "jobKey": job_key,
-        "evidenceId": evidence_id,
-        "suggestionId": suggestion_id,
-        "provider": PROVIDER,
-        "suggestedKind": classification.kind,
-        "classificationConfidence": classification.confidence,
-        "linkConfidence": link_confidence,
-        "linkSignals": list(signals),
-    }
-    values: dict[str, Any] = {
-        "job_url": job_key,
-        "stage": "apply",
-        "event_type": "ApplicationEmailFeedbackIngested",
-        "level": "info",
-        "message": "Application email feedback ingested.",
-        "occurred_at": _iso(occurred_at),
-        "payload_json": json.dumps(payload, sort_keys=True),
-    }
-    names = [name for name in values if name in columns]
-    if not names:
+    record_job_event(
+        conn,
+        job_id,
+        "apply",
+        "ApplicationEmailFeedbackIngested",
+        tenant_id=TENANT_ID,
+        message="Application email feedback ingested.",
+        occurred_at=_iso(occurred_at),
+        payload={
+            "evidenceId": evidence_id,
+            "suggestionId": suggestion_id,
+            "provider": PROVIDER,
+            "suggestedKind": classification.kind,
+            "classificationConfidence": classification.confidence,
+            "linkConfidence": link_confidence,
+            "linkSignals": list(signals),
+        },
+        publisher=publisher,
+    )
+
+
+def _publish_committed_events(publisher: _BufferedEventPublisher) -> None:
+    if not publisher.events:
         return
-    conn.execute(
-        f"INSERT INTO job_events ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})",
-        tuple(values[name] for name in names),
-    )
+    from jobctrl.infrastructure.events import get_default_publisher
 
-
-def _link_metadata(
-    *,
-    anchor: ApplicationAnchor,
-    metadata: dict[str, Any],
-    recipient_email: str,
-    after: datetime,
-    before: datetime,
-) -> LinkDecision:
-    text = " ".join(
-        [
-            _text(metadata.get("subject")),
-            _text(metadata.get("from")),
-            _text(metadata.get("to")),
-        ]
-    ).lower()
-    signals: list[str] = []
-    score = 0.0
-
-    recipients = {address.lower() for address in _email_addresses(_text(metadata.get("to")))}
-    if recipient_email.lower() in recipients:
-        signals.append("recipient")
-        score += 0.2
-
-    message_at = _message_datetime(metadata)
-    if message_at and after <= message_at <= before:
-        signals.append("time_window")
-        score += 0.2
-
-    if _any_hint_match(_name_tokens(anchor.company), text):
-        signals.append("company")
-        score += 0.2
-
-    if _any_hint_match(_title_tokens(anchor.title), text):
-        signals.append("job_title")
-        score += 0.15
-
-    if _any_hint_match(_application_url_tokens(anchor.application_url), text):
-        signals.append("application_domain")
-        score += 0.15
-
-    if _any_hint_match(_ATS_HINTS, text):
-        signals.append("ats_hint")
-        score += 0.1
-
-    if any(term in text for term in _OUTCOME_TERMS):
-        signals.append("outcome_term")
-        score += 0.1
-
-    confidence = round(min(score, 1.0), 2)
-    return LinkDecision(
-        linked=confidence >= LINK_THRESHOLD,
-        confidence=confidence,
-        signals=tuple(signals),
-    )
+    destination = get_default_publisher()
+    for event in publisher.events:
+        destination.publish(event)
 
 
 def _load_application_anchors(conn: sqlite3.Connection, *, limit: int) -> list[ApplicationAnchor]:
     anchors: dict[str, ApplicationAnchor] = {}
     for anchor in [*_job_anchors(conn), *_outcome_anchors(conn), *_apply_run_anchors(conn)]:
-        existing = anchors.get(anchor.job_key)
+        existing = anchors.get(anchor.job_id)
         if existing is None or anchor.anchor_at < existing.anchor_at:
-            anchors[anchor.job_key] = anchor
+            anchors[anchor.job_id] = anchor
     return sorted(anchors.values(), key=lambda item: item.anchor_at, reverse=True)[:limit]
 
 
 def _job_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
-    if not _table_exists(conn, "jobs"):
-        return []
-    columns = _columns(conn, "jobs")
-    title_expr = _column_expr(columns, "title")
-    company_expr = _first_column_expr(columns, ["company", "site", "employer"])
-    application_url_expr = _column_expr(columns, "application_url")
-    applied_at_expr = _column_expr(columns, "applied_at")
-    discovered_at_expr = _column_expr(columns, "discovered_at")
-    apply_status_expr = _column_expr(columns, "apply_status")
     rows = conn.execute(
-        f"""
-        SELECT url AS job_key, {title_expr} AS title, {company_expr} AS company,
-               {application_url_expr} AS application_url,
-               COALESCE(NULLIF({applied_at_expr}, ''), NULLIF({discovered_at_expr}, '')) AS anchor_at
-        FROM jobs
-        WHERE NULLIF({applied_at_expr}, '') IS NOT NULL
-           OR lower(COALESCE({apply_status_expr}, '')) = 'applied'
         """
+        SELECT j.job_id, j.url AS job_url, COALESCE(j.title, '') AS title,
+               COALESCE(j.company, j.site, '') AS company,
+               COALESCE(e.application_url, '') AS application_url,
+               COALESCE(NULLIF(j.applied_at, ''), NULLIF(j.discovered_at, '')) AS anchor_at
+        FROM jobs j
+        LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+        WHERE j.tenant_id = ? AND (
+            NULLIF(j.applied_at, '') IS NOT NULL OR lower(COALESCE(j.apply_status, '')) = 'applied'
+        )
+        """,
+        (TENANT_ID,),
     ).fetchall()
     return [_anchor_from_row(row) for row in rows if _anchor_from_row(row) is not None]
 
 
 def _outcome_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
-    if not _table_exists(conn, "application_outcomes") or not _table_exists(conn, "jobs"):
-        return []
-    columns = _columns(conn, "jobs")
-    title_expr = _column_expr(columns, "title", prefix="j")
-    company_expr = _first_column_expr(columns, ["company", "site", "employer"], prefix="j")
-    application_url_expr = _column_expr(columns, "application_url", prefix="j")
     rows = conn.execute(
-        f"""
-        SELECT o.job_key AS job_key, {title_expr} AS title, {company_expr} AS company,
-               {application_url_expr} AS application_url, o.occurred_at AS anchor_at
+        """
+        SELECT j.job_id, j.url AS job_url, COALESCE(j.title, '') AS title,
+               COALESCE(j.company, j.site, '') AS company,
+               COALESCE(e.application_url, '') AS application_url, o.occurred_at AS anchor_at
         FROM application_outcomes o
-        LEFT JOIN jobs j ON j.url = o.job_key
+        JOIN jobs j ON j.tenant_id = o.tenant_id AND j.job_id = o.job_id
+        LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
         WHERE o.tenant_id = ?
           AND o.kind IN (
             'applied_confirmation', 'recruiter_reply', 'interview',
@@ -664,51 +524,41 @@ def _outcome_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
 
 
 def _apply_run_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
-    if not _table_exists(conn, "apply_run_projections") or not _table_exists(conn, "jobs"):
-        return []
-    columns = _columns(conn, "jobs")
-    title_expr = _column_expr(columns, "title", prefix="j")
-    company_expr = _first_column_expr(columns, ["company", "site", "employer"], prefix="j")
-    application_url_expr = _column_expr(columns, "application_url", prefix="j")
     rows = conn.execute(
-        f"""
-        SELECT a.job_id AS job_key, {title_expr} AS title, {company_expr} AS company,
-               {application_url_expr} AS application_url,
+        """
+        SELECT j.job_id, j.url AS job_url, COALESCE(j.title, '') AS title,
+               COALESCE(j.company, j.site, '') AS company,
+               COALESCE(e.application_url, '') AS application_url,
                COALESCE(NULLIF(a.finished_at, ''), NULLIF(a.started_at, '')) AS anchor_at
         FROM apply_run_projections a
-        LEFT JOIN jobs j ON j.url = a.job_id
-        WHERE COALESCE(a.dry_run, 0) = 0
+        JOIN jobs j ON j.tenant_id = a.tenant_id AND j.job_id = a.job_id
+        LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+        WHERE a.tenant_id = ? AND COALESCE(a.dry_run, 0) = 0
           AND (
             lower(COALESCE(a.status, '')) IN ('succeeded', 'success', 'complete', 'completed')
             OR lower(COALESCE(a.result, '')) LIKE '%applied%'
             OR lower(COALESCE(a.result, '')) LIKE '%submitted%'
           )
-        """
+        """,
+        (TENANT_ID,),
     ).fetchall()
     return [_anchor_from_row(row) for row in rows if _anchor_from_row(row) is not None]
 
 
 def _anchor_from_row(row: sqlite3.Row) -> ApplicationAnchor | None:
     anchor_at = _parse_datetime(_text(row["anchor_at"]))
-    job_key = _text(row["job_key"])
-    if not job_key or anchor_at is None:
+    job_id = _text(row["job_id"])
+    job_url = _text(row["job_url"])
+    if not job_id or anchor_at is None:
         return None
     return ApplicationAnchor(
-        job_key=job_key,
+        job_id=job_id,
+        job_url=job_url,
         title=_text(row["title"]),
         company=_text(row["company"]),
         application_url=_text(row["application_url"]),
         anchor_at=anchor_at,
     )
-
-
-def _anchor_query(anchor: ApplicationAnchor) -> str:
-    hints: list[str] = []
-    hints.extend(_name_tokens(anchor.company))
-    hints.extend(_title_tokens(anchor.title))
-    hints.extend(_application_url_tokens(anchor.application_url))
-    hints.extend(hint for hint in _ATS_HINTS if hint in anchor.application_url.lower())
-    return " ".join(_dedupe(hints))
 
 
 def _profile_email(conn: sqlite3.Connection) -> str:
@@ -735,6 +585,19 @@ def _provider_message_exists(conn: sqlite3.Connection, provider_message_id: str)
         LIMIT 1
         """,
         (TENANT_ID, PROVIDER, provider_message_id),
+    ).fetchone()
+    return row is not None
+
+
+def _job_exists(conn: sqlite3.Connection, job_id: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM jobs
+        WHERE tenant_id = ? AND job_id = ?
+        LIMIT 1
+        """,
+        (TENANT_ID, job_id),
     ).fetchone()
     return row is not None
 
@@ -792,61 +655,6 @@ def _email_addresses(value: str) -> list[str]:
     return [address for _name, address in getaddresses([value]) if address]
 
 
-def _name_tokens(value: str) -> list[str]:
-    return [
-        token
-        for token in _safe_tokens(value)
-        if len(token) >= 3 and token.lower() not in {"inc", "llc", "ltd", "the"}
-    ][:4]
-
-
-def _title_tokens(value: str) -> list[str]:
-    stop = {"and", "for", "the", "with", "engineer", "developer", "manager"}
-    return [
-        token
-        for token in _safe_tokens(value)
-        if len(token) >= 4 and token.lower() not in stop
-    ][:6]
-
-
-def _application_url_tokens(value: str) -> list[str]:
-    if not value:
-        return []
-    parsed = urlparse(value)
-    tokens = _safe_tokens(" ".join([parsed.netloc, parsed.path]))
-    return [
-        token
-        for token in tokens
-        if len(token) >= 3 and token.lower() not in {"www", "com", "jobs", "apply"}
-    ][:8]
-
-
-def _safe_tokens(value: str) -> list[str]:
-    return _dedupe(
-        token
-        for token in _TOKEN_RE.findall(value or "")
-        if token.lower() not in {"from", "to", "after", "before", "older_than", "newer_than"}
-    )
-
-
-def _dedupe(values: Any) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        text = str(value).strip()
-        key = text.lower()
-        if not text or key in seen:
-            continue
-        seen.add(key)
-        result.append(text)
-    return result
-
-
-def _any_hint_match(hints: Any, text: str) -> bool:
-    lowered = text.lower()
-    return any(str(hint).lower() in lowered for hint in hints if str(hint).strip())
-
-
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -860,40 +668,6 @@ def _columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     }
-
-
-def _ensure_columns(
-    conn: sqlite3.Connection,
-    table_name: str,
-    additions: dict[str, str],
-) -> None:
-    columns = _columns(conn, table_name)
-    for column, definition in additions.items():
-        if column not in columns:
-            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column} {definition}")
-
-
-def _column_expr(columns: set[str], column: str, *, prefix: str | None = None) -> str:
-    if column not in columns:
-        return "''"
-    qualified = f"{prefix}.{column}" if prefix else column
-    return f"COALESCE({qualified}, '')"
-
-
-def _first_column_expr(
-    columns: set[str],
-    names: list[str],
-    *,
-    prefix: str | None = None,
-) -> str:
-    available = [
-        f"{prefix}.{name}" if prefix else name
-        for name in names
-        if name in columns
-    ]
-    if not available:
-        return "''"
-    return "COALESCE(" + ", ".join(available + ["''"]) + ")"
 
 
 def _text(value: Any) -> str:
@@ -931,9 +705,7 @@ def main(argv: list[str] | None = None) -> int:
             db_path=args.db_path,
             recipient_email=payload.get("recipientEmail") or args.recipient_email,
             limit=int(payload.get("limit") or args.limit),
-            max_results_per_anchor=int(
-                payload.get("maxResultsPerAnchor") or args.max_results_per_anchor
-            ),
+            max_results_per_anchor=int(payload.get("maxResultsPerAnchor") or args.max_results_per_anchor),
             window_days=int(payload.get("windowDays") or args.window_days),
         )
     except Exception as exc:

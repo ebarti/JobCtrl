@@ -12,7 +12,7 @@ import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ArtifactSummary } from "../../contexts/operations/types.js";
+import type { ArtifactSummary } from "@jobctrl/contracts";
 import {
   makeArtifactsPage,
   sampleArtifact,
@@ -140,7 +140,7 @@ describe("<ArtifactsTable>", () => {
     ).toBeInTheDocument();
     expect(
       within(list).getByRole("button", {
-        name: `Open artifact ${sampleArtifact.title}`,
+        name: `Open artifact ${sampleArtifact.title}: View details`,
       }),
     ).not.toHaveClass("row-activation-focus-only");
   });

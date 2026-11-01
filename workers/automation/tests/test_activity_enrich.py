@@ -173,7 +173,7 @@ def test_selected_enrichment_uses_only_the_requested_v7_job_id_at_fetch_boundary
 
     fetched_urls: list[str] = []
 
-    def fake_scrape_detail_page(_page, url, *, session):
+    def fake_scrape_detail_page(_page, url, *, session, **_determination_ports):
         fetched_urls.append(url)
         return {
             "status": "ok",
@@ -186,7 +186,7 @@ def test_selected_enrichment_uses_only_the_requested_v7_job_id_at_fetch_boundary
             "http_status": 200,
         }
 
-    monkeypatch.setattr("jobctrl.database.get_connection", lambda: conn)
+    monkeypatch.setattr("jobctrl.database.get_connection", lambda *_args: conn)
     monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
     monkeypatch.setattr(detail, "PolitenessGateway", lambda: offline_gateway())
     monkeypatch.setattr(detail, "scrape_detail_page", fake_scrape_detail_page)
@@ -247,3 +247,10 @@ def test_scrape_site_batch_rejects_legacy_url_targets(tmp_path) -> None:
             )
     finally:
         close_connection(db_path)
+
+
+@pytest.fixture(autouse=True)
+def semantic_page_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

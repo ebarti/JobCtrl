@@ -293,7 +293,6 @@ def test_exact_v7_selectors_ignore_retired_wide_job_state(
         """
         UPDATE jobs
         SET full_description = 'retired description',
-            application_url = 'https://apply.example.test/retired',
             detail_scraped_at = ?, detail_error = 'retired detail error',
             fit_score = 10, tailored_resume_path = '/tmp/retired-resume.txt',
             cover_letter_path = '/tmp/retired-cover.txt',
@@ -319,6 +318,10 @@ def test_exact_v7_selectors_ignore_retired_wide_job_state(
         WHERE tenant_id = ? AND job_id = ?
         """,
         (LOCAL_TENANT, TAILOR_JOB_ID),
+    )
+    conn.execute(
+        "INSERT INTO job_application_locators(tenant_id,job_id,application_url) VALUES(?,?,?)",
+        (OTHER_TENANT, OTHER_JOB_ID, "https://apply.example.test/retired"),
     )
     conn.commit()
 

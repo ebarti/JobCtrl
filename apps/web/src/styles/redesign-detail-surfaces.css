@@ -553,7 +553,7 @@
 .artifact-comparison-tag-group .tag,
 .artifact-detail-sidebar .tag {
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--radius);
 }
 
 /* Contact details are a single thread, not a stack of cards. */
@@ -1082,4 +1082,21 @@
   .apply-run-timeline {
     padding: 22px 16px;
   }
+}
+
+/* Keep the fact label distinct from its value in the narrow contact inspector. */
+.contact-provenance-fact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.contact-attribute-kind {
+  color: var(--muted-foreground);
+}
+
+.contact-attribute-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

@@ -11,9 +11,11 @@ Runs against a tmp SQLite database via ``init_db`` so the canonical
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from collections.abc import Iterator
 
 import pytest
+from pydantic import ValidationError
 
 from jobctrl.database import close_connection, init_db
 from jobctrl.domain.identifiers import JobId
@@ -122,6 +124,49 @@ def test_cache_hit_by_snapshot_and_version(conn: sqlite3.Connection) -> None:
 
     miss = repo.get_by_cache_key(LOCAL_TENANT, JOB_ID, "different-snapshot:p:s")
     assert miss is None
+
+
+def test_historical_format_is_retained_but_not_loaded_as_current(conn: sqlite3.Connection) -> None:
+    repo = SqliteEmployerAnalysisRepository(conn)
+    historical = replace(_record(generation=1), prompt_version="employer-analysis-v3")
+    repo.save(historical)
+    conn.execute(
+        "UPDATE job_employer_analysis SET inferred_seniority = ? WHERE generation = 1",
+        ("Historical free-text value",),
+    )
+    conn.commit()
+
+    assert repo.load(LOCAL_TENANT, JOB_ID) is None
+    assert repo.load(LOCAL_TENANT, JOB_ID, generation=1) is None
+    assert repo.get_by_cache_key(LOCAL_TENANT, JOB_ID, historical.cache_key) is None
+    assert repo.next_generation(LOCAL_TENANT, JOB_ID) == 2
+    assert conn.execute("SELECT inferred_seniority FROM job_employer_analysis").fetchone()[0] == "Historical free-text value"
+
+
+def test_higher_historical_generation_cannot_replace_current_analysis(conn: sqlite3.Connection) -> None:
+    repo = SqliteEmployerAnalysisRepository(conn)
+    accepted = _record(generation=1)
+    repo.save(accepted)
+    repo.save(replace(_record(generation=2), prompt_version="employer-analysis-v3"))
+    conn.execute(
+        "UPDATE job_employer_analysis SET inferred_seniority = ? WHERE generation = 2",
+        ("Historical free-text value",),
+    )
+    conn.commit()
+
+    assert repo.load(LOCAL_TENANT, JOB_ID) == accepted
+    assert repo.load(LOCAL_TENANT, JOB_ID, generation=2) is None
+    assert repo.next_generation(LOCAL_TENANT, JOB_ID) == 3
+    assert conn.execute("SELECT COUNT(*) FROM job_employer_analysis").fetchone()[0] == 2
+
+
+def test_invalid_current_analysis_is_still_rejected(conn: sqlite3.Connection) -> None:
+    repo = SqliteEmployerAnalysisRepository(conn)
+    repo.save(_record(generation=1))
+    conn.execute("UPDATE job_employer_analysis SET inferred_seniority = 'Invalid current value'")
+    conn.commit()
+    with pytest.raises(ValidationError, match="inferred_seniority"):
+        repo.load(LOCAL_TENANT, JOB_ID)
 
 
 def test_next_generation_is_monotonic(conn: sqlite3.Connection) -> None:

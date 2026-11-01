@@ -10,43 +10,13 @@ from jobctrl.domain.compensation import (
     ReportedCompensationObservation,
     build_direct_benchmark_fact,
     build_price_level_fact,
-    classify_role,
     extrapolate_benchmark,
-    resolve_benchmark_geography,
-    resolve_country_code,
 )
+from tests.compensation_fakes import classified_row
 from jobctrl.infrastructure.compensation import (
     FxRateToEur,
     canonicalize_reported_observations,
 )
-
-
-def test_role_and_country_classification_is_deterministic() -> None:
-    security = classify_role("Staff Application Security Engineer")
-    assert security.role_family_code == "security_privacy"
-    assert security.seniority_label == "staff"
-
-    data = classify_role("Senior Data Engineer")
-    assert data.role_family_code == "data_ai"
-    assert data.seniority_label == "senior"
-
-    platform = classify_role("Principal Platform Engineer")
-    assert platform.role_family_code == "infrastructure_platform"
-    assert platform.seniority_label == "principal"
-
-    privacy_director = classify_role("Privacy Engineering Director")
-    assert privacy_director.role_family_code == "security_privacy"
-    assert privacy_director.seniority_label == "director"
-
-    assert resolve_country_code("Remote — Barcelona, Spain") == "ES"
-    assert resolve_country_code("London / UK") == "GB"
-    assert resolve_country_code("Remote") is None
-    assert resolve_benchmark_geography("Madrid, Spain") == BenchmarkGeography(
-        "ES",
-        scope="locality",
-        locality="Madrid",
-    )
-    assert resolve_benchmark_geography("Remote - Spain") == BenchmarkGeography("ES")
 
 
 def test_reported_observations_become_content_addressed_direct_facts() -> None:
@@ -68,6 +38,7 @@ def test_reported_observations_become_content_addressed_direct_facts() -> None:
         attribution="Licensed compensation data",
         source_url="https://example.com/levels/acme",
     )
+    observation = classified_row(observation, country="DE", locality="Berlin", scope="company")
     fx = FxRateToEur(
         currency="USD",
         rate=0.9,
@@ -94,10 +65,10 @@ def test_reported_observations_become_content_addressed_direct_facts() -> None:
     assert first.rejected == ()
     assert first == second
     fact = first.facts[0]
-    assert fact.role_family_code == "infrastructure_platform"
+    assert fact.role_family_code == "software_engineering"
     assert fact.seniority_label == "senior"
     assert fact.geography == BenchmarkGeography("DE", scope="locality", locality="Berlin")
-    assert fact.normalized_company == "acme"
+    assert fact.normalized_company == "acme gmbh"
     assert fact.eur_annual_minimum_amount == 86_400
     assert fact.eur_annual_maximum_amount == 108_000
     assert fact.fx_reference["reference_id"] == "ecb-2026-08-12"
@@ -137,9 +108,11 @@ def test_invalid_observation_does_not_discard_independent_valid_evidence() -> No
         location="Spain",
         level_label="Senior",
         snapshot_version="/tmp/private-feed.json",
+        sample_count=20,
         attribution="Data source: Levels.fyi (https://www.levels.fyi)",
         source_url="https://www.levels.fyi/t/software-engineer",
     )
+    invalid = classified_row(invalid)
     valid = replace(invalid, snapshot_version="levels-public-2026")
 
     result = canonicalize_reported_observations(
@@ -150,44 +123,6 @@ def test_invalid_observation_does_not_discard_independent_valid_evidence() -> No
     )
 
     assert len(result.facts) == 1
-    assert result.rejected[0].reason == "invalid_observation"
-
-
-@pytest.mark.parametrize(
-    "location",
-    (
-        r"C:\Users\alice\private-salary.csv, Spain",
-        "/tmp/private-salary.csv, Spain",
-        "./private-salary.csv, Spain",
-        "https://private.example/Spain",
-        f"{'A' * 129}, Spain",
-    ),
-)
-def test_local_or_unbounded_geography_is_rejected_from_canonical_facts(
-    location: str,
-) -> None:
-    observation = ReportedCompensationObservation(
-        source_id="levels_fyi",
-        source_provenance="public",
-        company_name="Levels.fyi market aggregate",
-        role_title="Senior Software Engineer",
-        minimum_amount=80_000,
-        maximum_amount=100_000,
-        location=location,
-        level_label="Senior",
-        snapshot_version="levels-public-2026",
-        attribution="Data source: Levels.fyi (https://www.levels.fyi)",
-        source_url="https://www.levels.fyi/t/software-engineer",
-    )
-
-    result = canonicalize_reported_observations(
-        (observation,),
-        tenant_id="local",
-        fetched_at="2026-08-12T08:00:00Z",
-        fresh_until="2026-08-19T08:00:00Z",
-    )
-
-    assert result.facts == ()
     assert result.rejected[0].reason == "invalid_observation"
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,6 +43,138 @@ from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
 from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
 from .politeness_helpers import offline_session
+
+
+@pytest.mark.parametrize("recorder", ["cascade", "authenticated_url", "content_trust"])
+def test_snapshot_recorders_preserve_availability_committed_during_model(conn, monkeypatch, recorder):
+    from jobctrl.domain.errors import TransientNetworkError
+    from jobctrl.enrichment import availability
+
+    url = "https://www.linkedin.com/jobs/view/12345678"
+    description = "A complete synthetic posting description"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None, description=description)
+    job_id = _job_id(conn, url)
+    initial = PostingSnapshotSet.empty(tenant_id=LOCAL_TENANT, job_id=job_id, updated_at="2026-01-01T00:00:00+00:00")
+    initial, _ = initial.record_snapshot(
+        source_id="jobspy:linkedin", extraction_tier=ExtractionTier.LLM_ASSISTED.value,
+        description_hash=SnapshotDescriptionHash.from_text(description), apply_url=None,
+        active_state=ActiveState.ACTIVE, confidence=SnapshotConfidence.LOW,
+        quarantine_reason=QuarantineReason.LOW_CONFIDENCE_EXTRACTION, captured_at="2026-01-01T00:00:00+00:00",
+    )
+    SqlitePostingSnapshotSetRepository(conn).save(initial)
+    enrichment = SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id)
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+    set_stage_state(conn, job_id, "tailor", "blocked", tenant_id=LOCAL_TENANT,
+                    error_code="ENRICHMENT_QUARANTINED", retryable=True, blocked_by=["enrich"], validate_transition=False)
+    conn.commit()
+    peer = sqlite3.connect(conn.execute("PRAGMA database_list").fetchone()[2], timeout=0.1)
+    peer.row_factory = sqlite3.Row
+    quality = detail.judge_description_quality
+    accepted = []
+    released = []
+
+    def quality_with_new_availability(**kwargs):
+        assert not conn.in_transaction
+        claim, _ = availability.claim_job(peer, str(job_id))
+        assert claim is not None
+        availability.complete_check(peer, claim, verdict="closed", reason="synthetic_closed",
+                                    method="public_http", lineage=[])
+        accepted.append(peer.execute("SELECT snapshot_set_json FROM posting_snapshot_sets WHERE job_id=?",
+                                     (str(job_id),)).fetchone()[0])
+        return quality(**kwargs)
+
+    monkeypatch.setattr(detail, "judge_description_quality", quality_with_new_availability)
+    monkeypatch.setattr(detail, "_resume_tailoring_after_trustworthy_snapshot", lambda *args, **kwargs: released.append(True))
+    try:
+        with pytest.raises(TransientNetworkError, match="posting snapshot changed"):
+            if recorder == "cascade":
+                detail._record_posting_snapshot_from_cascade(
+                    conn, job_id=job_id, url=url, source_id="jobspy:linkedin", title="Engineer",
+                    cascade_result={"full_description": description, "active_state": "active",
+                                    "verification_method": "enrichment_success", "tier_used": 1},
+                    captured_at="2026-01-02T00:00:00+00:00",
+                )
+            elif recorder == "authenticated_url":
+                detail._record_authenticated_apply_url_snapshot_recovery(
+                    conn, tenant_id=LOCAL_TENANT, job_id=job_id, enrichment=enrichment,
+                    recovered=ApplicationUrl(value="https://example.com/apply/12345678"), captured_at="2026-01-02T00:00:00+00:00",
+                )
+            else:
+                detail._record_missing_apply_url_content_trust_recovery(
+                    conn, tenant_id=LOCAL_TENANT, job_id=job_id, enrichment=enrichment, captured_at="2026-01-02T00:00:00+00:00",
+                )
+        conn.rollback()
+        assert len(accepted) == 1
+        assert conn.execute("SELECT snapshot_set_json FROM posting_snapshot_sets WHERE job_id=?", (str(job_id),)).fetchone()[0] == accepted[0]
+        assert SqlitePostingSnapshotSetRepository(conn).load(LOCAL_TENANT, job_id).latest_active_state is ActiveState.CLOSED
+        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='tailor'", (str(job_id),)).fetchone()[0] == "blocked"
+        assert released == []
+    finally:
+        conn.rollback()
+        peer.close()
+
+
+@pytest.mark.parametrize("superseded_during_model", [False, True])
+def test_selected_apply_target_judges_before_fencing_and_rejects_superseded_owner(
+    conn, monkeypatch, superseded_during_model,
+):
+    from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+    from jobctrl.domain.errors import TransientNetworkError
+    from jobctrl.infrastructure.enrichment.execution_lease import claim_enrichment_execution_lease
+    from jobctrl.infrastructure.network import RunBudgetCounter
+    from jobctrl.state import record_job_event
+
+    url = "https://www.linkedin.com/jobs/view/12345678"
+    target = "https://example.com/apply/12345678"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None)
+    job_id = _job_id(conn, url)
+    detail._record_posting_snapshot_from_cascade(
+        conn, job_id=job_id, url=url, source_id="jobspy:linkedin", title="Engineer",
+        cascade_result={"full_description": "A complete LinkedIn description", "application_url": None,
+                        "active_state": "active", "verification_method": "enrichment_success", "tier_used": 1},
+        captured_at="2026-01-01T00:00:00+00:00",
+    )
+    before = conn.execute("SELECT snapshot_set_json FROM posting_snapshot_sets WHERE job_id=?", (str(job_id),)).fetchone()[0]
+    execution = DiscoveryExecutionRef(tenant_id="local", workflow_id="synthetic-refresh", temporal_run_id="synthetic-run")
+    lease = claim_enrichment_execution_lease(conn, execution, owner_token="first", activity_phase=1, activity_attempt=1)
+    peer = sqlite3.connect(conn.execute("PRAGMA database_list").fetchone()[2], timeout=0.1)
+    browser = SimpleNamespace(rendered_page=lambda *_args, **_kwargs: SimpleNamespace(
+        final_url=url, body_html='<section id="JobDetails_AboutTheJob_12345678">Synthetic posting</section>',
+        visible_apply_controls=[(target, "12345678")],
+    ))
+    monkeypatch.setattr(detail, "prefer_live_browser", lambda *_args, **_kwargs: browser)
+    monkeypatch.setattr(detail, "_enrichment_session", lambda *_args, **_kwargs: offline_session(conn, site="linkedin"))
+    quality = detail.judge_description_quality
+    calls = []
+
+    def quality_with_independent_writer(**kwargs):
+        assert not conn.in_transaction
+        record_job_event(peer, None, "operations", "StageProgress", message="synthetic heartbeat")
+        peer.commit()
+        calls.append(True)
+        if superseded_during_model:
+            claim_enrichment_execution_lease(peer, execution, owner_token="second", activity_phase=1, activity_attempt=2)
+        return quality(**kwargs)
+
+    monkeypatch.setattr(detail, "judge_description_quality", quality_with_independent_writer)
+    arguments = dict(job_ids=(job_id,), tenant_id=LOCAL_TENANT, browser_execution=execution,
+                     cancel_event=None, run_budget=RunBudgetCounter(5), activity_lease=lease)
+    try:
+        if superseded_during_model:
+            with pytest.raises(TransientNetworkError):
+                detail._refresh_selected_apply_targets(conn, **arguments)
+            assert conn.execute("SELECT snapshot_set_json FROM posting_snapshot_sets WHERE job_id=?", (str(job_id),)).fetchone()[0] == before
+            assert SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id).application_url is None
+        else:
+            assert detail._refresh_selected_apply_targets(conn, **arguments) == (1, 1)
+            assert SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id).application_url.value == target
+        assert calls == [True]
+        assert not conn.in_transaction
+    finally:
+        conn.rollback()
+        peer.close()
 
 
 @pytest.fixture(autouse=True)
@@ -482,7 +615,7 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
         (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
     assert before is not None
-    assert before["latest_confidence"] == SnapshotConfidence.MEDIUM.value
+    assert before["latest_confidence"] == SnapshotConfidence.HIGH.value
     assert before["latest_quarantine_reason"] == QuarantineReason.NONE.value
     ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
     set_stage_state(
@@ -522,7 +655,7 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
     ).fetchone()
     assert after is not None
     assert after["latest_snapshot_version"] == 2
-    assert after["latest_confidence"] == SnapshotConfidence.MEDIUM.value
+    assert after["latest_confidence"] == SnapshotConfidence.HIGH.value
     assert after["latest_quarantine_reason"] == QuarantineReason.NONE.value
     assert "apply_url_recovered:authenticated_browser" in after["snapshot_set_json"]
     tailor_state = conn.execute(
@@ -613,7 +746,7 @@ def test_legacy_missing_apply_url_snapshot_is_reclassified_for_every_source_with
     assert repaired is not None
     assert repaired.latest_snapshot is not None
     assert repaired.latest_snapshot.snapshot_version == 2
-    assert repaired.latest_snapshot.confidence is SnapshotConfidence.MEDIUM
+    assert repaired.latest_snapshot.confidence is SnapshotConfidence.HIGH
     assert repaired.latest_snapshot.quarantine_reason is QuarantineReason.NONE
     assert "content_trust_reclassified:apply_url_independent" in (repaired.latest_snapshot.evidence)
     tailor_state = conn.execute(
@@ -926,3 +1059,17 @@ def test_recovery_pass_defers_when_run_budget_exhausted(
     assert row is not None
     assert row[0] == "budget_exhausted"
     assert row[1] == 0
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def explicit_semantic_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

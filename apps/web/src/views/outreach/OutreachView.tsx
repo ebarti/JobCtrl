@@ -103,7 +103,7 @@ export function OutreachView() {
               description={
                 filtersActive
                   ? "Adjust the filters, or add a contact for this job or employer."
-                  : "Add a contact manually or import a CSV to build your outreach list."
+                  : "Add a contact manually or import CSV or vCard content to build your outreach list."
               }
               action={
                 <div className="contacts-empty-actions">

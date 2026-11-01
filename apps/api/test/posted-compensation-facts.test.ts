@@ -1,3 +1,4 @@
+import { recordCompensationAuthority } from "./semantic-fixtures.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PostedCompensationFactResponse } from "../src/contracts.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const PARSED_JOB_ID = "11111111-1111-4111-8111-111111111111";
 const PARSED_JOB_URL = "https://example.com/jobs/parsed";
@@ -32,7 +33,7 @@ function withTempApp() {
 }
 
 function seedDatabase(dbPath: string): void {
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   insertJob(
     db,
@@ -119,6 +120,7 @@ function insertFact(
     "a".repeat(64),
     "2026-06-19T10:00:00Z",
   );
+  recordCompensationAuthority(db, jobId);
   db.close();
 }
 

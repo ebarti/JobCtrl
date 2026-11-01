@@ -107,6 +107,8 @@ class SqliteJobRepository:
         source_family: str | None = None,
         search_unit_lease: DiscoverySearchUnitLease | None = None,
         identity_resolver: JobIdentityResolver | None = None,
+        result_budget=None,
+        result_budget_source_id: str | None = None,
     ) -> None:
         if search_unit_lease is not None:
             if discovery_execution is None:
@@ -114,6 +116,13 @@ class SqliteJobRepository:
             elif discovery_execution != search_unit_lease.execution:
                 raise ValueError("search-unit lease does not match discovery execution")
         self._conn = conn
+        self._result_budget = result_budget
+        self._result_budget_source_id = result_budget_source_id
+        if result_budget is not None and (
+            result_budget.conn is not conn or result_budget.execution != discovery_execution
+            or result_budget_source_id not in result_budget.source_limits
+        ):
+            raise ValueError("canonical insert budget does not match repository ownership")
         self._discovery_execution = discovery_execution
         self._source_family = source_family.strip() if source_family else None
         self._search_unit_lease = search_unit_lease
@@ -227,6 +236,17 @@ class SqliteJobRepository:
     # ------------------------------------------------------------------
 
     def _fence_search_unit_write(self) -> None:
+        if self._result_budget is not None:
+            self._result_budget.fence_write()
+        elif self._discovery_execution is not None:
+            from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan
+
+            # Omitting the optional object must never turn an already bounded
+            # execution into an unbounded canonical writer. Claims call this
+            # fence under BEGIN IMMEDIATE/their caller's writer transaction.
+            check_result_plan(
+                self._conn, self._discovery_execution, limit=0, source_limits={}, bounded=False, required=False,
+            )
         if self._search_unit_repository is None:
             return
         assert self._search_unit_lease is not None
@@ -284,6 +304,8 @@ class SqliteJobRepository:
                 attempted=supplied_job_id,
             )
         else:
+            if self._result_budget is not None:
+                raise ValueError("new budgeted jobs require a canonical claim with execution lineage")
             persisted_identity, was_new = self._insert_or_resolve_winner(
                 job,
                 supplied_job_id,
@@ -433,6 +455,8 @@ class SqliteJobRepository:
     ) -> tuple[ResolvedJobIdentity, bool]:
         """Claim a first URL, returning a concurrent winner when one exists."""
 
+        if self._result_budget is not None and str(job.tenant_id) != self._result_budget.execution.tenant_id:
+            raise ValueError("canonical job tenant does not match discovery result budget")
         try:
             self._conn.execute(
                 """
@@ -594,6 +618,8 @@ class SqliteJobRepository:
         the existing owner before any candidate row becomes visible.
         """
 
+        if self._result_budget is not None and observation.source_id != self._result_budget_source_id:
+            raise ValueError("canonical observation source does not match discovery result budget")
         owns_transaction = not self._conn.in_transaction
         savepoint = "claim_new_job"
         if owns_transaction:
@@ -631,6 +657,11 @@ class SqliteJobRepository:
                     basis="canonical_url_match",
                 )
 
+            if self._result_budget is not None:
+                self._result_budget.record_insert(
+                    str(persisted_identity.job_id), self._result_budget_source_id,
+                    observation_id=observation.source_observation_id, source_run_id=observation.run_id,
+                )
             self._sync_tombstone(job, persisted_identity)
             self._set_canonical_identity(persisted_identity, identity)
             owner_match = self._attach_source_observation(
@@ -645,6 +676,13 @@ class SqliteJobRepository:
                     self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
                     self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 return owner_match
+            if self._result_budget is not None:
+                # No committed admission may be stranded outside its execution
+                # or unit receipt when the next attempt observes the limit.
+                self._record_observation_side_effects(
+                    tenant_id=job.tenant_id, job_id=persisted_identity.job_id,
+                    observation=observation, was_new=True, commit=False,
+                )
             if owns_transaction:
                 self._conn.commit()
             else:
@@ -657,12 +695,13 @@ class SqliteJobRepository:
                 self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
             raise
 
-        self._record_observation_side_effects(
-            tenant_id=job.tenant_id,
-            job_id=persisted_identity.job_id,
-            observation=observation,
-            was_new=True,
-        )
+        if self._result_budget is None:
+            self._record_observation_side_effects(
+                tenant_id=job.tenant_id,
+                job_id=persisted_identity.job_id,
+                observation=observation,
+                was_new=True,
+            )
         return None
 
     # ------------------------------------------------------------------
@@ -835,7 +874,6 @@ class SqliteJobRepository:
                 continue
             basis = content_match_basis(
                 incoming_key=incoming_key,
-                incoming_description=description,
                 candidate_title=existing["title"],
                 candidate_employer=stored_employer,
                 candidate_descriptions=(
@@ -984,6 +1022,7 @@ class SqliteJobRepository:
         job_id: JobId,
         observation: JobSourceObservation,
         was_new: bool,
+        commit: bool = True,
     ) -> None:
         if self._search_unit_repository is not None:
             assert self._search_unit_lease is not None
@@ -992,6 +1031,7 @@ class SqliteJobRepository:
                 job_id,
                 was_new=was_new,
                 accepted_at=observation.observed_at,
+                commit=commit,
             )
         if self._execution_repository is not None:
             assert self._discovery_execution is not None
@@ -1008,6 +1048,7 @@ class SqliteJobRepository:
                 source_family=self._source_family,
                 source_run_id=observation.run_id,
                 linked_at=observation.observed_at,
+                commit=commit,
             )
 
     def set_canonical_identity(

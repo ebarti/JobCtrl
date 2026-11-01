@@ -96,6 +96,7 @@ method as either `mode="workflow"` (start a workflow, return its ids) or
 | `apply` | workflow | `ApplyWorkflow` (per-job, `apply-{tenant}-{jobKey}`) |
 | `rescore_job`, `rescore_jobs_not_on_current_scoring_policy` | workflow | `JobPreparationWorkflow` / `JobPipelineWorkflow` (score) |
 | `tailor_job`, `retailor_job`, `retailor_current_policy` | workflow | `JobPreparationWorkflow` (`tailor`,`cover`,`pdf`) |
+| `check_posting_availability` | workflow | `SavedPostingAvailabilityWorkflow` (explicit saved JobId or bounded due sweep) |
 | `refresh_compensation` | workflow | `CompensationRefreshWorkflow` |
 | `profile_import` | workflow | `ProfileImportWorkflow` |
 | `manual_capture_import` | workflow | `ManualCaptureImportWorkflow` (awaited by the API route) |
@@ -109,6 +110,17 @@ Workflow selection for `run_stage` lives in
 `workers/automation/src/jobctrl/workflow_specs.py`
 (`build_run_stage_workflow_spec`, `build_apply_workflow_spec`, and
 `build_manual_capture_import_workflow_spec`).
+
+`InterviewPrepWorkflow` is an explicit Materials action, outside Discover's
+automatic preparation chain. It validates a bounded current-catalog selection
+before provider spending, then selects canonical evidence before generating
+format-appropriate question outlines. The same workflow/run retry reuses a
+completed generation; failed generation or persistence retains the accepted
+prep. Independent note revisions do not belong to this workflow's replacement
+lifecycle. The [Materials interview contract](../materials.md#stored-interview-preparation)
+owns input snapshots, approved-material bindings, format gates, legacy output,
+and maturity; the [API contract](../../api/complete-contract.md#interview-catalog-preparation-and-notes)
+owns request fields and history/notes routes.
 
 ### Async vs Sync (202 vs 200)
 
@@ -164,30 +176,65 @@ activity call sites.
 
 | Workflow | Business activities | Key timeouts | Retry |
 | --- | --- | --- | --- |
-| `DiscoverWorkflow` | `plan_discovery_sources`, then one execution-scoped live `discovery_enrichment` alongside `discovery_source_family` producers, per-family preparation backstops, terminal reconcile enrichment, `automatic_compensation_refresh`, and terminal fan-out | source/enrichment 6 h; plan/fanout/compensation 30 min; live-enrich heartbeat 5 s; other heartbeats 2 min | source, enrich, and automatic compensation: 5 s→60 s ×3 |
-| `JobPipelineWorkflow` | serial stage dispatch; `discover`→child `DiscoverWorkflow`, `enrich`/`score`/`tailor`/`cover`→activities, `apply`→child `ApplyWorkflow` | stage activities 30 min; heartbeat 2 min | enrich/score 5 s→60 s ×3; tailor/cover 10 s→120 s ×3 |
-| `JobPreparationWorkflow` | `score_job`, `tailor_job`, `cover_letter`, `render_pdf` in fixed order | each 30 min; heartbeat 2 min | score ×3; tailor ×3; cover/pdf ×3 |
+| `DiscoverWorkflow` | `plan_discovery_sources`, then one execution-scoped live `discovery_enrichment` alongside `discovery_source_family` producers, per-family preparation backstops, terminal reconcile enrichment, `automatic_compensation_refresh`, and terminal fan-out | source/enrichment/compensation 6 h; plan/fanout 30 min; live-enrich heartbeat 5 s; other heartbeats 2 min | source, enrich, and automatic compensation: 5 s→60 s ×3 |
+| `JobPipelineWorkflow` | serial stage dispatch; `discover`→child `DiscoverWorkflow`, `enrich`/`score`/`tailor`/`cover`→activities, `apply`→child `ApplyWorkflow` | score/tailor/cover 6 h; enrich 30 min per selected worker wave, capped at 6 h; heartbeat 2 min | enrich/score 5 s→60 s ×3; tailor/cover 10 s→120 s ×3 |
+| `JobPreparationWorkflow` | `score_job`, `tailor_job`, `cover_letter`, `render_pdf` in fixed order | score/tailor/cover 6 h; PDF 30 min; heartbeat 2 min | score ×3; tailor ×3; cover/pdf ×3 |
 | `ApplyWorkflow` | `apply_activity` | 2 h batch / 1 h continuous batch; heartbeat 60 s | live: 1 attempt; dry-run: 2 attempts |
 | `ManualCaptureImportWorkflow` | `manual_capture_import_activity` | 10 min | 2 s→10 s ×2; identity/input/replay mismatches are non-retryable |
 | `ProfileImportWorkflow` | `profile_import_activity` | 10 min | 2 attempts |
+| `SavedPostingAvailabilityWorkflow` | `check_saved_posting_availability` (exact API/page/anonymous evidence, ledger claims) | 30 min; heartbeat 2 min | one attempt; observation backoff owns later retry |
 | `CompensationRefreshWorkflow` | `refresh_compensation_activity` | 20 min | 2 attempts |
 | `InterviewPrepWorkflow` | `generate_interview_prep_activity` | 20 min | 2 attempts |
 | `ContactResearchWorkflow` | `check_spend_budget` preflight, then `run_contact_research` (one source-family activity: gateway-guarded fetch + LLM candidate extraction, proposing candidates in `needs_review`) | activity 30 min; heartbeat 2 min | 10 s→120 s ×3 |
 | `DurabilityProbeWorkflow` | durable timer only (diagnostic; no business activity) | caller-selected timer | Temporal timer recovery |
 
+The compensation model-work budget is versioned by
+`discover-compensation-model-budget-v1`; histories without that marker retain
+their recorded 30-minute activity budget. New histories use the same six-hour
+model-work ceiling as enrichment, with bounded classification concurrency,
+cooperative cancellation and exact live lease renewal.
+
+Bounded Discover result handling is versioned by
+`discover-source-result-budget-v1`. The planning activity records the absolute
+new-job limit's per-source allowances; source activities retain that plan while
+current disabled/quarantine controls may only reduce it. Completed legacy
+histories replay unchanged; pending bounded activities without the current
+all-family plan marker refuse with restart guidance. Supported built-in JobStreaming boards load as
+active, including retained rows with the retired experimental default.
+
+New canonical admissions from every source family append `DiscoveryNewJobAdmitted` to the
+existing `job_events` ledger under the exact tenant/workflow/run/source identity.
+The current planner freezes `DiscoveryResultPlanFrozen` with operational caps,
+source IDs and an integrity digest. The canonical writer rechecks this marker
+under its transaction. Admission receipts use a null Job foreign key and an
+explicit canonical JobId plus source-observation/run IDs, so permanent Job
+deletion cannot replenish the same execution's allowance. Exact captured-posting
+admissions can finish acknowledgement at the cap without reingestion or recreating
+a deleted owner.
+The writer transaction includes the job, locator, canonical identity, source
+observation, acceptance receipt and execution membership. The receipt and both
+lineage adapters join the caller's transaction or savepoint; none may commit it
+early. A failed receipt, stale owner or later identity/membership failure rolls
+the whole admission back. Captured-posting recovery shares this budget. Retries
+compare cumulative receipts with the recorded absolute limit, settle exhausted
+units without opening a provider, and keep individual source caps separate from
+the shared result limit.
+
 A few catalog details worth calling out:
 
 - **`DiscoverWorkflow` streams scoring as it discovers (R9 Phase 1–2).** One
   execution-scoped enrichment activity consumes durable job memberships while
-  source activities are still crawling. Phase 2 hands off per job: the live
-  enrichment pass runs with `per_job_handoff=True`, so a
+  source activities are still crawling. Phase 2 hands off per job: live and
+  terminal enrichment run with `per_job_handoff=True`, so a
   job starts its `SCORE_JOB` preparation the moment it is individually enriched
-  (a side effect inside the enrichment activity — the workflow command history is
-  unchanged). Per-family score-only fan-outs catch already-enriched jobs and
+  (a side effect inside the existing enrichment activity). Per-family score-only fan-outs catch already-enriched jobs and
   missed handoffs. A terminal reconcile enrichment + fan-out runs last and stays
-  authoritative for the tolerated-partial-failure folding (succeed if ≥1 family
-  completed; fail as `discovery_source_failed` only if every family failed) and
-  progress finalization. Repeated starts are deduped by the deterministic
+  authoritative for the tolerated-partial-failure folding. Terminal per-job starts
+  overlap later enrichment and compensation refresh; final fan-out remains the
+  deduplicated backstop. A workflow marker preserves the old activity input on
+  replay. Source handling succeeds if ≥1 family completed and fails as
+  `discovery_source_failed` only if every family failed. Terminal reconciliation
+  owns progress finalization. Repeated starts are deduped by the deterministic
   `prep-{idempotency_key}` id + `USE_EXISTING`; a one-time straggler sweep runs
   before the family loop and every family/terminal fan-out is score-only. See
   [Concurrency & Fan-out](concurrency.md#where-fan-out-happens-and-why).
@@ -234,11 +281,15 @@ Primary implementation files (repo-relative):
 - `workers/automation/src/jobctrl/workflow_specs.py` — `run_stage` / `apply`
   workflow selection and deterministic IDs.
 - `workers/automation/src/jobctrl/infrastructure/temporal/registry.py` — the
-  six workflows and nineteen activities.
+  registered workflows and activities.
 - `workers/automation/src/jobctrl/infrastructure/temporal/finalize.py` — the
   workflow envelope (`record_workflow_started` / `record_workflow_outcome`).
 - `workers/automation/src/jobctrl/infrastructure/temporal/run_in_activity.py`
-  — `run_blocking_with_heartbeat`.
+  — `run_blocking_with_heartbeat`. Its bounded cancellation drain continues
+  heartbeating until the blocking thread settles or the original grace expires;
+  a short heartbeat must not turn an intentional handoff into a timeout. Hard
+  activity deadlines, cooperative cancellation and abandoned-executor recovery
+  still apply.
 - `workers/automation/src/jobctrl/infrastructure/temporal/runtime_guard.py` —
   `assert_activity_runtime`.
 - `workers/automation/src/jobctrl/discovery/workflow.py`,
@@ -263,3 +314,5 @@ Primary implementation files (repo-relative):
   heartbeat/reconciler loop, and `_reconcile_discovery_schedule`.
 - `workers/automation/src/jobctrl/infrastructure/projections/` — Python
   projection builders.
+
+Saved-posting availability is independent of Discover: explicit Job Detail/API/RPC/CLI commands and bounded worker startup/heartbeat sweeps use the same registered workflow. [Operations](operations.md#recurring-saved-posting-checks) owns cadence and failure policy; [Concurrency](concurrency.md#saved-posting-check-bounds) owns durable bounds.

@@ -1,9 +1,14 @@
+import fs from "node:fs";
+import { offerEventReferences } from "./offers.js";
+import { screeningEventReferences } from "./screening-answers.js";
+import { applyTimelineEnvelope } from "./apply-event-stream.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
-import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { LOCAL_TENANT, applyEventReferences } from "@jobctrl/domain-types";
 
-import { databaseExists, openDatabase, type SqliteDatabase } from "./db.js";
+import { createRetainedDatabase, databaseExists, SUPPORTED_SCHEMA_VERSION, type SqliteDatabase } from "./db.js";
 import { resolveLoopbackCorsOrigin } from "./local-origin.js";
+import { hasExactV15SchemaManifest } from "./schema-manifest.js";
 
 const POLL_DEFAULT_MS = 250;
 const KEEPALIVE_DEFAULT_MS = 15_000;
@@ -16,13 +21,17 @@ export interface EventStreamOptions {
   readonly pollIntervalMs?: number;
   readonly keepaliveIntervalMs?: number;
   readonly heartbeatIntervalMs?: number;
+  readonly databaseRetryIntervalMs?: number;
 }
 
 interface EventRow {
   readonly event_id: number;
   readonly tenant_id: string;
   readonly job_id: string | null;
+  readonly stage: string | null;
   readonly event_type: string | null;
+  readonly level: string | null;
+  readonly message: string | null;
   readonly payload_json: string | null;
   readonly occurred_at: string | null;
 }
@@ -42,90 +51,148 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
   );
   const keepaliveIntervalMs = clampPositive(options.keepaliveIntervalMs ?? KEEPALIVE_DEFAULT_MS);
   const heartbeatIntervalMs = clampPositive(options.heartbeatIntervalMs ?? HEARTBEAT_DEFAULT_MS);
+  const databaseRetryIntervalMs = clampPositive(options.databaseRetryIntervalMs ?? RETRY_BASELINE_MS);
 
   const subscribers = new Map<symbol, Subscriber>();
-  let db: SqliteDatabase | null = null;
+  const retainedDb = createRetainedDatabase(options.dbPath);
+  let boundDbIdentity: string | null = null;
+  let boundDb: SqliteDatabase | null = null;
+  let boundSchemaStamp: string | null = null;
+  let workspaceChanged = false;
+  let unavailable = false;
+  let nextRetryAt = 0;
   let pollHandle: NodeJS.Timeout | null = null;
 
+  function pathIdentity(): string {
+    const stat = fs.statSync(options.dbPath);
+    return `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+  }
+
+  function schemaStamp(connection: SqliteDatabase): string {
+    return `${connection.pragma("schema_version", { simple: true })}:${connection.pragma("user_version", { simple: true })}`;
+  }
+
+  function verifyBoundDb(): void {
+    if (!boundDb || !boundDbIdentity) throw new Error("Event database is unavailable");
+    if (pathIdentity() !== boundDbIdentity || schemaStamp(boundDb) !== boundSchemaStamp) {
+      // A changed file or schema cannot establish event-history continuity.
+      workspaceChanged = true;
+      throw new Error("Event database identity changed");
+    }
+  }
+
   function getDb(): SqliteDatabase | null {
-    if (db) {
-      return db;
+    if (boundDb) {
+      // Keep the accepted handle across read failures: reopening could bind a
+      // replacement file to a stale pre-open pathname stat.
+      verifyBoundDb();
+      return boundDb;
     }
-    if (!databaseExists(options.dbPath)) {
-      return null;
+    if (!databaseExists(options.dbPath)) return null;
+    const connection = retainedDb.open();
+    const identity = retainedDb.identity();
+    const stamp = schemaStamp(connection);
+    // Path checks cannot identify an A → B → A swap during the SQLite open.
+    // Database replacement and restore require a stopped runtime.
+    if (
+      pathIdentity() !== identity
+      || connection.pragma("user_version", { simple: true }) !== SUPPORTED_SCHEMA_VERSION
+      || !hasExactV15SchemaManifest(connection)
+      || schemaStamp(connection) !== stamp
+      || pathIdentity() !== identity
+    ) {
+      throw new Error("Event database changed while opening");
     }
-    db = openDatabase(options.dbPath);
-    return db;
+    boundDbIdentity = identity;
+    boundSchemaStamp = stamp;
+    boundDb = connection;
+    return connection;
   }
 
   function maxEventId(connection: SqliteDatabase, tenantId: string): number {
-    try {
-      const row = connection
-        .prepare(
-          "SELECT COALESCE(MAX(event_id), 0) AS max_id FROM job_events "
-            + "WHERE tenant_id = ?",
-        )
-        .get(tenantId) as { max_id: number | bigint | string } | undefined;
-      return row ? Number(row.max_id) : 0;
-    } catch {
-      return 0;
-    }
+    const row = connection
+      .prepare(
+        "SELECT COALESCE(MAX(event_id), 0) AS max_id FROM job_events "
+          + "WHERE tenant_id = ?",
+      )
+      .get(tenantId) as { max_id: number | bigint | string } | undefined;
+    return row ? Number(row.max_id) : 0;
   }
 
   function tailEvents(connection: SqliteDatabase, tenantId: string, after: number): EventRow[] {
-    try {
-      return connection
-        .prepare(
-          "SELECT event_id, tenant_id, job_id, event_type, payload_json, occurred_at "
-            + "FROM job_events "
-            + "WHERE event_id > ? "
-            + "  AND tenant_id = ? "
-            + "ORDER BY event_id ASC LIMIT ?",
-        )
-        .all(after, tenantId, EVENT_BATCH_LIMIT) as EventRow[];
-    } catch {
-      return [];
-    }
+    return connection
+      .prepare(
+        "SELECT event_id, tenant_id, job_id, stage, event_type, level, message, payload_json, occurred_at "
+          + "FROM job_events "
+          + "WHERE event_id > ? "
+          + "  AND tenant_id = ? "
+          + "ORDER BY event_id ASC LIMIT ?",
+      )
+      .all(after, tenantId, EVENT_BATCH_LIMIT) as EventRow[];
   }
 
   function poll(): void {
-    if (subscribers.size === 0) {
+    if (subscribers.size === 0 || workspaceChanged || (unavailable && Date.now() < nextRetryAt)) {
       return;
     }
-    const connection = getDb();
-    if (!connection) {
-      return;
-    }
-    const minCursorByTenant = new Map<string, number>();
-    for (const sub of subscribers.values()) {
-      const previous = minCursorByTenant.get(sub.tenantId);
-      if (previous === undefined || sub.cursor < previous) {
-        minCursorByTenant.set(sub.tenantId, sub.cursor);
+    try {
+      const connection = getDb();
+      if (!connection) {
+        if (unavailable) nextRetryAt = Date.now() + databaseRetryIntervalMs;
+        return;
       }
-    }
-
-    for (const [tenantId, minCursor] of minCursorByTenant) {
-      const rows = tailEvents(connection, tenantId, minCursor);
-      if (rows.length === 0) {
-        continue;
-      }
+      const minCursorByTenant = new Map<string, number>();
       for (const sub of subscribers.values()) {
-        if (sub.tenantId !== tenantId) {
-          continue;
-        }
-        for (const row of rows) {
-          if (row.event_id <= sub.cursor) {
-            continue;
-          }
-          writeEventRow(sub.reply, row);
-          sub.cursor = row.event_id;
+        const previous = minCursorByTenant.get(sub.tenantId);
+        if (previous === undefined || sub.cursor < previous) {
+          minCursorByTenant.set(sub.tenantId, sub.cursor);
         }
       }
+
+      for (const [tenantId, minCursor] of minCursorByTenant) {
+        const rows = tailEvents(connection, tenantId, minCursor);
+        // Discard a batch if its post-read path or schema differs from the bound snapshot.
+        verifyBoundDb();
+        for (const sub of subscribers.values()) {
+          if (sub.tenantId !== tenantId) continue;
+          for (const row of rows) {
+            if (row.event_id <= sub.cursor) continue;
+            writeEventRow(sub.reply, row);
+            sub.cursor = row.event_id;
+          }
+        }
+      }
+      if (unavailable) {
+        verifyBoundDb();
+        unavailable = false;
+        app.log.info("Event stream database recovered");
+        for (const sub of subscribers.values()) writeHeartbeat(sub.reply, sub.cursor);
+      }
+    } catch {
+      markUnavailable();
     }
   }
 
+  function markUnavailable(): void {
+    if (workspaceChanged || !boundDb) closeDb();
+    if (workspaceChanged) {
+      // Recovery must be offline: an old cursor cannot be applied to a new history.
+      unavailable = true;
+      stopPolling();
+      app.log.warn("Event stream database identity changed; stopped runtime recovery required");
+      for (const sub of subscribers.values()) writeUnavailable(sub.reply, "event_stream_workspace_changed");
+      return;
+    }
+    nextRetryAt = Date.now() + databaseRetryIntervalMs;
+    if (unavailable) return;
+    unavailable = true;
+    // Never include the exception: SQLite errors can contain local paths or data.
+    app.log.warn("Event stream unavailable; retrying database access");
+    for (const sub of subscribers.values()) writeUnavailable(sub.reply, "event_stream_unavailable");
+  }
+
   function startPolling(): void {
-    if (pollHandle !== null) {
+    if (pollHandle !== null || workspaceChanged) {
       return;
     }
     pollHandle = setInterval(poll, pollIntervalMs);
@@ -143,15 +210,12 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
   }
 
   function closeDb(): void {
-    if (!db) {
-      return;
-    }
     try {
-      db.close();
+      retainedDb.close();
     } catch {
       // best-effort
     }
-    db = null;
+    boundDb = null;
   }
 
   function detach(sub: Subscriber): void {
@@ -166,7 +230,9 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
     }
   }
 
-  app.addHook("onClose", async () => {
+  // SSE replies are hijacked and otherwise keep the HTTP server open. End
+  // them before Fastify waits for outstanding connections during shutdown.
+  app.addHook("preClose", async () => {
     stopPolling();
     for (const sub of subscribers.values()) {
       clearInterval(sub.keepaliveTimer);
@@ -178,8 +244,8 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
       }
     }
     subscribers.clear();
-    closeDb();
   });
+  app.addHook("onClose", async () => { closeDb(); });
 
   app.get("/v1/events/stream", async (request, reply) => {
     const tenantId = resolveTenantId(request);
@@ -200,12 +266,22 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
     reply.raw.writeHead(200, headers);
     reply.raw.write(`retry: ${RETRY_BASELINE_MS}\n\n`);
 
-    const connection = getDb();
     let cursor = requestedResume;
-    if (cursor === null && connection) {
-      cursor = maxEventId(connection, tenantId);
-    } else if (cursor === null) {
-      cursor = 0;
+    if (cursor === null) {
+      try {
+        const shouldAttempt = !workspaceChanged && (!unavailable || Date.now() >= nextRetryAt);
+        const connection = shouldAttempt ? getDb() : null;
+        if (shouldAttempt && !connection && unavailable) nextRetryAt = Date.now() + databaseRetryIntervalMs;
+        if (connection) {
+          cursor = maxEventId(connection, tenantId);
+          verifyBoundDb();
+        } else {
+          cursor = 0;
+        }
+      } catch {
+        markUnavailable();
+        cursor = 0;
+      }
     }
 
     const id = Symbol("sse-subscriber");
@@ -218,12 +294,19 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
         writeRaw(reply, ": keepalive\n\n");
       }, keepaliveIntervalMs),
       heartbeatTimer: setInterval(() => {
-        writeHeartbeat(reply, sub.cursor);
+        if (unavailable) return;
+        try {
+          if (boundDb) verifyBoundDb();
+          writeHeartbeat(reply, sub.cursor);
+        } catch {
+          markUnavailable();
+        }
       }, heartbeatIntervalMs),
     };
     sub.keepaliveTimer.unref?.();
     sub.heartbeatTimer.unref?.();
     subscribers.set(id, sub);
+    if (unavailable) writeUnavailable(reply, workspaceChanged ? "event_stream_workspace_changed" : "event_stream_unavailable");
     startPolling();
 
     request.raw.on("close", () => detach(sub));
@@ -289,6 +372,12 @@ function writeEventRow(reply: FastifyReply, row: EventRow): void {
   if (envelope === null) {
     return;
   }
+  const timeline = applyTimelineEnvelope(row, envelope);
+  if (timeline) {
+    // Keep the original cursor until the original frame is dispatched. A
+    // disconnect between frames replays this summary rather than skipping it.
+    writeRaw(reply, `event: ApplyRunEventRecorded\n${formatDataField(JSON.stringify(timeline))}\n\n`);
+  }
   const dataLine = formatDataField(JSON.stringify(envelope));
   writeRaw(
     reply,
@@ -305,6 +394,24 @@ function canonicalSseEnvelope(row: EventRow): Record<string, unknown> | null {
   }
   if (!isRecord(payload)) {
     return null;
+  }
+  // Historical rows retain private previews for canonical Apply Review.
+  // Replay emits references only, including legacy wrapped publisher events.
+  payload = applyEventReferences(row.event_type, payload);
+  if (!isRecord(payload)) return null;
+  if (row.event_type === "OfferRecordChanged") {
+    payload = offerEventReferences(payload);
+    if (!isRecord(payload)) return null;
+  }
+  if (
+    row.event_type === "CompanyBriefingRecorded" ||
+    row.event_type === "CareerLearningRecorded" ||
+    row.event_type === "ArchivedSmartPostingPrepared" ||
+    row.event_type === "LegacyEvidenceReviewRecorded"
+  ) return null;
+  if (row.event_type === "ScreeningAnswerRecorded") {
+    payload = screeningEventReferences(payload);
+    if (!isRecord(payload)) return null;
   }
   const legacyJobAliases = ["jobKey", "job_key", "jobUrl", "job_url", "job_id"];
   if (legacyJobAliases.some((key) => Object.hasOwn(payload, key))) {
@@ -339,6 +446,12 @@ function canonicalSseEnvelope(row: EventRow): Record<string, unknown> | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function writeUnavailable(reply: FastifyReply, code: "event_stream_unavailable" | "event_stream_workspace_changed"): void {
+  // An empty id resets the EventSource cursor before a changed workspace can restart.
+  const resetCursor = code === "event_stream_workspace_changed" ? "id:\n" : "";
+  writeRaw(reply, `${resetCursor}event: error\ndata: {"code":"${code}"}\n\n`);
 }
 
 function writeHeartbeat(reply: FastifyReply, watermark: number): void {

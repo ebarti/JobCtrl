@@ -1,0 +1,360 @@
+# Local Scale Benchmark
+
+The local scale benchmark is a reproducible, synthetic baseline for JobCtrl's
+production read paths. It creates a new owned temporary app directory, config,
+SQLite database, and artifact directory for each dataset, initializes the
+database with the exact schema-v15 constructor, and removes the workspace after
+the dataset finishes. It has no flag for an existing app directory or database.
+
+Run it from the repository root with a new output path:
+
+```bash
+corepack pnpm benchmark:local-scale --json-out /tmp/jobctrl-local-scale.json
+```
+
+Use `--background-load-note` to preserve a run-specific concurrency observation.
+A known dirty file can be recorded only by supplying all three
+`--dirty-exclusion-*` arguments: repository-relative path, verified content
+SHA-256, and an explicit reason. The runner rejects partial or mismatched
+exclusions.
+
+The command refuses to overwrite its output. The RPC subprocess receives a
+minimal allowlisted environment plus an isolated home and Codex, Claude, AWS,
+Google, and Azure config paths. AWS metadata and Langfuse export are disabled,
+and unexpected outbound proxy traffic goes to an unreachable loopback port.
+Before the read-only `provider_models` call, the production `provider_status`
+method must prove that all providers are non-ready. The returned model catalog
+must pass the production schema with no ready provider and no models. Any
+failure stops the run before provider model discovery can execute.
+
+The focused harness checks statistics, unsafe arguments, cleanup after failure,
+exact-v15 seed totals, deliberately perturbed correctness oracles, an ambient
+Bedrock/AWS/provider-credential counterfactual, and a
+smallest-dataset integration through the real HTTP, timer SSE, preview,
+projection, and `SubprocessJsonRpcAdapter` paths:
+
+```bash
+corepack pnpm --filter @jobctrl/api benchmark:local-scale:test
+```
+
+The exact-v15 and production-path integration cases require `uv`. They are
+skipped when `uv` is unavailable so ordinary TypeScript CI can still test the
+runtime-independent harness contracts. Accepted delivery verification requires
+`uv` and execution of every integration case; skipped cases do not establish
+correctness. Prepare the locked worker environment before running the offline
+harness: its provider isolation deliberately blocks dependency downloads too.
+
+## Method and proposed budgets
+
+The deterministic seed is `jobctrl-local-scale-v1`. Each base dataset has 100,
+1,000, or 10,000 jobs, three events per job (`discover`, `enrich`, and `score`),
+a 1 KiB job description, scores from 0 through 10, one 256 KiB PDF preview, and
+one 128 KiB HTML preview. Later scenarios add a fixed 50-event projection
+batch, workflow lifecycle events, SSE batches, and bounded sustained writes.
+Every dataset gets a separate temporary database and artifact directory.
+
+Warm HTTP, preview, and RPC results use two warmups followed by seven retained
+samples. Percentiles use nearest rank, so p95 selects the maximum when only
+seven samples are retained. These are exploratory, tail-sample-limited local
+observations rather than stable population estimates.
+
+Browser compatibility is a separate correctness check. The API pagination
+suite exercises the existing browser list adapter against independent synthetic
+expectations, including stages with more than 200 matches, ties, adjacent and
+deep pages, and clamping. Its independent boundary cases also cover mixed-case
+and accented text ordering, presented failed/exhausted sort keys, and literal
+percent/underscore/backslash and Unicode source/company filters across search
+and bulk selection. Timestamp boundaries cover mixed fractional precision,
+equivalent timezone offsets, absent/invalid values, and the OR of two cutoffs.
+Discovery sorting preserves the browser's locale comparison of raw timestamp
+strings, including mixed fractional/offset notation, rather than instant order.
+All list sorts and filters use SQLite selection over the rebuildable query
+index. Only selected IDs receive summary hydration, availability and template
+reads. Index refresh reads scalar source values and precomputes Unicode search
+fields, substring candidates, timestamp instants and directional locale sort
+ordinals. When connection change tokens advance, a source fingerprint comparison
+avoids sorting and trigram replacement if the tenant's scalar inputs are
+unchanged. Comparison still reads that tenant's source rows. Long literal
+filters start from indexed trigram postings and intersect candidates before
+field rechecks; only that candidate subset needs SQL ordinal ordering.
+Construction is proportional to the indexed tenant and must be
+distinguished from settled selection; count and deep-offset work can still
+grow with scalar candidates. The API retains its list connection until app
+close and rebuilds query state after restart or database replacement.
+The original benchmark seed, scenarios, warmups, samples and report fields are
+unchanged; the request paths exercise the current implementation.
+The combined-stage extension adds `queryIndex`: a separate direct retained
+connection observation after its HTTP scenarios, recording connection admission,
+cold and warm request times and `jobQueryMetrics` snapshots. TEMP schema/index
+initialization is separate from scalar rebuild time, which excludes DTO
+hydration. `sourceChecks` and `sourceCheckMs` also record source comparisons
+that avoid rebuilding after unrelated commits. A rebuild's duration includes
+its source check, so these overlapping durations must not be added; selection
+time includes count and ID paging. This
+extension preserves the original HTTP sample series and historical scenario
+names, including `materialized-ties-deep`. Source hashes include the query
+implementation, shared comparator and connection owner. Memory samples still
+cover the Node server/client process and can miss short-lived spikes; SQLite
+TEMP storage and ordinal/trigram index construction are not canonical schema
+growth or an independently sampled memory peak.
+The API contract is complete independently of UI pagination changes. For
+API-only delivery, current-browser compatibility includes the existing hook,
+demo and query-key regression suites, plus navigation, filters and bulk
+operations through `jobs-bulk.spec.ts` at the controller's browser QA stage.
+A pagination UI change owns its dedicated Playwright pagination scenario and
+the visual evidence below. Confirm that scenario appears in Playwright
+discovery and in the executed report; a command containing a missing filename
+can still succeed when another selected file matches.
+Retain the test source, synthetic inputs, request/response observations, source
+and lock hashes, and page images from successful populated, adjacent, deep,
+clamped and empty states. Inspect the images as well as the assertions.
+Distinguish the ordinary scalar/all-stage route from an explicit stage-array
+client request or a controlled experiment forwarding real combined responses
+to the current UI.
+
+The `combinedStages` report extension runs only after all original scenarios at
+all three sizes. Each extension dataset gets another owned exact-v15 workspace.
+The original seed, scenarios, two warmups, seven retained samples, and report
+fields remain available in `datasets`; their measurements precede the extension's
+allocations and writes. The exact schema constructor supplies the canonical
+built-in resume template required by current list summaries. Job and event totals,
+descriptions, scores, and preview bytes retain their original seed definitions.
+
+The extension uses seed `jobctrl-local-scale-v1:combined-stages-v1`, with every
+third job in Apply and the rest in Discover. Groups of four share discovery
+timestamps across stages to exercise ascending job-ID ties. It also seeds
+canonical `job_scores` versions with deterministic 1–10 scores. The original
+datasets preserve their legacy `jobs.fit_score` cells for comparison; those cells
+do not supply current list scores on exact-v15, and the original scenarios do not
+prove numeric score ordering. The extension measures combined
+discovery first, adjacent, deep, and clamped pages; duplicate-stage input; scalar/array
+precedence; explicit empty arrays; empty membership; search first, deep, and
+clamped pages; and a compensation sort with absent-value ties.
+Pages contain 25 jobs. Deep pages request the penultimate page of the matching
+set (or page one when the set is small). Expected totals, clamped pages, complete
+page IDs, and filter membership come from deterministic synthetic inputs;
+each HTTP sample must agree before a report is emitted.
+The retained `sql-first`, `sql-adjacent`, `sql-deep`, and `sql-clamped` scenario
+names are historical comparison labels: their unchanged discovery-sort requests
+now use SQLite ordinal selection. The labels alone do not establish the query
+strategy used by a historical measurement; inspect its recorded source hashes.
+Separate `fit-score-first`, `fit-score-adjacent`, `fit-score-deep`, and
+`fit-score-clamped` scenarios measure numeric score ordering, including
+repeated scores across stages and ascending job-ID ties.
+
+Each extended scenario retains the same latency distribution plus seven raw
+before/after Node RSS and heap observations. Peak growth and signed end deltas
+use the first retained request's baseline, without forced garbage collection.
+The scope includes the benchmark's loopback server and client in the same Node
+PID. Boundary sampling can miss transient allocation peaks; values are local
+observations, not allocation counts or leak proof. The report includes actual
+schema version and manifest hash, source/lock hashes, Git status, and worktree
+diff hash so pre-optimization observations can be tied to their candidate.
+
+For a new optimization, retain the expanded JSON, command, full stdout/stderr,
+UTC timestamps, and candidate/source/lock hashes in the controller's allocated
+evidence location before changing query strategy. The historical repository
+baseline below remains its original measurement; it does not supply expanded
+measurements for a later candidate.
+
+The sustained scenario runs for at least 1.5 seconds and seven iterations, with
+a 100-iteration cap. Each iteration directly writes 10 synthetic events,
+updates a seeded heartbeat, requests a free-text plus sorted job page,
+and reads seeded pipeline-operation records while a production SSE connection
+is open. It is not a live Temporal worker, provider workload, or endurance
+benchmark. Raw samples and all correctness fields are in the sanitized
+repository artifact at `docs/benchmarks/local-scale-baseline.json`.
+
+These are proposed reference targets for diagnosis. They are not adopted SLOs
+or CI gates:
+
+| Scenario | Proposed target | Rationale |
+| --- | ---: | --- |
+| Warm list, search, sort, preview, or reused RPC p95 | 250 ms | Conservative local interactive response target |
+| Settled projection no-op | 50 ms | Keep a watermark check small relative to an interactive request |
+| Fixed 50-event foreground projection pass | 100 ms | Bound work before the background drain |
+| One 1,000-event SSE batch visible | 600 ms | Two production 250 ms polls plus 100 ms delivery allowance |
+| Fully drained cold projection: 100 / 1,000 / 10,000 jobs | 2 s / 8 s / 45 s | Separate one-time rebuild cost from warm requests with local-hardware allowance |
+| Cold Python RPC startup | 10 s | Include `uv`, Python imports, and dispatcher startup |
+| Sustained Node RSS / heap peak growth | 128 MiB / 64 MiB | Diagnostic bounds for this bounded workload, not long-horizon guarantees |
+
+## Bounded job-page contract and supplied comparisons
+
+The web Operations list helper sends one `api.jobs` request for the requested
+page and page size. Explicit stage arrays override scalar stages, deduplicate
+valid values, and use an empty array to clear the restriction. Malformed or
+oversized arrays retain the shared parser’s scalar fallback. The helper returns the
+server response directly; it does not download preceding pages, merge jobs,
+deduplicate rows, sort them, or reconstruct pagination metadata.
+
+The Jobs grid keeps multi-stage selections in its grid/saved-view state, resets
+paging when selection changes, and passes the same stages to list and
+all-matching bulk filters. The view owns the effective list query; the route
+does not prefetch a separate URL-only page. Single-stage navigation remains
+URL-backed. The demo
+uses the shared filter/comparator and paginates the combined set once, including
+its effective stages in response metadata.
+
+The repository artifact `docs/benchmarks/bounded-job-queries.json` retains
+sanitized measurements supplied by the controller for historical api1
+(`bc924ebd91e810cabcb8a7704104b7106a647c48`) and sql1
+(`e5b03057267dd2c967ccf4e6f284ad4ad54d315d`) candidates. The series come from each dependency’s retained local-check scale log, captured
+on 2026-10-17. Each series records its original capture time, candidate/source/lock hashes, schema, raw latency and
+memory samples, and the SHA-256 of its retained source log. These are HTTP
+measurements of those candidates, not measurements of the browser change.
+
+| Jobs | Ordinary p95, api1 → sql1 | Search p95, api1 → sql1 | Sustained read p95, api1 → sql1 |
+| ---: | ---: | ---: | ---: |
+| 100 | 13.143 → 9.250 ms | 10.801 → 2.701 ms | 13.735 → 7.067 ms |
+| 1,000 | 78.699 → 10.037 ms | 76.723 → 11.821 ms | 96.222 → 26.369 ms |
+| 10,000 | 831.948 → 80.568 ms | 762.726 → 78.652 ms | 969.177 → 405.464 ms |
+
+Use the artifact's exact series when comparing: separate runs on the same
+candidate need not have identical timings. Seven retained warm samples make
+nearest-rank p95 equal to max. Memory is sampled in the shared Node server/client
+process, without forced GC; request-boundary samples can miss transient peaks.
+Both series use exact-v14 canonical schema. SQLite TEMP query-index construction
+and refresh costs are separate from canonical schema/storage growth. In sql1’s
+10,000-job direct-connection diagnostic, cold index refresh took 1,519 ms; the
+1,644 ms cold request and 103 ms warm request exclude connection admission.
+Sampled sustained heap peak growth was 240 MiB versus api1’s 196 MiB; these
+shared-process samples do not isolate SQLite’s native allocations. The
+sustained workload writes synthetic events and heartbeats without a live worker;
+its read latency remains a separate observation. Diagnostic budgets
+are not adopted acceptance thresholds.
+
+## Measured baseline
+
+The archived results below and the linked JSON retain their original v10 schema
+and measurements. Current runs use v15; compare schema identities explicitly
+before drawing performance conclusions across revisions.
+
+This baseline measured commit `8c80b31b584c7ef92b80f92ea9e496c968a8269a`
+on 2026-09-22. The checkout also contained an unrelated two-line change in
+`workers/automation/uv.lock`. The run received an explicit exclusion path,
+content SHA-256 `4eaf563541a57070c8e1b661d34aad441d419ef8811dbd02abdc64b267148a67`,
+and note; it verified the content hash, exact porcelain status, two-addition
+numstat, and diff identity before recording the exclusion. Generic runs do not
+infer that a dirty path is unrelated. Schema version was 10. The host was macOS
+25.6.0 on arm64, Apple M4 Pro with 12 logical CPUs and 24 GiB memory, using Node
+v22.21.1, Python 3.14.4, and SQLite 3.53.0.
+
+The invocation explicitly annotated that four other issue tasks were active on
+the host. The benchmark did not independently measure concurrent activity and
+had no CPU pinning or isolated reference hardware, so it is a local baseline
+with background-load contention. Generic future runs report concurrent load as
+unmeasured unless the operator supplies an annotation. Keep the raw samples
+when comparing another run, and do not tighten the proposed budgets from these
+measurements.
+
+Projection correctness required the expected row count and an operations
+watermark equal to the maximum event ID after convergence.
+
+| Jobs | Cold foreground | Fully drained | Settled no-op | 50-event foreground | Rows / watermark |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 100 | 34.626 ms | 34.714 ms | 1.072 ms | 14.493 ms | 100 / 352 = 352 |
+| 1,000 | 290.549 ms | 516.594 ms | 4.335 ms | 23.306 ms | 1,000 / 3,052 = 3,052 |
+| 10,000 | 2,833.645 ms | 9,739.466 ms | **50.123 ms** | **147.061 ms** | 10,000 / 30,052 = 30,052 |
+
+HTTP responses returned the expected totals, the deterministic newest job for
+the ordinary SQL-paginated list, exact free-text selectivity of 10%, and an
+ascending production source sort key for the in-memory path.
+
+| Jobs | Scenario | p50 | p95 | max |
+| ---: | --- | ---: | ---: | ---: |
+| 100 | Ordinary list | 8.238 ms | 9.061 ms | 9.061 ms |
+| 100 | Free-text search | 9.802 ms | 10.149 ms | 10.149 ms |
+| 100 | In-memory source sort | 10.315 ms | 10.928 ms | 10.928 ms |
+| 1,000 | Ordinary list | 12.157 ms | 13.086 ms | 13.086 ms |
+| 1,000 | Free-text search | 68.139 ms | 69.205 ms | 69.205 ms |
+| 1,000 | In-memory source sort | 71.768 ms | 72.956 ms | 72.956 ms |
+| 10,000 | Ordinary list | 76.373 ms | 76.969 ms | 76.969 ms |
+| 10,000 | Free-text search | 673.366 ms | **689.119 ms** | 689.119 ms |
+| 10,000 | In-memory source sort | 693.720 ms | **707.482 ms** | 707.482 ms |
+
+The 10,000-job search and in-memory sort exceed the proposed warm p95 target,
+as expected for that baseline's materialize/filter/sort implementation. No
+optimization is included in this baseline.
+
+The real SSE route used its production 250 ms timer and 1,000-event tenant
+batch. Idle observations lasted 550 ms and delivered zero domain events. Burst
+and replay counts and numeric event ordering were exact for one subscriber and
+four concurrent subscribers. This validates the server transport, timer, event
+ID, and count boundary with benchmark-only event types. It does not validate
+frontend event-registry membership or decoded-envelope acceptance.
+
+| Jobs | Idle Node CPU | One subscriber | Replay | Four subscribers | Total Node CPU |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 100 | 3.223 ms | 209.890 ms | 233.392 ms | 259.817 ms | 177.614 ms |
+| 1,000 | 0.931 ms | 205.573 ms | 240.149 ms | 253.531 ms | 140.888 ms |
+| 10,000 | 1.788 ms | 209.294 ms | 234.996 ms | 257.088 ms | 135.086 ms |
+
+Preview responses came from the production PDF and HTML routes. Every sample
+had the fixed byte count and SHA-256 digest: PDF
+`17cd1e5bbcd90fe8fcb8bd05cfd4d403f69cda0fb8e06da85573c1ef0ae50ef0`
+(262,144 bytes) and HTML
+`d7f5febbf7b896b40f92fc7014da0428f56636964b174f244c5ee854b3a2d350`
+(131,072 bytes).
+
+| Jobs | Preview | p50 | p95 | max |
+| ---: | --- | ---: | ---: | ---: |
+| 100 | PDF | 3.963 ms | 4.927 ms | 4.927 ms |
+| 100 | HTML | 3.722 ms | 3.895 ms | 3.895 ms |
+| 1,000 | PDF | 7.851 ms | 8.389 ms | 8.389 ms |
+| 1,000 | HTML | 7.622 ms | 7.758 ms | 7.758 ms |
+| 10,000 | PDF | 54.301 ms | 55.262 ms | 55.262 ms |
+| 10,000 | HTML | 54.112 ms | 55.111 ms | 55.111 ms |
+
+RPC measurements used the real TypeScript `SubprocessJsonRpcAdapter`, locked
+`uv` runtime, production Python `jobctrl rpc` dispatcher, and read-only
+`provider_status` and `provider_models` responses. Cold startup includes the
+status preflight. All three statuses were unconfigured and non-ready before the
+catalog call, and every catalog envelope passed the production schema with zero
+models. A single adapter instance was reused for warm catalog calls.
+
+| Jobs | Cold startup | Warm p50 | Warm p95 | Warm max | Descendant RSS / CPU point sample |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 100 | 498.749 ms | 0.110 ms | 0.175 ms | 0.175 ms | 170,737,664 bytes / 72.4% |
+| 1,000 | 587.419 ms | 0.065 ms | 0.091 ms | 0.091 ms | 176,209,920 bytes / 75.3% |
+| 10,000 | 1,839.813 ms | 0.070 ms | 0.098 ms | 0.098 ms | 207,208,448 bytes / 96.1% |
+
+The RPC resource scope is recursive descendants of the benchmark Node process
+while the adapter is warm (`esbuild`, `uv`, and Python), excluding the Node
+parent and `ps` sampler. The CPU value is a point-in-time `ps` observation, not
+integrated CPU time.
+
+The sustained workload seeded a `DiscoverWorkflow` record in `in_progress`, a
+worker-heartbeat record, `score_job` duration samples, queue backlog 3, and two
+pipeline lifecycle records. It directly refreshed the synthetic heartbeat and
+wrote synthetic events; no Temporal worker or provider ran. Every written event
+arrived over SSE. Node resource growth is scoped to the benchmark PID; peaks
+were sampled once per workload iteration and end deltas after SSE convergence.
+Sampling between iterations can miss short-lived spikes.
+
+| Jobs | Duration / iterations / writes | Read p50 / p95 / max | Operations p50 / p95 / max | RSS / heap peak growth | Node CPU |
+| ---: | --- | --- | --- | --- | ---: |
+| 100 | 1,745.274 ms / 73 / 730 | 10.663 / 11.500 / 24.073 ms | 6.234 / 6.838 / 21.039 ms | 5,980,160 / 5,999,096 bytes | 1,601.493 ms |
+| 1,000 | 1,551.300 ms / 18 / 180 | 72.927 / 97.806 / 97.806 ms | 6.385 / 35.962 / 35.962 ms | 36,814,848 / 44,614,552 bytes | 1,576.446 ms |
+| 10,000 | 5,755.515 ms / 7 / 70 | 750.845 / 894.215 / 894.215 ms | 6.681 / 300.844 / 300.844 ms | 39,288,832 / **194,176,016 bytes** | 5,996.898 ms |
+
+Database sizes after all scenarios were 10,306,216, 29,011,192, and
+251,633,216 bytes. Artifact bytes were fixed at 393,216 for each dataset. The
+overall benchmark Node peak RSS was 254,787,584, 515,784,704, and 918,470,656
+bytes respectively; these absolute peaks include sequential-process carryover
+and are reported separately from per-scenario growth.
+
+The historical exact-v10 global `llm_spend` totals stayed at zero input tokens,
+zero output tokens, and zero estimated USD, and provider call count was zero.
+The RPC dispatcher entered its instrumented path, but export was disabled. No
+LLM method ran, so no LLM span token attributes or provider usage observations
+exist for this benchmark. Zero spend does not establish complete usage
+telemetry for unrelated workflows. Future per-lane accounting is separate
+work; this baseline does not claim that lane state exists.
+
+The 10,000-job run exceeded five proposed references: settled projection no-op
+(50.123 ms versus 50 ms), the 50-event foreground projection pass (147.061 ms
+versus 100 ms), free-text search p95 (689.119 ms versus 250 ms), in-memory sort
+p95 (707.482 ms versus 250 ms), and sustained heap peak growth (194,176,016
+bytes versus 67,108,864 bytes). All correctness oracles passed. The measured
+evidence supports retaining these as visible baseline failures without a
+speculative optimization.

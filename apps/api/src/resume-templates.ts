@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { copyMaterialSlots } from "./cover-letter-review.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -42,6 +43,11 @@ const TEXT_BYTE_LIMIT = 128_000;
 const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export class ResumeTemplateInputError extends Error {}
+export class ResumeTemplateVersionConflictError extends Error {
+  constructor() {
+    super("The template changed. Review the latest version before saving.");
+  }
+}
 
 interface TemplateRow extends Record<string, unknown> {
   template_id: string;
@@ -147,100 +153,114 @@ export function createResumeTemplateVersion(
   request: ResumeTemplateVersionSaveRequest,
 ): ResumeTemplateVersionSaveResponse {
   const normalized = normalizeTemplateVersionRequest(request);
-  assertTemplatePayloadSafe(db, normalized);
-
-  const now = new Date().toISOString();
-  const templateId = normalized.templateId ?? `resume_template_${crypto.randomUUID()}`;
-  const existing = getTemplateRow(db, templateId);
-  const versionNumber = nextTemplateVersionNumber(db, templateId);
-  const versionId = `${templateId}:v${versionNumber}:${crypto.randomUUID().slice(0, 8)}`;
-  const contentHash = templateContentHash(normalized.theme, normalized.layout);
-
-  db.prepare(
-    `INSERT INTO resume_templates (
-       tenant_id, template_id, display_name, status, built_in, created_at, updated_at
-     ) VALUES (?, ?, ?, 'active', ?, ?, ?)
-     ON CONFLICT(tenant_id, template_id) DO UPDATE SET
-       display_name = excluded.display_name,
-       status = excluded.status,
-       built_in = excluded.built_in,
-       updated_at = excluded.updated_at`,
-  ).run(
-    DEFAULT_TENANT,
-    templateId,
-    normalized.displayName,
-    existing?.built_in ?? 0,
-    existing?.created_at ?? now,
-    now,
-  );
-  db.prepare(
-    `INSERT INTO resume_template_versions (
-       tenant_id, version_id, template_id, version_number, display_name, status,
-       theme_json, layout_json, content_hash, created_at
-     ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
-  ).run(
-    DEFAULT_TENANT,
-    versionId,
-    templateId,
-    versionNumber,
-    normalized.displayName,
-    JSON.stringify(normalized.theme),
-    JSON.stringify(normalized.layout),
-    contentHash,
-    now,
-  );
-  recordTemplateEvent(db, {
-    jobId: null,
-    eventType: "ResumeTemplateVersionSaved",
-    message: `Resume template saved: ${normalized.displayName}`,
-    payload: {
-      templateId,
-      templateVersionId: versionId,
-      versionNumber,
-      displayName: normalized.displayName,
-      savedAt: now,
-    },
-  });
-
-  const template = templateSummaryFromRow(db, getTemplateRow(db, templateId));
-  if (!template) {
-    throw new Error("Resume template version was not persisted.");
+  if (Boolean(normalized.templateId) !== Boolean(normalized.expectedVersionId)) {
+    throw new ResumeTemplateInputError("Updating a template requires the current version; new templates must not specify one.");
   }
-  return { ok: true, template };
+
+  return db.transaction(() => {
+    assertTemplatePayloadSafe(db, normalized);
+
+    const now = new Date().toISOString();
+    const templateId = normalized.templateId ?? `resume_template_${crypto.randomUUID()}`;
+    const existing = getTemplateRow(db, templateId);
+    if (normalized.templateId && (!existing || latestVersionRow(db, templateId)?.version_id !== normalized.expectedVersionId)) {
+      throw new ResumeTemplateVersionConflictError();
+    }
+    const versionNumber = nextTemplateVersionNumber(db, templateId);
+    const versionId = `${templateId}:v${versionNumber}:${crypto.randomUUID().slice(0, 8)}`;
+    const contentHash = templateContentHash(normalized.theme, normalized.layout);
+
+    db.prepare(
+      `INSERT INTO resume_templates (
+         tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+       ) VALUES (?, ?, ?, 'active', ?, ?, ?)
+       ON CONFLICT(tenant_id, template_id) DO UPDATE SET
+         display_name = excluded.display_name,
+         status = excluded.status,
+         built_in = excluded.built_in,
+         updated_at = excluded.updated_at`,
+    ).run(
+      DEFAULT_TENANT,
+      templateId,
+      normalized.displayName,
+      existing?.built_in ?? 0,
+      existing?.created_at ?? now,
+      now,
+    );
+    db.prepare(
+      `INSERT INTO resume_template_versions (
+         tenant_id, version_id, template_id, version_number, display_name, status,
+         theme_json, layout_json, content_hash, created_at
+       ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+    ).run(
+      DEFAULT_TENANT,
+      versionId,
+      templateId,
+      versionNumber,
+      normalized.displayName,
+      JSON.stringify(normalized.theme),
+      JSON.stringify(normalized.layout),
+      contentHash,
+      now,
+    );
+    recordTemplateEvent(db, {
+      jobId: null,
+      eventType: "ResumeTemplateVersionSaved",
+      message: `Resume template saved: ${normalized.displayName}`,
+      payload: {
+        templateId,
+        templateVersionId: versionId,
+        versionNumber,
+        displayName: normalized.displayName,
+        savedAt: now,
+      },
+    });
+
+    const template = templateSummaryFromRow(db, getTemplateRow(db, templateId));
+    if (!template) {
+      throw new Error("Resume template version was not persisted.");
+    }
+    return { ok: true as const, template };
+  }).immediate();
 }
 
 export function setDefaultResumeTemplate(
   db: SqliteDatabase,
   request: ResumeTemplateDefaultSelectionRequest,
 ): ResumeTemplateDefaultSelectionResponse {
-  const effective = resolveTemplateByRequest(db, request.templateId, request.versionId, "profile_default");
-  const now = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO resume_template_defaults (
-       tenant_id, profile_id, template_id, version_id, updated_at
-     ) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(tenant_id, profile_id) DO UPDATE SET
-       template_id = excluded.template_id,
-       version_id = excluded.version_id,
-       updated_at = excluded.updated_at`,
-  ).run(
-    DEFAULT_TENANT,
-    DEFAULT_PROFILE_ID,
-    effective.metadata.templateId,
-    effective.metadata.templateVersionId,
-    now,
-  );
-  recordTemplateEvent(db, {
-    jobId: null,
-    eventType: "ResumeTemplateDefaultChanged",
-    message: `Default resume template changed to ${effective.metadata.templateName}`,
-    payload: {
-      templateId: effective.metadata.templateId,
-      templateVersionId: effective.metadata.templateVersionId,
-      changedAt: now,
-    },
-  });
-  return { ok: true, defaultTemplate: effective.metadata };
+  return db.transaction(() => {
+    if (request.expectedActiveVersionId && latestVersionRow(db, request.templateId)?.version_id !== request.expectedActiveVersionId) {
+      throw new ResumeTemplateVersionConflictError();
+    }
+    const effective = resolveTemplateByRequest(db, request.templateId, request.versionId, "profile_default");
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO resume_template_defaults (
+         tenant_id, profile_id, template_id, version_id, updated_at
+       ) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(tenant_id, profile_id) DO UPDATE SET
+         template_id = excluded.template_id,
+         version_id = excluded.version_id,
+         updated_at = excluded.updated_at`,
+    ).run(
+      DEFAULT_TENANT,
+      DEFAULT_PROFILE_ID,
+      effective.metadata.templateId,
+      effective.metadata.templateVersionId,
+      now,
+    );
+    recordTemplateEvent(db, {
+      jobId: null,
+      eventType: "ResumeTemplateDefaultChanged",
+      message: `Default resume template changed to ${effective.metadata.templateName}`,
+      payload: {
+        templateId: effective.metadata.templateId,
+        templateVersionId: effective.metadata.templateVersionId,
+        changedAt: now,
+      },
+    });
+    return { ok: true as const, defaultTemplate: effective.metadata };
+  }).immediate();
 }
 
 export function setJobResumeTemplateAssignment(
@@ -549,6 +569,7 @@ function normalizeTemplateVersionRequest(
 ): ResumeTemplateVersionSaveRequest {
   return {
     templateId: request.templateId?.trim() || undefined,
+    expectedVersionId: request.expectedVersionId?.trim() || undefined,
     displayName: request.displayName.trim(),
     theme: ResumeTemplateThemeSchema.parse(request.theme),
     layout: ResumeTemplateLayoutSchema.parse(request.layout ?? {}),
@@ -591,16 +612,23 @@ function sensitiveFactSentinels(db: SqliteDatabase): string[] {
   for (const value of Object.values(profile ?? {})) addSensitiveFact(facts, value);
   const jobs = allRows<Record<string, unknown>>(
     db,
-    `SELECT title, company, application_url
-       FROM jobs
-      WHERE tenant_id = ?
-      ORDER BY discovered_at DESC
+    `SELECT j.title, j.company, e.application_url
+       FROM jobs j LEFT JOIN job_enrichments e
+         ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+      WHERE j.tenant_id = ?
+      ORDER BY j.discovered_at DESC
       LIMIT 25`,
     [DEFAULT_TENANT],
   );
   for (const job of jobs) {
     for (const value of Object.values(job)) addSensitiveFact(facts, value);
   }
+  const aliases = allRows<{ application_url: string }>(db,
+    `SELECT application_url FROM job_application_locators
+      WHERE tenant_id = ? AND job_id IN (
+        SELECT job_id FROM jobs WHERE tenant_id = ? ORDER BY discovered_at DESC LIMIT 25
+      )`, [DEFAULT_TENANT, DEFAULT_TENANT]);
+  for (const alias of aliases) addSensitiveFact(facts, alias.application_url);
   return [...facts];
 }
 
@@ -1091,6 +1119,7 @@ function persistRefreshRows(
     createdAt: now,
   });
   replaceLayoutBoxes(db, jobId, generation, pdfArtifactId, layoutBoxes, now);
+  copyMaterialSlots(db, jobId, generation, ["tailored_resume", "tailored_resume_txt", "resume_txt", "resume_pdf", "tailored_resume_pdf"]);
 }
 
 function insertMaterialArtifact(

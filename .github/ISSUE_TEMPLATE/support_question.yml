@@ -2,7 +2,6 @@ name: Question or support
 description: Ask a setup, usage, or contributor-workflow question that is safe to discuss publicly.
 title: "[Question]: "
 labels:
-  - "status: needs triage"
   - "type: question"
 body:
   - type: markdown

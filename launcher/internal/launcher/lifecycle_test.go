@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -292,7 +293,7 @@ func curlHasArgument(args []string, name, value string) bool {
 
 func TestUninstallRequiresRemoveDataFlagAndExactTypedPhrase(t *testing.T) {
 	runtime, state := t.TempDir(), t.TempDir()
-	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), ControlPath: filepath.Join(runtime, "control.lock")}}
+	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), LockPath: filepath.Join(runtime, "instance.lock"), ControlPath: filepath.Join(runtime, "control.lock")}}
 	old := uninstallInput
 	t.Cleanup(func() { uninstallInput = old })
 	var out bytes.Buffer
@@ -321,7 +322,7 @@ func TestDefaultUninstallPreservesUserDataAndRejectsForeignLinks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(state, "profile.json"), []byte("private"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), ControlPath: filepath.Join(runtime, "control.lock")}}
+	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), LockPath: filepath.Join(runtime, "instance.lock"), ControlPath: filepath.Join(runtime, "control.lock")}}
 	var out bytes.Buffer
 	if err := uninstall(ctx, nil, &out); err != nil {
 		t.Fatal(err)
@@ -399,7 +400,7 @@ func TestUninstallRejectsOverlappingStateBeforeMutatingRuntime(t *testing.T) {
 	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), ControlPath: filepath.Join(runtime, "control.lock")}}
+	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), LockPath: filepath.Join(runtime, "instance.lock"), ControlPath: filepath.Join(runtime, "control.lock")}}
 	if err := uninstall(ctx, nil, io.Discard); err == nil || !strings.Contains(err.Error(), "overlaps") {
 		t.Fatalf("overlapping uninstall = %v", err)
 	}
@@ -647,42 +648,92 @@ func TestCandidateExecutionRevalidatesTamperedImmutableLauncher(t *testing.T) {
 }
 
 func TestInterruptedTransitionWithRevokedPredecessorFailsClosed(t *testing.T) {
-	store, err := release.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := lifecycleReceipt("local-build-0000001", "curl", 1)
-	candidate := lifecycleReceipt("local-build-0000002", "curl", 2)
-	if _, err := store.RecordMetadata("local", old.Sequence, 0, old.BuildID, old.DescriptorSHA256, nil); err != nil {
-		t.Fatal(err)
-	}
-	journal, err := store.Begin("update", &old, &candidate, candidate.DescriptorSHA256)
-	if err != nil {
-		t.Fatal(err)
-	}
-	journal.BackupID = "pair-before-revocation"
-	if err := store.Advance(&journal, release.PolicyPending, nil); err != nil {
-		t.Fatal(err)
-	}
-	state, err := store.ValidateMetadata(release.ChannelMetadata{Channel: "local", Sequence: candidate.Sequence, Minimum: 2, BuildID: candidate.BuildID, DescriptorDigest: candidate.DescriptorSHA256, Revoked: []string{old.BuildID}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CommitMetadata(state); err != nil {
-		t.Fatal(err)
-	}
-	ctx := launchContext{Instance: instance{RuntimeHome: store.Home, StateDir: t.TempDir(), StatePath: filepath.Join(t.TempDir(), "state.json")}}
-	if recovered, err := recoverInterruptedTransition(ctx, store); recovered || err == nil || !strings.Contains(err.Error(), "revoked") {
-		t.Fatalf("revoked predecessor recovery = recovered:%v err:%v", recovered, err)
-	}
-	loaded, err := store.ReadJournal()
-	if err != nil || loaded.State != release.Failed {
-		t.Fatalf("revoked recovery did not preserve fail-closed audit state: %#v, %v", loaded, err)
+	for _, testCase := range []struct {
+		name          string
+		state         release.State
+		backupID      string
+		wantError     string
+		wantState     release.State
+		retainJournal bool
+	}{
+		{name: "before backup", state: release.Quiescing, wantError: "revoked", wantState: release.Failed},
+		{name: "missing backup after policy", state: release.PolicyPending, backupID: "pair-before-revocation", wantError: "no verified predecessor database pair", wantState: release.PolicyPending, retainJournal: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, err := release.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := lifecycleReceipt("local-build-0000001", "curl", 1)
+			candidate := lifecycleReceipt("local-build-0000002", "curl", 2)
+			if _, err := store.RecordMetadata("local", old.Sequence, 0, old.BuildID, old.DescriptorSHA256, nil); err != nil {
+				t.Fatal(err)
+			}
+			journal, err := store.Begin("update", &old, &candidate, candidate.DescriptorSHA256)
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal.BackupID = testCase.backupID
+			if err := store.Advance(&journal, testCase.state, nil); err != nil {
+				t.Fatal(err)
+			}
+			state, err := store.ValidateMetadata(release.ChannelMetadata{Channel: "local", Sequence: candidate.Sequence, Minimum: 2, BuildID: candidate.BuildID, DescriptorDigest: candidate.DescriptorSHA256, Revoked: []string{old.BuildID}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.CommitMetadata(state); err != nil {
+				t.Fatal(err)
+			}
+			stateDir := t.TempDir()
+			for _, name := range []string{"jobctrl.db", "temporal.db"} {
+				if err := os.WriteFile(filepath.Join(stateDir, name), []byte("newer-"+name), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			journalBefore, err := os.ReadFile(filepath.Join(store.Home, release.JournalFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			originalStart := startReleaseCommand
+			t.Cleanup(func() { startReleaseCommand = originalStart })
+			starts := 0
+			startReleaseCommand = func(_ launchContext, _ release.Receipt, _ string) error {
+				starts++
+				return errors.New("unexpected release start")
+			}
+			ctx := launchContext{Instance: instance{RuntimeHome: store.Home, StateDir: stateDir, StatePath: filepath.Join(stateDir, "state.json")}}
+			if recovered, err := recoverInterruptedTransition(ctx, store); recovered || err == nil || !strings.Contains(err.Error(), testCase.wantError) {
+				t.Fatalf("revoked predecessor recovery = recovered:%v err:%v", recovered, err)
+			}
+			loaded, err := store.ReadJournal()
+			if err != nil || loaded.State != testCase.wantState {
+				t.Fatalf("revoked recovery did not preserve fail-closed audit state: %#v, %v", loaded, err)
+			}
+			if testCase.retainJournal {
+				journalAfter, err := os.ReadFile(filepath.Join(store.Home, release.JournalFile))
+				if err != nil || !bytes.Equal(journalBefore, journalAfter) {
+					t.Fatalf("unverified backup changed the recovery journal: %v", err)
+				}
+			}
+			if starts != 0 {
+				t.Fatalf("revoked recovery started a release %d times", starts)
+			}
+			for _, name := range []string{"jobctrl.db", "temporal.db"} {
+				data, err := os.ReadFile(filepath.Join(stateDir, name))
+				if err != nil || string(data) != "newer-"+name {
+					t.Fatalf("revoked recovery changed %s: %v", name, err)
+				}
+			}
+		})
 	}
 }
 
 func TestRetentionPreservesReferencedAndNonStableEvidence(t *testing.T) {
 	runtime := t.TempDir()
+	state := t.TempDir()
+	if _, err := resolveInstance([]string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := release.Open(runtime)
 	if err != nil {
 		t.Fatal(err)
@@ -709,17 +760,26 @@ func TestRetentionPreservesReferencedAndNonStableEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	public, private, python := retentionSigningKey(t)
+	if err := os.RemoveAll(filepath.Join(runtime, "releases", prunable.BuildID)); err != nil {
+		t.Fatal(err)
+	}
+	prunable = stageSignedRetentionRelease(t, runtime, prunable.BuildID, prunable.Sequence, public, private, python)
+	if err := os.RemoveAll(filepath.Join(runtime, "releases", prior.BuildID)); err != nil {
+		t.Fatal(err)
+	}
+	prior = stageSignedRetentionRelease(t, runtime, prior.BuildID, prior.Sequence, public, private, python)
 	if _, err := store.WriteSelectedActive(active, 0, active.BuildID, "curl"); err != nil {
 		t.Fatal(err)
 	}
-	backupDirectory := filepath.Join(runtime, "instances", "fixture", "backups", "pair-reference")
+	backupDirectory := filepath.Join(state, "backups", "pair-reference")
 	if err := os.MkdirAll(backupDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONAtomic(filepath.Join(backupDirectory, "pair.json"), databasePair{SchemaVersion: 1, ID: "pair-reference", ReleaseReceipt: referenced, CreatedAt: time.Now(), Files: []databaseFile{{Name: "jobctrl.db"}, {Name: "temporal.db"}}}); err != nil {
+	if err := writeJSONAtomic(filepath.Join(backupDirectory, "pair.json"), databasePair{SchemaVersion: 1, ID: "pair-reference", ReleaseReceipt: referenced, CreatedAt: time.Now(), Files: []databaseFile{{Name: "jobctrl.db", SHA256: strings.Repeat("a", 64), SizeBytes: 1}, {Name: "temporal.db", SHA256: strings.Repeat("b", 64), SizeBytes: 1}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := retainReleases(store, runtime); err != nil {
+	if err := retainReleases(store, state); err != nil {
 		t.Fatal(err)
 	}
 	for _, build := range []string{active.BuildID, prior.BuildID, referenced.BuildID, local.BuildID, pre.BuildID} {
@@ -732,18 +792,17 @@ func TestRetentionPreservesReferencedAndNonStableEvidence(t *testing.T) {
 	}
 }
 
-// TestRealTwoReleasePromotionRollbackRestoresPairedSQLiteState runs the real
-// lifecycle transaction, receipt/payload verification, selector handoff,
-// SQLite online backup, restoration, and active-pointer writes. Only launcher
-// process execution is injected: component supervision itself is covered by
-// the hermetic launcher lifecycle test, while this test deliberately forces
-// candidate health failure at the exact promotion boundary.
+// Exercise successful promotion and the explicitly requested paired rollback.
+// Failed candidate startup is tested separately with independent writers.
 func TestRealTwoReleasePromotionRollbackRestoresPairedSQLiteState(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 unavailable")
 	}
 	runtime, state := t.TempDir(), t.TempDir()
+	if _, err := resolveInstance([]string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := release.Open(runtime)
 	if err != nil {
 		t.Fatal(err)
@@ -762,27 +821,14 @@ func TestRealTwoReleasePromotionRollbackRestoresPairedSQLiteState(t *testing.T) 
 	}
 	seedLifecycleSQLitePair(t, python, state, "old")
 	before := lifecycleDatabaseValues(t, python, state)
-	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), ControlPath: filepath.Join(state, "control.lock")}, Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}}
+	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), LockPath: filepath.Join(state, "instance.lock"), ControlPath: filepath.Join(state, "control.lock")}, Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}}
 	oldStart := startReleaseCommand
 	t.Cleanup(func() { startReleaseCommand = oldStart })
-	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
-		if receipt.BuildID == candidate.BuildID {
-			setLifecycleSQLitePair(t, python, state, "candidate")
-			return errors.New("forced candidate health failure")
-		}
-		return nil
+	active, err := store.ReadActive()
+	if err != nil {
+		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := promoteExisting(ctx, store, release.Active{SchemaVersion: 1, Generation: 1, Receipt: old, SelectorBuildID: old.BuildID, Acquisition: "local-fixture"}, candidate.BuildID, "update", &output); err == nil || !strings.Contains(err.Error(), "forced candidate health failure") {
-		t.Fatalf("forced promotion failure = %v", err)
-	}
-	active, err := store.ReadActive()
-	if err != nil || active.Receipt != old {
-		t.Fatalf("failed promotion did not restore old active receipt: %#v, %v", active, err)
-	}
-	if after := lifecycleDatabaseValues(t, python, state); !sameDatabaseDigests(after, before) {
-		t.Fatalf("failed promotion did not restore exact SQLite pair: before=%v after=%v", before, after)
-	}
 	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
 		if receipt.BuildID == candidate.BuildID {
 			setLifecycleSQLitePair(t, python, state, "candidate")
@@ -811,6 +857,68 @@ func TestRealTwoReleasePromotionRollbackRestoresPairedSQLiteState(t *testing.T) 
 	}
 }
 
+func TestRealFailedPromotionPreservesPairedSQLiteWrites(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	fixture := newPromotionBoundaryFixture(t, python)
+	oldStart := startReleaseCommand
+	t.Cleanup(func() { startReleaseCommand = oldStart })
+	oldStarts, candidateStarts := 0, 0
+	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
+		if receipt.BuildID == fixture.old.BuildID {
+			oldStarts++
+			return nil
+		}
+		if receipt.BuildID != fixture.candidate.BuildID {
+			t.Fatalf("unexpected start: %s", receipt.BuildID)
+		}
+		candidateStarts++
+		setLifecycleSQLitePair(t, python, fixture.state, "candidate")
+		return errors.New("forced candidate health failure")
+	}
+	initial, err := fixture.store.ReadActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = promoteExisting(fixture.ctx, fixture.store, initial, fixture.candidate.BuildID, "update", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "forced candidate health failure") || !strings.Contains(err.Error(), "retain the live databases") || !strings.Contains(err.Error(), "automatic recovery is unavailable") {
+		t.Fatalf("failed promotion was not explicitly refused: %v", err)
+	}
+	journal, err := fixture.store.ReadJournal()
+	if err != nil || journal.State != release.CandidateStarting || !journal.Resumable() || !journal.PreserveLiveOnFailure || journal.BackupID == "" {
+		t.Fatalf("failed promotion did not retain its fenced journal: %#v, %v", journal, err)
+	}
+	if oldStarts != 0 || candidateStarts != 1 {
+		t.Fatalf("start counts old=%d candidate=%d", oldStarts, candidateStarts)
+	}
+	active, err := fixture.store.ReadActive()
+	if err != nil || active.Receipt != fixture.old {
+		t.Fatalf("failure changed active receipt: %#v, %v", active, err)
+	}
+	if values := lifecycleDatabaseValues(t, python, fixture.state); values["jobctrl.db"] != "candidatejobctrl.db" || values["temporal.db"] != "candidatetemporal.db" {
+		t.Fatalf("post-backup writes were lost: %v", values)
+	}
+	pairDir := filepath.Join(fixture.state, "backups", journal.BackupID)
+	if values := lifecycleDatabaseValues(t, python, pairDir); values["jobctrl.db"] != "oldjobctrl.db" || values["temporal.db"] != "oldtemporal.db" {
+		t.Fatalf("original paired backup was changed: %v", values)
+	}
+	before := snapshotPromotionBoundaryFiles(t, fixture)
+	for attempt := 0; attempt < 2; attempt++ {
+		recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
+		if recovered || err == nil || !strings.Contains(err.Error(), "retain the live databases") || !strings.Contains(err.Error(), "automatic recovery is unavailable") {
+			t.Fatalf("recovery attempt %d = %v, %v", attempt, recovered, err)
+		}
+		if after := snapshotPromotionBoundaryFiles(t, fixture); !reflect.DeepEqual(before, after) {
+			t.Fatalf("recovery attempt %d modified preserved state", attempt)
+		}
+	}
+	if oldStarts != 0 || candidateStarts != 1 {
+		t.Fatalf("recovery started a release: old=%d candidate=%d", oldStarts, candidateStarts)
+	}
+}
+
 func TestRealInterruptedPreBackupAndSelectorHandoffRecovery(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -833,7 +941,7 @@ func TestRealInterruptedPreBackupAndSelectorHandoffRecovery(t *testing.T) {
 	if err := handoffPublicSelector(runtime, oldVerified); err != nil {
 		t.Fatal(err)
 	}
-	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), ControlPath: filepath.Join(state, "control.lock")}, Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}}
+	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), LockPath: filepath.Join(state, "instance.lock"), ControlPath: filepath.Join(state, "control.lock")}, Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}}
 	oldStart := startReleaseCommand
 	t.Cleanup(func() { startReleaseCommand = oldStart })
 	startReleaseCommand = func(_ launchContext, got release.Receipt, journalID string) error {
@@ -927,7 +1035,7 @@ func installLifecycleRelease(t *testing.T, runtime, build string, sequence uint6
 func seedLifecycleSQLitePair(t *testing.T, python, state, marker string) {
 	t.Helper()
 	for _, name := range []string{"jobctrl.db", "temporal.db"} {
-		code := "import pathlib,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (?)',(sys.argv[2],)); c.execute('PRAGMA user_version=9') if pathlib.Path(sys.argv[1]).name == 'jobctrl.db' else None; c.commit()"
+		code := "import pathlib,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (?)',(sys.argv[2],)); c.execute('PRAGMA user_version=15') if pathlib.Path(sys.argv[1]).name == 'jobctrl.db' else None; c.commit()"
 		if output, err := exec.Command(python, "-c", code, filepath.Join(state, name), marker+name).CombinedOutput(); err != nil {
 			t.Fatalf("seed %s: %v %s", name, err, output)
 		}
@@ -981,4 +1089,53 @@ func sameDatabaseDigests(left, right map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func TestUninstallRefusesPendingBridgeWithoutChangingRuntimeOrUserData(t *testing.T) {
+	for _, name := range []string{"regular", "directory", "symlink"} {
+		t.Run(name, func(t *testing.T) {
+			runtime, state := t.TempDir(), t.TempDir()
+			for _, rel := range []string{"releases", "bin", "staging", "instances"} {
+				if err := os.Mkdir(filepath.Join(runtime, rel), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(runtime, rel, "sentinel"), []byte(rel), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(state, "profile"), []byte("synthetic profile"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			intent := filepath.Join(runtime, "bridge-handoff.json")
+			switch name {
+			case "regular":
+				if err := os.WriteFile(intent, []byte("pending"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "directory":
+				if err := os.Mkdir(intent, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Symlink(filepath.Join(state, "profile"), intent); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), ControlPath: filepath.Join(runtime, "control.lock")}}
+			if err := uninstall(ctx, nil, io.Discard); err == nil || !strings.Contains(err.Error(), "bridge handoff") {
+				t.Fatalf("uninstall did not refuse: %v", err)
+			}
+			for _, rel := range []string{"releases", "bin", "staging", "instances"} {
+				if raw, err := os.ReadFile(filepath.Join(runtime, rel, "sentinel")); err != nil || string(raw) != rel {
+					t.Fatalf("changed %s: %q %v", rel, raw, err)
+				}
+			}
+			if raw, err := os.ReadFile(filepath.Join(state, "profile")); err != nil || string(raw) != "synthetic profile" {
+				t.Fatalf("changed profile: %q %v", raw, err)
+			}
+			if _, err := os.Lstat(intent); err != nil {
+				t.Fatalf("removed handoff: %v", err)
+			}
+		})
+	}
 }

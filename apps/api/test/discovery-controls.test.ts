@@ -11,7 +11,7 @@ import {
   ManualCaptureImportError,
   type ManualCaptureImporter,
 } from "../src/manual-capture-worker.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const FEEDBACK_JOB_ID = "40000000-0000-4000-8000-000000000001";
@@ -24,7 +24,7 @@ const REPLAY_JOB_ID = "40000000-0000-4000-8000-000000000006";
 function withTempDb(): { dbPath: string; dir: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-discovery-controls-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   return {
     dbPath,
     dir,
@@ -36,6 +36,7 @@ function options(dbPath: string, dir: string) {
   return {
     dbPath,
     configPath: path.join(dir, "config.json"),
+    jobUrlValidator: async () => ({ allowed: true }),
   };
 }
 
@@ -704,7 +705,7 @@ describe("discovery product controls API", () => {
     }
   });
 
-  it("auto-promotes parseable source locator candidates when listing review queue", async () => {
+  it("reads parseable and blocked source candidates without promotion or writes", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
     const app = buildApp(options(dbPath, dir));
     try {
@@ -746,8 +747,10 @@ describe("discovery product controls API", () => {
 
       const response = await app.inject({ method: "GET", url: "/v1/discovery/locator-candidates" });
       expect(response.statusCode, response.body).toBe(200);
-      expect(response.json().candidates).toHaveLength(1);
-      expect(response.json().candidates[0]).toMatchObject({ candidateId: "candidate-blocked" });
+      expect(response.json().candidates).toHaveLength(2);
+      expect(response.json().candidates.map((candidate: { candidateId: string }) => candidate.candidateId)).toEqual(["candidate-blocked", "candidate-parseable"]);
+      const repeated = await app.inject({ method: "GET", url: "/v1/discovery/locator-candidates" });
+      expect(repeated.json()).toEqual(response.json());
 
       const verifyDb = new Database(dbPath);
       const source = verifyDb
@@ -757,12 +760,8 @@ describe("discovery product controls API", () => {
         .prepare("SELECT 1 FROM source_locator_candidates WHERE candidate_id = ?")
         .get("candidate-parseable");
       verifyDb.close();
-      expect(source).toMatchObject({
-        source_id: "smart_extract:remoteok-com",
-        state: "active",
-        seed_url: "https://remoteok.com/remote-dev-jobs",
-      });
-      expect(parseableCandidate).toBeUndefined();
+      expect(source).toBeUndefined();
+      expect(parseableCandidate).toBeDefined();
     } finally {
       await app.close();
       cleanup();

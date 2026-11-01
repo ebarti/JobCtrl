@@ -21,8 +21,10 @@ tests can swap fakes without monkey-patching.
 from __future__ import annotations
 
 import logging
+import hashlib
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from contextlib import nullcontext
 from typing import Any
 
 from opentelemetry import trace as otel_trace
@@ -37,7 +39,7 @@ from jobctrl.domain.events import (
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.analysis import EmployerAnalysis
 from jobctrl.domain.ports.events import EventPublisher
-from jobctrl.domain.ports.llm import LlmMessage
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.domain.ports.scoring import (
     LlmPort,
     RequirementFitReportRepository,
@@ -53,7 +55,11 @@ from jobctrl.domain.scoring.requirement_fit import (
     derive_requirement_fit_signals,
     resolve_requirement_fit_report,
 )
-from jobctrl.domain.scoring.services import ConstraintChecker, ScoreParseResult, ScoreParser
+from jobctrl.domain.scoring.services import ScoreParseResult, ScoreParser
+from jobctrl.domain.scoring.determination import ScoringDecision
+from jobctrl.domain.determinations import Source, DeterminationFailure, determine
+from jobctrl.domain.profile.canonical_sources import profile_sources
+from jobctrl.domain.job_snapshot import build_jd_snapshot
 from jobctrl.domain.scoring.value_objects import (
     FitScore,
     MatchedKeywords,
@@ -64,7 +70,6 @@ from jobctrl.domain.scoring.value_objects import (
     ScoringCriteria,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.resume_profile import get_achievement_evidence, get_education_entries
 
 log = logging.getLogger(__name__)
 
@@ -74,8 +79,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-SCORE_PROMPT_VERSION = "score-fit-assessment-v4"
-SCORE_SCHEMA_VERSION = "score-fit-assessment-v3"
+SCORE_PROMPT_VERSION = "score-fit-assessment-v11-single-evidence-source"
+SCORE_SCHEMA_VERSION = "score-fit-assessment-v5-determinations"
 SCORE_THINKING_BUDGET = 0
 
 
@@ -93,7 +98,7 @@ DIMENSION SCORES (0..10 each — be strict, do not anchor on the overall score):
 - `experience_fit`: alignment of years / seniority level / domain depth.
 - `role_fit`: alignment of role responsibilities and the candidate's recent role focus.
 
-ELIGIBILITY: keep hard constraints separate from the numeric score. Use `blocked` when work authorization, application language, seniority floor, or an explicit exclusion is a non-negotiable mismatch. For every `hard_blockers` entry, provide the corresponding typed `hard_blocker_categories` entry in the same order. Compensation range and location/work-model preferences are always `warning` signals and must never appear in `hard_blockers`; if compensation is nevertheless returned there, classify it as `compensation_preference` so the deterministic boundary can demote it. Use `warning` for likely mismatches that need review. Use `eligible` only when no hard blocker or warning is visible.
+ELIGIBILITY: keep hard constraints separate from the numeric score. Use `blocked` when work authorization, application language, seniority floor, or an explicit exclusion is a non-negotiable mismatch. For every blocker return a typed category, reason and citations. Compensation range and location/work-model preferences are always `warning` signals and must never appear in `hard_blockers`; Return preference mismatches as typed warnings. Use `warning` for likely mismatches that need review. Use `eligible` only when no hard blocker or warning is visible.
 
 EVIDENCE: name matched signals, missing signals, and transferable signals. Do not invent candidate experience to close a gap.
 
@@ -108,192 +113,7 @@ REASONING: 2-3 sentence justification.
 Respond as a JSON object conforming to the provided schema. Do not wrap the JSON in markdown fences and do not include any prose outside the JSON object."""
 
 
-SCORE_SCHEMA: dict = {
-    "title": "JobFitScore",
-    "type": "object",
-    "properties": {
-        "score": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10,
-            "description": "Overall fit score 1..10",
-        },
-        "technical_fit": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10,
-            "description": "Technical skill / tooling alignment 0..10",
-        },
-        "experience_fit": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10,
-            "description": "Years / seniority / domain depth alignment 0..10",
-        },
-        "role_fit": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10,
-            "description": "Role responsibility alignment 0..10",
-        },
-        "fit_band": {
-            "type": "string",
-            "enum": ["excellent", "strong", "plausible", "stretch", "poor"],
-            "description": "Band derived from the overall assessment",
-        },
-        "confidence": {
-            "type": "string",
-            "enum": ["high", "medium", "low"],
-            "description": "Confidence in the assessment",
-        },
-        "eligibility": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "type": "string",
-                    "enum": ["eligible", "warning", "blocked", "unknown"],
-                },
-                "hard_blockers": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
-                "hard_blocker_categories": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": [
-                            "work_authorization",
-                            "application_language",
-                            "seniority",
-                            "explicit_exclusion",
-                            "compensation_preference",
-                        ],
-                    },
-                    "description": "One category per hard_blockers entry, in the same order.",
-                },
-                "warnings": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
-            },
-            "required": ["status", "hard_blockers", "hard_blocker_categories", "warnings"],
-        },
-        "matched_signals": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Concrete profile/job signals that support the score",
-        },
-        "missing_signals": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Required or preferred job signals missing from the profile",
-        },
-        "transferable_signals": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Adjacent experience that could bridge a gap",
-        },
-        "requirement_assessments": {
-            "type": "array",
-            "description": (
-                "Optional pre-tailoring fit rows keyed by explicit employer "
-                "requirement IDs. Omit unless requirement and profile evidence "
-                "IDs were provided in the prompt input."
-            ),
-            "items": {
-                "type": "object",
-                "properties": {
-                    "requirement_id": {
-                        "type": "string",
-                        "description": "Stable employer requirement ID from the prompt input",
-                    },
-                    "requirement_text": {
-                        "type": "string",
-                        "description": "Requirement text from the job post",
-                    },
-                    "tier": {
-                        "type": "string",
-                        "enum": ["must_have", "nice_to_have"],
-                    },
-                    "weight": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1,
-                    },
-                    "job_evidence_span": {
-                        "type": "string",
-                        "description": "Verbatim job-post span supporting this requirement",
-                    },
-                    "fit": {
-                        "type": "object",
-                        "properties": {
-                            "kind": {
-                                "type": "string",
-                                "enum": [
-                                    "matched",
-                                    "transferable",
-                                    "missing",
-                                    "blocked",
-                                    "not_assessed",
-                                ],
-                            },
-                            "evidence_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Provided profile evidence IDs; required for matched/transferable",
-                            },
-                            "strength": {
-                                "type": "string",
-                                "enum": ["direct", "strong"],
-                            },
-                            "gap": {"type": "string"},
-                            "bridge": {"type": "string"},
-                            "reason": {"type": "string"},
-                            "blocker": {"type": "string"},
-                        },
-                        "required": ["kind"],
-                    },
-                    "target_keywords": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                },
-                "required": [
-                    "requirement_id",
-                    "requirement_text",
-                    "tier",
-                    "weight",
-                    "job_evidence_span",
-                    "fit",
-                ],
-            },
-        },
-        "keywords": {
-            "type": "array",
-            "items": {"type": "string"},
-            "minItems": 1,
-            "description": "ATS keywords from the job that overlap with the candidate",
-        },
-        "reasoning": {
-            "type": "string",
-            "description": "2-3 sentence justification",
-        },
-    },
-    "required": [
-        "score",
-        "technical_fit",
-        "experience_fit",
-        "role_fit",
-        "fit_band",
-        "confidence",
-        "eligibility",
-        "matched_signals",
-        "missing_signals",
-        "transferable_signals",
-        "keywords",
-        "reasoning",
-    ],
-}
+SCORE_SCHEMA = ScoringDecision.model_json_schema()
 
 
 def _utc_now() -> str:
@@ -339,14 +159,8 @@ def _build_job_blob(job: dict[str, Any]) -> str:
     )
 
 
-def _build_profile_preferences_blob(criteria: ScoringCriteria) -> str:
-    return json_dumps(criteria.to_dict())
-
-
 def _build_requirement_fit_inputs_blob(
     *,
-    job: dict[str, Any],
-    profile_snapshot: ProfileSnapshot,
     employer_analysis: EmployerAnalysis | None,
 ) -> str:
     if employer_analysis is None:
@@ -369,69 +183,21 @@ def _build_requirement_fit_inputs_blob(
     payload = {
         "employer_analysis_generation": employer_analysis.generation,
         "requirements": requirements,
-        "profile_evidence": _profile_evidence_prompt_items(profile_snapshot),
     }
     return "REQUIREMENT FIT INPUTS:\n" + json_dumps(payload)
 
 
-def _profile_evidence_prompt_items(profile_snapshot: ProfileSnapshot) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for raw in get_education_entries(profile_snapshot.as_dict()):
-        if not isinstance(raw, dict):
-            continue
-        entry_id = str(raw.get("id") or "").strip()
-        parts = [
-            str(raw.get("degree") or "").strip(),
-            str(raw.get("institution") or "").strip(),
-            str(raw.get("location") or "").strip(),
-            str(raw.get("date") or "").strip(),
-        ]
-        source_text = " | ".join(part for part in parts if part)
-        if not entry_id or not source_text:
-            continue
-        items.append(
-            {
-                "id": f"education:{entry_id}",
-                "source_text": source_text,
-                "evidence_type": "education",
-            }
-        )
-    for raw in get_achievement_evidence(profile_snapshot.as_dict()):
-        if not isinstance(raw, dict):
-            continue
-        evidence_id = str(raw.get("id") or "").strip()
-        source_text = str(raw.get("source_text") or "").strip()
-        if not evidence_id or not source_text:
-            continue
-        item = {
-            "id": evidence_id,
-            "source_text": source_text,
-            "experience_entry_id": str(raw.get("experience_entry_id") or "").strip(),
-            "tools": _text_list(raw.get("tools")),
-            "metrics": _text_list(raw.get("metrics")),
-            "seniority_signal": str(raw.get("seniority_signal") or "").strip(),
-            "tags": _text_list(raw.get("tags")),
-        }
-        items.append({key: value for key, value in item.items() if value})
-        if len(items) >= 32:
-            break
-    return items
 
-
-def _text_list(value: Any) -> list[str]:
-    if not isinstance(value, (list, tuple)):
-        return []
-    seen: set[str] = set()
-    out: list[str] = []
-    for raw in value:
-        text = str(raw or "").strip()
-        key = text.lower()
-        if not text or key in seen:
-            continue
-        seen.add(key)
-        out.append(text)
-    return out
-
+def _scoring_source_fingerprint(employer_analysis, interpretation) -> str:
+    """Compare exact non-profile inputs, without interpreting their meaning."""
+    if interpretation is None:
+        raise DeterminationFailure("job_interpretation_unavailable")
+    payload = {
+        "requirement_fit_inputs": _build_requirement_fit_inputs_blob(employer_analysis=employer_analysis),
+        "interpretation": interpretation.model_dump(mode="json"),
+        "interpretation_id": interpretation._determination_id,
+    }
+    return hashlib.sha256(json_dumps(payload).encode("utf-8")).hexdigest()
 
 def _optional_prompt_section(text: str) -> str:
     if not text:
@@ -467,15 +233,14 @@ class ScoreJobOutcome:
     ok: bool
     score: JobScore | None
     error: str = ""
+    retained: bool = False
 
 
 class ScoreJobUseCase:
     """Score one job and persist the result through ``ScoreRepository``.
 
-    The use case owns the transaction boundary: it reads the previous
-    ``JobScore`` (if any), constructs the next version, persists it, then
-    publishes ``JobScored``. The repository commits eagerly; the event
-    publisher is called after the commit so subscribers see the new row.
+    The use case publishes the score, determination binding and report in
+    one repository transaction, then emits ``JobScored`` after publication.
     """
 
     def __init__(
@@ -485,7 +250,9 @@ class ScoreJobUseCase:
         llm: LlmPort,
         publisher: EventPublisher | None = None,
         parser: ScoreParser | None = None,
-        constraints: ConstraintChecker | None = None,
+        determination_dependencies,
+        job_interpretation_reader,
+        confirmed_preferences_reader,
         policy_repository: ScoringPolicyRepository | None = None,
         requirement_fit_repository: RequirementFitReportRepository | None = None,
         policy: ScoringPolicy | None = None,
@@ -495,7 +262,9 @@ class ScoreJobUseCase:
         self._llm = llm
         self._publisher = publisher
         self._parser = parser or ScoreParser()
-        self._constraints = constraints or ConstraintChecker()
+        self._determination_dependencies = determination_dependencies
+        self._job_interpretation_reader = job_interpretation_reader
+        self._confirmed_preferences_reader = confirmed_preferences_reader
         self._policy_repository = policy_repository
         self._requirement_fit_repository = requirement_fit_repository
         self._policy = policy
@@ -514,6 +283,7 @@ class ScoreJobUseCase:
         resume_text: str | None = None,
         criteria: ScoringCriteria | None = None,
         employer_analysis: EmployerAnalysis | None = None,
+        previous_score: JobScore | None = None,
     ) -> ScoreJobOutcome:
         """**Preferred entry point** for single-threaded callers.
 
@@ -529,8 +299,14 @@ class ScoreJobUseCase:
         used. Either way the LLM only sees the resume text — the snapshot
         carries the published candidate language.
         """
-        if _job_tenant_id(job) != tenant_id:
+        if _job_tenant_id(job) != tenant_id or profile_snapshot.tenant_id != tenant_id:
             raise ValueError("Scoring input tenant_id does not match the requested tenant")
+        connection = getattr(self._repository, "connection", None)
+        if connection is not None and connection.in_transaction and self._publisher is not None:
+            raise RuntimeError("Cannot publish a score event inside a caller-owned transaction")
+        capture_staleness = getattr(self._repository, "capture_staleness_for_score", None)
+        if "_score_staleness_snapshot" not in job and callable(capture_staleness):
+            job = {**job, "_score_staleness_snapshot": capture_staleness(tenant_id, _job_id(job))}
         parse_result = self.compute(
             job=job,
             profile_snapshot=profile_snapshot,
@@ -538,6 +314,7 @@ class ScoreJobUseCase:
             resume_text=resume_text,
             criteria=criteria,
             employer_analysis=employer_analysis,
+            previous_score=previous_score,
         )
         return self.persist_outcome(job=job, parse=parse_result, tenant_id=tenant_id)
 
@@ -550,6 +327,7 @@ class ScoreJobUseCase:
         resume_text: str | None = None,
         criteria: ScoringCriteria | None = None,
         employer_analysis: EmployerAnalysis | None = None,
+        previous_score: JobScore | None = None,
     ) -> ScoreParseResult:
         """LLM call + parse only — does NOT touch the repository.
 
@@ -563,19 +341,55 @@ class ScoreJobUseCase:
         each parse via :meth:`persist_outcome`.
         """
         _job_id(job)
-        if _job_tenant_id(job) != tenant_id:
+        if _job_tenant_id(job) != tenant_id or profile_snapshot.tenant_id != tenant_id:
             raise ValueError("Scoring input tenant_id does not match the requested tenant")
-        text = resume_text or profile_snapshot.as_dict().get("resume", {}).get(
-            "executive_profile", {}
-        ).get("baseline_text", "")
+        text = resume_text or profile_snapshot.as_dict().get("resume", {}).get("executive_profile", {}).get(
+            "baseline_text", ""
+        )
         scoring_criteria = criteria or ScoringCriteria.from_profile_snapshot(profile_snapshot)
-        return self._call_llm(
+        from jobctrl.domain.scoring.profile_impact import profile_inputs, review_profile_impact
+
+        review = {}
+        if previous_score is not None and previous_score.trace.profile_snapshot_version < profile_snapshot.version:
+            try:
+                current = profile_inputs(profile_snapshot, scoring_criteria,
+                    self._confirmed_preferences_reader(profile_snapshot, scoring_criteria), job)
+                decision, envelope = review_profile_impact(
+                    score=previous_score, current=current, job=job,
+                    dependencies={**self._determination_dependencies, "tenant_id": str(tenant_id)},
+                )
+                review = {"determination_id": envelope.determination_id,
+                    "entity_version": f"{previous_score.version}:{profile_snapshot.profile_id}:{profile_snapshot.version}",
+                    "score_version": str(previous_score.version)}
+                # Profile-only retention cannot conceal changed posting/configuration/policy.
+                old = previous_score.trace.profile_inputs
+                comparable = (
+                    previous_score.trace.prompt_version == SCORE_PROMPT_VERSION
+                    and previous_score.trace.schema_version == SCORE_SCHEMA_VERSION
+                    and previous_score.trace.model == str(getattr(self._llm, "model", "llm-port-default"))
+                    and all(old.get(key) == current.model_dump()[key] for key in (
+                        "posting_hash", "criteria_text", "target_criteria", "min_fit_score"))
+                    and bool(previous_score.trace.scoring_source_fingerprint)
+                    and previous_score.trace.scoring_source_fingerprint == _scoring_source_fingerprint(
+                        _matching_employer_analysis(job, employer_analysis), self._job_interpretation_reader(job))
+                )
+                if decision.verdict == "insignificant" and comparable:
+                    return ScoreParseResult(ok=True, fit_score=previous_score.fit_score,
+                        breakdown=previous_score.breakdown, keywords=previous_score.matched_keywords,
+                        criteria=previous_score.criteria, trace=previous_score.trace,
+                        retained_score_version=previous_score.version, profile_review=review)
+            except DeterminationFailure as failure:
+                return ScoreParseResult(ok=False, fit_score=None, breakdown=ScoreBreakdown(),
+                    keywords=MatchedKeywords(), criteria=scoring_criteria,
+                    error=str(failure))
+        parsed = self._call_llm(
             job=job,
             resume_text=text,
             profile_snapshot=profile_snapshot,
             criteria=scoring_criteria,
             employer_analysis=employer_analysis,
         )
+        return replace(parsed, profile_review=review)
 
     def persist_outcome(
         self,
@@ -595,38 +409,103 @@ class ScoreJobUseCase:
         version conflict or a real persistence failure and the caller
         wants both surfaced.
         """
+        # A publisher cannot be notified truthfully while an outer caller
+        # still controls the commit, and policy lookup may initialise data.
+        connection = getattr(self._repository, "connection", None)
+        if connection is not None and connection.in_transaction and self._publisher is not None:
+            raise RuntimeError("Cannot publish a score event inside a caller-owned transaction")
         if not parse.ok or parse.fit_score is None:
+            # A completed profile-impact review is separately useful evidence
+            # even when the replacement scoring request failed. Its own writer
+            # fence ensures that it still belongs to the accepted score.
+            if parse.profile_review:
+                retained = self._repository.load(tenant_id, _job_id(job))
+                if retained is None or str(retained.version) != parse.profile_review["score_version"]:
+                    raise DeterminationFailure("score_profile_binding_invalid")
+                self._repository.record_profile_review(retained,
+                    entity_version=parse.profile_review["entity_version"],
+                    determination_id=parse.profile_review["determination_id"])
             return ScoreJobOutcome(
                 ok=False,
                 score=None,
                 error=parse.error or "Unknown parse error",
             )
-
         if _job_tenant_id(job) != tenant_id:
             raise ValueError("Scoring input tenant_id does not match the requested tenant")
         job_id = _job_id(job)
+
+        # Resolve scoring policy before taking a writer lock: its first read can
+        # initialise the default policy. No model or external I/O belongs inside
+        # the score publication transaction.
         resolved_parse = (
-            self._resolve_with_requirement_fit(
-                parse=parse,
-                tenant_id=tenant_id,
-                job_id=job_id,
-            )
+            self._resolve_with_requirement_fit(parse=parse, tenant_id=tenant_id, job_id=job_id)
             if _has_requirement_fit(parse)
             else self._resolve_with_policy(parse=parse, tenant_id=tenant_id)
-        )
-        scored_at = _utc_now()
-        new_score = self._build_aggregate(
-            tenant_id=tenant_id,
-            job=job,
-            parse=resolved_parse,
-            scored_at=scored_at,
-        )
-        self._repository.save(new_score)
-        self._persist_requirement_fit_report(
-            tenant_id=tenant_id,
-            score=new_score,
-            parse=resolved_parse,
-        )
+        ) if parse.retained_score_version is None else parse
+        if not resolved_parse.ok or resolved_parse.fit_score is None:
+            return ScoreJobOutcome(ok=False, score=None, error=resolved_parse.error or "Unknown parse error")
+
+        publication = getattr(self._repository, "publication", None)
+        scope = publication(tenant_id, job_id) if callable(publication) else nullcontext()
+        # SQLite publication participants must use the same connection; a
+        # second connection would commit separately or deadlock under our lock.
+        determination_repository = self._determination_dependencies["repository"]
+        for participant in (self._requirement_fit_repository,):
+            if participant is None or connection is None:
+                continue
+            participant_connection = getattr(participant, "connection", None)
+            if participant_connection is None:
+                participant_connection = getattr(participant, "_connection", getattr(participant, "_conn", None))
+            if participant_connection is not None and participant_connection is not connection:
+                raise RuntimeError("Score publication repositories must share one SQLite connection")
+
+        with scope:
+            validate_inputs = getattr(self._repository, "validate_scoring_inputs", None)
+            if callable(validate_inputs):
+                validate_inputs(job, resolved_parse)
+            retained = None
+            if parse.profile_review:
+                retained = self._repository.load(tenant_id, job_id)
+                if retained is None or str(retained.version) != parse.profile_review["score_version"]:
+                    raise DeterminationFailure("score_profile_binding_invalid")
+                self._repository.record_profile_review(retained,
+                    entity_version=parse.profile_review["entity_version"],
+                    determination_id=parse.profile_review["determination_id"])
+            if parse.retained_score_version is not None:
+                if retained is None or retained.version != parse.retained_score_version:
+                    raise DeterminationFailure("score_profile_binding_invalid")
+                return ScoreJobOutcome(ok=True, score=retained, retained=True)
+
+            new_score = self._build_aggregate(
+                tenant_id=tenant_id,
+                job=job,
+                parse=resolved_parse,
+                scored_at=_utc_now(),
+            )
+            self._repository.save(new_score)
+            # A real SQLite determination repository may have used another
+            # connection during model work; bind its persisted receipt on the
+            # score writer. Pure in-memory test/domain ports keep their own
+            # binding behavior rather than writing nonexistent SQLite receipts.
+            determination_connection = getattr(determination_repository, "connection", None)
+            if determination_connection is None:
+                determination_connection = getattr(determination_repository, "_connection", None)
+            bind_score = (getattr(self._repository, "bind_score_determination", None)
+                          if determination_connection is not None else None)
+            if not callable(bind_score):
+                bind_score = determination_repository.bind
+            bind_score(
+                tenant_id=str(tenant_id),
+                entity_kind="score",
+                entity_id=str(job_id),
+                entity_version=str(new_score.version),
+                determination_kind="scoring",
+                determination_id=resolved_parse.trace.determination_id,
+            )
+            self._persist_requirement_fit_report(tenant_id=tenant_id, score=new_score, parse=resolved_parse)
+            resolve_staleness = getattr(self._repository, "resolve_staleness_for_score", None)
+            if callable(resolve_staleness):
+                resolve_staleness(new_score, job.get("_score_staleness_snapshot"))
         self._publish_scored(new_score)
         return ScoreJobOutcome(ok=True, score=new_score)
 
@@ -655,6 +534,7 @@ class ScoreJobUseCase:
     # Internals
     # ------------------------------------------------------------------
 
+    @lane_bound("scoring")
     def _call_llm(
         self,
         *,
@@ -673,27 +553,8 @@ class ScoreJobUseCase:
             profile_snapshot_version=profile_snapshot.version,
         )
         requirement_fit_inputs = _build_requirement_fit_inputs_blob(
-            job=job,
-            profile_snapshot=profile_snapshot,
             employer_analysis=matched_employer_analysis,
         )
-        messages = [
-            LlmMessage(role="system", content=self._prompt),
-            LlmMessage(
-                role="user",
-                content=(
-                    f"RESUME BASELINE:\n{resume_text}\n\n"
-                    f"---\n\nSCORING CRITERIA AND PROFILE PREFERENCES:\n"
-                    f"{_build_profile_preferences_blob(criteria)}\n\n"
-                    f"{_optional_prompt_section(requirement_fit_inputs)}"
-                    f"---\n\nJOB POSTING:\n{_build_job_blob(job)}"
-                ),
-            ),
-        ]
-        # Structured outputs: the LLM gateway returns a JSON object that
-        # already conforms to SCORE_SCHEMA. Do not pass max_tokens here:
-        # long postings plus requirement assessments need room to emit the
-        # full schema fill.
         with otel_trace.get_tracer("jobctrl.scoring").start_as_current_span("scoring.score_job") as span:
             span.set_attribute("langfuse.observation.type", "span")
             span.set_attribute("jobctrl.scoring.prompt_version", SCORE_PROMPT_VERSION)
@@ -702,37 +563,102 @@ class ScoreJobUseCase:
             span.set_attribute("jobctrl.scoring.profile_snapshot_version", profile_snapshot.version)
             span.set_attribute("jobctrl.scoring.min_fit_score", criteria.min_fit_score)
             try:
-                payload = self._llm.chat_json(
-                    messages,
-                    response_schema=SCORE_SCHEMA,
-                    temperature=0.0,
-                    thinking_budget=SCORE_THINKING_BUDGET,
+                authored = profile_sources(profile_snapshot.as_dict())
+                interpretation = self._job_interpretation_reader(job)
+                if interpretation is None:
+                    raise DeterminationFailure("job_interpretation_unavailable")
+                requirements = (
+                    {row.id: row.evidence_span for row in matched_employer_analysis.canonical.requirements}
+                    if matched_employer_analysis
+                    else {}
                 )
-            except Exception as exc:  # noqa: BLE001 — surface as a parse failure to the caller
-                log.error("LLM error scoring job %r: %s", job.get("title", "?"), exc)
-                span.set_attribute("jobctrl.scoring.parse.ok", False)
-                span.set_status(Status(StatusCode.ERROR, str(exc)))
-                span.record_exception(exc)
-                # Sentinel keyword keeps the ``MatchedKeywords`` non-empty
-                # invariant intact for the failure-path ``ScoreParseResult``;
-                # ``ok=False`` means nothing is persisted anyway.
+                scopes = {
+                    row.requirement_id: "employer_condition" if row.protected_class else row.scope
+                    for row in interpretation.requirements
+                }
+                if matched_employer_analysis is not None and (
+                    set(scopes) != set(requirements) or len(scopes) != len(interpretation.requirements)
+                ):
+                    raise DeterminationFailure("foreign_or_missing_requirement_scope")
+                if requirements and not interpretation._determination_id:
+                    raise DeterminationFailure("requirement_scope_source_unavailable")
+                if requirements and "resume" not in scopes.values():
+                    raise DeterminationFailure("no_capability_requirements")
+                confirmed_preferences = self._confirmed_preferences_reader(profile_snapshot, criteria)
+                from jobctrl.domain.scoring.profile_impact import profile_inputs
+
+                trace = replace(trace,
+                    scoring_source_fingerprint=_scoring_source_fingerprint(matched_employer_analysis, interpretation),
+                    profile_inputs=profile_inputs(
+                        profile_snapshot, criteria, confirmed_preferences, job,
+                    ).model_dump())
+                sources = [
+                    Source(source_id="posting", text=build_jd_snapshot(job)),
+                    *authored,
+                    *confirmed_preferences,
+                    Source(
+                        source_id="authored_conditions",
+                        text=json_dumps(
+                            {
+                                key: criteria.profile_preferences.get(key)
+                                for key in ("work_authorization", "compensation", "availability")
+                            }
+                        ),
+                    ),
+                    Source(source_id="job-interpretation", text=interpretation.model_dump_json()),
+                    *[Source(source_id=ident, text=text) for ident, text in requirements.items()],
+                ]
+                result, envelope = determine(
+                    kind="scoring",
+                    schema=ScoringDecision,
+                    schema_version=SCORE_SCHEMA_VERSION,
+                    prompt_version=SCORE_PROMPT_VERSION,
+                    instruction=self._prompt
+                    + " Each eligibility blocker must carry a closed category, rationale and verbatim citations. Compensation, work-model and location preferences belong in warnings, never blockers. Use the supplied job interpretation and saved search preferences; selected settings are authoritative. Compare shared codes directly and assess the posting against authored criteria through cited verdicts. Never replace saved preferences or invent a constraint. Every requirement ID must have one cited assessment. RequirementFit.evidence_ids must use only candidate_evidence_ids; copy quotes from the corresponding canonical sources, without reconstructing or joining fields. Decide discovery_feedback independently: propose_exact_title_exclusion only when the role itself is unsuitable for the confirmed target and avoiding that literal title would help. Otherwise use none. Give verbatim citations and a reason; do not use a score threshold to decide this. Cite supplied evidence IDs only.",
+                    sources=sources,
+                    context={
+                        "profile_version": profile_snapshot.version,
+                        "criteria_version": criteria.criteria_version,
+                        "requirement_ids": sorted(requirements),
+                        "candidate_evidence_ids": [item.source_id for item in authored],
+                        "requirement_fit_inputs": requirement_fit_inputs,
+                    },
+                    entity_id=str(job["job_id"]),
+                    validate=lambda row: row.validate_inventory(
+                        requirements=requirements, evidence_ids={item.source_id for item in authored}
+                    ),
+                    **{**self._determination_dependencies, "tenant_id": str(profile_snapshot.tenant_id)},
+                )
+                payload = result.score_payload()
+            except DeterminationFailure as failure:
                 return ScoreParseResult(
                     ok=False,
                     fit_score=None,
-                    breakdown=ScoreBreakdown(reasoning=f"LLM error: {exc}"),
+                    breakdown=ScoreBreakdown(),
                     keywords=MatchedKeywords(),
                     criteria=criteria,
                     trace=trace,
-                    error=f"LLM error: {exc}",
+                    error=str(failure),
                 )
 
+            trace = replace(trace, determination_id=envelope.determination_id)
             parsed = self._parser.parse_json(payload, criteria=criteria, trace=trace)
             if parsed.ok:
-                parsed = self._constraints.apply(parse=parsed, job=job)
                 if matched_employer_analysis is not None:
                     parsed = replace(
                         parsed,
                         employer_analysis_generation=matched_employer_analysis.generation,
+                        requirement_assessments=tuple(
+                            replace(
+                                row,
+                                contribution=replace(
+                                    row.contribution,
+                                    scope=scopes[row.requirement_id],
+                                    scope_source_id=interpretation._determination_id,
+                                ),
+                            )
+                            for row in parsed.requirement_assessments
+                        ),
                     )
             span.set_attribute("jobctrl.scoring.parse.ok", parsed.ok)
             span.set_attribute("jobctrl.scoring.parser_warning_count", len(parsed.trace.parser_warnings))
@@ -827,6 +753,8 @@ class ScoreJobUseCase:
             score_version=0,
         )
         assert report is not None
+        if report.resolved_fit_score is None:
+            return replace(parse, ok=False, fit_score=None, error="no_capability_requirements")
         signals = derive_requirement_fit_signals(report)
         resolved_score = report.resolved_fit_score or parse.fit_score
         assert resolved_score is not None

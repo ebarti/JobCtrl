@@ -3,7 +3,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { activityKeys } from "../activityKeys.js";
-import type { ActivityEventSummary } from "../types.js";
+import type { ActivityEventSummary } from "@jobctrl/contracts";
 
 export type ActivityEvent = ActivityEventSummary;
 

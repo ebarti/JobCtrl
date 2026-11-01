@@ -23,14 +23,8 @@ from jobctrl.domain.materials.policy import (
     TailoringPolicy,
     TailoringPolicyChangedError,
 )
-from jobctrl.domain.materials.value_objects import (
-    ArtifactStatus,
-    ArtifactType,
-    JudgeVerdict,
-    LlmModelSpec,
-    RenderFormat,
-    ValidationResult,
-)
+from jobctrl.domain.ports.artifact_review import ArtifactStatus, JudgeVerdict, ValidationResult
+from jobctrl.domain.materials.value_objects import ArtifactType, LlmModelSpec, RenderFormat
 
 __all__ = [
     "Artifact",

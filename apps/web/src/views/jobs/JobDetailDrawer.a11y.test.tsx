@@ -9,10 +9,13 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import { axe } from "jest-axe";
-import { render, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
+import { makeJobDetail, sampleArtifact, sampleJob } from "../../test/fixtures/projections.js";
+import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { JobDetailDrawer } from "./JobDetailDrawer.js";
 
@@ -31,6 +34,21 @@ function RoutedJobDetailDrawer() {
 
 describe("<JobDetailDrawer> a11y", () => {
   it("has no critical axe violations when populated from MSW", async () => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(
+          makeJobDetail(
+            { ...sampleJob, jobKey: String(params["jobKey"]) },
+            {
+              artifacts: [
+                { ...sampleArtifact, artifactId: "older", status: "superseded" },
+                { ...sampleArtifact, artifactId: "current", status: "approved" },
+              ],
+            },
+          ),
+        ),
+      ),
+    );
     const harness = buildProviderHarness();
     const rootRoute = createRootRoute({ component: () => <Outlet /> });
     const jobsRoute = createRoute({
@@ -53,7 +71,9 @@ describe("<JobDetailDrawer> a11y", () => {
         ),
       ).not.toBeNull(),
     );
-    const results = await axe(view.container);
-    expect(results).toHaveNoViolations();
+    expect(await axe(view.container)).toHaveNoViolations();
+    fireEvent.click(view.getByRole("button", { name: "Sections" }));
+    fireEvent.click(await view.findByRole("button", { name: "Expand all" }));
+    expect(await axe(view.container)).toHaveNoViolations();
   });
 });

@@ -24,6 +24,7 @@ RouteRequestFetcher = Callable[[str, str, Mapping[str, str]], "RouteFulfillment"
 
 _ROUTE_FETCH_TIMEOUT_SECONDS = 20
 _ROUTE_FETCH_MAX_BYTES = 2_000_000
+_ROUTE_ASSET_MAX_BYTES = 16_000_000
 _UNSAFE_REQUEST_HEADERS = {
     "authorization",
     "cookie",
@@ -140,22 +141,34 @@ class PublicHttpUrlRouteGuard:
         resolver: Resolver | None = None,
         fetch_public_requests: bool = False,
         request_fetcher: RouteRequestFetcher | None = None,
+        include_resource_destination: bool = False,
     ) -> None:
         self._page = page
         self._resolver = resolver
         self._fetch_public_requests = fetch_public_requests
         self._request_fetcher = request_fetcher or _fetch_public_route_request
+        self._include_resource_destination = include_resource_destination
         self._handler: Callable[[Any, Any], None] | None = None
         self.blocked_url: str | None = None
         self.blocked_reason: str | None = None
         self.failure_kind: PublicFetchFailureKind | None = None
+        self.failure_resource_type: str | None = None
 
-    def _record_failure(self, url: str, reason: str, kind: PublicFetchFailureKind) -> None:
-        if self.failure_kind is not None and self.failure_kind.priority >= kind.priority:
-            return
+    def _record_failure(
+        self, url: str, reason: str, kind: PublicFetchFailureKind, *, resource_type: str | None = None,
+    ) -> None:
+        if self.failure_kind is not None:
+            if self.failure_kind.priority > kind.priority:
+                return
+            if self.failure_kind.priority == kind.priority and (
+                self.failure_resource_type in {None, "document", "iframe"}
+                or resource_type not in {None, "document", "iframe"}
+            ):
+                return
         self.blocked_url = url
         self.blocked_reason = reason
         self.failure_kind = kind
+        self.failure_resource_type = resource_type
 
     @property
     def blocked(self) -> bool:
@@ -168,6 +181,7 @@ class PublicHttpUrlRouteGuard:
 
         def handler(playwright_route: Any, request: Any) -> None:
             request_url = str(getattr(request, "url", ""))
+            resource_type = str(getattr(request, "resource_type", "")) or None
             try:
                 request_scheme = urlsplit(request_url).scheme.lower()
             except ValueError:
@@ -179,35 +193,53 @@ class PublicHttpUrlRouteGuard:
                 # remote posting as a fatal unsafe redirect.
                 playwright_route.abort("blockedbyclient")
                 return
+            method = str(getattr(request, "method", "GET") or "GET").upper()
+            if self._fetch_public_requests and method not in {"GET", "HEAD"}:
+                # Public pages commonly emit analytics, telemetry, or API
+                # writes while loading. We deliberately do not replay those
+                # side-effecting requests through the pinned fetcher, but
+                # aborting one must not poison an otherwise safe top-level
+                # read. Availability captures require complete data evidence:
+                # a blocked API write can instead render a false closed view.
+                # Mark that capture incomplete without sending the write.
+                if self._include_resource_destination and str(getattr(request, "resource_type", "")) not in {
+                    "image", "font", "media",
+                }:
+                    self._record_failure(
+                        request_url, f"browser_resource_method_{method}", PublicFetchFailureKind.FETCH_ERROR,
+                        resource_type=resource_type,
+                    )
+                playwright_route.abort("blockedbyclient")
+                return
             decision = validate_public_http_url(request_url, resolver=self._resolver)
             if not decision.allowed:
                 self._record_failure(
                     request_url,
                     decision.reason or "URL is not a public HTTP(S) destination",
                     decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION,
+                    resource_type=resource_type,
                 )
                 playwright_route.abort("blockedbyclient")
                 return
             if not self._fetch_public_requests:
                 playwright_route.continue_()
                 return
-            method = str(getattr(request, "method", "GET") or "GET").upper()
-            if method not in {"GET", "HEAD"}:
-                # Public pages commonly emit analytics, telemetry, or API
-                # writes while loading. We deliberately do not replay those
-                # side-effecting requests through the pinned fetcher, but
-                # aborting one must not poison an otherwise safe top-level
-                # read. Non-public destinations above remain fatal and keep
-                # the page-wide blocked marker.
-                playwright_route.abort("blockedbyclient")
-                return
             headers = getattr(request, "headers", {}) or {}
+            headers = dict(headers)
+            if resource_type:
+                # Playwright routing may omit Sec-Fetch-Dest. Its native
+                # resource type still distinguishes passive assets from data.
+                headers = {name: value for name, value in headers.items() if str(name).lower() != "sec-fetch-dest"}
+                headers["sec-fetch-dest"] = {
+                    "stylesheet": "style", "media": "video", "xhr": "empty", "fetch": "empty",
+                }.get(resource_type, resource_type)
             try:
-                fulfillment = self._request_fetcher(request_url, method, dict(headers))
+                fulfillment = self._request_fetcher(request_url, method, headers)
             except Exception as exc:
                 self._record_failure(
                     getattr(exc, "destination_url", None) or request_url,
                     str(exc) or "Public route fetch failed", classify_public_fetch_failure(exc),
+                    resource_type=resource_type,
                 )
                 playwright_route.abort("blockedbyclient")
                 return
@@ -268,18 +300,20 @@ def _fetch_public_route_request(
         method=method,
         headers=_safe_request_headers(headers),
     )
+    destination = next((str(value) for name, value in headers.items() if str(name).lower() == "sec-fetch-dest"), "")
+    max_bytes = _ROUTE_ASSET_MAX_BYTES if destination in {"script", "style"} else _ROUTE_FETCH_MAX_BYTES
     try:
         with opener.open(request, timeout=_ROUTE_FETCH_TIMEOUT_SECONDS) as response:
             return RouteFulfillment(
                 status=int(getattr(response, "status", 200)),
                 headers=_response_headers(response.headers),
-                body=_read_limited(response),
+                body=_read_limited(response, max_bytes=max_bytes),
             )
     except urllib.error.HTTPError as exc:
         return RouteFulfillment(
             status=int(exc.code),
             headers=_response_headers(exc.headers),
-            body=_read_limited(exc),
+            body=_read_limited(exc, max_bytes=max_bytes),
         )
 
 
@@ -307,8 +341,8 @@ def _response_headers(headers: Message | Mapping[str, str]) -> dict[str, str]:
     return response_headers
 
 
-def _read_limited(response: Any) -> bytes:
-    body = response.read(_ROUTE_FETCH_MAX_BYTES + 1)
-    if len(body) > _ROUTE_FETCH_MAX_BYTES:
+def _read_limited(response: Any, *, max_bytes: int = _ROUTE_FETCH_MAX_BYTES) -> bytes:
+    body = response.read(max_bytes + 1)
+    if len(body) > max_bytes:
         raise PublicResponseLimitError("Public route response exceeded the maximum allowed size")
     return bytes(body)

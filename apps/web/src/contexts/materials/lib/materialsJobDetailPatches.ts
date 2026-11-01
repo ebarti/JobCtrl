@@ -1,6 +1,6 @@
 import type { MaterialStage } from "@jobctrl/contracts";
 
-import type { JobDetail } from "../../operations/types.js";
+import type { JobDetail } from "@jobctrl/contracts";
 
 function isJobDetail(value: unknown): value is JobDetail {
   return (

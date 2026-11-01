@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from jobctrl.database import close_connection, init_db
-from jobctrl.domain.compensation import BenchmarkGeography, build_direct_benchmark_fact
+from jobctrl.domain.compensation import BenchmarkGeography, build_direct_benchmark_fact as domain_fact
+from tests.compensation_fakes import record_job_interpretation, classified_row, observation
 from jobctrl.infrastructure.compensation.refresh_state import (
     SqliteCompensationRefreshStateRepository,
     StaleCompensationRefreshLease,
@@ -36,12 +37,16 @@ def test_discovers_unique_active_country_role_slices(tmp_path: Path) -> None:
             job_id="33333333-3333-4333-8333-333333333333",
             title="Unmapped Wizard",
             location="Berlin, Germany",
+            family="unknown",
+            country="DE",
         )
         _insert_job(
             conn,
             job_id="44444444-4444-4444-8444-444444444444",
             title="Senior Data Engineer",
             location="Remote",
+            family="data_engineering",
+            country=None,
         )
         _insert_job(
             conn,
@@ -59,7 +64,7 @@ def test_discovers_unique_active_country_role_slices(tmp_path: Path) -> None:
         assert result.jobs_without_country == 1
         assert len(result.slices) == 1
         benchmark_slice = result.slices[0]
-        assert benchmark_slice.role_family_code == "infrastructure_platform"
+        assert benchmark_slice.role_family_code == "software_engineering"
         assert benchmark_slice.seniority_label == "senior"
         assert benchmark_slice.geography.country_code == "ES"
         assert benchmark_slice.geography.scope == "country"
@@ -170,6 +175,57 @@ def test_expired_lease_cannot_publish_a_refresh_result(tmp_path: Path) -> None:
         close_connection(db_path)
 
 
+def test_forced_claim_bypasses_freshness_but_not_active_lease(tmp_path: Path) -> None:
+    db_path = tmp_path / "forced-lease.db"
+    conn = init_db(db_path)
+    repository = SqliteCompensationRefreshStateRepository(conn)
+    try:
+        _insert_job(
+            conn,
+            job_id="11111111-1111-4111-8111-111111111111",
+            title="Director of Software Engineering",
+            location="Madrid, Spain",
+        )
+        benchmark_slice = repository.discover_active_job_slices("local").slices[0]
+        repository.ensure_slices((benchmark_slice,), now="2026-08-12T08:00:00Z")
+        first = repository.claim_due(
+            (benchmark_slice,), owner="first", now="2026-08-12T08:00:00Z", lease_expires_at="2026-08-12T09:00:00Z"
+        )[0]
+        assert (
+            repository.claim_due(
+                (benchmark_slice,),
+                owner="second",
+                now="2026-08-12T08:01:00Z",
+                lease_expires_at="2026-08-12T09:01:00Z",
+                force=True,
+            )
+            == ()
+        )
+        repository.mark_insufficient(
+            first,
+            completed_at="2026-08-12T08:02:00Z",
+            next_refresh_at="2026-08-19T08:02:00Z",
+            error_code="no_direct_anchor",
+        )
+        assert (
+            repository.claim_due(
+                (benchmark_slice,), owner="second", now="2026-08-12T08:03:00Z", lease_expires_at="2026-08-12T09:03:00Z"
+            )
+            == ()
+        )
+        forced = repository.claim_due(
+            (benchmark_slice,),
+            owner="second",
+            now="2026-08-12T08:03:00Z",
+            lease_expires_at="2026-08-12T09:03:00Z",
+            force=True,
+        )
+        assert len(forced) == 1
+        assert repository.get(benchmark_slice).attempt_count == 2
+    finally:
+        close_connection(db_path)
+
+
 def test_stale_token_cannot_publish_after_same_owner_reclaims_expired_lease(
     tmp_path: Path,
 ) -> None:
@@ -246,6 +302,7 @@ def test_refresh_state_rejects_a_result_from_another_geography(tmp_path: Path) -
         )[0]
         wrong_country = SqliteCompensationBenchmarkRepository(conn).save_direct(
             build_direct_benchmark_fact(
+                conn,
                 tenant_id="local",
                 role_family_code=benchmark_slice.role_family_code,
                 seniority_label=benchmark_slice.seniority_label,
@@ -287,6 +344,99 @@ def test_refresh_state_rejects_a_result_from_another_geography(tmp_path: Path) -
         close_connection(db_path)
 
 
+def test_failed_level_lookup_keeps_the_fallback_fact_and_retries_on_the_retry_boundary(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    state_repository = SqliteCompensationRefreshStateRepository(conn)
+    try:
+        _insert_job(
+            conn,
+            job_id="11111111-1111-4111-8111-111111111111",
+            title="Principal Software Engineer",
+            seniority="principal",
+            location="Madrid, Spain",
+        )
+        conn.commit()
+        benchmark_slice = state_repository.discover_active_job_slices("local").slices[0]
+        assert benchmark_slice.seniority_label == "principal"
+        state_repository.ensure_slices((benchmark_slice,), now="2026-08-12T08:00:00Z")
+        lease = state_repository.claim_due(
+            (benchmark_slice,),
+            owner="run-1",
+            now="2026-08-12T08:00:00Z",
+            lease_expires_at="2026-08-12T09:00:00Z",
+        )[0]
+        fallback = SqliteCompensationBenchmarkRepository(conn).save_direct(
+            build_direct_benchmark_fact(
+                conn,
+                tenant_id="local",
+                role_family_code=benchmark_slice.role_family_code,
+                seniority_label="unknown",
+                geography=benchmark_slice.geography,
+                market_scope="market",
+                normalized_company=None,
+                component="total_compensation",
+                original_currency="EUR",
+                original_period="year",
+                original_minimum_amount=60_000,
+                original_maximum_amount=90_000,
+                eur_annual_minimum_amount=60_000,
+                eur_annual_maximum_amount=90_000,
+                confidence_interval_minimum_amount=54_000,
+                confidence_interval_maximum_amount=99_000,
+                confidence_score=0.8,
+                sample_count=20,
+                source_id="test-source",
+                source_provenance="manual",
+                source_snapshot_id="snapshot-es-all-levels",
+                source_url="https://example.com/source",
+                attribution="Test compensation evidence",
+                fx_reference={"rate_to_eur": 1, "reference_id": "eur-identity"},
+                as_of_date="2026-08-01",
+                fetched_at="2026-08-12T08:00:00Z",
+                fresh_until="2026-08-19T08:00:00Z",
+            )
+        )
+
+        state_repository.mark_result(
+            lease,
+            completed_at="2026-08-12T08:01:00Z",
+            next_refresh_at="2026-08-13T08:01:00Z",
+            result_kind="direct",
+            fact_id=fallback.fact_id,
+            source_error="levels_fyi_public_unavailable",
+        )
+
+        state = state_repository.get(benchmark_slice)
+        assert state is not None
+        assert state.refresh_status == "failed"
+        assert state.last_result_kind == "direct"
+        assert state.last_direct_fact_id == fallback.fact_id
+        assert state.last_extrapolated_fact_id is None
+        assert state.last_error_code == "levels_fyi_public_unavailable"
+        assert state.next_refresh_at == "2026-08-13T08:01:00.000000Z"
+        assert state.lease_owner is None
+        assert state.attempt_count == 1
+        assert (
+            state_repository.claim_due(
+                (benchmark_slice,),
+                owner="run-2",
+                now="2026-08-13T08:00:59Z",
+                lease_expires_at="2026-08-13T09:00:59Z",
+            )
+            == ()
+        )
+        retried = state_repository.claim_due(
+            (benchmark_slice,),
+            owner="run-2",
+            now="2026-08-13T08:01:00Z",
+            lease_expires_at="2026-08-13T09:01:00Z",
+        )
+        assert tuple(lease.benchmark_slice for lease in retried) == (benchmark_slice,)
+    finally:
+        close_connection(db_path)
+
+
 def _insert_job(
     conn,
     *,
@@ -294,6 +444,9 @@ def _insert_job(
     title: str,
     location: str,
     is_deleted: int = 0,
+    family: str = "software_engineering",
+    country: str | None = "ES",
+    seniority: str = "senior",
 ) -> None:
     conn.execute(
         """
@@ -319,3 +472,22 @@ def _insert_job(
             """,
             (job_id,),
         )
+
+    conn.commit()
+    record_job_interpretation(conn, job_id, family=family, country=country, seniority=seniority)
+
+
+def build_direct_benchmark_fact(conn, **kwargs):
+    row = classified_row(
+        observation(),
+        conn=conn,
+        family=kwargs["role_family_code"],
+        seniority=kwargs["seniority_label"],
+        country=kwargs["geography"].country_code,
+    )
+    kwargs["fx_reference"] = {
+        **kwargs["fx_reference"],
+        "classification_id": row.determination_id,
+        "classification_entity_id": row.classification_entity_id,
+    }
+    return domain_fact(**kwargs)

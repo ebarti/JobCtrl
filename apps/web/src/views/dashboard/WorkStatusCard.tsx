@@ -1,7 +1,7 @@
 import { IconBan } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 
-import type { DashboardSummary } from "../../contexts/operations/types.js";
+import type { DashboardSummary } from "@jobctrl/contracts";
 import {
   Card,
   CardAction,

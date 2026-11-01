@@ -34,6 +34,16 @@ class _InMemoryApplyRunRepository:
     def __init__(self) -> None:
         self._store: dict[tuple[str, str], ApplyRun] = {}
 
+    def admit_email_intent(self, run: ApplyRun) -> None:
+        self.save(run)
+
+    def email_intent_matches(self, run: ApplyRun) -> bool:
+        stored = self.load(run.tenant_id, run.run_id)
+        return bool(stored and any(event.event_type == "ApplySubmitIntended" for event in stored.events))
+
+    def email_intent_durable(self, run: ApplyRun) -> bool:
+        return self.email_intent_matches(run)
+
     def save(self, run: ApplyRun) -> None:
         self._store[(str(run.tenant_id), str(run.run_id))] = run
 
@@ -131,11 +141,11 @@ class _FakeEmailSender:
         self.fail = fail
         self.sent = []
 
-    def send_email_application(self, candidate):
+    def send_email_application(self, candidate, *, operation):
         self.sent.append(candidate)
         if self.fail:
             raise RuntimeError("Gmail token missing gmail.send scope")
-        return EmailApplicationSendResult(provider="gmail", message_id="m1", thread_id="t1")
+        return EmailApplicationSendResult(provider="gmail", message_id="m1", thread_id="t1", operation=operation)
 
 
 @pytest.fixture()
@@ -181,6 +191,16 @@ def _email_context(**overrides) -> EmailApplicationContext:
     }
     values.update(overrides)
     return EmailApplicationContext(**values)
+
+
+def _approve_email_for_test(_tenant, _job, _posting, _run, candidate, _context):
+    from contextlib import nullcontext
+    from dataclasses import replace
+    from jobctrl.domain.ports.apply import EmailApplicationAuthorization
+
+    return nullcontext(EmailApplicationAuthorization(
+        candidate=replace(candidate, attachment_bytes=b"synthetic attachment"), evidence={},
+    ))
 
 
 def test_live_rehearsal_stops_at_manual_boundary(repo):
@@ -623,6 +643,50 @@ def test_email_only_live_send_requires_approval_binding(repo):
     assert outcome.apply_run.submission_result.reason == "email_application_approval_required"
 
 
+@pytest.mark.parametrize("authority", ["missing", "none", "availability_only", "unpinned", "mismatched"])
+def test_owned_email_requires_current_approval_authority(repo, authority):
+    """A claim-time recipient match or freshness check cannot authorize a send."""
+    from contextlib import nullcontext
+    from dataclasses import replace
+    from jobctrl.domain.ports.apply import EmailApplicationAuthorization
+
+    sender = _FakeEmailSender()
+    def authorize(_tenant, _job, _posting, _run, candidate, _context):
+        if authority == "none":
+            value = None
+        elif authority == "availability_only":
+            value = {"available": True}
+        else:
+            pinned = replace(candidate, attachment_bytes=b"synthetic attachment")
+            if authority == "unpinned":
+                pinned = replace(pinned, attachment_bytes=None)
+            elif authority == "mismatched":
+                pinned = replace(pinned, recipient_email="other@example.com")
+            value = EmailApplicationAuthorization(candidate=pinned, evidence={})
+        return nullcontext(value)
+
+    authorizer = None if authority == "missing" else authorize
+    saga = ApplySaga(
+        browser_port=_FakeBrowser(),
+        agent_port=_FakeAgent(behaviour="email_only"),
+        repository=repo,
+        email_sender=sender,
+        email_intent_authorizer=authorizer,
+    )
+    outcome = saga.run(
+        apply_run=_starting(), browser_config=_config(), prompt=_prompt(), model="sonnet",
+        email_application_context=_email_context(
+            approved_recipient_email="apply@example.com",
+            approved_attachment_artifact_id="resume-pdf-1",
+        ),
+    )
+
+    assert sender.sent == []
+    assert isinstance(outcome.apply_run.submission_result, Failed)
+    assert outcome.apply_run.submission_result.error == "approval_authority_unavailable"
+    assert "ApplySubmitIntended" not in [event.event_type for event in outcome.apply_run.events]
+
+
 def test_email_only_live_send_records_intent_before_owned_send(repo):
     sender = _FakeEmailSender()
     saga = ApplySaga(
@@ -630,6 +694,7 @@ def test_email_only_live_send_records_intent_before_owned_send(repo):
         agent_port=_FakeAgent(behaviour="email_only"),
         repository=repo,
         email_sender=sender,
+        email_intent_authorizer=_approve_email_for_test,
     )
 
     outcome = saga.run(
@@ -650,6 +715,24 @@ def test_email_only_live_send_records_intent_before_owned_send(repo):
     assert event_types.index("ApplySubmitIntended") < event_types.index("EmailApplicationSent")
 
 
+def test_unverified_availability_stops_email_before_intent_or_send(repo):
+    sender = _FakeEmailSender()
+    def refuse(_tenant, _job, _posting, _run, _candidate, _context):
+        raise RuntimeError("Check availability")
+    saga = ApplySaga(browser_port=_FakeBrowser(), agent_port=_FakeAgent(behaviour="email_only"),
+                     repository=repo, email_sender=sender, email_intent_authorizer=refuse)
+    outcome = saga.run(apply_run=_starting(), browser_config=_config(), prompt=_prompt(), model="sonnet",
+                       email_application_context=_email_context(approved_recipient_email="apply@example.com",
+                                                                approved_attachment_artifact_id="resume-pdf-1"))
+    assert sender.sent == []
+    event_types = [event.event_type for event in outcome.apply_run.events]
+    assert "ApplySubmissionBlocked" in event_types
+    assert "ApplySubmitIntended" not in event_types and "EmailApplicationSent" not in event_types
+    assert isinstance(outcome.apply_run.submission_result, Failed)
+    assert outcome.apply_run.submission_result.retryable is True
+    assert outcome.apply_run.attempts == 1  # The already-started run is retained.
+
+
 def test_email_sender_exception_is_ambiguous_after_submit_intent(repo):
     sender = _FakeEmailSender(fail=True)
     saga = ApplySaga(
@@ -657,6 +740,7 @@ def test_email_sender_exception_is_ambiguous_after_submit_intent(repo):
         agent_port=_FakeAgent(behaviour="email_only"),
         repository=repo,
         email_sender=sender,
+        email_intent_authorizer=_approve_email_for_test,
     )
 
     outcome = saga.run(
@@ -674,7 +758,7 @@ def test_email_sender_exception_is_ambiguous_after_submit_intent(repo):
     assert isinstance(submission, Failed)
     assert submission.retryable is False
     assert "email_send_outcome_ambiguous" in submission.error
-    assert "gmail.send scope" in submission.error
+    assert "gmail.send scope" not in submission.error
     event_types = [event.event_type for event in outcome.apply_run.events]
     assert event_types.index("ApplySubmitIntended") < event_types.index(
         "EmailApplicationSendFailed"

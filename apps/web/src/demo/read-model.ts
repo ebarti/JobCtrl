@@ -1,6 +1,7 @@
 import { ProfileSchema } from "@jobctrl/contracts";
 
 import { DEMO_ARTIFACTS } from "./artifacts.js";
+import { DEMO_RESCORE_UNAVAILABLE_MESSAGE } from "./capabilities.js";
 import type { DemoReadModel } from "./contracts.js";
 import { demoTimestamp } from "./clock.js";
 
@@ -133,8 +134,8 @@ const staleJob = {
   currentSubstage: "score",
   currentState: "failed",
   errorCode: "demo_rescore_gate",
-  errorMessage: "The synthetic rescore quality gate requested a retry.",
-  nextAction: "Retry the rescore against the current synthetic policy.",
+  errorMessage: "The synthetic rescore quality gate failed.",
+  nextAction: DEMO_RESCORE_UNAVAILABLE_MESSAGE,
   artifactCount: 0,
 } satisfies DemoReadModel["jobs"]["list"]["items"][number];
 
@@ -197,7 +198,7 @@ const workflowActivities = [
     company: staleJob.company,
     stage: "score",
     level: "error",
-    message: "The synthetic rescore quality gate requested a retry.",
+    message: "The synthetic rescore quality gate failed.",
     at: at("2026-07-11T08:22:00.000Z"),
   },
   {
@@ -445,6 +446,17 @@ export const DEMO_READ_MODEL = {
         dailyBudgetUsd: 20,
         remainingUsd: 20,
         unlimited: false,
+        lanes: {
+          discovery: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+          enrichment: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+          scoring: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+          tailoring: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+          apply: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+          contact: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+          interview: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+          profile: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+          compensation: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+        },
         message: "The public demo makes no model-provider calls.",
       },
       worker: {
@@ -725,10 +737,10 @@ export const DEMO_READ_MODEL = {
             finishedAt: at("2026-07-11T08:22:00.000Z"),
             durationMs: 120_000,
             errorCode: "demo_rescore_gate",
-            errorMessage: "The synthetic rescore quality gate requested a retry.",
-            retryable: true,
+            errorMessage: "The synthetic rescore quality gate failed.",
+            retryable: false,
             blockedBy: [],
-            nextAction: "Retry the rescore with the current policy.",
+            nextAction: DEMO_RESCORE_UNAVAILABLE_MESSAGE,
           },
         ],
         artifacts: [],
@@ -752,9 +764,8 @@ export const DEMO_READ_MODEL = {
         hoursOld: 72,
         schedulingEnabled: false,
         scheduleCron: "0 9 * * 1",
-        roleFilterMode: "auto",
-        roleFilterModel: null,
         maxParallelFamilies: 1,
+        useBrowserHeaders: false,
         crawlUserAgentProduct: "JobCtrl",
         crawlUserAgentContact: "demo-contact",
         source: "database",
@@ -768,9 +779,8 @@ export const DEMO_READ_MODEL = {
         hoursOld: { value: 72, source: "persisted", activation: "next_run", editable: true },
         schedulingEnabled: { value: false, source: "persisted", activation: "restart", editable: true },
         scheduleCron: { value: "0 9 * * 1", source: "persisted", activation: "restart", editable: true },
-        roleFilterMode: { value: "auto", source: "default", activation: "next_source_family", editable: true },
-        roleFilterModel: { value: null, source: "default", activation: "next_source_family", editable: true },
         maxParallelFamilies: { value: 1, source: "default", activation: "next_run", editable: true },
+        useBrowserHeaders: { value: false, source: "default", activation: "next_source_family", editable: true },
         crawlUserAgentProduct: { value: "JobCtrl", source: "default", activation: "next_source_family", editable: true },
         crawlUserAgentContact: { value: "demo-contact", source: "default", activation: "next_source_family", editable: true },
       },
@@ -1056,18 +1066,21 @@ export const DEMO_READ_MODEL = {
           },
         ],
         tailoringExplanation: null,
+        determinations: [],
       },
       [textArtifact.artifactId]: {
         ok: true,
         artifact: textArtifact,
         layoutBoxes: [],
         tailoringExplanation: null,
+        determinations: [],
       },
       [contosoResumeTextArtifact.artifactId]: {
         ok: true,
         artifact: contosoResumeTextArtifact,
         layoutBoxes: [],
         tailoringExplanation: null,
+        determinations: [],
       },
       [contosoResumePdfArtifact.artifactId]: {
         ok: true,
@@ -1085,6 +1098,7 @@ export const DEMO_READ_MODEL = {
           },
         ],
         tailoringExplanation: null,
+        determinations: [],
       },
     },
     resumeReviewDrafts: {
@@ -1310,7 +1324,7 @@ export const DEMO_READ_MODEL = {
         model: "simulated",
         result: null,
         errorCode: "demo_rescore_gate",
-        errorMessage: "The synthetic rescore quality gate requested a retry.",
+        errorMessage: "The synthetic rescore quality gate failed.",
         retryable: true,
         inputSummary: { simulated: true, operation: "rescoreJob" },
         temporalRunId: null,
@@ -1319,7 +1333,7 @@ export const DEMO_READ_MODEL = {
         durationMs: 120_000,
         events: [
           { eventType: "WorkflowStarted", occurredAt: at("2026-07-11T08:20:00.000Z"), status: "in_progress", message: "Synthetic run started." },
-          { eventType: "WorkflowFailed", occurredAt: at("2026-07-11T08:22:00.000Z"), status: "failed", message: "Retry is available." },
+          { eventType: "WorkflowFailed", occurredAt: at("2026-07-11T08:22:00.000Z"), status: "failed", message: DEMO_RESCORE_UNAVAILABLE_MESSAGE },
         ],
       },
       "run-score-succeeded": {
@@ -1540,11 +1554,17 @@ export const DEMO_READ_MODEL = {
   profile: {
     config: {
       ok: true,
+      profileVersion: 1,
       // ProfileConfigResponse.profile intentionally remains `unknown` on the
       // wire. Parse this authored fixture now, then assert it again in the demo
       // invariant so malformed future edits cannot reach the adapter.
       profile: ProfileSchema.parse({
         personal: { full_name: "Synthetic profile" },
+        experience: {
+          target_role: "Platform delivery lead",
+          target_track: "Management",
+          target_seniority_floor: "Director",
+        },
         resume: {
           experience_entries: [
             {
@@ -1562,14 +1582,16 @@ export const DEMO_READ_MODEL = {
     credentials: {
       ok: true,
       store: {
-        kind: "config_and_macos_keychain",
+        kind: "config_and_native_credential_store",
+        nativeStore: "macos_keychain" as const,
+        maxSecretBytes: 128,
         available: false,
         unavailableReason: "unsupported_platform",
         requiresWorkerRestart: true,
       },
       credentials: [
-        { key: "OPENAI_API_KEY", label: "OpenAI API Key", configured: null, storage: "keychain", effectiveSource: "inspection_unknown", editable: false },
-        { key: "GEMINI_API_KEY", label: "Gemini API Key", configured: null, storage: "keychain", effectiveSource: "inspection_unknown", editable: false },
+        { key: "OPENAI_API_KEY", label: "OpenAI API Key", configured: null, storage: "native_store", effectiveSource: "inspection_unknown", editable: false },
+        { key: "GEMINI_API_KEY", label: "Gemini API Key", configured: null, storage: "native_store", effectiveSource: "inspection_unknown", editable: false },
       ],
     },
   },
@@ -1580,10 +1602,17 @@ export const DEMO_READ_MODEL = {
       pipelineInternalConcurrency: 2,
       workerActivitySlots: 4,
       dailyBudgetUsd: 20,
+      laneTokenLimits: {
+        discovery: 0, enrichment: 0, scoring: 0, tailoring: 0, apply: 0,
+        contact: 0, interview: 0, profile: 0, compensation: 0,
+      },
       analysisLegs: ["claude", "codex", "google"],
+      defaultLlmModel: null,
+      codexReasoningEfforts: {},
       tailoringGeneratorModels: null,
       tailoringJudgeModel: null,
-      tailoringJudgeMinScore: 0.82,
+      resumeVoicePolish: false,
+      coverLetterGeneration: false,
       applyMaxBudgetUsd: 5,
       applyTimeoutSeconds: 900,
       scoreCriteria: "Synthetic demonstration criteria.",
@@ -1592,13 +1621,25 @@ export const DEMO_READ_MODEL = {
     },
     effectiveSettings: {
       dailyBudgetUsd: { value: 20, source: "persisted", activation: "live", editable: true },
+      laneTokenLimits: {
+        value: {
+          discovery: 0, enrichment: 0, scoring: 0, tailoring: 0, apply: 0,
+          contact: 0, interview: 0, profile: 0, compensation: 0,
+        },
+        source: "default",
+        activation: "live",
+        editable: true,
+      },
       applyConcurrency: { value: 1, source: "persisted", activation: "next_poll", editable: true },
       pipelineInternalConcurrency: { value: 2, source: "persisted", activation: "next_workflow", editable: true },
       workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
       analysisLegs: { value: ["claude", "codex", "google"], source: "default", activation: "next_analysis", editable: true },
+      defaultLlmModel: { value: null, source: "default", activation: "next_workflow", editable: true },
+      codexReasoningEfforts: { value: {}, source: "default", activation: "next_workflow", editable: true },
       tailoringGeneratorModels: { value: null, source: "default", activation: "next_workflow", editable: true },
       tailoringJudgeModel: { value: null, source: "default", activation: "next_workflow", editable: true },
-      tailoringJudgeMinScore: { value: 0.82, source: "default", activation: "next_workflow", editable: true },
+      resumeVoicePolish: { value: false, source: "default", activation: "next_workflow", editable: true },
+      coverLetterGeneration: { value: false, source: "default", activation: "next_workflow", editable: true },
       applyMaxBudgetUsd: { value: 5, source: "default", activation: "next_apply_job", editable: true },
       applyTimeoutSeconds: { value: 900, source: "default", activation: "next_apply_job", editable: true },
       scoreCriteria: { value: "Synthetic demonstration criteria.", source: "persisted", activation: "next_run", editable: true },
@@ -1629,6 +1670,7 @@ export const DEMO_READ_MODEL = {
       "contact-demo-hiring-partner": {
         ok: true,
         contact: {
+          fingerprint: "d".repeat(64),
           contactId: "contact-demo-hiring-partner",
           displayName: "Synthetic hiring partner",
           role: "recruiter",

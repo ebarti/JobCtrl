@@ -200,112 +200,36 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
     labels: [
       "Fetch once, then walk the configured extraction cascade.",
       "Verify active state independently.",
-      "Assign confidence from the posting-content evidence.",
-      "Quarantine instead of guessing.",
-      "Surface duplicate candidates from content evidence.",
+      "Determine content quality from the captured sources.",
+      "Quarantine low-confidence content.",
+      "Resolve duplicate identity.",
     ],
-    tokens: [
-      "JSON-LD",
-      "200 characters",
-      "400 characters",
-      "1.0",
-      "0.95",
-      "0.85",
-      "unknown active state",
-      "operator override",
-    ],
+    tokens: ["JSON-LD", "verbatim", "determination", "last accepted snapshot", "signals remain unknown", "operator override", "Availability-only uncertainty does not create a content-review entry"],
   },
   {
     path: "/user/materials-and-tailoring",
     heading: "#how-jobctrl-chooses-a-resume",
     selectors: [".mermaid svg"],
-    labels: [
-      "Build one deterministic plan.",
-      "Ask each ready generator for structured content.",
-      "Validate the assembled resume, not just model JSON.",
-      "Repair bounded quality failures.",
-      "Require approval from every enabled gate.",
-      "Select and persist the best clean candidate.",
-    ],
-    tokens: [
-      "actual candidate text",
-      "8/10",
-      "85%",
-      "0.82",
-      "PASS",
-      "six-persona",
-      "last accepted generation",
-    ],
+    labels: ["Bind canonical inputs.", "Generate candidates with anchors.", "Verify the final text.", "Repair bounded failures.", "Persist accepted output."],
+    tokens: ["claim-verification", "quality judge", "verbatim", "line IDs", "last accepted generation"],
   },
   {
     path: "/user/outcomes-and-feedback",
     heading: "#how-email-becomes-an-outcome-suggestion",
-    labels: [
-      "Start from known applications.",
-      "Score metadata before reading a body.",
-      "Classify with fixed phrase rules.",
-      "Wait for a human decision.",
-      "Gate analytics by sample size.",
-    ],
-    tokens: [
-      "applied_at",
-      "discovered_at",
-      "45-day",
-      "0.70",
-      "0.20",
-      "five applied records",
-      "five response-time samples",
-    ],
+    labels: ["A user-started scan bounds application anchors.", "A model reads bounded headers.", "A second determination classifies the linked body.", "Both decisions are persisted.", "Accept or correct creates an outcome.", "Ignore records only the suggestion decision."],
+    tokens: ["application anchors", "bounded headers", "verbatim span", "prompt/model versions", "blocked reason", "Raw bodies remain local", "applied_at", "discovered_at", "45-day", "five applied", "five response-time"],
   },
   {
     path: "/user/contacts-and-outreach",
     heading: "#how-research-and-draft-approval-work",
-    labels: [
-      "Check source policy before research.",
-      "Keep findings as proposals.",
-      "Ground the actual draft.",
-      "Run the approval stack.",
-      "Persist the gate result as authority.",
-      "Stop at the clipboard.",
-    ],
-    tokens: [
-      "broad-web discovery",
-      "needs_review",
-      "PASS",
-      "0.82",
-      "persisted approved draft",
-    ],
+    labels: ["Check source policy before research.", "Keep findings as proposals.", "Verify the actual draft.", "Run independent quality review.", "Persist the gate result as authority.", "Stop at the clipboard."],
+    tokens: ["broad-web discovery", "needs_review", "persisted approved draft", "confirmed profile and contact facts", "recorded line IDs", "Both model verdicts must pass", "Stop at the clipboard"],
   },
   {
     path: "/user/compensation-evidence",
     heading: "#how-compensation-is-calculated",
-    labels: [
-      "Record parse state.",
-      "Interpret bounds conservatively.",
-      "Annualize only with a known or narrowly inferred period.",
-      "Keep cash and equity separate.",
-      "Discover reusable benchmark slices.",
-      "Refresh only missing or due slices.",
-      "Normalize direct evidence.",
-      "Extrapolate missing geographies audibly.",
-      "Materialize the last good result.",
-    ],
-    tokens: [
-      "parsed_range",
-      "2,080",
-      "12,000",
-      "seven-day freshness window",
-      "Euro Top Tech",
-      "Levels.fyi",
-      "Glassdoor",
-      "source-dated ECB exchange rates",
-      "0.1x",
-      "10x",
-      "factor_out_of_bounds",
-      "Discovery",
-      "explicit compensation refresh",
-      "passive read",
-    ],
+    labels: ["Employer-posted compensation", "Direct and extrapolated market benchmarks", "Reads are passive:"],
+    tokens: ["source-bound", "taxonomy", "exact", "code equality", "Classification sources", "last accepted estimate", "2,080", "seven-day", "ECB", "0.1x", "10x", "factor_out_of_bounds", "Euro Top Tech", "Glassdoor", "Levels.fyi", "Reads are passive", "opening a compensation panel neither fetches a provider nor refreshes an estimate"],
   },
 ];
 
@@ -1875,7 +1799,9 @@ try {
   const privacyContract = await page.evaluate(() => {
     const heading = document.querySelector("#privacy-quick-answer");
     const table = heading?.nextElementSibling;
-    const text = document.querySelector(".vp-doc")?.textContent ?? "";
+    const text = (document.querySelector(".vp-doc")?.textContent ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
     return {
       headerCount: table?.querySelectorAll("thead th").length ?? 0,
       rowCount: table?.querySelectorAll("tbody tr").length ?? 0,
@@ -1884,17 +1810,21 @@ try {
         "every path below is relative to JOBCTRL_DIR",
       ),
       hasMacOnlyBoundary: text.includes("macOS credential panel"),
-      hasRuntimeBoundary: text.includes("loads a Keychain entry at startup"),
+      hasRuntimeBoundary:
+        text.includes("Python loads native credentials at startup") &&
+        text.includes("corresponding environment value is missing or empty"),
       hasPrecedenceBoundary: text.includes(
-        "Any non-empty environment value already present wins",
+        "Any non-empty inherited value wins",
       ),
       hasRestartBoundary: text.includes("Restart JobCtrl"),
       hasWindowsBoundary: text.includes("Windows Credential Manager"),
-      hasLinuxBoundary: text.includes("Linux Secret Service/keyring"),
+      hasLinuxBoundary: text.includes("Linux Secret Service"),
       hasInspectionFailureBoundary:
         text.includes("inspection_failed") &&
         text.includes("not that a credential is absent"),
-      hasRetryBoundary: text.includes("unlock it and retry"),
+      hasRetryBoundary: text.includes(
+        "Unlock or restore access to the native store and retry",
+      ),
       hasDefaultProtection: text.includes("Protected by default"),
       hasDocsAnalyticsDisclosure:
         Boolean(document.querySelector("#documentation-site-analytics")) &&
@@ -1915,12 +1845,18 @@ try {
     "Does Discovery make network requests?",
     "Is product telemetry enabled by default?",
     "Does this documentation site use analytics?",
-    "Can Discovery or enrichment launch a browser?",
+    "Does Discovery use my browser profile?",
     "Does application-submission browser automation run continuously?",
     "Does JobCtrl submit applications or send employer-facing email by default?",
     "Does Outreach send messages automatically?",
   ];
   const requiredQuickAnswerStatuses = ["✓ Yes", "✕ No", "◐ Only"];
+  const requiredBrowserBoundaries = [
+    "Discovery and Enrich prefer its live profile",
+    "Without it, they use guarded public HTTP or anonymous managed Playwright",
+    "They never copy or separately launch your profile",
+    "a fetch failure does not change transport",
+  ];
   if (
     privacyContract.headerCount !== 2 ||
     privacyContract.rowCount < 8 ||
@@ -1933,8 +1869,8 @@ try {
     !privacyContract.tableText.includes(
       "during runs you start or schedules you explicitly enable",
     ) ||
-    !privacyContract.tableText.includes(
-      "Smart extraction and some detail enrichment use Playwright",
+    requiredBrowserBoundaries.some(
+      (boundary) => !privacyContract.tableText.includes(boundary),
     ) ||
     !privacyContract.hasWorkspaceScope ||
     !privacyContract.hasMacOnlyBoundary ||
@@ -2000,9 +1936,11 @@ try {
         "only into that process's environment",
       ),
       hasNoHotReloadBoundary: text.includes("There is no hot reload"),
-      hasPlatformBoundary: text.includes(
-        "native Windows and Linux stores are planned",
-      ),
+      hasPlatformBoundary:
+        text.includes("macOS uses Keychain") &&
+        text.includes("Windows uses Credential Manager") &&
+        text.includes("Linux uses Secret Service") &&
+        text.includes("No adapter persists a plaintext fallback"),
       hasProviderStatusBoundary:
         text.includes("GET /v1/providers/status") &&
         text.includes(
@@ -2573,6 +2511,67 @@ try {
     );
   } else {
     console.log("ok    / search privacy");
+  }
+  // Shared product tokens use a different dark-mode selector than VitePress.
+  // Exercise real first paint, controls, diagrams and search in every mode so
+  // a broken build-time adapter cannot silently ship a light-only docs theme.
+  const themeBase = `http://127.0.0.1:${port}`;
+  for (const colorScheme of ["light", "dark"]) {
+    for (const viewport of [BASE_VIEWPORT, { width: 390, height: 844 }]) {
+      const themedContext = await browser.newContext({ colorScheme, viewport });
+      const themedPage = await themedContext.newPage();
+      try {
+        for (const route of ["/", "/user/normal-flows", "/guides/at-most-once-job-application-submission"]) {
+          await themedPage.goto(`${themeBase}${route}`, { waitUntil: "networkidle" });
+          await themedPage.locator("h1").first().waitFor({ state: "visible" });
+          if (route.includes("at-most-once")) {
+            await themedPage.locator(".mermaid svg").first().waitFor({ state: "visible" });
+          }
+          const style = await themedPage.evaluate(() => {
+            const action = document.querySelector(".VPButton.brand");
+            return {
+              dark: document.documentElement.classList.contains("dark"),
+              // Computed colors normalize equivalent minified spellings (.16
+              // and 0.16) and verify the token reaches the rendered surface.
+              background: getComputedStyle(document.body).backgroundColor,
+              font: getComputedStyle(document.body).fontFamily,
+              radius: action ? getComputedStyle(action).borderRadius : null,
+              overflow: document.documentElement.scrollWidth > innerWidth + 1,
+            };
+          });
+          const expectedBackground = colorScheme === "dark" ? "oklch(0.16 0 0)" : "oklch(1 0 0)";
+          if (style.dark !== (colorScheme === "dark") || style.background !== expectedBackground ||
+              !style.font.startsWith('"Helvetica Neue"') || (style.radius !== null && style.radius !== "0px") || style.overflow) {
+            fail(`${route} ${colorScheme} ${viewport.width}px: shared theme/reflow mismatch (${JSON.stringify(style)})`);
+          } else {
+            console.log(`ok    ${route} ${colorScheme} ${viewport.width}px shared theme and reflow`);
+          }
+        }
+        await themedPage.getByRole("button", { name: "Search", exact: true }).click();
+        await themedPage.locator("input.search-input").fill("privacy");
+        const searchFrame = await themedPage.locator(".VPLocalSearchBox .search-bar").evaluate((element) => {
+          const style = getComputedStyle(element);
+          return {
+            border: style.borderTopColor,
+            ink: getComputedStyle(document.body).color,
+            outline: style.outlineStyle,
+            outlineWidth: style.outlineWidth,
+          };
+        });
+        if (searchFrame.border !== searchFrame.ink || searchFrame.outline !== "solid" || searchFrame.outlineWidth !== "2px") {
+          fail(`/ search ${colorScheme} ${viewport.width}px: input outline or focus ring mismatch (${JSON.stringify(searchFrame)})`);
+        }
+        await themedPage.locator(".VPLocalSearchBox .result").first().waitFor({ state: "visible" });
+        const firstResult = themedPage.locator(".VPLocalSearchBox .result").first();
+        const resultHref = await firstResult.getAttribute("href");
+        await firstResult.click();
+        await themedPage.waitForURL((url) => url.pathname === new URL(resultHref, themeBase).pathname);
+        await themedPage.locator(".VPLocalSearchBox").waitFor({ state: "hidden" });
+        console.log(`ok    / search result navigation ${colorScheme} ${viewport.width}px`);
+      } finally {
+        await themedContext.close();
+      }
+    }
   }
 } finally {
   await browser.close();

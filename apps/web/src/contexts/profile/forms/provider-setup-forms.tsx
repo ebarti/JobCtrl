@@ -1,5 +1,5 @@
 import { useForm } from "@tanstack/react-form";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { z } from "zod";
 import {
   SecretCredentialKeys,
@@ -28,6 +28,7 @@ import {
 } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
 import { useUpdateCredentialsBatchMutation } from "../hooks/useUpdateCredentialsBatchMutation.js";
+import { credentialRecoveryMessage } from "../lib/credential-recovery-message.js";
 import {
   buildClaudeCredentialBatch,
   buildGoogleCredentialBatch,
@@ -109,6 +110,7 @@ interface ProviderFormProps {
   configured: boolean;
   currentMode?: string | null | undefined;
   environmentManagedKeys?: readonly CredentialKey[];
+  inspectionBlocked?: boolean;
   secretStorageAvailable?: boolean;
 }
 
@@ -116,10 +118,12 @@ export function ClaudeProviderForm({
   configured,
   currentMode,
   environmentManagedKeys = [],
+  inspectionBlocked = false,
   secretStorageAvailable = true,
 }: ProviderFormProps) {
   const update = useUpdateCredentialsBatchMutation();
   const [message, setMessage] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
   const [removalError, setRemovalError] = useState("");
   const effectiveMode = claudeModeFromStatus(currentMode);
@@ -131,9 +135,13 @@ export function ClaudeProviderForm({
   const sharedAdcEnvironmentManaged = environmentManagedKeys.includes(
     "GOOGLE_APPLICATION_CREDENTIALS",
   );
+  const initialMode = effectiveMode ?? (secretStorageAvailable ? "anthropic_api_key" : "vertex");
+  const modeBaseline = useRef<{ value: ClaudeMode; version: number }>({ value: initialMode, version: 0 });
+  const editVersion = useRef(0);
+  const savedEditVersion = useRef(0);
   const form = useForm({
     defaultValues: {
-      mode: (effectiveMode ?? (secretStorageAvailable ? "anthropic_api_key" : "vertex")) as ClaudeMode,
+      mode: initialMode as ClaudeMode,
       apiKey: "",
       vertexProjectId: "",
       vertexRegion: "global",
@@ -144,7 +152,9 @@ export function ClaudeProviderForm({
       googleApplicationCredentials: "",
     },
     onSubmit: async ({ value, formApi }) => {
+      if (inspectionBlocked) return;
       setMessage("");
+      setSaveError("");
       if (environmentManaged && value.mode === effectiveMode) {
         setMessage("Claude's active mode is managed by the launch environment. Choose another mode to save local settings.");
         return;
@@ -154,38 +164,61 @@ export function ClaudeProviderForm({
         setMessage(parsed.error.issues[0]?.message ?? "Review the Claude setup fields.");
         return;
       }
+      const submittedValues = { ...value };
+      const baselineVersion = modeBaseline.current.version;
+      const submittedEditVersion = editVersion.current;
       try {
         const request = withoutUnavailableSecrets(
           withoutEnvironmentManaged(buildClaudeCredentialBatch(parsed.data), environmentManagedKeys),
           secretStorageAvailable,
         );
-        formApi.setFieldValue("googleApplicationCredentials", "");
         if (request.operations.length === 0) {
           setMessage("Claude setup is managed by the launch environment and is read-only here.");
           return;
         }
         await update.mutateAsync(request);
-        formApi.setFieldValue("apiKey", "");
-        setMessage("Claude provider settings saved. Restart JobCtrl to load them.");
+        const changed = (Object.keys(submittedValues) as Array<keyof typeof submittedValues>)
+          .some((field) => formApi.state.values[field] !== submittedValues[field]);
+        if (request.operations.some((operation) => operation.operation === "set" && operation.key === "ANTHROPIC_API_KEY")
+          && formApi.getFieldValue("apiKey") === submittedValues.apiKey) formApi.setFieldValue("apiKey", "");
+        if (request.operations.some((operation) => operation.operation === "set" && operation.key === "GOOGLE_APPLICATION_CREDENTIALS")
+          && formApi.getFieldValue("googleApplicationCredentials") === submittedValues.googleApplicationCredentials) formApi.setFieldValue("googleApplicationCredentials", "");
+        const statusChanged = modeBaseline.current.version !== baselineVersion;
+        savedEditVersion.current = submittedEditVersion;
+        if (!statusChanged) modeBaseline.current = { value: submittedValues.mode, version: baselineVersion + 1 };
+        else if (editVersion.current === submittedEditVersion && formApi.getFieldValue("mode") === submittedValues.mode) {
+          formApi.setFieldValue("mode", modeBaseline.current.value, { dontUpdateMeta: true });
+        }
+        setMessage(changed || statusChanged
+          ? "Claude provider settings saved. The form has changed since submission; review it before saving again. Restart JobCtrl to load the saved settings."
+          : "Claude provider settings saved. Restart JobCtrl to load them.");
       } catch (error) {
-        setMessage(providerMutationMessage(error));
+        setSaveError(providerMutationMessage(error));
       }
     },
   });
   useEffect(() => {
     const selected = claudeModeFromStatus(currentMode);
     if (selected) {
-      form.setFieldValue("mode", selected);
+      const base = modeBaseline.current;
+      if (form.getFieldValue("mode") === base.value && editVersion.current === savedEditVersion.current) {
+        form.setFieldValue("mode", selected, { dontUpdateMeta: true });
+      } else if (selected !== base.value) {
+        setMessage("Claude provider status changed while you were editing. Your form is retained; review it before saving.");
+      }
+      if (selected !== base.value) modeBaseline.current = { value: selected, version: base.version + 1 };
     }
   }, [currentMode, form]);
 
   async function removeProvider() {
+    if (inspectionBlocked) return;
     setMessage("");
     setRemovalError("");
     if (environmentManaged) {
       setRemovalError("Claude setup is managed by the launch environment and remains effective.");
       return;
     }
+    const inputAtRemoval = form.getFieldValue("apiKey");
     try {
       const request = withoutUnavailableSecrets(
         withoutEnvironmentManaged(removeClaudeProviderBatch(), environmentManagedKeys),
@@ -196,16 +229,18 @@ export function ClaudeProviderForm({
         return;
       }
       await update.mutateAsync(request);
-      form.setFieldValue("apiKey", "");
+      if (form.getFieldValue("apiKey") === inputAtRemoval) form.setFieldValue("apiKey", "");
       setRemovalOpen(false);
       setMessage("Claude provider settings removed. Restart JobCtrl to stop using this provider.");
-    } catch {
-      setRemovalError(providerRemovalMessage("Claude"));
+    } catch (error) {
+      setRemovalError(providerRemovalMessage("Claude", error));
     }
   }
 
   return (
-    <form className="provider-form" onSubmit={(event) => submitForm(event, form.handleSubmit)}>
+    <form className="provider-form" onChangeCapture={() => { editVersion.current += 1; }} onSubmit={(event) => submitForm(event, form.handleSubmit)}>
+      <fieldset className="contents" disabled={inspectionBlocked}>
+      <legend className="sr-only">Claude setup fields</legend>
       <form.Field name="mode">
         {(field) => (
           <ProviderChoices
@@ -214,6 +249,7 @@ export function ClaudeProviderForm({
             value={field.state.value}
             onChange={field.handleChange}
             options={CLAUDE_OPTIONS}
+            disabled={inspectionBlocked}
             disabledValues={[
               ...(secretStorageAvailable ? [] : ["anthropic_api_key" as ClaudeMode]),
               ...(environmentManaged && effectiveMode ? [effectiveMode] : []),
@@ -327,24 +363,28 @@ export function ClaudeProviderForm({
           </div>
         )}
       </form.Subscribe>
+      </fieldset>
       <form.Subscribe selector={(state) => state.values.mode}>
         {(mode) => (
           <>
             <ProviderFormActions
               pending={update.isPending}
               message={message}
+              saveError={saveError}
+              removalError={removalOpen ? "" : removalError}
               saveLabel="Save Claude setup"
-              readOnly={environmentManaged && mode === effectiveMode}
+              readOnly={inspectionBlocked || (environmentManaged && mode === effectiveMode)}
               removeAction={
-                configured && !environmentManaged ? (
+                removalOpen || (configured && !environmentManaged) ? (
                   <ProviderRemovalDialog
+                    disabled={inspectionBlocked}
                     error={removalError}
                     open={removalOpen}
                     pending={update.isPending}
                     provider="Claude"
                     onConfirm={() => void removeProvider()}
                     onOpenChange={(open) => {
-                      setRemovalError("");
+                      if (open) setRemovalError("");
                       setRemovalOpen(open);
                     }}
                   />
@@ -365,10 +405,12 @@ export function GoogleProviderForm({
   configured,
   currentMode,
   environmentManagedKeys = [],
+  inspectionBlocked = false,
   secretStorageAvailable = true,
 }: ProviderFormProps) {
   const update = useUpdateCredentialsBatchMutation();
   const [message, setMessage] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
   const [removalError, setRemovalError] = useState("");
   const effectiveMode = googleModeFromStatus(currentMode);
@@ -380,16 +422,22 @@ export function GoogleProviderForm({
   const sharedAdcEnvironmentManaged = environmentManagedKeys.includes(
     "GOOGLE_APPLICATION_CREDENTIALS",
   );
+  const initialMode = effectiveMode ?? (secretStorageAvailable ? "gemini_api_key" : "vertex");
+  const modeBaseline = useRef<{ value: GoogleMode; version: number }>({ value: initialMode, version: 0 });
+  const editVersion = useRef(0);
+  const savedEditVersion = useRef(0);
   const form = useForm({
     defaultValues: {
-      mode: (effectiveMode ?? (secretStorageAvailable ? "gemini_api_key" : "vertex")) as GoogleMode,
+      mode: initialMode as GoogleMode,
       apiKey: "",
       projectId: "",
       location: "us-central1",
       googleApplicationCredentials: "",
     },
     onSubmit: async ({ value, formApi }) => {
+      if (inspectionBlocked) return;
       setMessage("");
+      setSaveError("");
       if (environmentManaged && value.mode === effectiveMode) {
         setMessage("Google's active mode is managed by the launch environment. Choose another mode to save local settings.");
         return;
@@ -399,38 +447,61 @@ export function GoogleProviderForm({
         setMessage(parsed.error.issues[0]?.message ?? "Review the Google setup fields.");
         return;
       }
+      const submittedValues = { ...value };
+      const baselineVersion = modeBaseline.current.version;
+      const submittedEditVersion = editVersion.current;
       try {
         const request = withoutUnavailableSecrets(
           withoutEnvironmentManaged(buildGoogleCredentialBatch(parsed.data), environmentManagedKeys),
           secretStorageAvailable,
         );
-        formApi.setFieldValue("googleApplicationCredentials", "");
         if (request.operations.length === 0) {
           setMessage("Google setup is managed by the launch environment and is read-only here.");
           return;
         }
         await update.mutateAsync(request);
-        formApi.setFieldValue("apiKey", "");
-        setMessage("Google provider settings saved. Restart JobCtrl to load them.");
+        const changed = (Object.keys(submittedValues) as Array<keyof typeof submittedValues>)
+          .some((field) => formApi.state.values[field] !== submittedValues[field]);
+        if (request.operations.some((operation) => operation.operation === "set" && operation.key === "GEMINI_API_KEY")
+          && formApi.getFieldValue("apiKey") === submittedValues.apiKey) formApi.setFieldValue("apiKey", "");
+        if (request.operations.some((operation) => operation.operation === "set" && operation.key === "GOOGLE_APPLICATION_CREDENTIALS")
+          && formApi.getFieldValue("googleApplicationCredentials") === submittedValues.googleApplicationCredentials) formApi.setFieldValue("googleApplicationCredentials", "");
+        const statusChanged = modeBaseline.current.version !== baselineVersion;
+        savedEditVersion.current = submittedEditVersion;
+        if (!statusChanged) modeBaseline.current = { value: submittedValues.mode, version: baselineVersion + 1 };
+        else if (editVersion.current === submittedEditVersion && formApi.getFieldValue("mode") === submittedValues.mode) {
+          formApi.setFieldValue("mode", modeBaseline.current.value, { dontUpdateMeta: true });
+        }
+        setMessage(changed || statusChanged
+          ? "Google provider settings saved. The form has changed since submission; review it before saving again. Restart JobCtrl to load the saved settings."
+          : "Google provider settings saved. Restart JobCtrl to load them.");
       } catch (error) {
-        setMessage(providerMutationMessage(error));
+        setSaveError(providerMutationMessage(error));
       }
     },
   });
   useEffect(() => {
     const selected = googleModeFromStatus(currentMode);
     if (selected) {
-      form.setFieldValue("mode", selected);
+      const base = modeBaseline.current;
+      if (form.getFieldValue("mode") === base.value && editVersion.current === savedEditVersion.current) {
+        form.setFieldValue("mode", selected, { dontUpdateMeta: true });
+      } else if (selected !== base.value) {
+        setMessage("Google provider status changed while you were editing. Your form is retained; review it before saving.");
+      }
+      if (selected !== base.value) modeBaseline.current = { value: selected, version: base.version + 1 };
     }
   }, [currentMode, form]);
 
   async function removeProvider() {
+    if (inspectionBlocked) return;
     setMessage("");
     setRemovalError("");
     if (environmentManaged) {
       setRemovalError("Google setup is managed by the launch environment and remains effective.");
       return;
     }
+    const inputAtRemoval = form.getFieldValue("apiKey");
     try {
       const request = withoutUnavailableSecrets(
         withoutEnvironmentManaged(removeGoogleProviderBatch(), environmentManagedKeys),
@@ -441,16 +512,18 @@ export function GoogleProviderForm({
         return;
       }
       await update.mutateAsync(request);
-      form.setFieldValue("apiKey", "");
+      if (form.getFieldValue("apiKey") === inputAtRemoval) form.setFieldValue("apiKey", "");
       setRemovalOpen(false);
       setMessage("Google provider settings removed. Restart JobCtrl to stop using this provider.");
-    } catch {
-      setRemovalError(providerRemovalMessage("Google"));
+    } catch (error) {
+      setRemovalError(providerRemovalMessage("Google", error));
     }
   }
 
   return (
-    <form className="provider-form" onSubmit={(event) => submitForm(event, form.handleSubmit)}>
+    <form className="provider-form" onChangeCapture={() => { editVersion.current += 1; }} onSubmit={(event) => submitForm(event, form.handleSubmit)}>
+      <fieldset className="contents" disabled={inspectionBlocked}>
+      <legend className="sr-only">Google setup fields</legend>
       <form.Field name="mode">
         {(field) => (
           <ProviderChoices
@@ -459,6 +532,7 @@ export function GoogleProviderForm({
             value={field.state.value}
             onChange={field.handleChange}
             options={GOOGLE_OPTIONS}
+            disabled={inspectionBlocked}
             disabledValues={[
               ...(secretStorageAvailable ? [] : ["gemini_api_key" as GoogleMode]),
               ...(environmentManaged && effectiveMode ? [effectiveMode] : []),
@@ -515,24 +589,28 @@ export function GoogleProviderForm({
           </div>
         )}
       </form.Subscribe>
+      </fieldset>
       <form.Subscribe selector={(state) => state.values.mode}>
         {(mode) => (
           <>
             <ProviderFormActions
               pending={update.isPending}
               message={message}
+              saveError={saveError}
+              removalError={removalOpen ? "" : removalError}
               saveLabel="Save Google setup"
-              readOnly={environmentManaged && mode === effectiveMode}
+              readOnly={inspectionBlocked || (environmentManaged && mode === effectiveMode)}
               removeAction={
-                configured && !environmentManaged ? (
+                removalOpen || (configured && !environmentManaged) ? (
                   <ProviderRemovalDialog
+                    disabled={inspectionBlocked}
                     error={removalError}
                     open={removalOpen}
                     pending={update.isPending}
                     provider="Google"
                     onConfirm={() => void removeProvider()}
                     onOpenChange={(open) => {
-                      setRemovalError("");
+                      if (open) setRemovalError("");
                       setRemovalOpen(open);
                     }}
                   />
@@ -716,12 +794,16 @@ function CloudGuidance({ command, children }: { command: string; children: React
 function ProviderFormActions({
   pending,
   message,
+  saveError,
+  removalError,
   saveLabel,
   removeAction,
   readOnly = false,
 }: {
   pending: boolean;
   message: string;
+  saveError: string;
+  removalError: string;
   saveLabel: string;
   removeAction?: ReactNode;
   readOnly?: boolean;
@@ -735,6 +817,8 @@ function ProviderFormActions({
       <div aria-live="polite" className="provider-form-message" role="status">
         {message}
       </div>
+      {saveError ? <div className="provider-form-message warning" role="alert">{saveError}</div> : null}
+      {removalError ? <div className="provider-form-message warning" role="alert">{removalError}</div> : null}
     </div>
   );
 }
@@ -743,6 +827,7 @@ function ProviderRemovalDialog({
   provider,
   open,
   pending,
+  disabled,
   error,
   onOpenChange,
   onConfirm,
@@ -750,6 +835,7 @@ function ProviderRemovalDialog({
   provider: "Claude" | "Google";
   open: boolean;
   pending: boolean;
+  disabled: boolean;
   error: string;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
@@ -757,7 +843,7 @@ function ProviderRemovalDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button disabled={pending} type="button" variant="outline">
+        <Button disabled={pending || disabled} type="button" variant="outline">
           Remove {provider} setup
         </Button>
       </DialogTrigger>
@@ -782,7 +868,7 @@ function ProviderRemovalDialog({
             </Button>
           </DialogClose>
           <Button
-            disabled={pending}
+            disabled={pending || disabled}
             type="button"
             variant="destructive"
             onClick={onConfirm}
@@ -827,8 +913,9 @@ function providerMutationMessage(error: unknown): string {
     : "Could not save provider settings. Check config.json access and Keychain Access, then retry.";
 }
 
-function providerRemovalMessage(provider: "Claude" | "Google"): string {
-  return `Could not remove ${provider} provider settings. No successful removal was confirmed. Check config.json access and Keychain Access, then retry.`;
+function providerRemovalMessage(provider: "Claude" | "Google", error: unknown): string {
+  const prefix = `Could not remove ${provider} provider settings. No successful removal was confirmed.`;
+  return `${prefix} ${credentialRecoveryMessage(error) ?? "Check credential status before trying again."}`;
 }
 
 function withoutEnvironmentManaged(

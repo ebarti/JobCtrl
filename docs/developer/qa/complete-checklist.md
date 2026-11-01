@@ -5,56 +5,23 @@ run, the Temporal fault-injection matrix, the high-risk regression matrix that
 pairs each risk with its automated coverage, the scoring and tailoring eval
 gates, and the frontend QA pyramid.
 
-**Read this if** you changed TypeScript API behavior, the web app, Python automation,
-generated artifacts, profile/settings persistence, or apply flows, and need to
-know what to run and what must stay covered.
+Read the relevant section when the QA router identifies one of these risks.
 
 Jump to the [regression matrix](#high-risk-regression-areas) for the risk →
 coverage table, or the
 [Temporal fault-injection matrix](#temporal-fault-injection-matrix) for
-per-workflow failure behavior. The known-failing web e2e baseline these gates
-run against is recorded in the [backlog](../../backlog.md).
+per-workflow failure behavior. Record regressions in a linked
+[GitHub issue](https://github.com/ebarti/JobCtrl/issues) with the affected path,
+invariant, reproducer and acceptance criteria. Historical backlog dispositions
+live in [migration index #881](https://github.com/ebarti/JobCtrl/issues/881);
+they do not exempt a failing web E2E spec from its applicable gate.
 
-## Required Commands
+## Selecting Checks
 
-```bash
-pnpm test
-pnpm qa:test
-uv --project workers/automation run --extra dev pytest -q
-uv --project workers/automation run --extra dev ruff check .
-git diff --check
-```
-
-`corepack pnpm test` runs the API Vitest suite, the web build, the extension unit tests,
-the extension built-bundle privacy e2e, and the Python tests — it does not run
-the web unit/hook/component suite, the type-level tests, or the Playwright e2e
-specs. For frontend-touching changes, also run:
-
-```bash
-corepack pnpm web:test
-corepack pnpm web:test-d
-corepack pnpm web:e2e
-corepack pnpm extension:check
-corepack pnpm extension:test
-corepack pnpm extension:e2e
-```
-
-For browser smoke, run the TypeScript API and web app:
-
-```bash
-pnpm api:dev
-pnpm web:dev -- --port 5173
-```
-
-For worker-backed pipeline smoke, run the full local stack and confirm
-`GET /v1/health` reports `worker.status: "healthy"` before starting stages:
-
-```bash
-pnpm dev
-```
-
-`pnpm dev` is the attached full-stack launcher; keep it running while exercising
-the UI and stop it with Ctrl-C when the QA pass is finished.
+Use [Reliability & QA](../../local-reliability-qa.md) to choose the smallest
+applicable proof. This catalog is read by relevant section; it does not require
+all suites for every change. Run worker-backed smoke only on a healthy isolated
+stack, using `corepack pnpm dev` when the full stack is needed.
 
 ## Temporal Fault-Injection Matrix
 
@@ -68,13 +35,234 @@ the UI and stop it with Ctrl-C when the QA pass is finished.
 | `CompensationRefreshWorkflow` | Auto-resumes or terminalizes the single refresh activity through Temporal retry/finalize; covered by `workers/automation/tests/test_workflow_heavy_rpc_conversions.py`. | Prompt stop records workflow cancellation; manual QA can cancel the run from `/runs` while refreshing synthetic compensation fixtures. | JSON-RPC and CLI surfaces return workflow-start failure without refreshing compensation inline; covered by `workers/automation/tests/test_jsonrpc_handlers.py` and `workers/automation/tests/test_compensation_refresh_cli.py`. | Reconciler terminalizes open compensation-refresh workflows; covered by `workers/automation/tests/test_workflow_finalize.py`. |
 | `InterviewPrepWorkflow` | Auto-resumes or terminalizes the single stored-prep activity through Temporal retry/finalize; covered by `workers/automation/tests/test_interview_prep_generation.py` and `workers/automation/tests/test_jsonrpc_handlers.py`. | Prompt stop records workflow cancellation without deleting the last accepted prep generation; manual QA can cancel the run from `/runs` once the UI trigger lands. | JSON-RPC starts only `generate_interview_prep` as workflow-mode stored preparation and exposes no live-assistance surface; covered by `workers/automation/tests/test_jsonrpc_handlers.py` and `apps/api/test/rpc-contracts.test.ts`. | Reconciler terminalizes open interview-prep workflows through the shared workflow lifecycle path; covered by `workers/automation/tests/test_workflow_finalize.py`. |
 
-For destructive browser QA, seed a disposable workspace:
+The durable-execution rule is simple: accepted work survives a worker restart,
+cancellation reaches a terminal observable state, an unavailable Temporal path
+fails clearly at start, and a lost dev-server history is reconciled rather than
+left open forever.
+
+Batch Enrich adds a cohort-level cancellation assertion: cancel a real
+`JobPipelineWorkflow` after its activity starts, then prove all and only its
+selected unfinished rows are `canceled`, the request identity is in the Runs
+timeline, and a fresh reconciler closes persisted ownership left by a stopped
+worker. The focused gate is:
 
 ```bash
-corepack pnpm qa:seed /tmp/jobctrl-qa
-JOBCTRL_DIR=/tmp/jobctrl-qa pnpm api:dev
-VITE_JOBCTRL_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
+uv --project workers/automation run python -m pytest -q \
+  workers/automation/tests/test_workflow_job_pipeline.py::test_pipeline_enrich_cancel_terminalizes_exact_selected_cohort \
+  workers/automation/tests/test_worker_reconciler.py::test_reconciler_maps_canceled_execution_to_workflow_canceled \
+  workers/automation/tests/test_worker_reconciler.py::test_reconciler_cancels_persisted_enrich_ownership_after_worker_restart
 ```
+
+Restart pickup is a separate regression boundary. An Enrich reset must clear
+the predecessor owner and set the canonical enrichment aggregate to `pending`.
+Bulk pickup must ignore stale projected descriptions, must not skip an active
+Enrich owner to start Score, and must persist `firstExecutionRunId` rather than
+the workflow-handle compatibility ID. The selected worker may process a queued
+row only when both identifiers match; a foreign execution must leave it alone.
+The focused gate is:
+
+```bash
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/server.test.ts \
+  test/write-model-state.test.ts
+uv --project workers/automation run --extra dev python -m pytest -q \
+  workers/automation/tests/test_discover_reliability.py \
+  -k 'selected_enrich_workflow_picks_up_api_prequeued_job or selected_enrich_workflow_does_not_steal_another_queued_owner'
+```
+
+Use the workflow-by-workflow matrix in the
+[Regression Catalog](regression-catalog.md#temporal-fault-injection)
+or the [complete checklist](complete-checklist.md#temporal-fault-injection-matrix).
+
+### Broad-board commit/ack recovery
+
+Broad-board discovery adds a stricter fault boundary inside the source-family
+activity. The hermetic fixture commits the first JobStreaming posting and its
+acceptance receipt, blocks the provider acknowledgement, kills that worker,
+starts a fresh worker on the same Temporal task queue, and verifies the same
+Discover execution completes from the stored checkpoint. It also covers
+unacknowledged replay, durable result and filtered counts, activity-attempt
+fencing, cursor reset ordering, partial board failure, incompatible cursor
+schemas, and cooperative cancellation. It uses fake local adapters and performs
+no external crawl:
+
+```bash
+uv --project workers/automation run pytest -q \
+  workers/automation/tests/test_jobstreaming_resumable_discovery.py \
+  workers/automation/tests/test_discovery_search_units.py \
+  workers/automation/tests/test_jobstreaming_gateway.py
+```
+
+The provider-progress regression additionally emits a JobStreaming page
+boundary carrying a private fake cursor. Verify that the worker callback,
+exact-run Operations response, and expanded **Crawl sources** row expose only
+the normalized provider/page counts and continuation state. The private cursor
+must be absent, an event from another Temporal run must not leak into the
+selected execution, and a missing provider total must not become a synthetic
+percentage. With two planned families, one active family, five recent
+whole-family duration samples, complete runtime inventory, and an empty task
+queue, the same fixture must produce a bounded `source_rate` range. One
+selected-sweep preparation workflow with several sequential stages must reserve
+one slot and remain bounded when spare capacity exists; queued backlog,
+unbounded retry demand, sweep demand beyond spare slots, or truncated inventory
+still produces `contention_unbounded`:
+
+```bash
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/pipeline-operations.test.ts
+corepack pnpm --filter @jobctrl/web exec vitest run \
+  src/views/pipelines/PipelinesView.test.tsx
+```
+
+### Preparation ownership and four-process chaos
+
+Score, Tailor, and Cover must recover from both sides of the commit boundary:
+an interrupted activity before persistence leaves one retryable owned row, and
+an interrupted acknowledgement after persistence reuses the committed score or
+accepted artifact without another model call. Profile and browser-setting
+continuations must also survive an API stop after their durable write and
+before dispatch. A selected batch must honor its bounded worker count; item
+failures remain attached to their own rows while the approved Tailor subset
+continues to Cover. A global command that includes Tailor or Cover — including
+score-led maintenance runs such as `run score tailor cover` — must freeze each
+requested material stage's backlog into exact JobIds before Temporal starts,
+so material stages use the same bounded per-job fan-out, ownership fence, and
+worker-wave deadline instead of the legacy unscoped batch runner. Inside the
+run, Score's newly scored jobs join the frozen Tailor cohort and Tailor's
+approved subset joins the frozen Cover cohort. Prove each zero-row cohort is
+an explicit per-stage no-op rather than an unscoped fallback — an empty Tailor
+cohort must not skip a non-empty Cover backlog — that a mixed
+Tailor/Cover/Apply request retains batch-Apply semantics, and that global
+current-policy re-tailoring freezes the policy-aware cohort before dispatch.
+An activity timeout or worker shutdown is retryable and
+must not be projected as user cancellation. For an explicitly selected batch,
+the replay-versioned activity deadline is 30 minutes per worker wave, capped at
+6 hours; the 2-minute heartbeat still detects a dead worker promptly. Parallel
+Tailor jobs generated from identical safety controls must persist distinct
+job-prompt fingerprints under the same global policy revision. Changing the
+complete tailoring-relevant profile projection, learned rules, model, judge,
+schema, or validation mode must advance that global revision and fail stale
+artifact persistence closed. A compensation-, authorization-, availability-,
+EEO-, or application-preference-only profile edit must not advance the global
+tailoring policy or reject an otherwise current artifact.
+Cancel a real selected Tailor and Cover workflow after the first worker wave
+starts. No later wave may start; in-flight jobs must receive the cooperative
+cancel token; the final artifact and stage-state writes must be fenced inside
+their SQLite transactions; and the exact unfinished cohort must become
+`canceled` without overwriting a successor owner. A result committed before the
+cancel boundary remains `succeeded`. Also pause a generation after it reads the
+profile, save a new profile revision, and prove the stale generation cannot
+commit. The selected artifact's prompt fingerprint must equal a digest of the
+exact selected candidate message list. Exercise the production single-job
+Tailor and Cover runners with their default SQLite repositories as well as the
+batch workflow: cancellation during generation must leave no artifact and no
+false completed/failed terminal event for the interrupted owner. Also hold a
+blocking activity thread past its cancellation grace window: the abandoned
+generation must be recorded and fenced, and the next activity must run on fresh
+bounded executor capacity without restarting the worker.
+
+For batch Tailor changes, exercise the actual `tailor_activity` without job IDs
+as well as the selected path. Seed more eligible jobs than workers and cancel
+during synthetic generation: only dispatched jobs may emit `StageStarted`, no
+later item may start, and late work must preserve successor ownership and the
+last accepted artifact. Verify commit-before-cancel and crash-after-commit
+recovery without another generation, prerequisite blocks without attempt
+spending, fifth-attempt exhaustion, tenant/limit/model policy, and approved-only
+Cover scope. Use owned pre-import fixtures and the relevant Temporal workflow
+matrix; the generic durable-timer demo does not prove these material invariants.
+
+Repeated Tailor validation/model-repair failures must also keep the inner LLM
+attempt count separate from the durable stage execution count. Each activity
+execution advances the durable count once; the fifth durable failure retains
+the non-retryable `exhausted` persistence marker, but product read models must
+show a retryable failed state with reason `attempt_budget_exhausted`. A later
+pickup cannot restart it without an explicit attempt reset. Verify that Retry
+atomically resets the attempt count to zero. Run at least two durable failures against the same
+materials generation and assert that both complete inner-attempt reports remain
+in the append-only audit history.
+When Tailor fails or reaches that exhausted boundary, assert that unstarted
+Cover and Apply rows become non-retryable `blocked` dependencies with the exact
+`UPSTREAM_TAILOR_FAILED` or `UPSTREAM_TAILOR_EXHAUSTED` code and a Tailor-owned
+next action. Repeat reconciliation to prove idempotence, interleave a dependent
+claim immediately before the guarded update to prove ownership preservation,
+and then complete Tailor to prove only the Tailor-owned blocks reset.
+For pipeline operations, seed a closed Temporal workflow whose final native
+activity timed out after recording only queued/running durable events. Startup
+reconciliation must append the exact terminal failure, make the stage 100%
+terminal, and ensure Pipelines never renders it as active or **In progress**.
+Also seed an active two-family source plan with one family running and only one
+durable family row. Pipelines must report one processing and one waiting family,
+with zero unknown. After terminalizing that workflow without recording the
+second family lifecycle, the missing family must become unknown.
+For a current score below the live materials threshold, preparation must persist
+Tailor, Cover, and Apply as non-retryable `skipped` rows with `MIN_SCORE` and the
+exact score/threshold pair. No row may remain `pending` after the workflow has
+made that terminal policy decision. Repeating reconciliation must add no event;
+a hard eligibility blocker must replace the threshold skip with `blocked`; and
+lowering the threshold or using the explicit per-job low-fit override must clear
+only `MIN_SCORE` rows and restore dependency-aware stage state. The rendered Job
+Detail timeline must expose that reason while retaining **Tailor this job** and
+must not present attempts or a retry action for the skip.
+Change the enriched posting snapshot after an employer analysis exists, then
+run Score and Tailor. Score must resolve the current analysis cache identity and
+persist a requirement-fit report for that exact generation. A deliberately
+missing or generation-mismatched report must block Tailor on Score before an LLM
+candidate call, preserve the Tailor attempt count, and emit an auditable
+`StageBlocked` prerequisite reason. Include a requirement-scope fixture with
+one grounded technical must-have and one missing hybrid/office-attendance
+must-have. The
+logistics item must remain present in safe plan metadata and prompt context,
+must be excluded from coverage nodes, weighted/must-have resume denominators,
+and prioritized fixes, and must not consume a Tailor retry. Pair it with
+negative controls such as “leading remote engineering teams” and “hybrid cloud
+infrastructure” so the classifier cannot become a blunt remote/hybrid keyword
+filter. With coherent inputs, sentence-level executive-profile mapping
+locations must bind to the rendered summary and skill-group mappings must use
+the exact rendered item sequence.
+The focused deterministic gate is:
+
+```bash
+uv --project workers/automation run pytest -q \
+  workers/automation/tests/test_score_activity_recovery.py \
+  workers/automation/tests/test_material_activity_recovery.py \
+  workers/automation/tests/test_materials_unit_of_work.py \
+  workers/automation/tests/test_materials_use_cases.py \
+  workers/automation/tests/test_linkedin_authenticated_enrichment_retry.py \
+  workers/automation/tests/test_linkedin_apply_resolver.py \
+  workers/automation/tests/test_enrichment_url_safety.py \
+  workers/automation/tests/test_materials_repository.py \
+  workers/automation/tests/test_v7_tailor_runtime.py \
+  workers/automation/tests/test_v7_cover_runtime.py \
+  workers/automation/tests/test_p1b_error_inversion.py \
+  workers/automation/tests/test_temporal_worker.py \
+  workers/automation/tests/test_workflow_job_preparation.py \
+  workers/automation/tests/test_workflow_job_pipeline.py
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/server.test.ts \
+  test/json-rpc-adapter.test.ts \
+  test/profile-events-v7.test.ts
+```
+
+Then run the four-process harness in both restart orders. It creates its own
+temporary `JOBCTRL_DIR`, SQLite database, Temporal persistence, ports, and PID
+manifest; it may kill only those captured process trees. Never point it at a
+personal workspace or live application target.
+
+```bash
+JOBCTRL_RELIABILITY_RESTART_TEMPORAL=1 \
+  scripts/reliability-demo.sh 1 8
+JOBCTRL_RELIABILITY_RESTART_TEMPORAL=1 \
+JOBCTRL_RELIABILITY_TEMPORAL_FIRST=1 \
+  scripts/reliability-demo.sh 1 8
+```
+
+Both passes must retain the original Temporal run ID, complete it exactly once,
+and converge in Temporal history, the SQLite read model, API health, and the
+web-origin proxy. The complete R01-R25 scenario definitions and stop conditions
+live in
+[`plans/2026-08-04-pipeline-reliability-chaos.md`](../../plans/2026-08-04-pipeline-reliability-chaos.md).
+
+<a id="durable-execution-recovery-demo"></a>
 
 ### Durable-Execution Recovery Demo
 
@@ -114,10 +302,11 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | Risk | Automated coverage |
 | --- | --- |
 | SQLite has no backup/restore path, or the schema drifts without a `user_version` guard: unstamped databases go unnoticed, a pre-guard DB is not adopted, or a DB written by a newer build is silently downgraded by the worker or additively written by a stale TypeScript API | `workers/automation/tests/test_database_backup.py`; `apps/api/test/schema-version-guard.test.ts` |
+| The guarded job-data purge mutates profile, resume-template, Discovery settings/source-control, unrelated workflow/operational attempts, lane spend, or Settings data; runs with active work; accepts an artifact path outside owned generated roots; leaves jobs/artifact rows, generated resume/cover-letter files, source-quality summaries, job-stage operational attempts, or a stale job/Discovery execution ledger that can recreate projections or retry a previous run; hides retained reference families; reports a compaction-only failure as a restore condition; deletes baseline resume/contact history; lacks a readable pre-purge recovery bundle; or is not idempotent | `apps/api/test/job-data-purge.test.ts`; `apps/api/test/permanent-delete-v7.test.ts`; disposable command-path QA from `docs/local-reliability-qa.md` |
 | The daily LLM spend ceiling stops gating workflows: the budget preflight is skipped before heavy activities, an exceeded budget fails as retryable instead of a non-retryable `BudgetExceededError`, or a zero budget stops meaning unlimited | `workers/automation/tests/test_llm_spend_budget.py` |
 | LLM HTTP retries stop being bounded (persistent transient failures retry forever), retry on client errors, or honor hostile `Retry-After` headers uncapped | `workers/automation/tests/test_llm_client.py` |
-| First-run provider readiness drifts from the one-provider contract: Codex is marked ready from a raw key instead of persisted isolated CLI auth; Claude accepts consumer OAuth instead of one supported API/cloud route; Google Vertex treats project metadata or a missing `GOOGLE_APPLICATION_CREDENTIALS` path as credentials; one ready provider cannot service plain, structured, and employer-analysis synthesis calls; a stale optional-leg list excludes the sole ready provider; local/custom or direct OpenAI routing returns; Keychain provider replacement partially commits; or Settings cannot revoke a provider | `workers/automation/tests/test_setup_probes.py`; `workers/automation/tests/test_setup_synthesis_auth.py`; `workers/automation/tests/test_employer_analysis_leg_config.py`; `workers/automation/tests/test_llm_provider_routing.py`; `workers/automation/tests/test_llm_analysis_synthesizer.py`; `workers/automation/tests/test_bundled_runtime.py`; `workers/automation/tests/test_codex_home_isolation.py`; `apps/api/test/credentials.test.ts`; `apps/api/test/server.test.ts`; `apps/web/src/contexts/profile/components/CredentialsPanel.test.tsx`; `apps/web/e2e/tests/profile-edit.spec.ts` |
-| Real-path first-run time-to-value regresses or is claimed from incomplete evidence: T0 must be captured before the first install command, TTFV-1 must prove a measured real job was absent from the all-state pre-work `/v1/jobs` baseline, has `discoveredAt >= T0`, exposes hashed real discovery-source provenance, and then is scored through both `GET /v1/jobs` and the `/jobs` fit-score badge, and TTFV-2 must prove the same measured job's real Apply Review PDF through `GET /v1/apply/review-queue`, the `/apply-review` `open final file` link, and a non-empty `/v1/artifacts/:artifactId/preview.pdf` byte stream. Synthetic data, fixtures, seeds, timing-only records, probe-only records, skipped phases, custom work commands, and CI are invalid for this gate. Owner-run cadence is pre-release only on the owner's Apple-silicon macOS reference machine: three clean runs, median TTFV-1 under 10 minutes with worst under 15 minutes, median TTFV-2 under 30 minutes with worst under 45 minutes. | `scripts/ttfv-real.mjs run` records the owner-run measurement artifact with the default discovery-inclusive command `jobctrl run discover score tailor --limit 1 --workers 1`; `scripts/ttfv-real.mjs probe` dry-validates the API/UI/PDF probes against an already-running real-output stack; `scripts/ttfv-real.mjs summarize` rejects non-gateable records and computes the median/worst aggregate; `pnpm scripts:test` covers the no-spend summary gate regressions; protocol: `docs/developer/first-run-ttfv.md` |
+| First-run provider readiness drifts from the one-provider contract: Codex is marked ready from a raw key instead of persisted isolated CLI auth; Claude accepts consumer OAuth instead of one supported API/cloud route; Google Vertex treats project metadata or a missing `GOOGLE_APPLICATION_CREDENTIALS` path as credentials; one ready provider cannot service plain, structured, and employer-analysis synthesis calls; a stale optional-leg list excludes the sole ready provider; local/custom or direct OpenAI routing returns; Native credential-store provider replacement partially commits; or Settings cannot revoke a provider | `workers/automation/tests/test_setup_probes.py`; `workers/automation/tests/test_setup_synthesis_auth.py`; `workers/automation/tests/test_employer_analysis_leg_config.py`; `workers/automation/tests/test_llm_provider_routing.py`; `workers/automation/tests/test_llm_analysis_synthesizer.py`; `workers/automation/tests/test_bundled_runtime.py`; `workers/automation/tests/test_codex_home_isolation.py`; `apps/api/test/credentials.test.ts`; `apps/api/test/server.test.ts`; `apps/web/src/contexts/profile/components/CredentialsPanel.test.tsx`; `apps/web/e2e/tests/profile-edit.spec.ts` |
+| Real-path first-run time-to-value regresses or is claimed from incomplete evidence: T0 must be captured before the first install command, TTFV-1 must prove a measured real job was absent from the all-state pre-work `/v1/jobs` baseline, has `discoveredAt >= T0`, exposes hashed real discovery-source provenance, and then is scored through both `GET /v1/jobs` and the `/jobs` fit-score badge, and TTFV-2 must prove the same measured job's real Apply Review PDF through `GET /v1/apply/review-queue`, the `/apply-review` `open final file` link, and a non-empty `/v1/artifacts/:artifactId/preview.pdf` byte stream. Synthetic data, fixtures, seeds, timing-only records, probe-only records, skipped phases, custom work commands, and CI are invalid for this gate. Owner-run cadence is pre-release only on the owner's Apple-silicon macOS reference machine: three clean runs, median TTFV-1 under 10 minutes with worst under 15 minutes, median TTFV-2 under 30 minutes with worst under 45 minutes. | `scripts/ttfv-real.mjs run` records the owner-run measurement artifact with the default discovery-inclusive command `jobctrl run discover score tailor --limit 1 --workers 1`; `scripts/ttfv-real.mjs probe` dry-validates the API/UI/PDF probes against an already-running real-output stack; `scripts/ttfv-real.mjs summarize` rejects non-gateable records and computes the median/worst aggregate; `corepack pnpm scripts:test` covers the no-spend summary gate regressions; protocol: `docs/developer/first-run-ttfv.md` |
 | Dry run marks a job applied | `workers/automation/tests/test_apply_regressions.py` |
 | Apply process hangs while stdout stays open | `workers/automation/tests/test_apply_regressions.py` |
 | Targeted apply skips fresh jobs | `workers/automation/tests/test_apply_regressions.py` |
@@ -141,7 +330,7 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | Discovery source cancellation reaches only broad boards, leaving ATS, Workday, or Smart Extract in-flight after a workflow cancel | `workers/automation/tests/test_p1b_error_inversion.py` |
 | The TypeScript API drops its loopback `Host`-header allowlist (DNS-rebinding defense), lets browser-extension CORS/token trust escape `/v1/extension/*`, lets a valid extension token bypass the loopback Host gate, fails to seed extension captures through `manual_capture_queue`, or serves/opens an artifact whose resolved path escapes the JobCtrl app directory | `apps/api/test/server.test.ts` (`rejects requests whose Host header is not a loopback host`; `blocks foreign-Host mutations before the handler runs`; `keeps the Host gate mandatory for valid extension bearer tokens`; `allows CORS preflight only for authenticated extension API routes`; `trusts valid extension bearer tokens only on extension API routes without weakening CSRF`; `refuses to open an artifact whose path resolves outside the app directory`; `refuses to preview a PDF artifact whose path resolves outside the app directory`); `apps/api/test/discovery-controls.test.ts` (`seeds extension captures into the manual capture queue before worker import`) |
 | The browser extension loses exact HTTP(S)-wildcard page reach, gains access to non-web schemes, broadens outbound network permissions beyond loopback, ships a non-loopback network literal, runs form inspection without an explicit review request, loses the stack-down local queue bound, stops sending captures/profile reads with a local bearer token, fabricates missing autofill values, or gains a submit path | `apps/extension/src/privacy.test.ts`; `apps/extension/src/privacy.e2e.test.ts`; `apps/extension/src/chromium-extension.e2e.test.ts`; `apps/extension/src/local-api.test.ts`; `apps/extension/src/queue.test.ts`; `apps/extension/src/content-script.test.ts` |
-| A saved pairing token is presented as live Discovery readiness; Discover dispatches while the extension heartbeat is offline; a broker task loses exact workflow/run identity, bounded lease/result/cancellation, public URL validation, or memory-only retention; worker-supplied Cookie/User-Agent headers cross into Chrome; the extension uses a copied/new profile; or any JobStreaming, ATS, Workday, Smart Extract, robots, or integrated detail-enrichment acquisition bypasses the live-profile extension transport | `apps/api/test/discovery-browser-broker.test.ts`; `apps/api/test/discovery-browser-routes.test.ts`; `apps/extension/src/discovery-executor.test.ts`; `apps/extension/src/chromium-extension.e2e.test.ts`; `workers/automation/tests/test_live_browser_discovery.py`; `workers/automation/tests/test_discovery_production_wiring.py`; `workers/automation/tests/test_workday_discovery.py`; `workers/automation/tests/test_smartextract_discovery.py`; `workers/automation/tests/test_discover_reliability.py`; `apps/web/src/contexts/profile/components/SettingsPanel.test.tsx`; `apps/web/src/contexts/pipeline/components/StageTriggerPanel.test.tsx`; live product-path QA from `docs/local-reliability-qa.md` |
+| A saved pairing token is presented as live readiness; eligible Discover/Enrich launch or retry is blocked solely by an offline extension; acquisition fails to prefer a connected selected extension or switches transport after a fetch/cancellation failure; a broker task loses exact workflow/run identity, bounded lease/result/cancellation, public URL validation, or memory-only retention; worker-supplied Cookie/User-Agent headers cross into Chrome; a copied profile is used; or anonymous JobStreaming initial/redirect/recreated/detail requests bypass public URL/DNS/socket guards or use unpinned proxy routing | `workers/automation/tests/test_optional_extension.py`; `apps/web/e2e/tests/optional-extension.spec.ts`; `apps/api/test/discovery-browser-broker.test.ts`; `apps/api/test/discovery-browser-routes.test.ts`; `apps/extension/src/discovery-executor.test.ts`; `apps/extension/src/chromium-extension.e2e.test.ts`; `workers/automation/tests/test_live_browser_discovery.py`; `workers/automation/tests/test_discovery_production_wiring.py`; `workers/automation/tests/test_workday_discovery.py`; `workers/automation/tests/test_smartextract_discovery.py`; `workers/automation/tests/test_discover_reliability.py`; `apps/web/src/contexts/profile/components/SettingsPanel.test.tsx`; `apps/web/src/contexts/pipeline/components/StageTriggerPanel.test.tsx`; live product-path QA from `docs/local-reliability-qa.md` |
 | The release privacy gate regresses: `scripts/release_check.py` stops catching a seeded violation class (owner-derived needles, secrets, prompt tripwires, blocked file types, or mismatched release metadata) or its CLI exit code stops failing CI | `workers/automation/tests/test_release_check.py` |
 | Operational metrics collapse scraper, manual abort, reload, harness, and unknown failures into one failed status | `workers/automation/tests/test_operational_metrics.py`; `apps/api/test/projections.test.ts` |
 | Discovery cancel-all-sources regresses, so stopping `DiscoverWorkflow` reaches broad boards but leaves ATS, Workday, Smart Extract, or enrichment running without observing the cooperative cancel event | `workers/automation/tests/test_p1b_error_inversion.py`; `workers/automation/tests/test_workflow_discovery.py::test_discover_workflow_detects_activity_cancellation_cause`; `workers/automation/tests/test_workflow_discovery.py::test_discover_workflow_records_canceled_outcome`; manual QA: start Discover against all source families in a disposable workspace, cancel from Runs, and confirm no source-family activity continues writing progress after cancellation |
@@ -151,17 +340,17 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | JobStreaming discovery loses or double-counts a posting when the worker dies after the JobCtrl commit but before provider acknowledgement; a stale attempt can still write after reclaim; a cursor reset runs before its error acknowledgement; the durable limit restarts; checkpoint incompatibility silently resets; explicit cancellation resumes as stale work; or recovered work is invisible | `workers/automation/tests/test_jobstreaming_resumable_discovery.py`; `workers/automation/tests/test_discovery_search_units.py`; `workers/automation/tests/test_jobstreaming_gateway.py`; `workers/automation/tests/test_pipeline_observability.py`; `apps/api/test/server.test.ts`; `apps/web/src/contexts/pipeline/components/StageTriggerPanel.test.tsx` |
 | Kill-worker discovery resumption regresses, requiring a reaper or manual action instead of Temporal retrying incomplete source-family activities and completing discovery | `workers/automation/tests/test_workflow_discovery.py::test_discover_workflow_kill_worker_resumption`; `workers/automation/tests/test_jobstreaming_resumable_discovery.py::test_temporal_worker_loss_after_store_before_ack_reclaims_and_completes`; manual QA: run Discover in a disposable workspace, kill the worker mid-source activity, restart the worker, and confirm the workflow completes with no orphan reaper |
 | Cover letters use the wrong resume | `workers/automation/tests/test_cover_requirements.py` |
-| Resume tailoring accepts a merely validation-passing resume, ignores generator/judge routing, hides judge rejection or high-fit adversarial blockers as success, fails to retry non-blocking review warnings while budget remains, omits auditable source-vs-tailored change annotations, requirement-led coverage graph metadata, generated-claim mappings, review-blocking adjacent/draft labels, hard per-role bullet ceilings, actionable keyword coverage counts, persona prompt/response/score audit, or expandable LLM request/response trails for persona warnings, lets low-signal marketing tokens pollute tailoring keywords, persists unsafe provider config, accepts unsupported metrics or keyword stuffing, drops profile evidence controls, or lets CLI/RPC/Temporal/API contracts drop tailoring model controls | `workers/automation/tests/test_requirement_led_tailoring.py`; `workers/automation/tests/test_materials_quality_eval.py`; `workers/automation/tests/test_materials_quality.py`; `workers/automation/tests/test_materials_adversarial.py`; `workers/automation/tests/test_materials_use_cases.py`; `workers/automation/tests/test_content_validator.py`; `workers/automation/tests/test_tailor_retailor.py`; `workers/automation/tests/test_activity_tailor.py`; `workers/automation/tests/test_actions.py`; `workers/automation/tests/test_jsonrpc_handlers.py`; `workers/automation/tests/test_llm_port.py`; `apps/api/test/application-feedback.test.ts`; `apps/api/test/json-rpc-adapter.test.ts`; `apps/web/src/contexts/profile/components/StructuredProfileEditor.test.tsx` |
+| Resume tailoring accepts a merely validation-passing resume, ignores generator/judge routing, hides judge rejection or high-fit adversarial blockers as success, fails to retry non-blocking review warnings while budget remains, omits auditable source-vs-tailored change annotations, requirement-led coverage graph metadata, generated-claim mappings, review-blocking adjacent/draft labels, hard per-role bullet ceilings, actionable keyword coverage counts, persona prompt/response/score audit, or expandable LLM request/response trails for persona warnings, lets low-signal marketing tokens pollute tailoring keywords, persists unsafe provider config, accepts unsupported metrics or keyword stuffing, drops profile evidence controls, or lets CLI/RPC/Temporal/API contracts drop tailoring model controls | `workers/automation/tests/test_requirement_led_tailoring.py`; `workers/automation/tests/test_artifact_determinations.py`; `workers/automation/tests/test_materials_quality.py`; `workers/automation/tests/test_materials_adversarial.py`; `workers/automation/tests/test_materials_use_cases.py`; `workers/automation/tests/test_tailor_retailor.py`; `workers/automation/tests/test_activity_tailor.py`; `workers/automation/tests/test_actions.py`; `workers/automation/tests/test_jsonrpc_handlers.py`; `workers/automation/tests/test_llm_port.py`; `apps/api/test/application-feedback.test.ts`; `apps/api/test/json-rpc-adapter.test.ts`; `apps/web/src/contexts/profile/components/StructuredProfileEditor.test.tsx` |
 | A resume or cover-letter retry promotes free-form validator, judge, adversarial-review, or prior-model text into a later generator system/user message instead of retaining it as audit-only data and using bounded code-owned reason guidance | `workers/automation/tests/test_materials_use_cases.py` |
 | Stored interview prep bypasses the existing fabrication, claim-grounding, or adversarial judge gates; accepts a fabricated metric/tool or dishonest gap drill; supersedes the last accepted prep after a failed refresh; omits the projected `JobDetail.interviewPrep` provenance read model; or exposes a live/in-session/transcript/microphone/streaming/real-time assistance contract instead of a stored prep generation | `workers/automation/tests/test_interview_prep_generation.py`; `workers/automation/tests/test_jsonrpc_handlers.py` (`test_interview_prep_has_no_live_assistance_surface`); `workers/automation/tests/test_audit_projection_parity.py`; `apps/api/test/audit-projection-parity.test.ts`; `apps/api/test/json-rpc-adapter.test.ts`; `apps/api/test/rpc-contracts.test.ts`; `apps/web/src/contexts/materials/components/InterviewPrepPanel.test.tsx`; `apps/web/e2e/tests/interview-prep.spec.ts` |
 | The post-generation revision gate trusts the model's self-declared claim mappings instead of grounding them in the shipped rendered text, so the persisted "Must-have coverage 100% · passed" record can contradict the provenance-backed requirement audit on the Apply Review surface ("4/9 requirements covered" with must-haves marked missing from the tailored resume). Coverage-bearing claims must count only when bound to a shipped line (location + text binding, with the same bullet's pre-voice text honored for voice-reworded lines and the assembler's policy-gated summary swap treated as unshipped), claimed-only requirements must fail the gate with explicit shipped-resume fixes feeding the revision loop, provenance rows must carry the grounded claim requirement links so chips/badge/gate derive from one criterion, the shipped artifact must persist a lifecycle-labeled post-voice grounded fit record (`post_generation_fit_final`), and the Apply Review read model must label the gate's coverage basis (grounded vs judge-claimed legacy) rather than hiding it, surface the shipped grounded fit with its post-acceptance warnings, and report revisions used (`attempt - 1`) instead of a raw attempt ordinal so the badge, chips, and gate never contradict each other | `workers/automation/tests/test_claim_grounding.py`; `workers/automation/tests/test_requirement_led_tailoring.py` (`test_grounded_gate_reproduces_apply_review_contradiction_shape`, `test_post_generation_fit_score_rejects_claims_absent_from_shipped_text`); `workers/automation/tests/test_tailor_voice_audit_integration.py`; `apps/api/test/application-feedback.test.ts`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx` |
 | Voice pass runs after (not before) the final audit, audits/coverage diverge from the rendered/PDF text, a voiced bullet is not recorded as the `voice` transform, the never-fabricate detector/provenance are not re-run after voice (a voice-introduced unsourced metric ships), keyword coverage is inferred from the job description or counts an ungrounded keyword-stuffed line as covered, a skill the user declares in `skill_categories` and ships in the resume's skills line is falsely reported `missing` instead of the honest `declared` bucket (or is silently credited as `covered` without evidence), or a voice error/regression sinks the otherwise-approved resume instead of falling back to the clean pre-voice candidate | `workers/automation/tests/test_voice_metrics.py`; `workers/automation/tests/test_voice_payload.py`; `workers/automation/tests/test_voice_adapter.py`; `workers/automation/tests/test_coverage_audit.py`; `workers/automation/tests/test_bullet_provenance.py`; `workers/automation/tests/test_tailor_voice_audit_integration.py`; `apps/api/test/projections.test.ts`; `apps/api/test/audit-projection-parity.test.ts`; `apps/web/src/contexts/materials/components/TailoringExplanationSection.test.tsx` |
 | A re-tailor supersedes the prior approved generation before the replacement resume PDF is durable, so a transient PDF render failure strips the job of its last accepted resume (`load_current_approved` returns nothing), publishes a dangling `ResumeApproved` with no artifact, or orphans provenance against the now-rejected generation | `workers/automation/tests/test_tailor_provenance_integration.py`; `workers/automation/tests/test_materials_use_cases.py`; `workers/automation/tests/test_tailor_retailor.py` |
 | The tailor generation flip (supersede prior + save new generation + record provenance/coverage) commits per repository instead of atomically, so a crash between the supersede and the new-generation save leaves `load_current_approved` transiently empty, or a provenance write failure after the artifact commits leaves an approved generation with no provenance | `workers/automation/tests/test_materials_unit_of_work.py`; `workers/automation/tests/test_tailor_provenance_integration.py` |
-| A fabricated in-demand skill/tool (Kubernetes, Terraform, Kafka, …) is woven into an experience bullet or the executive summary and ships because the deterministic detector only checks numeric/date/title/employer tokens and the prose skill check is a short denylist. The prose skill/tool gate must hard-reject (resume NOT approved, prior accepted generation preserved) any job-target skill/tool keyword present in the shipped prose that grounds in neither the profile skill vocabulary nor the evidence corpus, while never false-firing on profile-backed tools, corpus-grounded concept terms (`latency`), or ordinary English words | `workers/automation/tests/test_bullet_provenance.py`; `workers/automation/tests/test_materials_use_cases.py` |
+| A model unsupported-claim verdict for a generated line must prevent promotion and preserve the accepted generation. Opposing valid model decisions over the same sources must change the outcome; foreign IDs, non-verbatim quotes and mismatched exact values fail independently with no lexical fallback. | `workers/automation/tests/test_bullet_provenance.py`; `workers/automation/tests/test_materials_use_cases.py` |
 | The never-fabricate scan runs the numeric/date/title/employer arms over the SKILLS section rows against the whole-resume corpus (which excludes skill categories), so a DECLARED versioned skill (`Java 17`, `OAuth 2.0`) is flagged as a fabricated number and hard-rejects the whole resume; skills rows must instead ground against the declared skill items themselves, while a skills numeric absent from every declared item (a renderer bug / injected item) is still caught | `workers/automation/tests/test_bullet_provenance.py`; `workers/automation/tests/test_materials_use_cases.py` |
-| A deterministic gate finding (prose skill fabrication, never-fabricate numeric/title, or provenance FK binding) on the selected candidate fails the whole tailor run without feeding the finding back into the attempt loop, so a resume fixable on retry is rejected outright; a hard finding with retry budget remaining must re-enter the loop with the finding rendered as an `avoid_note` (recorded as per-candidate `failed_fabrication_gate` repair-loop history) and still fail-closed — resume NOT approved, prior accepted generation preserved — when every candidate trips the gate | `workers/automation/tests/test_materials_use_cases.py` |
-| A cover letter ships to the employer with a fabricated metric/date/title/employer or a job-target skill/tool the profile cannot back, because its only gate is structural (banned words, dashes, word count, salutation/closing). The cover-letter body must run the same deterministic grounding gates the resume uses (never-fabricate detector + prose skill/tool gate) before acceptance, hard-reject a fabrication (letter REJECTED, aggregate stays `resume_approved`, failure kept as `fabrication_audit` history), and never false-reject legitimate content (the `Dear` salutation, the target company/role, declared skills, evidence tools, real profile numbers, or JD concept keywords in varied word forms such as scalability/reliability/observability — the skill gate is scoped to named technologies with word-form-tolerant grounding) | `workers/automation/tests/test_materials_use_cases.py` |
+| Claim-verification or independent quality findings must feed the artifact repair loop while retries remain. Exhaustion or provider/budget/structural failure keeps the accepted artifact and its recorded anchors. | `workers/automation/tests/test_materials_use_cases.py` |
+| A cover letter requires an approved resume, canonical profile sources, generation anchors and separate claim-verification and quality determinations. Unsupported verdicts drive repair or rejection; failed refreshes preserve the accepted letter and all failure codes remain actionable. | `workers/automation/tests/test_materials_use_cases.py` |
 | A failed cover-letter refresh overwrites the approved text file or replaces the canonical approved artifact with the rejected candidate; a validation-passing refresh mutates approved bytes before the replacement pointer is durably saved; or replacement text remains paired with the prior approved PDF after rendering fails. Every refresh must use a new immutable path; rejected bytes and validation remain inspectable in `cover_letter_attempts`; validation or persistence failure must leave the prior approved path, bytes, lifecycle state, SQLite round-trip, and projected path unchanged; and successful text replacement must persist the old PDF as superseded and project the job as pending PDF until the new render succeeds | `workers/automation/tests/test_materials_aggregate.py` (`test_with_cover_letter_replacement_clears_stale_pdf`); `workers/automation/tests/test_materials_use_cases.py` (`test_cover_letter_failed_refresh_preserves_last_approved_artifact`, `test_cover_letter_refresh_persistence_failure_preserves_approved_bytes`, `test_cover_letter_refresh_drops_stale_pdf_before_renderer_failure`); `workers/automation/tests/test_materials_repository.py` (`test_rejected_cover_refresh_round_trips_without_changing_projected_path`, `test_approved_cover_refresh_supersedes_stale_pdf_and_projects_pending_pdf`) |
 | Profile PDF import corrupts defaults or drops tailoring claim/evidence controls | `workers/automation/tests/test_profile_import.py`; `workers/automation/tests/test_profile_aggregate.py`; `workers/automation/tests/test_sqlite_profile_repository.py`; `apps/web/src/contexts/profile/components/StructuredProfileEditor.test.tsx` |
 | API list filtering/sorting/pagination or shared data-grid filtering/sorting/pagination/column resizing regresses | `apps/api/test/server.test.ts`; `apps/web/src/shared/ui/filterable-data-grid.test.tsx`; `apps/web/src/views/debug/DebugActivityTable.test.tsx` |
@@ -176,7 +365,7 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | Requirement-fit explanation regresses by deriving requirement matches from broad score-signal text, hiding the `not_assessed` state for scores without requirement-level evidence, omitting the current-policy re-score path, or letting Apply Review requirement coverage disagree with the projected requirement-fit report | `apps/web/src/contexts/materials/components/EmployerAnalysisPanel.test.tsx`; `apps/web/src/views/jobs/JobDetailDrawer.test.tsx`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; browser smoke on a `/jobs/$jobId` route workspace and `/apply-review` |
 | Jobs delete/hide lifecycle regresses, causing temporary deletes not to resurface, hidden jobs to leak into active/deleted views, permanent deletes to leave suppressing tombstones behind, or a rejected cross-source content-matched duplicate (distinct URL/source/location) to soft-delete the accepted owner it matched instead of dropping only the incoming duplicate | `apps/api/test/server.test.ts`; `workers/automation/tests/test_discovery_identity.py`; `apps/web/src/views/jobs/JobBulkActions.test.tsx`; `apps/web/src/views/jobs/JobsView.test.tsx` |
 | Cross-source content dedup regresses, letting the same posting create a second Job aggregate — via Smart Extract's direct-SQL insert bypassing the content-owner lookup, JobSpy rediscovery of an ATS-first owner whose `jobs.company` is NULL (employer only in `jobs.site`), or a fresh listing arriving after the owner is enriched (listing-vs-enriched similarity drops below threshold) — or the rejected-duplicate audit stops attributing to the surviving owner or appends a fresh event row on every re-observation of an already-rejected duplicate, or the accepted-merge `DuplicateJobLinked` event fails to attribute to the surviving owner (persisted with a NULL `job_url` and absent from the owner's audit history) | `workers/automation/tests/test_discovery_identity.py`; `workers/automation/tests/test_discovery_limits.py`; `workers/automation/tests/test_smartextract_discovery.py`; `apps/api/test/server.test.ts` |
-| Destructive UI workflows touch real user data | `apps/api/test/qa-workflow.test.ts` with `pnpm qa:seed` |
+| Destructive UI workflows touch real user data | `apps/api/test/qa-workflow.test.ts` with `corepack pnpm qa:seed` |
 | Source registry compatibility drops discovery config aliases | `workers/automation/tests/test_source_registry.py` covers packaged `sites.yaml` and `employers.yaml` imports, broad-board `boards` selection through the internal `jobspy` compatibility key, and the `sites` alias warning |
 | Posted compensation parsing loses explicit states, over-captures source text, annualizes without assumptions, mutates `jobs.salary`, writes facts from API GET reads, leaks private data, or changes fit score, sorting, filtering, apply readiness, or apply dispatch behavior | `workers/automation/tests/test_posted_compensation_parser.py`; `workers/automation/tests/test_posted_compensation_repository.py`; `workers/automation/tests/test_discovery_identity.py`; `workers/automation/tests/test_discovery_limits.py`; `apps/api/test/posted-compensation-facts.test.ts`; `apps/api/test/server.test.ts` (`compensation boundary`) |
 | Score eligibility fabricates a hard blocker from a preference — accepting model-supplied compensation blockers, treating any posted compensation below the profile range or a remote-vs-onsite work-model mismatch as a blocker, mis-annualizing hourly/daily/weekly/monthly pay, or dropping the warning source and parsed figure from the audit trail — instead of keeping those mismatches auditable and allowing materials to continue | `workers/automation/tests/test_score_use_cases.py` (`test_score_job_demotes_model_compensation_blocker_to_warning`, `test_constraint_checker_hourly_pay_annualizes_and_does_not_false_block`, `test_constraint_checker_hourly_below_minimum_is_warning_with_annualization_audit`, `test_constraint_checker_confident_annual_below_minimum_is_warning_with_source`, `test_constraint_checker_monthly_pay_below_minimum_is_warning_not_hard_blocker`, `test_constraint_checker_weekly_pay_annualizes_and_does_not_false_block`, `test_constraint_checker_daily_rate_below_minimum_is_warning_not_hard_blocker`, `test_constraint_checker_bare_amount_without_period_is_still_read_as_annual`, `test_constraint_checker_remote_work_model_mismatch_is_warning_not_hard_blocker`, `test_score_job_keeps_hard_blockers_separate_from_high_score`, `test_score_job_warns_when_explicit_posted_compensation_is_below_minimum`) |
@@ -185,8 +374,8 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | Compensation read-model propagation diverges between Python and TypeScript projection builders, drops raw `JobSummary.salary` compatibility, merges posted facts with market estimates, leaks unsafe compensation data through SSE, or stops invalidating job list/detail after compensation writes | `workers/automation/tests/test_projection_builder.py`; `workers/automation/tests/test_posted_compensation_repository.py`; `workers/automation/tests/test_market_compensation_repository.py`; `apps/api/test/projections.test.ts`; `apps/api/test/server.test.ts` (`compensation boundary`, `market compensation boundary`); `apps/web/src/contexts/operations/every-event-has-handler.test.ts`; `apps/web/src/contexts/operations/invalidation-router.test.ts` |
 | Compensation rendering disappears from Jobs table, expanded Jobs detail, or Apply Review; drops the separate Salary min, Salary max, Market, Confidence, or Warnings Jobs columns; stops normalizing posted salary min/max values to EUR/year; moves EUR/year units back into repeated row text instead of compensation headers; hides missing/not-requested states; drops market confidence interval, statistical confidence, source count, sample count, or warning count; merges posted salary and reported market evidence; loses Jobs table sort/filter behavior for any data column; or turns compensation into readiness/apply behavior | `apps/api/test/application-feedback.test.ts`; `apps/web/src/views/jobs/JobsView.test.tsx`; `apps/web/src/views/jobs/JobDetailDrawer.test.tsx`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; browser smoke on `/jobs` and `/apply-review` |
 | Source quality stops feeding discovery budgets or dashboard health | `workers/automation/tests/test_discovery_scheduler_pr4.py`; `workers/automation/tests/test_source_quality_projection_pr4.py`; `apps/web/src/views/dashboard/SourceHealthCard.test.tsx`; `apps/web/src/contexts/operations/invalidation-router.test.ts` |
-| Discovery product controls stop recording source/quarantine/manual-capture feedback safely, mislabel locator candidates, preview quarantine residue as source leads, or hide low-score role-match suggestions and approval state | `apps/api/test/discovery-controls.test.ts`; `apps/api/test/server.test.ts`; `apps/web/src/contexts/discovery/components/DiscoveryProductControls.test.tsx`; `workers/automation/tests/test_title_filter.py` |
-| Discovery title filtering drops engineering/technical roles that merely carry a business-function token (account, commercial, PMO, pricing, sales) as a non-adjacent team/domain qualifier: these ambiguous titles must be routed to the LLM role adjudicator (never verbatim-accepted without it) and must default to accept — preserving recall — when the adjudicator is unavailable, while only business-primary titles (the token is the role head or its immediate modifier, with no genuine engineering head) are deterministically rejected | `workers/automation/tests/test_title_filter.py` |
+| Discovery product controls stop recording source/quarantine/manual-capture feedback safely, mislabel locator candidates, preview quarantine residue as source leads, or hide low-score role-match suggestions and approval state | `apps/api/test/discovery-controls.test.ts`; `apps/api/test/server.test.ts`; `apps/web/src/contexts/discovery/components/DiscoveryProductControls.test.tsx`; `workers/automation/tests/test_discovery_production_wiring.py`; `workers/automation/tests/test_captured_posting_recovery.py` |
+| Saved settings become exact JobStreaming request parameters. Structurally valid fetched listings ingest without an extra model gate; literal exclusions, capture/ack fences, identity and limits survive retries. Full-posting scoring owns suitability. | `workers/automation/tests/test_jobstreaming_resumable_discovery.py`, `test_discovery_production_wiring.py`, `test_target_search_preferences.py` |
 | Apply review queue or outcome tracking starts apply automation, derives readiness differently from job detail, loses local-only outcome notes, hides pending outcome suggestions or in-flight apply stop controls, hides incomplete application-attestation warnings, exposes raw Gmail body text, drops the email-application preview, approves submit with a stale email recipient or attachment binding, or stops invalidating job/outcome views after decisions | `apps/api/test/apply-audit.test.ts`; `apps/api/test/application-feedback.test.ts`; `apps/api/test/server.test.ts`; `workers/automation/tests/test_gmail_feedback.py`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; `apps/web/src/contexts/apply/components/ApplicationOutcomes.test.tsx`; `apps/web/src/contexts/apply/hooks/useApplyReviewMutations.test.ts`; `apps/web/src/contexts/operations/hooks/useApplyReviewOutcomeQueries.test.ts` |
 | Apply Review stops using the generated HTML/CSS resume as the editable line-level audit surface, falls back to a PDF image overlay for current HTML-rendered artifacts, reintroduces a separate side-by-side line audit pane, loses JobCtrl inline comments, loses source-to-tailored claim pins, stops highlighting the selected resume line, hides missing provenance, drops grounding/risk labels from generated claims, loses draft autosave/manual save reload, allows approval while a saved draft is dirty/unrendered/invalid, drops comment replies or source/risk labels, or mutates accepted materials instead of writing a validated replacement generation | `apps/api/test/resume-review-drafts.test.ts`; `apps/api/test/server.test.ts`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; `apps/web/src/contexts/apply/hooks/useApplyReviewMutations.test.ts`; browser smoke on `/apply-review` |
 | Resume PDF rendering diverges from the accepted tailored payload, loses `resume_pdf` / render-format tagging, emits unsanitized HTML, drops layout target metadata on the HTML renderer, fails to persist/project layout boxes, stops exposing the generated sibling HTML through `/v1/artifacts/:artifactId/preview.html`, breaks legacy-to-HTML resume conversion, reintroduces a TeX render adapter, or applies the hard per-role bullet ceiling differently from the reviewed plain-text resume (making the submitted PDF, HTML renderer, provenance, and assembler select different bullet sets) | `workers/automation/tests/test_pdf_renderer_ports.py`; `workers/automation/tests/test_bullet_provenance.py`; `workers/automation/tests/test_resume_html_migration.py`; `workers/automation/tests/test_materials_repository.py`; `workers/automation/tests/test_dashboard_projection.py`; `apps/api/test/projections.test.ts`; `apps/api/test/application-feedback.test.ts`; `apps/api/test/server.test.ts`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; browser smoke on `/apply-review` |
@@ -217,9 +406,9 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | Discover collapses to a hard failure when only some source families fail, instead of proceeding through detail enrichment and preparation on the surviving sources and failing the workflow only when every source family fails | `workers/automation/tests/test_workflow_discovery.py` |
 | An enrichment site-batch crash aborts the whole enrichment activity instead of being isolated per site — the failing site must be recorded in `site_errors`, healthy sites must still complete, and the run must end `partial` rather than `failed` | `workers/automation/tests/test_discover_reliability.py` |
 | A single job's enrichment crash fails the entire site batch (or the activity) instead of marking only that job failed with `ENRICH_INTERNAL_ERROR` while the rest of the batch continues | `workers/automation/tests/test_discover_reliability.py` |
-| A browser acquisition bypasses the crawl-politeness gateway. For integrated Discovery, ordinary anonymous `robots.txt` reads and allowed page/API requests must use the live-profile extension, a robots-disallowed page must create no page task, run budget and shared host pacing must stop/defer further tasks, and denied work must fold into the Enrich stage as `ENRICH_ROBOTS_DISALLOWED` / `robots_disallowed` rather than a generic scrape failure. LinkedIn is the explicit owner-authenticated carve-out: its live signed-in extension session ignores the anonymous robots verdict but retains public-URL safety, exact-origin controls, pacing, budget, and no-submit. Every Temporal Enrich retry must synthesize a live-extension execution and skip the copied-profile pre-pass; an offline extension must reject before stage reset. A robots-blocked job whose robots later allows must Unblock (`Blocked -> Pending`) and re-enrich on a later run rather than strand as `ENRICH_INTERNAL_ERROR`. | `workers/automation/tests/test_live_browser_discovery.py`; `workers/automation/tests/test_enrichment_politeness_gate.py`; `apps/api/test/server.test.ts`; `apps/web/src/contexts/pipeline/components/StageTimeline.test.tsx`; live product-path QA from `docs/local-reliability-qa.md` |
+| A browser acquisition bypasses the shared host pacing, concurrency, request budget or destination guard. Discovery and Enrich must not request or evaluate robots.txt in either mode, even with historical HONOR policy values or a supplied robots adapter. Useful content must fetch and persist while other guards remain enforced. Historical robots-blocked jobs must Unblock (`Blocked -> Pending`) and re-enrich with an audited retry in either mode, without resetting unrelated work or retaining a write transaction. Every Temporal retry retains execution identity and skips the copied-profile pre-pass.  | `workers/automation/tests/test_optional_extension.py`; `workers/automation/tests/test_live_browser_discovery.py`; `workers/automation/tests/test_enrichment_politeness_gate.py`; `apps/api/test/server.test.ts`; `apps/web/src/contexts/pipeline/components/StageTimeline.test.tsx`; live product-path QA from `docs/local-reliability-qa.md` |
 | A hostile/absurd server `Retry-After` freezes a host and a pooled worker for an attacker-chosen duration — the limiter must clamp the stored deadline at the sink (`note_retry_after`) and cap any single nap, and an over-clamp host must record a `rate_limited` outcome and be skipped by `guard` (no slot held, no budget spent) rather than slept | `workers/automation/tests/test_politeness_gateway.py`; `workers/automation/tests/test_gateway_http_client.py` |
-| Crawl identity diverges from its transport: standalone/non-extension gateways must retain the configurable `<product>/<version> (+<contact>)` identity (no `Mozilla`) and resolve it at use time, while integrated Discovery must preserve Chrome's own user agent rather than overwrite it and must evaluate robots with the browser-reported identity. `jobctrl doctor` must still disclose the configured standalone identity, active broad boards, and recent robots/rate-limit outcomes. | `workers/automation/tests/test_crawl_politeness_config.py`; `workers/automation/tests/test_browser_ua_propagation.py`; `workers/automation/tests/test_live_browser_discovery.py::test_robots_policy_is_fetched_and_cached_through_the_live_profile` |
+| Crawl identity diverges from its transport: non-extension gateways and integrated anonymous broad-board requests must retain the configurable `<product>/<version> (+<contact>)` identity (no `Mozilla`) and resolve it at use time, while connected Discovery preserves Chrome's own user agent without using it for robots evaluation. `jobctrl doctor` must still disclose the configured standalone identity, active broad boards, and rate-limit outcomes and historical robots outcomes. | `workers/automation/tests/test_crawl_politeness_config.py`; `workers/automation/tests/test_browser_ua_propagation.py`; `workers/automation/tests/test_politeness_gateway.py::test_content_fetch_never_requests_robots_even_for_legacy_honor_policy` |
 | The JobStreaming broad-board per-run budget is silently mislabeled (counts search invocations, not requests) or Workday parallel routing loses per-host pacing / records blocked outcomes on the wrong thread — the broad-board budget must be documented as a per-search-invocation cap, and Workday `workers>=2` must pace per host while recording outcomes on the owning thread under the correct `source_id` with no `check_same_thread` error | `workers/automation/tests/test_jobspy_gateway_boundary.py`; `workers/automation/tests/test_workday_gateway_routing.py` |
 | A Temporal activity failure is surfaced as the placeholder string `failed: failed` instead of the real error class and message; the propagated `ApplicationError` must carry the actual error type, message, and details (the literal `failed: failed` must never appear) | `workers/automation/tests/test_p1b_error_inversion.py`; `workers/automation/tests/test_discover_reliability.py` |
 | Discover progress stalls at a stale running percentage (e.g. a frozen `running 67%`) instead of advancing through the "Detail enrichment" and "Preparation" steps on the Temporal path, or fails to show a terminal `failed` status when the workflow fails | `workers/automation/tests/test_workflow_discovery.py`; `workers/automation/tests/test_discover_reliability.py`; `apps/api/test/server.test.ts` |
@@ -230,7 +419,7 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | Supervised contact research fetches a source the policy does not permit, auto-fetches a public page that was not opted in, follows a login-walled/paywalled URL instead of routing it to manual capture, or fails to record a robots/rate-limit/budget block as a first-class `ResearchSourceAttempt` outcome (INV-3; all fetching gateway-routed) | `workers/automation/tests/test_contact_research_source_policy.py`; `workers/automation/tests/test_contact_research_workflow.py` (robots/rate-limit outcomes; disallowed-source rejected without fetching; gateway routing) |
 | A research candidate becomes a stored contact without an explicit user confirm command, a proposed candidate/attribute lacks provenance, or a candidate VALUE leaks into an event/projection instead of living only in `contact_candidates.attributes_json` (INV-4 supervised; INV-2 provenance; sensitivity) | `workers/automation/tests/test_contact_research_workflow.py` (candidate-requires-confirmation; provenance-on-every-candidate; values-never-leak); `workers/automation/tests/test_contact_research_projection_parity.py`; `apps/api/test/contact-research.test.ts`; `apps/api/test/contact-research-projection-parity.test.ts`; `apps/web/src/contexts/outreach/hooks/useConfirmCandidateMutation.test.ts`; `apps/web/src/contexts/outreach/components/CandidateReviewList.a11y.test.tsx`; browser smoke on a job's Contacts panel |
 | The research read model drifts between runtimes — the Python `_rebuild_contact_research` and TS `rebuildContactResearchProjections` disagree on counts, source-attempt outcomes, or per-candidate provenance metadata for the shared fixture | `workers/automation/tests/test_contact_research_projection_parity.py`; `apps/api/test/contact-research-projection-parity.test.ts` |
-| An outreach draft that fabricates a metric, employer, title, or relationship — or otherwise fails the reused truthfulness gate stack (deterministic never-fabricate detector + content validator + LLM judge) — becomes approvable, approval is not HARD-gated on the persisted `gate_results_json.passed` (a failed- or absent-gate draft approves through the aggregate, the worker draft path, or the TS API transition), or approving a draft performs an outbound send (INV-5; INV-1) | `workers/automation/tests/test_outreach_draft_gates.py`; `workers/automation/tests/test_outreach_thread_aggregate.py`; `workers/automation/tests/test_outreach_no_send_transport.py`; `apps/api/test/outreach.test.ts`; `apps/web/src/contexts/outreach/components/DraftGateResultsPanel.test.tsx`; `apps/web/src/contexts/outreach/hooks/useApproveDraftMutation.test.ts`; browser smoke on a contact's Outreach panel |
+| Outreach approval requires persisted passing claim-verification and quality determinations bound to the current draft. Missing or failed verification blocks approval, failed refreshes preserve the last accepted draft, and approval never sends a message. | `workers/automation/tests/test_outreach_draft_gates.py`; `workers/automation/tests/test_outreach_thread_aggregate.py`; `workers/automation/tests/test_outreach_no_send_transport.py`; `apps/api/test/outreach.test.ts`; `apps/web/src/contexts/outreach/components/DraftGateResultsPanel.test.tsx`; `apps/web/src/contexts/outreach/hooks/useApproveDraftMutation.test.ts`; browser smoke on a contact's Outreach panel |
 | Re-drafting or editing an outreach message destroys or hides the last approved draft before a replacement is approved — a new generation fails to supersede stale candidates, a re-draft overwrites the approved draft, an edit is applied in place instead of as a gated new generation, or the generation history drops prior drafts (INV-5) | `workers/automation/tests/test_outreach_thread_aggregate.py`; `workers/automation/tests/test_outreach_draft_gates.py`; `apps/api/test/outreach.test.ts`; `apps/web/src/contexts/outreach/components/OutreachThreadPanel.test.tsx`; `apps/web/src/contexts/outreach/hooks/useReviseDraftMutation.test.ts`; browser smoke on a contact's Outreach panel |
 | Outreach drafting/logging starts an automated send, exposes a send transport, or marks a thread sent without a user-attested send log (INV-1) — the four enforcement layers: (a) the `OutreachThread` aggregate lets a thread reach "sent" without a user-attested `OutreachSendLog` over an approved draft; (b) any send-transport symbol (`smtp`, `gmail.send`, `messages.send`, `sendMail`, `nodemailer`, `createTransport`, …) appears in outreach code on either runtime; (c) any transport-shaped seam is invoked on an outreach path; or (d) "approve draft" and "log send" collapse into one action (approving performs an outbound action or marks the thread sent) | (a) `workers/automation/tests/test_outreach_thread_aggregate.py`; (b) `workers/automation/tests/test_outreach_no_send_transport.py` (scans Python domain/infra + `apps/api/src/outreach.ts` + `apps/web/src/contexts/outreach/` + `views/outreach/`); (c) `workers/automation/tests/test_outreach_no_auto_send.py` (`test_no_transport_is_invoked_on_any_outreach_path`); (d) `workers/automation/tests/test_outreach_no_auto_send.py` (approve-records-a-fact / log-send-is-separate) + `apps/api/test/outreach.test.ts` (records-a-send / refuses-non-approved / no `/send` route) |
 | Outreach follow-ups auto-act or auto-send, or an optional recurring follow-up reminder defaults ON — a follow-up is sent or acted on without an explicit user action, the due-follow-ups read model triggers an outbound effect instead of only surfacing, the 7-day/14-day derivation is wrong, or `outreach_follow_up_reminders_enabled` defaults to `true` (§9; INV-1) | `workers/automation/tests/test_outreach_follow_up_derivation.py` (7d/14d derivation; default-off; even-when-enabled-only-surfaces); `workers/automation/tests/test_due_follow_up_projection_parity.py`; `apps/api/test/outreach.test.ts` (schedule/complete/dismiss + only-arrived-follow-ups-are-due); `apps/api/test/due-follow-up-projection-parity.test.ts`; `apps/web/src/contexts/outreach/hooks/useScheduleFollowUpMutation.test.ts`; browser smoke on the Follow-ups panel |
@@ -258,7 +447,7 @@ For Jobs table saved-view changes, run the targeted web fixtures and one browser
 smoke on `/jobs`:
 
 ```bash
-pnpm --dir apps/web exec vitest run src/shared/stores/saved-table-views.test.ts src/shared/ui/filterable-data-grid.test.tsx src/views/jobs/JobsView.test.tsx
+corepack pnpm --dir apps/web exec vitest run src/shared/stores/saved-table-views.test.ts src/shared/ui/filterable-data-grid.test.tsx src/views/jobs/JobsView.test.tsx
 ```
 
 Manual smoke:
@@ -281,7 +470,7 @@ For daily digest changes, run the TypeScript/Python parity fixtures plus the
 CLI smoke:
 
 ```bash
-pnpm --dir apps/api exec vitest run test/digest.test.ts
+corepack pnpm --dir apps/api exec vitest run test/digest.test.ts
 uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_digest_parity.py workers/automation/tests/test_digest_cli.py
 ```
 
@@ -298,11 +487,11 @@ Manual smoke:
 
 ### Resume Tailoring Quality Eval Gate
 
-For resume tailoring prompt, evidence policy, deterministic quality checks,
+For resume tailoring prompt, evidence policy, semantic verification,
 judge, or adversarial-review changes, run:
 
 ```bash
-uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_materials_quality_eval.py workers/automation/tests/test_materials_quality.py workers/automation/tests/test_materials_adversarial.py workers/automation/tests/test_materials_use_cases.py
+uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_artifact_determinations.py workers/automation/tests/test_materials_quality.py workers/automation/tests/test_materials_adversarial.py workers/automation/tests/test_materials_use_cases.py
 ```
 
 This gate uses synthetic profile and job fixtures only. Do not add real resume
@@ -373,11 +562,10 @@ boundary scan must return zero disallowed imports from `shared/ui` into
 contexts, views, API clients, routes, TanStack Query hooks, local storage,
 EventSource, or clipboard APIs.
 
-The broad `corepack pnpm --filter @jobctrl/web test` command may be skipped
-for shared primitive changes when it hits known unrelated inline
-snapshot runner failures, provided the scoped shared/ui tests, `web:check`,
-Storybook build/test, retired-token scan, boundary scan, and diff hygiene pass
-and the skip reason is recorded in the change summary or primitive audit.
+Select the scoped shared/UI cases through the QA router. Preserve applicable
+`web:check`, Storybook build/test, retired-token and dependency-boundary checks.
+A required failing test blocks the gate; a separately confirmed unrelated
+failure needs a linked issue and an explicit verification limitation.
 
 Shared primitive QA must use synthetic stories, seeded browser proof, or
 disposable fixtures only. Do not run auto-apply, browser submission, mailbox
@@ -390,6 +578,7 @@ For route-level visual-system changes, run the seeded Playwright route visual QA
 spec:
 
 ```bash
+mkdir -p /tmp/jobctrl-route-qa
 JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-route-qa \
 JOBCTRL_E2E_API_PORT=8878 \
 JOBCTRL_E2E_WEB_PORT=5275 \
@@ -404,15 +593,40 @@ destructive profile/database actions, or worker-backed jobs for visual QA.
 
 ### Cumulative Rhea/Base UI Final Gate
 
-After the cumulative stack and canonical docs are complete, run:
+Run this gate after the cumulative redesign branch has its canonical docs and
+synthetic fixtures. It complements focused phase checks; it is not a substitute
+for the security, apply, or workflow matrices above.
 
 ```bash
 corepack pnpm --filter @jobctrl/web exec vitest run \
   src/styles/token-contrast.test.ts \
   src/shared/ui/base-ui-migration-boundary.test.ts \
+  src/shared/layout/Topbar.test.tsx \
+  src/shared/ui/button.test.tsx \
+  src/shared/ui/data-table.test.tsx \
+  src/shared/ui/label.test.tsx \
+  src/shared/ui/page-head.test.tsx \
+  src/shared/ui/filterable-data-grid.test.tsx \
+  src/shared/stores/saved-table-views.test.ts \
   src/contexts/operations/components/BrowserCapabilitiesPanel.test.tsx \
   src/contexts/profile/components/CredentialsPanel.test.tsx \
+  src/contexts/outreach/components/DueFollowUpsPanel.test.tsx \
+  src/contexts/scoring/components/CompensationSourcePolicyPanel.test.tsx \
+  src/contexts/materials/components/EmployerAnalysisPanel.test.tsx \
+  src/contexts/materials/components/EmployerAnalysisPanel.a11y.test.tsx \
+  src/contexts/materials/components/TailoringExplanationSection.test.tsx \
+  src/contexts/pipeline/hooks/useCancelWorkflowRunMutation.test.ts \
   src/views/pipelines/PipelinesView.test.tsx \
+  src/routes/-jobs.search.test.ts \
+  src/views/jobs/JobBulkActions.test.tsx \
+  src/views/jobs/JobBulkActions.a11y.test.tsx \
+  src/views/jobs/JobsTable.test.tsx \
+  src/views/jobs/JobsTable.a11y.test.tsx \
+  src/views/jobs/JobsView.test.tsx \
+  src/views/jobs/JobDetailDrawer.test.tsx \
+  src/views/artifacts/ArtifactDetailPanel.test.tsx \
+  src/views/evidence-map/EvidenceMapView.test.tsx \
+  src/views/apply-review/ApplyReviewView.test.tsx \
   src/contexts/operations/hooks/usePipelineOperationsQuery.test.ts \
   src/contexts/operations/invalidation-router.test.ts
 corepack pnpm --filter @jobctrl/api exec vitest run \
@@ -423,28 +637,67 @@ corepack pnpm --filter @jobctrl/api exec vitest run \
 uv --project workers/automation run --extra dev pytest -q \
   workers/automation/tests/test_browser_capabilities.py \
   workers/automation/tests/test_browser_capabilities_rpc.py
+mkdir -p /tmp/jobctrl-route-qa
 JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-route-qa \
 JOBCTRL_E2E_API_PORT=8878 \
 JOBCTRL_E2E_WEB_PORT=5275 \
 corepack pnpm --filter @jobctrl/web e2e -- tests/route-visual-qa.spec.ts
+mkdir -p /tmp/jobctrl-responsive-qa
+JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-responsive-qa \
+JOBCTRL_E2E_API_PORT=8879 \
+JOBCTRL_E2E_WEB_PORT=5276 \
+corepack pnpm --filter @jobctrl/web e2e -- tests/responsive-data-surfaces.spec.ts
 git diff --check
 ```
 
-Then use the [Browser Smoke cumulative route sweep](browser-smoke.md#cumulative-redesign-route-sweep).
-The final gate requires:
+Visual evidence is valid only when it is captured from the final integration
+HEAD after the last merge, rebase, or visual-system edit. Screenshots from an
+earlier commit do not satisfy this gate. A final-head rerun must also exercise
+the geometry assertions, because a painted screenshot alone cannot prove that
+composite controls contain their children.
 
-- exact `base-rhea`/Geist/token/radius/card/status contracts and no direct
-  Radix imports or raw native selects;
-- accessible Base UI keyboard, focus, dismissal, and portal behavior through
-  real routes at the required theme/density/viewport matrix;
-- truthful pipeline topology, scope, privacy, refresh, ETA, freshness, queue,
-  capacity, and active inventory from the deterministic seed;
-- passive path-free browser detection followed by explicit fail-closed
-  adoption, with advanced manual fallback and separate profile-copy consent;
-- environment-owned active provider controls remaining read-only while
-  alternative routes remain editable but inactive; and
-- retry worker-readiness preflight preserving the failed stage and audit data
-  when replacement work cannot start.
+The gate passes only when:
+
+- `base-rhea`, the Helvetica Neue/Helvetica/Arial stack, the semantic token
+  mappings, light/dark contrast, all three densities, a density-independent 14px body, the compact PageHead
+  hierarchy, and the shared card/status rules remain intact;
+- direct Radix imports and raw native selects are absent, Base UI overlays keep
+  their focus/dismissal/portal contract, and route visuals show no clipping or
+  document-level overflow at desktop and 390×844;
+- Jobs exposes one table with a static Active/Deleted/Hidden Job state column
+  filter defaulted to Active, keeps legacy `closed` only as a compatible
+  deep-link state, hides Sources/Warnings in the default view, omits redundant
+  active lifecycle copy, uses destructive deletion, and keeps row activation
+  focus-visible without a permanent duplicate action;
+- Jobs keeps workflow-recovery actions visible without opening the maintenance
+  menu; Apply Review queue rows contain their content without overlapping at
+  every density; and Discovery checkboxes keep a 24px hit target around a 16px
+  visual control that does not overpower its label;
+- Jobs, Artifacts, Contacts, Discovery, and Settings record data reflows into
+  labelled cards at 900px and below; Profile and Evidence Map stack their work
+  regions, while Apply Review keeps a desktop queue rail and wraps decisions in
+  its narrow sequential layout;
+- Pipelines keeps source families separate from the two reconciliation steps,
+  preserves execution/sweep/global-backlog scope and exact outcome counts,
+  masks sensitive identifiers, refreshes after stopping active discovery, and
+  gates replacement-run setup on an exact zero-active-work inventory without
+  dispatching implicitly; compact inspector labels, values, and timestamps also
+  remain on the same body-small typography scale;
+- Job Detail and Artifact Detail resolve evidence through the Evidence Map into
+  human-readable titles/excerpts, keep unresolved keys behind technical details,
+  Artifact Detail places the preview after its audit details, and Apply Review
+  preserves persisted comments even when a rendered-line anchor cannot be
+  resolved;
+- passive browser detection exposes no paths or side effects, stale detected
+  IDs fail closed, manual path entry remains an advanced explicit fallback,
+  Settings never exposes the legacy copied-profile capability, and the retained
+  compatibility API still requires separate consent;
+- an environment-owned active provider route stays authoritative and read-only
+  while alternative supported routes remain editable but inactive; and
+- a retry with `runAfter: true` preflights worker readiness before resetting
+  the failed stage. If the worker is unavailable, the API returns the readiness
+  failure and preserves the stage state, attempt count, diagnostics, and audit
+  evidence unchanged.
 
 ### Coverage layout
 
@@ -693,7 +946,7 @@ real applications or submit anything from this flow.
 
 The Storybook `addon-a11y` is configured so that **critical** and **serious**
 axe violations fail CI (`a11y: { test: "error" }`). The Storybook test runner
-(`pnpm web:storybook:test`) is the gate; `pnpm --filter @jobctrl/web test`
+(`corepack pnpm web:storybook:test`) is the gate; `corepack pnpm --filter @jobctrl/web test`
 also runs the colocated `*.a11y.test.tsx` suites for forms and dialogs.
 
 The `color-contrast` axe rule is disabled in the Storybook test runner
@@ -706,13 +959,124 @@ resolved token values against each real surface.
 No Storybook story currently defers the a11y check: no `*.stories.ts` or
 `*.stories.tsx` file under `apps/web/src/` sets `a11y.test` to `"off"` or
 `a11y.disable` to `true`. Any future escape-hatch use must have a matching
-entry in [`docs/backlog.md`](../../backlog.md) "Frontend Accessibility Backlog" with
+entry in [GitHub Issues](https://github.com/ebarti/JobCtrl/issues) with
 the story path, affected production file, and defect type.
 
 ### Storybook gate
 
-`pnpm web:storybook:build` produces the static Storybook bundle;
-`pnpm web:storybook:test` serves it with `http-server` and runs
+`corepack pnpm web:storybook:build` produces the static Storybook bundle;
+`corepack pnpm web:storybook:test` serves it with `http-server` and runs
 `test-storybook` over every story. A story that throws on render, fails its
 `play()` interaction, or surfaces a critical / serious axe violation fails
 the gate.
+
+## Materials, Direct Import And Demo Lifecycle
+
+For achievement selection and metric ownership, exercise `/profile` with
+synthetic data. The editor must show metrics as part of each achievement bullet,
+not as a separate **Verified resume metrics** input. Saving a synthetic bullet
+containing `£240k`, `12%`, and `£2M+` must round-trip those exact values in the
+API's derived compatibility projection, while an old unrelated flat metric is
+retained only as non-authoritative, unassigned legacy data. Then tailor a synthetic role
+with no required bullets: the accepted artifact must never exceed the per-role
+maximum, contain no uncovered filler, and preserve the exact agency
+and causal meaning of every selected achievement through the final voice/judge
+audit. Also configure one synthetic role whose distinct pinned plus
+requirement-covered achievements exceed that maximum: Tailor must block before
+any generator call, keep the durable attempt count unchanged, and report the
+role, required count, and ceiling. Never run this check against a real
+application or submit anything.
+
+For candidate evaluation, use scripted generation and voice responses through
+the real Materials use case. Count plan/profile-evidence construction once per
+execution and provenance, grounding, fit, coverage and text assembly once per
+candidate. No voice or a no-op voice reply must reuse the accepted evidence;
+changed voice text must receive fresh deterministic and paid review. A rejected
+rewrite retains the base text, provenance and verdict, with a separate voice
+audit. Assert that the final artifact bytes come from the evaluated normalized
+payload and that final fit retains its `post_voice_shipped` lifecycle label.
+A fabricated high-fit candidate must make zero judge/adversarial calls. Follow
+a fabricated or judge-rejected candidate with invalid JSON and prove the run
+stays rejected, its history remains inspectable, and the previous accepted
+artifact bytes survive. Retain the transaction and render-failure fixtures that
+protect the previous accepted generation and provenance.
+Include a required experience entry with no source bullets or achievement
+evidence: Tailor must accept an empty bullet list while the assembled artifact
+preserves its employer, title, and dates. The same empty list must fail for a
+role with achievement evidence; an invented positioning bullet must still fail
+its evidence check. Keep this case in the real Materials use-case fixture so
+field validation, claim validation, assembly, and accepted provenance all run.
+Also return parsed JSON with `skill_category_updates: null` before a valid
+candidate: field validation must reject it before assembly, preserve its audit
+and continue bounded repair. Exhausting that malformed response must leave the
+previous accepted artifact intact. Read the rejected `.txt` for both missing
+required fields and malformed nested fields: it must contain the selected JSON
+and validation errors, with nonzero registered size, without invoking assembly
+on invalid fields. A changed voice rewrite in lenient mode must
+retain `SKIPPED` with reason `lenient_validation_mode` in both voice and final
+judge metadata, without judge/adversarial calls or paid-model attribution.
+
+For direct URL import, exercise the Jobs-page dialog through the product API
+and worker boundary. A readable JSON-LD posting must create one canonical job,
+refresh the list, and open that job. A custom careers page with an individual
+job URL, H1, multiple job-section headings, and an embedded ATS application
+form must also import without broadening generic-content acceptance. Start a
+second URL import before the first resolves and prove both requests are
+dispatched and can complete independently. A login/blocked fixture must create a
+pending Manual Capture item, render the fallback action, and create zero jobs.
+Re-importing a legacy direct-URL row whose stored Greenhouse heading is
+`Job Application for <role> at <employer>` must repair the canonical role and
+missing employer without refetching, duplicating the job, or duplicating its
+metadata-correction event.
+An active, non-quarantined import with a usable description but no separate
+application URL must still persist enriched state, record Discover and Enrich
+as succeeded, and start exactly one deterministic root preparation workflow
+containing score, tailor, cover, and PDF—but not Apply. Retrying the import
+before preparation begins must reuse that workflow ID. An incomplete legacy
+import whose canonical description still matches its immutable snapshot proof
+must repair its missing enrichment before the same handoff without refetching;
+an already complete import also opens without refetching.
+An unsafe credential-bearing, loopback, or private URL must perform no worker
+dispatch, navigation, or queue write. Commit-before-ack failures after canonical
+ingestion must converge on retry to one complete discovery event set and one
+posting snapshot, without duplicate Jobs or events. Generic non-job articles
+must route to Manual Capture instead of creating placeholder Jobs. When a
+previously ambiguous URL later imports successfully, its matching pending
+Manual Capture item must close against the canonical job rather than remain as
+a false action item. The same product-path check must confirm employer-posted
+salary evidence is projected from the imported description.
+
+The dedicated demo-workspace Playwright lane starts Vite only; it must not
+start or contact the product API or SSE endpoint. It proves same-profile tab
+sharing and concurrent writes, separate-context isolation, reload persistence,
+atomic reset/blob deletion, future IndexedDB-version refusal without downgrade,
+one-time seed-version refresh with generated-blob cleanup,
+post-commit domain-event delivery, and populated direct-refresh coverage for
+the demo's dashboard, product routes, and seeded detail deep links. It also
+exercises real source promotion, manual-capture import, and score correction
+through the shared UI, proving that the results are reload durable and
+product-network-free; score correction is also cross-tab visible. Native
+browser coverage also proves that eventless Discovery and Settings writes
+trigger a broad cross-tab resync and remain durable after reload. The same lane
+drives deterministic queued, running, and terminal stage scenarios through
+accessible product controls; covers the Contoso fail-first tailoring retry;
+checks receipt history across reload and same-profile tabs; and rehearses
+artifact preview, application dry-run, and mark-applied actions without an
+external effect. It also proves the admitted Demo guide reaches the seeded
+scoring, materials, Apply Review, and run-history shortcuts before a confirmed
+workspace reset. Every scenario test installs a strict
+request guard that rejects product API, SSE, and external-origin traffic. Unit
+and component tests cover seed-refresh quota/memory fallback, other injected
+quota/security fallbacks, schema revalidation, reset-epoch races, event-log
+loss, read-adapter query/404/capability parity, valid arguments for every
+browser-local command plus focused projection, replay, cascade, and
+quota-rollback invariants, the reactive data-boundary warning, and the unchanged
+canonical event provider/invalidation router.
+Playwright artifacts are written outside the repository under the system
+temporary directory.
+
+The same lane begins with three consent regressions: no IndexedDB, health, or
+product telemetry before a confirmed grant; anonymous decline redirects even
+when measurement fails; and a denied revisit renders the acceptance-required
+gate again. Existing product journeys use a granted same-origin API stub, so
+the full suite also proves the gate does not regress admitted sessions.

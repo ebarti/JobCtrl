@@ -11,7 +11,7 @@ import {
   resolveJobId,
   retryFailedJobs,
 } from "../src/write-model.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000041";
 const JOB_URL = "https://jobs.example.test/platform-engineer";
@@ -76,41 +76,6 @@ describe("exact-v7 write-model stage state", () => {
       `SELECT state, metadata_json FROM job_stage_states
        WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
     ).get(JOB_ID) as { state: string; metadata_json: string | null };
-    expect(row).toEqual({ state: "pending", metadata_json: null });
-  });
-
-  it("clears canceled Enrich execution ownership on an admin reset", () => {
-    const fixture = createFixture();
-    fixture.db.prepare(
-      `INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
-       VALUES ('local', ?, ?, 'Platform Engineer', ?)`,
-    ).run(JOB_ID, JOB_URL, "2026-07-31T09:00:00.000Z");
-    fixture.db.prepare(
-      `INSERT INTO job_stage_states (
-         tenant_id, job_id, stage, state, attempt_count, max_attempts,
-         updated_at, retryable, metadata_json
-       ) VALUES ('local', ?, 'enrich', 'canceled', 1, 3, ?, 1, ?)`,
-    ).run(
-      JOB_ID,
-      "2026-07-31T09:00:00.000Z",
-      JSON.stringify({
-        workflowId: "workflow-canceled",
-        temporalRunId: "run-canceled",
-      }),
-    );
-
-    const reset = resetJobStage(fixture.db, JOB_ID, "enrich", {
-      resetAttempts: false,
-    });
-    const row = fixture.db.prepare(
-      `SELECT state, metadata_json FROM job_stage_states
-       WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
-    ).get(JOB_ID) as { state: string; metadata_json: string | null };
-
-    expect(reset).toMatchObject({
-      jobUrl: JOB_URL,
-      stage: { state: "pending", attemptCount: 1 },
-    });
     expect(row).toEqual({ state: "pending", metadata_json: null });
   });
 
@@ -223,7 +188,7 @@ describe("exact-v7 write-model stage state", () => {
 function createFixture(): { directory: string; db: Database.Database } {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-write-model-state-"));
   const dbPath = path.join(directory, "jobctrl.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const fixture = { directory, db: new Database(dbPath) };
   fixtures.push(fixture);
   return fixture;
@@ -236,3 +201,296 @@ function stageRow(db: Database.Database): Record<string, unknown> {
      WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'`,
   ).get(JOB_ID) as Record<string, unknown>;
 }
+
+it.each(["pending", "failed", "needs_verification", "running"])("Skip from %s preserves intent, history, budget and safe reset refusal", async (prior) => {
+  const { markJobSkipped, markJobApplied } = await import("../src/write-model.js");
+  const { applySubmitIntentRunIds, applyIntentManuallyResolved } = await import("../src/apply-controls.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply',?,2,3,'2026-10-24',0)").run(JOB_ID, prior);
+  db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','ApplySubmitIntended',?,'2026-10-24')").run(JOB_ID, JSON.stringify({ run_id: "original" }));
+  markJobSkipped(db, JOB_ID, {});
+  const skipped = db.prepare("SELECT * FROM job_stage_states WHERE job_id=?").get(JOB_ID);
+  expect(skipped).toMatchObject({ state: prior === "needs_verification" ? prior : "skipped", attempt_count: 2, retryable: 0, error_code: null });
+  expect(applySubmitIntentRunIds(db, "local", JOB_ID)).toEqual(["original"]);
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow(/intent/);
+  expect(db.prepare("SELECT * FROM job_stage_states WHERE job_id=?").get(JOB_ID)).toEqual(skipped);
+  expect(db.prepare("SELECT COUNT(*) AS n FROM job_events").get()).toEqual({ n: 2 });
+  markJobApplied(db, JOB_ID, {});
+  expect(db.prepare("SELECT state FROM job_stage_states WHERE job_id=?").get(JOB_ID)).toEqual({ state: "succeeded" });
+  expect(applySubmitIntentRunIds(db, "local", JOB_ID)).toEqual(["original"]);
+  expect(applyIntentManuallyResolved(db, "local", JOB_ID)).toBe(true);
+});
+
+it("safe reset releases only a local stop and retains the budget and previous events", async () => {
+  const { markJobSkipped } = await import("../src/write-model.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','failed',2,3,'2026-10-24',1)").run(JOB_ID);
+  markJobSkipped(db, JOB_ID, {});
+  expect(resetJobStage(db, JOB_ID, "apply", { resetAttempts: false }).stage).toMatchObject({ state: "pending", attemptCount: 2 });
+  expect(db.prepare("SELECT event_type FROM job_events ORDER BY event_id").all()).toEqual([{ event_type: "StageSkipped" }, { event_type: "StageReset" }]);
+  db.prepare("UPDATE job_stage_states SET state='running'").run();
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: false })).toThrow(/active/);
+});
+
+it("safe reset binds the legacy API Skip event to its release frontier", () => {
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','skipped',2,3,'2026-10-24',0)").run(JOB_ID);
+  const skip = db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,message,payload_json,occurred_at) VALUES ('local',?,1,'apply','StageSkipped','Job marked skipped from the local API.','{}','2026-10-24')").run(JOB_ID);
+  resetJobStage(db, JOB_ID, 'apply', { resetAttempts: false });
+  const event = db.prepare("SELECT payload_json FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='StageReset'").get(JOB_ID) as { payload_json: string };
+  expect(JSON.parse(event.payload_json)).toMatchObject({ resetAuthority: 'explicit_safe_apply_reset', manualSkipReleasedThroughEventId: Number(skip.lastInsertRowid) });
+});
+
+it("keeps a legacy local Stop after an old owner settles and relabels the stage", async () => {
+  const { hasManualApplyStop } = await import("../src/apply-controls.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','pending',1,3,'2026-10-24',1)").run(JOB_ID);
+  const event = db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,message,payload_json,occurred_at) VALUES ('local',?,1,'apply',?,?,?,'2026-10-24')");
+  event.run(JOB_ID, "ApplyRunStarted", "Started.", JSON.stringify({ run_id: "legacy-owner" }));
+  const skip = event.run(JOB_ID, "StageSkipped", "Job marked skipped from the local API.", JSON.stringify({ reason: "user reason" }));
+  event.run(JOB_ID, "ApplicationFailed", "Previous owner finished.", JSON.stringify({ run_id: "legacy-owner", result: "failed" }));
+  expect(hasManualApplyStop(db, "local", JOB_ID)).toBe(true);
+  resetJobStage(db, JOB_ID, "apply", { resetAttempts: false });
+  expect(hasManualApplyStop(db, "local", JOB_ID)).toBe(false);
+  const release = db.prepare("SELECT payload_json FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='StageReset'").get(JOB_ID) as { payload_json: string };
+  expect(JSON.parse(release.payload_json).manualSkipReleasedThroughEventId).toBe(Number(skip.lastInsertRowid));
+});
+
+it("does not interpret user reason text or other event types as a legacy Apply Skip", () => {
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','skipped',2,3,'2026-10-24',0)").run(JOB_ID);
+  const event = db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,message,payload_json,occurred_at) VALUES ('local',?,1,?,?,?,?,'2026-10-24')");
+  const marker = "Job marked skipped from the local API.";
+  event.run(JOB_ID, "apply", "StageSkipped", "Other skip.", JSON.stringify({ reason: marker }));
+  event.run(JOB_ID, "apply", "StageCompleted", marker, "{}");
+  event.run(JOB_ID, "cover", "StageSkipped", marker, "{}");
+  resetJobStage(db, JOB_ID, "apply", { resetAttempts: false });
+  const reset = db.prepare("SELECT payload_json FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='StageReset'").get(JOB_ID) as { payload_json: string };
+  expect(JSON.parse(reset.payload_json)).toMatchObject({ resetAuthority: "explicit_safe_apply_reset", manualSkipReleasedThroughEventId: null });
+});
+
+it("refuses resetting Skip over an unsettled admitted run even before intent", async () => {
+  const { markJobSkipped } = await import("../src/write-model.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','running',1,3,'2026-10-24',1)").run(JOB_ID);
+  db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','ApplyRunStarted',?,'2026-10-24')").run(JOB_ID, JSON.stringify({ run_id: "original" }));
+  markJobSkipped(db, JOB_ID, {});
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: false })).toThrow(/prior admitted run/);
+  // A foreign run's terminal result cannot release the original owner.
+  db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','ApplicationFailed',?,'2026-10-24')").run(JOB_ID, JSON.stringify({ run_id: "unrelated" }));
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: false })).toThrow(/prior admitted run/);
+  db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','ApplicationFailed',?,'2026-10-24')").run(JOB_ID, JSON.stringify({ run_id: "original" }));
+  expect(resetJobStage(db, JOB_ID, "apply", { resetAttempts: false }).stage).toMatchObject({ state: "pending", attemptCount: 1 });
+});
+
+it("Skip cannot launder Needs verification into a safe reset when the intent receipt is absent", async () => {
+  const { markJobSkipped, markJobApplied } = await import("../src/write-model.js");
+  const { hasUnresolvedSkippedOutcome } = await import("../src/apply-controls.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','needs_verification',1,3,'2026-10-24',0)").run(JOB_ID);
+  markJobSkipped(db, JOB_ID, {});
+  markJobSkipped(db, JOB_ID, {});
+  expect(hasUnresolvedSkippedOutcome(db, "local", JOB_ID)).toBe(true);
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow(/verification/);
+  expect(db.prepare("SELECT state,attempt_count FROM job_stage_states WHERE job_id=?").get(JOB_ID)).toEqual({ state: "needs_verification", attempt_count: 1 });
+  markJobApplied(db, JOB_ID, {});
+  expect(hasUnresolvedSkippedOutcome(db, "local", JOB_ID)).toBe(false);
+});
+
+it.each(["pending", "failed", "canceled"])("reset cannot treat a later %s label as settlement of skipped running work", async (state) => {
+  const { markJobSkipped } = await import("../src/write-model.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','running',1,3,'2026-10-24',1)").run(JOB_ID);
+  db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','ApplyRunStarted',?,'2026-10-24')")
+    .run(JOB_ID, JSON.stringify({ run_id: "original" }));
+  markJobSkipped(db, JOB_ID, {});
+  db.prepare("UPDATE job_stage_states SET state=? WHERE job_id=? AND stage='apply'").run(state, JOB_ID);
+  const before = db.prepare("SELECT * FROM job_stage_states WHERE job_id=?").all(JOB_ID);
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow(/prior admitted run/);
+  expect(db.prepare("SELECT * FROM job_stage_states WHERE job_id=?").all(JOB_ID)).toEqual(before);
+});
+
+it("recorded manual Skip remains active after relabel and is released only by safe reset", async () => {
+  const { markJobSkipped } = await import("../src/write-model.js");
+  const { hasManualApplyStop } = await import("../src/apply-controls.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  markJobSkipped(db, JOB_ID, {});
+  db.prepare("UPDATE job_stage_states SET state='pending' WHERE job_id=? AND stage='apply'").run(JOB_ID);
+  expect(hasManualApplyStop(db, "local", JOB_ID)).toBe(true);
+  expect(hasManualApplyStop(db, "other", JOB_ID)).toBe(false);
+  resetJobStage(db, JOB_ID, "apply", { resetAttempts: false });
+  expect(hasManualApplyStop(db, "local", JOB_ID)).toBe(false);
+  markJobSkipped(db, JOB_ID, {});
+  expect(hasManualApplyStop(db, "local", JOB_ID)).toBe(true);
+});
+
+it("audit consumes only exact recorded outcomes while retaining every intent as a reset blocker", async () => {
+  const { markJobSkipped } = await import("../src/write-model.js");
+  const { applyIntentOutcomeRecorded } = await import("../src/apply-controls.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','succeeded',1,3,'2026-10-24',0)").run(JOB_ID);
+  const event = db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply',?,?,'2026-10-24')");
+  event.run(JOB_ID, "ApplySubmitIntended", JSON.stringify({ run_id: "original" }));
+  event.run(JOB_ID, "ApplicationSubmitted", JSON.stringify({ run_id: "unrelated" }));
+  expect(applyIntentOutcomeRecorded(db, "local", JOB_ID)).toBe(false);
+  event.run(JOB_ID, "ApplicationSubmitted", JSON.stringify({ run_id: "original" }));
+  expect(applyIntentOutcomeRecorded(db, "local", JOB_ID)).toBe(true);
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow(/intent/);
+  markJobSkipped(db, JOB_ID, {});
+  expect(applyIntentOutcomeRecorded(db, "local", JOB_ID)).toBe(true);
+  event.run(JOB_ID, "ApplySubmitIntended", JSON.stringify({ run_id: "later" }));
+  expect(applyIntentOutcomeRecorded(db, "local", JOB_ID)).toBe(false);
+});
+
+it.each([
+  ["succeeded", null],
+  ["needs_verification", "APPLY_NEEDS_VERIFICATION"],
+  ["skipped", "MANUAL_ATS"],
+  ["skipped", "MIN_SCORE"],
+  ["queued", null],
+] as const)("repeated Skip preserves protected %s / %s state", async (state, errorCode) => {
+  const { markJobSkipped } = await import("../src/write-model.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable,error_code,error_message,metadata_json) VALUES ('local',?,'apply',?,2,3,'2026-10-24',0,?,'protected detail',?)")
+    .run(JOB_ID, state, errorCode, JSON.stringify({ source: "synthetic" }));
+  const before = db.prepare("SELECT * FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'").get(JOB_ID);
+  markJobSkipped(db, JOB_ID, {});
+  markJobSkipped(db, JOB_ID, {});
+  expect(db.prepare("SELECT * FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'").get(JOB_ID)).toEqual(before);
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow();
+  expect(db.prepare("SELECT event_type FROM job_events ORDER BY event_id").all()).toEqual([{ event_type: "StageSkipped" }, { event_type: "StageSkipped" }]);
+});
+
+it.each([
+  ["ApplicationManuallyMarked", {}, "skipped", /applied/i],
+  ["StageSkipped", { previousState: "succeeded", manualDisposition: "skip" }, "skipped", /applied/i],
+  ["StageSkipped", { previousState: "queued", manualDisposition: "skip" }, "skipped", /queued/i],
+  ["StageSkipped", { previousState: "needs_verification", manualDisposition: "skip" }, "skipped", /verification/i],
+  ["ApplicationFailed", { result: "needs_verification" }, "skipped", /verification/i],
+] as const)("legacy %s history survives repeated Skip and refuses reset", async (eventType, payload, state, message) => {
+  const { markJobSkipped } = await import("../src/write-model.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply',?,2,3,'2026-10-24',0)").run(JOB_ID, state);
+  db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply',?,?,'2026-10-24')").run(JOB_ID, eventType, JSON.stringify(payload));
+  markJobSkipped(db, JOB_ID, {});
+  markJobSkipped(db, JOB_ID, {});
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow(message);
+  expect(db.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type='StageReset'").get()).toEqual({ n: 0 });
+});
+
+it.each(["manual_ats", "score_threshold"])("legacy %s policy survives repeated manual Skip", async (policy) => {
+  const { markJobSkipped } = await import("../src/write-model.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','skipped',2,3,'2026-10-24',0)").run(JOB_ID);
+  const event = db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,message,payload_json,occurred_at) VALUES ('local',?,1,'apply',?,?,?,'2026-10-24')");
+  event.run(JOB_ID, policy === "manual_ats" ? "ApplyManualSkip" : "StageSkipped", policy === "manual_ats" ? "manual ATS" : "Fit score 3/10 is below the materials threshold 7/10.", JSON.stringify(policy === "manual_ats" ? { result: "manual" } : { reason: "score_below_threshold", fitScore: 3, minScore: 7, upstreamStage: "score", downstreamStage: "apply" }));
+  event.run(JOB_ID, "StageSkipped", "Job marked skipped from the local API.", JSON.stringify({ reason: "legacy" }));
+  markJobSkipped(db, JOB_ID, {});
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow(/policy/i);
+  expect(db.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type='StageReset'").get()).toEqual({ n: 0 });
+});
+
+it("a genuine score-policy clearance leaves an ordinary later Skip safely resettable", async () => {
+  const { markJobSkipped } = await import("../src/write-model.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','pending',2,3,'2026-10-24',1)").run(JOB_ID);
+  const event = db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,message,payload_json,occurred_at) VALUES ('local',?,1,'apply',?,?,?,'2026-10-24')");
+  event.run(JOB_ID, "StageSkipped", "Fit score 3/10 is below the materials threshold 7/10.", JSON.stringify({ reason: "score_below_threshold", fitScore: 3, minScore: 7, upstreamStage: "score", downstreamStage: "apply" }));
+  event.run(JOB_ID, "StageReset", "apply restored after the score threshold allowed materials.", JSON.stringify({ reason: "score_threshold_cleared", upstreamStage: "score", downstreamStage: "apply" }));
+  markJobSkipped(db, JOB_ID, {});
+  markJobSkipped(db, JOB_ID, {});
+  expect(resetJobStage(db, JOB_ID, "apply", { resetAttempts: false }).stage).toMatchObject({ state: "pending", attemptCount: 2 });
+});
+
+it("does not treat a user-authored score reason as an earlier score-policy Skip", async () => {
+  const { markJobSkipped } = await import("../src/write-model.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','skipped',2,3,'2026-10-24',0)").run(JOB_ID);
+  db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,message,payload_json,occurred_at) VALUES ('local',?,1,'apply','StageSkipped','Job marked skipped from the local API.',?,'2026-10-24')").run(JOB_ID, JSON.stringify({ reason: "score_below_threshold" }));
+  markJobSkipped(db, JOB_ID, { reason: "score_below_threshold" });
+  expect(resetJobStage(db, JOB_ID, "apply", { resetAttempts: false }).stage).toMatchObject({ state: "pending", attemptCount: 2 });
+});
+
+it("a score-policy clearance cannot clear a retained manual ATS disposition", () => {
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','skipped',2,3,'2026-10-24',0)").run(JOB_ID);
+  const event = db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,message,payload_json,occurred_at) VALUES ('local',?,1,'apply',?,?,?,'2026-10-24')");
+  event.run(JOB_ID, "ApplyManualSkip", "manual ATS", JSON.stringify({ result: "manual" }));
+  event.run(JOB_ID, "StageSkipped", "Skipped locally.", JSON.stringify({ manualDisposition: "skip", previousState: "skipped", previousErrorCode: "MANUAL_ATS", reason: "score_below_threshold" }));
+  event.run(JOB_ID, "StageReset", "apply restored after the score threshold allowed materials.", JSON.stringify({ reason: "score_threshold_cleared", upstreamStage: "score", downstreamStage: "apply" }));
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: false })).toThrow(/policy/i);
+});
+
+it.each(["", 42, null])("unidentified intent %s cannot acquire a resolved audit label from a matching malformed outcome", async (runId) => {
+  const { applyIntentOutcomeRecorded, applySubmitIntentRunIds } = await import("../src/apply-controls.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','succeeded',1,3,'2026-10-24',0)").run(JOB_ID);
+  for (const type of ["ApplySubmitIntended", "ApplicationSubmitted"]) {
+    db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply',?,?,'2026-10-24')")
+      .run(JOB_ID, type, JSON.stringify({ run_id: runId }));
+  }
+  expect(applyIntentOutcomeRecorded(db, "local", JOB_ID)).toBe(false);
+  expect(applySubmitIntentRunIds(db, "local", JOB_ID)).toEqual(["unknown"]);
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow(/intent/);
+});
+
+it.each(["pending", "failed", "canceled"])("reset of %s requires the admitted owner's acknowledgement without a Skip", async (state) => {
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply',?,1,3,'2026-10-24',1)").run(JOB_ID, state);
+  const event = db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply',?,?,'2026-10-24')");
+  event.run(JOB_ID, "ApplyClaimAcquired", JSON.stringify({ run_id: "admitted", launcher_id: "launcher" }));
+  event.run(JOB_ID, "ApplyRunStarted", JSON.stringify({ run_id: "admitted" }));
+  event.run(JOB_ID, "StageCanceled", JSON.stringify({ run_id: "admitted" }));
+  const before = db.prepare("SELECT * FROM job_stage_states").all();
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow(/prior admitted run/);
+  expect(db.prepare("SELECT * FROM job_stage_states").all()).toEqual(before);
+  expect(db.prepare("SELECT COUNT(*) AS n FROM job_events").get()).toEqual({ n: 3 });
+  event.run(JOB_ID, "LockReleased", JSON.stringify({ run_id: "other" }));
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow(/prior admitted run/);
+  event.run(JOB_ID, "LockReleased", JSON.stringify({ run_id: "admitted" }));
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow(/prior admitted run/);
+  event.run(JOB_ID, "ApplyClaimSettled", JSON.stringify({ run_id: "admitted", launcher_id: "other" }));
+  expect(() => resetJobStage(db, JOB_ID, "apply", { resetAttempts: true })).toThrow(/prior admitted run/);
+  event.run(JOB_ID, "ApplyClaimSettled", JSON.stringify({ run_id: "admitted", launcher_id: "launcher" }));
+  expect(resetJobStage(db, JOB_ID, "apply", { resetAttempts: false }).stage.state).toBe("pending");
+});
+
+it("automatic and unbound StageReset events cannot release manual Skip", async () => {
+  const { markJobSkipped } = await import("../src/write-model.js");
+  const { hasManualApplyStop } = await import("../src/apply-controls.js");
+  const { db } = createFixture();
+  db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+  markJobSkipped(db, JOB_ID, {});
+  db.prepare("UPDATE job_stage_states SET state='pending' WHERE job_id=? AND stage='apply'").run(JOB_ID);
+  const event = db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','StageReset',?,'2026-10-24')");
+  for (const payload of [{ reason: "score_threshold_cleared" }, { reset_attempts: true },
+    { resetAuthority: "explicit_safe_apply_reset", manualSkipReleasedThroughEventId: "1" },
+    { resetAuthority: "explicit_safe_apply_reset", manualSkipReleasedThroughEventId: 99999 }]) {
+    event.run(JOB_ID, JSON.stringify(payload));
+    expect(hasManualApplyStop(db, "local", JOB_ID)).toBe(true);
+  }
+  resetJobStage(db, JOB_ID, "apply", { resetAttempts: false });
+  expect(hasManualApplyStop(db, "local", JOB_ID)).toBe(false);
+  const release = db.prepare("SELECT payload_json FROM job_events ORDER BY event_id DESC LIMIT 1").get() as {payload_json:string};
+  markJobSkipped(db, JOB_ID, {});
+  event.run(JOB_ID, release.payload_json);
+  expect(hasManualApplyStop(db, "local", JOB_ID)).toBe(true);
+});

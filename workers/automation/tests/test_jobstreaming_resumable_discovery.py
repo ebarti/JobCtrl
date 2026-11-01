@@ -392,6 +392,12 @@ async def _temporal_check_spend_budget(_payload) -> SpendBudgetStatus:
         output_tokens=0,
         estimated_usd=0.0,
         daily_budget_usd=25.0,
+        lane="discovery",
+        lane_input_tokens=0,
+        lane_output_tokens=0,
+        lane_token_limit=0,
+        lane_exceeded=False,
+        global_exceeded=False,
         exceeded=False,
     )
 
@@ -616,6 +622,7 @@ def test_filtered_count_survives_loss_after_acknowledgement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conn, _db_path = discovery_db
+
     execution = _execution("temporal-run-filtered")
     original_save = SqliteDiscoverySearchUnitCheckpointStore.save
     interrupted = False
@@ -638,7 +645,7 @@ def test_filtered_count_survives_loss_after_acknowledgement(
         match="simulated worker loss after filtered acknowledgement",
     ):
         jobspy.run_discovery(
-            cfg=_config(),
+            cfg={**_config(), "exact_title_exclusions": ["Accountant"]},
             discovery_execution=execution,
             activity_attempt=1,
             activity_owner_token="filtered-attempt-1",
@@ -652,7 +659,7 @@ def test_filtered_count_survives_loss_after_acknowledgement(
     assert repository.execution_filtered_count(execution) == 1
 
     result = jobspy.run_discovery(
-        cfg=_config(),
+        cfg={**_config(), "exact_title_exclusions": ["Accountant"]},
         discovery_execution=execution,
         activity_attempt=2,
         activity_owner_token="filtered-attempt-2",
@@ -962,13 +969,11 @@ def test_linkedin_listing_only_discovery_persists_job_for_detail_enrichment(
 
     assert _ListingOnlyLinkedIn.fetch_description_requests == [False]
     assert result["new"] == 1, json.dumps(result, sort_keys=True)
-    stored = conn.execute(
-        "SELECT job_id, description, full_description, location FROM jobs"
-    ).fetchone()
+    stored = conn.execute("SELECT job_id, description, full_description, location FROM jobs").fetchone()
     assert stored is not None
     assert stored["description"] == ""
     assert stored["full_description"] is None
-    assert stored["location"] == "Spain (Remote)"
+    assert stored["location"] == "Spain"
     assert conn.execute("SELECT COUNT(*) FROM job_enrichments").fetchone()[0] == 0
     assert {row["job_id"] for row in get_jobs_by_stage(conn, "pending_detail", limit=0)} == {stored["job_id"]}
 
@@ -1068,7 +1073,9 @@ def test_selective_detail_replays_safely_when_provider_acknowledgement_is_lost(
         adapter_registry=registry,
     )
 
-    assert _ContentCollisionLinkedIn.detail_requests == ["101", "101"]
+    assert _ContentCollisionLinkedIn.detail_requests == ["101"]
+    # The durable intake decision and stored opening survive a lost provider ACK.
+    # Replaying the provider event does not repeat an already accepted detail fetch.
     assert result["new"] == 1
     assert result["existing"] == 1
     assert result["raw_total"] == 2
@@ -1211,6 +1218,41 @@ def test_cancellation_interrupts_provider_wait_and_terminalizes_all_units(
         close_connection(db_path)
 
 
+def test_pending_cancellation_terminalizes_all_units_without_starting_a_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    init_db(db_path)
+    close_connection(db_path)
+    monkeypatch.setattr(jobspy, "init_db", lambda: init_db(db_path))
+    monkeypatch.setattr(jobspy, "get_shared_rate_limiter", _NoopLimiter)
+    execution = _execution("temporal-run-pending-cancel")
+    cancel_event = threading.Event()
+    cancel_event.set()
+    _SuccessfulIndeed.requests = []
+
+    with pytest.raises(jobspy.DiscoveryCancelled):
+        jobspy.run_discovery(
+            cfg=_config(
+                queries=("Director of Engineering", "VP Engineering"),
+            ),
+            cancel_event=cancel_event,
+            discovery_execution=execution,
+            activity_attempt=1,
+            activity_owner_token="pending-cancel-attempt-1",
+            adapter_registry=_registry(indeed_factory=_SuccessfulIndeed),
+        )
+
+    conn = init_db(db_path)
+    try:
+        units = SqliteDiscoverySearchUnitRepository(conn).list_units(execution)
+        assert [unit.state for unit in units] == ["canceled", "canceled"]
+        assert _SuccessfulIndeed.requests == []
+    finally:
+        close_connection(db_path)
+
+
 @pytest.mark.asyncio
 async def test_temporal_worker_loss_after_store_before_ack_reclaims_and_completes(
     tmp_path: Path,
@@ -1318,3 +1360,10 @@ async def test_temporal_worker_loss_after_store_before_ack_reclaims_and_complete
     finally:
         close_connection(db_path)
         _TEMPORAL_REGISTRY = None
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

@@ -10,6 +10,7 @@ import type {
   RepeatApplicationAssessment,
   CredentialsResponse,
   DashboardSummary,
+  DeterminationEnvelope,
   DailyDigest,
   DiscoverySettingsResponse,
   EvidenceMapResponse,
@@ -49,6 +50,17 @@ export const sampleHealthResponse: ApiHealthResponse = {
     dailyBudgetUsd: 25,
     remainingUsd: 24.88,
     unlimited: false,
+    lanes: {
+      discovery: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      enrichment: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      scoring: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      tailoring: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      apply: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      contact: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      interview: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      profile: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      compensation: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+    },
     message: "LLM spend is $0.12 / $25.00 today.",
   },
   worker: {
@@ -136,11 +148,20 @@ export const sampleCompensationSummary: JobCompensationSummary = {
   },
 };
 
+export const samplePostedDetermination: DeterminationEnvelope = {
+  determination_id: "c".repeat(64), tenant_id: "local", entity_id: "job-2",
+  kind: "posted_compensation", schema_version: "1", prompt_version: "posted-compensation-v1",
+  provider: "synthetic", model: "synthetic", lane: "compensation",
+  input_fingerprint: "d".repeat(64), created_at: "2026-06-20T08:00:00Z",
+  result: { parse_state: "parsed_range", currency: "EUR", period: "year", component: "base_salary", minimum: 70000, maximum: 90000, confidence: "high", citations: [{source_id:"salary",quote:"EUR 70000-90000/year",exact_values:["70000","90000"]}], rationale:"Explicit synthetic decision" },
+};
+
 export const sampleCompensationAudit: JobCompensationAudit = {
   projectionVersion: 3,
   posted: {
     ok: true,
     recordStatus: "recorded",
+    determination: samplePostedDetermination,
     fact: {
       tenantId: "local",
       jobId: "job-2",
@@ -234,8 +255,10 @@ export const sampleCompensationAudit: JobCompensationAudit = {
           reason: "Seven reported rows support the estimate.",
         },
       ],
+      determinations: [],
       evidence: [
         {
+          determinationId: null,
           sourceId: "levels_fyi",
           displayName: "Levels.fyi",
           sourceUrl: "https://www.levels.fyi/companies/globex/salaries/software-engineer",
@@ -844,7 +867,8 @@ export const sampleApplicationOutcomes: ApplicationOutcomeListResponse = {
       suggestionId: "suggestion-1",
       jobKey: sampleSecondaryJob.jobKey,
       evidenceId: "evidence-1",
-      suggestedKind: "interview",
+      determination: null, citations: [],
+    suggestedKind: "interview",
       confidence: 0.84,
       rationale: "Recruiter reply indicates an interview request.",
       status: "pending",
@@ -1149,7 +1173,6 @@ export function makeArtifactTailoringExplanation(
     },
     evidence: {
       requiredIds: [],
-      seniorityIds: [],
       representedIds: [],
       missingIds: [],
       verifiedMetricCount: null,
@@ -1166,7 +1189,7 @@ export function makeArtifactTailoringExplanation(
       passed: true,
       verdict: "PASS",
       score: 0.91,
-      minScore: 0.82,
+
       issues: [],
       unsupportedClaims: [],
       fabrications: [],
@@ -1198,7 +1221,7 @@ export function makeArtifactDetail(
   artifact: ArtifactSummary = sampleArtifact,
   tailoringExplanation: ArtifactTailoringExplanation | null = null,
 ): ArtifactDetail {
-  return { ok: true, artifact, layoutBoxes: [], tailoringExplanation };
+  return { ok: true, artifact, layoutBoxes: [], determinations: [], tailoringExplanation };
 }
 
 export const sampleDashboardSummary: DashboardSummary = {
@@ -1743,6 +1766,7 @@ export const sampleDailyDigest: DailyDigest = {
 
 export const sampleProfileResponse: ProfileConfigResponse = {
   ok: true,
+  profileVersion: 3,
   profile: {
     personal: { full_name: "Jordan Candidate", email: "jordan@example.com" },
     resume: {
@@ -1773,10 +1797,17 @@ export const sampleSettingsResponse: SettingsResponse = {
     pipelineInternalConcurrency: 3,
     workerActivitySlots: 4,
     dailyBudgetUsd: 25,
+    laneTokenLimits: {
+      discovery: 0, enrichment: 0, scoring: 0, tailoring: 0, apply: 0,
+      contact: 0, interview: 0, profile: 0, compensation: 0,
+    },
     analysisLegs: ["claude", "codex", "google"],
+    defaultLlmModel: null,
+    codexReasoningEfforts: {},
     tailoringGeneratorModels: null,
     tailoringJudgeModel: null,
-    tailoringJudgeMinScore: 0.82,
+    resumeVoicePolish: false,
+    coverLetterGeneration: false,
     applyMaxBudgetUsd: 5,
     applyTimeoutSeconds: 900,
     scoreCriteria: "Platform reliability and team leadership.",
@@ -1785,13 +1816,25 @@ export const sampleSettingsResponse: SettingsResponse = {
   },
   effectiveSettings: {
     dailyBudgetUsd: { value: 25, source: "persisted", activation: "live", editable: true },
+    laneTokenLimits: {
+      value: {
+        discovery: 0, enrichment: 0, scoring: 0, tailoring: 0, apply: 0,
+        contact: 0, interview: 0, profile: 0, compensation: 0,
+      },
+      source: "default",
+      activation: "live",
+      editable: true,
+    },
     applyConcurrency: { value: 2, source: "persisted", activation: "next_poll", editable: true },
     pipelineInternalConcurrency: { value: 3, source: "persisted", activation: "next_workflow", editable: true },
     workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
     analysisLegs: { value: ["claude", "codex", "google"], source: "default", activation: "next_analysis", editable: true },
+    defaultLlmModel: { value: null, source: "default", activation: "next_workflow", editable: true },
+    codexReasoningEfforts: { value: {}, source: "default", activation: "next_workflow", editable: true },
     tailoringGeneratorModels: { value: null, source: "default", activation: "next_workflow", editable: true },
     tailoringJudgeModel: { value: null, source: "default", activation: "next_workflow", editable: true },
-    tailoringJudgeMinScore: { value: 0.82, source: "default", activation: "next_workflow", editable: true },
+    resumeVoicePolish: { value: false, source: "default", activation: "next_workflow", editable: true },
+    coverLetterGeneration: { value: false, source: "default", activation: "next_workflow", editable: true },
     applyMaxBudgetUsd: { value: 5, source: "default", activation: "next_apply_job", editable: true },
     applyTimeoutSeconds: { value: 900, source: "default", activation: "next_apply_job", editable: true },
     scoreCriteria: { value: "Platform reliability and team leadership.", source: "persisted", activation: "next_run", editable: true },
@@ -1907,9 +1950,8 @@ export const sampleDiscoverySettingsResponse: DiscoverySettingsResponse = {
     hoursOld: 72,
     schedulingEnabled: false,
     scheduleCron: "0 7 * * *",
-    roleFilterMode: "auto",
-    roleFilterModel: null,
     maxParallelFamilies: 1,
+    useBrowserHeaders: false,
     crawlUserAgentProduct: "JobCtrl",
     crawlUserAgentContact: "demo-contact",
     source: "database",
@@ -1923,9 +1965,8 @@ export const sampleDiscoverySettingsResponse: DiscoverySettingsResponse = {
     hoursOld: { value: 72, source: "persisted" as const, activation: "next_run" as const, editable: true as const },
     schedulingEnabled: { value: false, source: "persisted" as const, activation: "restart" as const, editable: true as const },
     scheduleCron: { value: "0 7 * * *", source: "persisted" as const, activation: "restart" as const, editable: true as const },
-    roleFilterMode: { value: "auto" as const, source: "default" as const, activation: "next_source_family" as const, editable: true as const },
-    roleFilterModel: { value: null, source: "default" as const, activation: "next_source_family" as const, editable: true as const },
     maxParallelFamilies: { value: 1, source: "default" as const, activation: "next_run" as const, editable: true as const },
+    useBrowserHeaders: { value: false, source: "default" as const, activation: "next_source_family" as const, editable: true as const },
     crawlUserAgentProduct: { value: "JobCtrl", source: "default" as const, activation: "next_source_family" as const, editable: true as const },
     crawlUserAgentContact: { value: "demo-contact", source: "default" as const, activation: "next_source_family" as const, editable: true as const },
   },
@@ -2048,7 +2089,9 @@ export function makeWorkflowRunsPage(
 export const sampleCredentialsResponse: CredentialsResponse = {
   ok: true,
   store: {
-    kind: "config_and_macos_keychain",
+    kind: "config_and_native_credential_store",
+    nativeStore: "macos_keychain" as const,
+    maxSecretBytes: 128,
     available: true,
     unavailableReason: null,
     requiresWorkerRestart: true,
@@ -2057,8 +2100,8 @@ export const sampleCredentialsResponse: CredentialsResponse = {
     key,
     label: key,
     configured: key === "ANTHROPIC_API_KEY",
-    storage: "keychain" as const,
-    effectiveSource: key === "ANTHROPIC_API_KEY" ? "keychain" as const : "absent" as const,
+    storage: "native_store" as const,
+    effectiveSource: key === "ANTHROPIC_API_KEY" ? "native_store" as const : "absent" as const,
     editable: true,
   })),
 };
@@ -2081,7 +2124,7 @@ export const sampleProviderModelsResponse: ProviderModelCatalogResponse = {
       ready: true,
       source: "live",
       models: [
-        { id: "gpt-5.5", displayName: "GPT-5.5", isDefault: true },
+        { id: "gpt-5.5", displayName: "GPT-5.5", isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Provider low effort" }, { reasoningEffort: "high", description: "Provider high effort" }, { reasoningEffort: "max", description: "Provider maximum effort" }], defaultReasoningEffort: "low" },
         { id: "gpt-5.4", displayName: "GPT-5.4" },
       ],
       message: "Codex model catalog is current.",

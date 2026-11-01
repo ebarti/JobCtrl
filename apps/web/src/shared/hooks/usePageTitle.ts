@@ -10,6 +10,7 @@ const PAGE_TITLES: Record<string, string> = {
   discovery: "Discovery",
   artifacts: "Artifacts",
   "evidence-map": "Evidence",
+  interviews: "Interviews",
   outreach: "Contacts",
   runs: "Runs",
   debug: "Debug",

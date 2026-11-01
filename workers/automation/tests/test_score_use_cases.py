@@ -7,7 +7,9 @@ behaviour is observable without a real DB or LLM.
 
 from __future__ import annotations
 
+import json
 import uuid
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -25,6 +27,7 @@ from jobctrl.domain.materials.analysis import (
 from jobctrl.domain.ports.events import Subscription
 from jobctrl.domain.ports.llm import LlmMessage
 from jobctrl.domain.profile.aggregate import Profile
+from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring import (
     FitScore,
     JobScore,
@@ -34,7 +37,7 @@ from jobctrl.domain.scoring import (
     ScoringPolicy,
     ScoringCriteria,
 )
-from jobctrl.domain.scoring.services import ConstraintChecker, ScoreParser
+from jobctrl.domain.scoring.services import ScoreParser
 from jobctrl.domain.scoring.use_cases import (
     CorrectScoreUseCase,
     ScoreJobUseCase,
@@ -42,6 +45,73 @@ from jobctrl.domain.scoring.use_cases import (
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.profile.factory import build_profile_repository
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+
+
+def _score_case(*, llm, requirements=(), interpretation=None, **kwargs):
+    from jobctrl.domain.determinations import Source
+    from tests.determination_fakes import job_interpretation
+    from tests.test_semantic_determinations import Repository
+
+    return ScoreJobUseCase(
+        llm=llm,
+        determination_dependencies=dict(
+            llm=llm,
+            repository=Repository(),
+            tenant_id="local",
+            provider="synthetic",
+            model="synthetic",
+            lane="scoring",
+            preflight=lambda: None,
+        ),
+        job_interpretation_reader=lambda job: interpretation or job_interpretation(requirements),
+        confirmed_preferences_reader=lambda snapshot, criteria: [
+            Source(source_id="target:roles:0", text="Synthetic saved target")
+        ],
+        **kwargs,
+    )
+
+
+def _cited_decision(raw, messages):
+    if "score" not in raw:
+        return raw  # Intentionally malformed schema tests stay malformed.
+    result = dict(raw)
+    data = json.loads(messages[1].content)
+    sources = {row["source_id"]: row["text"] for row in data["sources"]}
+    citation = {"source_id": "posting", "quote": sources["posting"], "exact_values": []}
+    result.setdefault("fit_band", "strong")
+    result.setdefault("confidence", "high")
+    for field in ("matched_signals", "missing_signals", "transferable_signals"):
+        result.setdefault(field, [])
+    result.setdefault("citations", [citation])
+    result.setdefault(
+        "discovery_feedback", {"verdict": "none", "reason": "Explicit model decision", "citations": [citation]}
+    )
+    result.setdefault("eligibility", {"status": "eligible", "blockers": [], "warnings": []})
+    assessments = result.setdefault("requirement_assessments", [])
+    existing = {row["requirement_id"] for row in assessments}
+    for ident in data["context"]["requirement_ids"]:
+        if ident not in existing:
+            assessments.append(
+                {
+                    "requirement_id": ident,
+                    "requirement_text": "Synthetic requirement",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "job_evidence_span": sources[ident],
+                    "fit": {"kind": "not_assessed", "reason": "Explicit model abstention"},
+                }
+            )
+    for row in assessments:
+        row.setdefault("target_keywords", [])
+        row.setdefault(
+            "citations",
+            [{"source_id": row["requirement_id"], "quote": sources[row["requirement_id"]], "exact_values": []}],
+        )
+        fit = row["fit"]
+        for key in ("strength", "gap", "bridge", "reason", "blocker"):
+            fit.setdefault(key, None)
+        fit.setdefault("evidence_ids", [])
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -114,11 +184,7 @@ class _MemoryRequirementFitRepo:
         self.saved: list[tuple[str, RequirementFitReport]] = []
 
     def load(self, tenant_id, job_id, *, score_version=None):  # pragma: no cover
-        reports = [
-            report
-            for tenant, report in self.saved
-            if tenant == str(tenant_id) and report.job_id == str(job_id)
-        ]
+        reports = [report for tenant, report in self.saved if tenant == str(tenant_id) and report.job_id == str(job_id)]
         if score_version is not None:
             reports = [report for report in reports if report.score_version == score_version]
         return reports[-1] if reports else None
@@ -169,7 +235,7 @@ class _ScriptedLlm:
         )
         if not self._queue:
             raise AssertionError("ScriptedLlm exhausted")
-        return self._queue.pop(0)
+        return _cited_decision(self._queue.pop(0), messages)
 
     def ask(self, prompt: str, **kwargs: Any) -> str:  # pragma: no cover
         raise AssertionError("ScoreJobUseCase should not call ask()")
@@ -259,6 +325,8 @@ def _profile_snapshot_with_evidence(tmp_path):
                     "achievement_evidence": [
                         {
                             "id": "ev_python_platform",
+                            "user_confirmed": True,
+                            "evidence_strength": "verified",
                             "source_text": "Led Python platform reliability for distributed APIs.",
                             "tools": ["Python", "FastAPI"],
                             "metrics": [],
@@ -353,7 +421,7 @@ def _strong_llm_response() -> dict[str, Any]:
         "role_fit": 9,
         "fit_band": "excellent",
         "confidence": "high",
-        "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+        "eligibility": {"status": "eligible", "blockers": [], "warnings": []},
         "matched_signals": ["Python"],
         "missing_signals": [],
         "transferable_signals": [],
@@ -457,7 +525,7 @@ def test_score_parser_parses_requirement_assessments() -> None:
             "role_fit": 7,
             "fit_band": "strong",
             "confidence": "high",
-            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "eligibility": {"status": "eligible", "blockers": [], "warnings": []},
             "matched_signals": ["platform leadership"],
             "missing_signals": ["public company scale"],
             "transferable_signals": ["incident command"],
@@ -499,9 +567,7 @@ def test_score_parser_parses_requirement_assessments() -> None:
     assert matched.contribution.rationale == "Pending deterministic requirement-fit resolution."
     assert missing.fit.kind == "missing"
     assert missing.tailoring.action == "avoid_claim"
-    assert missing.tailoring.prohibited_claims == (
-        "Own public company operating cadence.",
-    )
+    assert missing.tailoring.prohibited_claims == ("Own public company operating cadence.",)
     assert result.trace.parser_warnings == ()
 
 
@@ -514,7 +580,7 @@ def test_score_parser_does_not_accept_matched_requirement_without_evidence() -> 
             "role_fit": 7,
             "fit_band": "strong",
             "confidence": "medium",
-            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "eligibility": {"status": "eligible", "blockers": [], "warnings": []},
             "matched_signals": ["platform leadership"],
             "missing_signals": [],
             "transferable_signals": [],
@@ -536,9 +602,7 @@ def test_score_parser_does_not_accept_matched_requirement_without_evidence() -> 
     assert result.ok is True
     assert result.requirement_assessments[0].fit.kind == "not_assessed"
     assert result.requirement_assessments[0].tailoring.action == "low_priority"
-    assert result.trace.parser_warnings == (
-        "requirement_fit_matched_without_evidence:req-1",
-    )
+    assert result.trace.parser_warnings == ("requirement_fit_matched_without_evidence:req-1",)
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +630,7 @@ def test_score_job_happy_path_persists_and_publishes(profile_snapshot) -> None:
                 "reasoning": "Strong overlap.",
             }
         )
-        use_case = ScoreJobUseCase(repository=repo, llm=llm, publisher=bus)
+        use_case = _score_case(repository=repo, llm=llm, publisher=bus)
         outcome = use_case.score(job=_job(), profile_snapshot=profile_snapshot)
     finally:
         sub.unsubscribe()
@@ -592,7 +656,7 @@ def test_score_job_rejects_url_shaped_job_id(profile_snapshot) -> None:
     llm = _ScriptedLlm(_strong_llm_response())
 
     with pytest.raises(ValueError, match="canonical UUID"):
-        ScoreJobUseCase(
+        _score_case(
             repository=_MemoryRepo(),
             llm=llm,
         ).score(job=job, profile_snapshot=profile_snapshot)
@@ -604,7 +668,7 @@ def test_compute_rejects_cross_tenant_job_before_llm(profile_snapshot) -> None:
     llm = _ScriptedLlm(_strong_llm_response())
 
     with pytest.raises(ValueError, match="tenant_id"):
-        ScoreJobUseCase(repository=_MemoryRepo(), llm=llm).compute(
+        _score_case(repository=_MemoryRepo(), llm=llm).compute(
             job=_job(),
             profile_snapshot=profile_snapshot,
             tenant_id=TenantId("another-tenant"),
@@ -617,18 +681,17 @@ def test_score_job_omits_structured_output_token_cap(profile_snapshot) -> None:
     repo = _MemoryRepo()
     llm = _ScriptedLlm(_strong_llm_response())
 
-    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+    outcome = _score_case(repository=repo, llm=llm).score(
         job=_job(),
         profile_snapshot=profile_snapshot,
     )
 
     assert outcome.ok is True
     assert llm.kwargs[0]["max_tokens"] is None
-    assert llm.kwargs[0]["temperature"] == 0.0
-    assert llm.kwargs[0]["thinking_budget"] == 0
+    assert llm.kwargs[0]["response_schema"]["additionalProperties"] is False
 
 
-def test_requirement_fit_prompt_includes_education_evidence(tmp_path) -> None:
+def test_requirement_fit_prompt_keeps_canonical_evidence_once_including_education(tmp_path) -> None:
     score_repo = _MemoryRepo()
     report_repo = _MemoryRequirementFitRepo()
     job = {
@@ -636,6 +699,15 @@ def test_requirement_fit_prompt_includes_education_evidence(tmp_path) -> None:
         "full_description": "Bachelor's degree in Information Security or equivalent experience required.",
     }
     snapshot = _profile_snapshot_with_education(tmp_path)
+    profile = snapshot.as_dict()
+    profile["resume"]["achievement_evidence"] = [
+        {
+            "id": "unconfirmed-suggestion",
+            "source_text": "Unconfirmed proposal must stay outside the model's evidence",
+            "user_confirmed": False,
+        }
+    ]
+    snapshot = ProfileSnapshot(snapshot.tenant_id, snapshot.profile_id, snapshot.version, profile)
     canonical = JobAnalysis(
         role_framing="Security leadership.",
         inferred_seniority="senior",
@@ -688,21 +760,39 @@ def test_requirement_fit_prompt_includes_education_evidence(tmp_path) -> None:
         }
     )
 
-    outcome = ScoreJobUseCase(
+    outcome = _score_case(
         repository=score_repo,
         llm=llm,
         requirement_fit_repository=report_repo,
+        requirements=analysis.canonical.requirements,
     ).score(job=job, profile_snapshot=snapshot, employer_analysis=analysis)
 
     assert outcome.ok is True
-    prompt_payload = llm.calls[0][1].content
-    assert '"id": "education:security_degree"' in prompt_payload
-    assert "Bachelor of Science in Information Security | State University | 2016" in prompt_payload
+    captured = json.loads(llm.calls[0][1].content)
+    prompt_payload = captured["context"]["requirement_fit_inputs"]
+    from jobctrl.domain.profile.canonical_sources import profile_sources
+
+    expected = profile_sources(snapshot.as_dict())
+    evidence_ids = [source.source_id for source in expected]
+    assert captured["context"]["candidate_evidence_ids"] == evidence_ids
+    canonical_sources = {row["source_id"]: row["text"] for row in captured["sources"]}
+    assert len(canonical_sources) == len(captured["sources"])
+    assert [row for row in captured["sources"] if row["source_id"] in evidence_ids] == [
+        source.model_dump() for source in expected
+    ]
+    fit_inputs = json.loads(prompt_payload.split("\n", 1)[1])
+    assert set(fit_inputs) == {"employer_analysis_generation", "requirements"}
+    assert fit_inputs["employer_analysis_generation"] == analysis.generation
+    assert fit_inputs["requirements"] == [
+        {name: getattr(requirement, name) for name in ("id", "text", "tier", "weight", "evidence_span")}
+        for requirement in analysis.canonical.requirements
+    ]
+    assert outcome.score.trace.prompt_version == "score-fit-assessment-v11-single-evidence-source"
+    assert "unconfirmed-suggestion" not in llm.calls[0][1].content
+    assert "Unconfirmed proposal" not in llm.calls[0][1].content
+    assert "Bachelor of Science in Information Security" in canonical_sources["education:security_degree"]
     assert outcome.score is not None
-    assert (
-        "requirement_fit_matched_without_evidence:req-degree"
-        not in outcome.score.trace.parser_warnings
-    )
+    assert "requirement_fit_matched_without_evidence:req-degree" not in outcome.score.trace.parser_warnings
     assert report_repo.saved[0][1].assessments[0].fit.kind == "matched"
     assert report_repo.saved[0][1].resolved_fit_score is not None
     assert report_repo.saved[0][1].resolved_fit_score.value == 10
@@ -718,7 +808,7 @@ def test_score_job_includes_criteria_in_prompt_and_persists_snapshot(profile_sna
             "role_fit": 9,
             "fit_band": "excellent",
             "confidence": "high",
-            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "eligibility": {"status": "eligible", "blockers": [], "warnings": []},
             "matched_signals": ["security leadership"],
             "missing_signals": [],
             "transferable_signals": ["platform reliability"],
@@ -736,7 +826,7 @@ def test_score_job_includes_criteria_in_prompt_and_persists_snapshot(profile_sna
         },
     )
 
-    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+    outcome = _score_case(repository=repo, llm=llm).score(
         job=_job(),
         profile_snapshot=profile_snapshot,
         criteria=criteria,
@@ -744,9 +834,10 @@ def test_score_job_includes_criteria_in_prompt_and_persists_snapshot(profile_sna
 
     assert outcome.ok is True
     prompt_payload = llm.calls[0][1].content
-    assert "Prioritize platform security leadership." in prompt_payload
-    assert "Remote infrastructure roles." in prompt_payload
-    assert '"target_work_models": "remote"' in prompt_payload
+    prompt_sources = {row["source_id"]: row["text"] for row in json.loads(prompt_payload)["sources"]}
+    assert prompt_sources["target:roles:0"] == "Synthetic saved target"
+    assert "Prioritize platform security leadership." not in prompt_payload
+    assert "Remote infrastructure roles." not in prompt_payload
     persisted = repo.load(LOCAL_TENANT, JobId(_job()["job_id"]))
     assert persisted is not None
     assert persisted.criteria.criteria_text == "Prioritize platform security leadership."
@@ -762,21 +853,29 @@ def test_score_job_includes_requirement_fit_inputs_in_prompt(tmp_path) -> None:
     job = _job("https://example.com/job/requirement-fit-input")
     snapshot = _profile_snapshot_with_evidence(tmp_path)
 
-    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+    outcome = _score_case(
+        repository=repo,
+        llm=llm,
+        requirements=_employer_analysis(JobId(job["job_id"])).canonical.requirements,
+    ).score(
         job=job,
         profile_snapshot=snapshot,
         employer_analysis=_employer_analysis(JobId(job["job_id"])),
     )
 
     assert outcome.ok is True
-    prompt_payload = llm.calls[0][1].content
+    captured = json.loads(llm.calls[0][1].content)
+    prompt_payload = captured["context"]["requirement_fit_inputs"]
     assert "REQUIREMENT FIT INPUTS" in prompt_payload
     assert '"employer_analysis_generation": 3' in prompt_payload
     assert '"id": "req-platform"' in prompt_payload
     assert '"tier": "must_have"' in prompt_payload
     assert '"weight": 0.95' in prompt_payload
-    assert '"id": "ev_python_platform"' in prompt_payload
-    assert "Led Python platform reliability for distributed APIs." in prompt_payload
+    assert "ev_python_platform" in captured["context"]["candidate_evidence_ids"]
+    evidence = [row for row in captured["sources"] if row["source_id"] == "ev_python_platform"]
+    assert len(evidence) == 1
+    assert "Led Python platform reliability for distributed APIs." in evidence[0]["text"]
+    assert "profile_evidence" not in json.loads(prompt_payload.split("\n", 1)[1])
 
 
 def test_score_job_ignores_cross_tenant_employer_analysis(tmp_path) -> None:
@@ -788,7 +887,7 @@ def test_score_job_ignores_cross_tenant_employer_analysis(tmp_path) -> None:
         tenant_id=TenantId("another-tenant"),
     )
 
-    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+    outcome = _score_case(repository=repo, llm=llm).score(
         job=job,
         profile_snapshot=_profile_snapshot_with_evidence(tmp_path),
         employer_analysis=analysis,
@@ -824,10 +923,11 @@ def test_score_job_persists_resolved_requirement_fit_report(tmp_path) -> None:
         }
     )
 
-    outcome = ScoreJobUseCase(
+    outcome = _score_case(
         repository=score_repo,
         llm=llm,
         requirement_fit_repository=report_repo,
+        requirements=_employer_analysis(JobId(job["job_id"])).canonical.requirements,
     ).score(
         job=job,
         profile_snapshot=snapshot,
@@ -837,9 +937,7 @@ def test_score_job_persists_resolved_requirement_fit_report(tmp_path) -> None:
     assert outcome.ok is True
     assert outcome.score is not None
     assert outcome.score.fit_score.value == 10
-    assert outcome.score.breakdown.matched_signals == (
-        "Lead Python platform reliability across distributed APIs.",
-    )
+    assert outcome.score.breakdown.matched_signals == ("Lead Python platform reliability across distributed APIs.",)
     assert outcome.score.trace.resolution_reason == "requirement_fit_report"
     assert len(report_repo.saved) == 1
     tenant, report = report_repo.saved[0]
@@ -849,7 +947,7 @@ def test_score_job_persists_resolved_requirement_fit_report(tmp_path) -> None:
     assert report.employer_analysis_generation == 3
     assert report.profile_snapshot_version == snapshot.version
     assert report.scoring_policy_version == 1
-    assert report.formula_version == "requirement-fit-v1"
+    assert report.formula_version == "requirement-fit-v2-scoped"
     assert report.resolved_fit_score is not None
     assert report.resolved_fit_score.value == 10
     assert report.summary.weighted_fit == 1.0
@@ -885,10 +983,11 @@ def test_score_job_requirement_fit_missing_must_have_drives_low_score(tmp_path) 
         }
     )
 
-    outcome = ScoreJobUseCase(
+    outcome = _score_case(
         repository=score_repo,
         llm=llm,
         requirement_fit_repository=report_repo,
+        requirements=_employer_analysis(JobId(job["job_id"])).canonical.requirements,
     ).score(
         job=job,
         profile_snapshot=snapshot,
@@ -899,16 +998,126 @@ def test_score_job_requirement_fit_missing_must_have_drives_low_score(tmp_path) 
     assert outcome.score is not None
     assert outcome.score.fit_score.value == 1
     assert outcome.score.breakdown.fit_band == "poor"
-    assert outcome.score.breakdown.missing_signals == (
-        "Lead Python platform reliability across distributed APIs.",
-    )
+    assert outcome.score.breakdown.missing_signals == ("Lead Python platform reliability across distributed APIs.",)
     assert report_repo.saved[0][1].resolved_fit_score is not None
     assert report_repo.saved[0][1].resolved_fit_score.value == 1
 
 
+@pytest.mark.parametrize(
+    "scope,expected", [("resume", 4), ("eligibility", 10), ("logistics", 10), ("employer_condition", 10)]
+)
+def test_recorded_scope_controls_fit_without_changing_eligibility(tmp_path, scope, expected) -> None:
+    from tests.determination_fakes import job_interpretation
+
+    job = _job()
+    analysis = _employer_analysis(JobId(job["job_id"]))
+    first = analysis.canonical.requirements[0]
+    condition = first.model_copy(update={"id": "req-condition"})
+    analysis = replace(analysis, canonical=analysis.canonical.model_copy(update={"requirements": [first, condition]}))
+    interpretation = job_interpretation(analysis.canonical.requirements)
+    interpretation.requirements[1].scope = scope
+    citation = {"source_id": condition.id, "quote": condition.evidence_span, "exact_values": []}
+    llm = _ScriptedLlm(
+        {
+            **_strong_llm_response(),
+            "eligibility": {
+                "status": "blocked",
+                "blockers": [
+                    {
+                        "category": "qualification",
+                        "reason": "Explicit synthetic blocker",
+                        "citations": [citation],
+                    }
+                ],
+                "warnings": [],
+            },
+            "requirement_assessments": [
+                {
+                    "requirement_id": first.id,
+                    "requirement_text": first.text,
+                    "tier": first.tier,
+                    "weight": first.weight,
+                    "job_evidence_span": first.evidence_span,
+                    "fit": {"kind": "matched", "evidence_ids": ["ev_python_platform"], "strength": "direct"},
+                },
+                {
+                    "requirement_id": condition.id,
+                    "requirement_text": condition.text,
+                    "tier": condition.tier,
+                    "weight": condition.weight,
+                    "job_evidence_span": condition.evidence_span,
+                    "fit": {"kind": "blocked", "blocker": "Explicit synthetic blocker"},
+                },
+            ],
+        }
+    )
+    reports = _MemoryRequirementFitRepo()
+    outcome = _score_case(
+        llm=llm,
+        repository=_MemoryRepo(),
+        requirement_fit_repository=reports,
+        interpretation=interpretation,
+    ).score(job=job, profile_snapshot=_profile_snapshot_with_evidence(tmp_path), employer_analysis=analysis)
+    assert outcome.ok, outcome.error
+    assert outcome.score.fit_score.value == expected
+    assert outcome.score.breakdown.eligibility.hard_blockers == ("Explicit synthetic blocker",)
+    contribution = reports.saved[0][1].assessments[1].contribution
+    assert contribution.scope == scope
+    assert contribution.scope_source_id == interpretation._determination_id
+    assert contribution.max_points == (1.1875 if scope == "resume" else 0)
+
+
+@pytest.mark.parametrize("failure", ["missing", "foreign", "unbound", "context_only"])
+def test_invalid_scope_bindings_preserve_accepted_score_before_provider_work(tmp_path, failure) -> None:
+    from tests.determination_fakes import job_interpretation
+
+    job = _job()
+    analysis = _employer_analysis(JobId(job["job_id"]))
+    snapshot = _profile_snapshot_with_evidence(tmp_path)
+    repo, reports = _MemoryRepo(), _MemoryRequirementFitRepo()
+    accepted = _score_case(
+        repository=repo,
+        llm=_ScriptedLlm(_strong_llm_response()),
+        requirements=analysis.canonical.requirements,
+        requirement_fit_repository=reports,
+    ).score(job=job, profile_snapshot=snapshot, employer_analysis=analysis)
+    assert accepted.ok
+    interpretation = job_interpretation(analysis.canonical.requirements)
+    if failure == "missing":
+        interpretation.requirements = []
+    elif failure == "foreign":
+        interpretation.requirements[0].requirement_id = "foreign"
+    elif failure == "unbound":
+        interpretation._determination_id = ""
+    else:
+        interpretation.requirements[0].scope = "logistics"
+    llm = _ScriptedLlm(_strong_llm_response())
+    failed = _score_case(
+        repository=repo,
+        llm=llm,
+        interpretation=interpretation,
+        requirement_fit_repository=reports,
+    ).score(job=job, profile_snapshot=snapshot, employer_analysis=analysis)
+    assert not failed.ok
+    assert llm.calls == []
+    assert repo.load(LOCAL_TENANT, JobId(job["job_id"])) == accepted.score
+    assert len(reports.saved) == 1
+
+
 def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot) -> None:
     repo = _MemoryRepo()
-    llm = _ScriptedLlm(_strong_llm_response())
+    decision = _strong_llm_response()
+    cite = {"source_id": "posting", "quote": "Must already be authorized; no sponsorship.", "exact_values": []}
+    decision["eligibility"] = {
+        "status": "blocked",
+        "blockers": [
+            {"category": "work_authorization", "reason": "Model decision: sponsorship unavailable", "citations": [cite]}
+        ],
+        "warnings": [
+            {"category": "work_model_preference", "reason": "Model remote preference warning", "citations": [cite]}
+        ],
+    }
+    llm = _ScriptedLlm(decision)
     criteria = ScoringCriteria(
         min_fit_score=8,
         target_criteria="Remote only.",
@@ -923,7 +1132,7 @@ def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot
         "full_description": "Python role. Must already be authorized; no sponsorship. Office-based team.",
     }
 
-    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+    outcome = _score_case(repository=repo, llm=llm).score(
         job=job,
         profile_snapshot=profile_snapshot,
         criteria=criteria,
@@ -933,309 +1142,18 @@ def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot
     assert outcome.score is not None
     assert outcome.score.fit_score.value == 9
     assert outcome.score.breakdown.eligibility.status == "blocked"
-    assert any(
-        "sponsorship" in blocker
-        for blocker in outcome.score.breakdown.eligibility.hard_blockers
-    )
+    assert any("sponsorship" in blocker for blocker in outcome.score.breakdown.eligibility.hard_blockers)
     # A remote-vs-onsite work-model mismatch is a preference, not a hard
     # eligibility constraint; it must surface as a warning so the job stays
     # in the funnel for the user to judge rather than being silently dropped.
-    assert not any(
-        "remote" in blocker
-        for blocker in outcome.score.breakdown.eligibility.hard_blockers
-    )
-    assert any(
-        "remote" in warning
-        for warning in outcome.score.breakdown.eligibility.warnings
-    )
-
-
-def test_score_job_does_not_treat_numeric_prose_as_posted_compensation(profile_snapshot) -> None:
-    repo = _MemoryRepo()
-    llm = _ScriptedLlm(_strong_llm_response())
-    criteria = ScoringCriteria(
-        min_fit_score=8,
-        profile_preferences={
-            "compensation": {
-                "salary_range_min": "120,000",
-                "salary_expectation": "140,000",
-            },
-        },
-    )
-    job = {
-        **_job("https://example.com/job/no-posted-pay"),
-        "salary": "",
-        "full_description": (
-            "Lead 30+ engineers across 5 teams in an AI-first delivery model. "
-            "Own 202 platform services and mentor 12 staff engineers."
-        ),
-    }
-
-    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
-        job=job,
-        profile_snapshot=profile_snapshot,
-        criteria=criteria,
-    )
-
-    assert outcome.ok is True
-    assert outcome.score is not None
-    assert outcome.score.breakdown.eligibility.status == "eligible"
-    assert "posted compensation appears below profile minimum" not in (
-        outcome.score.breakdown.eligibility.hard_blockers
-    )
-
-
-def test_score_job_warns_when_explicit_posted_compensation_is_below_minimum(profile_snapshot) -> None:
-    repo = _MemoryRepo()
-    llm = _ScriptedLlm(_strong_llm_response())
-    criteria = ScoringCriteria(
-        min_fit_score=8,
-        profile_preferences={
-            "compensation": {
-                "salary_range_min": "120,000",
-                "salary_expectation": "120,000",
-            },
-        },
-    )
-    job = {
-        **_job("https://example.com/job/posted-pay"),
-        "salary": "$80k-$95k",
-        "full_description": "Senior engineering role.",
-    }
-
-    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
-        job=job,
-        profile_snapshot=profile_snapshot,
-        criteria=criteria,
-    )
-
-    assert outcome.ok is True
-    assert outcome.score is not None
-    assert outcome.score.breakdown.eligibility.status == "warning"
-    assert outcome.score.breakdown.eligibility.hard_blockers == ()
-    warning = next(
-        (
-            entry
-            for entry in outcome.score.breakdown.eligibility.warnings
-            if "posted compensation appears below profile minimum" in entry
-        ),
-        None,
-    )
-    assert warning is not None
-    # The audit trail must name the source and the parsed figure it judged.
-    assert "jobs.salary" in warning
-    assert "$95,000" in warning
-    assert "$120,000" in warning
-
-
-@pytest.mark.parametrize(
-    "blocker",
-    (
-        "Compensation range is below the candidate's expectation.",
-        "Pay is below the candidate minimum.",
-        "Expected earnings are below the target.",
-        "The total cash package is under the preferred range.",
-        "The salary range falls below the candidate's minimum expectation.",
-        "Compensation does not align with the candidate expectations.",
-    ),
-)
-def test_score_job_demotes_model_compensation_blocker_to_warning(
-    profile_snapshot,
-    blocker: str,
-) -> None:
-    response = _strong_llm_response()
-    response["eligibility"] = {
-        "status": "blocked",
-        "hard_blockers": [blocker],
-        "hard_blocker_categories": ["compensation_preference"],
-        "warnings": [],
-    }
-    outcome = ScoreJobUseCase(repository=_MemoryRepo(), llm=_ScriptedLlm(response)).score(
-        job={
-            **_job("https://example.com/job/model-salary-blocker"),
-            "salary": "",
-            "full_description": "Senior engineering role with compensation discussed later.",
-        },
-        profile_snapshot=profile_snapshot,
-        criteria=ScoringCriteria(min_fit_score=8),
-    )
-
-    assert outcome.ok is True
-    assert outcome.score is not None
-    eligibility = outcome.score.breakdown.eligibility
-    assert eligibility.status == "warning"
-    assert eligibility.hard_blockers == ()
-    assert eligibility.warnings == (blocker,)
-
-
-def test_score_job_preserves_mixed_language_constraint_despite_compensation_category(
-    profile_snapshot,
-) -> None:
-    blocker = "Compensation is below target and the candidate must speak German."
-    response = _strong_llm_response()
-    response["eligibility"] = {
-        "status": "blocked",
-        "hard_blockers": [blocker],
-        "hard_blocker_categories": ["compensation_preference"],
-        "warnings": [],
-    }
-
-    outcome = ScoreJobUseCase(repository=_MemoryRepo(), llm=_ScriptedLlm(response)).score(
-        job={
-            **_job("https://example.com/job/model-language-blocker"),
-            "salary": "",
-            "full_description": "Senior engineering role with German required.",
-        },
-        profile_snapshot=profile_snapshot,
-        criteria=ScoringCriteria(min_fit_score=8),
-    )
-
-    assert outcome.ok is True
-    assert outcome.score is not None
-    eligibility = outcome.score.breakdown.eligibility
-    assert eligibility.status == "blocked"
-    assert eligibility.hard_blockers == (blocker,)
+    assert not any("remote" in blocker for blocker in outcome.score.breakdown.eligibility.hard_blockers)
+    assert any("remote" in warning for warning in outcome.score.breakdown.eligibility.warnings)
 
 
 def _comp_criteria(desired_min: str) -> ScoringCriteria:
     return ScoringCriteria(
         profile_preferences={"compensation": {"salary_range_min": desired_min}},
     )
-
-
-def test_constraint_checker_hourly_pay_annualizes_and_does_not_false_block() -> None:
-    # Regression: "$50/hourly" is ~$104k/yr, not $50k. The old parser
-    # multiplied any amount < 1000 by 1000, fabricating a below-minimum hard
-    # blocker that silently dropped a truthful, high-fit job from the funnel.
-    assessment = ConstraintChecker().evaluate(
-        job={"title": "Engineer", "salary": "$50/hourly"},
-        criteria=_comp_criteria("80,000"),
-    )
-
-    assert assessment.status == "eligible"
-    assert assessment.hard_blockers == ()
-    assert assessment.warnings == ()
-
-
-def test_constraint_checker_hourly_below_minimum_is_warning_with_annualization_audit() -> None:
-    # An hourly rate is annualized under a fixed-hours assumption, so a
-    # below-minimum reading is a warning (never a hard blocker) and the audit
-    # trail records the annualized figure, the source, and the assumption.
-    assessment = ConstraintChecker().evaluate(
-        job={"title": "Engineer", "salary": "$50/hr"},
-        criteria=_comp_criteria("150,000"),
-    )
-
-    assert assessment.status == "warning"
-    assert assessment.hard_blockers == ()
-    assert len(assessment.warnings) == 1
-    warning = assessment.warnings[0]
-    assert "posted compensation appears below profile minimum" in warning
-    assert "$104,000" in warning
-    assert "$150,000" in warning
-    assert "jobs.salary" in warning
-    assert "2,080" in warning
-
-
-def test_constraint_checker_confident_annual_below_minimum_is_warning_with_source() -> None:
-    # Salary range is a preference, so even a confidently-parsed annual salary
-    # stays actionable and records the mismatch as an auditable warning.
-    assessment = ConstraintChecker().evaluate(
-        job={"title": "Engineer", "salary": "$40,000 per year"},
-        criteria=_comp_criteria("120,000"),
-    )
-
-    assert assessment.status == "warning"
-    assert assessment.hard_blockers == ()
-    assert len(assessment.warnings) == 1
-    warning = assessment.warnings[0]
-    assert "posted compensation appears below profile minimum" in warning
-    assert "$40,000" in warning
-    assert "$120,000" in warning
-    assert "jobs.salary" in warning
-    assert "period year" in warning
-
-
-def test_constraint_checker_monthly_pay_below_minimum_is_warning_not_hard_blocker() -> None:
-    # Monthly pay is annualized via a fixed x12 assumption, so it is a warning
-    # rather than a hard blocker even when the annualized figure is below floor.
-    assessment = ConstraintChecker().evaluate(
-        job={"title": "Engineer", "salary": "$6,000/month"},
-        criteria=_comp_criteria("120,000"),
-    )
-
-    assert assessment.status == "warning"
-    assert assessment.hard_blockers == ()
-    assert len(assessment.warnings) == 1
-    warning = assessment.warnings[0]
-    assert "$72,000" in warning
-    assert "period month" in warning
-
-
-def test_constraint_checker_remote_work_model_mismatch_is_warning_not_hard_blocker() -> None:
-    # A remote preference vs an onsite posting is a soft mismatch the user
-    # should judge, not a hard eligibility constraint that drops the job.
-    assessment = ConstraintChecker().evaluate(
-        job={
-            "title": "Engineer",
-            "location": "On-site Barcelona",
-            "full_description": "Office-based team; relocation required.",
-        },
-        criteria=ScoringCriteria(profile_preferences={"target_work_models": "remote"}),
-    )
-
-    assert assessment.status == "warning"
-    assert assessment.hard_blockers == ()
-    assert any("remote" in warning for warning in assessment.warnings)
-
-
-def test_constraint_checker_weekly_pay_annualizes_and_does_not_false_block() -> None:
-    # Regression: the posted-comp parser classifies only hour/month/year, so a
-    # salary-field "$15,000/week" (~$780k/yr) was read as a raw annual $15k and
-    # could fabricate a below-minimum hard blocker. Weekly pay must annualize
-    # (x52) and never hard-block.
-    assessment = ConstraintChecker().evaluate(
-        job={"title": "Engineer", "salary": "$15,000/week"},
-        criteria=_comp_criteria("120,000"),
-    )
-
-    assert assessment.status == "eligible"
-    assert assessment.hard_blockers == ()
-    assert assessment.warnings == ()
-
-
-def test_constraint_checker_daily_rate_below_minimum_is_warning_not_hard_blocker() -> None:
-    # A daily rate annualizes under a fixed working-days assumption, so a
-    # below-minimum reading is a warning (never a hard blocker) and the audit
-    # trail records the annualized figure and the assumption.
-    assessment = ConstraintChecker().evaluate(
-        job={"title": "Engineer", "salary": "$300/day"},
-        criteria=_comp_criteria("120,000"),
-    )
-
-    assert assessment.status == "warning"
-    assert assessment.hard_blockers == ()
-    assert len(assessment.warnings) == 1
-    warning = assessment.warnings[0]
-    assert "$78,000" in warning
-    assert "period day" in warning
-    assert "260" in warning
-
-
-def test_constraint_checker_bare_amount_without_period_is_still_read_as_annual() -> None:
-    # A bare salary-field amount with no sub-annual marker keeps the existing
-    # parsing behavior: it is read as annual, but remains a preference warning.
-    assessment = ConstraintChecker().evaluate(
-        job={"title": "Engineer", "salary": "$13,000"},
-        criteria=_comp_criteria("120,000"),
-    )
-
-    assert assessment.status == "warning"
-    assert assessment.hard_blockers == ()
-    assert len(assessment.warnings) == 1
-    warning = assessment.warnings[0]
-    assert "$13,000" in warning
-    assert "read as annual" in warning
 
 
 def test_score_job_resolves_final_score_from_policy_not_llm_overall(profile_snapshot) -> None:
@@ -1248,7 +1166,7 @@ def test_score_job_resolves_final_score_from_policy_not_llm_overall(profile_snap
             "role_fit": 2,
             "fit_band": "excellent",
             "confidence": "high",
-            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "eligibility": {"status": "eligible", "blockers": [], "warnings": []},
             "matched_signals": ["Python"],
             "missing_signals": ["senior ownership", "platform depth"],
             "transferable_signals": [],
@@ -1257,7 +1175,7 @@ def test_score_job_resolves_final_score_from_policy_not_llm_overall(profile_snap
         }
     )
 
-    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+    outcome = _score_case(repository=repo, llm=llm).score(
         job=_job("https://example.com/job/low-dimensions"),
         profile_snapshot=profile_snapshot,
     )
@@ -1298,23 +1216,24 @@ def test_score_job_resolves_final_score_from_policy_not_llm_overall(profile_snap
 def test_score_job_returns_error_on_unparseable_response(profile_snapshot) -> None:
     repo = _MemoryRepo()
     # Payload missing the required ``score`` field — parser flags ok=False.
-    llm = _ScriptedLlm({"keywords": ["a"], "reasoning": "missing score"})
-    use_case = ScoreJobUseCase(repository=repo, llm=llm)
+    llm = _ScriptedLlm(*[{"keywords": ["a"], "reasoning": "missing score"} for _ in range(3)])
+    use_case = _score_case(repository=repo, llm=llm)
 
     outcome = use_case.score(job=_job(), profile_snapshot=profile_snapshot)
     assert outcome.ok is False
     assert outcome.score is None
-    assert "missing" in outcome.error.lower()
+    assert outcome.error == "semantic_determination:schema_violation"
+    assert len(llm.calls) == 3
     assert repo.load(LOCAL_TENANT, JobId(_job()["job_id"])) is None
 
 
 def test_score_job_handles_llm_error_as_parse_failure(profile_snapshot) -> None:
     repo = _MemoryRepo()
-    use_case = ScoreJobUseCase(repository=repo, llm=_ExplodingLlm())
+    use_case = _score_case(repository=repo, llm=_ExplodingLlm())
 
     outcome = use_case.score(job=_job(), profile_snapshot=profile_snapshot)
     assert outcome.ok is False
-    assert "provider down" in outcome.error
+    assert outcome.error == "semantic_determination:provider_error"
     assert repo.load(LOCAL_TENANT, JobId(_job()["job_id"])) is None
 
 
@@ -1338,9 +1257,11 @@ def test_score_job_bumps_version_on_rescore(profile_snapshot) -> None:
             "reasoning": "rescored.",
         },
     )
-    use_case = ScoreJobUseCase(repository=repo, llm=llm)
+    use_case = _score_case(repository=repo, llm=llm)
     use_case.score(job=_job(), profile_snapshot=profile_snapshot)
-    second = use_case.score(job=_job(), profile_snapshot=profile_snapshot)
+    second = use_case.score(
+        job={**_job(), "full_description": "A changed canonical posting"}, profile_snapshot=profile_snapshot
+    )
 
     assert second.ok is True
     assert second.score is not None
@@ -1406,7 +1327,7 @@ def test_correct_score_updates_policy_and_subsequent_score_traces_anchor(
             "role_fit": 5,
             "fit_band": "plausible",
             "confidence": "medium",
-            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "eligibility": {"status": "eligible", "blockers": [], "warnings": []},
             "matched_signals": ["Python"],
             "missing_signals": ["platform leadership"],
             "transferable_signals": [],
@@ -1420,7 +1341,7 @@ def test_correct_score_updates_policy_and_subsequent_score_traces_anchor(
             "role_fit": 7,
             "fit_band": "strong",
             "confidence": "medium",
-            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "eligibility": {"status": "eligible", "blockers": [], "warnings": []},
             "matched_signals": ["Python", "platform"],
             "missing_signals": [],
             "transferable_signals": [],
@@ -1428,7 +1349,7 @@ def test_correct_score_updates_policy_and_subsequent_score_traces_anchor(
             "reasoning": "Subsequent score should cite the learned anchor.",
         },
     )
-    scorer = ScoreJobUseCase(repository=repo, llm=llm, policy_repository=policy_repo)
+    scorer = _score_case(repository=repo, llm=llm, policy_repository=policy_repo)
 
     first = scorer.score(job=_job(url), profile_snapshot=profile_snapshot)
     assert first.score is not None

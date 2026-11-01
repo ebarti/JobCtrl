@@ -47,8 +47,11 @@ import {
   createApplicationEmailFeedbackIngested,
   createApplicationOutcomeRecorded,
   createApplicationSubmitted,
+  createApplicationFailed,
+  createDryRunCompleted,
   createApplyReviewDecisionRecorded,
   createApplyRunStarted,
+  createApplyRunEventRecorded,
   createOutcomeSuggestionDecided,
 } from "../src/events/apply.js";
 import { createStageStarted, createStageCompleted } from "../src/events/orchestration.js";
@@ -448,7 +451,7 @@ describe("Scoring events", () => {
       staleReason: "scoring_policy_changed",
       oldPolicyVersion: 1,
       newPolicyVersion: 2,
-      nextAction: "jobctrl run score --rescore",
+      nextAction: "jobctrl score --rescore",
     });
     expect(event.eventType).toBe("ScoreRescoreRequested");
     expect(event.payload.oldPolicyVersion).toBe(1);
@@ -574,16 +577,51 @@ describe("Preparation events", () => {
 });
 
 describe("Apply events", () => {
-  it("ApplicationSubmitted has required fields", () => {
+  it.each([0, 2, null])("DryRunCompleted preserves worker_id %s and the dry-run verdict", (workerId) => {
+    const event = createDryRunCompleted(LOCAL_TENANT, {
+      jobId: "j1",
+      run_id: "r1",
+      result: "dry_run_complete",
+      dry_run: true,
+      finished_at: "2026-09-11T10:00:00Z",
+      duration_ms: null,
+      worker_id: workerId,
+      model: null,
+      coverage: "partial",
+      blocked_channels: [],
+      allowed_navigations: [],
+      materials_generation: null,
+      application_url: null,
+      profile_version: null,
+    });
+    expect(event.eventType).toBe("DryRunCompleted");
+    expect(event.tenantId).toBe(LOCAL_TENANT);
+    expect(event.payload).toMatchObject({ run_id: "r1", result: "dry_run_complete", dry_run: true });
+    expect(event.payload.worker_id).toBe(workerId);
+    expect(event.payload).not.toHaveProperty("appliedAt");
+    expect(DOMAIN_EVENT_TYPES).toContain(event.eventType);
+  });
+  it.each([0, null])("ApplicationSubmitted preserves launcher fields (worker %s)", (workerId) => {
     const event = createApplicationSubmitted(LOCAL_TENANT, {
       jobId: "j1",
-      runId: "r1",
-      appliedAt: "2025-01-01T00:00:00Z",
-      verificationConfidence: 0.95,
+      run_id: "r1",
+      result: "applied",
+      finished_at: "2025-01-01T00:00:00Z",
+      duration_ms: null,
+      worker_id: workerId,
+      model: null,
     });
     expect(event.eventType).toBe("ApplicationSubmitted");
     expect(event.tenantId).toBe("local");
-    expect(event.payload.verificationConfidence).toBe(0.95);
+    expect(event.payload).toEqual({
+      jobId: "j1",
+      run_id: "r1",
+      result: "applied",
+      finished_at: "2025-01-01T00:00:00Z",
+      duration_ms: null,
+      worker_id: workerId,
+      model: null,
+    });
   });
 
   it("ApplyRunStarted has required fields", () => {
@@ -848,7 +886,7 @@ describe("All events carry tenantId", () => {
       }),
     () =>
       createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
-        jobKey: "j1",
+        jobId: "j1",
         evidenceId: "e1",
         suggestionId: "s1",
         provider: "gmail",
@@ -860,9 +898,12 @@ describe("All events carry tenantId", () => {
     () =>
       createApplicationSubmitted(LOCAL_TENANT, {
         jobId: "j1",
-        runId: "r1",
-        appliedAt: "t",
-        verificationConfidence: 0.9,
+        run_id: "r1",
+        result: "applied",
+        finished_at: "t",
+        duration_ms: 4000,
+        worker_id: 0,
+        model: "test-model",
       }),
     () =>
       createStageStarted(LOCAL_TENANT, {
@@ -1136,9 +1177,12 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
       }).eventType,
       createApplicationSubmitted(LOCAL_TENANT, {
         jobId: "j",
-        runId: "r",
-        appliedAt: "t",
-        verificationConfidence: 0.5,
+        run_id: "r",
+        result: "applied",
+        finished_at: "t",
+        duration_ms: null,
+        worker_id: null,
+        model: null,
       }).eventType,
       createApplyReviewDecisionRecorded(LOCAL_TENANT, {
         jobKey: "j",
@@ -1174,7 +1218,7 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         reasonPresent: false,
       }).eventType,
       createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
-        jobKey: "j",
+        jobId: "j",
         evidenceId: "e",
         suggestionId: "s",
         provider: "gmail",
@@ -1226,4 +1270,38 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
       expect(DOMAIN_EVENT_TYPES).toContain(eventType);
     }
   });
+});
+
+
+describe("Apply event privacy", () => {
+  it.each(["event_type", "eventType"])("omits private AgentResult content carried by %s", (eventKey) => {
+    const event = createApplyRunEventRecorded(LOCAL_TENANT, {
+      runId: "owned-email-run",
+      event: { [eventKey]: "AgentResult", event_id: 7, level: "info",
+        message: "private-agent-canary", payload: { raw_output: "private-agent-canary" } },
+    });
+    expect(event.payload.runId).toBe("owned-email-run");
+    expect(event.payload.event).toMatchObject({ event_id: 7, level: "info" });
+    expect(JSON.stringify(event)).not.toContain("private-agent-canary");
+  });
+});
+
+
+it.each(["AssistantText", "ToolUse", "ApplyTerminalDetermination"])("redacts private %s content in wrapped notifications", (eventType) => {
+  for (const key of ["event_type", "eventType"]) {
+    const event = createApplyRunEventRecorded(LOCAL_TENANT, { runId: "run-owned",
+      event: { [key]: eventType, message: "private-stream-canary", payload: { input_preview: "private-stream-canary" } } });
+    expect(event.payload.runId).toBe("run-owned");
+    expect(JSON.stringify(event)).not.toContain("private-stream-canary");
+  }
+});
+
+it("bounds historical provider exceptions in direct and wrapped failure factories", () => {
+  const result = { kind: "failed", error: "email_send_outcome_ambiguous:private-provider-canary", retryable: false };
+  const event = createApplicationFailed(LOCAL_TENANT, { jobId: "job-owned", runId: "run-owned", result, attemptNumber: 1 });
+  expect(event.payload.result).toEqual({ ...result, error: "email_send_outcome_ambiguous" });
+  expect(event.payload.jobId).toBe("job-owned");
+  const wrapped = createApplyRunEventRecorded(LOCAL_TENANT, { runId: "run-owned",
+    event: { event_type: "ApplicationFailed", payload: { result } } });
+  expect(JSON.stringify(wrapped)).not.toContain("private-provider-canary");
 });

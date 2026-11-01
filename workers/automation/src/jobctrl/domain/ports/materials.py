@@ -1,6 +1,7 @@
 """Driven ports for the Materials Generation context.
 
-See ddd-target.md §5.5. Two ports here:
+The local tailoring application uses these capabilities alongside the analysis,
+policy, provenance and transaction ports below:
 
   ``MaterialsRepository`` — persistence for the :class:`MaterialsSet`
                              aggregate root (one aggregate per ``(tenant,
@@ -8,13 +9,15 @@ See ddd-target.md §5.5. Two ports here:
   ``PdfRendererPort``      — render text artifacts to PDF; the resume HTML
                              adapter and cover-letter adapter wrap Playwright
                              headless Chromium.
-
-Both protocols are tenant-scoped: local adapters accept ``tenant_id`` and
-ignore it (single-tenant); hosted adapters use it for row isolation.
+  ``ArtifactTextWriter``   — write exact candidate and inspection text to the
+                             local generation paths chosen by the use case.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from pathlib import Path
 from typing import Protocol
 
 from jobctrl.domain.identifiers import JobId
@@ -25,13 +28,12 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysisDraft,
 )
 from jobctrl.domain.materials.entities import Artifact
-from jobctrl.domain.materials.policy import TailoringPolicy, TailoringPolicyRollbackReason
-from jobctrl.domain.materials.provenance import BulletProvenanceSet
-from jobctrl.domain.materials.value_objects import (
-    ArtifactStatus,
-    ArtifactType,
-    RenderFormat,
+from jobctrl.domain.materials.policy import (
+    TailoringPolicy, TailoringPolicyRollbackReason, TailoringPolicyRollbackResult,
 )
+from jobctrl.domain.materials.provenance import BulletProvenanceSet
+from jobctrl.domain.ports.artifact_review import ArtifactStatus
+from jobctrl.domain.materials.value_objects import ArtifactType, RenderFormat
 from jobctrl.domain.materials.voice import VoiceRequest, VoiceResult
 from jobctrl.domain.operations.learning import (
     LearningRecommendationDecision,
@@ -39,6 +41,18 @@ from jobctrl.domain.operations.learning import (
 )
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import TenantId
+
+
+class ArtifactTextWriter(Protocol):
+    """Write exact UTF-8 text to a caller-selected local generation path.
+
+    Creates missing parent directories and returns the on-disk byte count when
+    available. Write failures propagate; this capability neither registers nor
+    accepts artifacts. The application use case owns those transitions through
+    ``MaterialsRepository`` and ``UnitOfWork``.
+    """
+
+    def write_text(self, path: Path, text: str) -> int | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -63,11 +77,9 @@ class UnitOfWork(Protocol):
     back to the per-call-commit behaviour of each repository.
     """
 
-    def __enter__(self) -> "UnitOfWork":
-        ...
+    def __enter__(self) -> "UnitOfWork": ...
 
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool | None:
-        ...
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +141,21 @@ class MaterialsRepository(Protocol):
           * Persisting every artifact slot atomically with the parent
             row. SQLite uses a transaction; the cloud adapter will use
             an outbox.
+        """
+        ...
+
+    def write_transaction(self) -> AbstractContextManager[None]:
+        """Serialize material authority checks and writes with other writers."""
+        ...
+
+    def publish_rendered_pdf(
+        self, expected: MaterialsSet, artifact: Artifact, source_sha256: str,
+        *, commit_guard: Callable[[], None] | None = None,
+    ) -> MaterialsSet | None:
+        """Publish only if the approved source and PDF slot are still current.
+
+        The read, comparison, and write must share one writer transaction with
+        other material and Apply-intent writers. Return ``None`` for stale input.
         """
         ...
 
@@ -239,10 +266,12 @@ class TailoringPolicyRepository(Protocol):
         tenant_id: TenantId,
         *,
         target_version: int,
+        expected_current_version: int,
+        command_id: str,
         reason: TailoringPolicyRollbackReason,
         rolled_back_at: str,
-    ) -> TailoringPolicy:
-        """Append a current revision that restores a prior effective policy."""
+    ) -> TailoringPolicyRollbackResult:
+        """Restore the reviewed transition once, or replay its durable receipt."""
         ...
 
 
@@ -449,6 +478,7 @@ class PdfRendererPort(Protocol):
         cover_letter_text: str,
         output_path: str,
         created_at: str,
+        settings: dict | None = None,
     ) -> Artifact:
         """Render plain-text cover letter to PDF at ``output_path``."""
         ...
@@ -458,6 +488,7 @@ __all__ = [
     "AnalysisDraftPort",
     "AnalysisSynthesizerPort",
     "ArtifactStatus",
+    "ArtifactTextWriter",
     "ArtifactType",
     "BulletProvenanceRepository",
     "EmployerAnalysisRepository",

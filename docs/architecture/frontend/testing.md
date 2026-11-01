@@ -55,7 +55,56 @@ graph TB
   `DomainEvent` union is plain TypeScript, not Zod, so it is not among
   these (§7.2).
 
+The boundary runner (`corepack pnpm web:lint:test`) permits canonical DTO,
+schema, constant and domain imports without routing exemptions. Its independent
+negative controls retain API-client, Query/Zustand, browser-port, dependency,
+barrel and stale-exemption enforcement. It inspects the actual tsconfig/generated
+route program, with direct loader-access controls for any/unresolved context,
+casts, aliases, nested destructuring, bracket access and unresolved barrels.
+Expression fallbacks, destructuring defaults, member assignments, computed
+capability slots and container/destructured runtime exports have independent
+controls for routes and views, with resolved and missing package declarations.
+Array spread/rest, awaited values and forwarding calls have independent
+source-located controls, including conditional/mutable callees and capability
+containers. Positive controls retain context-owned helper handoffs and harmless
+array positions.
+Loop bindings (including nested destructuring, assignments and `for await`),
+comma results/aliases and capability storage in instance, static or private
+class fields (including constructor/method writes) have separate generated-loader
+and view controls. Comma-result barrels are checked with both resolved and
+missing package declarations.
+Mixed default/named imports (including named type-only bindings), ordinary
+parameter defaults, constructor parameter properties, capability-bearing method
+receivers and raw context-helper returns through `any` have generated-program
+negative controls. Positive controls preserve harmless defaults, container
+methods, local shadowing and DTO-returning context helpers.
+These require boundary diagnostics at actionable source locations independently
+of compiler diagnostics; compiler-clean `any` cannot authorize a capability.
+Generated-route composition tests exercise loader-to-API/cache handoff, tenant
+separation, warm/cold caches, dependency changes and failed reads/recovery.
+Hook tests retain enabled/select/refetch policy; shell navigation scenarios
+cover passive reads, reload/Back and transport failure recovery against the owned
+synthetic API. Browser execution and product QA remain required checks.
+Type-level read-hook tests compare
+inferred results to canonical DTOs; readonly Jobs stage input remains a frontend
+refinement rather than a duplicate schema.
+
 These tests do not mount React components.
+
+Pure files explicitly select Node with `// @vitest-environment node`; tests that
+need browser behavior retain jsdom. Both environments reject unexpected network
+requests through MSW. DOM setup, React cleanup, and browser polyfills load only
+for jsdom files. Tests using the shared provider render helper also install the
+default API handlers and interview fixtures. Teardown unmounts React before
+resetting handlers and fixture state. The upstream axe assertion remains
+synchronous and loads its implementation when used.
+
+The boundary regression suite runs two files through Node's test runner with
+`--test-concurrency=2`: module ownership/generated-route controls and capability
+handoff/flow controls. Each process uses independent in-memory fixtures and
+fresh TypeScript programs; every real-program case still requests semantic
+diagnostics for the complete graph. The standalone production boundary check
+remains an independent cold run.
 
 ## 10.3 Component & Hook Tests (Vitest + React Testing Library + MSW)
 
@@ -95,6 +144,18 @@ per case. Event-stream tests use `FakeEventStreamPort` from
 
 ## 10.4 End-to-End Tests (Playwright)
 
+Resume-review lifecycle coverage spans the Apply controller, Materials document
+modules, browser interactions and canonical API persistence. The controller's
+colocated tests cover tenant/job/source identity, stale cache responses,
+independent comments, normalized save acknowledgements and approval preparation.
+The `artifact-comparison.spec.ts` browser suite preserves later typing and undo
+through delayed responses, exercises real multiline HTML paste and reload, and
+requires recovery from save conflicts and failed renders before authorization.
+Its controlled HTTP responses isolate the session from providers/renderers;
+canonical artifact bytes and approval/audit preservation are checked separately
+by the API suites listed in [Frontend QA](../../developer/qa/frontend.md).
+
+
 The suite has **18** spec files under `apps/web/e2e/tests/` today:
 `analytics`, `artifact-comparison`, `dashboard`, `dry-run`, `evidence-map`,
 `interview-prep`, `jobs-bulk`, `jobs-drawer`, `materials`,
@@ -108,8 +169,8 @@ critical flows:
 2. **Job Detail workspace** → click a row → the full route workspace opens with
    score, stages, artifacts, and a back action; returning preserves the URL filter.
 3. **Soft-delete + restore** → bulk-select 3 jobs → delete → confirm
-   removal from active list → switch to "deleted" tab → restore → confirm
-   re-appearance.
+   removal from the Active-filtered list → set the **Job state** column filter
+   to **Deleted** → restore → confirm re-appearance.
 4. **Profile edit + Plate baseline editor** → load profile → edit a field →
    save → baseline resume HTML is refetched with a new cache key and remains
    rendered in the Profile Plate editor.
@@ -122,9 +183,15 @@ critical flows:
    timeline → simulated `DryRunComplete` event closes the run.
 8. **Settings update** → change a setting → confirm persistence.
 
-Playwright is configured with **per-test isolated SQLite databases**
-seeded from fixture files; the `apps/api` boots against the test DB; the
-test interacts with the rendered web app at `http://127.0.0.1:5173`.
+Each main web Playwright invocation owns a disposable workspace with a seeded
+SQLite database and its own API and web servers. Tests share that database
+serially and use fresh browser contexts. By default the web server builds a fresh production
+bundle inside the workspace and serves it through Vite preview, retaining the
+same-origin API and SSE proxy. `JOBCTRL_E2E_WEB_SERVER=dev` selects Vite's
+development server for small focused runs where a fresh build would dominate.
+The default API/web ports are `8767`/`5174`; the owning
+[development commands](../../local-development.md#frontend-test-pyramid)
+describe isolated runs and overrides.
 
 ## 10.5 Storybook (Component-Driven Development)
 
@@ -166,8 +233,8 @@ high-risk surfaces; the current source-derived inventory lives in
 `docs/local-reliability-qa.md`. Storybook's a11y addon enforces **zero critical
 and serious axe violations** across stories. A story that exercises a
 pre-existing production defect may set `parameters.a11y.test = "off"` only
-with a matching entry in the "Frontend Accessibility Backlog" in
-`docs/backlog.md`, which owns the live deferral inventory.
+with a matching [GitHub issue](https://github.com/ebarti/JobCtrl/issues) recording
+the story path, affected production file and defect type.
 
 ## 10.8 Primitive Ownership And Non-Goals
 
@@ -187,29 +254,37 @@ with a matching entry in the "Frontend Accessibility Backlog" in
 ## 10.9 CI Pipeline (Cross-Reference)
 
 The GitHub Actions TypeScript workflow (`.github/workflows/typescript.yml`)
-runs, in order:
+has independent API, web, Storybook and E2E jobs. After locked dependency setup:
 
-1. `pnpm -r check` (workspace typecheck, including `apps/web`). The
-   compile-time guards (`Record<DomainEventType, InvalidationHandler>`
-   exhaustiveness, etc.) fire here — this is the CI-enforced parity guard.
-2. `pnpm --filter @jobctrl/api test` (the API Vitest suite; API only).
-3. `pnpm --filter @jobctrl/web test` (web unit and integration coverage).
-4. `pnpm --filter @jobctrl/web test-d` (web type assertions).
-5. `pnpm --filter @jobctrl/web build` (Vite production build).
-6. `pnpm --filter @jobctrl/web storybook:build` (static Storybook build).
-7. Install Chromium for both the Node Playwright E2E runner and the locked
-   Python Playwright runtime used by API-backed preview routes.
-8. `pnpm --filter @jobctrl/web e2e` (browser coverage against the local API
-   and web servers).
-9. `pnpm --filter @jobctrl/web storybook:test` (Storybook test runner —
-   play functions + `@storybook/addon-a11y` axe checks).
+- The API job checks shared contracts, API client, domain types and API, then
+  tests domain types and API behavior with the locked worker available.
+- The web job runs `corepack pnpm web:lint` and `web:lint:test`, then
+  `web:check`, `web:test`, `web:test-d` and `web:build` in that order.
+  Compile-time guards such as
+  `Record<DomainEventType, InvalidationHandler>` enforce exhaustiveness here.
+- The Storybook job builds the stories, installs Chromium and runs
+  `web:storybook:test` for play functions and axe checks.
+- The E2E job installs Node and locked Python Chromium runtimes, then runs
+  `web:e2e` against the isolated fixture API and the selected real API/worker
+  RPC scenarios in a separate owned workspace.
 
-Not yet gated in CI (run locally / pre-merge; tracked in `docs/backlog.md`):
-the web Vitest unit + integration suite — including the event-handler and
-stage-state parity tests (§10.2) — and ESLint. Chromatic / Loki visual
-regression is named-not-built (§10.5). The
-frontend's parity tests are the analogue of the backend's
-`scripts/check-domain-type-parity.py`; today their CI-enforced half is the
-`pnpm -r check` typecheck, with the runtime backstop running locally.
+Dependency-boundary enforcement from
+[#895](https://github.com/ebarti/JobCtrl/issues/895) is delivered through
+`corepack pnpm web:lint` and its boundary regression suite, and runs in the
+TypeScript CI web job. Chromatic / Loki visual
+regression is named-not-built (§10.5). The frontend's parity tests are the
+analogue of the backend's `scripts/check-domain-type-parity.py`; both the
+typecheck and the web Vitest runtime backstop run in CI.
 
 ---
+
+### Saved posting availability coverage
+
+The availability component/mutation tests cover latest uncertainty alongside
+prior successful evidence, overdue/offline explanation, port dispatch, queued
+feedback, tenant-scoped invalidation, optimistic rollback and accessibility.
+Registry-derived event fixtures cover observation and intentional internal lease
+no-op handling. Product QA additionally drives the real worker/API/CLI and
+rendered Job Detail through active, unknown and closed-to-active synthetic
+transport responses; builds or component tests alone do not establish that
+workflow path.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, readFileSync } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -135,6 +135,8 @@ const PYTHON_RUNTIME_NON_RUNTIME_PATHS = new Set([
   "opentelemetry/sdk/metrics/_internal/exponential_histogram/mapping/ieee_754.md",
   "playwright/driver/README.md",
   "playwright/driver/package/README.md",
+  "playwright/driver/package/lib/tools/skills",
+  "typer/.agents",
 ]);
 
 function invariant(condition, message) {
@@ -491,7 +493,7 @@ function componentRoot(payloadRoot, contracts, componentId) {
   return path.join(payloadRoot, relativePath);
 }
 
-async function writeFixtureComponents(payloadRoot, contracts) {
+async function writeFixtureComponents(payloadRoot, contracts, sourceRoot) {
   for (const [componentId, relativeRoot] of contracts.componentPaths) {
     const root = path.join(payloadRoot, relativeRoot);
     await mkdir(root, { recursive: true, mode: 0o755 });
@@ -500,6 +502,7 @@ async function writeFixtureComponents(payloadRoot, contracts) {
         await writeFile(path.join(root, name), `#!/bin/sh\necho fixture:${name}:${contracts.versions[componentId]}\n`, { mode: 0o755 });
         await chmod(path.join(root, name), 0o755);
       }
+      await copySchemaTransitionContract(sourceRoot, root);
       continue;
     }
     const executable = ["jobctrl-launcher", "node-runtime", "python-runtime", "temporal-runtime", "playwright-mcp"].includes(componentId);
@@ -507,6 +510,19 @@ async function writeFixtureComponents(payloadRoot, contracts) {
     await writeFile(path.join(root, filename), `fixture:${componentId}:${contracts.versions[componentId]}\n`, { mode: executable ? 0o755 : 0o644 });
     await chmod(path.join(root, filename), executable ? 0o755 : 0o644);
   }
+}
+
+// This declaration is inventoried and signed alongside the launcher. The
+// transition controller refuses a payload without this exact schema contract.
+export async function copySchemaTransitionContract(sourceRoot, launcherRoot) {
+  const source = path.join(sourceRoot, "launcher", "schema-transition.json");
+  const sourceInfo = await lstat(source);
+  invariant(sourceInfo.isFile() && !sourceInfo.isSymbolicLink(), "schema transition declaration must be a regular file");
+  const contents = await readFile(source);
+  invariant(contents.equals(Buffer.from('{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":15}\n')), "schema transition declaration does not match v14-to-v15 contract");
+  const target = path.join(launcherRoot, "schema-transition.json");
+  await writeFile(target, contents, { mode: 0o644, flag: "wx" });
+  await chmod(target, 0o644);
 }
 
 function shouldExcludeSourcePath(relativePath) {
@@ -825,7 +841,7 @@ async function assembleExternalRuntimes(payloadRoot, contracts, cacheDirectory, 
   await chmod(path.join(temporalRoot, "temporal"), 0o755);
 
   const chromiumRoot = componentRoot(payloadRoot, contracts, "chromium-core");
-  const headlessRevisionRoot = path.join(chromiumRoot, "chromium_headless_shell-1208");
+  const headlessRevisionRoot = path.join(chromiumRoot, "chromium_headless_shell-1248");
   const headlessEntries = await extractVerifiedArchive({
     archivePath: archiveById.get("chromium-core-headless-archive"),
     lock: lockById.get("chromium-core-headless-archive"),
@@ -1189,6 +1205,9 @@ async function writeGeneratedComponents(payloadRoot, root, contracts, sourceDate
   await chmod(path.join(launcherRoot, "jobctrl-installer"), 0o755);
   await copyFile(path.join(root, "launcher", "runtime-manifest.json"), path.join(launcherRoot, "runtime-manifest.json"));
   await chmod(path.join(launcherRoot, "runtime-manifest.json"), 0o644);
+  await copyFile(path.join(root, "launcher", "update-protocol.json"), path.join(launcherRoot, "update-protocol.json"));
+  await chmod(path.join(launcherRoot, "update-protocol.json"), 0o644);
+  await copySchemaTransitionContract(root, launcherRoot);
 
   const pdfjsRoot = componentRoot(payloadRoot, contracts, "pdfjs-renderer");
   await mkdir(pdfjsRoot, { recursive: true, mode: 0o755 });
@@ -1384,12 +1403,18 @@ export async function collectPayloadNpmContributors(payloadRoot, nodeModules, { 
   return merged;
 }
 
-async function collectMcpNodeContributors(payloadRoot, contracts) {
+export async function collectMcpNodeContributors(payloadRoot, contracts) {
   const mcpRoot = componentRoot(payloadRoot, contracts, "playwright-mcp");
+  // This metadata came from the hash-verified MCP archive. Use its exact
+  // dependency instead of a second, easily stale copy of the core version.
+  const mcpPackage = JSON.parse(await readFile(path.join(mcpRoot, "node_modules", "@playwright", "mcp", "package.json"), "utf8"));
+  invariant(mcpPackage.name === "@playwright/mcp" && mcpPackage.version === contracts.versions["playwright-mcp"], "Playwright MCP package identity does not match inventory");
+  const coreVersion = mcpPackage.dependencies?.["playwright-core"];
+  invariant(typeof coreVersion === "string" && /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(coreVersion), "Playwright MCP must pin an exact playwright-core version");
   return collectPayloadNpmContributors(payloadRoot, path.join(mcpRoot, "node_modules"), {
     expectedKeys: new Set([
       `@playwright/mcp@${contracts.versions["playwright-mcp"]}`,
-      "playwright-core@1.62.0-alpha-2026-06-29",
+      `playwright-core@${coreVersion}`,
     ]),
   });
 }
@@ -1645,7 +1670,7 @@ async function browserCreditsEvidence(payloadRoot, contracts) {
 async function captureChromiumCredits(payloadRoot, contracts, scratchDirectory) {
   const source = path.join(
     componentRoot(payloadRoot, contracts, "chromium-core"),
-    "chromium_headless_shell-1208",
+    "chromium_headless_shell-1248",
     "chrome-headless-shell-mac-arm64",
     "LICENSE.headless_shell",
   );
@@ -1944,7 +1969,10 @@ export function createExtractedRuntimeStackPlan({ payloadRoot, stateRoot, tempor
         "--disable-config-env",
       ],
     },
-    worker: { command: pythonExecutable, args: ["-I", "-B", "-m", "jobctrl", "worker"] },
+    worker: {
+      command: pythonExecutable,
+      args: ["-I", "-B", "-c", readFileSync(path.join(REPO_ROOT, "scripts", "distribution-smoke-model.py"), "utf8")],
+    },
     api: { command: nodeExecutable, args: [path.join(payloadRoot, "api", "server.mjs")] },
     apiOrigin: `http://127.0.0.1:${apiPort}`,
   };
@@ -1954,6 +1982,33 @@ const LOOPBACK_ONLY_SANDBOX_PROFILE = `(version 1)
 (allow default)
 (deny network-outbound (remote ip))
 (allow network-outbound (remote ip "localhost:*"))`;
+
+const NATIVE_EXECUTION_QA_SANDBOX = "loopback-only-v1";
+
+// launchd must be controlled outside Seatbelt. The native helper applies this
+// fixed additional restriction before any payload command can execute.
+export function createNativeLauncherSmokePlan({ payloadRoot, extractedRoot, stockEnvironment = {} }) {
+  invariant(path.isAbsolute(payloadRoot) && path.isAbsolute(extractedRoot), "native launcher smoke requires absolute owned extraction paths");
+  const requested = stockEnvironment.JOBCTRL_EXECUTION_QA_SANDBOX;
+  invariant(requested === undefined || requested === NATIVE_EXECUTION_QA_SANDBOX, "native launcher smoke requires the fixed loopback-only sandbox selector");
+  return {
+    command: path.join(payloadRoot, "launcher", "jobctrl"),
+    options: {
+      cwd: extractedRoot,
+      env: {
+        ...stockEnvironment,
+        JOBCTRL_RUNTIME_HOME: path.join(extractedRoot, "runtime"),
+        JOBCTRL_EXECUTION_QA_SANDBOX: NATIVE_EXECUTION_QA_SANDBOX,
+      },
+    },
+    executionSandbox: {
+      controller: "outside-seatbelt",
+      runtimeHelper: "macos-sandbox-exec",
+      selector: NATIVE_EXECUTION_QA_SANDBOX,
+      profileSha256: createHash("sha256").update(LOOPBACK_ONLY_SANDBOX_PROFILE).digest("hex"),
+    },
+  };
+}
 
 async function runLoopbackSandboxed(command, args, options) {
   return run("/usr/bin/sandbox-exec", ["-p", LOOPBACK_ONLY_SANDBOX_PROFILE, command, ...args], options);
@@ -2056,13 +2111,10 @@ async function terminateExtractedRuntimeStack(stack) {
 }
 
 async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockEnvironment }) {
-  const launcher = path.join(payloadRoot, "launcher", "jobctrl");
-  await requireFile(launcher, "native JobCtrl launcher");
-  const environment = {
-    ...stockEnvironment,
-    JOBCTRL_RUNTIME_HOME: path.join(extractedRoot, "runtime"),
-  };
-  const statusJson = async () => JSON.parse((await runLoopbackSandboxed(launcher, ["status", "--json"], { cwd: extractedRoot, env: environment })).stdout);
+  const plan = createNativeLauncherSmokePlan({ payloadRoot, extractedRoot, stockEnvironment });
+  await requireFile(plan.command, "native JobCtrl launcher");
+  const invoke = (args) => run(plan.command, args, plan.options);
+  const statusJson = async () => JSON.parse((await invoke(["status", "--json"])).stdout);
   const waitForStatus = async (expected, label) => {
     let observed = null;
     for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -2072,8 +2124,8 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     }
     throw new Error(`${label}: lifecycle status remained ${observed?.status}`);
   };
-  const start = async () => runLoopbackSandboxed(launcher, ["start", "--no-open"], { cwd: extractedRoot, env: environment });
-  const stop = async () => runLoopbackSandboxed(launcher, ["stop"], { cwd: extractedRoot, env: environment });
+  const start = async () => invoke(["start", "--no-open"]);
+  const stop = async () => invoke(["stop"]);
   let lifecycleStarted = false;
   try {
     const firstStart = await start();
@@ -2094,15 +2146,15 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     let status = await statusJson();
     invariant(status.status === "running", `native launcher status is ${status.status}`);
     for (const component of ["temporal", "worker", "api"]) invariant(status.components?.[component]?.state === "running", `native launcher ${component} status is not running`);
-    const logs = await runLoopbackSandboxed(launcher, ["logs"], { cwd: extractedRoot, env: environment });
+    const logs = await invoke(["logs"]);
     invariant(logs.stdout.includes("== temporal ==") && logs.stdout.includes("== worker ==") && logs.stdout.includes("== api =="), "native launcher logs did not route all bounded component logs");
-    const version = JSON.parse((await runLoopbackSandboxed(launcher, ["version", "--json"], { cwd: extractedRoot, env: environment })).stdout);
+    const version = JSON.parse((await invoke(["version", "--json"])).stdout);
     invariant(typeof version.buildId === "string" && /^[a-f0-9]{64}$/.test(version.manifestSha256), "native launcher version JSON is incomplete");
-    await runLoopbackSandboxed(launcher, ["doctor"], { cwd: extractedRoot, env: environment });
-    const digest = await runLoopbackSandboxed(launcher, ["digest", "--json"], { cwd: extractedRoot, env: environment });
+    await invoke(["doctor"]);
+    const digest = await invoke(["digest", "--json"]);
     invariant(digest.stdout.trim().startsWith("{"), "native launcher did not transparently dispatch JSON Python CLI command");
-    await runLoopbackSandboxed(launcher, ["pipeline-status"], { cwd: extractedRoot, env: environment });
-    await runLoopbackSandboxed(launcher, ["status", "--pipeline"], { cwd: extractedRoot, env: environment });
+    await invoke(["pipeline-status"]);
+    await invoke(["status", "--pipeline"]);
     // A killed owned worker leaves a degraded registry rather than a misleading
     // healthy status. stop then obtains a clean restart from that evidence.
     process.kill(status.components.worker.pid, "SIGKILL");
@@ -2125,7 +2177,7 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     status = await waitForStatus(["running"], "supervisor-kill restart");
     await stop();
     const stopped = await waitForStatus(["stopped"], "final stop");
-    return { startUrl: "http://127.0.0.1:8766", components: Object.keys(status.components).sort(bytewiseCompare), manifestSha256: version.manifestSha256, pipelineStatusCompatibility: "passed", pythonDispatch: ["doctor", "digest --json"], recovery: { workerKill: "degraded-stop-restart", supervisorKill: "orphaned-stop-restart" } };
+    return { executionSandbox: plan.executionSandbox, startUrl: "http://127.0.0.1:8766", components: Object.keys(status.components).sort(bytewiseCompare), manifestSha256: version.manifestSha256, pipelineStatusCompatibility: "passed", pythonDispatch: ["doctor", "digest --json"], recovery: { workerKill: "degraded-stop-restart", supervisorKill: "orphaned-stop-restart" } };
   } finally {
     if (lifecycleStarted) await stop().catch(() => null);
   }
@@ -2142,8 +2194,9 @@ async function cleanupNativeLauncherRuntime(extractedRoot) {
     JOBCTRL_RUNTIME_HOME: path.join(canonicalRoot, "runtime"),
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
   };
+  const plan = createNativeLauncherSmokePlan({ payloadRoot: path.join(canonicalRoot, "payload"), extractedRoot: canonicalRoot, stockEnvironment: environment });
   try {
-    await runLoopbackSandboxed(launcher, ["stop"], { cwd: canonicalRoot, env: environment });
+    await run(plan.command, ["stop"], plan.options);
     return { status: "stopped" };
   } catch (error) {
     return { status: "stop-failed", error: error.message };
@@ -2392,9 +2445,9 @@ async function smokePlaywrightMcpProtocol(command, args, { cwd, env }) {
       name: "browser_navigate",
       arguments: { url: `data:text/html,<title>${marker}</title><main>${marker}</main>` },
     });
-    invariant(navigation.isError !== true, `bundled Playwright MCP navigation failed: ${JSON.stringify(navigation).slice(-2000)}`);
+    invariant(navigation.error === undefined && navigation.result && navigation.result.isError !== true, `bundled Playwright MCP navigation failed: ${JSON.stringify(navigation).slice(-2000)}`);
     const snapshot = await request("tools/call", { name: "browser_snapshot", arguments: {} });
-    invariant(snapshot.isError !== true, `bundled Playwright MCP snapshot failed: ${JSON.stringify(snapshot).slice(-2000)}`);
+    invariant(snapshot.error === undefined && snapshot.result && snapshot.result.isError !== true, `bundled Playwright MCP snapshot failed: ${JSON.stringify(snapshot).slice(-2000)}`);
     invariant(JSON.stringify(snapshot).includes(marker), "bundled Playwright MCP snapshot did not observe the managed local browser page");
     return {
       protocolVersion: initialize.result.protocolVersion,
@@ -2413,7 +2466,7 @@ async function managedMcpChromiumExecutable(payloadRoot, contracts) {
   invariant(contracts.platform.id === "darwin-arm64", `unsupported MCP Chromium smoke platform: ${contracts.platform.id}`);
   const executable = path.join(
     componentRoot(payloadRoot, contracts, "chromium-core"),
-    "chromium_headless_shell-1208",
+    "chromium_headless_shell-1248",
     "chrome-headless-shell-mac-arm64",
     "chrome-headless-shell",
   );
@@ -2423,11 +2476,11 @@ async function managedMcpChromiumExecutable(payloadRoot, contracts) {
 export async function assertHeadlessChromiumPayload(payloadRoot, contracts) {
   const chromiumRoot = componentRoot(payloadRoot, contracts, "chromium-core");
   const files = await buildFileInventory(chromiumRoot);
-  const required = "chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/chrome-headless-shell";
+  const required = "chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/chrome-headless-shell";
   const executable = files.filter((file) => file.type === "file" && file.path === required);
   invariant(executable.length === 1, "core Chromium payload must contain exactly one managed headless-shell executable");
   const topLevel = [...new Set(files.map((file) => file.path.split("/")[0]))].sort(bytewiseCompare);
-  invariant(JSON.stringify(topLevel) === JSON.stringify(["chromium_headless_shell-1208"]), `core Chromium payload has unexpected browser revisions: ${topLevel.join(", ")}`);
+  invariant(JSON.stringify(topLevel) === JSON.stringify(["chromium_headless_shell-1248"]), `core Chromium payload has unexpected browser revisions: ${topLevel.join(", ")}`);
   invariant(files.filter((file) => file.type === "file" && path.posix.basename(file.path) === "chrome-headless-shell").length === 1, "core Chromium payload must not contain an extra headless-shell revision");
   const forbidden = files.filter((file) => file.path.startsWith("chromium-") || file.path.includes(".app/") || file.path.includes("Google Chrome for Testing"));
   invariant(forbidden.length === 0, `core Chromium payload must exclude the full browser topology: ${forbidden.map((file) => file.path).join(", ")}`);
@@ -2529,9 +2582,12 @@ finally:
     [
       "--headless",
       "--isolated",
+      // macOS rejects nested Seatbelt sandboxes. This synthetic smoke retains
+      // LOOPBACK_ONLY_SANDBOX_PROFILE; user MCP launches keep their defaults.
+      "--no-sandbox",
       "--output-dir", path.join(canonicalExtractedRoot, "playwright-mcp-smoke-output"),
       "--executable-path", await managedMcpChromiumExecutable(payloadRoot, contracts),
-      "--output-mode", "stdout",
+      "--snapshot-mode", "full",
       "--codegen", "none",
     ],
     { cwd: payloadRoot, env: stockEnvironment },
@@ -2674,7 +2730,7 @@ render_script = """async (input) => {
     for (const value of pixels) if (value !== 0) nonZeroPixelBytes += 1;
     if (nonZeroPixelBytes === 0) await new Promise((resolve) => requestAnimationFrame(() => resolve()));
   }
-  await document.destroy();
+  await loadingTask.destroy();
   return { width: canvas.width, height: canvas.height, nonZeroPixelBytes, readbackAttempts, text };
 }"""
 
@@ -2703,7 +2759,7 @@ with sync_playwright() as playwright:
     from pathlib import Path
     import os
     browser_root = Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
-    required_headless = browser_root / "chromium_headless_shell-1208" / "chrome-headless-shell-mac-arm64" / "chrome-headless-shell"
+    required_headless = browser_root / "chromium_headless_shell-1248" / "chrome-headless-shell-mac-arm64" / "chrome-headless-shell"
     assert required_headless.is_file(), required_headless
     assert not any(browser_root.glob("chromium-*")), list(browser_root.glob("chromium-*"))
     assert not any(browser_root.rglob("*.app")), "full browser app bundle entered the core payload"
@@ -2801,8 +2857,9 @@ with sync_playwright() as playwright:
     playwrightMcp: mcpProtocol,
     tlsClientNative: "darwin-arm64-load-pass",
     dbBackedRoute: "/v1/jobs",
-    browserRevision: 1208,
+    browserRevision: 1248,
     offlineManualCaptureJob: offlineFixtureUrl,
+    semanticModel: { provider: "distribution-smoke", model: "explicit-page-fixture", boundary: "model-port-test-double" },
     manualCaptureWorkflow: {
       itemId: captureEvidence.itemId,
       workflowId: workflowEvidence.workflowId,
@@ -3752,7 +3809,7 @@ export async function buildFixturePayload({
   const payloadRoot = path.join(outputRoot, "payload");
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(payloadRoot, { recursive: true, mode: 0o755 });
-  await writeFixtureComponents(payloadRoot, contracts);
+  await writeFixtureComponents(payloadRoot, contracts, root);
   await generateReleaseMetadata(payloadRoot, contracts, { root, mode: "fixture", sourceDateEpoch });
   const manifest = await createLocalManifest(payloadRoot, contracts, { buildId, sourceDateEpoch });
   await verifyExactPayloadTree(payloadRoot, manifest);

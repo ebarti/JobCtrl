@@ -1,8 +1,11 @@
+import { interviewHandlers } from "./interview-handlers.js";
 import type {
   ContactAttributeDto,
   ContactCreateRequest,
-  ContactUpdateRequest,
+  ContactImportRequest,
+  ContactImportResponse,
 } from "@jobctrl/contracts";
+import { ContactUpdateRequestSchema } from "@jobctrl/contracts";
 import { http, HttpResponse } from "msw";
 
 import {
@@ -264,6 +267,13 @@ function makeStoryArtifactDetail(artifactId: string) {
 }
 
 export const handlers = [
+  http.post("*/v1/jobs/:jobId/material-exports", async ({ params, request }) => {
+    const body = await request.json() as { operation: string };
+    return body.operation === "history"
+      ? HttpResponse.json({ tenantId: "local", jobId: params["jobId"], sources: [], exports: [], exportedArtifactId: null })
+      : HttpResponse.json({ ok: false, error: "accepted_source_unavailable" }, { status: 409 });
+  }),
+  ...interviewHandlers,
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
   http.get("*/v1/analytics/outcomes", () => HttpResponse.json(sampleOutcomeAnalyticsSummary)),
@@ -313,6 +323,7 @@ export const handlers = [
     });
   }),
   http.get("*/v1/evidence-map", () => HttpResponse.json(sampleEvidenceMapResponse)),
+  http.get("*/v1/evidence-map/learning", () => HttpResponse.json({ ok: true, preview: null, cohorts: [], milestones: [], truncated: false })),
   http.get("*/v1/debug/activity", () =>
     HttpResponse.json(makeActivityPage(sampleDashboardSummary.activity)),
   ),
@@ -631,6 +642,7 @@ export const handlers = [
       },
     });
   }),
+  http.get("*/v1/jobs/:jobId/offer", ({ params }) => HttpResponse.json({ ok: true, jobId: params["jobId"], termsHistory: [], decisions: [], currentTerms: null, currentDecision: null })),
   http.get("*/v1/outcomes", () => HttpResponse.json(sampleApplicationOutcomes)),
   http.get("*/v1/jobs/:jobKey/outcomes", ({ params }) =>
     HttpResponse.json({
@@ -709,9 +721,14 @@ export const handlers = [
   }),
 
   http.get("*/v1/jobs", () => HttpResponse.json(makeJobsPage())),
+  http.get("*/v1/jobs/reviewable-list", () => HttpResponse.json({ ...makeJobsPage(), observationId: "00000000-0000-4000-8000-000000000001" })),
   http.post("*/v1/jobs/bulk-delete", async ({ request }) => {
     const body = (await request.json()) as { jobKeys?: string[] };
     return HttpResponse.json(jobMutationResponse(body.jobKeys ?? []));
+  }),
+  http.post("*/v1/jobs/permanent-delete-selection", async ({ request }) => {
+    const body = (await request.json()) as { selections?: Array<{ jobKeys?: string[] }> };
+    return HttpResponse.json({ ok: true, selectionId: "synthetic-selection", jobKeys: body.selections?.flatMap((selection) => selection.jobKeys ?? []) ?? [] });
   }),
   http.post("*/v1/jobs/bulk-delete-permanent", async ({ request }) => {
     const body = (await request.json()) as { jobKeys?: string[] };
@@ -783,7 +800,7 @@ export const handlers = [
       ok: true,
       count: body.jobKeys?.length ?? 0,
       jobKeys: body.jobKeys ?? [],
-      nextAction: "jobctrl run score --rescore",
+      nextAction: "jobctrl score --rescore",
     });
   }),
   http.post("*/v1/jobs/:jobKey/actions/rescore-current-policy", ({ params }) =>
@@ -873,6 +890,37 @@ export const handlers = [
 
   http.get("*/v1/profile", () => HttpResponse.json(sampleProfileResponse)),
   http.patch("*/v1/profile", () => HttpResponse.json(sampleProfileResponse)),
+  http.post("*/v1/profile/target-role-suggestions", () =>
+    HttpResponse.json({
+      ok: true,
+      profileVersion: sampleProfileResponse.profileVersion,
+      suggestions: [
+        {
+          title: "Head of Platform Engineering",
+          classification: "adjacent",
+          track: "Management",
+          seniority: "Director",
+          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+          rationale: "Synthetic saved experience supports an adjacent platform leadership role.",
+        },
+      ],
+      preferenceSuggestions: [
+        { location: "Madrid, Spain", workModel: "Hybrid", evidenceIds: ["experience:exp-1"] },
+      ],
+      strategy: "model_stub",
+      warnings: ["stubbed_model_evidence"],
+    }),
+  ),
+  http.post("*/v1/profile/required-bullet-suggestions", () =>
+    HttpResponse.json({
+      ok: true,
+      profileVersion: sampleProfileResponse.profileVersion,
+      suggestions: [],
+      strategy: "model_v1",
+      modelUsed: true,
+      truncated: false,
+    }),
+  ),
   http.post("*/v1/profile/import-resume", () =>
     HttpResponse.json({ ok: true, profile: sampleProfileResponse.profile }),
   ),
@@ -989,15 +1037,42 @@ export const handlers = [
     return HttpResponse.json(makeContactListResponse(items));
   }),
   http.post("*/v1/contacts/import", async ({ request }) => {
-    const body = (await request.json()) as { csvText?: string };
-    const rows = (body.csvText ?? "").split(/\r?\n/).filter((line) => line.trim().length > 0);
-    const imported = Math.max(rows.length - 1, 0);
-    return HttpResponse.json({
+    const body = (await request.json()) as ContactImportRequest;
+    const legacy = "csvText" in body;
+    const content = legacy ? body.csvText : body.content;
+    const format = legacy ? "csv" : body.format;
+    const mode = legacy ? "commit" : body.mode;
+    const isVCard = format === "vcard";
+    const rows = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const count = isVCard
+      ? Math.max(content.match(/BEGIN:VCARD/gi)?.length ?? 0, 1)
+      : Math.max(rows.length - 1, 0);
+    const items = Array.from({ length: count }, (_, index) => ({
+      index: index + 1,
+      status: "ready" as const,
+      displayName: isVCard ? (/FN:([^\r\n]+)/i.exec(content)?.[1] ?? "Imported contact") : `Imported contact ${index + 1}`,
+      employer: isVCard ? (/ORG:([^;\r\n]+)/i.exec(content)?.[1] ?? "Acme") : "Acme",
+      jobId: null,
+      role: "other" as const,
+      attributes: isVCard
+        ? [{ kind: "name" as const, value: /FN:([^\r\n]+)/i.exec(content)?.[1] ?? "Imported contact" }]
+        : [],
+      duplicate: null,
+      issues: [],
+      importedContactId: mode === "commit" ? `imported-contact-${index + 1}` : null,
+    }));
+    const imported = mode === "commit" ? count : 0;
+    const response: ContactImportResponse = {
       ok: true,
+      format,
+      mode,
       imported,
       skipped: 0,
       contactIds: Array.from({ length: imported }, (_, index) => `imported-contact-${index + 1}`),
-    });
+      summary: { total: count, ready: count, duplicates: 0, invalid: 0, unsupported: 0 },
+      items,
+    };
+    return HttpResponse.json(response);
   }),
   http.post("*/v1/contacts", async ({ request }) => {
     const body = (await request.json()) as ContactCreateRequest;
@@ -1065,13 +1140,10 @@ export const handlers = [
   // R6 Phase 4: user-attested send log + follow-ups. `send-logs` RECORDS a fact
   // (no transport, INV-1); the follow-up routes schedule/complete/dismiss a
   // surfaced-only reminder; `follow-ups/due` is the derived due list.
-  http.post("*/v1/outreach/threads/:threadId/send-logs", () =>
-    HttpResponse.json(
-      makeOutreachThreadResponse(
-        makeOutreachThreadDetail({ sendLogs: [makeOutreachSendLog()], isSent: true }),
-      ),
-    ),
-  ),
+  http.post("*/v1/outreach/threads/:threadId/send-logs", async ({ params, request }) => {
+    const body = await request.json() as { draftId: string; channel: string; sentAt: string };
+    return HttpResponse.json({ ok: true, sendLog: makeOutreachSendLog({ ...body, threadId: String(params["threadId"]) }) });
+  }),
   http.post("*/v1/outreach/threads/:threadId/follow-up/schedule", () =>
     HttpResponse.json(
       makeOutreachThreadResponse(
@@ -1104,7 +1176,12 @@ export const handlers = [
     ),
   ),
   http.patch("*/v1/contacts/:contactId", async ({ params, request }) => {
-    const body = (await request.json()) as ContactUpdateRequest;
+    const parsed = ContactUpdateRequestSchema.safeParse(await request.json());
+    if (!parsed.success) return HttpResponse.json({ ok: false, error: "invalid_contact" }, { status: 400 });
+    const body = parsed.data;
+    if (body.expectedFingerprint !== sampleContactDetail.fingerprint) {
+      return HttpResponse.json({ ok: false, error: "contact_revision_conflict" }, { status: 409 });
+    }
     return HttpResponse.json(
       makeContactMutationResponse(
         makeContactDetail({

@@ -1,6 +1,7 @@
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 
 import { useToastStore } from "../stores/toasts.js";
+import { databaseStartupProblem } from "./databaseStartupProblem.js";
 
 export interface QueryMeta {
   readonly suppressGlobalErrorToast?: boolean;
@@ -14,7 +15,7 @@ declare module "@tanstack/react-query" {
 }
 
 function toastError(error: unknown, meta: QueryMeta | undefined): void {
-  if (meta?.suppressGlobalErrorToast) {
+  if (meta?.suppressGlobalErrorToast || databaseStartupProblem(error)) {
     return;
   }
   const message = error instanceof Error ? error.message : "Unexpected error.";

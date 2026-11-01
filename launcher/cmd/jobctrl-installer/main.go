@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime"
 
 	"github.com/ebarti/jobctrl/launcher/internal/installer"
@@ -49,7 +47,7 @@ func main() {
 	if source == "curl" && descriptorURL != "" {
 		fail("signed cached release inputs are reserved for the Homebrew acquisition adapter")
 	}
-	options := installer.Options{Home: home, ReleaseURL: releaseURL, Trust: trust, Policy: policy, AllowUnsignedLocal: allowUnsignedLocal, AcquisitionSource: source, StageOnly: stageOnly}
+	options := installer.Options{Home: home, ReleaseURL: releaseURL, Trust: trust, Policy: policy, AllowUnsignedLocal: allowUnsignedLocal, AcquisitionSource: source, StageOnly: stageOnly, Environment: os.Environ()}
 	var receipt installer.Receipt
 	var err error
 	if allowUnsignedLocal {
@@ -96,8 +94,8 @@ func writeReceipt(output io.Writer, receipt installer.Receipt, jsonOutput bool) 
 }
 
 // A different already-installed build is only an acquisition result. The
-// existing authenticated selector performs the health-gated promotion, which
-// preserves paired database rollback and selector compatibility. First install
+// newly authenticated controller performs health-gated promotion, which keeps
+// migration decisions independent of immutable older launchers. First install
 // was activated inside the installer because no predecessor existed.
 func promoteStagedIfNeeded(home, source string, candidate installer.Receipt) error {
 	runtimeHome, err := installer.RuntimeHome(home)
@@ -118,16 +116,7 @@ func promoteStagedIfNeeded(home, source string, candidate installer.Receipt) err
 	if active.Receipt.BuildID == candidate.BuildID {
 		return nil
 	}
-	selector := filepath.Join(runtimeHome, "bin", "jobctrl")
-	if err := launcher.VerifyPublicSelectorForExecution(runtimeHome); err != nil {
-		return fmt.Errorf("verify public selector before promotion: %w", err)
-	}
-	command := exec.Command(selector, "update", "--to", candidate.BuildID)
-	command.Env = append(os.Environ(), "JOBCTRL_RUNTIME_HOME="+runtimeHome, "JOBCTRL_ACQUISITION_SOURCE="+source, "JOBCTRL_ACQUISITION_INTERNAL=1")
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("promote staged release through authenticated selector: %w: %s", err, output)
-	}
-	return nil
+	return launcher.PromoteStagedRelease(runtimeHome, candidate.BuildID, source, os.Environ(), io.Discard)
 }
 
 func fail(message string) { fmt.Fprintln(os.Stderr, "jobctrl-installer:", message); os.Exit(1) }

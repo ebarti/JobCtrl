@@ -2,7 +2,7 @@
 
 Scrapes Workday-powered career sites (TD, RBC, NVIDIA, Salesforce, etc.) via the
 Workday CXS JSON API -- the stable JSON endpoint the public career-site UI itself
-calls, treated as a documented-API-class source (robots-exempt, D2). Zero LLM,
+calls, treated as a documented API source. Zero LLM,
 zero browser -- pure HTTP through the shared politeness gateway.
 
 Employer registry is loaded from config/employers.yaml instead of being
@@ -24,16 +24,12 @@ from jobctrl.database import get_connection, init_db
 from jobctrl.domain.discovery.identity import AtsKind
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.source_registry import WORKDAY_API_POLICY
-from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase, matches_exact_title_exclusion
 from jobctrl.domain.discovery.value_objects import Employer, JobMetadata, PostingUrl, SearchStrategy, Source
 from jobctrl.domain.errors import TransientNetworkError
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import LOCAL_TENANT
-from jobctrl.infrastructure.discovery.location_filter import (
-    configured_location_filters,
-    location_matches_target,
-)
 from jobctrl.infrastructure.network import (
     GatewayHttpClient,
     PolitenessGateway,
@@ -41,13 +37,12 @@ from jobctrl.infrastructure.network import (
     PolitenessSourceContext,
     build_opener,
 )
-from jobctrl.discovery.target_queries import query_specs_for_source, title_matches_any_query
-from jobctrl.discovery.title_filter import title_matches_query
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultBudget, DiscoveryResultLimitReached
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveChromeDiscoveryClient,
-    LiveChromeRobotsCache,
     PoliteLiveChromeHttpClient,
+    prefer_live_browser,
 )
 from jobctrl.state import record_job_event
 
@@ -66,22 +61,6 @@ def load_employers() -> dict:
         log.warning("employers.yaml not found at %s", CONFIG_DIR / "employers.yaml")
         return {}
     return data.get("employers", {})
-
-
-# -- Location filtering from search config -----------------------------------
-
-
-def _load_location_filter(search_cfg: dict | None = None):
-    """Load location accept/reject lists from search config."""
-    if search_cfg is None:
-        search_cfg = config.load_search_config()
-
-    return configured_location_filters(search_cfg)
-
-
-def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
-    """Check if a job location passes the user's location filter."""
-    return location_matches_target(location, accept=accept, reject=reject)
 
 
 # -- HTML stripper -----------------------------------------------------------
@@ -129,8 +108,7 @@ def strip_html(html: str) -> str:
 
 # -- Politeness gateway routing (R10) ---------------------------------------
 #
-# The Workday CXS API is treated as a documented-API-class source (robots-exempt,
-# D2): the stable JSON endpoint the public career-site UI calls, not an ad-hoc
+# The Workday CXS API is treated as a documented API source: the stable JSON endpoint the public career-site UI calls, not an ad-hoc
 # scrape target. Every fetch still routes through the shared politeness gateway
 # for the honest UA, per-host rate/concurrency pacing, and a per-employer request
 # budget. Configured once per run (mirroring the old global-opener pattern); the
@@ -234,11 +212,9 @@ def _employer_client(employer: dict) -> GatewayHttpClient | PoliteLiveChromeHttp
                 if politeness.discovery_execution is not None
                 else None
             )
-            active_gateway = (
-                politeness.gateway.with_robots(LiveChromeRobotsCache(browser))
-                if browser is not None
-                else politeness.gateway
-            )
+            if browser is not None:
+                browser = prefer_live_browser(browser, cancel_event=politeness.cancel_event)
+            active_gateway = politeness.gateway
             session = PolitenessSession(
                 active_gateway,
                 policy=WORKDAY_API_POLICY,
@@ -294,23 +270,17 @@ def search_employer(
     employer_key: str,
     employer: dict,
     search_text: str,
-    location_filter: bool = True,
     max_results: int = 0,
     max_pages: int = 25,
-    accept_locs: list[str] | None = None,
-    reject_locs: list[str] | None = None,
-    query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
     cancel_event: threading.Event | None = None,
 ) -> list[dict]:
     """Search an employer, paginate through all results, optionally filter by location."""
     log.info('%s: searching "%s"...', employer["name"], search_text)
-
     all_jobs: list[dict] = []
     offset = 0
     page_size = 20
-    max_pages = max(1, max_pages)  # Workday pages are 20 postings each.
+    max_pages = max(1, max_pages)
     total = None
-
     while True:
         if cancel_event is not None and cancel_event.is_set():
             raise TransientNetworkError("Workday discovery canceled")
@@ -319,29 +289,17 @@ def search_employer(
         except Exception as e:
             log.error("%s: API error at offset %d: %s", employer["name"], offset, e)
             break
-
         if total is None:
             total = data.get("total", 0)
             log.info("%s: %d total results", employer["name"], total)
-
         postings = data.get("jobPostings", [])
         if not postings:
             break
-
         for j in postings:
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("Workday discovery canceled")
             title = j.get("title", "")
-            if query_specs is not None:
-                if not title_matches_any_query(title, query_specs):
-                    continue
-            elif not title_matches_query(title, search_text):
-                continue
             loc = j.get("locationsText", "")
-            if location_filter and accept_locs is not None and reject_locs is not None:
-                if not _location_ok(loc, accept_locs, reject_locs):
-                    continue
-
             all_jobs.append(
                 {
                     "title": title,
@@ -352,7 +310,6 @@ def search_employer(
                     "employer_name": employer["name"],
                 }
             )
-
         offset += page_size
         page_num = offset // page_size
         if offset >= total:
@@ -363,8 +320,7 @@ def search_employer(
         if max_results and len(all_jobs) >= max_results:
             all_jobs = all_jobs[:max_results]
             break
-
-    log.info("%s: %d jobs found%s", employer["name"], len(all_jobs), " (filtered)" if location_filter else "")
+    log.info("%s: %d jobs found", employer["name"], len(all_jobs))
     return all_jobs
 
 
@@ -434,10 +390,7 @@ class _DiscoveryEventPublisher:
     def publish(self, event: DomainEvent) -> None:
         payload = {"tenantId": str(event.tenant_id), **event.payload}
         job_url = (
-            payload.get("job_id")
-            or payload.get("jobId")
-            or payload.get("posting_url")
-            or payload.get("postingUrl")
+            payload.get("job_id") or payload.get("jobId") or payload.get("posting_url") or payload.get("postingUrl")
         )
         record_job_event(
             self._conn,
@@ -473,8 +426,6 @@ def _posting_from_job(job: dict, employers: dict) -> ScrapedJobPosting | None:
     if not url:
         return None
     description = _usable_description_text(job.get("full_description"))
-    if not description:
-        return None
     employer_name = str(job.get("employer_name") or "").strip()
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=url),
@@ -501,18 +452,31 @@ def _update_detail_columns(conn: sqlite3.Connection, job: dict, url: str, now: s
         """
         UPDATE jobs
         SET full_description = COALESCE(?, full_description),
-            application_url = COALESCE(?, application_url),
             detail_scraped_at = COALESCE(?, detail_scraped_at),
             detail_error = COALESCE(?, detail_error)
-        WHERE url = ?
+        WHERE tenant_id = ? AND url = ?
         """,
         (
             full_description,
-            url,
             now if full_description else None,
             job.get("detail_error"),
+            str(LOCAL_TENANT),
             url,
         ),
+    )
+    conn.execute(
+        """INSERT INTO job_enrichments (tenant_id, job_id, current_status, application_url, updated_at)
+           SELECT tenant_id, job_id, 'pending', ?, ? FROM jobs WHERE tenant_id = ? AND url = ?
+           ON CONFLICT (tenant_id, job_id) DO UPDATE SET
+             application_url = COALESCE(NULLIF(job_enrichments.application_url, ''), excluded.application_url)
+        """,
+        (url, now, str(LOCAL_TENANT), url),
+    )
+    conn.execute(
+        """INSERT INTO job_application_locators (tenant_id, job_id, application_url)
+           SELECT tenant_id, job_id, ? FROM jobs WHERE tenant_id = ? AND url = ?
+           ON CONFLICT DO NOTHING""",
+        (url, str(LOCAL_TENANT), url),
     )
 
 
@@ -532,10 +496,17 @@ def store_results(
     limit: int = 0,
     run_id: str | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    search_cfg: dict | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[int, int]:
     """Store corporate jobs through the Discovery write boundary."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("Workday discovery canceled")
     now = datetime.now(timezone.utc).isoformat()
+    active_cfg = search_cfg if search_cfg is not None else config.load_discovery_control_settings()
     use_case = DiscoverJobsUseCase(
+        exact_title_exclusions=tuple(active_cfg.get("exact_title_exclusions") or ()),
         repository=SqliteJobRepository(
             conn,
             discovery_execution=discovery_execution,
@@ -543,20 +514,42 @@ def store_results(
         ),
         publisher=_DiscoveryEventPublisher(conn),
     )
-    if limit > 0:
+    if limit > 0 or result_budget is not None or cancel_event is not None:
         new_jobs = 0
         observed_jobs = 0
         for job in jobs:
-            if new_jobs >= limit:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("Workday discovery canceled")
+            if limit > 0 and new_jobs >= limit:
                 break
             posting = _posting_from_job(job, employers)
             if posting is None:
                 continue
-            summary = use_case.execute(
-                tenant_id=LOCAL_TENANT,
-                postings=[posting],
-                run_id=run_id,
-            )
+            if result_budget is not None:
+                if result_budget.run_exhausted():
+                    break
+                if result_budget.source_exhausted(posting.source_id):
+                    continue
+                use_case = DiscoverJobsUseCase(
+                    exact_title_exclusions=tuple(active_cfg.get("exact_title_exclusions") or ()),
+                    repository=SqliteJobRepository(
+                        conn, discovery_execution=discovery_execution, source_family="workday",
+                        result_budget=result_budget, result_budget_source_id=posting.source_id,
+                    ),
+                    publisher=_DiscoveryEventPublisher(conn),
+                )
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("Workday discovery canceled")
+            try:
+                summary = use_case.execute(
+                    tenant_id=LOCAL_TENANT,
+                    postings=[posting],
+                    run_id=run_id,
+                )
+            except DiscoveryResultLimitReached:
+                # A concurrent family won the final slot. The atomic canonical
+                # claim rolled back; do not update detail state for this card.
+                continue
             new_jobs += summary.new_jobs
             observed_jobs += summary.observed
             _update_detail_columns(conn, job, posting.posting_url.value, now)
@@ -593,44 +586,37 @@ def _process_one(
     employer_key: str,
     employers: dict,
     search_text: str,
-    location_filter: bool,
-    accept_locs: list[str],
-    reject_locs: list[str],
     limit: int = 0,
     max_pages_per_employer: int = 25,
     run_id: str | None = None,
-    query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
     cancel_event: threading.Event | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    search_cfg: dict | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
 ) -> dict:
     """Search one employer, fetch details, store results."""
     result = _search_and_fetch_one(
         employer_key,
         employers,
         search_text,
-        location_filter,
-        accept_locs,
-        reject_locs,
         limit=limit,
         max_pages_per_employer=max_pages_per_employer,
-        query_specs=query_specs,
         cancel_event=cancel_event,
+        search_cfg=search_cfg,
     )
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("Workday discovery canceled")
     jobs = result.pop("jobs", [])
     if not jobs:
         return result
-
     conn = get_connection()
-    new, existing = store_results(
-        conn,
-        jobs,
-        employers,
-        limit=limit,
-        run_id=run_id,
-        discovery_execution=discovery_execution,
+    (new, existing) = store_results(
+        conn, jobs, employers, limit=limit, run_id=run_id, discovery_execution=discovery_execution,
+        search_cfg=search_cfg,
+        **({"result_budget": result_budget} if result_budget is not None else {}),
+        **({"cancel_event": cancel_event} if cancel_event is not None else {}),
     )
     log.info("%s: %d new, %d already in DB", result["employer"], new, existing)
-
     return {**result, "new": new, "existing": existing}
 
 
@@ -638,49 +624,35 @@ def _search_and_fetch_one(
     employer_key: str,
     employers: dict,
     search_text: str,
-    location_filter: bool,
-    accept_locs: list[str],
-    reject_locs: list[str],
     limit: int = 0,
     max_pages_per_employer: int = 25,
-    query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
     cancel_event: threading.Event | None = None,
+    search_cfg: dict | None = None,
 ) -> dict:
     """Search one employer and fetch details without writing to storage."""
     emp = employers[employer_key]
-    # Stamp the fan-out key so the per-employer politeness client caches by it
-    # (1:1 with this task/thread) and derives a source_id that joins to storage.
     emp.setdefault("employer_key", employer_key)
-
     try:
         jobs = search_employer(
-            employer_key,
-            emp,
-            search_text,
-            location_filter=location_filter,
-            max_results=0,
-            max_pages=max_pages_per_employer,
-            accept_locs=accept_locs,
-            reject_locs=reject_locs,
-            query_specs=query_specs,
-            cancel_event=cancel_event,
+            employer_key, emp, search_text, max_results=0, max_pages=max_pages_per_employer, cancel_event=cancel_event
         )
     except TransientNetworkError:
         raise
     except Exception as e:
         log.error("%s: ERROR searching '%s': %s", emp["name"], search_text, e)
         return {"employer": emp["name"], "query": search_text, "found": 0, "new": 0, "existing": 0, "error": str(e)}
-
     if not jobs:
         return {"employer": emp["name"], "query": search_text, "found": 0, "new": 0, "existing": 0}
-
+    active_cfg = search_cfg if search_cfg is not None else config.load_search_config()
+    exclusions = tuple(active_cfg.get("exact_title_exclusions") or ())
+    jobs = [job for job in jobs if (posting := _posting_from_job(job, employers)) is not None
+            and not matches_exact_title_exclusion(posting.metadata.title, exclusions)]
     try:
         jobs = fetch_details(emp, jobs, cancel_event=cancel_event)
     except TransientNetworkError:
         raise
     except Exception as e:
         log.error("%s: ERROR fetching details for '%s': %s", emp["name"], search_text, e)
-
     return {"employer": emp["name"], "query": search_text, "found": len(jobs), "new": 0, "existing": 0, "jobs": jobs}
 
 
@@ -691,45 +663,32 @@ def scrape_employers(
     search_text: str,
     employers: dict,
     employer_keys: list[str] | None = None,
-    location_filter: bool = True,
     max_results: int = 0,
-    accept_locs: list[str] | None = None,
-    reject_locs: list[str] | None = None,
     workers: int = 1,
     limit: int = 0,
     max_pages_per_employer: int = 25,
     run_id: str | None = None,
-    query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
     cancel_event: threading.Event | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    search_cfg: dict | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
 
     Sequential by default. When workers > 1, processes employers in parallel
     using ThreadPoolExecutor.
     """
+    search_cfg = search_cfg if search_cfg is not None else config.load_search_config()
     if employer_keys is None:
         employer_keys = list(employers.keys())
-
-    if accept_locs is None:
-        accept_locs = []
-    if reject_locs is None:
-        reject_locs = []
-
-    # Ensure DB schema
     init_db()
-
     total_new = 0
     total_existing = 0
     total_found = 0
     errors = 0
     t0 = time.time()
-
     valid_keys = [k for k in employer_keys if k in employers]
-    query_kwargs = {"query_specs": query_specs} if query_specs is not None else {}
-
     if workers > 1 and len(valid_keys) > 1:
-        # Parallel mode
         completed = 0
         with ThreadPoolExecutor(max_workers=min(workers, len(valid_keys))) as pool:
             cancel_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
@@ -740,13 +699,10 @@ def scrape_employers(
                         key,
                         employers,
                         search_text,
-                        location_filter,
-                        accept_locs,
-                        reject_locs,
                         limit,
                         max_pages_per_employer,
+                        search_cfg=search_cfg,
                         **cancel_kwargs,
-                        **query_kwargs,
                     ): key
                     for key in valid_keys
                 }
@@ -757,15 +713,12 @@ def scrape_employers(
                         key,
                         employers,
                         search_text,
-                        location_filter,
-                        accept_locs,
-                        reject_locs,
                         0,
                         max_pages_per_employer,
                         run_id,
                         discovery_execution=discovery_execution,
+                        search_cfg=search_cfg,
                         **cancel_kwargs,
-                        **query_kwargs,
                     ): key
                     for key in valid_keys
                 }
@@ -781,13 +734,16 @@ def scrape_employers(
                     remaining = max(limit - total_new, 0) if limit > 0 else 0
                     if limit <= 0 or remaining > 0:
                         conn = get_connection()
-                        new, existing = store_results(
+                        (new, existing) = store_results(
                             conn,
                             jobs,
                             employers,
                             limit=remaining if limit > 0 else 0,
                             run_id=run_id,
                             discovery_execution=discovery_execution,
+                            search_cfg=search_cfg,
+                            **({"result_budget": result_budget} if result_budget is not None else {}),
+                            **({"cancel_event": cancel_event} if cancel_event is not None else {}),
                         )
                         result = {**result, "found": len(jobs), "new": new, "existing": existing}
                 total_new += result["new"]
@@ -795,7 +751,6 @@ def scrape_employers(
                 total_found += result["found"]
                 if "error" in result:
                     errors += 1
-
                 if completed % 10 == 0 or completed == len(valid_keys):
                     elapsed = time.time() - t0
                     log.info(
@@ -813,7 +768,6 @@ def scrape_employers(
                         pending.cancel()
                     break
     else:
-        # Sequential mode (default)
         completed = 0
         for key in valid_keys:
             if cancel_event is not None and cancel_event.is_set():
@@ -826,15 +780,13 @@ def scrape_employers(
                 key,
                 employers,
                 search_text,
-                location_filter,
-                accept_locs,
-                reject_locs,
                 remaining if limit > 0 else 0,
                 max_pages_per_employer,
                 run_id,
                 discovery_execution=discovery_execution,
+                search_cfg=search_cfg,
+                **({"result_budget": result_budget} if result_budget is not None else {}),
                 **cancel_kwargs,
-                **query_kwargs,
             )
             completed += 1
             total_new += result["new"]
@@ -842,7 +794,6 @@ def scrape_employers(
             total_found += result["found"]
             if "error" in result:
                 errors += 1
-
             if completed % 10 == 0 or completed == len(valid_keys):
                 elapsed = time.time() - t0
                 log.info(
@@ -855,12 +806,10 @@ def scrape_employers(
                     errors,
                     elapsed,
                 )
-
     elapsed = time.time() - t0
     log.info(
         "[%s] Done: %d found, %d new, %d dupes in %.0fs", search_text, total_found, total_new, total_existing, elapsed
     )
-
     return {"found": total_found, "new": total_new, "existing": total_existing}
 
 
@@ -874,6 +823,8 @@ def run_workday_discovery(
     run_id: str | None = None,
     cancel_event: threading.Event | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    search_cfg: dict | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
 ) -> dict:
     """Main entry point for Workday-based corporate job discovery.
 
@@ -890,27 +841,10 @@ def run_workday_discovery(
     """
     if employers is None:
         employers = load_employers()
-
     if not employers:
         log.warning("No employers configured. Create config/employers.yaml.")
         return {"found": 0, "new": 0, "existing": 0, "queries": 0}
-
-    search_cfg = config.load_search_config()
-    queries_cfg = search_cfg.get("queries", [])
-    accept_locs, reject_locs = _load_location_filter(search_cfg)
-
-    # Default to tier 1-2 queries for Workday title matching.
-    max_tier = search_cfg.get("workday_max_tier", 2)
-    query_specs = query_specs_for_source(queries_cfg, "workday", max_tier=max_tier)
-
-    if not query_specs:
-        # Fallback: use all source-eligible queries.
-        query_specs = query_specs_for_source(queries_cfg, "workday")
-
-    if not query_specs and queries_cfg:
-        log.warning("No search queries configured in Discovery settings.")
-        return {"found": 0, "new": 0, "existing": 0, "queries": 0}
-
+    search_cfg = search_cfg if search_cfg is not None else config.load_search_config()
     proxy = search_cfg.get("proxy")
     configure_workday_politeness(
         run_id=run_id,
@@ -918,55 +852,28 @@ def run_workday_discovery(
         discovery_execution=discovery_execution,
         cancel_event=cancel_event,
     )
-
-    location_filter = search_cfg.get("workday_location_filter", True)
     max_pages_per_employer = _workday_max_pages_per_employer(search_cfg, limit=limit)
-
-    log.info(
-        "Workday crawl: source-first enumeration across %d employers using %d target query filters (workers=%d)",
-        len(employers),
-        len(query_specs),
-        workers,
-    )
-
+    log.info("Workday crawl across %d employers (workers=%d)", len(employers), workers)
     grand_new = 0
     grand_existing = 0
     grand_found = 0
-
     result = scrape_employers(
         search_text="",
         employers=employers,
-        location_filter=location_filter,
-        accept_locs=accept_locs,
-        reject_locs=reject_locs,
         workers=workers,
         limit=limit,
         max_pages_per_employer=max_pages_per_employer,
         run_id=run_id,
         discovery_execution=discovery_execution,
-        query_specs=query_specs,
         cancel_event=cancel_event,
+        search_cfg=search_cfg,
+        **({"result_budget": result_budget} if result_budget is not None else {}),
     )
     grand_new += result["new"]
     grand_existing += result["existing"]
     grand_found += result["found"]
-
-    log.info(
-        "Workday crawl done: %d found, %d new, %d existing across %d query filters x %d employers",
-        grand_found,
-        grand_new,
-        grand_existing,
-        len(query_specs),
-        len(employers),
-    )
-
-    return {
-        "found": grand_found,
-        "new": grand_new,
-        "existing": grand_existing,
-        "queries": 1,
-        "query_filters": len(query_specs),
-    }
+    log.info("Workday crawl done: %d found, %d new, %d existing", grand_found, grand_new, grand_existing)
+    return {"found": grand_found, "new": grand_new, "existing": grand_existing, "queries": 1}
 
 
 def _workday_max_pages_per_employer(search_cfg: dict, *, limit: int) -> int:

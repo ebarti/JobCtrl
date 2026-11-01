@@ -67,6 +67,7 @@ class ScrapedJobPosting:
     canonical_url: str
     ats_kind: AtsKind = AtsKind.OTHER
     employer: Employer = field(default_factory=Employer.unknown)
+    structured_remote: bool | None = None
 
 
 @dataclass(frozen=True)

@@ -26,13 +26,6 @@ from jobctrl.domain.contact import (
     ContactRole,
     CreateContactUseCase,
 )
-from jobctrl.domain.contact.outreach_gates import (
-    build_outreach_evidence_corpus,
-    compute_outreach_claim_provenance,
-    parse_outreach_judge_response,
-    scan_outreach_draft,
-    validate_outreach_draft,
-)
 from jobctrl.domain.contact.outreach_use_cases import (
     ApproveOutreachDraftUseCase,
     GenerateOutreachDraftUseCase,
@@ -40,7 +33,7 @@ from jobctrl.domain.contact.outreach_use_cases import (
     RejectOutreachDraftUseCase,
     ReviseOutreachDraftUseCase,
 )
-from jobctrl.domain.materials.value_objects import ArtifactStatus
+from jobctrl.domain.ports.artifact_review import ArtifactStatus
 from jobctrl.domain.ports.llm import LlmPort
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.contact import (
@@ -55,11 +48,7 @@ _CLEAN_BODY = (
     "to hear how your team approaches reliability at Acme.\n\n"
     "Best,\nSam"
 )
-_FABRICATED_BODY = (
-    "Hi Dana,\n\n"
-    "We worked together at Initech Inc. and I increased revenue by 250% there.\n\n"
-    "Best,\nSam"
-)
+_FABRICATED_BODY = "Hi Dana,\n\nWe worked together at Initech Inc. and I increased revenue by 250% there.\n\nBest,\nSam"
 
 _JUDGE_PASS = {
     "verdict": "PASS",
@@ -81,9 +70,7 @@ _JUDGE_PASS = {
 def _profile() -> dict:
     return {
         "resume": {
-            "executive_profile": {
-                "baseline_text": "Backend engineer scaling data platforms."
-            },
+            "executive_profile": {"baseline_text": "Backend engineer scaling data platforms."},
             "experience_entries": [
                 {
                     "id": "exp1",
@@ -100,9 +87,7 @@ def _profile() -> dict:
                     ],
                 }
             ],
-            "skill_categories": [
-                {"id": "skills", "label": "Skills", "items": ["Python", "PostgreSQL"]}
-            ],
+            "skill_categories": [{"id": "skills", "label": "Skills", "items": ["Python", "PostgreSQL"]}],
             "education_entries": [],
         },
         "resume_constraints": {"real_metrics": ["5 million users"]},
@@ -117,11 +102,25 @@ class _FakeLlm(LlmPort):
         self.judge = judge if judge is not None else dict(_JUDGE_PASS)
         self.schemas_seen: list[str] = []
 
-    def chat_json(self, messages, *, response_schema, model=None, temperature=None, max_tokens=None, thinking_budget=None):  # noqa: ANN001,D102
+    def chat_json(
+        self, messages, *, response_schema, model=None, temperature=None, max_tokens=None, thinking_budget=None
+    ):  # noqa: ANN001,D102
         title = str(response_schema.get("title"))
         self.schemas_seen.append(title)
-        if title == "OutreachDraftBody":
-            return {"body": self.body}
+        if title == "GeneratedProseDraft":
+            request = json.loads(messages[1].content)
+            return {
+                "lines": [
+                    {
+                        "line_id": "outreach:body",
+                        "text": self.body,
+                        "evidence_ids": [row["source_id"] for row in request["sources"]],
+                        "requirement_ids": [],
+                        "transform_type": "rephrase",
+                        "reason": "Explicit generator anchor",
+                    }
+                ]
+            }
         if title == "OutreachDraftJudgeResult":
             return dict(self.judge)
         return {}
@@ -172,84 +171,13 @@ def _setup(tmp_path: Path):
 # --- Deterministic gate 1 (never-fabricate) --------------------------------
 
 
-def test_clean_draft_has_no_fabrication_findings() -> None:
-    corpus = build_outreach_evidence_corpus(_profile())
-    findings = scan_outreach_draft(
-        _CLEAN_BODY,
-        corpus,
-        profile=_profile(),
-        target_company="Acme",
-        recipient_role="Engineering Manager",
-        application_role="Staff Engineer",
-    )
-    assert findings == []
-
-
-def test_fabricated_draft_is_flagged_from_canonical_facts() -> None:
-    corpus = build_outreach_evidence_corpus(_profile())
-    findings = scan_outreach_draft(
-        _FABRICATED_BODY,
-        corpus,
-        profile=_profile(),
-        target_company="Acme",
-        recipient_role="Engineering Manager",
-        application_role="Staff Engineer",
-    )
-    kinds = {finding.kind for finding in findings}
-    tokens = {finding.token for finding in findings}
-    assert "numeric" in kinds  # invented "250%"
-    assert "employer" in kinds  # invented "Initech Inc."
-    assert any("250" in token for token in tokens)
-
-
 # --- Gate 2 (content validator) --------------------------------------------
-
-
-def test_validator_flags_missing_greeting_and_banned_words() -> None:
-    result = validate_outreach_draft("I am passionate about synergy.\nCheers")
-    assert not result.passed
-    assert any("greeting" in error.lower() for error in result.errors)
-
-
-def test_validator_accepts_a_clean_message() -> None:
-    assert validate_outreach_draft(_CLEAN_BODY).passed
 
 
 # --- Gate 3 (judge) --------------------------------------------------------
 
 
-def test_judge_fails_on_fabricated_relationship() -> None:
-    verdict = parse_outreach_judge_response(
-        {
-            "verdict": "PASS",
-            "score": 0.9,
-            "criterion_scores": {"relationship_accuracy": 0.2},
-            "issues": [],
-            "unsupported_claims": [],
-            "fabricated_relationships": ["claims a prior collaboration with the recipient"],
-            "repair_instructions": ["remove the invented collaboration"],
-        }
-    )
-    assert verdict.approved is False
-    assert any("collaboration" in issue for issue in verdict.issues)
-
-
 # --- Gate 4 (claim -> fact provenance, INV-2) ------------------------------
-
-
-def test_claim_provenance_binds_contact_facts_and_profile(tmp_path: Path) -> None:
-    corpus = build_outreach_evidence_corpus(_profile())
-    contact_facts = [
-        {"attribute_id": "attr-name", "kind": "name", "value": "Dana Lee"},
-    ]
-    claims = compute_outreach_claim_provenance(
-        _CLEAN_BODY, corpus, contact_facts=contact_facts, new_id=_counter()
-    )
-    joined_facts = {fact for claim in claims for fact in claim.contact_fact_ids}
-    assert "attr-name" in joined_facts
-    assert any(claim.profile_grounded for claim in claims)
-    # Computed against the rendered draft text, not the target.
-    assert all(claim.generated_text.strip() for claim in claims)
 
 
 # --- Use cases: generate / revise / approve (INV-5) ------------------------
@@ -262,6 +190,7 @@ def test_generate_produces_gated_candidate_and_approves(tmp_path: Path) -> None:
         contact_repository=contact_repo,
         llm=_FakeLlm(body=_CLEAN_BODY),
         new_id=_counter(),
+        **outreach_review_ports(thread_repo._conn, verdict="pass"),
     ).execute(
         LOCAL_TENANT,
         thread_id="thread-1",
@@ -274,7 +203,7 @@ def test_generate_produces_gated_candidate_and_approves(tmp_path: Path) -> None:
     assert draft is not None
     assert draft.status is ArtifactStatus.CANDIDATE
     assert draft.gate_results.passed is True
-    assert draft.provenance  # claim -> fact bindings present (INV-2)
+    assert draft.gate_results.determination_ids  # Persisted model verdict is the source of truth.
 
     approved = ApproveOutreachDraftUseCase(repository=thread_repo).execute(
         LOCAL_TENANT, thread_id="thread-1", draft_id=draft.draft_id
@@ -290,6 +219,7 @@ def test_fabricated_generate_cannot_be_approved(tmp_path: Path) -> None:
         contact_repository=contact_repo,
         llm=_FakeLlm(body=_FABRICATED_BODY),
         new_id=_counter(),
+        **outreach_review_ports(thread_repo._conn, verdict="fail"),
     ).execute(
         LOCAL_TENANT,
         thread_id="thread-1",
@@ -320,6 +250,7 @@ def test_revise_creates_new_generation_and_reruns_gates(tmp_path: Path) -> None:
         contact_repository=contact_repo,
         llm=_FakeLlm(body=_CLEAN_BODY),
         new_id=new_id,
+        **outreach_review_ports(thread_repo._conn, verdict="pass"),
     ).execute(
         LOCAL_TENANT,
         thread_id="thread-1",
@@ -327,12 +258,13 @@ def test_revise_creates_new_generation_and_reruns_gates(tmp_path: Path) -> None:
         job_id="00000000-0000-4000-8000-000000000001",
         profile=_profile(),
     )
-    # A user edit that introduces a fabrication RE-RUNS the gates and fails them.
+    # The explicit verifier rejection must govern the edited draft.
     revised = ReviseOutreachDraftUseCase(
         repository=thread_repo,
         contact_repository=contact_repo,
         llm=_FakeLlm(body="unused-for-revise"),
         new_id=new_id,
+        **outreach_review_ports(thread_repo._conn, verdict="fail"),
     ).execute(
         LOCAL_TENANT,
         thread_id="thread-1",
@@ -351,6 +283,7 @@ def test_redraft_preserves_last_approved_until_replacement_approved(tmp_path: Pa
         contact_repository=contact_repo,
         llm=_FakeLlm(body=_CLEAN_BODY),
         new_id=_counter(),
+        **outreach_review_ports(thread_repo._conn, verdict="pass"),
     )
     thread = gen.execute(
         LOCAL_TENANT,
@@ -395,6 +328,7 @@ def test_reject_reason_stays_canonical_and_out_of_events(tmp_path: Path) -> None
         contact_repository=contact_repo,
         llm=_FakeLlm(body=_CLEAN_BODY),
         new_id=_counter(),
+        **outreach_review_ports(thread_repo._conn, verdict="pass"),
     ).execute(
         LOCAL_TENANT,
         thread_id="thread-1",
@@ -424,9 +358,7 @@ def test_reject_reason_stays_canonical_and_out_of_events(tmp_path: Path) -> None
     assert all(reason not in payload for payload in payloads)
 
     rejected_payload = next(
-        json.loads(str(event["payload_json"]))
-        for event in event_rows
-        if event["event_type"] == "OutreachDraftRejected"
+        json.loads(str(event["payload_json"])) for event in event_rows if event["event_type"] == "OutreachDraftRejected"
     )
     assert "reason" not in rejected_payload
     assert rejected_payload["rejectedAt"] == "2026-07-06T00:02:00Z"
@@ -439,6 +371,7 @@ def test_revise_rejects_empty_body(tmp_path: Path) -> None:
         contact_repository=contact_repo,
         llm=_FakeLlm(body=_CLEAN_BODY),
         new_id=_counter(),
+        **outreach_review_ports(thread_repo._conn, verdict="pass"),
     ).execute(
         LOCAL_TENANT,
         thread_id="thread-1",
@@ -452,6 +385,26 @@ def test_revise_rejects_empty_body(tmp_path: Path) -> None:
             contact_repository=contact_repo,
             llm=_FakeLlm(),
             new_id=_counter(),
-        ).execute(
-            LOCAL_TENANT, thread_id="thread-1", edited_body_text="   ", profile=_profile()
-        )
+            **outreach_review_ports(thread_repo._conn, verdict="pass"),
+        ).execute(LOCAL_TENANT, thread_id="thread-1", edited_body_text="   ", profile=_profile())
+
+
+def outreach_review_ports(conn, verdict="pass"):
+    from tests.determination_fakes import VerificationModel
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+    from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
+    from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
+
+    deps = dict(
+        repository=SqliteDeterminationRepository(conn),
+        tenant_id="local",
+        provider="synthetic",
+        model="synthetic",
+        lane="contact",
+        preflight=lambda: None,
+    )
+    return dict(
+        claim_verifier=ModelClaimVerifier(llm=VerificationModel(verdict), **deps),
+        quality_judge=ModelArtifactQualityJudge(llm=VerificationModel(), **deps),
+        preflight=lambda: None,
+    )

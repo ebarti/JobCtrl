@@ -17,6 +17,7 @@
  */
 
 import crypto from "node:crypto";
+import { ContactAttributeInputSchema } from "@jobctrl/contracts";
 
 import type {
   ContactAttributeDto,
@@ -24,6 +25,11 @@ import type {
   ContactCreateRequest,
   ContactDeleteResponse,
   ContactDetail,
+  ContactImportFormat,
+  ContactImportIssue,
+  ContactImportItem,
+  ContactImportMode,
+  ContactImportPreviewAttribute,
   ContactImportRequest,
   ContactImportResponse,
   ContactListQuery,
@@ -35,6 +41,7 @@ import type {
 import { CONTACT_ROLES } from "@jobctrl/domain-types";
 import { allRows, getRow, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { refreshContactProjections } from "./projections.js";
+import { parseVCardContacts, type ParsedContactImportItem } from "./contact-vcard.js";
 
 const TENANT_ID = "local";
 const USER_ENTERED_REF = "user_entered";
@@ -42,6 +49,11 @@ const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 
 export class ContactInputError extends Error {}
 export class ContactNotFoundError extends Error {}
+export class ContactRevisionConflictError extends Error {
+  constructor() {
+    super("This contact changed since you opened it. Review the latest contact before retrying your draft.");
+  }
+}
 
 interface ProvenanceSeed {
   sourceKind: ContactSourceKind;
@@ -95,17 +107,37 @@ export function listContacts(
 }
 
 export function getContactDetail(db: SqliteDatabase, contactId: string): ContactDetail | null {
-  refreshContactProjections(db, TENANT_ID);
-  const row = getRow<ContactProjectionRow>(
+  // All fields and the edit base come from one canonical read snapshot, never
+  // independently refreshed projections. This also works on read-only handles.
+  return db.transaction(() => readContactDetail(db, contactId))();
+}
+
+function contactFingerprint(db: SqliteDatabase, contactId: string, row: ContactRow): string {
+  const facts = allRows<Record<string, SqliteValue>>(
     db,
-    "SELECT * FROM contact_projections WHERE tenant_id = ? AND contact_id = ?",
+    "SELECT * FROM contact_attributes WHERE tenant_id = ? AND contact_id = ? ORDER BY attribute_id",
     [TENANT_ID, contactId],
   );
-  if (!row) {
-    return null;
-  }
+  // Include the durable publication identity so even same-clock/no-op saves
+  // cannot repeat a successful mutation after a lost acknowledgement.
+  const publication = getRow<{ event_id: number | null }>(db,
+    `SELECT MAX(event_id) AS event_id FROM job_events
+     WHERE tenant_id = ? AND entity_kind = 'contact' AND entity_ref = ?
+       AND event_type IN ('ContactCreated', 'ContactUpdated', 'ContactAttributeRecorded')`,
+    [TENANT_ID, contactId]);
+  return crypto.createHash("sha256")
+    .update(JSON.stringify(["contact-edit-v1", TENANT_ID, contactId, row, facts, publication]))
+    .digest("hex");
+}
+
+function readContactDetail(db: SqliteDatabase, contactId: string): ContactDetail | null {
+  const row = getRow<ContactRow>(db,
+    "SELECT * FROM contacts WHERE tenant_id = ? AND contact_id = ? AND deleted_at IS NULL",
+    [TENANT_ID, contactId]);
+  if (!row) return null;
   const attributes = readAttributes(db, contactId);
   return {
+    fingerprint: contactFingerprint(db, contactId, row),
     contactId,
     displayName: displayNameFrom(attributes),
     role: normalizeRole(row.role),
@@ -174,97 +206,81 @@ export function updateContact(
   contactId: string,
   request: ContactUpdateRequest,
 ): ContactDetail {
-  const existing = getRow<ContactRow>(
-    db,
-    "SELECT * FROM contacts WHERE tenant_id = ? AND contact_id = ? AND deleted_at IS NULL",
-    [TENANT_ID, contactId],
-  );
-  if (!existing) {
-    throw new ContactNotFoundError(`Contact ${contactId} not found`);
-  }
-  const employer =
-    request.employer !== undefined ? normalizeLink(request.employer) : existing.employer ?? null;
-  const jobId = request.jobId !== undefined ? canonicalJobId(request.jobId) : existing.job_id ?? null;
-  if (!employer && !jobId) {
-    throw new ContactInputError("A contact must link to at least one of employer or jobId.");
-  }
-  const role = request.role ?? normalizeRole(existing.role);
-  const now = new Date().toISOString();
-  const existingAttributes = readAttributes(db, contactId);
-  const previousFacts = new Set(
-    existingAttributes.map((attribute) => `${attribute.kind} ${attribute.value}`),
-  );
-  const provenance: ProvenanceSeed = {
-    sourceKind: "user_entered",
-    sourceRef: USER_ENTERED_REF,
-    captureMethod: "manual",
-    confidence: 1,
-    userConfirmed: true,
-  };
-  const changed = changedFields(existing, { employer, jobId, role }, request.attributes !== undefined);
-  const nextAttributes =
-    request.attributes !== undefined ? seedAttributes(request.attributes) : null;
-  const transaction = db.transaction(() => {
-    db.prepare(
-      `UPDATE contacts SET employer = ?, job_id = ?, role = ?, updated_at = ?
-       WHERE tenant_id = ? AND contact_id = ?`,
-    ).run(employer, jobId, role, now, TENANT_ID, contactId);
-    if (nextAttributes !== null) {
-      db.prepare("DELETE FROM contact_attributes WHERE tenant_id = ? AND contact_id = ?").run(
-        TENANT_ID,
-        contactId,
-      );
-      // A fact whose (kind, value) is unchanged keeps its original attribute
-      // id and provenance (INV-2: editing the contact must not re-stamp
-      // imported/derived facts as user_entered); only new or value-edited
-      // facts are user-entered.
+  // Reserve the SQLite writer before loading or comparing the caller's base.
+  // Keep the returned next base inside the same transaction as its publication.
+  return db.transaction(() => {
+    const existing = getRow<ContactRow>(db,
+      "SELECT * FROM contacts WHERE tenant_id = ? AND contact_id = ? AND deleted_at IS NULL",
+      [TENANT_ID, contactId]);
+    if (!existing) throw new ContactNotFoundError(`Contact ${contactId} not found`);
+    if (request.expectedFingerprint !== contactFingerprint(db, contactId, existing)) {
+      throw new ContactRevisionConflictError();
+    }
+    const employer = request.employer !== undefined ? normalizeLink(request.employer) : existing.employer;
+    const jobId = request.jobId !== undefined ? canonicalJobId(request.jobId) : existing.job_id;
+    if (!employer && !jobId) {
+      throw new ContactInputError("A contact must link to at least one of employer or jobId.");
+    }
+    const role = request.role ?? normalizeRole(existing.role);
+    const now = new Date().toISOString();
+    const provenance: ProvenanceSeed = {
+      sourceKind: "user_entered", sourceRef: USER_ENTERED_REF,
+      captureMethod: "manual", confidence: 1, userConfirmed: true,
+    };
+    const added: AttributeSeed[] = [];
+    if (request.attributes !== undefined) {
+      const current = readAttributes(db, contactId);
+      const byId = new Map(current.map((fact) => [fact.attributeId, fact]));
+      const specified = new Set<string>();
+      for (const input of request.attributes) {
+        if (input.attributeId === undefined) continue;
+        if (!byId.has(input.attributeId) || specified.has(input.attributeId)) {
+          throw new ContactInputError("Contact fact identity is invalid or repeated.");
+        }
+        specified.add(input.attributeId);
+      }
       const remaining = new Map<string, ContactAttributeDto[]>();
-      for (const attribute of existingAttributes) {
-        const key = `${attribute.kind} ${attribute.value}`;
-        const bucket = remaining.get(key);
-        if (bucket) {
-          bucket.push(attribute);
+      for (const fact of current) {
+        if (specified.has(fact.attributeId)) continue;
+        const key = JSON.stringify([fact.kind, fact.value]);
+        const bucket = remaining.get(key) ?? [];
+        bucket.push(fact);
+        remaining.set(key, bucket);
+      }
+      const retained = new Set<string>();
+      for (const input of request.attributes) {
+        const rawKey = JSON.stringify([input.kind, input.value]);
+        const normalizedKey = JSON.stringify([input.kind, input.value.trim()]);
+        const kept = input.attributeId !== undefined
+          ? byId.get(input.attributeId)
+          : remaining.get(rawKey)?.shift() ??
+            (rawKey !== normalizedKey ? remaining.get(normalizedKey)?.shift() : undefined);
+        if (kept && kept.kind === input.kind &&
+            (kept.value === input.value || kept.value === input.value.trim())) {
+          retained.add(kept.attributeId);
         } else {
-          remaining.set(key, [attribute]);
+          const parsed = ContactAttributeInputSchema.safeParse({ kind: input.kind, value: input.value });
+          if (!parsed.success) throw new ContactInputError("Contact fact is invalid.");
+          added.push({ attributeId: crypto.randomUUID(), ...parsed.data });
         }
       }
-      const rows = nextAttributes.map((seed) => {
-        const kept = remaining.get(`${seed.kind} ${seed.value}`)?.shift();
-        if (kept) {
-          return {
-            attributeId: kept.attributeId,
-            kind: seed.kind,
-            value: seed.value,
-            provenance: {
-              sourceKind: kept.provenance.sourceKind,
-              sourceRef: kept.provenance.sourceRef,
-              captureMethod: kept.provenance.captureMethod,
-              confidence: kept.provenance.confidence,
-              userConfirmed: kept.provenance.userConfirmed,
-            },
-            recordedAt: kept.provenance.capturedAt,
-          };
-        }
-        return { attributeId: seed.attributeId, kind: seed.kind, value: seed.value, provenance, recordedAt: now };
-      });
-      insertAttributeRows(db, contactId, rows);
+      // Leave retained rows byte-for-byte intact, including nullable provenance.
+      const remove = db.prepare("DELETE FROM contact_attributes WHERE tenant_id = ? AND contact_id = ? AND attribute_id = ?");
+      for (const fact of current) {
+        if (!retained.has(fact.attributeId)) remove.run(TENANT_ID, contactId, fact.attributeId);
+      }
+      insertAttributes(db, contactId, added, provenance, now);
     }
+    db.prepare(`UPDATE contacts SET employer = ?, job_id = ?, role = ?, updated_at = ?
+      WHERE tenant_id = ? AND contact_id = ?`).run(employer, jobId, role, now, TENANT_ID, contactId);
     recordContactEvent(db, {
-      jobId,
-      eventType: "ContactUpdated",
-      contactId,
-      payload: { tenantId: TENANT_ID, contactId, changedFields: changed, updatedAt: now },
+      jobId, eventType: "ContactUpdated", contactId,
+      payload: { tenantId: TENANT_ID, contactId,
+        changedFields: changedFields(existing, { employer, jobId, role }, request.attributes !== undefined), updatedAt: now },
     });
-    if (nextAttributes !== null) {
-      for (const attribute of nextAttributes) {
-        if (!previousFacts.has(`${attribute.kind} ${attribute.value}`)) {
-          recordAttributeEvent(db, contactId, jobId, attribute, provenance, now);
-        }
-      }
-    }
-  });
-  transaction();
-  return requireContactDetail(db, contactId);
+    for (const attribute of added) recordAttributeEvent(db, contactId, jobId, attribute, provenance, now);
+    return readContactDetail(db, contactId)!;
+  }).immediate();
 }
 
 export function deleteContact(
@@ -296,48 +312,357 @@ export function importContacts(
   db: SqliteDatabase,
   request: ContactImportRequest,
 ): ContactImportResponse {
-  const filename = request.filename.trim() || "import.csv";
+  const normalized = normalizeImportRequest(request);
+  if (normalized.mode === "preview") {
+    return evaluateContactImport(db, normalized);
+  }
+  return db.transaction(() => commitContactImport(db, normalized))();
+}
+
+interface NormalizedContactImportRequest {
+  filename: string;
+  format: ContactImportFormat;
+  mode: ContactImportMode;
+  content: string;
+}
+
+interface ImportCandidate extends ParsedContactImportItem {
+  jobId: string | null;
+}
+
+type ContactIdentityRow = {
+  contact_id: string;
+  employer: string | null;
+  job_id: string | null;
+  role: string | null;
+  attribute_kind: string | null;
+  value_json: string | null;
+};
+
+function normalizeImportRequest(request: ContactImportRequest): NormalizedContactImportRequest {
+  if ("csvText" in request) {
+    return {
+      filename: request.filename.trim() || "import.csv",
+      format: "csv",
+      mode: "commit",
+      content: request.csvText,
+    };
+  }
+  return {
+    filename: request.filename.trim(),
+    format: request.format,
+    mode: request.mode,
+    content: request.content,
+  };
+}
+
+function parseImportCandidates(request: NormalizedContactImportRequest): ImportCandidate[] {
+  if (request.format === "vcard") {
+    return parseVCardContacts(request.content).map((candidate) => ({ ...candidate, jobId: null }));
+  }
+  return parseCsv(request.content).map((row) => {
+    const employer = normalizeLink(firstColumn(row, EMPLOYER_COLUMNS));
+    const rawJobId = firstColumn(row, JOB_COLUMNS);
+    const issues: ContactImportIssue[] = [];
+    let jobId: string | null = null;
+    if (rawJobId && !CANONICAL_JOB_ID.test(rawJobId)) {
+      issues.push({
+        code: "invalid_job_id",
+        message: "jobId must be a canonical UUID.",
+        severity: "error",
+        property: "job_id",
+      });
+    } else {
+      jobId = rawJobId || null;
+    }
+    if (!employer && !jobId) {
+      issues.push({
+        code: "missing_contact_link",
+        message: "A CSV contact must include employer/company or a canonical jobId.",
+        severity: "error",
+        property: null,
+      });
+    }
+    const attributes = csvAttributes(row);
+    if ((employer?.length ?? 0) > 200) {
+      issues.push({
+        code: "employer_too_long",
+        message: "employer/company exceeds 200 characters.",
+        severity: "error",
+        property: "employer",
+      });
+    }
+    for (const attribute of attributes) {
+      if (attribute.value.length > 2_000) {
+        issues.push({
+          code: "value_too_long",
+          message: `${attribute.kind} exceeds 2000 characters.`,
+          severity: "error",
+          property: attribute.kind,
+        });
+      }
+    }
+    return {
+      displayName: attributes.find((attribute) => attribute.kind === "name")?.value ?? "",
+      employer,
+      jobId,
+      role: normalizeRole(firstColumn(row, ["role"])),
+      attributes,
+      issues,
+    };
+  });
+}
+
+function evaluateContactImport(
+  db: SqliteDatabase,
+  request: NormalizedContactImportRequest,
+): ContactImportResponse {
+  const candidates = parseImportCandidates(request);
+  const existingRows = allRows<ContactIdentityRow>(
+    db,
+    `SELECT c.contact_id, c.employer, c.job_id, c.role, a.attribute_kind, a.value_json
+     FROM contacts c
+     LEFT JOIN contact_attributes a
+       ON a.tenant_id = c.tenant_id AND a.contact_id = c.contact_id
+     WHERE c.tenant_id = ? AND c.deleted_at IS NULL
+     ORDER BY c.contact_id, a.attribute_id`,
+    [TENANT_ID],
+  );
+  const existing = buildExistingIdentityIndexes(existingRows);
+  const validJobIds = new Set(
+    allRows<{ job_id: string }>(
+      db,
+      "SELECT job_id FROM jobs WHERE tenant_id = ?",
+      [TENANT_ID],
+    ).map((row) => row.job_id),
+  );
+  const batchIdentifiers = new Map<string, number>();
+  const batchSignatures = new Map<string, number>();
+  const items: ContactImportItem[] = [];
+
+  candidates.forEach((candidate, candidateIndex) => {
+    const index = candidateIndex + 1;
+    const issues = [...candidate.issues];
+    if (candidate.jobId && !validJobIds.has(candidate.jobId)) {
+      issues.push({
+        code: "invalid_job_link",
+        message: "jobId does not identify an existing local job.",
+        severity: "error",
+        property: "job_id",
+      });
+    }
+    let duplicate: ContactImportItem["duplicate"] = null;
+    let status: ContactImportItem["status"] = issues.some((issue) => issue.severity === "error")
+      ? "invalid"
+      : "ready";
+    const identifiers = identityKeys(candidate.attributes);
+    if (status === "ready") {
+      const existingMatches = new Set<string>();
+      for (const key of identifiers) {
+        for (const contactId of existing.identifiers.get(key) ?? []) existingMatches.add(contactId);
+      }
+      if (existingMatches.size > 1) {
+        status = "invalid";
+        issues.push({
+          code: "ambiguous_identity",
+          message: "Email and phone identifiers match different existing contacts.",
+          severity: "error",
+          property: null,
+        });
+      } else if (existingMatches.size === 1) {
+        status = "duplicate";
+        duplicate = { scope: "existing", contactId: [...existingMatches][0] ?? null, itemIndex: null };
+      }
+    }
+    if (status === "ready") {
+      const batchMatches = new Set<number>();
+      for (const key of identifiers) {
+        const match = batchIdentifiers.get(key);
+        if (match !== undefined) batchMatches.add(match);
+      }
+      if (batchMatches.size > 1) {
+        status = "invalid";
+        issues.push({
+          code: "ambiguous_batch_identity",
+          message: "Email and phone identifiers match different contacts in this import.",
+          severity: "error",
+          property: null,
+        });
+      } else if (batchMatches.size === 1) {
+        status = "duplicate";
+        duplicate = { scope: "batch", contactId: null, itemIndex: [...batchMatches][0] ?? null };
+      }
+    }
+    if (status === "ready" && identifiers.length === 0) {
+      const signature = fullRecordSignature(candidate);
+      const existingContactId = existing.signatures.get(signature);
+      const batchIndex = batchSignatures.get(signature);
+      if (existingContactId) {
+        status = "duplicate";
+        duplicate = { scope: "existing", contactId: existingContactId, itemIndex: null };
+      } else if (batchIndex !== undefined) {
+        status = "duplicate";
+        duplicate = { scope: "batch", contactId: null, itemIndex: batchIndex };
+      }
+    }
+    if (status === "ready") {
+      for (const key of identifiers) batchIdentifiers.set(key, index);
+      if (identifiers.length === 0) batchSignatures.set(fullRecordSignature(candidate), index);
+    }
+    items.push({
+      index,
+      status,
+      displayName: candidate.displayName,
+      employer: candidate.employer,
+      jobId: candidate.jobId,
+      role: candidate.role,
+      attributes: candidate.attributes,
+      duplicate,
+      issues,
+      importedContactId: null,
+    });
+  });
+  return buildImportResponse(request, items, []);
+}
+
+function commitContactImport(
+  db: SqliteDatabase,
+  request: NormalizedContactImportRequest,
+): ContactImportResponse {
+  const evaluated = evaluateContactImport(db, request);
+  const candidates = parseImportCandidates(request);
   const now = new Date().toISOString();
   const provenance: ProvenanceSeed = {
     sourceKind: "user_imported_list",
-    sourceRef: filename,
+    sourceRef: request.filename,
     captureMethod: "manual",
     confidence: 1,
     userConfirmed: true,
   };
-  const rows = parseCsv(request.csvText);
-  let imported = 0;
-  let skipped = 0;
   const contactIds: string[] = [];
-  const transaction = db.transaction(() => {
-    for (const row of rows) {
-      const employer = normalizeLink(firstColumn(row, EMPLOYER_COLUMNS));
-      const jobId = canonicalJobId(firstColumn(row, JOB_COLUMNS));
-      if (!employer && !jobId) {
-        skipped += 1;
-        continue;
-      }
-      const role = normalizeRole(firstColumn(row, ["role"]));
-      const attributes = seedAttributes(csvAttributes(row));
-      const contactId = crypto.randomUUID();
-      insertContactRow(db, { contactId, employer, jobId, role, createdAt: now, updatedAt: now });
-      insertAttributes(db, contactId, attributes, provenance, now);
-      recordContactEvent(db, {
-        jobId,
-        eventType: "ContactCreated",
-        contactId,
-        payload: { tenantId: TENANT_ID, contactId, employer, jobId, role, createdAt: now },
-      });
-      for (const attribute of attributes) {
-        recordAttributeEvent(db, contactId, jobId, attribute, provenance, now);
-      }
-      imported += 1;
-      contactIds.push(contactId);
+  for (const item of evaluated.items) {
+    if (item.status !== "ready") continue;
+    const candidate = candidates[item.index - 1];
+    if (!candidate) continue;
+    const contactId = crypto.randomUUID();
+    const attributes = seedAttributes(candidate.attributes);
+    insertContactRow(db, { contactId, employer: candidate.employer, jobId: candidate.jobId, role: candidate.role, createdAt: now, updatedAt: now });
+    insertAttributes(db, contactId, attributes, provenance, now);
+    recordContactEvent(db, {
+      jobId: candidate.jobId,
+      eventType: "ContactCreated",
+      contactId,
+      payload: { tenantId: TENANT_ID, contactId, employer: candidate.employer, jobId: candidate.jobId, role: candidate.role, createdAt: now },
+    });
+    for (const attribute of attributes) {
+      recordAttributeEvent(db, contactId, candidate.jobId, attribute, provenance, now);
     }
-  });
-  transaction();
+    item.importedContactId = contactId;
+    contactIds.push(contactId);
+  }
   refreshContactProjections(db, TENANT_ID);
-  return { ok: true, imported, skipped, contactIds };
+  return buildImportResponse(request, evaluated.items, contactIds);
+}
+
+function buildExistingIdentityIndexes(rows: ContactIdentityRow[]): {
+  identifiers: Map<string, Set<string>>;
+  signatures: Map<string, string>;
+} {
+  const identifiers = new Map<string, Set<string>>();
+  const contacts = new Map<string, ImportCandidate>();
+  for (const row of rows) {
+    let contact = contacts.get(row.contact_id);
+    if (!contact) {
+      contact = {
+        displayName: "",
+        employer: row.employer,
+        jobId: row.job_id,
+        role: normalizeRole(row.role),
+        attributes: [],
+        issues: [],
+      };
+      contacts.set(row.contact_id, contact);
+    }
+    if (row.attribute_kind && row.value_json !== null) {
+      const attribute = {
+        kind: row.attribute_kind as ContactImportPreviewAttribute["kind"],
+        value: decodeValue(row.value_json),
+      };
+      contact.attributes.push(attribute);
+      if (attribute.kind === "name" && !contact.displayName) contact.displayName = attribute.value;
+      for (const key of identityKeys([attribute])) {
+        const matches = identifiers.get(key) ?? new Set<string>();
+        matches.add(row.contact_id);
+        identifiers.set(key, matches);
+      }
+    }
+  }
+  const signatures = new Map<string, string>();
+  for (const [contactId, contact] of contacts) {
+    if (identityKeys(contact.attributes).length === 0) {
+      signatures.set(fullRecordSignature(contact), contactId);
+    }
+  }
+  return { identifiers, signatures };
+}
+
+function identityKeys(attributes: ContactImportPreviewAttribute[]): string[] {
+  const keys = new Set<string>();
+  for (const attribute of attributes) {
+    if (attribute.kind === "email") {
+      const email = attribute.value.trim().toLowerCase();
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) keys.add(`email:${email}`);
+    } else if (attribute.kind === "phone") {
+      const value = attribute.value.trim();
+      const phone = value.replace(/[^0-9]/g, "");
+      if (/^\+?[0-9(). -]+$/.test(value) && phone.length >= 7) keys.add(`phone:${phone}`);
+    }
+  }
+  return [...keys];
+}
+
+function fullRecordSignature(candidate: ImportCandidate): string {
+  const facts = candidate.attributes
+    .map((attribute) => `${attribute.kind}:${normalizeSignatureValue(attribute.value)}`)
+    .sort();
+  return JSON.stringify({
+    employer: normalizeSignatureValue(candidate.employer ?? ""),
+    jobId: candidate.jobId ?? "",
+    role: candidate.role,
+    facts,
+  });
+}
+
+function normalizeSignatureValue(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+}
+
+function buildImportResponse(
+  request: NormalizedContactImportRequest,
+  items: ContactImportItem[],
+  contactIds: string[],
+): ContactImportResponse {
+  const duplicates = items.filter((item) => item.status === "duplicate").length;
+  const invalid = items.filter((item) => item.status === "invalid").length;
+  const unsupported = items.filter((item) =>
+    item.issues.some((issue) => issue.code.startsWith("unsupported_")),
+  ).length;
+  return {
+    ok: true,
+    format: request.format,
+    mode: request.mode,
+    imported: contactIds.length,
+    skipped: items.length - contactIds.length,
+    contactIds,
+    summary: {
+      total: items.length,
+      ready: items.filter((item) => item.status === "ready").length,
+      duplicates,
+      invalid,
+      unsupported,
+    },
+    items,
+  };
 }
 
 // ---------------------------------------------------------------------------

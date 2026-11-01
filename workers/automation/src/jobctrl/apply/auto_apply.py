@@ -92,6 +92,15 @@ async def reconcile_auto_apply_loop(
             settings_path=settings_path,
         ):
             return AutoApplyReconcileResult(workflow_id, "halted_budget_exceeded", True)
+        from jobctrl.database import get_connection
+        from jobctrl.infrastructure.apply_controls import capture_apply_dispatch_frontier
+        from jobctrl.infrastructure.runtime_identity import assert_expected_runtime
+
+        assert_expected_runtime(expected_app_dir=expected_app_dir, expected_db_path=expected_db_path)
+        conn = get_connection()
+        if conn.in_transaction:
+            raise RuntimeError('Apply dispatch cannot cross a caller-owned database transaction')
+        frontier, _ = capture_apply_dispatch_frontier(conn, tenant_id=tenant_id)
         payload = ApplyWorkflowInput(
             tenant_id=tenant_id,
             expected_app_dir=expected_app_dir,
@@ -103,6 +112,7 @@ async def reconcile_auto_apply_loop(
             approval_required=settings.approval_required,
             continuous=True,
             auto_apply_loop=True,
+            dispatch_frontier=frontier,
         )
         await client.start_workflow(
             ApplyWorkflow.run,
@@ -142,6 +152,9 @@ def _budget_halt_active(
     path = Path(db_path)
     if not path.exists():
         return False
+    from jobctrl.database import _refuse_unresolved_initialization
+
+    _refuse_unresolved_initialization(path)
     try:
         with sqlite3.connect(path) as conn:
             row = conn.execute(
@@ -156,17 +169,26 @@ def _budget_halt_active(
             if not row or str(row[0]) != "failed" or str(row[1]) != "budget_exceeded":
                 return False
             daily_budget = read_daily_budget_usd(settings_path, default=25.0)
-            if daily_budget <= 0:
-                return False
             spend_day = datetime.now(timezone.utc).date().isoformat()
             spend = conn.execute(
-                "SELECT estimated_usd FROM llm_spend WHERE day = ?",
+                "SELECT COALESCE(SUM(estimated_usd), 0) FROM llm_spend WHERE day = ?",
+                (spend_day,),
+            ).fetchone()
+            apply_spend = conn.execute(
+                "SELECT input_tokens + output_tokens FROM llm_spend WHERE day = ? AND lane = 'apply'",
                 (spend_day,),
             ).fetchone()
     except sqlite3.Error:
         return False
     estimated = float(spend[0] or 0.0) if spend else 0.0
-    return estimated >= daily_budget
+    from jobctrl.infrastructure.scoring.criteria_provider import read_lane_token_limits
+
+    apply_limit = read_lane_token_limits(settings_path)["apply"]
+    apply_tokens = int(apply_spend[0] or 0) if apply_spend else 0
+    return (
+        (daily_budget > 0 and estimated >= daily_budget)
+        or (apply_limit > 0 and apply_tokens >= apply_limit)
+    )
 
 
 __all__ = [

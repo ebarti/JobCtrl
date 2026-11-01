@@ -25,8 +25,9 @@ swap it for a hosted service.
 > below are documented as conceptual seams and are **not realised as distinct
 > named types** in the current code: `ProfileSnapshotPort` (the code passes
 > `ProfileSnapshot` value objects; see `domain/profile/snapshot.py`),
-> `ArtifactStoragePort` (artifacts are written directly to the local filesystem
-> and registered in the read model), `EventSubscriber` (the in-process
+> `ArtifactStoragePort` (the broad storage seam remains conceptual; tailoring
+> realizes only the local `ArtifactTextWriter` capability, with registration
+> owned by `MaterialsRepository`), `EventSubscriber` (the in-process
 > `InProcessEventBus` is subscribed directly), and `ReadModelStore` (the
 > projection store in `infrastructure/projections/` is the concrete read side).
 > They are kept here because each names a real hosted-future seam.
@@ -123,7 +124,7 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 | **Driven** | `LlmPort` | LLM for tailoring and cover letter generation |
 | **Driven** | `AnalysisDraftPort` / `AnalysisSynthesizerPort` | Employer/company analysis via the 3-SDK agent ensemble (second LLM path) |
 | **Driven** | `PdfRendererPort` | Render HTML to PDF |
-| **Driven** | `ArtifactStoragePort` | Write and register generated files |
+| **Driven** | `ArtifactTextWriter` | Write exact tailoring candidate and inspection text to local generation paths |
 | **Driven** | `MaterialsRepository` | Persist MaterialsSet aggregates |
 | **Driven** | `ProfileSnapshotPort` | Read-only access to the current profile |
 | **Driven** | `EventPublisher` | Publish domain events |
@@ -133,14 +134,19 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 | `LlmPort` | Provider-routed `LlmAdapter`; plain and structured calls share the selected ready SDK backend | `CloudLlmGatewayAdapter` (shared gateway; see Enrichment) |
 | `AnalysisDraftPort` / `AnalysisSynthesizerPort` | Claude, Codex, and Google draft adapters run independently; `LlmAnalysisSynthesizer` reconciles through any ready `LlmPort` backend. A sole ready provider is included even when a stale optional-leg list omitted it | Same ensemble fronted by the cloud LLM gateway, with per-tenant token metering |
 | `PdfRendererPort` | `HtmlResumePdfAdapter` (structured resume HTML/CSS + Playwright renderer with layout boxes), `PlaywrightHtmlPdfAdapter` (cover letters) | HTML/CSS + Playwright/Chromium resume rendering. Cover letters: `WeasyPrintAdapter` (pure-Python HTML→PDF, no browser needed in cloud) |
-| `ArtifactStoragePort` | `LocalFilesystemAdapter` (writes to `~/.jobctrl/tailored_resumes/`, etc.) | `S3ArtifactAdapter` (**AWS S3** with tenant-prefixed keys: `s3://jobctrl-artifacts/{tenantId}/{jobId}/`; presigned URLs for browser download; lifecycle policy for cost control) |
+| `ArtifactTextWriter` | `LocalArtifactTextWriter` (UTF-8 candidate, `_JOB.txt` and `_REPORT.json` writes); `MaterialsRepository` owns registration | No hosted adapter implemented; a broader artifact-storage contract remains future work |
 | `MaterialsRepository` | `SqliteMaterialsRepository` | `PostgresMaterialsRepository` (RDS Postgres, tenant-scoped) |
 
 **Seam justification:** The `PdfRendererPort` absorbed the renderer swap:
 HTML/CSS + Playwright is the production default for resume PDFs, emits
 layout boxes for Apply Review, and historical `latex_pdf` rows remain metadata
 for migration/inspection without a render adapter. The
-`ArtifactStoragePort` absorbs the local-to-cloud transition for generated files.
+local `ArtifactTextWriter` separates filesystem writes from tailoring decisions;
+it does not define a remote storage platform. The composition root resolves the
+immutable model policy and injects the writer. The use case retains generation
+paths, accepted/evaluated text and transaction ordering; repositories retain
+registration, provenance and policy fences. See the
+[tailoring application boundary](../tailoring.md#local-application-boundary).
 
 ## 5.6 Apply Automation Context
 
@@ -221,7 +227,7 @@ supervised-research ports; Phase 3 adds the `OutreachThread` aggregate's ports
 |---|---|---|
 | **Driving** | `CreateContactUseCase` | Create a contact linked to an employer and/or application, with user-entered provenance |
 | **Driving** | `UpdateContactUseCase` | Update a contact's link, role, or attributes |
-| **Driving** | `ImportContactsUseCase` | Import a user-provided CSV contact list (CSV only), tagging every fact `user_imported_list` |
+| **Driving** | `ImportContactsUseCase` | Preview and explicitly import user-provided CSV/vCard contacts, tagging every fact `user_imported_list` |
 | **Driving** | `DeleteContactUseCase` | Soft-delete a contact |
 | **Driving** | `RunContactResearchUseCase` | Start a supervised research run: authorise sources (INV-3), fetch allowed public pages through the gateway, propose candidates in `needs_review` (INV-4) |
 | **Driving** | `ConfirmContactCandidateUseCase` | Promote a `needs_review` candidate into a stored `Contact` fact, preserving provenance (INV-2) |
@@ -235,7 +241,7 @@ supervised-research ports; Phase 3 adds the `OutreachThread` aggregate's ports
 | **Driven** | `ContactRepository` | Persist and retrieve the `Contact` aggregate (tenant-scoped) |
 | **Driven** | `ContactResearchTaskRepository` | Persist and retrieve the `ContactResearchTask` aggregate (task + candidates + source attempts) |
 | **Driven** | `OutreachThreadRepository` | Persist and retrieve the `OutreachThread` aggregate (thread + generation-versioned drafts, gate results, claim provenance, user-attested send logs, and the follow-up schedule), tenant-scoped |
-| **Driven** | `ResearchPageFetcherPort` | Gateway-routed public-page fetch; the single research outbound choke point (robots/rate-limit/budget are first-class outcomes) |
+| **Driven** | `ResearchPageFetcherPort` | Gateway-routed public-page fetch; the single research outbound choke point (rate-limit/budget and historical robots records are first-class outcomes) |
 | **Driven** | `LlmPort` | Schema-driven candidate extraction from a fetched page; outreach draft synthesis and the LLM-as-judge gate |
 | **Driven** | `EventPublisher` | Publish contact, research, and outreach-draft domain events |
 

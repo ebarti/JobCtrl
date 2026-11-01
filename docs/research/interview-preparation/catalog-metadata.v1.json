@@ -1,0 +1,3663 @@
+{
+  "schemaVersion": "1",
+  "catalogRevision": "2026-10-01.1",
+  "reviewedAt": "2026-10-01",
+  "sourcePacketDigest": "a4493c20c01dd856f75f3344d9a44f381a17fff7e77229fd4adc8fbf75c26356",
+  "sourceFiles": [
+    {
+      "path": "docs/research/interview-preparation/README.md",
+      "sha256": "26299d1b2d8691f4e14b854ed26b9f21ce7b0a091192420b1c2724c9fda12725"
+    },
+    {
+      "path": "docs/research/interview-preparation/ai.md",
+      "sha256": "8cf6ec55481b43acf8b62ec11ba1807eb7b1eea570186074c96447319a234b91"
+    },
+    {
+      "path": "docs/research/interview-preparation/behavioral.md",
+      "sha256": "73540e47eb57fb3a2c58416129f986d33057892ad8307630749d48dc815af34c"
+    },
+    {
+      "path": "docs/research/interview-preparation/common.md",
+      "sha256": "ffcd0e97b0e35c176645331ec2b0382365a073bfaa798e58c2b2e44bd6754aff"
+    },
+    {
+      "path": "docs/research/interview-preparation/coverage.md",
+      "sha256": "0fc45b3c9ce162fc521de763cf77e938b629c34e680af59cc680e2ffa67681fe"
+    },
+    {
+      "path": "docs/research/interview-preparation/culture.md",
+      "sha256": "05f0ddb38a73cd4271055ff4d610634d26741582fc040e81b83e07b13e920b88"
+    },
+    {
+      "path": "docs/research/interview-preparation/delivery.md",
+      "sha256": "53402513e0d7a7d84e4a7fe96e76d1c40dffa6bf7df122ac4aeaa7edd1efc176"
+    },
+    {
+      "path": "docs/research/interview-preparation/distributed.md",
+      "sha256": "a1bfdca12e61f2e5959bb0022586ebfcd1aa7883e9d1a510e2f73c617549585a"
+    },
+    {
+      "path": "docs/research/interview-preparation/evaluation.md",
+      "sha256": "78cb7e1158ca41bc0637277648931aef88269d15bb693280d754aec47cdfe695"
+    },
+    {
+      "path": "docs/research/interview-preparation/examples.md",
+      "sha256": "41a97d2051439c4efcb15fc4c7199ec4b6f369d96a435d6ecb28983ada6cad20"
+    },
+    {
+      "path": "docs/research/interview-preparation/executive.md",
+      "sha256": "0e9cfe9f7e60a6ded2b14c52c9fbec85b655ec9635077c2fe6e740d5d8457042"
+    },
+    {
+      "path": "docs/research/interview-preparation/management.md",
+      "sha256": "fd7503059d03df6afc28dc9b4c904f4ace26f7d114ac6a2b9f71007b06b1c717"
+    },
+    {
+      "path": "docs/research/interview-preparation/operations.md",
+      "sha256": "68a4f8724ef17d8b5d70c8d6c66f5f522efa1dbeaa91ca1eb210d28b173ac446"
+    },
+    {
+      "path": "docs/research/interview-preparation/organization.md",
+      "sha256": "358e409c5e6dde4b1659f10a58f2bce6dd4ec72fa686056b3f6f707dbde7df0b"
+    },
+    {
+      "path": "docs/research/interview-preparation/personal-leadership.md",
+      "sha256": "0b997dbbbf37b5d055192c5a944f7520ff3597e0c05c33deca910f9a6f5e49c2"
+    },
+    {
+      "path": "docs/research/interview-preparation/product.md",
+      "sha256": "ba30018b2b21827c92eabd3de59f5d5a0135ec0c2fa039b989e4d6061fb1e3a1"
+    },
+    {
+      "path": "docs/research/interview-preparation/review.md",
+      "sha256": "9687012a179df70df2228f3b3d0bed54b730ba01a3b45b1f371b11a78b9131a9"
+    },
+    {
+      "path": "docs/research/interview-preparation/sources.md",
+      "sha256": "f0570eedac31474a364be92f722809b18592baaeef35d76eb611eaed41a4658a"
+    },
+    {
+      "path": "docs/research/interview-preparation/staff.md",
+      "sha256": "1ecacb51f2a66e84a382073bcf0d4dd50f8f2b57b2bffb9f2c04517ddf5b7829"
+    },
+    {
+      "path": "docs/research/interview-preparation/talent.md",
+      "sha256": "045982fd41504343ae91983855e0c904b3338c77d5b95041bcc6a242518446b9"
+    },
+    {
+      "path": "docs/research/interview-preparation/technical-strategy.md",
+      "sha256": "eb20255dc470cba320d52adfc1b37833dd2f258fe7aa4487f81ae0c5847526d0"
+    }
+  ],
+  "topics": [
+    {
+      "id": "common",
+      "name": "Common & recruiter",
+      "prefix": "C"
+    },
+    {
+      "id": "behavioral",
+      "name": "Behavioral",
+      "prefix": "B"
+    },
+    {
+      "id": "management",
+      "name": "Management",
+      "prefix": "M"
+    },
+    {
+      "id": "staff",
+      "name": "Staff & principal",
+      "prefix": "T"
+    },
+    {
+      "id": "executive",
+      "name": "Executive",
+      "prefix": "E"
+    },
+    {
+      "id": "delivery",
+      "name": "Delivery",
+      "prefix": "DL"
+    },
+    {
+      "id": "operations",
+      "name": "Reliability",
+      "prefix": "O"
+    },
+    {
+      "id": "product",
+      "name": "Product judgment",
+      "prefix": "P"
+    },
+    {
+      "id": "organization",
+      "name": "Organization",
+      "prefix": "G"
+    },
+    {
+      "id": "talent",
+      "name": "Talent",
+      "prefix": "HR"
+    },
+    {
+      "id": "technical-strategy",
+      "name": "Technical strategy",
+      "prefix": "TS"
+    },
+    {
+      "id": "culture",
+      "name": "Culture & ethics",
+      "prefix": "K"
+    },
+    {
+      "id": "distributed",
+      "name": "Distributed work",
+      "prefix": "W"
+    },
+    {
+      "id": "personal-leadership",
+      "name": "Personal leadership",
+      "prefix": "LQ"
+    },
+    {
+      "id": "ai",
+      "name": "AI judgment",
+      "prefix": "AI"
+    }
+  ],
+  "authors": [
+    {
+      "id": "larson",
+      "name": "Will Larson",
+      "sourceIds": [
+        "L01",
+        "L02",
+        "L03",
+        "L04",
+        "L05",
+        "L06",
+        "L07",
+        "L08",
+        "L09",
+        "L10",
+        "L11",
+        "L12",
+        "L13",
+        "L14",
+        "L15",
+        "L16",
+        "L17",
+        "L18",
+        "L19",
+        "L20",
+        "L21"
+      ]
+    },
+    {
+      "id": "lopp",
+      "name": "Michael Lopp",
+      "sourceIds": [
+        "R01",
+        "R02",
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R07"
+      ]
+    },
+    {
+      "id": "hogan",
+      "name": "Lara Hogan",
+      "sourceIds": [
+        "H01",
+        "H02",
+        "H03",
+        "H04",
+        "H05",
+        "H06",
+        "H07"
+      ]
+    },
+    {
+      "id": "fournier",
+      "name": "Camille Fournier",
+      "sourceIds": [
+        "F01"
+      ]
+    },
+    {
+      "id": "reilly",
+      "name": "Tanya Reilly",
+      "sourceIds": [
+        "TR01",
+        "TR02",
+        "TR03",
+        "TR04"
+      ]
+    },
+    {
+      "id": "majors",
+      "name": "Charity Majors",
+      "sourceIds": [
+        "J01"
+      ]
+    },
+    {
+      "id": "huston",
+      "name": "Cate Huston",
+      "sourceIds": [
+        "U01"
+      ]
+    },
+    {
+      "id": "buritica-turnbull",
+      "name": "Buriticá & Turnbull",
+      "sourceIds": [
+        "U02"
+      ]
+    },
+    {
+      "id": "drasner",
+      "name": "Sarah Drasner",
+      "sourceIds": [
+        "D01"
+      ]
+    },
+    {
+      "id": "mckinley",
+      "name": "Dan McKinley",
+      "sourceIds": [
+        "DM01"
+      ]
+    },
+    {
+      "id": "topologies",
+      "name": "Skelton & Pais",
+      "sourceIds": [
+        "TP01"
+      ]
+    },
+    {
+      "id": "osmani",
+      "name": "Addy Osmani",
+      "sourceIds": [
+        "OS01"
+      ]
+    },
+    {
+      "id": "metr",
+      "name": "METR",
+      "sourceIds": [
+        "ME01"
+      ]
+    },
+    {
+      "id": "gitlab",
+      "name": "GitLab",
+      "sourceIds": [
+        "GI01"
+      ]
+    },
+    {
+      "id": "edmondson",
+      "name": "Amy Edmondson",
+      "sourceIds": [
+        "AE01"
+      ]
+    },
+    {
+      "id": "torres",
+      "name": "Teresa Torres",
+      "sourceIds": [
+        "PT01",
+        "PT02"
+      ]
+    },
+    {
+      "id": "sre",
+      "name": "Google SRE",
+      "sourceIds": [
+        "SR01",
+        "SR02"
+      ]
+    },
+    {
+      "id": "cagan",
+      "name": "Marty Cagan",
+      "sourceIds": [
+        "PC01"
+      ]
+    },
+    {
+      "id": "mckenzie",
+      "name": "Patrick McKenzie",
+      "sourceIds": [
+        "N01"
+      ]
+    },
+    {
+      "id": "opm",
+      "name": "OPM",
+      "sourceIds": [
+        "A01"
+      ]
+    }
+  ],
+  "questionMetadata": {
+    "C01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_narrative",
+        "career_choices"
+      ],
+      "competencyTags": [
+        "relevance",
+        "credible_ownership",
+        "coherent_direction"
+      ],
+      "answerFormats": [
+        "narrative"
+      ],
+      "defaultAnswerFormat": "narrative",
+      "attributionKind": "editorial_synthesis"
+    },
+    "C02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_narrative",
+        "career_choices"
+      ],
+      "competencyTags": [
+        "specific_interest",
+        "contribution",
+        "calibrated_knowledge"
+      ],
+      "answerFormats": [
+        "preference",
+        "narrative"
+      ],
+      "defaultAnswerFormat": "preference",
+      "attributionKind": "direct_interview_guidance"
+    },
+    "C03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_narrative",
+        "career_choices"
+      ],
+      "competencyTags": [
+        "comprehensibility",
+        "professional_boundaries",
+        "forward_direction"
+      ],
+      "answerFormats": [
+        "narrative"
+      ],
+      "defaultAnswerFormat": "narrative",
+      "attributionKind": "editorial_synthesis"
+    },
+    "C04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_narrative",
+        "career_choices"
+      ],
+      "competencyTags": [
+        "relevant_capability",
+        "demonstration",
+        "self_knowledge"
+      ],
+      "answerFormats": [
+        "historical",
+        "narrative"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "C05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_narrative",
+        "career_choices"
+      ],
+      "competencyTags": [
+        "real_development_need",
+        "action",
+        "progress_awareness"
+      ],
+      "answerFormats": [
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "C06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_narrative",
+        "career_choices"
+      ],
+      "competencyTags": [
+        "professional_continuity",
+        "transfer_boundary",
+        "current_direction"
+      ],
+      "answerFormats": [
+        "narrative"
+      ],
+      "defaultAnswerFormat": "narrative",
+      "attributionKind": "editorial_synthesis"
+    },
+    "C07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "compensation_negotiation",
+        "candidate_choice"
+      ],
+      "competencyTags": [
+        "information_and_anchoring",
+        "package_meaning",
+        "response_to_pressure"
+      ],
+      "answerFormats": [
+        "negotiation"
+      ],
+      "defaultAnswerFormat": "negotiation",
+      "attributionKind": "editorial_synthesis"
+    },
+    "C09": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_narrative",
+        "career_choices"
+      ],
+      "competencyTags": [
+        "work_sought",
+        "informed_preference",
+        "mutual_fit"
+      ],
+      "answerFormats": [
+        "preference"
+      ],
+      "defaultAnswerFormat": "preference",
+      "attributionKind": "editorial_synthesis"
+    },
+    "C10": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "employer_due_diligence",
+        "candidate_choice"
+      ],
+      "competencyTags": [
+        "decision_value",
+        "context",
+        "useful_specificity"
+      ],
+      "answerFormats": [
+        "principle",
+        "preference"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "direct_interview_guidance"
+    },
+    "B01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "personal_contribution",
+        "decision_quality",
+        "collaboration"
+      ],
+      "competencyTags": [
+        "contribution",
+        "relevant_effect",
+        "judgment"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "B02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "personal_contribution",
+        "decision_quality",
+        "collaboration"
+      ],
+      "competencyTags": [
+        "responsibility",
+        "decision_analysis",
+        "changed_practice"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "B03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "personal_contribution",
+        "decision_quality",
+        "collaboration"
+      ],
+      "competencyTags": [
+        "understanding",
+        "decision_process",
+        "collaboration"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "B04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "personal_contribution",
+        "decision_quality",
+        "collaboration"
+      ],
+      "competencyTags": [
+        "understanding",
+        "examination",
+        "response"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "B05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "personal_contribution",
+        "decision_quality",
+        "collaboration"
+      ],
+      "competencyTags": [
+        "diagnosis",
+        "bounded_progress",
+        "adaptation"
+      ],
+      "answerFormats": [
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "B06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "personal_contribution",
+        "decision_quality",
+        "collaboration"
+      ],
+      "competencyTags": [
+        "tradeoff",
+        "capacity",
+        "communication"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "B07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "personal_contribution",
+        "decision_quality",
+        "collaboration"
+      ],
+      "competencyTags": [
+        "shared_understanding",
+        "influence_mechanism",
+        "adoption"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "B08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "personal_contribution",
+        "decision_quality",
+        "collaboration"
+      ],
+      "competencyTags": [
+        "initial_reasoning",
+        "evidence_update",
+        "responsible_revision"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "B09": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "personal_contribution",
+        "decision_quality",
+        "collaboration"
+      ],
+      "competencyTags": [
+        "risk_response",
+        "coordination",
+        "recovery"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "editorial_synthesis"
+    },
+    "B10": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "personal_contribution",
+        "decision_quality",
+        "collaboration"
+      ],
+      "competencyTags": [
+        "grounded_concern",
+        "constructive_action",
+        "judgment_of_limits"
+      ],
+      "answerFormats": [
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "editorial_synthesis"
+    },
+    "B11": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "decision_quality",
+        "uncertainty",
+        "learning"
+      ],
+      "competencyTags": [
+        "decision_criterion",
+        "reasoning_under_uncertainty",
+        "evaluation_and_learning"
+      ],
+      "answerFormats": [
+        "principle"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "M01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "people_management",
+        "team_development"
+      ],
+      "competencyTags": [
+        "role_understanding",
+        "motivation",
+        "operating_behavior"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "direct_interview_guidance"
+    },
+    "M02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "people_management",
+        "team_development"
+      ],
+      "competencyTags": [
+        "role_alignment",
+        "technical_judgment",
+        "attention_tradeoff"
+      ],
+      "answerFormats": [
+        "principle"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "M03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "people_management",
+        "team_development"
+      ],
+      "competencyTags": [
+        "clear_agreement",
+        "support",
+        "accountability"
+      ],
+      "answerFormats": [
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "M04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "people_management",
+        "team_development"
+      ],
+      "competencyTags": [
+        "individual_understanding",
+        "development_action",
+        "capability_and_ownership"
+      ],
+      "answerFormats": [
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "editorial_synthesis"
+    },
+    "M05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "people_management",
+        "team_development"
+      ],
+      "competencyTags": [
+        "diagnosis",
+        "fair_support",
+        "accountability"
+      ],
+      "answerFormats": [
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "M06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "people_management",
+        "team_development"
+      ],
+      "competencyTags": [
+        "factual_clarity",
+        "dialogue",
+        "action"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "M07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "people_management",
+        "team_development"
+      ],
+      "competencyTags": [
+        "purpose",
+        "listening",
+        "reliability"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "M08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "people_management",
+        "team_development"
+      ],
+      "competencyTags": [
+        "role_definition",
+        "shared_process",
+        "improvement"
+      ],
+      "answerFormats": [
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "direct_interview_guidance"
+    },
+    "M09": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "people_management",
+        "team_development"
+      ],
+      "competencyTags": [
+        "balanced_definition",
+        "observation",
+        "team_capability"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "M10": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "people_management",
+        "team_development"
+      ],
+      "competencyTags": [
+        "understanding",
+        "fair_explanation",
+        "credible_action"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "direct_interview_guidance"
+    },
+    "T01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager"
+      ],
+      "responsibilityTags": [
+        "technical_leadership",
+        "cross_team_influence"
+      ],
+      "competencyTags": [
+        "technical_understanding",
+        "leadership_contribution",
+        "delivered_effect"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "direct_interview_guidance"
+    },
+    "T02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager"
+      ],
+      "responsibilityTags": [
+        "technical_leadership",
+        "cross_team_influence"
+      ],
+      "competencyTags": [
+        "alternatives",
+        "decision_reasoning",
+        "revision_awareness"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "editorial_synthesis"
+    },
+    "T03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager"
+      ],
+      "responsibilityTags": [
+        "technical_leadership",
+        "cross_team_influence"
+      ],
+      "competencyTags": [
+        "problem_value",
+        "feasible_transition",
+        "completion"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "T04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager"
+      ],
+      "responsibilityTags": [
+        "technical_leadership",
+        "cross_team_influence"
+      ],
+      "competencyTags": [
+        "support",
+        "technical_discernment",
+        "repair"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "direct_interview_guidance"
+    },
+    "T05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager"
+      ],
+      "responsibilityTags": [
+        "technical_leadership",
+        "cross_team_influence"
+      ],
+      "competencyTags": [
+        "enabling_mechanism",
+        "other_people_s_capability",
+        "sustainability"
+      ],
+      "answerFormats": [
+        "historical",
+        "principle"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "E01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "business_strategy",
+        "resource_allocation",
+        "organizational_accountability"
+      ],
+      "competencyTags": [
+        "diagnosis",
+        "coherent_choices",
+        "learning_and_impact"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "E02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "business_strategy",
+        "resource_allocation",
+        "organizational_accountability"
+      ],
+      "competencyTags": [
+        "learning_agenda",
+        "urgency_judgment",
+        "initial_action"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "E03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "business_strategy",
+        "resource_allocation",
+        "organizational_accountability"
+      ],
+      "competencyTags": [
+        "business_framing",
+        "options_and_uncertainty",
+        "accountable_allocation"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "E04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "business_strategy",
+        "resource_allocation",
+        "organizational_accountability"
+      ],
+      "competencyTags": [
+        "system_diagnosis",
+        "design_judgment",
+        "leadership_capability"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "E05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "business_strategy",
+        "resource_allocation",
+        "organizational_accountability"
+      ],
+      "competencyTags": [
+        "decision_purpose",
+        "measurement_judgment",
+        "value_and_action"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "DL01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "delivery_planning",
+        "dependency_coordination"
+      ],
+      "competencyTags": [
+        "forecast_basis",
+        "shared_commitment",
+        "updating"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "DL02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "delivery_planning",
+        "dependency_coordination"
+      ],
+      "competencyTags": [
+        "constraint_understanding",
+        "feasible_options",
+        "agreement"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "DL03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "delivery_planning",
+        "dependency_coordination"
+      ],
+      "competencyTags": [
+        "diagnosis",
+        "recovery_action",
+        "credibility"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "editorial_synthesis"
+    },
+    "DL04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "delivery_planning",
+        "dependency_coordination"
+      ],
+      "competencyTags": [
+        "dependencies",
+        "agreement",
+        "coordination"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "DL05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "delivery_planning",
+        "dependency_coordination"
+      ],
+      "competencyTags": [
+        "need",
+        "adoption",
+        "effect"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "direct_interview_guidance"
+    },
+    "DL06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "delivery_planning",
+        "dependency_coordination"
+      ],
+      "competencyTags": [
+        "risk_fit",
+        "readiness_evidence",
+        "accountability"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "DL07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "delivery_planning",
+        "dependency_coordination"
+      ],
+      "competencyTags": [
+        "forward_judgment",
+        "decision_process",
+        "closure"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "editorial_synthesis"
+    },
+    "DL08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "delivery_planning",
+        "dependency_coordination"
+      ],
+      "competencyTags": [
+        "bottleneck_evidence",
+        "unblocking",
+        "verification"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "O01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "service_reliability",
+        "operational_risk"
+      ],
+      "competencyTags": [
+        "impact",
+        "coordination",
+        "recovery"
+      ],
+      "answerFormats": [
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "O02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "service_reliability",
+        "operational_risk"
+      ],
+      "competencyTags": [
+        "expectations",
+        "tradeoff",
+        "operating_rule"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "O03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "service_reliability",
+        "operational_risk"
+      ],
+      "competencyTags": [
+        "reconstruction",
+        "system_learning",
+        "follow_through"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "O04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "service_reliability",
+        "operational_risk"
+      ],
+      "competencyTags": [
+        "load_diagnosis",
+        "relief",
+        "durable_change"
+      ],
+      "answerFormats": [
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "O05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "service_reliability",
+        "operational_risk"
+      ],
+      "competencyTags": [
+        "change_understanding",
+        "containment",
+        "recovery"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "O06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "service_reliability",
+        "operational_risk"
+      ],
+      "competencyTags": [
+        "ownership",
+        "preparedness",
+        "gap_handling"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "O07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "service_reliability",
+        "operational_risk"
+      ],
+      "competencyTags": [
+        "accuracy",
+        "usefulness",
+        "coordination"
+      ],
+      "answerFormats": [
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "O08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "service_reliability",
+        "operational_risk"
+      ],
+      "competencyTags": [
+        "risk_assessment",
+        "action",
+        "verification"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "P01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "product_judgment",
+        "customer_outcomes"
+      ],
+      "competencyTags": [
+        "problem_understanding",
+        "exploration",
+        "collaboration"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "P02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "product_judgment",
+        "customer_outcomes"
+      ],
+      "competencyTags": [
+        "inquiry",
+        "evidence",
+        "decision_effect"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "editorial_synthesis"
+    },
+    "P03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "product_judgment",
+        "customer_outcomes"
+      ],
+      "competencyTags": [
+        "assumption",
+        "test_fit",
+        "decision_rule"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "P04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "product_judgment",
+        "customer_outcomes"
+      ],
+      "competencyTags": [
+        "context",
+        "tradeoff",
+        "alignment"
+      ],
+      "answerFormats": [
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "P05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "product_judgment",
+        "customer_outcomes"
+      ],
+      "competencyTags": [
+        "measurement",
+        "diagnosis",
+        "response"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "P06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "product_judgment",
+        "customer_outcomes"
+      ],
+      "competencyTags": [
+        "shared_outcome",
+        "decision_mechanism",
+        "learning"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "P07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "product_judgment",
+        "customer_outcomes"
+      ],
+      "competencyTags": [
+        "business_mechanism",
+        "evidence_limits",
+        "tradeoff"
+      ],
+      "answerFormats": [
+        "historical",
+        "principle"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "editorial_synthesis"
+    },
+    "P08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "product_judgment",
+        "customer_outcomes"
+      ],
+      "competencyTags": [
+        "prior_hypothesis",
+        "interpretation",
+        "adaptation"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "G01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "staff_principal",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "manager_development"
+      ],
+      "competencyTags": [
+        "development_diagnosis",
+        "ownership",
+        "effects"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "G02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "manager_oversight",
+        "listening"
+      ],
+      "competencyTags": [
+        "listening",
+        "follow_up",
+        "operating_trust"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "G03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "decision_rights",
+        "team_interfaces"
+      ],
+      "competencyTags": [
+        "ambiguity_diagnosis",
+        "rights",
+        "effect"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "G04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "capability_transfer",
+        "continuity"
+      ],
+      "competencyTags": [
+        "dependency",
+        "development",
+        "continuity"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "G05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "organizational_design",
+        "manager_development"
+      ],
+      "competencyTags": [
+        "purpose",
+        "transition",
+        "evidence"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "G06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "organizational_design",
+        "manager_development"
+      ],
+      "competencyTags": [
+        "rationale",
+        "continuity",
+        "feedback"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "G07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "management_transition",
+        "fairness"
+      ],
+      "competencyTags": [
+        "role_clarity",
+        "fairness",
+        "support"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "G08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "organizational_design",
+        "manager_development"
+      ],
+      "competencyTags": [
+        "understanding",
+        "feasibility",
+        "adaptation"
+      ],
+      "answerFormats": [
+        "historical",
+        "situational"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "HR01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "talent_decisions",
+        "people_development"
+      ],
+      "competencyTags": [
+        "context",
+        "support",
+        "effectiveness"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "HR02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "hiring_assessment",
+        "evidence_based_decisions"
+      ],
+      "competencyTags": [
+        "criteria",
+        "evidence",
+        "decision"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "HR03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "transferable_evidence",
+        "development_investment"
+      ],
+      "competencyTags": [
+        "requirements",
+        "evidence",
+        "investment"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "direct_interview_guidance"
+    },
+    "HR04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "talent_decisions",
+        "people_development"
+      ],
+      "competencyTags": [
+        "consistency",
+        "opportunity",
+        "resolution"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "HR05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "compensation_fairness",
+        "resource_allocation"
+      ],
+      "competencyTags": [
+        "diagnosis",
+        "tradeoffs",
+        "communication"
+      ],
+      "answerFormats": [
+        "situational",
+        "principle"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "HR06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "talent_decisions",
+        "people_development"
+      ],
+      "competencyTags": [
+        "behavior_evidence",
+        "accountability",
+        "team_protection"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "HR07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "talent_decisions",
+        "people_development"
+      ],
+      "competencyTags": [
+        "understanding",
+        "options",
+        "continuity"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "HR08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "capacity_reduction",
+        "operational_continuity"
+      ],
+      "competencyTags": [
+        "accountability",
+        "care",
+        "operating_reset"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "TS01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "technical_strategy",
+        "architecture_decisions"
+      ],
+      "competencyTags": [
+        "need",
+        "boundary",
+        "adaptation"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "TS02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "technical_strategy",
+        "architecture_decisions"
+      ],
+      "competencyTags": [
+        "fit",
+        "full_cost",
+        "evidence"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "TS03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "technical_strategy",
+        "architecture_decisions"
+      ],
+      "competencyTags": [
+        "consumer_need",
+        "service_design",
+        "value"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "TS04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "technical_strategy",
+        "architecture_decisions"
+      ],
+      "competencyTags": [
+        "decision_framing",
+        "expertise",
+        "closure"
+      ],
+      "answerFormats": [
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "TS05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "technical_strategy",
+        "architecture_decisions"
+      ],
+      "competencyTags": [
+        "workload",
+        "diagnosis",
+        "intervention"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "TS06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "technical_strategy",
+        "architecture_decisions"
+      ],
+      "competencyTags": [
+        "diagnosis",
+        "change",
+        "effect"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "TS07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "technical_strategy",
+        "architecture_decisions"
+      ],
+      "competencyTags": [
+        "purpose",
+        "trial",
+        "adoption"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "TS08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "senior_ic",
+        "staff_principal",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "technical_strategy",
+        "architecture_decisions"
+      ],
+      "competencyTags": [
+        "time_horizon",
+        "reversibility",
+        "obligation"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "TS09": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "technical_decision_quality",
+        "operating_cost",
+        "reversibility"
+      ],
+      "competencyTags": [
+        "problem_and_technical_fit",
+        "whole_system_tradeoffs",
+        "risk_and_evolution"
+      ],
+      "answerFormats": [
+        "principle"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "K01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "inclusive_collaboration",
+        "ethical_judgment"
+      ],
+      "competencyTags": [
+        "access",
+        "response",
+        "standards"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "K02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "inclusive_collaboration",
+        "ethical_judgment"
+      ],
+      "competencyTags": [
+        "barrier",
+        "intervention",
+        "effect"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "editorial_synthesis"
+    },
+    "K03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "inclusive_collaboration",
+        "ethical_judgment"
+      ],
+      "competencyTags": [
+        "pattern_awareness",
+        "allocation",
+        "consequences"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "K04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "inclusive_collaboration",
+        "ethical_judgment"
+      ],
+      "competencyTags": [
+        "initial_care",
+        "process",
+        "follow_up"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "K05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "inclusive_collaboration",
+        "ethical_judgment"
+      ],
+      "competencyTags": [
+        "mismatch",
+        "action",
+        "effect"
+      ],
+      "answerFormats": [
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "K06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "inclusive_collaboration",
+        "ethical_judgment"
+      ],
+      "competencyTags": [
+        "understanding",
+        "requirement",
+        "agreement"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "K07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "inclusive_collaboration",
+        "ethical_judgment"
+      ],
+      "competencyTags": [
+        "purpose_and_scope",
+        "authority",
+        "alternative"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "K08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "inclusive_collaboration",
+        "ethical_judgment"
+      ],
+      "competencyTags": [
+        "access",
+        "consideration",
+        "closure"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "W01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "distributed_collaboration",
+        "communication"
+      ],
+      "competencyTags": [
+        "channel_fit",
+        "context",
+        "conclusion"
+      ],
+      "answerFormats": [
+        "principle"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "W02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "distributed_collaboration",
+        "communication"
+      ],
+      "competencyTags": [
+        "burden",
+        "design",
+        "access"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "W03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "distributed_collaboration",
+        "communication"
+      ],
+      "competencyTags": [
+        "pattern",
+        "intervention",
+        "verification"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "W04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "distributed_collaboration",
+        "communication"
+      ],
+      "competencyTags": [
+        "context",
+        "action",
+        "accessibility"
+      ],
+      "answerFormats": [
+        "principle"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "W05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "distributed_collaboration",
+        "communication"
+      ],
+      "competencyTags": [
+        "purpose",
+        "cost_and_access",
+        "adjustment"
+      ],
+      "answerFormats": [
+        "principle"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "W06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "distributed_collaboration",
+        "communication"
+      ],
+      "competencyTags": [
+        "interpretation",
+        "repair_channel",
+        "resolution"
+      ],
+      "answerFormats": [
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "W07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "distributed_collaboration",
+        "communication"
+      ],
+      "competencyTags": [
+        "needs",
+        "support",
+        "independence"
+      ],
+      "answerFormats": [
+        "situational",
+        "principle"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "W08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "distributed_collaboration",
+        "communication"
+      ],
+      "competencyTags": [
+        "needs_inquiry",
+        "adaptation",
+        "substance"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "LQ01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_development",
+        "sustainable_work"
+      ],
+      "competencyTags": [
+        "ambiguity",
+        "influence",
+        "agreement"
+      ],
+      "answerFormats": [
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "LQ02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_development",
+        "sustainable_work"
+      ],
+      "competencyTags": [
+        "specificity",
+        "response",
+        "boundaries"
+      ],
+      "answerFormats": [
+        "situational",
+        "historical"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "LQ03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_development",
+        "sustainable_work"
+      ],
+      "competencyTags": [
+        "capacity",
+        "tradeoff",
+        "sustainability"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "LQ04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_development",
+        "sustainable_work"
+      ],
+      "competencyTags": [
+        "challenge",
+        "use",
+        "responsibility"
+      ],
+      "answerFormats": [
+        "principle",
+        "historical"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "LQ05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_development",
+        "sustainable_work"
+      ],
+      "competencyTags": [
+        "gap_awareness",
+        "learning",
+        "capability"
+      ],
+      "answerFormats": [
+        "historical",
+        "principle"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "LQ06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_development",
+        "sustainable_work"
+      ],
+      "competencyTags": [
+        "acknowledgment",
+        "repair",
+        "follow_through"
+      ],
+      "answerFormats": [
+        "historical"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "editorial_synthesis"
+    },
+    "LQ07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_development",
+        "sustainable_work"
+      ],
+      "competencyTags": [
+        "scope_clarity",
+        "evidence",
+        "operating_change"
+      ],
+      "answerFormats": [
+        "principle"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "editorial_synthesis"
+    },
+    "LQ08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "professional_development",
+        "sustainable_work"
+      ],
+      "competencyTags": [
+        "decision_clarity",
+        "tradeoffs",
+        "reflection"
+      ],
+      "answerFormats": [
+        "historical",
+        "preference"
+      ],
+      "defaultAnswerFormat": "historical",
+      "attributionKind": "practice_extrapolation"
+    },
+    "AI01": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "ai_judgment",
+        "verification",
+        "data_boundaries"
+      ],
+      "competencyTags": [
+        "purpose",
+        "conditions",
+        "learning"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "AI02": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "ai_judgment",
+        "verification",
+        "data_boundaries"
+      ],
+      "competencyTags": [
+        "outcome",
+        "comparison",
+        "inference"
+      ],
+      "answerFormats": [
+        "situational",
+        "principle"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "AI03": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "ai_judgment",
+        "verification",
+        "data_boundaries"
+      ],
+      "competencyTags": [
+        "understanding",
+        "verification",
+        "ownership"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "AI04": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "ai_judgment",
+        "verification",
+        "data_boundaries"
+      ],
+      "competencyTags": [
+        "understanding",
+        "support",
+        "capability"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "AI05": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "ai_judgment",
+        "verification",
+        "data_boundaries"
+      ],
+      "competencyTags": [
+        "quality_definition",
+        "evidence",
+        "operating_decision"
+      ],
+      "answerFormats": [
+        "situational",
+        "principle"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "practice_extrapolation"
+    },
+    "AI06": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "agent_authority",
+        "data_boundaries",
+        "verification"
+      ],
+      "competencyTags": [
+        "scope",
+        "authority",
+        "containment"
+      ],
+      "answerFormats": [
+        "situational"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    },
+    "AI07": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "ic",
+        "senior_ic",
+        "staff_principal",
+        "first_time_manager",
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "ai_judgment",
+        "verification",
+        "data_boundaries"
+      ],
+      "competencyTags": [
+        "claim_separation",
+        "checking",
+        "reuse"
+      ],
+      "answerFormats": [
+        "principle",
+        "situational"
+      ],
+      "defaultAnswerFormat": "principle",
+      "attributionKind": "practice_extrapolation"
+    },
+    "AI08": {
+      "cardRevision": "1",
+      "rubricRevision": "1",
+      "roleLenses": [
+        "engineering_manager",
+        "director",
+        "executive"
+      ],
+      "responsibilityTags": [
+        "ai_judgment",
+        "verification",
+        "data_boundaries"
+      ],
+      "competencyTags": [
+        "evidence",
+        "system_effects",
+        "planning"
+      ],
+      "answerFormats": [
+        "situational",
+        "principle"
+      ],
+      "defaultAnswerFormat": "situational",
+      "attributionKind": "editorial_synthesis"
+    }
+  },
+  "sourceCoverageKinds": {
+    "L01": "article",
+    "L02": "article",
+    "L03": "article",
+    "L04": "article",
+    "L05": "article",
+    "L06": "article",
+    "L07": "article",
+    "L08": "article",
+    "L09": "article",
+    "L10": "article",
+    "L11": "article",
+    "L12": "article",
+    "L13": "article",
+    "L14": "article",
+    "L15": "selected_passage",
+    "L16": "article",
+    "L17": "selected_passage",
+    "L18": "selected_passage",
+    "L19": "selected_passage",
+    "L20": "selected_passage",
+    "L21": "selected_passage",
+    "R01": "article",
+    "R02": "article",
+    "R03": "article",
+    "R04": "article",
+    "R05": "article",
+    "R06": "article",
+    "R07": "article",
+    "H01": "article",
+    "H02": "article",
+    "H03": "article",
+    "H04": "article",
+    "H05": "article",
+    "H06": "article",
+    "H07": "selected_passage",
+    "F01": "article",
+    "TR01": "selected_passage",
+    "TR02": "overview",
+    "TR03": "article",
+    "TR04": "article",
+    "J01": "article",
+    "U01": "selected_passage",
+    "U02": "selected_passage",
+    "D01": "overview",
+    "DM01": "article",
+    "TP01": "official_guidance",
+    "OS01": "selected_passage",
+    "ME01": "research_update",
+    "GI01": "official_guidance",
+    "AE01": "article",
+    "PT01": "selected_passage",
+    "PT02": "selected_passage",
+    "SR01": "official_guidance",
+    "SR02": "selected_passage",
+    "PC01": "article",
+    "N01": "selected_passage",
+    "A01": "official_guidance"
+  },
+  "retiredQuestions": [
+    {
+      "id": "C08",
+      "retiredAt": "2026-10-01",
+      "reason": "Routine availability, location, travel and authorization are user-owned checklist facts, not substantive preparation or scored competencies. ID reserved; never recycle.",
+      "replacementId": null
+    }
+  ],
+  "catalogDigest": "fcea1ff4717dc0faa639f10a668faf12dcbc842991affb0a8cad5c9eca6b1dfd"
+}

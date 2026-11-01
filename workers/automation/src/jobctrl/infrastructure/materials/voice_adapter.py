@@ -20,15 +20,21 @@ wrapping asyncio task — matching the constraint "NO timeouts on the voice LLM 
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
 from jobctrl.domain.materials.voice import VoicePayload, VoiceRequest, VoiceResult
+from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.infrastructure.analysis.claude_analysis_adapter import _collect_sdk_messages
 from jobctrl.infrastructure.materials.voice_prompts import build_voice_user_prompt
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.infrastructure.setup_probes import bundled_claude_sdk_options
 from jobctrl.runtime import activate_provider_pack, is_bundled_runtime
+from jobctrl.infrastructure.llm.provider_availability import record_provider_failure
+from jobctrl.infrastructure.llm.provider_errors import raise_on_claude_failure
 
 # A query callable: (prompt, options) -> async iterator of SDK messages.
 QueryFn = Callable[..., AsyncIterator[Any] | Awaitable[AsyncIterator[Any]]]
@@ -61,14 +67,6 @@ def _load_options_factory() -> OptionsFactory:
     from claude_agent_sdk import ClaudeAgentOptions  # type: ignore[import-untyped]
 
     return ClaudeAgentOptions
-
-
-async def _aiter(result: AsyncIterator[Any] | Awaitable[AsyncIterator[Any]]) -> AsyncIterator[Any]:
-    """Normalise sync/awaitable query return shapes into an async iterator."""
-    if hasattr(result, "__aiter__"):
-        return result  # type: ignore[return-value]
-    awaited = await result  # type: ignore[misc]
-    return awaited
 
 
 def _structured_output_from_messages(messages: list[Any]) -> dict[str, Any]:
@@ -111,8 +109,8 @@ def _usage_from_messages(messages: list[Any]) -> tuple[int | None, int | None]:
     """Best-effort ``(input_tokens, output_tokens)`` from the final ResultMessage.
 
     The Claude Agent SDK reports authoritative cumulative usage on the terminal
-    ``ResultMessage``; the true input is fresh + cache-creation + cache-read
-    tokens. Every field is coerced defensively so a drifted/non-int usage shape
+    ``ResultMessage``. Cache fields are subsets of ``input_tokens`` and must not
+    be added again. Every field is coerced defensively so a drifted/non-int usage shape
     yields omitted counts rather than raising inside the span (telemetry must
     never fail the leg). Returns ``(None, None)`` when the SDK surfaced no usage.
     """
@@ -122,14 +120,34 @@ def _usage_from_messages(messages: list[Any]) -> tuple[int | None, int | None]:
         usage = getattr(message, "usage", None)
         if not isinstance(usage, Mapping):
             return None, None
-        input_tokens = (
-            (_optional_int(usage.get("input_tokens")) or 0)
-            + (_optional_int(usage.get("cache_creation_input_tokens")) or 0)
-            + (_optional_int(usage.get("cache_read_input_tokens")) or 0)
-        )
+        input_tokens = _optional_int(usage.get("input_tokens")) or 0
         output_tokens = _optional_int(usage.get("output_tokens")) or 0
         return (input_tokens or None, output_tokens or None)
     return None, None
+
+
+class LlmVoiceAdapter:
+    """Run the optional writing pass through the saved core model route."""
+
+    def __init__(self, *, llm: LlmPort, provider_id: str, model: str) -> None:
+        self._llm = llm
+        self._model_id = f"{provider_id}:{model}"
+
+    @property
+    def model_id(self) -> str:
+        return self._model_id
+
+    @lane_bound("tailoring")
+    async def rewrite(self, system_prompt: str, request: VoiceRequest) -> VoiceResult:
+        structured = await asyncio.to_thread(
+            self._llm.chat_json,
+            [
+                LlmMessage(role="system", content=system_prompt),
+                LlmMessage(role="user", content=build_voice_user_prompt(request)),
+            ],
+            response_schema=VoicePayload.model_json_schema(),
+        )
+        return VoiceResult.from_payload(VoicePayload.model_validate(structured))
 
 
 class ClaudeVoiceAdapter:
@@ -150,6 +168,7 @@ class ClaudeVoiceAdapter:
     def model_id(self) -> str:
         return self._model
 
+    @lane_bound("tailoring")
     async def rewrite(self, system_prompt: str, request: VoiceRequest) -> VoiceResult:
         query_fn = self._query_fn or _load_sdk_query()
         options_factory = self._options_factory or _load_options_factory()
@@ -179,21 +198,24 @@ class ClaudeVoiceAdapter:
             params={},
             scope_name=_VOICE_SCOPE,
         ) as record:
-            raw = query_fn(prompt=user_prompt, options=options)
-            iterator = await _aiter(raw)
-            messages = [message async for message in iterator]
+            try:
+                messages = await _collect_sdk_messages(
+                    query_fn, prompt=user_prompt, options=options, model=self._model, operation="voice",
+                    record_cancelled_usage=record,
+                )
+                input_tokens, output_tokens = _usage_from_messages(messages)
+                record("", input_tokens=input_tokens, output_tokens=output_tokens)
+                raise_on_claude_failure(messages, model=self._model, operation="voice")
+            except Exception as error:
+                record_provider_failure("claude", self._model, error)
+                raise
             structured = _structured_output_from_messages(messages)
-            input_tokens, output_tokens = _usage_from_messages(messages)
-            record(
-                json.dumps(structured, ensure_ascii=False),
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            )
             payload = VoicePayload.model_validate(structured)
             return VoiceResult.from_payload(payload)
 
 
 __all__ = [
+    "LlmVoiceAdapter",
     "CLAUDE_VOICE_MODEL",
     "ClaudeVoiceAdapter",
 ]

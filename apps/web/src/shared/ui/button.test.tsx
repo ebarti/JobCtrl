@@ -107,7 +107,7 @@ describe("<Button>", () => {
     expect(screen.getByRole("button", { name: "Defer" })).toHaveClass(
       "bg-warning",
       "text-warning-foreground",
-      "focus-visible:ring-warning",
+      "focus-visible:ring-ring",
     );
   });
 

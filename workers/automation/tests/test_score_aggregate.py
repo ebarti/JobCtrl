@@ -71,9 +71,7 @@ def test_score_breakdown_defaults_to_zero_components() -> None:
 
 
 def test_score_breakdown_round_trips_through_dict() -> None:
-    original = ScoreBreakdown(
-        technical_fit=8, experience_fit=7, role_fit=9, reasoning="Strong match"
-    )
+    original = ScoreBreakdown(technical_fit=8, experience_fit=7, role_fit=9, reasoning="Strong match")
     restored = ScoreBreakdown.from_dict(original.to_dict())
     assert restored == original
 
@@ -385,9 +383,7 @@ def test_score_parser_rejects_missing_score_field() -> None:
 
 
 def test_score_parser_rejects_out_of_range_score() -> None:
-    result = ScoreParser().parse_json(
-        {"score": 11, "keywords": [], "reasoning": "too high"}
-    )
+    result = ScoreParser().parse_json({"score": 11, "keywords": [], "reasoning": "too high"})
     assert result.ok is False
     assert result.fit_score is None
     assert "outside" in result.error.lower()
@@ -397,9 +393,7 @@ def test_score_parser_rejects_successful_score_with_no_keywords() -> None:
     """Round-1 review M1: a score with no keywords is not a valid scoring
     per §4.4 — the parser surfaces it as ``ok=False`` so the caller
     doesn't accidentally persist a sentinel-keyword score."""
-    result = ScoreParser().parse_json(
-        {"score": 7, "keywords": [], "reasoning": "missing the keywords"}
-    )
+    result = ScoreParser().parse_json({"score": 7, "keywords": [], "reasoning": "missing the keywords"})
     assert result.ok is False
     assert result.fit_score is None
     assert "keywords" in result.error.lower()
@@ -459,7 +453,7 @@ def test_eligibility_checker_treats_salary_blockers_as_advisory() -> None:
         FitScore.create(9),
         criteria,
         EligibilityAssessment(
-            status="blocked",
-            hard_blockers=("Base salary is below the preferred compensation range.",),
+            status="warning",
+            warnings=("Base salary is below the preferred compensation range.",),
         ),
     )

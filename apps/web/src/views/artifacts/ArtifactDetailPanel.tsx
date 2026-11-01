@@ -23,11 +23,8 @@ import { useArtifactDetailQuery } from "../../contexts/operations/hooks/useArtif
 import { useArtifactsListQuery } from "../../contexts/operations/hooks/useArtifactsListQuery.js";
 import { useEvidenceMapQuery } from "../../contexts/operations/hooks/useEvidenceMapQuery.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
-import type {
-  ArtifactsListInput,
-  EvidenceMapEntry,
-  JobDetail,
-} from "../../contexts/operations/types.js";
+import type { ArtifactsListInput } from "../../contexts/operations/types.js";
+import type { EvidenceMapEntry, JobDetail } from "@jobctrl/contracts";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
@@ -479,6 +476,16 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                     </Collapsible>
                   </CardContent>
                 </Card>
+                <details className="artifact-verification-sources">
+                  <summary>Verification sources</summary>
+                  {detail.determinations.length ? detail.determinations.map(receipt => (
+                    <details key={receipt.determination_id}>
+                      <summary>{receipt.kind.replaceAll("_", " ")} · {receipt.provider} · {receipt.model}</summary>
+                      <p>{receipt.prompt_version} · input {receipt.input_fingerprint}</p>
+                      <pre>{JSON.stringify(receipt.result, null, 2)}</pre>
+                    </details>
+                  )) : <p>No recorded verification sources.</p>}
+                </details>
                 {detail.tailoringExplanation ? (
                   <Collapsible
                     className="artifact-rationale-disclosure"

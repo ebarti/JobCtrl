@@ -11,6 +11,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.infrastructure.temporal.control import execute_control_activity
     from jobctrl.infrastructure.temporal.finalize import (
         emit_workflow_outcome,
         emit_workflow_started,
@@ -65,9 +66,9 @@ class ProfileImportWorkflow:
             expected_db_path=payload.expected_db_path,
         )
         try:
-            await workflow.execute_activity(
+            await execute_control_activity(
                 check_spend_budget,
-                SpendBudgetInput(tenant_id=payload.tenant_id),
+                SpendBudgetInput(tenant_id=payload.tenant_id, lane="profile"),
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )

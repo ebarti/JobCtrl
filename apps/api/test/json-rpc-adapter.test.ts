@@ -29,11 +29,7 @@ const CANONICAL_JOB_ID = "11111111-1111-4111-8111-111111111111";
 
 class FakeDispatcher implements JsonRpcDispatcher {
   public readonly calls: Array<{ method: RpcMethod; params: Record<string, unknown> }> = [];
-  private response: JsonRpcResponse = {
-    jsonrpc: "2.0",
-    id: 1,
-    result: { runId: "run-fake" },
-  } as JsonRpcResponse;
+  private response: JsonRpcResponse | null = null;
 
   setResponse(response: JsonRpcResponse): void {
     this.response = response;
@@ -41,7 +37,12 @@ class FakeDispatcher implements JsonRpcDispatcher {
 
   async call(method: RpcMethod, params: Record<string, unknown>): Promise<JsonRpcResponse> {
     this.calls.push({ method, params });
-    return this.response;
+    if (this.response) return this.response;
+    const result = method === "cancel_run" ? { runId: "run-1", status: "canceling" }
+      : method === "analyze_job" ? { jobId: CANONICAL_JOB_ID, generation: 1, cacheKey: "synthetic", cached: false, legsAttempted: 1, legsSucceeded: 1, degraded: false }
+      : method === "run_stage" && params.awaitResult ? { runId: "run-fake", result: { stages_completed: ["score", "tailor", "cover"], stages_failed: [], failure: null, error_code: null } }
+      : { runId: "run-fake" };
+    return { jsonrpc: "2.0", id: 1, result };
   }
 
   async close(): Promise<void> {
@@ -319,6 +320,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         limit: 20,
         workers: 4,
         minScore: 8,
+        tailorModels: [],
         validationMode: "strict",
         dryRun: true,
         rescore: true,
@@ -343,6 +345,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         dryRun: true,
         rescore: true,
         retailor: false,
+        tailorModels: [],
         headless: false,
         model: "default",
         llmModel: DEFAULT_PIPELINE_LLM_MODEL,
@@ -394,7 +397,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         reason: "manual_tailor",
         tailorModels: ["gemini:test"],
         tailorJudgeModel: "judge:test",
-        tailorJudgeMinScore: 0.82,
       },
       context,
     );
@@ -407,7 +409,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         suppressExistingArtifacts: false,
         tailorModels: ["gemini:test"],
         tailorJudgeModel: "judge:test",
-        tailorJudgeMinScore: 0.82,
       },
       context,
     );
@@ -457,7 +458,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           reason: "manual_tailor",
           tailorModels: ["gemini:test"],
           tailorJudgeModel: "judge:test",
-          tailorJudgeMinScore: 0.82,
         },
       },
       {
@@ -471,7 +471,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           suppressExistingArtifacts: false,
           tailorModels: ["gemini:test"],
           tailorJudgeModel: "judge:test",
-          tailorJudgeMinScore: 0.82,
         },
       },
       {
@@ -484,6 +483,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           jobIds: [CANONICAL_JOB_ID],
           dryRun: false,
           suppressExistingArtifacts: false,
+          tailorModels: [],
         },
       },
     ]);
@@ -509,6 +509,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         jobKey: CANONICAL_JOB_ID,
         jobId: CANONICAL_JOB_ID,
         suppressExistingArtifacts: true,
+        tailorModels: [],
       },
       context,
     );
@@ -533,6 +534,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           jobId: CANONICAL_JOB_ID,
           dryRun: false,
           suppressExistingArtifacts: true,
+          tailorModels: [],
         },
       },
     ]);
@@ -951,7 +953,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         stages: ["tailor"],
         tailorModels: ["local:draft-a", "openai:draft-b"],
         tailorJudgeModel: "gemini:judge-c",
-        tailorJudgeMinScore: 0.9,
         model: "sonnet",
       },
       { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" },
@@ -965,7 +966,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       tailorModels: ["local:draft-a", "openai:draft-b"],
       tailorJudgeModel: "gemini:judge-c",
-      tailorJudgeMinScore: 0.9,
     });
   });
 
@@ -1174,7 +1174,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     });
   });
 
-  it("does not require runId on apply response", async () => {
+  it("rejects an apply acknowledgment without a runId", async () => {
     const fake = new FakeDispatcher();
     fake.setResponse({
       jsonrpc: "2.0",
@@ -1183,7 +1183,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     } as JsonRpcResponse);
     const dispatcher = createActionDispatcher(fake);
 
-    const result: ActionDispatchResult = await dispatcher(
+    await expect(dispatcher(
       {
         action: "apply",
         jobKey: CANONICAL_JOB_ID,
@@ -1192,10 +1192,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         dryRun: true,
       },
       { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" },
-    );
-
-    expect(result.status).toBe("queued");
-    expect(result.runId).toBeUndefined();
+    )).rejects.toThrow("Invalid JSON-RPC result");
   });
 
   it("includes tenantId in every dispatched RPC call", async () => {
@@ -1231,10 +1228,114 @@ describe("SubprocessJsonRpcAdapter per-request timeout", () => {
       requestTimeoutMs: 100,
     });
     try {
-      await expect(adapter.call("run_stage", { tenantId: "local" })).rejects.toThrow(/timed out/);
+      await expect(adapter.call("run_stage", { tenantId: "local", stage: "score" })).rejects.toThrow(/timed out/);
     } finally {
       await adapter.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("shared enforcing RPC boundary", () => {
+  it("requires the verification provider before injected transport", async () => {
+    const { callRpc } = await import("../src/json-rpc-adapter.js");
+    const fake = new FakeDispatcher();
+    await expect(callRpc(fake, "provider_verify", {} as never)).rejects.toMatchObject({ phase: "params" });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("requires the verification provider before worker resolution", async () => {
+    const { SubprocessJsonRpcAdapter } = await import("../src/json-rpc-adapter.js");
+    const resolve = vi.fn(() => { throw new Error("must not resolve a command"); });
+    const adapter = new SubprocessJsonRpcAdapter({ pythonRuntime: { id: "unused", resolve } });
+    try {
+      await expect(adapter.call("provider_verify", {} as never)).rejects.toMatchObject({ phase: "params" });
+      expect(resolve).not.toHaveBeenCalled();
+    } finally { await adapter.close(); }
+  });
+
+  it.each([
+    { stage: "score", workers: 0 },
+    { stage: "score", minScore: 11 },
+    { stage: "score", unexpected: true },
+    { stage: "score", jobId: CANONICAL_JOB_ID, jobIds: [CANONICAL_JOB_ID] },
+    { stage: "discover", sourceIds: ["same", "same"] },
+    { stage: "score", sourceIds: ["jobspy:indeed"] },
+  ])("rejects invalid input before an injected transport: %j", async (params) => {
+    const { callRpc } = await import("../src/json-rpc-adapter.js");
+    const fake = new FakeDispatcher();
+    await expect(callRpc(fake, "run_stage", params as never)).rejects.toMatchObject({ phase: "params" });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("rejects invalid parameters before spawning the worker", async () => {
+    const { SubprocessJsonRpcAdapter } = await import("../src/json-rpc-adapter.js");
+    const resolve = vi.fn(() => { throw new Error("must not resolve a command"); });
+    const adapter = new SubprocessJsonRpcAdapter({ pythonRuntime: { id: "unused", resolve } });
+    try {
+      await expect(adapter.call("run_stage", { stage: "score", workers: 0 })).rejects.toMatchObject({ phase: "params" });
+      expect(resolve).not.toHaveBeenCalled();
+    } finally { await adapter.close(); }
+  });
+
+  it.each([
+    { runId: "only-an-ack" },
+    { runId: "malformed", result: { stages_completed: "score" } },
+    { runId: "wrong-family", result: { families_completed: [], families_failed: [], preparation_started: 0, enrichment_status: "succeeded", enrichment_site_errors: {}, compensation_refresh_status: "succeeded", compensation_estimates_written: 0, compensation_refresh_warnings: [], failure: null, error_code: null } },
+  ])("rejects invalid awaited profile completion %j", async (result) => {
+    const fake = new FakeDispatcher();
+    fake.setResponse({ jsonrpc: "2.0", id: 1, result });
+    await expect(createActionDispatcher(fake)({ action: "run_stage", jobKey: "pipeline", stage: "score", reason: "profile_updated:42" }, { appDir: "/synthetic", dbPath: "/synthetic/jobs.db" })).rejects.toMatchObject({ phase: "result" });
+  });
+
+  it("distinguishes a terminal failed profile completion from uncertain dispatch", async () => {
+    const fake = new FakeDispatcher();
+    fake.setResponse({ jsonrpc: "2.0", id: 1, result: { runId: "failed", result: { stages_completed: [], stages_failed: ["score"], failure: "Synthetic stage failure", error_code: "synthetic" } } });
+    await expect(createActionDispatcher(fake)({ action: "run_stage", jobKey: "pipeline", stage: "score", reason: "profile_updated:42" }, { appDir: "/synthetic", dbPath: "/synthetic/jobs.db" })).resolves.toMatchObject({
+      status: "failed",
+      completedWorkflowFailure: { runId: "failed", errorCode: "synthetic" },
+    });
+    fake.setResponse({ jsonrpc: "2.0", id: 1, error: { code: -32603, message: "Synthetic transport failure" } });
+    const uncertain = await createActionDispatcher(fake)({ action: "run_stage", jobKey: "pipeline", stage: "score", reason: "profile_updated:42" }, { appDir: "/synthetic", dbPath: "/synthetic/jobs.db" });
+    expect(uncertain.status).toBe("failed");
+    expect(uncertain).not.toHaveProperty("completedWorkflowFailure");
+  });
+});
+
+describe("subprocess response settlement", () => {
+  function adapterFor(script: string) {
+    return import("../src/json-rpc-adapter.js").then(({ SubprocessJsonRpcAdapter }) => new SubprocessJsonRpcAdapter({
+      requestTimeoutMs: 2000,
+      pythonRuntime: { id: "synthetic-node-wire", resolve: () => ({ executable: process.execPath, argv: ["-e", script], cwd: REPO_ROOT, env: process.env }) },
+    }));
+  }
+
+  it("correlates reversed replies while ignoring progress notifications", async () => {
+    const adapter = await adapterFor(`const readline=require('node:readline');const requests=[];const emit=x=>console.log(JSON.stringify(x));readline.createInterface({input:process.stdin}).on('line',line=>{requests.push(JSON.parse(line));if(requests.length===2){emit({jsonrpc:'2.0',method:'progress',params:{step:1}});for(const r of requests.reverse())emit({jsonrpc:'2.0',id:r.id,result:{status:'succeeded',pdfPath:r.params.pdfPath}})}});`);
+    try {
+      const results = await Promise.all([
+        adapter.call("render_resume_pdf", { htmlPath: "/synthetic/first.html", pdfPath: "/synthetic/first.pdf" }),
+        adapter.call("render_resume_pdf", { htmlPath: "/synthetic/second.html", pdfPath: "/synthetic/second.pdf" }),
+      ]);
+      expect(results.map(response => response.result?.pdfPath)).toEqual(["/synthetic/first.pdf", "/synthetic/second.pdf"]);
+      expect(results.map(response => response.id)).toEqual([1, 2]);
+    } finally { await adapter.close(); }
+  });
+
+  it.each(["invalid_result", "invalid_envelope", "rpc_error"])("settles %s distinctly", async (mode) => {
+    const adapter = await adapterFor(`const readline=require('node:readline');readline.createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);const response=${JSON.stringify(mode)}==='invalid_envelope'?{jsonrpc:'2.0',id:r.id,result:{},error:{code:-32603,message:'both'}}:${JSON.stringify(mode)}==='rpc_error'?{jsonrpc:'2.0',id:r.id,error:{code:-32602,message:'synthetic invalid parameters',data:{reason:'synthetic'}}}:{jsonrpc:'2.0',id:r.id,result:{status:'succeeded'}};console.log(JSON.stringify(response));});`);
+    try {
+      const response = adapter.call("render_resume_pdf", { htmlPath: "/synthetic/in.html", pdfPath: "/synthetic/out.pdf" });
+      if (mode === "rpc_error") await expect(response).resolves.toMatchObject({ error: { code: -32602, message: "synthetic invalid parameters", data: { reason: "synthetic" } } });
+      else await expect(response).rejects.toMatchObject({ name: "RpcContractError", phase: "result" });
+    } finally { await adapter.close(); }
+  });
+
+  it("rejects pending work on close", async () => {
+    const adapter = await adapterFor("process.stdin.resume();");
+    const result = adapter.call("render_resume_pdf", { htmlPath: "/synthetic/in.html", pdfPath: "/synthetic/out.pdf" });
+    const assertion = expect(result).rejects.toThrow("Adapter closed before response");
+    await adapter.close();
+    await assertion;
   });
 });

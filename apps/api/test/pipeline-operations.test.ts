@@ -7,7 +7,7 @@ import { PipelineOperationsSnapshotSchema } from "@jobctrl/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildPipelineOperationsSnapshot } from "../src/pipeline-operations.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const NOW = new Date("2026-07-14T12:00:00.000Z");
 const DISCOVER_WORKFLOW_ID = "discover-local";
@@ -31,6 +31,72 @@ afterEach(() => {
 });
 
 describe("pipeline operations read model", () => {
+  it.each([
+    ["failed", 0, "blocked"], ["exhausted", 0, "blocked"], ["canceled", 0, "canceled"],
+  ] as const)("finishes a stopped preparation plan with an unexecuted PDF after %s", (state, retryable, bucket) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    for (const cohort of ["observed_this_run", "existing_backlog"] as const) {
+      const key = `terminal-before-pdf-${cohort}`;
+      const member = insertMember(fixture, { key, cohort, requiredSteps: ["score", "tailor", "pdf"] });
+      insertStageState(fixture, key, "enrich", "succeeded");
+      insertStageState(fixture, key, "score", "succeeded");
+      insertStageState(fixture, key, "tailor", state, null, null, retryable);
+      insertWorkflowProjection(fixture, member.preparationWorkflowId, "failed", PREPARATION_RUN_ID);
+    }
+    const result = snapshot(fixture);
+    expect(result.execution).toMatchObject({
+      phase: "completed_with_issues", currentExecution: { terminal: 1, remaining: 0 },
+      sweptExistingBacklog: { terminal: 1, remaining: 0 },
+    });
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, [bucket]: 1, succeeded: 0, unknown: 0,
+    });
+  });
+
+  it("keeps an actual PDF activity authoritative over a later failed prerequisite", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "actual-pdf-running", requiredSteps: ["tailor", "pdf"] });
+    insertStageState(fixture, "actual-pdf-running", "tailor", "failed", null, null, 0);
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "failed", PREPARATION_RUN_ID);
+    insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state: "running" });
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      processing: 1, blocked: 0, unknown: 0,
+    });
+    expect(snapshot(fixture).execution?.currentExecution.remaining).toBe(1);
+  });
+
+  it.each(["failed", "queued", "running"])("does not settle the missing PDF while recovery is %s", (state) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "recovering-before-pdf", requiredSteps: ["score", "tailor", "pdf"] });
+    insertStageState(fixture, "recovering-before-pdf", "score", "succeeded");
+    insertStageState(fixture, "recovering-before-pdf", "tailor", state, null, null, 1);
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "failed", PREPARATION_RUN_ID);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, unknown: 1, blocked: 0, canceled: 0, succeeded: 0,
+    });
+  });
+
+  it.each(["enrich", "score", "tailor", "cover"])("reports the %s recovery batch stage and exact execution without inventing job membership", (stageName) => {
+    const fixture = createFixture();
+    const workflowId = `prepare-auto-local-${stageName}-${"a".repeat(24)}`;
+    insertHeartbeat(fixture, {
+      activeSlots: 1, counts: { [stageName]: 1 },
+      details: [activityDetail(stageName, "op_000000000000000000000042", workflowId, PREPARATION_RUN_ID)],
+    });
+    const result = snapshot(fixture);
+    expect(result.activeStageCounts).toEqual([{ stage: stageName, count: 1 }]);
+    expect(result.activeItems).toEqual([expect.objectContaining({
+      kind: "unresolved_runtime_activity", activityType: stageName, stage: stageName,
+      workflowId, executionId: PREPARATION_RUN_ID,
+    })]);
+    expect(result.activeItemsTotal).toBe(1);
+    expect(result.projectionCoverage).toMatchObject({ persistedMembershipCount: 0 });
+  });
+
   it("presents stages in dependency order with an explicit enrichment reconciliation label", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "in_progress" });
@@ -62,28 +128,82 @@ describe("pipeline operations read model", () => {
     const fixture = createFixture();
     insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
 
-    expect(snapshot(fixture).projectionCoverage).toBeNull();
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toBeNull();
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBe(0);
+    expect(result.activeItemsTruncated).toBe(false);
+  });
+
+  it("keeps unselected scope unconfirmed when a fresh idle worker has a stale peer", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, { workerId: "fresh", activeSlots: 0, counts: {}, details: [] });
+    insertHeartbeat(fixture, { workerId: "stale", activeSlots: 1, counts: {}, details: [] });
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString(), "stale");
+
+    const result = snapshot(fixture);
+    expect(result.capacity).toMatchObject({ status: "available", activeSlots: 0, staleWorkerCount: 1 });
+    expect(result.activeItemsTotal).toBe(0);
+    expect(result.projectionCoverage).toMatchObject({ status: "recovering" });
+    expect(fixture.db.prepare("SELECT COUNT(*) AS count FROM worker_runtime_heartbeats").get())
+      .toMatchObject({ count: 2 });
   });
 
   it("reports recovering coverage when no selected execution has unavailable telemetry", () => {
     const fixture = createFixture();
 
-    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toMatchObject({
       status: "recovering",
       persistedMembershipCount: 0,
       persistedStepCount: 0,
     });
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBeNull();
+    expect(result.activeItemsTruncated).toBeNull();
   });
 
   it("reports recovering coverage when occupied slots have no allowlisted runtime details", () => {
     const fixture = createFixture();
     insertHeartbeat(fixture, { activeSlots: 1, counts: {}, details: [] });
 
-    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toMatchObject({
       status: "recovering",
       persistedMembershipCount: 0,
       persistedStepCount: 0,
     });
+    expect(result.activeItems).toEqual([]);
+    expect(result.capacity).toMatchObject({ status: "available", activeSlots: 1 });
+    expect(result.activeStageCounts).toEqual([]);
+    expect(result.activeItemsTotal).toBe(0);
+    expect(result.activeItemsTruncated).toBe(true);
+  });
+
+  it("reports four standalone URL imports without inventing pipeline stages or a Discover execution", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      activeSlots: 4, counts: { job_url_import: 4 },
+      details: Array.from({ length: 4 }, (_, index) => ({
+        ...activityDetail("job_url_import", `op_${String(index).padStart(24, "0")}`, unmatchedWorkflowRef("intake")),
+        workflowRef: null,
+      })),
+    });
+    const result = snapshot(fixture);
+    expect(result.execution).toBeNull();
+    expect(result.capacity).toMatchObject({ activeSlots: 4 });
+    expect(result.activeItemsTotal).toBe(4);
+    expect(result.activeItemsTruncated).toBe(false);
+    expect(result.activeStageCounts).toEqual([]);
+    expect(result.activeItems).toHaveLength(4);
+    for (const item of result.activeItems) {
+      expect(item).toMatchObject({
+        kind: "unresolved_runtime_activity", activityType: "job_url_import", stage: null,
+        workflowId: null, attempt: 1,
+      });
+    }
+    expect(result.projectionCoverage?.status).toBe("recovering");
   });
 
   it("reports recovering coverage when fresh runtime work has no selected execution", () => {
@@ -96,11 +216,178 @@ describe("pipeline operations read model", () => {
       ],
     });
 
-    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toMatchObject({
       status: "recovering",
       persistedMembershipCount: 0,
       persistedStepCount: 0,
     });
+    expect(result.activeStageCounts).toEqual([{ stage: "tailor", count: 1 }]);
+    expect(result.activeItems).toEqual([{
+      kind: "unresolved_runtime_activity",
+      activityType: "tailor_job",
+      workflowId: unmatchedWorkflowRef("unselected"),
+      executionId: DISCOVER_RUN_ID,
+      attempt: 1,
+      startedAt: "2026-07-14T11:05:00.000Z",
+      opaqueId: "op_000000000000000000000041",
+      stage: "tailor",
+    }]);
+    expect(result.activeItemsTotal).toBe(1);
+    expect(result.activeItemsTruncated).toBe(false);
+  });
+
+  it.each([
+    ["score_job", "score"], ["tailor_job", "tailor"],
+    ["cover_letter", "cover"], ["render_pdf", "pdf_render"],
+  ])("labels standalone %s from its exact preparation execution without inventing a Discover", (activityType, expectedStage) => {
+    const fixture = createFixture();
+    const preparation = insertStandalonePreparation(fixture, "standalone-label");
+    const opaqueId = "op_000000000000000000000044";
+    insertHeartbeat(fixture, { activeSlots: 1, counts: { [activityType]: 1 }, details: [
+      activityDetail(activityType, opaqueId, preparation.workflowId, PREPARATION_RUN_ID),
+    ] });
+    const writesBefore = fixture.db.prepare("SELECT total_changes() AS count").get();
+
+    const result = snapshot(fixture);
+    expect(result.execution).toBeNull();
+    expect(result.activeItems).toEqual([expect.objectContaining({
+      kind: "resolved_job", activityType, stage: expectedStage, jobKey: opaqueId,
+      workflowId: preparation.workflowId, executionId: PREPARATION_RUN_ID,
+      title: "Standalone role", company: "Standalone company",
+    })]);
+    expect(result.activeItemsTotal).toBe(1);
+    expect(result.activeItemsTruncated).toBe(false);
+    expect(result.projectionCoverage?.status).toBe("recovering");
+    expect(fixture.db.prepare("SELECT total_changes() AS count").get()).toEqual(writesBefore);
+    expect(JSON.stringify(result)).not.toContain("private-runtime-input-sentinel");
+    expect(JSON.stringify(result)).not.toContain(preparation.jobId);
+    expect(JSON.stringify(result)).not.toContain("https://private.invalid/");
+  });
+
+  it("hydrates global preparation labels without changing an unrelated selected Discover", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "selected-unrelated", requiredSteps: ["score"] });
+    insertStageState(fixture, "selected-unrelated", "score", "pending");
+    const workflowId = unmatchedWorkflowRef("standalone-selected");
+    insertHeartbeat(fixture, { activeSlots: 1, counts: { tailor_job: 1 }, details: [
+      activityDetail("tailor_job", "op_000000000000000000000045", workflowId, PREPARATION_RUN_ID),
+    ] });
+    const before = snapshot(fixture);
+    insertStandalonePreparation(fixture, "standalone-selected", workflowId);
+    const after = snapshot(fixture);
+    expect(after.activeItems[0]).toMatchObject({ kind: "resolved_job", title: "Standalone role" });
+    expect(before.activeItems[0]).toMatchObject({ kind: "unresolved_runtime_activity" });
+    const { activeItems: _beforeItems, ...beforeMetrics } = before;
+    const { activeItems: _afterItems, ...afterMetrics } = after;
+    expect(afterMetrics).toEqual(beforeMetrics);
+  });
+
+  it.each([
+    "missing projection", "foreign workflow tenant", "foreign job tenant", "wrong workflow type",
+    "stale run", "missing run", "malformed JSON", "missing job", "unknown job",
+    "null job", "numeric job", "array job", "object job", "empty job", "padded job",
+    "batch selection", "missing runtime run", "missing runtime workflow",
+  ])("keeps standalone preparation %s unresolved", (fault) => {
+    const fixture = createFixture();
+    const preparation = insertStandalonePreparation(fixture, "invalid-standalone");
+    const updateInput = (value: unknown) => fixture.db.prepare(
+      "UPDATE workflow_run_projections SET input_summary_json = ? WHERE workflow_id = ?",
+    ).run(JSON.stringify(value), preparation.workflowId);
+    if (fault === "missing projection") fixture.db.prepare("DELETE FROM workflow_run_projections").run();
+    if (fault === "foreign workflow tenant") fixture.db.prepare("UPDATE workflow_run_projections SET tenant_id = 'other'").run();
+    if (fault === "foreign job tenant") fixture.db.prepare("UPDATE jobs SET tenant_id = 'other'").run();
+    if (fault === "wrong workflow type") fixture.db.prepare("UPDATE workflow_run_projections SET workflow_type = 'JobPipelineWorkflow'").run();
+    if (fault === "stale run") fixture.db.prepare("UPDATE workflow_run_projections SET temporal_run_id = ?").run(DISCOVER_RUN_ID);
+    if (fault === "missing run") fixture.db.prepare("UPDATE workflow_run_projections SET temporal_run_id = NULL").run();
+    if (fault === "malformed JSON") fixture.db.prepare("UPDATE workflow_run_projections SET input_summary_json = '{'").run();
+    if (fault === "missing job") updateInput({});
+    if (fault === "unknown job") updateInput({ jobId: jobIdFor("absent") });
+    if (fault === "null job") updateInput({ jobId: null });
+    if (fault === "numeric job") updateInput({ jobId: 123 });
+    if (fault === "array job") updateInput({ jobId: [preparation.jobId] });
+    if (fault === "object job") updateInput({ jobId: { id: preparation.jobId } });
+    if (fault === "empty job") updateInput({ jobId: "" });
+    if (fault === "padded job") updateInput({ jobId: ` ${preparation.jobId} ` });
+    if (fault === "batch selection") updateInput({ jobIds: [preparation.jobId] });
+    const detail = activityDetail("tailor_job", "op_000000000000000000000046", preparation.workflowId, PREPARATION_RUN_ID);
+    if (fault === "missing runtime run") detail.executionRef = null;
+    if (fault === "missing runtime workflow") detail.workflowRef = null;
+    insertHeartbeat(fixture, { activeSlots: 1, counts: { tailor_job: 1 }, details: [detail] });
+    const result = snapshot(fixture);
+    expect(result.activeItems).toEqual([expect.objectContaining({ kind: "unresolved_runtime_activity" })]);
+    expect(result.activeItemsTotal).toBe(1);
+    expect(JSON.stringify(result)).not.toContain("Standalone role");
+    expect(JSON.stringify(result)).not.toContain("private-runtime-input-sentinel");
+  });
+
+  it.each(["score", "tailor", "cover"])("does not assign a batch %s activity to one preparation job", (activityType) => {
+    const fixture = createFixture();
+    const preparation = insertStandalonePreparation(fixture, "batch-preparation");
+    insertHeartbeat(fixture, { activeSlots: 1, counts: { [activityType]: 1 }, details: [
+      activityDetail(activityType, "op_000000000000000000000050", preparation.workflowId, PREPARATION_RUN_ID),
+    ] });
+    expect(snapshot(fixture).activeItems).toEqual([expect.objectContaining({ kind: "unresolved_runtime_activity" })]);
+  });
+
+  it("fences selected membership labels to the exact preparation run", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, { key: "selected-run-label", requiredSteps: ["tailor"], title: "Selected role" });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "in_progress", PREPARATION_RUN_ID);
+    insertHeartbeat(fixture, { activeSlots: 2, counts: { tailor_job: 2 }, details: [
+      activityDetail("tailor_job", "op_000000000000000000000047", member.preparationWorkflowId, PREPARATION_RUN_ID),
+      activityDetail("tailor_job", "op_000000000000000000000048", member.preparationWorkflowId, DISCOVER_RUN_ID),
+    ] });
+    expect(snapshot(fixture).activeItems).toEqual([
+      expect.objectContaining({ kind: "resolved_job", title: "Selected role", executionId: PREPARATION_RUN_ID }),
+      expect.objectContaining({ kind: "unresolved_runtime_activity", executionId: DISCOVER_RUN_ID }),
+    ]);
+  });
+
+  it("does not hydrate stale preparation telemetry from a valid canonical binding", () => {
+    const fixture = createFixture();
+    const preparation = insertStandalonePreparation(fixture, "stale-bound-preparation");
+    insertHeartbeat(fixture, { activeSlots: 1, counts: { tailor_job: 1 }, details: [
+      activityDetail("tailor_job", "op_000000000000000000000049", preparation.workflowId, PREPARATION_RUN_ID),
+    ] });
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ?").run(new Date(NOW.getTime() - 60_000).toISOString());
+    const result = snapshot(fixture);
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBeNull();
+    expect(JSON.stringify(result)).not.toContain("Standalone role");
+  });
+
+  it("preserves a truncated standalone runtime inventory without a selected execution", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      activeSlots: 2,
+      counts: { tailor_job: 2 },
+      details: [activityDetail("tailor_job", "op_000000000000000000000042", unmatchedWorkflowRef("truncated"))],
+    });
+
+    const result = snapshot(fixture);
+    expect(result.activeItems).toHaveLength(1);
+    expect(result.activeItemsTotal).toBe(2);
+    expect(result.activeItemsTruncated).toBe(true);
+  });
+
+  it("withholds stale standalone activity details without a selected execution", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      activeSlots: 1,
+      counts: { tailor_job: 1 },
+      details: [activityDetail("tailor_job", "op_000000000000000000000043", unmatchedWorkflowRef("stale"))],
+    });
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString());
+
+    const result = snapshot(fixture);
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBeNull();
+    expect(result.activeItemsTruncated).toBeNull();
+    expect(result.activeStageCounts).toBeNull();
   });
 
   it.each([
@@ -251,6 +538,94 @@ describe("pipeline operations read model", () => {
       phase: "completed_with_issues",
       currentExecution: { terminal: 1, remaining: 0 },
     });
+  });
+
+  it("keeps zero selected-stage demand provisional until Discover membership closes", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+
+    const open = snapshot(fixture);
+    expect(open.execution).toMatchObject({ membershipClosed: false });
+    expect(open.projectionCoverage).toMatchObject({ status: "ready" });
+    expectSelectedEtasNotNoWork(open);
+    for (const scope of ["current_execution", "execution_sweep"] as const) {
+      expect(stage(open, "score", scope).eta).toMatchObject({ status: "calibrating", reason: "membership_open" });
+    }
+    expect(stage(open, "score", "global_outside_execution").eta)
+      .toMatchObject({ status: "unavailable", reason: "no_work" });
+
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    const closed = snapshot(fixture);
+    expect(closed.execution).toMatchObject({ membershipClosed: true });
+    for (const scope of ["current_execution", "execution_sweep"] as const) {
+      expect(stage(closed, "score", scope).eta).toMatchObject({ status: "unavailable", reason: "no_work" });
+    }
+  });
+
+  it.each([
+    ["observed_this_run", "current_execution"],
+    ["existing_backlog", "execution_sweep"],
+  ] as const)("keeps positive %s stage estimates available before membership closure", (cohort, scope) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, { key: "open-positive-stage", cohort, requiredSteps: ["score"] });
+    insertStageState(fixture, "open-positive-stage", "enrich", "succeeded");
+    insertStageState(fixture, "open-positive-stage", "score", "pending");
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "in_progress", PREPARATION_RUN_ID);
+    for (let index = 0; index < 5; index += 1) {
+      insertStageState(fixture, `open-positive-history-${index}`, "score", "succeeded", 60_000,
+        new Date(NOW.getTime() - index * 60_000).toISOString());
+    }
+    insertHeartbeat(fixture, {
+      activeSlots: 1, counts: { score_job: 1 },
+      details: [activityDetail("score_job", "op_000000000000000000000025", member.preparationWorkflowId, PREPARATION_RUN_ID)],
+    });
+
+    const result = snapshot(fixture);
+    expect(result.execution).toMatchObject({ membershipClosed: false });
+    expect(result.overallEta).toMatchObject({ status: "calibrating", reason: "membership_open" });
+    expect(stage(result, "score", scope).eta).toMatchObject({ status: "available", sampleSize: 5 });
+  });
+
+  it("keeps zero source demand provisional while retaining positive source-family estimates", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertStep(fixture, { stepKind: "source_planning", itemKey: "open-plan", state: "succeeded", detailCount: 1 });
+    insertStep(fixture, { stepKind: "source_family", itemKey: "open-source", state: "succeeded" });
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+    const zero = snapshot(fixture);
+    expect(zero.execution).toMatchObject({ membershipClosed: false });
+    expect(zero.sourceFamilies?.eta).toMatchObject({ status: "calibrating", reason: "membership_open" });
+    expect(stage(zero, "source_family", "current_execution").eta).toEqual(zero.sourceFamilies?.eta);
+
+    insertStep(fixture, { stepKind: "source_family", itemKey: "next-open-source", state: "running" });
+    // The completed current family and four historical families supply five samples.
+    for (let index = 0; index < 4; index += 1) {
+      insertHistoricalStep(fixture, { stepKind: "source_family", itemKey: `open-source-history-${index}`,
+        durationMs: 60_000, index });
+    }
+    fixture.db.prepare("DELETE FROM worker_runtime_heartbeats WHERE worker_id = 'worker'").run();
+    insertHeartbeat(fixture, {
+      activeSlots: 1, counts: { discovery_source_family: 1 },
+      details: [activityDetail("discovery_source_family", "op_000000000000000000000026", DISCOVER_WORKFLOW_ID)],
+    });
+    const positive = snapshot(fixture);
+    expect(positive.execution).toMatchObject({ membershipClosed: false });
+    expect(positive.sourceFamilies?.eta).toMatchObject({ status: "available", basis: "source_rate", sampleSize: 5 });
+    expect(stage(positive, "source_family", "current_execution").eta).toEqual(positive.sourceFamilies?.eta);
+
+    fixture.db.prepare(
+      "UPDATE pipeline_step_projections SET state='succeeded', finished_at=?, duration_ms=60000 "
+      + "WHERE tenant_id='local' AND discover_workflow_id=? AND discover_run_id=? "
+      + "AND step_kind='source_family' AND item_key='next-open-source'",
+    ).run(NOW.toISOString(), DISCOVER_WORKFLOW_ID, DISCOVER_RUN_ID);
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    fixture.db.prepare("DELETE FROM worker_runtime_heartbeats WHERE worker_id = 'worker'").run();
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+    expect(snapshot(fixture).sourceFamilies?.eta).toMatchObject({ status: "unavailable", reason: "no_work" });
   });
 
   it("keeps promoted members current and swept members separate while excluding both from global backlog", () => {
@@ -560,6 +935,439 @@ describe("pipeline operations read model", () => {
     });
   });
 
+  it.each(["pending", "queued", "running"])("keeps unrecorded PDFs waiting while required scoring is %s in both cohorts", (state) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    for (const cohort of ["observed_this_run", "existing_backlog"] as const) {
+      const key = `pdf-awaits-${cohort}-${state}`;
+      insertMember(fixture, { key, cohort, requiredSteps: ["score", "pdf"] });
+      insertStageState(fixture, key, "score", state);
+    }
+    const result = snapshot(fixture);
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 1, unknown: 0,
+    });
+    expect(stage(result, "pdf_render", "execution_sweep").existingBacklog).toMatchObject({
+      kind: "domain_jobs", counts: { eligible: 1, waiting: 1, unknown: 0 },
+    });
+  });
+
+  it.each(["tailor", "cover"])("keeps unrecorded PDFs waiting for required %s work", (upstream) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-awaits-material", requiredSteps: [upstream, "pdf"] });
+    insertStageState(fixture, "pdf-awaits-material", upstream, "running");
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 1, unknown: 0,
+    });
+  });
+
+  it.each(["succeeded", "failed", "blocked", "canceled"])("retains an unrecorded PDF gap after required scoring is %s", (state) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-gap", requiredSteps: ["score", "pdf"] });
+    insertStageState(fixture, "pdf-gap", "score", state);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it.each(["succeeded", "failed", "canceled"])("retains a PDF gap when its owner is %s despite stale pending prerequisites", (status) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, { key: "pdf-closed-owner", requiredSteps: ["score", "pdf"] });
+    insertStageState(fixture, "pdf-closed-owner", "score", "pending");
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, status);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it("retains a PDF gap when its required prerequisite has no recorded state", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-missing-prerequisite", requiredSteps: ["score", "pdf"] });
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it("does not use unrelated running work to explain an unrecorded PDF", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-only", requiredSteps: ["pdf"] });
+    insertStageState(fixture, "pdf-only", "score", "running");
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it.each([
+    ["queued", "waiting"], ["running", "processing"], ["succeeded", "succeeded"], ["failed", "failed"],
+  ])("keeps the recorded PDF %s state authoritative over pending prerequisites", (state, bucket) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, { key: "pdf-recorded", requiredSteps: ["score", "pdf"] });
+    insertStageState(fixture, "pdf-recorded", "score", "pending");
+    insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state });
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, [bucket]: 1, unknown: 0,
+    });
+  });
+
+  it("settles conditionally unexecuted PDFs from exact successful preparation results in both cohorts", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    for (const cohort of ["observed_this_run", "existing_backlog"] as const) {
+      const key = `pdf-skipped-${cohort}`;
+      const member = insertMember(fixture, { key, cohort, requiredSteps: ["score", "tailor", "cover", "pdf"] });
+      insertStageState(fixture, key, "score", "succeeded");
+      insertStageState(fixture, key, "tailor", "skipped");
+      insertStageState(fixture, key, "cover", "skipped");
+      insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+      insertPreparationOutcomeObservation(fixture, member);
+    }
+    const result = snapshot(fixture);
+    expect(result.execution).toMatchObject({
+      phase: "completed", currentExecution: { terminal: 1, remaining: 0 },
+      sweptExistingBacklog: { terminal: 1, remaining: 0 },
+    });
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, skipped: 1, succeeded: 0, waiting: 0, unknown: 0,
+    });
+    expect(stage(result, "pdf_render", "execution_sweep").existingBacklog).toMatchObject({
+      kind: "domain_jobs", counts: { eligible: 1, skipped: 1, succeeded: 0, unknown: 0 },
+    });
+    expect(fixture.db.prepare("SELECT count(*) AS n FROM pipeline_step_projections WHERE step_kind = 'pdf_render'").get()).toEqual({ n: 0 });
+    expect(fixture.db.prepare("SELECT DISTINCT required_steps_json FROM discovery_execution_jobs").all())
+      .toEqual([{ required_steps_json: '["score","tailor","cover","pdf"]' }]);
+  });
+
+  it("resolves the complete 20-job cohort with nine material sets, nine threshold skips and two eligibility holds", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+    for (let index = 0; index < 18; index += 1) {
+      const key = `complete-policy-cohort-${index}`;
+      const member = insertMember(fixture, { key, requiredSteps: ["score", "tailor", "cover", "pdf"] });
+      for (const stageName of ["enrich", "score", "tailor", "cover"]) {
+        insertStageState(fixture, key, stageName, index < 9 || stageName === "score" || stageName === "enrich" ? "succeeded" : "skipped");
+      }
+      insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+      if (index < 9) insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state: "succeeded" });
+      else insertPreparationOutcomeObservation(fixture, member);
+    }
+    for (let index = 0; index < 2; index += 1) insertEligibilityHold(fixture, `complete-eligibility-${index}`);
+    insertReadyRecoveryCheckpoints(fixture);
+    const before = fixture.db.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").all();
+    const stateBefore = fixture.db.prepare("SELECT * FROM job_stage_states ORDER BY job_id, stage").all();
+    const planBefore = fixture.db.prepare("SELECT * FROM discovery_execution_jobs ORDER BY job_id").all();
+    const result = snapshot(fixture);
+    expect(result.execution).toMatchObject({ phase: "completed", currentExecution: { members: 20, terminal: 20, remaining: 0 } });
+    for (const stageName of ["tailor", "cover"]) {
+      const row = stage(result, stageName, "current_execution");
+      expect(row.currentExecution).toMatchObject({ succeeded: 9, skipped: 9, blocked: 2, waiting: 0, unknown: 0 });
+      expect(row.eta).toMatchObject({ status: "unavailable", reason: "no_work" });
+    }
+    expect(result.overallEta).toMatchObject({ status: "unavailable", reason: "no_work" });
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({ succeeded: 9, skipped: 11, unknown: 0 });
+    expect(fixture.db.prepare("SELECT * FROM job_stage_states ORDER BY job_id, stage").all()).toEqual(stateBefore);
+    expect(fixture.db.prepare("SELECT * FROM discovery_execution_jobs ORDER BY job_id").all()).toEqual(planBefore);
+    expect(fixture.db.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").all()).toEqual(before);
+  });
+
+  it.each(["observed_this_run", "existing_backlog"] as const)("resolves an exact eligibility hold in the %s cohort", (cohort) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    insertEligibilityHold(fixture, "single-eligibility", cohort);
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+    const result = snapshot(fixture);
+    const summary = cohort === "observed_this_run" ? result.execution?.currentExecution : result.execution?.sweptExistingBacklog;
+    expect(summary).toMatchObject({ terminal: 1, remaining: 0 });
+    expect(result.execution?.phase).toBe("completed");
+    expect(stage(result, "tailor", cohort === "observed_this_run" ? "current_execution" : "execution_sweep").eta)
+      .toMatchObject({ status: "unavailable", reason: "no_work" });
+  });
+
+  it.each(["cached score", "rescore", "no planned PDF"])("keeps canonical eligibility completion valid with %s", (variation) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    insertEligibilityHold(fixture, "eligibility-score-reuse");
+    if (variation === "cached score") fixture.db.prepare("UPDATE job_stage_states SET metadata_json = json_set(metadata_json, '$.priorScoreVersion', 1) WHERE stage = 'score'").run();
+    if (variation === "rescore") fixture.db.prepare("UPDATE job_stage_states SET metadata_json = json_set(metadata_json, '$.rescore', json('true')) WHERE stage = 'score'").run();
+    if (variation === "no planned PDF") {
+      const plan = JSON.stringify(["score", "tailor", "cover"]);
+      fixture.db.prepare("UPDATE discovery_execution_jobs SET required_steps_json = ?").run(plan);
+      fixture.db.prepare("UPDATE job_events SET payload_json = json_set(payload_json, '$.requiredSteps', json(?))").run(plan);
+    }
+    expect(snapshot(fixture).execution).toMatchObject({ phase: "completed", currentExecution: { terminal: 1, remaining: 0 } });
+  });
+
+  it("preserves an actually queued PDF after a valid eligibility hold", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    const member = insertEligibilityHold(fixture, "eligibility-recorded-pdf");
+    insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state: "queued" });
+    const result = snapshot(fixture);
+    expect(result.execution).toMatchObject({ phase: "draining", currentExecution: { terminal: 0, remaining: 1 } });
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({ waiting: 1, skipped: 0 });
+  });
+
+  it.each([
+    "missing receipt", "foreign receipt run", "replacement owner", "wrong score owner", "missing accepted score",
+    "newer accepted score", "different score version", "cleared eligibility", "score staleness", "generic block",
+    "retryable block", "missing gate provenance", "different gate blockers", "refreshed cover", "pending score",
+  ])("keeps an eligibility-like row unresolved with %s", (fault) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    const member = insertEligibilityHold(fixture, "invalid-eligibility");
+    if (fault === "missing receipt") fixture.db.prepare("DELETE FROM job_events").run();
+    if (fault === "foreign receipt run") fixture.db.prepare("UPDATE job_events SET payload_json = json_set(payload_json, '$.temporalRunId', 'other-run')").run();
+    if (fault === "replacement owner") fixture.db.prepare("UPDATE workflow_run_projections SET temporal_run_id = 'replacement-run' WHERE workflow_id = ?").run(member.preparationWorkflowId);
+    if (fault === "wrong score owner") fixture.db.prepare("UPDATE job_stage_states SET metadata_json = json_set(metadata_json, '$.activityOwner', 'other-run') WHERE stage = 'score'").run();
+    if (fault === "missing accepted score") fixture.db.prepare("DELETE FROM job_scores").run();
+    if (fault === "newer accepted score") fixture.db.prepare("UPDATE job_scores SET scored_at = ?").run(NOW.toISOString());
+    if (fault === "different score version") fixture.db.prepare("UPDATE job_scores SET version = 3").run();
+    if (fault === "cleared eligibility") fixture.db.prepare("UPDATE job_scores SET breakdown_json = ?").run(JSON.stringify({ eligibility: { status: "eligible", hard_blockers: [] } }));
+    if (fault === "score staleness") fixture.db.prepare("INSERT INTO job_score_staleness (tenant_id,job_id,stale_reason,old_policy_version,new_policy_version,marked_at,resolved) VALUES ('local',?,'synthetic',1,2,?,0)").run(member.jobId, NOW.toISOString());
+    if (fault === "generic block") fixture.db.prepare("UPDATE job_stage_states SET error_code = 'SETUP_REQUIRED' WHERE stage = 'tailor'").run();
+    if (fault === "retryable block") fixture.db.prepare("UPDATE job_stage_states SET retryable = 1 WHERE stage = 'tailor'").run();
+    if (fault === "missing gate provenance") fixture.db.prepare("UPDATE job_stage_states SET metadata_json = '{}' WHERE stage = 'tailor'").run();
+    if (fault === "different gate blockers") fixture.db.prepare("UPDATE job_stage_states SET metadata_json = json_set(metadata_json, '$.hard_blockers', json(?)) WHERE stage = 'cover'").run(JSON.stringify(["another canonical blocker"]));
+    if (fault === "refreshed cover") fixture.db.prepare("UPDATE job_stage_states SET state = 'pending' WHERE stage = 'cover'").run();
+    if (fault === "pending score") fixture.db.prepare("UPDATE job_stage_states SET state = 'pending' WHERE stage = 'score'").run();
+    const result = snapshot(fixture);
+    expect(result.execution?.currentExecution).toMatchObject({ terminal: 0, remaining: 1 });
+    expect(result.execution?.phase).toBe("draining");
+  });
+
+  it("does not reserve ETA contention for valid held sweep members while current scoring continues", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    insertMember(fixture, { key: "active-score-with-held-sweep", requiredSteps: ["score"] });
+    insertStageState(fixture, "active-score-with-held-sweep", "enrich", "succeeded");
+    insertStageState(fixture, "active-score-with-held-sweep", "score", "pending");
+    insertEligibilityHold(fixture, "held-sweep-contention", "existing_backlog");
+    for (let index = 0; index < 5; index += 1) {
+      insertStageState(fixture, `eligibility-history-${index}`, "score", "succeeded", 60_000, new Date(NOW.getTime() - index * 60_000).toISOString());
+    }
+    insertHeartbeat(fixture, {
+      activeSlots: 1, counts: { score_job: 1 },
+      details: [activityDetail("score_job", "op_000000000000000000000031", unmatchedWorkflowRef("active-eligibility-score"))],
+    });
+    const result = snapshot(fixture);
+    expect(result.execution?.sweptExistingBacklog).toMatchObject({ terminal: 1, remaining: 0 });
+    expect(stage(result, "score", "current_execution").eta).toMatchObject({ status: "available", caveat: null });
+    expect(result.overallEta).toMatchObject({ status: "available", caveat: null });
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET task_queue_observation_json = json_set(task_queue_observation_json, '$.blockingExecutor', json(?))")
+      .run(JSON.stringify({
+        version: 1, unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 3,
+        generationLimit: 3, nextSubmission: "refusing",
+      }));
+    const blocked = snapshot(fixture);
+    expect(blocked.capacity).toMatchObject({
+      status: "available", availableSlots: 3,
+      blockingExecutor: { refusingWorkers: 1, unfinishedRetiredCalls: 3 },
+    });
+    expect(blocked.overallEta).toMatchObject({ status: "unavailable", reason: "contention_unbounded" });
+    expect(stage(blocked, "score", "current_execution").eta).toMatchObject({
+      status: "unavailable", reason: "contention_unbounded",
+    });
+  });
+
+  it("does not infer a conditional PDF skip from current MIN_SCORE-like rows without an exact outcome receipt", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-no-outcome", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertStageState(fixture, "pdf-no-outcome", "score", "succeeded");
+    insertStageState(fixture, "pdf-no-outcome", "tailor", "skipped");
+    insertStageState(fixture, "pdf-no-outcome", "cover", "skipped");
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    const result = snapshot(fixture);
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, unknown: 1 });
+    expect(result.execution?.currentExecution).toMatchObject({ terminal: 0, remaining: 1 });
+  });
+
+  it.each(["in_progress", "failed", "canceled", "timed_out", "terminated"])("rejects conditional PDF receipts while the current preparation owner is %s", (status) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-owner-outcome", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, status, PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, unknown: 1 });
+  });
+
+  it.each([
+    ["decoder", { decoderVersion: 2 }],
+    ["evidence", { evidenceKind: "request_intent" }],
+    ["tenant", { tenantId: "other" }],
+    ["workflow type", { workflowType: "ApplyWorkflow" }],
+    ["workflow", { workflowId: "prep-other" }],
+    ["run", { temporalRunId: "other-run" }],
+    ["job", { jobId: "other-job" }],
+    ["key", { idempotencyKey: "other-key" }],
+    ["plan", { requiredSteps: ["score", "pdf"] }],
+    ["discovery", { discoveryExecution: { tenantId: "local", workflowId: DISCOVER_WORKFLOW_ID, temporalRunId: "old-run" } }],
+    ["terminal event", { terminalHistoryEventId: 0 }],
+    ["failed result", { result: { stepsCompleted: ["score"], stepsSkipped: ["tailor"], stepsFailed: ["cover"], failure: "failed", errorCode: "failed" } }],
+    ["unrelated skip", { result: { stepsCompleted: ["score"], stepsSkipped: ["apply"], stepsFailed: [], failure: null, errorCode: null } }],
+    ["out-of-order result", { result: { stepsCompleted: ["cover"], stepsSkipped: ["tailor"], stepsFailed: [], failure: null, errorCode: null } }],
+  ] as const)("keeps a missing PDF unknown for a foreign or invalid %s receipt", (_name, override) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-invalid-outcome", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member, override);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, unknown: 1 });
+  });
+
+  it.each([
+    ["tailor", "score", "cover", "pdf"],
+    ["score", "score", "tailor", "pdf"],
+  ])("rejects a receipt whose frozen plan has a noncanonical step order (%j)", (...required) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-noncanonical-plan", requiredSteps: required });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member, {
+      requiredSteps: required,
+      result: { stepsCompleted: [], stepsSkipped: [required[0]], stepsFailed: [], failure: null, errorCode: null },
+    });
+    const result = snapshot(fixture);
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, unknown: 1 });
+    expect(result.execution?.currentExecution).toMatchObject({ terminal: 0, remaining: 1 });
+  });
+
+  it.each(["missing owner", "missing run", "foreign owner type", "foreign row job", "foreign row owner", "foreign row key", "malformed payload"])("keeps a missing PDF unknown with %s", (fault) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-row-binding", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    if (fault !== "missing owner") {
+      insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", fault === "missing run" ? null : PREPARATION_RUN_ID);
+    }
+    insertPreparationOutcomeObservation(fixture, member);
+    if (fault === "foreign owner type") fixture.db.prepare("UPDATE workflow_run_projections SET workflow_type = 'ApplyWorkflow' WHERE workflow_id = ?").run(member.preparationWorkflowId);
+    if (fault === "foreign row job") {
+      fixture.db.prepare("INSERT INTO jobs (tenant_id, job_id, url) VALUES ('local', ?, ?)")
+        .run(jobIdFor("unrelated-outcome"), "https://private.invalid/unrelated-outcome");
+      fixture.db.prepare("UPDATE job_events SET job_id = ?").run(jobIdFor("unrelated-outcome"));
+    }
+    if (fault === "foreign row owner") fixture.db.prepare("UPDATE job_events SET entity_ref = 'prep-other'").run();
+    if (fault === "foreign row key") fixture.db.prepare("UPDATE job_events SET idempotency_key = 'unrelated-key'").run();
+    if (fault === "malformed payload") fixture.db.prepare("UPDATE job_events SET payload_json = '{'").run();
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, unknown: 1 });
+  });
+
+  it.each(["observed_this_run", "existing_backlog"] as const)("completes PDF progress from an exact native or associated result in %s", (cohort) => {
+    for (const version of [1, 2]) for (const optionalCover of [false, true]) {
+      const fixture = createFixture();
+      insertExecution(fixture, { status: "succeeded" });
+      insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+      const member = insertMember(fixture, { key: "pdf-completed-outcome", cohort, requiredSteps: ["score", "tailor", "cover", "pdf"] });
+      for (const name of ["enrich", "score", "tailor", "cover"]) insertStageState(fixture, "pdf-completed-outcome", name,
+        optionalCover && name === "cover" ? "skipped" : "succeeded");
+      insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+      insertPreparationOutcomeObservation(fixture, member, {
+        decoderVersion: version,
+        ...(version === 2 ? {
+          associationKind: "recorded_membership", discoveryCohortKind: cohort,
+          originDiscoveryExecution: null, originDiscoveryCohortKind: null,
+        } : {}),
+        result: { stepsCompleted: optionalCover ? ["score", "tailor", "pdf"] : ["score", "tailor", "cover", "pdf"],
+          stepsSkipped: optionalCover ? ["cover"] : [], stepsFailed: [], failure: null, errorCode: null },
+      });
+      insertHeartbeat(fixture, { activeSlots: 1, counts: { saved_posting_availability: 1 }, details: [] });
+      const before = fixture.db.prepare("SELECT * FROM job_events ORDER BY event_id").all();
+      const result = snapshot(fixture);
+      expect(result.execution?.phase).toBe("completed");
+      expect(cohort === "observed_this_run" ? result.execution?.currentExecution : result.execution?.sweptExistingBacklog)
+        .toMatchObject({ remaining: 0, terminal: 1 });
+      const pdf = stage(result, "pdf_render", cohort === "observed_this_run" ? "current_execution" : "execution_sweep");
+      expect(cohort === "observed_this_run" ? pdf.currentExecution : (pdf.existingBacklog.kind === "domain_jobs" ? pdf.existingBacklog.counts : null))
+        .toMatchObject({ succeeded: 1, skipped: 0, unknown: 0 });
+      expect(fixture.db.prepare("SELECT * FROM job_events ORDER BY event_id").all()).toEqual(before);
+      expect(fixture.db.prepare("SELECT * FROM pipeline_step_projections WHERE step_kind = 'pdf_render'").all()).toEqual([]);
+    }
+  });
+
+  it.each(["queued", "running", "failed"])("keeps an actual %s PDF authoritative over a successful outcome", (state) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-completion-real-state", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    for (const name of ["enrich", "score", "tailor", "cover"]) insertStageState(fixture, "pdf-completion-real-state", name, "succeeded");
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member, {
+      result: { stepsCompleted: ["score", "tailor", "cover", "pdf"], stepsSkipped: [], stepsFailed: [], failure: null, errorCode: null },
+    });
+    insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state });
+    const result = snapshot(fixture);
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({ succeeded: 0, unknown: 0 });
+    expect(result.execution?.phase).toBe(state === "failed" ? "completed_with_issues" : "draining");
+  });
+
+  it.each(["cohort", "foreign origin tenant", "partial origin", "row identity", "replacement run", "changed plan"])("rejects an associated PDF result with %s", (fault) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-linked-invalid", cohort: "existing_backlog", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member, {
+      decoderVersion: 2, associationKind: "recorded_membership",
+      discoveryCohortKind: fault === "cohort" ? "observed_this_run" : "existing_backlog",
+      originDiscoveryExecution: fault === "foreign origin tenant" ? { tenantId: "other", workflowId: "foreign", temporalRunId: "foreign" } : null,
+      originDiscoveryCohortKind: ["foreign origin tenant", "partial origin"].includes(fault) ? "observed_this_run" : null,
+      result: { stepsCompleted: ["score", "tailor", "cover", "pdf"], stepsSkipped: [], stepsFailed: [], failure: null, errorCode: null },
+    });
+    if (fault === "row identity") fixture.db.prepare("UPDATE job_events SET idempotency_key = 'foreign'").run();
+    if (fault === "replacement run") fixture.db.prepare("UPDATE workflow_run_projections SET temporal_run_id = 'new-run' WHERE workflow_id = ?").run(member.preparationWorkflowId);
+    if (fault === "changed plan") fixture.db.prepare("UPDATE discovery_execution_jobs SET required_steps_json = ?").run(JSON.stringify(["score", "tailor", "pdf"]));
+    expect(stage(snapshot(fixture), "pdf_render", "execution_sweep").existingBacklog).toMatchObject({ kind: "domain_jobs", counts: { succeeded: 0, unknown: 1 } });
+  });
+
+  it("does not expose private observation payload fields in the progress response", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-private-outcome", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member, { privateNote: "private-receipt-content-sentinel" });
+    const result = snapshot(fixture);
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 1, unknown: 0 });
+    expect(JSON.stringify(result)).not.toContain("private-receipt-content-sentinel");
+  });
+
+  it.each([
+    ["queued", "waiting"], ["running", "processing"], ["succeeded", "succeeded"], ["failed", "failed"],
+  ])("keeps recorded PDF %s authoritative over a conditional outcome receipt", (state, bucket) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-observed-outcome", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member);
+    insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state });
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, [bucket]: 1, unknown: 0 });
+  });
+
+  it("keeps refreshed pending prerequisite work unresolved even when the prior owner skipped PDF", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-reset-prerequisite", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertStageState(fixture, "pdf-reset-prerequisite", "score", "succeeded");
+    insertStageState(fixture, "pdf-reset-prerequisite", "tailor", "pending");
+    insertStageState(fixture, "pdf-reset-prerequisite", "cover", "skipped");
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member);
+    const result = snapshot(fixture);
+    expect(result.execution?.currentExecution).toMatchObject({ terminal: 0, remaining: 1 });
+  });
+
   it("uses exact PDF joins, merges safe runtime activity inventory, and omits private input data", () => {
     const fixture = createFixture();
     const current = insertMember(fixture, { key: "pdf-current", requiredSteps: ["pdf"] });
@@ -640,6 +1448,49 @@ describe("pipeline operations read model", () => {
     const eta = snapshot(fixture).overallEta;
     expect(eta).toMatchObject({ status: "available", basis: "stage_throughput" });
     if (eta.status === "available") expect(eta.highSeconds).toBeLessThan(1_000);
+  });
+
+  it("withholds selected-run and stage ETAs for a stale same-queue peer until it reports fresh again", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertMember(fixture, { key: "eta-stale-peer", requiredSteps: ["score"] });
+    insertStageState(fixture, "eta-stale-peer", "enrich", "succeeded");
+    insertStageState(fixture, "eta-stale-peer", "score", "pending");
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    for (let index = 0; index < 5; index += 1) {
+      insertStageState(fixture, `eta-stale-history-${index}`, "score", "succeeded", 60_000,
+        new Date(NOW.getTime() - index * 60_000).toISOString());
+    }
+    insertHeartbeat(fixture, {
+      workerId: "fresh", activeSlots: 1, counts: { score_job: 1 },
+      details: [activityDetail("score_job", "op_000000000000000000000063", unmatchedWorkflowRef("eta-stale"))],
+    });
+    insertHeartbeat(fixture, { workerId: "peer", activeSlots: 0, counts: {}, details: [] });
+
+    const fresh = snapshot(fixture);
+    expect(fresh.projectionCoverage?.status).toBe("ready");
+    expect(fresh.overallEta.status).toBe("available");
+    expect(stage(fresh, "score", "current_execution").eta.status).toBe("available");
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString(), "peer");
+    const stale = snapshot(fixture);
+    expect(stale.capacity).toMatchObject({ status: "available", freshWorkerCount: 1, staleWorkerCount: 1 });
+    expect(stale.overallEta).toMatchObject({ status: "unavailable", reason: "contention_unbounded" });
+    expect(stage(stale, "score", "current_execution").eta)
+      .toMatchObject({ status: "unavailable", reason: "contention_unbounded" });
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(NOW.toISOString(), "peer");
+    const recovered = snapshot(fixture);
+    expect(recovered.overallEta.status).toBe("available");
+    expect(stage(recovered, "score", "current_execution").eta.status).toBe("available");
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET task_queue = ?, last_seen_at = ? WHERE worker_id = ?")
+      .run("another-queue", new Date(NOW.getTime() - 60_000).toISOString(), "peer");
+    const otherQueue = snapshot(fixture);
+    expect(otherQueue.capacity).toMatchObject({ status: "available", staleWorkerCount: 0 });
+    expect(otherQueue.overallEta.status).toBe("available");
   });
 
   it("keeps pooled capacity visible but refuses an ETA when multi-worker slots cannot be fully inventoried", () => {
@@ -780,8 +1631,20 @@ describe("pipeline operations read model", () => {
 
     const result = snapshot(fixture);
     expect(result.projectionCoverage).toMatchObject({ status: "ready" });
+    expect(result.execution).toMatchObject({ membershipClosed: false });
     expect(result.activeStageCounts).toEqual([{ stage: "tailor", count: 1 }]);
-    expect(stage(result, "tailor", "current_execution").eta).toMatchObject({
+    const openTailor = stage(result, "tailor", "current_execution");
+    expect(openTailor.currentExecution).toMatchObject({ processing: 0, waiting: 0 });
+    expect(openTailor.eta).toMatchObject({ status: "calibrating", reason: "membership_open" });
+
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    const closed = snapshot(fixture);
+    expect(closed.execution).toMatchObject({ membershipClosed: true });
+    expect(closed.activeStageCounts).toEqual([{ stage: "tailor", count: 1 }]);
+    const closedTailor = stage(closed, "tailor", "current_execution");
+    expect(closedTailor.currentExecution).toMatchObject({ processing: 0, waiting: 0 });
+    expect(closedTailor.eta).toMatchObject({
       status: "unavailable",
       reason: "no_work",
     });
@@ -1361,6 +2224,16 @@ describe("pipeline operations read model", () => {
     expect(result.sourceFamilies?.eta).toMatchObject({
       caveat: "Provider total is unavailable; range uses recent whole-family duration and bounded live capacity.",
     });
+
+    insertHeartbeat(fixture, { workerId: "source-peer", activeSlots: 0, counts: {}, details: [] });
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString(), "source-peer");
+    const stale = snapshot(fixture);
+    expect(stale.sourceFamilies?.eta).toMatchObject({ status: "unavailable", reason: "contention_unbounded" });
+    expect(stage(stale, "source_family", "current_execution").eta).toEqual(stale.sourceFamilies?.eta);
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(NOW.toISOString(), "source-peer");
+    expect(snapshot(fixture).sourceFamilies?.eta.status).toBe("available");
   });
 
   it("withholds source history when global job-stage work is queued before telemetry observes it", () => {
@@ -1448,7 +2321,7 @@ function createFixture(): Fixture {
   const dbPath = path.join(directory, "jobctrl.db");
   const configPath = path.join(directory, "config.json");
   fs.writeFileSync(configPath, JSON.stringify({ daily_budget_usd: 25 }));
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   const fixture = { directory, dbPath, configPath, db };
   fixtures.push(fixture);
@@ -1552,6 +2425,21 @@ function recoveryKeyDigest(
     .digest("hex");
 }
 
+function insertStandalonePreparation(
+  fixture: Fixture,
+  key: string,
+  workflowId = unmatchedWorkflowRef(key),
+): { workflowId: string; jobId: string } {
+  const jobId = jobIdFor(key);
+  fixture.db.prepare(
+    "INSERT INTO jobs (tenant_id, job_id, url, title, company) VALUES ('local', ?, ?, 'Standalone role', 'Standalone company')",
+  ).run(jobId, `https://private.invalid/${key}`);
+  insertWorkflowProjection(fixture, workflowId, "in_progress", PREPARATION_RUN_ID, {
+    jobId, privateNote: "private-runtime-input-sentinel",
+  });
+  return { workflowId, jobId };
+}
+
 function insertExecution(
   fixture: Fixture,
   input: { status: string; workflowId?: string; runId?: string; inputSummary?: Record<string, unknown> },
@@ -1627,6 +2515,59 @@ function insertMember(
     NOW.toISOString(),
   );
   return { preparationWorkflowId, jobId };
+}
+
+function insertPreparationOutcomeObservation(
+  fixture: Fixture,
+  member: { preparationWorkflowId: string; jobId: string },
+  override: Record<string, unknown> = {},
+): void {
+  const workflowId = member.preparationWorkflowId;
+  const payload = {
+    tenantId: "local", decoderVersion: 1, evidenceKind: "temporal_history", workflowType: "JobPreparationWorkflow",
+    workflowId, temporalRunId: PREPARATION_RUN_ID, jobId: member.jobId,
+    idempotencyKey: workflowId.slice("prep-".length), requiredSteps: ["score", "tailor", "cover", "pdf"],
+    discoveryExecution: { tenantId: "local", workflowId: DISCOVER_WORKFLOW_ID, temporalRunId: DISCOVER_RUN_ID },
+    terminalHistoryEventId: 42,
+    result: { stepsCompleted: ["score"], stepsSkipped: ["tailor"], stepsFailed: [], failure: null, errorCode: null },
+    ...override,
+  };
+  fixture.db.prepare(
+    `INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message,
+        occurred_at, payload_json, entity_kind, entity_ref, idempotency_key)
+     VALUES ('local', ?, 1, 'workflow', 'PreparationWorkflowOutcomeObserved', 'info',
+        'Preparation outcome observed.', ?, ?, 'workflow_run', ?, ?)`,
+  ).run(member.jobId, NOW.toISOString(), JSON.stringify(payload), workflowId,
+    payload.decoderVersion === 2
+      ? `preparation-outcome:2:${JSON.stringify([
+        "local", workflowId, PREPARATION_RUN_ID, DISCOVER_WORKFLOW_ID, DISCOVER_RUN_ID,
+        member.jobId, override.discoveryCohortKind, payload.requiredSteps,
+      ])}`
+      : `preparation-outcome:1:local:${workflowId}:${PREPARATION_RUN_ID}`);
+}
+
+function insertEligibilityHold(
+  fixture: Fixture,
+  key: string,
+  cohort: "observed_this_run" | "existing_backlog" = "observed_this_run",
+): { preparationWorkflowId: string; jobId: string } {
+  const member = insertMember(fixture, { key, cohort, requiredSteps: ["score", "tailor", "cover", "pdf"] });
+  insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+  insertPreparationOutcomeObservation(fixture, member);
+  insertStageState(fixture, key, "enrich", "succeeded");
+  insertStageState(fixture, key, "score", "succeeded", 60_000, "2026-07-14T11:30:00.000Z");
+  fixture.db.prepare("UPDATE job_stage_states SET metadata_json = ? WHERE job_id = ? AND stage = 'score'").run(
+    JSON.stringify({ activityOwner: PREPARATION_RUN_ID, priorScoreVersion: 0, rescore: false }), member.jobId,
+  );
+  const blockers = ["Explicit synthetic eligibility decision"];
+  for (const stageName of ["tailor", "cover"]) {
+    insertStageState(fixture, key, stageName, "blocked");
+    fixture.db.prepare("UPDATE job_stage_states SET error_code = 'SCORE_ELIGIBILITY_BLOCKED', attempt_count = 0, metadata_json = ? WHERE job_id = ? AND stage = ?")
+      .run(JSON.stringify({ reason: "score_eligibility_blocked", hard_blockers: blockers }), member.jobId, stageName);
+  }
+  fixture.db.prepare("INSERT INTO job_scores (tenant_id,job_id,version,fit_score,breakdown_json,keywords_json,scored_at,criteria_json,trace_json) VALUES ('local',?,1,6,?,'[]',?,'{}','{}')")
+    .run(member.jobId, JSON.stringify({ eligibility: { status: "blocked", hard_blockers: blockers } }), "2026-07-14T11:29:00.000Z");
+  return member;
 }
 
 function insertStageState(
@@ -1710,6 +2651,7 @@ function insertHeartbeat(
     counts: Record<string, number>;
     details: Record<string, unknown>[];
     queueObservation?: unknown;
+    blockingExecutor?: Record<string, unknown> | null;
   },
 ): void {
   fixture.db.prepare(
@@ -1730,7 +2672,15 @@ function insertHeartbeat(
     JSON.stringify(input.counts),
     JSON.stringify(input.details),
     Object.values(input.counts).reduce((total, count) => total + count, 0),
-    JSON.stringify(input.queueObservation ?? availableObservation()),
+    JSON.stringify({
+      ...(input.queueObservation ?? availableObservation()) as Record<string, unknown>,
+      ...(input.blockingExecutor === null ? {} : {
+        blockingExecutor: input.blockingExecutor ?? {
+          version: 1, unfinishedRetiredGenerations: 0, unfinishedRetiredCalls: 0,
+          generationLimit: 3, nextSubmission: "accepting",
+        },
+      }),
+    }),
   );
 }
 
@@ -1741,9 +2691,15 @@ function activityDetail(
   executionRef = DISCOVER_RUN_ID,
 ): Record<string, unknown> {
   const kinds: Record<string, string> = {
+    job_url_import: "job-url-import",
+    enrich: "enrichment",
     render_pdf: "job-pdf-render",
     score_job: "job-scoring",
     tailor_job: "job-tailoring",
+    cover_letter: "job-cover-letter",
+    score: "scoring-batch",
+    tailor: "tailoring-batch",
+    cover: "cover-letter-batch",
     discovery_source_family: "discovery-source-family",
     discovery_enrichment: "discovery-enrichment",
     discovery_preparation_fanout: "discovery-preparation-fanout",

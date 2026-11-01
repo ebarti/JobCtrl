@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,7 +6,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JobListQuery } from "../src/contracts.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION, type JobListQuery } from "../src/contracts.js";
 import {
   buildDashboardSummary,
   getJobDetail,
@@ -13,11 +14,12 @@ import {
   listActivity,
   listJobs,
   listScoringKeywords,
+  matchingJobKeys,
 } from "../src/read-model.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
-import { EXACT_V9_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
-import { hideJob, restoreJob, softDeleteJob, unhideJob } from "../src/write-model.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { EXACT_V15_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
+import { correctScore, hideJob, restoreJob, softDeleteJob, unhideJob } from "../src/write-model.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000081";
 const HIDDEN_JOB_ID = "00000000-0000-4000-8000-000000000082";
@@ -37,7 +39,7 @@ afterEach(() => {
 function seededDatabase(): Database.Database {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-read-model-v7-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
   cleanups.push(() => {
@@ -128,9 +130,10 @@ function insertJob(
   applicationUrl: string,
 ): void {
   db.prepare(
-    `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at, application_url)
-     VALUES (?, ?, ?, ?, 'Example', 'example', ?, ?)`,
-  ).run(tenantId, jobId, url, title, NOW, applicationUrl);
+    `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+     VALUES (?, ?, ?, ?, 'Example', 'example', ?)`,
+  ).run(tenantId, jobId, url, title, NOW);
+  seedApplicationUrl(db, tenantId, jobId, applicationUrl);
   db.prepare(
     `INSERT INTO job_events (
        tenant_id, job_id, identity_version, stage, event_type, occurred_at
@@ -190,6 +193,91 @@ const activeJobQuery: JobListQuery = {
 };
 
 describe("exact-v7 read model job ids", () => {
+  it("derives analysis freshness from canonical generations and preserves older score history", () => {
+    const db = seededDatabase();
+    const freshness = () => getJobDetail(db, JOB_ID)?.job.scoreAnalysisFreshness;
+    const insertAnalysis = (generation: number) => {
+      db.prepare(`INSERT INTO job_employer_analysis (
+        tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
+        cache_key, legs_attempted, legs_succeeded, created_at
+      ) VALUES ('local', ?, ?, 'snapshot', '${EMPLOYER_ANALYSIS_PROMPT_VERSION}', 'v1', ?, 1, 1, ?)`).run(JOB_ID, generation, `cache-${generation}`, NOW);
+      db.prepare(`INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, occurred_at)
+        VALUES ('local', ?, 1, 'score', 'AnalysisSaved', ?)`).run(JOB_ID, NOW);
+    };
+    const insertReport = (scoreVersion: number, analysisGeneration: number) => {
+      insertScoreWithKeywords(db, "local", JOB_ID, scoreVersion, []);
+      db.prepare(`INSERT INTO job_requirement_fit_reports (
+        tenant_id, job_id, score_version, employer_analysis_generation,
+        profile_snapshot_version, scoring_policy_version, formula_version,
+        resolved_fit_score, fit_band, confidence, summary_json, created_at
+      ) VALUES ('local', ?, ?, ?, 1, 1, 'requirement-fit-v1', 8, 'strong', 'high', '{}', ?)`).run(
+        JOB_ID, scoreVersion, analysisGeneration, NOW,
+      );
+      db.prepare(`INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, occurred_at)
+        VALUES ('local', ?, 1, 'score', 'JobScored', ?)`).run(JOB_ID, NOW);
+    };
+
+    expect(freshness()).toMatchObject({ status: "no_analysis" });
+    insertAnalysis(1);
+    expect(freshness()).toMatchObject({ status: "not_assessed", currentAnalysisGeneration: 1 });
+    insertReport(1, 1);
+    expect(freshness()).toMatchObject({ status: "current", currentAnalysisGeneration: 1, assessedScoreVersion: 1 });
+    expect(getJobDetail(db, JOB_ID)?.requirementFitReport?.employerAnalysisGeneration).toBe(1);
+
+    insertAnalysis(2);
+    expect(freshness()).toMatchObject({
+      status: "outdated", currentAnalysisGeneration: 2, assessedAnalysisGeneration: 1,
+    });
+    expect(getJobDetail(db, JOB_ID)?.requirementFitReport).toBeNull();
+    expect(getJobDetail(db, JOB_ID)?.job.scoreVersion).toBe(1);
+    expect(listJobs(db, activeJobQuery).items.find((job) => job.jobKey === JOB_ID)?.scoreAnalysisFreshness?.status).toBe("outdated");
+
+    insertReport(2, 2);
+    expect(freshness()).toMatchObject({ status: "current", currentAnalysisGeneration: 2, assessedScoreVersion: 2 });
+    expect(getJobDetail(db, JOB_ID)?.requirementFitReport?.scoreVersion).toBe(2);
+  });
+
+  it("withholds a prior fit report after score correction without attributing it to analysis drift", () => {
+    const db = seededDatabase();
+    db.prepare(`INSERT INTO job_employer_analysis (
+      tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
+      cache_key, legs_attempted, legs_succeeded, created_at
+    ) VALUES ('local', ?, 1, 'snapshot', '${EMPLOYER_ANALYSIS_PROMPT_VERSION}', 'v1', 'cache-1', 1, 1, ?)`).run(JOB_ID, NOW);
+    insertScoreWithKeywords(db, "local", JOB_ID, 1, []);
+    db.prepare(`INSERT INTO job_requirement_fit_reports (
+      tenant_id, job_id, score_version, employer_analysis_generation,
+      profile_snapshot_version, scoring_policy_version, formula_version,
+      resolved_fit_score, fit_band, confidence, summary_json, created_at
+    ) VALUES ('local', ?, 1, 1, 1, 1, 'requirement-fit-v1', 8, 'strong', 'high', '{}', ?)`).run(JOB_ID, NOW);
+    expect(getJobDetail(db, JOB_ID)?.job.scoreAnalysisFreshness?.status).toBe("current");
+    const earlierReport = db.prepare(`SELECT requirement_fit_report_json FROM job_detail_projections
+      WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID) as { requirement_fit_report_json: string };
+
+    correctScore(db, "local", JOB_ID, { correctedScore: 6, reason: "Synthetic correction" });
+
+    const detail = getJobDetail(db, JOB_ID);
+    expect(detail?.job.scoreVersion).toBe(2);
+    expect(detail?.job.scoreAnalysisFreshness).toMatchObject({
+      status: "outdated", currentAnalysisGeneration: 1,
+      assessedAnalysisGeneration: 1, assessedScoreVersion: 1,
+    });
+    expect(detail?.requirementFitReport).toBeNull();
+    expect(db.prepare(`SELECT requirement_fit_report_json FROM job_detail_projections
+      WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID)).toEqual({ requirement_fit_report_json: null });
+    expect(db.prepare(`SELECT fit_band FROM job_list_projections
+      WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID)).toEqual({ fit_band: "unreported" });
+    expect(db.prepare(`SELECT score_version FROM job_requirement_fit_reports
+      WHERE tenant_id = 'local' AND job_id = ?`).all(JOB_ID)).toEqual([{ score_version: 1 }]);
+
+    // An older installation can already have materialized the wrong report.
+    // A read must repair it even when no newer event arrives.
+    db.prepare(`UPDATE job_detail_projections SET requirement_fit_report_json = ?
+      WHERE tenant_id = 'local' AND job_id = ?`).run(earlierReport.requirement_fit_report_json, JOB_ID);
+    expect(getJobDetail(db, JOB_ID)?.requirementFitReport).toBeNull();
+    expect(db.prepare(`SELECT requirement_fit_report_json FROM job_detail_projections
+      WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID)).toEqual({ requirement_fit_report_json: null });
+  });
+
   it.each(["waiting", "stopped", "checks_exhausted"])("projects canonical %s fetch recovery without raw request URLs or invented retryability", (status) => {
     const db = seededDatabase();
     const failure = {
@@ -238,7 +326,7 @@ describe("exact-v7 read model job ids", () => {
 
   it("keeps same-UUID tenants isolated while preserving URL locators and material/template state", () => {
     const db = seededDatabase();
-    const before = schemaManifest(db, EXACT_V9_SCHEMA_MANIFEST.version);
+    const before = schemaManifest(db, EXACT_V15_SCHEMA_MANIFEST.version);
 
     const jobs = listJobs(db, activeJobQuery);
     const detail = getJobDetail(db, JOB_ID);
@@ -260,7 +348,33 @@ describe("exact-v7 read model job ids", () => {
     expect(detail?.job.resumeTemplate).toEqual(expect.any(Object));
     expect(detail?.stages.find((stage) => stage.stage === "score")).toMatchObject({ retryable: false });
     expect(dashboard.totals.jobs).toBe(1);
-    expect(schemaManifest(db, EXACT_V9_SCHEMA_MANIFEST.version)).toEqual(before);
+    expect(schemaManifest(db, EXACT_V15_SCHEMA_MANIFEST.version)).toEqual(before);
+  });
+
+  it("returns canonical artifact generations without changing accepted lifecycle statuses", () => {
+    const db = seededDatabase();
+    const insertMaterial = db.prepare(
+      `INSERT INTO job_materials (
+         tenant_id, job_id, generation, status, created_at, updated_at
+       ) VALUES ('local', ?, ?, ?, ?, ?)`,
+    );
+    insertMaterial.run(JOB_ID, 3, "resume_approved", NOW, NOW);
+    insertMaterial.run(JOB_ID, 4, "resume_in_progress", NOW, NOW);
+    const insertArtifact = db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
+         render_format, size_bytes, metadata_json, created_at
+       ) VALUES ('local', ?, ?, ?, ?, ?, ?, 'text', 12, '{}', ?)`,
+    );
+    insertArtifact.run(JOB_ID, 3, "tailored_resume", "resume-approved-3", "approved", path.join(os.tmpdir(), "resume-approved-3.txt"), NOW);
+    insertArtifact.run(JOB_ID, 4, "cover_letter", "cover-candidate-4", "candidate", path.join(os.tmpdir(), "cover-candidate-4.txt"), NOW);
+
+    const artifacts = getJobDetail(db, JOB_ID)!.artifacts;
+    expect(artifacts.map(({ artifactId, status, generation }) => ({ artifactId, status, generation })).sort((a, b) => a.artifactId.localeCompare(b.artifactId))).toEqual([
+      { artifactId: "cover-candidate-4", status: "candidate", generation: 4 },
+      { artifactId: "resume-approved-3", status: "approved", generation: 3 },
+      { artifactId: "resume-local", status: "approved", generation: 1 },
+    ]);
   });
 
   it("projects attempt exhaustion as a retryable failure reason", () => {
@@ -622,6 +736,71 @@ describe("exact-v7 read model job ids", () => {
     );
     expect(activity.items.some((item) => item.jobKey === HIDDEN_JOB_ID || item.jobKey === DELETED_JOB_ID)).toBe(false);
     expect(getJobDetail(db, "not-a-canonical-job-id")).toBeNull();
+  });
+
+  it("combines stages with canonical visibility before counting, paging, and bulk selection", () => {
+    const db = seededDatabase();
+    for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
+      db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+        VALUES ('local', ?, ?, 'succeeded', ?, 1)`).run(DELETED_JOB_ID, stage, NOW);
+    }
+    const query: JobListQuery = { ...activeJobQuery, stages: ["discover", "apply", "discover"],
+      stage: "score", jobStates: ["active", "deleted", "hidden"], pageSize: 1, page: 999 };
+    const result = listJobs(db, query);
+    expect(result.pagination).toEqual({ page: 3, pageSize: 1, total: 3, pages: 3 });
+    expect(result.filter).toMatchObject({ stage: "score", stages: ["discover", "apply"] });
+    expect(listJobs(db, { ...query, stages: ["apply"] }).items.map((job) => job.jobKey)).toEqual([DELETED_JOB_ID]);
+    expect(matchingJobKeys(db, { stages: ["discover", "apply"], jobStates: ["active", "deleted", "hidden"] }).sort())
+      .toEqual([JOB_ID, HIDDEN_JOB_ID, DELETED_JOB_ID].sort());
+    expect(matchingJobKeys(db, { stages: ["apply"], jobStates: ["deleted"] })).toEqual([DELETED_JOB_ID]);
+  });
+
+  it("filters canonical job states before count, pagination, and bulk selection", () => {
+    const db = seededDatabase();
+    db.prepare(
+      `INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at)
+       VALUES ('local', ?, ?)`,
+    ).run(HIDDEN_JOB_ID, NOW);
+
+    const active = listJobs(db, {
+      ...activeJobQuery,
+      deleted: "hidden",
+      jobStates: ["active"],
+    });
+    const deleted = listJobs(db, {
+      ...activeJobQuery,
+      deleted: "active",
+      jobStates: ["deleted"],
+    });
+    const hidden = listJobs(db, {
+      ...activeJobQuery,
+      deleted: "deleted",
+      jobStates: ["hidden"],
+    });
+    const mixedFirstPage = listJobs(db, {
+      ...activeJobQuery,
+      pageSize: 1,
+      jobStates: ["active", "hidden"],
+    });
+
+    expect(active.items.map((job) => job.jobKey)).toEqual([JOB_ID]);
+    expect(deleted.items.map((job) => job.jobKey)).toEqual([DELETED_JOB_ID]);
+    expect(hidden.items.map((job) => job.jobKey)).toEqual([HIDDEN_JOB_ID]);
+    expect(mixedFirstPage.pagination).toMatchObject({
+      page: 1,
+      pageSize: 1,
+      total: 2,
+      pages: 2,
+    });
+    expect(mixedFirstPage.filter).toMatchObject({
+      jobStates: ["active", "hidden"],
+    });
+    expect(
+      matchingJobKeys(db, {
+        deleted: "active",
+        jobStates: ["deleted", "hidden"],
+      }).sort(),
+    ).toEqual([DELETED_JOB_ID, HIDDEN_JOB_ID].sort());
   });
 
   it("filters and aggregates only projection-visible normalized score keywords", () => {

@@ -33,6 +33,49 @@ export const EXACT_V9_SCHEMA_MANIFEST: SchemaManifest = {
   fingerprint: "ee90d737238c162f34d69f5becf01f15897d4bbeb2c4b2c51d41526ec6343621",
 };
 
+export const EXACT_V10_SCHEMA_MANIFEST: SchemaManifest = {
+  version: 10,
+  objectCount: 274,
+  tableCount: 118,
+  fingerprint: "d5c1676fff6e81c987055bf4db6d725c582c74b834f4bf92c9eef3f5980f3641",
+};
+
+export const EXACT_V11_SCHEMA_MANIFEST: SchemaManifest = {
+  version: 11,
+  objectCount: 274,
+  tableCount: 118,
+  fingerprint: "6a653761d23c9c17f4e8000f13d14003d265cc5739877063212991569564e542",
+};
+
+export const EXACT_V12_SCHEMA_MANIFEST: SchemaManifest = {
+  version: 12,
+  objectCount: 276,
+  tableCount: 120,
+  fingerprint: "10a8edc30fbfa77e7bea57f3c939a80d836ef3d579f4c5378e7e6e49c6754b56",
+};
+
+export const EXACT_V13_SCHEMA_MANIFEST: SchemaManifest = {
+  version: 13,
+  objectCount: 286,
+  tableCount: 128,
+  fingerprint: "24f551f62457dd2190db390df3d72db50620fc0ae60de3706a6dfc4f38934138",
+};
+
+export const EXACT_V14_SCHEMA_MANIFEST: SchemaManifest = {
+  version: 14,
+  objectCount: 286,
+  tableCount: 128,
+  fingerprint:
+    "d84e0f30dc509e70e270f74993cb2c7d8e5f1905b0f583626553b5a16adda09f",
+};
+
+export const EXACT_V15_SCHEMA_MANIFEST: SchemaManifest = {
+  version: 15,
+  objectCount: 302,
+  tableCount: 130,
+  fingerprint: "739d1361bf3ae482f1a440a81393e0bef54a50003bbe97f32eb0cc04656f0250",
+};
+
 type SqliteMasterRow = [type: string, name: string, tableName: string, sql: string];
 
 type SqliteMasterQueryRow = {
@@ -107,6 +150,34 @@ export function hasExactV8SchemaManifest(db: Pick<Database.Database, "prepare">)
 
 export function hasExactV9SchemaManifest(db: Pick<Database.Database, "prepare">): boolean {
   return hasExactSchemaManifest(db, EXACT_V9_SCHEMA_MANIFEST);
+}
+
+export function hasExactV10SchemaManifest(db: Pick<Database.Database, "prepare">): boolean {
+  return hasExactSchemaManifest(db, EXACT_V10_SCHEMA_MANIFEST);
+}
+
+export function hasExactV11SchemaManifest(db: Pick<Database.Database, "prepare">): boolean {
+  return hasExactSchemaManifest(db, EXACT_V11_SCHEMA_MANIFEST);
+}
+
+export function hasExactV12SchemaManifest(db: Pick<Database.Database, "prepare">): boolean {
+  return hasExactSchemaManifest(db, EXACT_V12_SCHEMA_MANIFEST);
+}
+
+export function hasExactV13SchemaManifest(db: Pick<Database.Database, "prepare">): boolean {
+  return hasExactSchemaManifest(db, EXACT_V13_SCHEMA_MANIFEST);
+}
+
+export function hasExactV14SchemaManifest(
+  db: Pick<Database.Database, "prepare">,
+): boolean {
+  return hasExactSchemaManifest(db, EXACT_V14_SCHEMA_MANIFEST);
+}
+
+export function hasExactV15SchemaManifest(
+  db: Pick<Database.Database, "prepare">,
+): boolean {
+  return hasExactSchemaManifest(db, EXACT_V15_SCHEMA_MANIFEST);
 }
 
 function hasExactSchemaManifest(

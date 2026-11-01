@@ -1,12 +1,38 @@
+import { providerStatusResult, providerModelsResult, providerVerifyResult } from "./provider-fixture.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { createEndpointMethods } from "@jobctrl/api-client";
 import { ENDPOINTS } from "../src/contracts.js";
+import { syntheticInterviewCatalogAsset } from "./interview-fixture.js";
 
 const RECOMMENDATION_ID = `learning-recommendation:${"a".repeat(64)}`;
 const REVIEW_ID = `learning-recommendation-review:${"b".repeat(64)}`;
 
 describe("endpoint client factory", () => {
+  it("generates the five interview methods from the shared endpoint registry", async () => {
+    const catalog = syntheticInterviewCatalogAsset().data as { catalogRevision: string; catalogDigest: string; questions: unknown[] };
+    const note = { jobId: "job/one", questionId: "TS09", revision: 1, noteText: "synthetic user statement",
+      factualSupport: "unverified_user_statement", editStatus: "user_edited", sourceGeneration: null, bindings: null, updatedAt: "2026-10-02T12:00:00Z" };
+    const transport = vi.fn(async (method: string, path: string) => {
+      if (path === "/v1/interviews/catalog") return { ok: true, catalog, page: 1, pageSize: 121, total: 2 };
+      if (path.startsWith("/v1/interviews/questions/")) return { ok: true, catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest }, question: catalog.questions[0] };
+      if (path.endsWith("interview-prep/history")) return { ok: true, jobId: "job/one", generations: [], page: 1, pageSize: 20, total: 0 };
+      return method === "POST" ? { ok: true, note } : { ok: true, jobId: "job/one", notes: [note], page: 1, pageSize: 20, total: 1 };
+    });
+    const client = createEndpointMethods(transport);
+    await client.interviewCatalog({ role: "staff_principal" });
+    await client.interviewQuestion("TS09");
+    await client.interviewPrepHistory("job/one");
+    await client.interviewNotes("job/one", { questionId: "TS09", history: true });
+    await client.saveInterviewNote("job/one", { questionId: "TS09", expectedRevision: 0, noteText: "synthetic user statement" });
+    expect(transport.mock.calls).toEqual([
+      ["GET", "/v1/interviews/catalog", { role: "staff_principal" }],
+      ["GET", "/v1/interviews/questions/TS09", undefined],
+      ["GET", "/v1/jobs/job%2Fone/interview-prep/history", undefined],
+      ["GET", "/v1/jobs/job%2Fone/interview-notes", { questionId: "TS09", history: true }],
+      ["POST", "/v1/jobs/job%2Fone/interview-notes", { questionId: "TS09", expectedRevision: 0, noteText: "synthetic user statement" }],
+    ]);
+  });
   it("derives paths, payload placement, and response parsing from the registry", async () => {
     const transport = vi.fn(async (_method: string, path: string) => {
       if (path === "/v1/learning/recommendations") {
@@ -38,6 +64,7 @@ describe("endpoint client factory", () => {
         policyKind: "tailoring_rule",
         version: 3,
         status: "current",
+        currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111",
         learnedRules: [],
         sourceReviewId: null,
         sourceRecommendationId: null,
@@ -52,7 +79,7 @@ describe("endpoint client factory", () => {
     await client.reviewLearningRecommendation(RECOMMENDATION_ID, {
       decision: "accepted",
     });
-    await client.rollbackTailoringPolicy({ targetVersion: 1 });
+    await client.rollbackTailoringPolicy({ targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" });
 
     expect(transport.mock.calls).toEqual([
       ["GET", "/v1/learning/recommendations", { page: 2, pageSize: 5 }],
@@ -61,7 +88,7 @@ describe("endpoint client factory", () => {
         `/v1/learning/recommendations/${encodeURIComponent(RECOMMENDATION_ID)}/reviews`,
         { decision: "accepted" },
       ],
-      ["POST", "/v1/learning/policies/materials/rollbacks", { targetVersion: 1 }],
+      ["POST", "/v1/learning/policies/materials/rollbacks", { targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" }],
     ]);
     expect(Object.keys(client).toSorted()).toEqual(
       Object.values(ENDPOINTS)
@@ -73,7 +100,7 @@ describe("endpoint client factory", () => {
   it("rejects a response that violates the endpoint response schema", async () => {
     const client = createEndpointMethods(async () => ({ ok: true }));
 
-    await expect(client.rollbackTailoringPolicy({ targetVersion: 1 })).rejects.toThrow();
+    await expect(client.rollbackTailoringPolicy({ targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" })).rejects.toThrow();
   });
 
   it("preserves empty-object bodies for optional write requests", async () => {
@@ -101,5 +128,40 @@ describe("endpoint client factory", () => {
       ["POST", "/v1/resume-review/drafts/draft%2Fone/render", {}],
       ["POST", "/v1/outcomes/gmail/scan", {}],
     ]);
+  });
+});
+
+const providerCases = [
+  ["providerStatus", "GET", "/v1/providers/status", { ok: true, ...providerStatusResult }],
+  ["providerModels", "GET", "/v1/providers/models", { ok: true, ...providerModelsResult }],
+  ["verifyCodexProvider", "POST", "/v1/providers/codex/verify", { ok: true, verification: providerVerifyResult }],
+] as const;
+
+describe("generated provider clients", () => {
+  it.each(providerCases)("%s derives transport and validates success", async (name, method, route, response) => {
+    const transport = vi.fn(async () => response);
+    await expect(createEndpointMethods(transport)[name]()).resolves.toEqual(response);
+    expect(transport.mock.calls).toEqual([[method, route, method === "POST" ? {} : undefined]]);
+  });
+
+  it.each(providerCases)("%s rejects malformed and private response fields", async (name, _method, _route, response) => {
+    for (const invalid of [{ ok: true }, { ...response, privateAccount: "synthetic-private-marker" },
+      name === "verifyCodexProvider"
+        ? { ...response, verification: { ...providerVerifyResult, status: "unknown" } }
+        : { ok: true, providers: [{ ...providerStatusResult.providers[0], token: "synthetic-private-marker" }] }]) {
+      await expect(createEndpointMethods(async () => invalid)[name]()).rejects.toThrow();
+    }
+  });
+
+  it.each(providerCases)("%s propagates transport failures", async (name) => {
+    const error = new Error("synthetic transport failure");
+    await expect(createEndpointMethods(async () => { throw error; })[name]()).rejects.toBe(error);
+  });
+
+  it("retains catalog ordering and unready-provider controls at the client boundary", async () => {
+    for (const providers of [providerModelsResult.providers.toReversed(),
+      providerModelsResult.providers.map((p, i) => i === 0 ? { ...p, ready: false } : p)]) {
+      await expect(createEndpointMethods(async () => ({ ok: true, providers })).providerModels()).rejects.toThrow();
+    }
   });
 });

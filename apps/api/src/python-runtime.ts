@@ -56,7 +56,7 @@ export function createSourcePythonRuntime(
       const invocationArgv = pythonInvocationArgv(invocation, false);
       return {
         executable,
-        argv: ["--project", projectDir, "run", ...invocationArgv],
+        argv: ["--project", projectDir, "run", "--frozen", ...invocationArgv],
         cwd: context.appDir,
         env: runtimeEnvironment(environment, context.appDir, {
           JOBCTRL_RUNTIME_MODE: "source",

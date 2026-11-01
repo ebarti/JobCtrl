@@ -523,3 +523,81 @@ def test_rejects_symlinks_and_overlapping_multi_wheel_paths(tmp_path: Path) -> N
             app_dir=tmp_path / "state-overlap",
             fetcher=_copy_fetcher(tmp_path),
         )
+
+
+def test_changed_closure_with_same_sdk_version_preserves_the_prior_install(monkeypatch, tmp_path: Path) -> None:
+    """Moving a shared dependency into core must not overwrite an older payload's pack."""
+    wheels = tmp_path / 'owned-wheels'
+    wheels.mkdir()
+    sdk = wheels / 'demo-1.0-py3-none-any.whl'
+    shared = wheels / 'shared_schema-1.0-py3-none-any.whl'
+    _write_wheel(sdk, {'demo/__init__.py': b'owned sdk\n'})
+    _write_wheel(shared, {'shared_schema/__init__.py': b'owned former provider dependency\n'})
+    before = parse_provider_pack_spec(_payload([sdk, shared]))
+    after = parse_provider_pack_spec(_payload([sdk]))
+    assert before.version == after.version
+    state = tmp_path / 'owned-state'
+    old = install_provider_pack(before, app_dir=state, fetcher=_copy_fetcher(wheels))
+    # Reproduce an installation made by the prior version-only writer.
+    legacy = old.parent / before.version
+    old.rename(legacy)
+    old = legacy
+    metadata = json.loads((old / 'pack.json').read_text())
+    (old.parent / 'active.json').write_text(json.dumps({
+        'schemaVersion': 1, 'version': before.version, 'treeSha256': metadata['treeSha256'],
+    }))
+    old_metadata = (old / 'pack.json').read_bytes()
+    old_tree = provider_tree_stats(old / 'site-packages')
+    new = install_provider_pack(after, app_dir=state, fetcher=_copy_fetcher(wheels))
+    assert new != old
+    assert (old / 'pack.json').read_bytes() == old_metadata
+    assert provider_tree_stats(old / 'site-packages') == old_tree
+    assert (new / 'site-packages/demo/__init__.py').is_file()
+    assert not (new / 'site-packages/shared_schema').exists()
+    assert install_provider_pack(after, app_dir=state, fetcher=_copy_fetcher(wheels)) == new
+    _enable_bundled_pack(monkeypatch, tmp_path, _payload([sdk]))
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    assert runtime.activate_provider_pack(after.pack_id, app_dir=state) == new / 'site-packages'
+    assert (old / 'pack.json').read_bytes() == old_metadata
+    assert provider_tree_stats(old / 'site-packages') == old_tree
+
+
+def test_legacy_activation_keeps_its_original_version_directory(monkeypatch, tmp_path: Path) -> None:
+    wheel = tmp_path / 'legacy_demo-1.0-py3-none-any.whl'
+    _write_wheel(wheel, {'legacy_demo/__init__.py': b'owned legacy sdk\n'})
+    payload = _payload([wheel])
+    spec = parse_provider_pack_spec(payload)
+    state = tmp_path / 'owned-state'
+    installed = install_provider_pack(spec, app_dir=state, fetcher=_copy_fetcher(tmp_path))
+    legacy = installed.parent / spec.version
+    installed.rename(legacy)
+    metadata = json.loads((legacy / 'pack.json').read_text())
+    (legacy.parent / 'active.json').write_text(json.dumps({
+        'schemaVersion': 1, 'version': spec.version, 'treeSha256': metadata['treeSha256'],
+    }))
+    _enable_bundled_pack(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    assert runtime.activate_provider_pack(spec.pack_id, app_dir=state) == legacy / 'site-packages'
+
+
+@pytest.mark.parametrize('forged_key', [None, '../outside-owned-state', '1.2.3-' + '0' * 64])
+def test_activation_rejects_a_mutable_installation_identity(monkeypatch, tmp_path: Path, forged_key) -> None:
+    wheel = tmp_path / 'identity_demo-1.0-py3-none-any.whl'
+    _write_wheel(wheel, {'identity_demo/__init__.py': b'owned signed sdk\n'})
+    payload = _payload([wheel])
+    spec = parse_provider_pack_spec(payload)
+    state = tmp_path / 'owned-state'
+    installed = install_provider_pack(spec, app_dir=state, fetcher=_copy_fetcher(tmp_path))
+    original = provider_tree_stats(installed / 'site-packages')
+    active_path = installed.parent / 'active.json'
+    active = json.loads(active_path.read_text())
+    assert active['schemaVersion'] == 2
+    active['installationKey'] = forged_key
+    active_path.write_text(json.dumps(active))
+    _enable_bundled_pack(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    original_paths = list(sys.path)
+    with pytest.raises(runtime.RuntimeConfigurationError, match='installation identity'):
+        runtime.activate_provider_pack(spec.pack_id, app_dir=state)
+    assert sys.path == original_paths
+    assert provider_tree_stats(installed / 'site-packages') == original

@@ -18,6 +18,11 @@ export interface ApplyAuditLatestRun {
 }
 
 export interface BuildApplyAuditInput {
+  submitIntentRunIds?: readonly string[];
+  manuallySkipped?: boolean;
+  intentManuallyResolved?: boolean;
+  intentOutcomeRecorded?: boolean;
+  unresolvedSkippedOutcome?: boolean;
   applicationUrl: string | null;
   hasResume: boolean;
   hasCoverLetter: boolean;
@@ -40,8 +45,6 @@ const REPAIR_STATES = new Set<StageState>([
   "canceled",
   "skipped",
 ]);
-
-const ACTIVE_STATES = new Set<StageState>(["queued", "running"]);
 
 const APPLICATION_ATTESTATION_LABELS: Readonly<Record<string, string>> = {
   age_18_plus: "Age 18+",
@@ -104,12 +107,33 @@ export function buildApplyAudit(input: BuildApplyAuditInput): ApplyAudit {
     source(
       "profile_attestations",
       "Application attestations",
-      input.missingProfileData?.length ? "missing" : "present",
+      input.missingProfileData === undefined ? "unknown" : input.missingProfileData.length ? "missing" : "present",
       input.missingProfileData?.length
         ? missingApplicationAttestationDetail(input.missingProfileData)
-        : "Typed application attestations are complete.",
+        : input.missingProfileData === undefined
+          ? "Application attestations have not been checked."
+          : "Typed application attestations are complete.",
     ),
   ];
+
+  if (input.submitIntentRunIds?.length && !input.intentManuallyResolved && !input.intentOutcomeRecorded) {
+    hardBlockers.push(fact("submission_intent_recorded", "Submission outcome requires verification",
+      `Submission intent is recorded for run(s): ${input.submitIntentRunIds.join(", ")}. Skip and reset do not prove that no submission occurred. Verify externally; Mark Applied remains available.`,
+      "blocking", "submit_intent"));
+  }
+  if (input.submitIntentRunIds?.length) {
+    sources.push(source("submit_intent", "Durable submission intent", "present", `${input.submitIntentRunIds.join(", ")}${input.intentManuallyResolved ? "; manually recorded Applied" : input.intentOutcomeRecorded ? "; submission recorded" : ""}`));
+  }
+  if (input.unresolvedSkippedOutcome) {
+    hardBlockers.push(fact("submission_outcome_uncertain", "External outcome remains uncertain",
+      "A prior Needs verification outcome remains unresolved. Skip and reset do not establish that no submission occurred. Verify externally and record the confirmed outcome.",
+      "blocking", "stage_state"));
+  }
+  if (input.manuallySkipped) {
+    hardBlockers.push(fact("manual_apply_skip", "Skipped locally",
+      "Future Apply is stopped until a safe explicit reset. In-flight work may still complete; Skip does not cancel a provider submission.",
+      "blocking", "stage_state"));
+  }
 
   if (!input.applicationUrl) {
     hardBlockers.push(
@@ -154,7 +178,7 @@ export function buildApplyAudit(input: BuildApplyAuditInput): ApplyAudit {
     hardBlockers.push(stageIssue);
   }
 
-  const runIssue = applyRunIssueFact(input.latestApplyRun);
+  const runIssue = input.intentManuallyResolved ? null : applyRunIssueFact(input.latestApplyRun);
   if (runIssue) {
     hardBlockers.push(runIssue);
   }
@@ -255,6 +279,7 @@ function auditState(
     stageIssue: ApplyAuditFact | null;
   },
 ): ApplyAuditState {
+  if ((input.submitIntentRunIds?.length && !input.intentManuallyResolved && !input.intentOutcomeRecorded) || input.unresolvedSkippedOutcome || input.manuallySkipped) return "blocked";
   if (facts.runIssue || facts.stageIssue) {
     return "repair";
   }
@@ -262,9 +287,7 @@ function auditState(
     return "blocked";
   }
   if (
-    facts.missingPrerequisites.length > 0 ||
-    ACTIVE_STATES.has(input.currentState) ||
-    input.currentStage !== "apply"
+    !input.hasResume || !input.hasPdf
   ) {
     return "preparing";
   }
@@ -328,7 +351,7 @@ function auditSummary(
 }
 
 function stageIssueFact(input: BuildApplyAuditInput): ApplyAuditFact | null {
-  if (!REPAIR_STATES.has(input.currentState)) {
+  if (input.manuallySkipped || !REPAIR_STATES.has(input.currentState)) {
     return null;
   }
   const detail =

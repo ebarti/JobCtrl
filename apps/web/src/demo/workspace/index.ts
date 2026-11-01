@@ -14,13 +14,6 @@ export type {
   DemoWorkspaceMutationContext,
   DemoWorkspaceRepositoryOptions,
 } from "./DemoWorkspaceRepository.js";
-export { DemoWorkspaceScheduler } from "./DemoWorkspaceScheduler.js";
-export type {
-  DemoSchedulerClock,
-  DemoWorkspaceDeadlineHandler,
-  DemoWorkspaceInvocationScheduleResult,
-  DemoWorkspaceScenarioEnqueueHandler,
-} from "./DemoWorkspaceScheduler.js";
 export {
   DEMO_BLOBS_STORE,
   DEMO_WORKSPACE_DATABASE,
@@ -28,11 +21,8 @@ export {
   DEMO_WORKSPACE_EVENT_LOG_LIMIT,
   DEMO_WORKSPACE_SCHEMA_VERSION,
   DEMO_WORKSPACE_STORE,
-  isDemoScenarioInvocation,
 } from "./contracts.js";
 export type {
-  DemoPendingScenario,
-  DemoScenarioInvocation,
   DemoWorkspaceReceipt,
   DemoWorkspaceClock,
   DemoWorkspaceCommit,

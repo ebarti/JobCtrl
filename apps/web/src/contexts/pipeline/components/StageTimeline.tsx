@@ -11,34 +11,40 @@ import {
   AlertDescription,
   AlertTitle,
 } from "../../../shared/ui/alert.js";
+import { getApiCapabilityAvailability } from "../../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Button } from "../../../shared/ui/button.js";
+import { ContextHelp } from "../../../shared/ui/context-help.js";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "../../../shared/ui/collapsible.js";
 import { TailorJobButton } from "../../materials/components/RetailorCurrentPolicyButton.js";
-import { useDiscoveryBrowserBridgeQuery } from "../../operations/hooks/useDiscoveryBrowserBridgeQuery.js";
 import { useRetryStageMutation } from "../hooks/useRetryStageMutation.js";
 import { StageBadge } from "./StageBadge.js";
 
 export interface StageTimelineProps {
   stages: readonly StageSummary[];
   jobId?: string;
+  detailQueryId?: string;
   postingUrl?: string;
 }
 
 export function StageTimeline({
   stages,
   jobId,
+  detailQueryId,
   postingUrl,
 }: StageTimelineProps): JSX.Element {
+  const { featureFlags } = usePorts();
+  const retryAvailable = getApiCapabilityAvailability(featureFlags, "retryStage").available;
   return (
     <ol aria-label="Preparation stages" className="timeline stage-timeline">
       {stages.map((stage) => {
-        const diagnostics = stageDiagnostics(stage);
+        const diagnostics = stageDiagnostics(stage, retryAvailable);
         const postingPageUrl = publicPostingUrl(postingUrl);
-        const guidance = stageGuidance(stage, postingPageUrl);
+        const guidance = stageGuidance(stage);
         const manualCaptureUrl = guidance ? postingPageUrl : null;
         return (
           <li
@@ -52,6 +58,7 @@ export function StageTimeline({
                 data-typography="strong-body"
               >
                 {stageLabel(stage.stage)}
+                <ContextHelp label={`${stageLabel(stage.stage)} stage`} description={stageHelp[stage.stage]} />
               </span>
               <StageBadge state={stage.state} />
             </div>
@@ -72,9 +79,9 @@ export function StageTimeline({
                   <p>{guidance.explanation}</p>
                   {stage.state === "blocked" &&
                   stage.errorCode === "ENRICH_ROBOTS_DISALLOWED" &&
-                  jobId &&
-                  isLinkedInJobUrl(manualCaptureUrl) ? (
-                    <LiveProfileLinkedInRetry jobId={jobId} />
+                  jobId ? (
+                    <LegacyEnrichmentRetry jobId={jobId} retryAvailable={retryAvailable}
+                      {...(detailQueryId === undefined ? {} : { detailQueryId })} />
                   ) : null}
                   <p>
                     <strong>Manual capture fallback.</strong> Open the posting
@@ -83,7 +90,7 @@ export function StageTimeline({
                     <strong> Capture page</strong>. JobCtrl imports the visible
                     posting as an explicit, job-scoped manual override and
                     stores user-mediated provenance. It does not bypass the
-                    fetch guard or the site's robots policy, and it never
+                    destination safety checks, and it never
                     submits an application.
                   </p>
                   {manualCaptureUrl ? (
@@ -148,76 +155,48 @@ function StageDiagnosticDisclosure({
         Technical details
       </CollapsibleTrigger>
       <CollapsibleContent className="stage-timeline__diagnostic-content">
+        <ContextHelp label={`${stageLabel(stage)} diagnostics`} description="Recorded code, reason, and attempt details for this preparation stage. These explain a blocked, skipped, failed, or exhausted state; they do not imply an application was submitted." />
         <StageDiagnosticList diagnostics={diagnostics} stage={stage} />
       </CollapsibleContent>
     </Collapsible>
   );
 }
 
-function LiveProfileLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
-  const bridge = useDiscoveryBrowserBridgeQuery();
+function LegacyEnrichmentRetry({ jobId, detailQueryId, retryAvailable }: {
+  jobId: string; detailQueryId?: string; retryAvailable: boolean;
+}): JSX.Element {
   const retryStage = useRetryStageMutation();
-  const ready = bridge.data?.connected === true && bridge.data.installationBound;
-
-  if (bridge.isPending) {
-    return (
-      <div className="flex flex-col items-start gap-2">
-        <p>Checking the paired extension in your current Chrome profile.</p>
-        <Button disabled size="sm" variant="outline">
-          Checking Chrome extension
-        </Button>
-      </div>
-    );
-  }
-
-  if (!ready) {
-    return (
-      <div className="flex flex-col items-start gap-2">
-        <p>
-          Open the paired JobCtrl extension in the Chrome profile where you are
-          signed in to LinkedIn. JobCtrl reads that live profile directly; it
-          does not create or launch a copy.
-        </p>
-        <Button
-          nativeButton={false}
-          render={<a href="/settings/browser" role="link" />}
-          size="sm"
-          variant="outline"
-        >
-          Connect this Chrome profile
-        </Button>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col items-start gap-2">
-      <p>
-        Retry this LinkedIn job through the extension in your current signed-in
-        Chrome profile. Host pacing and the current run request budget still
-        apply. No browser profile is copied or launched, the stage reset and new
-        attempt remain in audit history, and this preparation retry never
-        reaches application submission.
-      </p>
+      {retryAvailable ? (
+        <p>
+          Retry using the connected extension when available, or anonymous
+          acquisition otherwise. Host pacing and the current run request budget
+          still apply. The stage reset and new attempt remain in audit history,
+          and this preparation retry never reaches application submission.
+        </p>
+      ) : <p>Retrying enrichment is unavailable in the demo.</p>}
       <Button
-        disabled={retryStage.isPending}
-        onClick={() =>
+        disabled={retryStage.isPending || !retryAvailable}
+        onClick={() => {
+          if (!retryAvailable) return;
           retryStage.mutate({
             jobId,
             stage: "enrich",
             runAfter: true,
-          })
-        }
+            ...(detailQueryId === undefined ? {} : { detailQueryId }),
+          });
+        }}
         size="sm"
       >
         {retryStage.isPending
-          ? "Retrying through this Chrome profile"
-          : "Retry through this Chrome profile"}
+          ? "Retrying enrichment"
+          : "Retry enrichment"}
       </Button>
       {retryStage.isError ? (
         <p role="alert">
-          The live-profile retry could not start. Check that the extension is
-          connected, then try again from this job.
+          Enrichment could not start. Try again from this job.
         </p>
       ) : null}
     </div>
@@ -259,11 +238,20 @@ const STAGE_LABELS: Record<StageSummary["stage"], string> = {
   apply: "Apply",
 };
 
+const stageHelp: Record<StageSummary["stage"], string> = {
+  discover: "Discovery captured a job from a configured source. Its state reflects local pipeline progress, not whether the live posting is still available.",
+  enrich: "Enrichment captures and checks posting details and an application target when available. A blocked target may need manual review; saved job details remain available.",
+  score: "Scoring evaluates candidate fit against the current policy and evidence. A completed stage records a score, not a hiring prediction.",
+  tailor: "Tailoring prepares resume material for review. Draft or failed attempts do not replace the last accepted artifact.",
+  cover: "Cover-letter preparation creates reviewable material. Completion does not send it to an employer.",
+  apply: "The apply stage has separate approval and submission controls. Its state must be checked in Apply history; preparation alone never authorizes submission.",
+};
+
 function stageLabel(stage: StageSummary["stage"]): string {
   return STAGE_LABELS[stage];
 }
 
-function stageDiagnostics(stage: StageSummary): Array<[string, string]> {
+function stageDiagnostics(stage: StageSummary, retryAvailable: boolean): Array<[string, string]> {
   const diagnostics: Array<[string, string]> = [];
   if (["failed", "exhausted", "blocked", "skipped"].includes(stage.state)) {
     if (stage.failureReason === "attempt_budget_exhausted") {
@@ -286,7 +274,7 @@ function stageDiagnostics(stage: StageSummary): Array<[string, string]> {
     if (["failed", "exhausted"].includes(stage.state)) {
       diagnostics.push([
         "retry",
-        stage.retryable ? "available" : "not automatic",
+        retryAvailable ? (stage.retryable ? "available" : "not automatic") : "unavailable in the demo",
       ]);
     }
   }
@@ -318,7 +306,6 @@ function stageDiagnostics(stage: StageSummary): Array<[string, string]> {
 
 function stageGuidance(
   stage: StageSummary,
-  postingUrl: string | null,
 ): { title: string; explanation: string } | null {
   if (
     stage.stage !== "enrich" ||
@@ -327,17 +314,10 @@ function stageGuidance(
     return null;
   }
   if (stage.errorCode === "ENRICH_ROBOTS_DISALLOWED") {
-    if (isLinkedInJobUrl(postingUrl)) {
-      return {
-        title: "LinkedIn enrichment needs your live Chrome session",
-        explanation:
-          "A previous anonymous enrichment attempt stopped at LinkedIn's robots policy. Retry through the paired extension to read the posting in your current signed-in Chrome profile.",
-      };
-    }
     return {
-      title: "Automated enrichment is blocked by site policy",
+      title: "An earlier robots policy blocked enrichment",
       explanation:
-        "The site's robots policy does not allow JobCtrl to fetch this posting automatically, so JobCtrl did not fetch it.",
+        "JobCtrl no longer checks robots.txt. This historical block can be retried with or without a connected extension; destination safety checks still apply.",
     };
   }
   if (stage.fetchFailure) {
@@ -387,20 +367,6 @@ function publicPostingUrl(value: string | undefined): string | null {
       : null;
   } catch {
     return null;
-  }
-}
-
-function isLinkedInJobUrl(value: string | null): boolean {
-  if (!value) return false;
-  try {
-    const url = new URL(value);
-    const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
-    const linkedinHost =
-      hostname === "linkedin.com" || hostname.endsWith(".linkedin.com");
-    const path = url.pathname.toLowerCase();
-    return linkedinHost && (path === "/jobs" || path.startsWith("/jobs/"));
-  } catch {
-    return false;
   }
 }
 

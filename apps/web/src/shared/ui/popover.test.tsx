@@ -418,7 +418,7 @@ describe("Popover", () => {
     ).toBeInTheDocument();
   });
 
-  it("reports focus-out before the final click for a real focusable outside interaction", async () => {
+  it("closes once on focus-out before a real focusable outside click", async () => {
     const user = userEvent.setup();
     const sequence: string[] = [];
     const onPointerDownOutside = vi.fn();
@@ -483,19 +483,18 @@ describe("Popover", () => {
 
     await user.click(outsideTarget);
 
+    // Focus-out ends the open session; the later click must not dismiss it twice.
     expect(sequence).toEqual([
       "native-pointerdown",
       "focus-out:focusout",
       "interact:dismissableLayer.focusOutside:focusout",
       "open:false:focus-out:focusout",
       "native-click",
-      "interact:popover.outsidePress:click",
-      "open:false:outside-press:click",
     ]);
     expect(onPointerDownOutside).not.toHaveBeenCalled();
     expect(onFocusOutside).toHaveBeenCalledTimes(1);
-    expect(onInteractOutside).toHaveBeenCalledTimes(2);
-    expect(onOpenChange).toHaveBeenCalledTimes(2);
+    expect(onInteractOutside).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).toHaveBeenCalledTimes(1);
     expect(
       screen.queryByRole("dialog", { name: "Focus-order details" }),
     ).toBeNull();

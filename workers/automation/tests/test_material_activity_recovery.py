@@ -5,24 +5,29 @@ from __future__ import annotations
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from temporalio.exceptions import ApplicationError
+from temporalio.testing import ActivityEnvironment
 
 from jobctrl.database import init_db
 from jobctrl.domain.identifiers import canonical_job_id
-from jobctrl.domain.materials.value_objects import ArtifactStatus
+from jobctrl.domain.ports.artifact_review import ArtifactStatus
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.preparation_recovery import (
     CancelPreparationStateInput,
+    MaterialActivityAttempt,
     RecoverPreparationStateInput,
+    assert_material_activity_attempt_not_superseded,
     assert_material_activity_commit_allowed,
     cancel_preparation_state_rows,
     recover_preparation_state_rows,
 )
 from jobctrl.materials.activities import _run_selected_material_jobs
-from jobctrl.state import ensure_job_stage_rows, set_stage_state
+from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
 
 
 _STARTED_AT = "2026-08-04T19:00:00+00:00"
@@ -66,6 +71,83 @@ def _seed_owned_stage(
     )
     conn.commit()
     return job_id
+
+
+@pytest.mark.parametrize("stage", ["tailor", "cover"])
+def test_material_commit_guard_accepts_legacy_callers_and_fences_exact_attempt(tmp_path: Path, stage: str) -> None:
+    conn = init_db(tmp_path / "material-attempt-owner.db")
+    job_id = _seed_owned_stage(conn, 100, stage=stage, workflow_id="same-workflow")
+    other_job = _seed_owned_stage(conn, 101, stage=stage, workflow_id="same-workflow")
+    guard = dict(tenant_id="local", job_id=job_id, stage=stage, workflow_id="same-workflow")
+
+    # Older callers and histories have no attempt token or start event.
+    assert_material_activity_commit_allowed(conn, **guard)
+    with pytest.raises(RuntimeError, match="no longer owns"):
+        assert_material_activity_commit_allowed(conn, **guard, attempt_id="first")
+    record_job_event(conn, canonical_job_id(job_id), stage, "StageStarted", payload={"materialAttemptId": "first"})
+    record_job_event(conn, canonical_job_id(other_job), stage, "StageStarted", payload={"materialAttemptId": "other"})
+    conn.commit()
+    assert_material_activity_commit_allowed(conn, **guard, attempt_id="first")
+    record_job_event(conn, canonical_job_id(job_id), stage, "StageStarted", payload={"materialAttemptId": "successor"})
+    conn.commit()
+    with pytest.raises(RuntimeError, match="no longer owns"):
+        assert_material_activity_commit_allowed(conn, **guard, attempt_id="first")
+    assert_material_activity_commit_allowed(conn, **guard, attempt_id="successor")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["tailor", "cover"])
+async def test_late_retry_cannot_recover_a_newer_activity_stage(tmp_path: Path, monkeypatch, stage: str) -> None:
+    from jobctrl import database
+    from jobctrl.materials import activities
+
+    conn = init_db(tmp_path / "late-retry-recovery.db")
+    job_id = _seed_owned_stage(conn, 102, stage=stage, workflow_id="same-workflow")
+    env = ActivityEnvironment()
+    env.info = replace(env.info, workflow_run_id="same-workflow", attempt=2)
+    record_job_event(
+        conn, canonical_job_id(job_id), stage, "StageStarted",
+        payload={"materialAttemptId": "newer", "temporalRunId": "same-workflow",
+                 "temporalActivityId": env.info.activity_id, "temporalAttempt": 3},
+    )
+    conn.commit()
+    stage_before = tuple(conn.execute("SELECT state,attempt_count,metadata_json FROM job_stage_states WHERE job_id=? AND stage=?", (job_id, stage)).fetchone())
+    events_before = conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0]
+    monkeypatch.setattr(database, "get_connection", lambda: conn)
+    called = []
+    monkeypatch.setattr(activities, "_tailor_one_job" if stage == "tailor" else "_cover_one_job", lambda *_, **__: called.append(True))
+    payload = (activities.TailorJobActivityInput if stage == "tailor" else activities.CoverLetterActivityInput)(
+        tenant_id="local", job_id=canonical_job_id(job_id),
+    )
+    runner = activities.tailor_job_activity if stage == "tailor" else activities.cover_letter_activity
+    with pytest.raises(ApplicationError, match="no longer owns artifact persistence"):
+        await env.run(runner, payload)
+    assert not called
+    assert tuple(conn.execute("SELECT state,attempt_count,metadata_json FROM job_stage_states WHERE job_id=? AND stage=?", (job_id, stage)).fetchone()) == stage_before
+    assert conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == events_before
+    # Another activity ID or a later attempt is a legitimate following owner.
+    base = dict(tenant_id="local", job_id=job_id, stage=stage, workflow_id="same-workflow")
+    assert_material_activity_attempt_not_superseded(conn, **base, attempt=MaterialActivityAttempt("following-activity", 1))
+    assert_material_activity_attempt_not_superseded(conn, **base, attempt=MaterialActivityAttempt(env.info.activity_id, 4))
+
+
+@pytest.mark.parametrize("stage", ["tailor", "cover"])
+def test_single_job_retry_recovery_does_not_settle_a_sibling_job(tmp_path: Path, monkeypatch, stage: str) -> None:
+    from jobctrl import database
+    from jobctrl.materials.activities import _reconcile_activity_retry
+
+    conn = init_db(tmp_path / "scoped-retry-recovery.db")
+    target = _seed_owned_stage(conn, 103, stage=stage, workflow_id="shared-workflow")
+    sibling = _seed_owned_stage(conn, 104, stage=stage, workflow_id="shared-workflow")
+    monkeypatch.setattr(database, "get_connection", lambda: conn)
+    _reconcile_activity_retry(
+        tenant_id="local", workflow_id="shared-workflow", stage=stage,
+        job_id=canonical_job_id(target), temporal_attempt=MaterialActivityAttempt("activity", 2),
+    )
+    states = dict(conn.execute("SELECT job_id,state FROM job_stage_states WHERE stage=?", (stage,)).fetchall())
+    assert states[target] == "failed"
+    assert states[sibling] == "running"
+    assert not conn.in_transaction
 
 
 def test_tailor_recovery_accepts_only_a_newly_committed_retailor_generation(
@@ -121,8 +203,7 @@ def test_tailor_recovery_accepts_only_a_newly_committed_retailor_generation(
     states = {
         row["job_id"]: (row["state"], row["attempt_count"])
         for row in conn.execute(
-            "SELECT job_id, state, attempt_count FROM job_stage_states "
-            "WHERE stage = 'tailor'"
+            "SELECT job_id, state, attempt_count FROM job_stage_states WHERE stage = 'tailor'"
         ).fetchall()
     }
     assert states[restored_job] == ("succeeded", 2)
@@ -217,18 +298,13 @@ def test_cover_recovery_reuses_committed_cover_and_ignores_another_owner(
     )
 
     assert (result.restored, result.failed) == (1, 0)
-    states = dict(conn.execute(
-        "SELECT job_id, state FROM job_stage_states WHERE stage = 'cover'"
-    ).fetchall())
+    states = dict(conn.execute("SELECT job_id, state FROM job_stage_states WHERE stage = 'cover'").fetchall())
     assert states[owned] == "succeeded"
     assert states[other] == "running"
 
 
 def test_selected_material_fanout_stops_scheduling_after_cancellation() -> None:
-    job_ids = tuple(
-        canonical_job_id(f"10000000-0000-4000-8000-{index:012d}")
-        for index in range(4)
-    )
+    job_ids = tuple(canonical_job_id(f"10000000-0000-4000-8000-{index:012d}") for index in range(4))
     cancel_event = threading.Event()
     first_wave_started = threading.Event()
     release_first_wave = threading.Event()
@@ -313,11 +389,7 @@ def test_material_cancellation_preserves_successor_owner_and_cancels_pending(
         ),
     )
 
-    states = dict(
-        conn.execute(
-            "SELECT job_id, state FROM job_stage_states WHERE stage = 'cover'"
-        ).fetchall()
-    )
+    states = dict(conn.execute("SELECT job_id, state FROM job_stage_states WHERE stage = 'cover'").fetchall())
     assert result.canceled == 2
     assert result.restored == 0
     assert states[owned] == "canceled"

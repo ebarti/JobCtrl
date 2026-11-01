@@ -21,7 +21,12 @@ import hashlib
 import json
 import math
 import sqlite3
+import uuid
+from collections.abc import Callable
+from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from jobctrl.database import effective_tailoring_min_score
@@ -32,6 +37,7 @@ from jobctrl.domain.materials.policy import (
     TailoringPolicy,
     TailoringPolicyChangedError,
     TailoringPolicyRollbackReason,
+    TailoringPolicyRollbackResult,
     fingerprint_profile_snapshot,
 )
 from jobctrl.domain.operations.learning import (
@@ -39,13 +45,8 @@ from jobctrl.domain.operations.learning import (
     LearningRecommendationReview,
     TailoringRuleEffect,
 )
-from jobctrl.domain.materials.value_objects import (
-    ArtifactStatus,
-    ArtifactType,
-    JudgeVerdict,
-    RenderFormat,
-    ValidationResult,
-)
+from jobctrl.domain.ports.artifact_review import ArtifactStatus, JudgeVerdict, ValidationResult
+from jobctrl.domain.materials.value_objects import ArtifactType, RenderFormat
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
@@ -55,6 +56,17 @@ from jobctrl.scoring.eligibility_sql import (
 )
 
 _LINEAGE_KEY = "__jobctrl_materials_lineage_id"
+
+
+def _source_matches(path: str, expected_sha256: str) -> bool:
+    try:
+        with Path(path).open("rb") as source:
+            digest = hashlib.sha256()
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest() == expected_sha256
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +98,43 @@ class LearningRecommendationReviewError(ValueError):
 
 class TailoringPolicyRevisionError(ValueError):
     """Raised when a requested policy history operation is not valid."""
+
+
+class TailoringPolicyStaleReviewError(TailoringPolicyRevisionError):
+    """The current policy no longer matches the reviewed predecessor."""
+
+
+class TailoringPolicyCommandConflictError(TailoringPolicyRevisionError):
+    """A command identity is already bound to a different reviewed intent."""
+
+
+_RESTORE_RECEIPT_PREFIX = "jobctrl:policy-restore:v1:"
+
+
+def _restore_receipt_prefix(command_id: str) -> str:
+    return f"{_RESTORE_RECEIPT_PREFIX}{command_id}:"
+
+
+def _restore_reason(raw: str) -> str:
+    """Expose only the reason for a recognized receipt, preserving old history."""
+    if raw.startswith(_RESTORE_RECEIPT_PREFIX):
+        try:
+            _, payload = raw[len(_RESTORE_RECEIPT_PREFIX):].split(":", 1)
+            if json.loads(payload).get("reason") == "user_requested":
+                return "user_requested"
+        except (AttributeError, ValueError, TypeError):
+            pass
+    return raw
+
+
+def _valid_restore_command_id(command_id: object) -> bool:
+    if not isinstance(command_id, str):
+        return False
+    try:
+        parsed = uuid.UUID(command_id)
+        return parsed.version == 4 and str(parsed) == command_id
+    except (ValueError, AttributeError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -273,11 +322,7 @@ class SqliteMaterialsRepository:
         will mint a new generation when it picks them up.
         """
         min_score = effective_tailoring_min_score(min_score)
-        where = (
-            "AND approved_resumes.job_id IS NULL "
-            if not retailor
-            else ""
-        )
+        where = "AND approved_resumes.job_id IS NULL " if not retailor else ""
         sql = (
             "WITH latest_scores AS ("
             "SELECT tenant_id, job_id, MAX(version) AS version "
@@ -486,6 +531,52 @@ class SqliteMaterialsRepository:
         else:
             self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
 
+    def publish_rendered_pdf(
+        self, expected: MaterialsSet, artifact: Artifact, source_sha256: str,
+        *, commit_guard: Callable[[], None] | None = None,
+    ) -> MaterialsSet | None:
+        """Atomically revalidate a rendered PDF against its current source."""
+        if artifact.type not in (ArtifactType.RESUME_PDF, ArtifactType.COVER_LETTER_PDF):
+            raise ValueError("expected a rendered PDF artifact")
+        with self.write_transaction():
+            if commit_guard is not None:
+                commit_guard()
+            current = self.load_current_approved(expected.tenant_id, expected.job_id)
+            is_resume = artifact.type is ArtifactType.RESUME_PDF
+            source = current.tailored_resume if current and is_resume else current.cover_letter if current else None
+            existing = current.resume_pdf if current and is_resume else current.cover_letter_pdf if current else None
+            if (
+                current is None or current != expected or source is None
+                or source.status is not ArtifactStatus.APPROVED
+                or (existing is not None and existing.status is ArtifactStatus.APPROVED)
+                or not _source_matches(source.path, source_sha256)
+            ):
+                return None
+            now = datetime.now(timezone.utc).isoformat()
+            updated = (current.with_resume_pdf(artifact, updated_at=now) if is_resume
+                       else current.with_cover_letter_pdf(artifact, updated_at=now))
+            self.save(updated)
+            return updated
+
+    @contextmanager
+    def write_transaction(self):
+        """Take the same SQLite writer lock used by Apply intent admission."""
+        owns_transaction = not self._conn.in_transaction
+        if owns_transaction:
+            self._conn.execute("BEGIN IMMEDIATE")
+        else:
+            # A caller may have entered a deferred transaction. Acquire its
+            # writer lock before reading publication authority.
+            self._conn.execute("UPDATE job_materials SET generation=generation WHERE 0")
+        try:
+            yield
+            if owns_transaction:
+                self._conn.commit()
+        except BaseException:
+            if owns_transaction:
+                self._conn.rollback()
+            raise
+
     def _save_rows(
         self,
         materials: MaterialsSet,
@@ -661,6 +752,23 @@ class SqliteMaterialsRepository:
                 artifact.superseded_at,
             ),
         )
+        verification_id = metadata.get("claim_verification_id")
+        if verification_id:
+            from jobctrl.infrastructure.determinations import save_artifact_anchors
+
+            save_artifact_anchors(
+                self._conn,
+                tenant_id=materials.tenant_id,
+                artifact_kind=artifact.type.value,
+                artifact_id=artifact.artifact_id,
+                generation=materials.generation,
+                determination_id=verification_id,
+                anchors=metadata["line_anchors"],
+                quality_determination_id=metadata.get("quality_determination_id"),
+                adversarial_determination_id=metadata.get("resume_adversarial_id"),
+                require_pass=artifact.status is ArtifactStatus.APPROVED,
+                expected_entity_id=str(job_id),
+            )
         self._replace_layout_boxes(
             materials,
             job_id,
@@ -960,21 +1068,13 @@ class SqliteLearningRecommendationReviewRepository:
         recommendation_id = str(recommendation_id or "").strip()
         reviewed_at = str(reviewed_at or "").strip()
         if not recommendation_id:
-            raise LearningRecommendationReviewError(
-                "recommendation_id must not be empty"
-            )
+            raise LearningRecommendationReviewError("recommendation_id must not be empty")
         if decision not in {"accepted", "rejected"}:
-            raise LearningRecommendationReviewError(
-                "decision must be accepted or rejected"
-            )
+            raise LearningRecommendationReviewError("decision must be accepted or rejected")
         if not reviewed_at:
             raise LearningRecommendationReviewError("reviewed_at must not be empty")
 
-        policy_repository = (
-            SqliteTailoringPolicyRepository(self._conn)
-            if decision == "accepted"
-            else None
-        )
+        policy_repository = SqliteTailoringPolicyRepository(self._conn) if decision == "accepted" else None
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             recommendation = self._conn.execute(
@@ -986,9 +1086,7 @@ class SqliteLearningRecommendationReviewRepository:
                 (str(tenant_id), recommendation_id),
             ).fetchone()
             if recommendation is None:
-                raise LearningRecommendationReviewError(
-                    "learning recommendation does not exist for tenant"
-                )
+                raise LearningRecommendationReviewError("learning recommendation does not exist for tenant")
 
             prior_reviews = tuple(
                 self._review_from_row(row)
@@ -1008,9 +1106,7 @@ class SqliteLearningRecommendationReviewRepository:
                 if decision == terminal.decision:
                     self._conn.commit()
                     return terminal
-                raise LearningRecommendationReviewError(
-                    "learning recommendation decision is terminal"
-                )
+                raise LearningRecommendationReviewError("learning recommendation decision is terminal")
 
             tombstoned = self._conn.execute(
                 """
@@ -1022,9 +1118,7 @@ class SqliteLearningRecommendationReviewRepository:
                 (str(tenant_id), recommendation_id),
             ).fetchone()
             if tombstoned is not None:
-                raise LearningRecommendationReviewError(
-                    "tombstoned learning recommendation cannot be reviewed"
-                )
+                raise LearningRecommendationReviewError("tombstoned learning recommendation cannot be reviewed")
 
             revision = len(prior_reviews) + 1
             policy_version: int | None = None
@@ -1033,16 +1127,12 @@ class SqliteLearningRecommendationReviewRepository:
                     signal_kind=str(_row_value(recommendation, "signal_kind", 0)),
                     rule_key=str(_row_value(recommendation, "rule_key", 1)),
                     rule_value=str(_row_value(recommendation, "rule_value", 2)),
-                    allowlist_version=int(
-                        _row_value(recommendation, "allowlist_version", 3)
-                    ),
+                    allowlist_version=int(_row_value(recommendation, "allowlist_version", 3)),
                 )
                 assert policy_repository is not None
                 current = policy_repository.get_current(tenant_id)
                 if current is None:
-                    raise LearningRecommendationReviewError(
-                        "acceptance requires an initialized tailoring policy"
-                    )
+                    raise LearningRecommendationReviewError("acceptance requires an initialized tailoring policy")
                 policy = current.with_learned_tailoring_rule(
                     rule_key=effect.rule_key,
                     rule_value=effect.rule_value,
@@ -1099,9 +1189,7 @@ class SqliteLearningRecommendationReviewRepository:
             recommendation_id=str(_row_value(row, "recommendation_id", 2)),
             revision=int(_row_value(row, "revision", 3)),
             decision=str(_row_value(row, "decision", 4)),
-            policy_version=(
-                None if raw_policy_version is None else int(raw_policy_version)
-            ),
+            policy_version=(None if raw_policy_version is None else int(raw_policy_version)),
             reviewed_at=str(_row_value(row, "reviewed_at", 6)),
         )
 
@@ -1223,9 +1311,7 @@ class SqliteTailoringPolicyRepository:
         *,
         expected_current_version: int | None = None,
     ) -> TailoringPolicy:
-        owns_transaction = not (
-            self._unit_of_work is not None and self._unit_of_work.active
-        )
+        owns_transaction = not (self._unit_of_work is not None and self._unit_of_work.active)
         if owns_transaction:
             self._conn.execute("BEGIN IMMEDIATE")
         try:
@@ -1234,14 +1320,9 @@ class SqliteTailoringPolicyRepository:
             if (
                 expected_current_version is not None
                 and actual_current_version != expected_current_version
-                and (
-                    current is None
-                    or not current.same_config_as(candidate)
-                )
+                and (current is None or not current.same_config_as(candidate))
             ):
-                raise TailoringPolicyChangedError(
-                    "tailoring policy advanced before artifact persistence"
-                )
+                raise TailoringPolicyChangedError("tailoring policy advanced before artifact persistence")
             if current is not None and current.learned_tailoring_rules.rules:
                 candidate = candidate.with_learned_tailoring_rules(
                     current.learned_tailoring_rules,
@@ -1288,15 +1369,11 @@ class SqliteTailoringPolicyRepository:
         """Assert tailoring-relevant profile and policy identity atomically."""
 
         if self._unit_of_work is None or not self._unit_of_work.active:
-            raise RuntimeError(
-                "tailoring generation fence requires an active unit of work"
-            )
-        if policy.runtime_settings.get(
-            "profile_snapshot_fingerprint"
-        ) != fingerprint_profile_snapshot(profile_snapshot):
-            raise TailoringPolicyChangedError(
-                "tailoring profile snapshot changed before artifact persistence"
-            )
+            raise RuntimeError("tailoring generation fence requires an active unit of work")
+        if policy.runtime_settings.get("profile_snapshot_fingerprint") != fingerprint_profile_snapshot(
+            profile_snapshot
+        ):
+            raise TailoringPolicyChangedError("tailoring profile snapshot changed before artifact persistence")
         from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
         from jobctrl.infrastructure.profile.sqlite_repository import (
             SqliteProfileRepository,
@@ -1309,59 +1386,105 @@ class SqliteTailoringPolicyRepository:
                 profile_id=str(profile_snapshot.profile_id),
             ).load_snapshot(profile_snapshot.tenant_id)
         except FileNotFoundError as exc:
-            raise TailoringPolicyChangedError(
-                "tailoring profile disappeared before artifact persistence"
-            ) from exc
-        if fingerprint_profile_snapshot(
-            current_profile_snapshot
-        ) != fingerprint_profile_snapshot(profile_snapshot):
-            raise TailoringPolicyChangedError(
-                "tailoring-relevant profile data changed before artifact persistence"
-            )
+            raise TailoringPolicyChangedError("tailoring profile disappeared before artifact persistence") from exc
+        if fingerprint_profile_snapshot(current_profile_snapshot) != fingerprint_profile_snapshot(profile_snapshot):
+            raise TailoringPolicyChangedError("tailoring-relevant profile data changed before artifact persistence")
         current = self.get_current(policy.tenant_id)
-        if (
-            current is None
-            or current.version != policy.version
-            or not current.same_config_as(policy)
-        ):
-            raise TailoringPolicyChangedError(
-                "tailoring policy advanced before artifact persistence"
-            )
+        if current is None or current.version != policy.version or not current.same_config_as(policy):
+            raise TailoringPolicyChangedError("tailoring policy advanced before artifact persistence")
 
     def rollback_to(
         self,
         tenant_id: TenantId,
         *,
         target_version: int,
+        expected_current_version: int,
+        command_id: str,
         reason: TailoringPolicyRollbackReason,
         rolled_back_at: str,
-    ) -> TailoringPolicy:
+    ) -> TailoringPolicyRollbackResult:
+        for name, value in (("target version", target_version), ("expected current version", expected_current_version)):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1 or value > 9007199254740991:
+                raise TailoringPolicyRevisionError(f"{name} must be a positive safe integer")
+        if not _valid_restore_command_id(command_id):
+            raise TailoringPolicyRevisionError("command ID must be a canonical UUIDv4")
         if reason != "user_requested":
             raise TailoringPolicyRevisionError("unsupported tailoring policy rollback reason")
-        if not str(rolled_back_at or "").strip():
+        if not isinstance(rolled_back_at, str) or not rolled_back_at.strip():
             raise TailoringPolicyRevisionError("rolled_back_at must not be empty")
 
+        # A receipt is stored in the revision's provenance, so neither half can
+        # commit without the other and the exact-v15 schema remains unchanged.
+        prefix = _restore_receipt_prefix(command_id)
+        payload = {
+            "commandId": command_id,
+            "targetVersion": target_version,
+            "expectedCurrentVersion": expected_current_version,
+            "reason": reason,
+        }
+        encoded_reason = prefix + json.dumps(payload, sort_keys=True, separators=(",", ":"))
         self._conn.execute("BEGIN IMMEDIATE")
         try:
+            receipts = self._conn.execute(
+                """SELECT version, rollback_of_version, rollback_reason
+                     FROM tailoring_policies
+                    WHERE tenant_id = ? AND substr(rollback_reason, 1, ?) = ?""",
+                (str(tenant_id), len(prefix), prefix),
+            ).fetchall()
+            if receipts:
+                if len(receipts) != 1:
+                    raise TailoringPolicyCommandConflictError("restore command receipt is inconsistent")
+                receipt = receipts[0]
+                receipt_version = int(_row_value(receipt, "version", 0))
+                receipt_target = _row_value(receipt, "rollback_of_version", 1)
+                receipt_raw = str(_row_value(receipt, "rollback_reason", 2))
+                if receipt_raw != encoded_reason:
+                    raise TailoringPolicyCommandConflictError("restore command identity already used")
+                if receipt_target != target_version or receipt_version != expected_current_version + 1:
+                    raise TailoringPolicyCommandConflictError("restore command receipt is inconsistent")
+                accepted = self.get_version(tenant_id, receipt_version)
+                current = self.get_current(tenant_id)
+                if accepted is None or current is None:
+                    raise TailoringPolicyCommandConflictError("restore command receipt is inconsistent")
+                self._conn.commit()
+                return TailoringPolicyRollbackResult(accepted, current.version, True)
+
             current = self.get_current(tenant_id)
             if current is None:
                 raise TailoringPolicyRevisionError("tailoring policy is not initialized")
             target = self.get_version(tenant_id, target_version)
             if target is None:
-                raise TailoringPolicyRevisionError(
-                    "target tailoring policy version does not exist for tenant"
-                )
-            if (
-                current.rollback_of_version == target.version
-                and current.rollback_reason == reason
-                and current.same_config_as(target)
-            ):
-                self._conn.commit()
-                return current
+                raise TailoringPolicyRevisionError("target tailoring policy version does not exist for tenant")
+            if current.version != expected_current_version:
+                raise TailoringPolicyStaleReviewError("tailoring_policy_stale_review")
             if target.version >= current.version:
-                raise TailoringPolicyRevisionError(
-                    "rollback target must precede the current tailoring policy"
-                )
+                raise TailoringPolicyRevisionError("rollback target must precede the current tailoring policy")
+            # The general policy reader tolerates damaged JSON for legacy reads.
+            # A restore must copy the actual historical configuration, never a
+            # reader's empty fallback, and its response must be valid before commit.
+            raw_settings = self._conn.execute(
+                """SELECT generator_settings_json, judge_settings_json, runtime_settings_json
+                     FROM tailoring_policies WHERE tenant_id = ? AND version = ?""",
+                (str(tenant_id), target_version),
+            ).fetchone()
+            try:
+                if raw_settings is None:
+                    raise ValueError("invalid historical settings")
+                settings = [json.loads(raw_settings[index]) for index in range(3)]
+                if any(not isinstance(value, dict) for value in settings):
+                    raise ValueError("invalid historical settings")
+                # Python's JSON reader accepts NaN and infinities, including
+                # finite-looking exponents that overflow a float. They cannot
+                # be emitted as interoperable JSON in the restored revision.
+                for value in settings:
+                    json.dumps(value, allow_nan=False)
+                # The domain reader normalizes rule whitespace for legacy
+                # reads; the history contract requires exact allowlisted pairs.
+                rules = target.learned_tailoring_rules.to_dict()
+                if settings[2].get("learned_tailoring_rules", {}) != rules:
+                    raise ValueError("noncanonical learned tailoring rules")
+            except (TypeError, ValueError):
+                raise TailoringPolicyRevisionError("target tailoring policy configuration is invalid") from None
 
             rollback = TailoringPolicy(
                 tenant_id=tenant_id,
@@ -1377,14 +1500,14 @@ class SqliteTailoringPolicyRepository:
                 judge_settings=target.judge_settings,
                 runtime_settings=target.runtime_settings,
                 rollback_of_version=target.version,
-                rollback_reason=reason,
+                rollback_reason=encoded_reason,
                 created_at=rolled_back_at,
                 created_from_event_id=None,
             )
             self._insert(rollback)
             self._conn.commit()
-            return rollback
-        except Exception:
+            return TailoringPolicyRollbackResult(replace(rollback, rollback_reason=reason), rollback.version, False)
+        except BaseException:
             self._conn.rollback()
             raise
 
@@ -1404,7 +1527,7 @@ class SqliteTailoringPolicyRepository:
             judge_settings=_loads(_row_value(row, "judge_settings_json", 10)) or {},
             runtime_settings=_loads(_row_value(row, "runtime_settings_json", 11)) or {},
             rollback_of_version=_row_value(row, "rollback_of_version", 12),
-            rollback_reason=str(_row_value(row, "rollback_reason", 13) or ""),
+            rollback_reason=_restore_reason(str(_row_value(row, "rollback_reason", 13) or "")),
             created_at=str(_row_value(row, "created_at", 14)),
             created_from_event_id=_row_value(row, "created_from_event_id", 15),
         )

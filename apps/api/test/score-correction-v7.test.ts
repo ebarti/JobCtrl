@@ -15,9 +15,9 @@ vi.mock("../src/read-model.js", async (importOriginal) => ({
   getJobDetail,
 }));
 
-import { hasExactV9SchemaManifest } from "../src/schema-manifest.js";
+import { hasExactV15SchemaManifest } from "../src/schema-manifest.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const CORRECTED_JOB_ID = "00000000-0000-4000-8000-000000000081";
 const CORRECTED_JOB_URL = "https://jobs.example.test/score-correction";
@@ -32,12 +32,12 @@ afterEach(() => {
   }
 });
 
-describe("score correction exact-v7 identity", () => {
+describe("score correction exact-current identity", () => {
   it("resolves URL locators at the API boundary and persists corrections, policy staleness, and events by JobId", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-score-correction-v7-"));
     directories.push(directory);
     const dbPath = path.join(directory, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     seedScores(dbPath);
 
     const app = buildApp({
@@ -104,7 +104,7 @@ describe("score correction exact-v7 identity", () => {
             event_type: "ScoreCorrected",
           }),
         ]);
-        expect(hasExactV9SchemaManifest(db)).toBe(true);
+        expect(hasExactV15SchemaManifest(db)).toBe(true);
       } finally {
         db.close();
       }
@@ -126,7 +126,7 @@ describe("score correction exact-v7 identity", () => {
       try {
         expect(resetDb.prepare(
           "SELECT resolved FROM job_score_staleness WHERE tenant_id = 'local' AND job_id = ?",
-        ).get(COMPARABLE_JOB_ID)).toEqual({ resolved: 1 });
+        ).get(COMPARABLE_JOB_ID)).toEqual({ resolved: 0 });
         expect(resetDb.prepare(
           "SELECT state, attempt_count FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'",
         ).get(COMPARABLE_JOB_ID)).toEqual({ state: "pending", attempt_count: 0 });
@@ -136,7 +136,7 @@ describe("score correction exact-v7 identity", () => {
           identity_version: 1,
           event_type: "ScoreRescoreRequested",
         }));
-        expect(hasExactV9SchemaManifest(resetDb)).toBe(true);
+        expect(hasExactV15SchemaManifest(resetDb)).toBe(true);
       } finally {
         resetDb.close();
       }

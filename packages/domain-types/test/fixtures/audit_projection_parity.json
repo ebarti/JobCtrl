@@ -128,9 +128,9 @@
       {
         "generation": 1,
         "snapshot_hash": "hash-old",
-        "prompt_version": "employer-analysis-v1",
+        "prompt_version": "employer-analysis-v4-determinations",
         "sdk_set_version": "claude+codex-v1",
-        "cache_key": "hash-old:employer-analysis-v1:claude+codex-v1",
+        "cache_key": "hash-old:employer-analysis-v4-determinations:claude+codex-v1",
         "role_framing": "Old framing.",
         "inferred_seniority": "mid",
         "ideal_candidate_narrative": "Old narrative.",
@@ -144,9 +144,9 @@
       {
         "generation": 2,
         "snapshot_hash": "hash-new",
-        "prompt_version": "employer-analysis-v1",
+        "prompt_version": "employer-analysis-v4-determinations",
         "sdk_set_version": "claude+codex-v1",
-        "cache_key": "hash-new:employer-analysis-v1:claude+codex-v1",
+        "cache_key": "hash-new:employer-analysis-v4-determinations:claude+codex-v1",
         "role_framing": "Own the developer platform.",
         "inferred_seniority": "senior",
         "ideal_candidate_narrative": "A hands-on platform owner.",
@@ -210,7 +210,7 @@
         "position": 0,
         "created_at": "2026-06-08T12:10:00+00:00",
         "coverage_json": "{\"computed_against\": \"rendered_text\", \"planned\": [\"developer platform\", \"kafka\"], \"covered\": [\"developer platform\"], \"declared\": [], \"missing\": [\"kafka\"], \"covered_by\": {\"developer platform\": \"experience:acme#0\"}, \"declared_by\": {}, \"counts\": {\"planned\": 2, \"covered\": 1, \"declared\": 0, \"missing\": 1}}",
-        "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"proxy_delta\": {\"improved\": true}, \"reason\": \"\", \"summary_rejection_reason\": \"\"}"
+        "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"reason\": \"\", \"summary_rejection_reason\": \"\"}"
       },
       {
         "generation": 2,
@@ -228,7 +228,7 @@
         "position": 1,
         "created_at": "2026-06-08T12:10:00+00:00",
         "coverage_json": "{\"computed_against\": \"rendered_text\", \"planned\": [\"developer platform\", \"kafka\"], \"covered\": [\"developer platform\"], \"declared\": [], \"missing\": [\"kafka\"], \"covered_by\": {\"developer platform\": \"experience:acme#0\"}, \"declared_by\": {}, \"counts\": {\"planned\": 2, \"covered\": 1, \"declared\": 0, \"missing\": 1}}",
-        "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"proxy_delta\": {\"improved\": true}, \"reason\": \"\", \"summary_rejection_reason\": \"\"}"
+        "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"reason\": \"\", \"summary_rejection_reason\": \"\"}"
       }
     ],
     "jobInterviewPrep": [
@@ -242,7 +242,8 @@
         "grounding_findings_json": "[]",
         "judge_verdict": "grounded",
         "warnings_json": "[]",
-        "failure_reason": ""
+        "failure_reason": "",
+        "generation_context_json": null
       },
       {
         "generation": 2,
@@ -254,7 +255,8 @@
         "grounding_findings_json": "[]",
         "judge_verdict": "grounded",
         "warnings_json": "[\"Mention Kubernetes scope without adding new metrics.\"]",
-        "failure_reason": ""
+        "failure_reason": "",
+        "generation_context_json": "{\"schemaVersion\": \"1\", \"catalogBinding\": {\"catalogRevision\": \"synthetic.v1\", \"catalogDigest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"contextDigest\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"selectedQuestionIds\": [\"B01\"], \"selectedQuestions\": [{\"questionId\": \"B01\", \"cardRevision\": \"1\", \"cardDigest\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"rubricRevision\": \"1\", \"rubricDigest\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"answerFormat\": \"historical\", \"selectionRationale\": \"Synthetic responsibility match\", \"snapshot\": {\"id\": \"B01\", \"title\": \"Synthetic ownership question\", \"topic\": \"behavioral\", \"status\": \"active\", \"maturity\": \"research_draft\", \"cardRevision\": \"1\", \"cardDigest\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"rubricRevision\": \"1\", \"rubricDigest\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"roleLenses\": [\"senior_ic\"], \"responsibilityTags\": [\"ownership\"], \"competencyTags\": [\"decision_quality\"], \"answerFormats\": [\"historical\"], \"defaultAnswerFormat\": \"historical\", \"attributionKind\": \"editorial_synthesis\", \"sourceRef\": \"synthetic/editorial\", \"variants\": \"Synthetic variant\", \"intent\": \"Explain a decision\", \"answer\": \"Use accepted facts\", \"adaptation\": \"State personal scope\", \"alternatives\": \"Explain plausible alternatives\", \"probes\": \"What changed?\", \"failures\": \"Inventing facts\", \"provenance\": \"Synthetic public test guidance\", \"rubric\": [{\"dimension\": \"ownership\", \"weak\": \"Unclear\", \"strong\": \"Explicit\"}], \"sources\": [], \"examples\": []}, \"evidenceSelectionMode\": \"deterministic\", \"selectedEvidenceIds\": [\"ev-platform-latency\"]}], \"selectionMode\": \"user_selected\", \"interviewStage\": \"behavioral\", \"interviewFormat\": \"video\", \"roleLens\": \"senior_ic\", \"roleResponsibilities\": [\"ownership\"], \"knownCriteria\": [\"decision quality\"], \"profile\": {\"profileId\": \"default\", \"version\": 1, \"evidence\": [{\"evidenceId\": \"ev-platform-latency\", \"sourceRef\": \"profile:default/experience:platform\", \"excerpt\": \"Synthetic accepted excerpt\", \"scope\": \"direct\"}]}, \"jobContext\": {\"jobId\": \"https://example.com/jobs/parity-developer-platform\", \"title\": \"Senior Platform Engineer\", \"company\": \"ParityCo\", \"descriptionExcerpt\": \"Synthetic target context\", \"snapshotHash\": \"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"}, \"employerAnalysis\": null, \"fitReport\": null, \"approvedMaterials\": [], \"model\": {\"model\": \"synthetic\", \"promptVersion\": \"1\", \"gateVersion\": \"1\"}}"
       },
       {
         "generation": 3,
@@ -266,7 +268,8 @@
         "grounding_findings_json": "[]",
         "judge_verdict": "blocked",
         "warnings_json": "[\"Rejected by fabrication gate.\"]",
-        "failure_reason": "Invented Kafka production ownership."
+        "failure_reason": "Invented Kafka production ownership.",
+        "generation_context_json": null
       }
     ],
     "jobInterviewPrepItems": [
@@ -283,7 +286,8 @@
         "control": "never_fabricate",
         "grounding_audit_json": "[\"ev_platform supports the STAR draft.\"]",
         "warnings_json": "[]",
-        "position": 0
+        "position": 0,
+        "question_metadata_json": "{\"questionId\": \"B01\", \"cardRevision\": \"1\", \"cardDigest\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"rubricRevision\": \"1\", \"rubricDigest\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"answerFormat\": \"historical\", \"selectionRationale\": \"Synthetic responsibility match\", \"evidenceLinks\": [{\"evidenceId\": \"ev-platform-latency\", \"sourceRef\": \"profile:default/experience:platform\", \"excerpt\": \"Synthetic accepted excerpt\", \"scope\": \"direct\"}], \"outline\": [{\"heading\": \"Personal contribution\", \"text\": \"Synthetic accepted excerpt\", \"evidenceIds\": [\"ev-platform-latency\"], \"factualSupport\": \"accepted_profile_fact\"}], \"gaps\": [{\"id\": \"gap-tradeoff\", \"prompt\": \"What alternatives did you consider?\", \"reason\": \"Not recorded\"}], \"probes\": [\"What changed?\"], \"sourceGuidanceRefs\": [\"synthetic/editorial\"], \"factualSupport\": \"accepted_profile_fact\", \"userEditStatus\": \"generated\"}"
       },
       {
         "generation": 2,
@@ -298,7 +302,8 @@
         "control": "honest_gap",
         "grounding_audit_json": "[\"Gap drill avoids unsupported Kafka ownership.\"]",
         "warnings_json": "[\"Accepted residual gap: Kafka is only adjacent.\"]",
-        "position": 1
+        "position": 1,
+        "question_metadata_json": "{\"questionId\": \"B01\", \"cardRevision\": \"1\", \"cardDigest\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"rubricRevision\": \"1\", \"rubricDigest\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"answerFormat\": \"historical\", \"selectionRationale\": \"Synthetic responsibility match\", \"evidenceLinks\": [{\"evidenceId\": \"ev-platform-latency\", \"sourceRef\": \"profile:default/experience:platform\", \"excerpt\": \"Synthetic accepted excerpt\", \"scope\": \"direct\"}], \"outline\": [{\"heading\": \"Personal contribution\", \"text\": \"Synthetic accepted excerpt\", \"evidenceIds\": [\"ev-platform-latency\"], \"factualSupport\": \"accepted_profile_fact\"}], \"gaps\": [{\"id\": \"gap-tradeoff\", \"prompt\": \"What alternatives did you consider?\", \"reason\": \"Not recorded\"}], \"probes\": [\"What changed?\"], \"sourceGuidanceRefs\": [\"synthetic/editorial\"], \"factualSupport\": \"accepted_profile_fact\", \"userEditStatus\": \"generated\"}"
       }
     ],
     "conversionJobs": [
@@ -370,12 +375,30 @@
       "discoveredAt": "2026-06-08T09:00:00+00:00",
       "fitScore": null,
       "stages": [
-        { "stage": "discover", "state": "succeeded" },
-        { "stage": "enrich", "state": "succeeded" },
-        { "stage": "score", "state": "succeeded" },
-        { "stage": "tailor", "state": "succeeded" },
-        { "stage": "cover", "state": "succeeded" },
-        { "stage": "apply", "state": "pending" }
+        {
+          "stage": "discover",
+          "state": "succeeded"
+        },
+        {
+          "stage": "enrich",
+          "state": "succeeded"
+        },
+        {
+          "stage": "score",
+          "state": "succeeded"
+        },
+        {
+          "stage": "tailor",
+          "state": "succeeded"
+        },
+        {
+          "stage": "cover",
+          "state": "succeeded"
+        },
+        {
+          "stage": "apply",
+          "state": "pending"
+        }
       ]
     },
     {
@@ -393,12 +416,30 @@
       "discoveredAt": "2026-06-07T09:00:00+00:00",
       "fitScore": 7,
       "stages": [
-        { "stage": "discover", "state": "succeeded" },
-        { "stage": "enrich", "state": "succeeded" },
-        { "stage": "score", "state": "succeeded" },
-        { "stage": "tailor", "state": "succeeded" },
-        { "stage": "cover", "state": "succeeded" },
-        { "stage": "apply", "state": "succeeded" }
+        {
+          "stage": "discover",
+          "state": "succeeded"
+        },
+        {
+          "stage": "enrich",
+          "state": "succeeded"
+        },
+        {
+          "stage": "score",
+          "state": "succeeded"
+        },
+        {
+          "stage": "tailor",
+          "state": "succeeded"
+        },
+        {
+          "stage": "cover",
+          "state": "succeeded"
+        },
+        {
+          "stage": "apply",
+          "state": "succeeded"
+        }
       ]
     }
   ],
@@ -476,7 +517,7 @@
           "sourceKind": "posted",
           "warningCount": 0
         },
-        "projectionVersion": 3,
+        "projectionVersion": 4,
         "warningCount": 0
       },
       "current_error_code": null,
@@ -495,7 +536,7 @@
       "has_pdf": 1,
       "has_resume": 1,
       "job_id": "https://example.com/jobs/parity-developer-platform",
-      "location": "Berlin, Germany (Remote)",
+      "location": "Remote - Berlin, Germany",
       "resume_template_id": "template-modern",
       "resume_template_name": "Modern compact",
       "salary": "EUR 90000-120000/year",
@@ -575,7 +616,7 @@
           "ok": true,
           "recordStatus": "not_recorded"
         },
-        "projectionVersion": 3
+        "projectionVersion": 4
       },
       "compensation_summary_json": {
         "legacyRawSalary": "EUR 90000-120000/year",
@@ -603,7 +644,7 @@
           "sourceKind": "posted",
           "warningCount": 0
         },
-        "projectionVersion": 3,
+        "projectionVersion": 4,
         "warningCount": 0
       },
       "description_preview": "Own the developer platform across the fleet. Build paved paths for product teams.",
@@ -615,7 +656,7 @@
           "flagged_requirements": [],
           "score": 0.8
         },
-        "cache_key": "hash-new:employer-analysis-v1:claude+codex-v1",
+        "cache_key": "hash-new:employer-analysis-v4-determinations:claude+codex-v1",
         "created_at": "2026-06-08T12:00:00+00:00",
         "ensemble_completeness": "1/2",
         "failures": [
@@ -640,7 +681,7 @@
         ],
         "legs_attempted": 2,
         "legs_succeeded": 1,
-        "prompt_version": "employer-analysis-v1",
+        "prompt_version": "employer-analysis-v4-determinations",
         "requirements": [
           {
             "evidence_span": "5+ years building developer platforms",
@@ -717,7 +758,49 @@
             ],
             "title": "Developer platform ownership",
             "transformType": "grounded_prep",
-            "warnings": []
+            "warnings": [],
+            "questionMetadata": {
+              "questionId": "B01",
+              "cardRevision": "1",
+              "cardDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "rubricRevision": "1",
+              "rubricDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "answerFormat": "historical",
+              "selectionRationale": "Synthetic responsibility match",
+              "evidenceLinks": [
+                {
+                  "evidenceId": "ev-platform-latency",
+                  "sourceRef": "profile:default/experience:platform",
+                  "excerpt": "Synthetic accepted excerpt",
+                  "scope": "direct"
+                }
+              ],
+              "outline": [
+                {
+                  "heading": "Personal contribution",
+                  "text": "Synthetic accepted excerpt",
+                  "evidenceIds": [
+                    "ev-platform-latency"
+                  ],
+                  "factualSupport": "accepted_profile_fact"
+                }
+              ],
+              "gaps": [
+                {
+                  "id": "gap-tradeoff",
+                  "prompt": "What alternatives did you consider?",
+                  "reason": "Not recorded"
+                }
+              ],
+              "probes": [
+                "What changed?"
+              ],
+              "sourceGuidanceRefs": [
+                "synthetic/editorial"
+              ],
+              "factualSupport": "accepted_profile_fact",
+              "userEditStatus": "generated"
+            }
           },
           {
             "control": "honest_gap",
@@ -737,12 +820,161 @@
             "transformType": "grounded_gap_drill",
             "warnings": [
               "Accepted residual gap: Kafka is only adjacent."
-            ]
+            ],
+            "questionMetadata": {
+              "questionId": "B01",
+              "cardRevision": "1",
+              "cardDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "rubricRevision": "1",
+              "rubricDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "answerFormat": "historical",
+              "selectionRationale": "Synthetic responsibility match",
+              "evidenceLinks": [
+                {
+                  "evidenceId": "ev-platform-latency",
+                  "sourceRef": "profile:default/experience:platform",
+                  "excerpt": "Synthetic accepted excerpt",
+                  "scope": "direct"
+                }
+              ],
+              "outline": [
+                {
+                  "heading": "Personal contribution",
+                  "text": "Synthetic accepted excerpt",
+                  "evidenceIds": [
+                    "ev-platform-latency"
+                  ],
+                  "factualSupport": "accepted_profile_fact"
+                }
+              ],
+              "gaps": [
+                {
+                  "id": "gap-tradeoff",
+                  "prompt": "What alternatives did you consider?",
+                  "reason": "Not recorded"
+                }
+              ],
+              "probes": [
+                "What changed?"
+              ],
+              "sourceGuidanceRefs": [
+                "synthetic/editorial"
+              ],
+              "factualSupport": "accepted_profile_fact",
+              "userEditStatus": "generated"
+            }
           }
         ],
         "jobId": "https://example.com/jobs/parity-developer-platform",
         "model": "gpt-test",
-        "status": "accepted"
+        "status": "accepted",
+        "generationContext": {
+          "schemaVersion": "1",
+          "catalogBinding": {
+            "catalogRevision": "synthetic.v1",
+            "catalogDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "contextDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "selectedQuestionIds": [
+            "B01"
+          ],
+          "selectedQuestions": [
+            {
+              "questionId": "B01",
+              "cardRevision": "1",
+              "cardDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "rubricRevision": "1",
+              "rubricDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "answerFormat": "historical",
+              "selectionRationale": "Synthetic responsibility match",
+              "snapshot": {
+                "id": "B01",
+                "title": "Synthetic ownership question",
+                "topic": "behavioral",
+                "status": "active",
+                "maturity": "research_draft",
+                "cardRevision": "1",
+                "cardDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "rubricRevision": "1",
+                "rubricDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "roleLenses": [
+                  "senior_ic"
+                ],
+                "responsibilityTags": [
+                  "ownership"
+                ],
+                "competencyTags": [
+                  "decision_quality"
+                ],
+                "answerFormats": [
+                  "historical"
+                ],
+                "defaultAnswerFormat": "historical",
+                "attributionKind": "editorial_synthesis",
+                "sourceRef": "synthetic/editorial",
+                "variants": "Synthetic variant",
+                "intent": "Explain a decision",
+                "answer": "Use accepted facts",
+                "adaptation": "State personal scope",
+                "alternatives": "Explain plausible alternatives",
+                "probes": "What changed?",
+                "failures": "Inventing facts",
+                "provenance": "Synthetic public test guidance",
+                "rubric": [
+                  {
+                    "dimension": "ownership",
+                    "weak": "Unclear",
+                    "strong": "Explicit"
+                  }
+                ],
+                "sources": [],
+                "examples": []
+              },
+              "evidenceSelectionMode": "deterministic",
+              "selectedEvidenceIds": [
+                "ev-platform-latency"
+              ]
+            }
+          ],
+          "selectionMode": "user_selected",
+          "interviewStage": "behavioral",
+          "interviewFormat": "video",
+          "roleLens": "senior_ic",
+          "roleResponsibilities": [
+            "ownership"
+          ],
+          "knownCriteria": [
+            "decision quality"
+          ],
+          "profile": {
+            "profileId": "default",
+            "version": 1,
+            "evidence": [
+              {
+                "evidenceId": "ev-platform-latency",
+                "sourceRef": "profile:default/experience:platform",
+                "excerpt": "Synthetic accepted excerpt",
+                "scope": "direct"
+              }
+            ]
+          },
+          "jobContext": {
+            "jobId": "https://example.com/jobs/parity-developer-platform",
+            "title": "Senior Platform Engineer",
+            "company": "ParityCo",
+            "descriptionExcerpt": "Synthetic target context",
+            "snapshotHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          },
+          "employerAnalysis": null,
+          "fitReport": null,
+          "approvedMaterials": [],
+          "model": {
+            "model": "synthetic",
+            "promptVersion": "1",
+            "gateVersion": "1"
+          }
+        },
+        "staleReasons": []
       },
       "score_breakdown_json": {
         "confidence": "high",
@@ -1130,9 +1362,9 @@
     "employerAnalysisJson": {
       "generation": 2,
       "snapshot_hash": "hash-new",
-      "prompt_version": "employer-analysis-v1",
+      "prompt_version": "employer-analysis-v4-determinations",
       "sdk_set_version": "claude+codex-v1",
-      "cache_key": "hash-new:employer-analysis-v1:claude+codex-v1",
+      "cache_key": "hash-new:employer-analysis-v4-determinations:claude+codex-v1",
       "created_at": "2026-06-08T12:00:00+00:00",
       "ensemble_completeness": "1/2",
       "legs_attempted": 2,
@@ -1238,7 +1470,49 @@
             "ev_platform supports the STAR draft."
           ],
           "warnings": [],
-          "position": 0
+          "position": 0,
+          "questionMetadata": {
+            "questionId": "B01",
+            "cardRevision": "1",
+            "cardDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "rubricRevision": "1",
+            "rubricDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "answerFormat": "historical",
+            "selectionRationale": "Synthetic responsibility match",
+            "evidenceLinks": [
+              {
+                "evidenceId": "ev-platform-latency",
+                "sourceRef": "profile:default/experience:platform",
+                "excerpt": "Synthetic accepted excerpt",
+                "scope": "direct"
+              }
+            ],
+            "outline": [
+              {
+                "heading": "Personal contribution",
+                "text": "Synthetic accepted excerpt",
+                "evidenceIds": [
+                  "ev-platform-latency"
+                ],
+                "factualSupport": "accepted_profile_fact"
+              }
+            ],
+            "gaps": [
+              {
+                "id": "gap-tradeoff",
+                "prompt": "What alternatives did you consider?",
+                "reason": "Not recorded"
+              }
+            ],
+            "probes": [
+              "What changed?"
+            ],
+            "sourceGuidanceRefs": [
+              "synthetic/editorial"
+            ],
+            "factualSupport": "accepted_profile_fact",
+            "userEditStatus": "generated"
+          }
         },
         {
           "itemId": "prep-gap-kafka",
@@ -1258,9 +1532,158 @@
           "warnings": [
             "Accepted residual gap: Kafka is only adjacent."
           ],
-          "position": 1
+          "position": 1,
+          "questionMetadata": {
+            "questionId": "B01",
+            "cardRevision": "1",
+            "cardDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "rubricRevision": "1",
+            "rubricDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "answerFormat": "historical",
+            "selectionRationale": "Synthetic responsibility match",
+            "evidenceLinks": [
+              {
+                "evidenceId": "ev-platform-latency",
+                "sourceRef": "profile:default/experience:platform",
+                "excerpt": "Synthetic accepted excerpt",
+                "scope": "direct"
+              }
+            ],
+            "outline": [
+              {
+                "heading": "Personal contribution",
+                "text": "Synthetic accepted excerpt",
+                "evidenceIds": [
+                  "ev-platform-latency"
+                ],
+                "factualSupport": "accepted_profile_fact"
+              }
+            ],
+            "gaps": [
+              {
+                "id": "gap-tradeoff",
+                "prompt": "What alternatives did you consider?",
+                "reason": "Not recorded"
+              }
+            ],
+            "probes": [
+              "What changed?"
+            ],
+            "sourceGuidanceRefs": [
+              "synthetic/editorial"
+            ],
+            "factualSupport": "accepted_profile_fact",
+            "userEditStatus": "generated"
+          }
         }
-      ]
+      ],
+      "generationContext": {
+        "schemaVersion": "1",
+        "catalogBinding": {
+          "catalogRevision": "synthetic.v1",
+          "catalogDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "contextDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "selectedQuestionIds": [
+          "B01"
+        ],
+        "selectedQuestions": [
+          {
+            "questionId": "B01",
+            "cardRevision": "1",
+            "cardDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "rubricRevision": "1",
+            "rubricDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "answerFormat": "historical",
+            "selectionRationale": "Synthetic responsibility match",
+            "snapshot": {
+              "id": "B01",
+              "title": "Synthetic ownership question",
+              "topic": "behavioral",
+              "status": "active",
+              "maturity": "research_draft",
+              "cardRevision": "1",
+              "cardDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "rubricRevision": "1",
+              "rubricDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "roleLenses": [
+                "senior_ic"
+              ],
+              "responsibilityTags": [
+                "ownership"
+              ],
+              "competencyTags": [
+                "decision_quality"
+              ],
+              "answerFormats": [
+                "historical"
+              ],
+              "defaultAnswerFormat": "historical",
+              "attributionKind": "editorial_synthesis",
+              "sourceRef": "synthetic/editorial",
+              "variants": "Synthetic variant",
+              "intent": "Explain a decision",
+              "answer": "Use accepted facts",
+              "adaptation": "State personal scope",
+              "alternatives": "Explain plausible alternatives",
+              "probes": "What changed?",
+              "failures": "Inventing facts",
+              "provenance": "Synthetic public test guidance",
+              "rubric": [
+                {
+                  "dimension": "ownership",
+                  "weak": "Unclear",
+                  "strong": "Explicit"
+                }
+              ],
+              "sources": [],
+              "examples": []
+            },
+            "evidenceSelectionMode": "deterministic",
+            "selectedEvidenceIds": [
+              "ev-platform-latency"
+            ]
+          }
+        ],
+        "selectionMode": "user_selected",
+        "interviewStage": "behavioral",
+        "interviewFormat": "video",
+        "roleLens": "senior_ic",
+        "roleResponsibilities": [
+          "ownership"
+        ],
+        "knownCriteria": [
+          "decision quality"
+        ],
+        "profile": {
+          "profileId": "default",
+          "version": 1,
+          "evidence": [
+            {
+              "evidenceId": "ev-platform-latency",
+              "sourceRef": "profile:default/experience:platform",
+              "excerpt": "Synthetic accepted excerpt",
+              "scope": "direct"
+            }
+          ]
+        },
+        "jobContext": {
+          "jobId": "https://example.com/jobs/parity-developer-platform",
+          "title": "Senior Platform Engineer",
+          "company": "ParityCo",
+          "descriptionExcerpt": "Synthetic target context",
+          "snapshotHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "employerAnalysis": null,
+        "fitReport": null,
+        "approvedMaterials": [],
+        "model": {
+          "model": "synthetic",
+          "promptVersion": "1",
+          "gateVersion": "1"
+        }
+      },
+      "staleReasons": []
     },
     "bulletProvenanceJson": [
       {
@@ -1296,46 +1719,37 @@
     ],
     "coverageAuditJson": {
       "computed_against": "rendered_text",
-      "planned": ["developer platform", "kafka"],
-      "covered": ["developer platform"],
+      "planned": [
+        "developer platform",
+        "kafka"
+      ],
+      "covered": [
+        "developer platform"
+      ],
       "declared": [],
-      "missing": ["kafka"],
-      "covered_by": { "developer platform": "experience:acme#0" },
+      "missing": [
+        "kafka"
+      ],
+      "covered_by": {
+        "developer platform": "experience:acme#0"
+      },
       "declared_by": {},
-      "counts": { "planned": 2, "covered": 1, "declared": 0, "missing": 1 }
+      "counts": {
+        "planned": 2,
+        "covered": 1,
+        "declared": 0,
+        "missing": 1
+      }
     },
     "voicePassJson": {
       "ran": true,
       "accepted": true,
       "model": "claude-opus-4-8",
       "prompt_version": "voice-pass-v1",
-      "proxy_delta": {
-        "improved": true
-      },
       "reason": "",
       "summary_rejection_reason": "",
       "scope_violations": [],
       "final_judge": {}
     }
-  },
-  "locationCases": [
-    { "input": "ES (Remote)", "expected": "Spain (Remote)" },
-    { "input": "En remoto, ES (Remote)", "expected": "Spain (Remote)" },
-    { "input": "Barcelona, CT, ES (Remote)", "expected": "Barcelona, Catalonia, Spain (Remote)" },
-    { "input": "Madrid, MD, ES", "expected": "Madrid, Community of Madrid, Spain" },
-    { "input": "Málaga, AN, ESP", "expected": "Málaga, Andalusia, Spain" },
-    { "input": "Madrid, España", "expected": "Madrid, Spain" },
-    { "input": "Seville, AN", "expected": "Seville, AN" },
-    { "input": "Work from Home - Poland", "expected": "Poland (Remote)" },
-    { "input": "Work From Home - US", "expected": "US (Remote)" },
-    { "input": "UK - Remote", "expected": "UK (Remote)" },
-    { "input": "Remote - Berlin, Germany", "expected": "Berlin, Germany (Remote)" },
-    { "input": "Madrid, remoto", "expected": "Madrid (Remote)" },
-    { "input": "Valencia, teletrabajo", "expected": "Valencia (Remote)" },
-    { "input": "Sevilla (remoto)", "expected": "Sevilla (Remote)" },
-    { "input": "WFH", "expected": "Remote" },
-    { "input": "Berlin, Germany", "expected": "Berlin, Germany" },
-    { "input": "", "expected": "" },
-    { "input": null, "expected": "" }
-  ]
+  }
 }

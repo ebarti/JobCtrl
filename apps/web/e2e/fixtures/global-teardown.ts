@@ -1,70 +1,28 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
-import path from "node:path";
-
 import { e2eStateFilePath } from "./e2e-state.js";
 
-interface DocsScreenshotWorkspaceGuard {
-  assertOwnedDocsScreenshotDirectory(appDir: string): Promise<string>;
-}
-
-const { assertOwnedDocsScreenshotDirectory } = createRequire(import.meta.url)(
-  "./docs-screenshot-workspace.cjs",
-) as DocsScreenshotWorkspaceGuard;
-
-function findRepoRoot(start: string): string | null {
-  let current = path.resolve(start);
-  for (let i = 0; i < 10; i += 1) {
-    if (fs.existsSync(path.join(current, "pnpm-workspace.yaml"))) {
-      return current;
-    }
-    const next = path.dirname(current);
-    if (next === current) {
-      return null;
-    }
-    current = next;
-  }
-  return null;
-}
-
-interface State {
-  workspace?: { appDir?: string; dbPath?: string };
-}
+const {
+  assertE2eWorkspaceEnvironment,
+  assertExpectedWorkspace,
+  removeOwnedE2eWorkspace,
+} = createRequire(import.meta.url)("./owned-workspace.cjs") as {
+  assertE2eWorkspaceEnvironment(): unknown;
+  assertExpectedWorkspace(report: unknown): void;
+  removeOwnedE2eWorkspace(workspace: unknown): void;
+};
 
 export default async function globalTeardown(): Promise<void> {
-  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") {
-    const { assertIsolatedE2eWorkspace } = createRequire(import.meta.url)("./isolated-workspace.cjs") as { assertIsolatedE2eWorkspace(): Promise<string> };
-    await assertIsolatedE2eWorkspace();
-  }
-  const repoRoot = findRepoRoot(process.cwd());
-  if (!repoRoot) {
-    return;
-  }
-  const stateFile = e2eStateFilePath();
-  let state: State;
+  const owned = assertE2eWorkspaceEnvironment();
   try {
-    state = JSON.parse(fs.readFileSync(stateFile, "utf-8")) as State;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
-      return;
-    }
-    throw error;
-  }
-  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") {
-    const { assertExpectedWorkspace } = createRequire(import.meta.url)("./isolated-workspace.cjs") as { assertExpectedWorkspace(workspace: State["workspace"]): void };
+    const state = JSON.parse(fs.readFileSync(e2eStateFilePath(), "utf8")) as {
+      workspace?: unknown;
+    };
     assertExpectedWorkspace(state.workspace);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+      throw error;
   }
-  const dir = state.workspace?.appDir;
-  if (dir && fs.existsSync(dir)) {
-    const deletionTarget =
-      process.env["JOBCTRL_DOCS_SCREENSHOTS"] === "1"
-        ? await assertOwnedDocsScreenshotDirectory(dir)
-        : dir;
-    fs.rmSync(deletionTarget, { force: true, recursive: true });
-  }
-  fs.rmSync(stateFile, { force: true });
+  // State is only a receipt. The independent allocation is deletion authority.
+  removeOwnedE2eWorkspace(owned);
 }

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Stage } from "../src/contracts.js";
 import { cancelJobAction, markJobApplied, markJobSkipped, resetJobStage } from "../src/write-model.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_URL = "https://example.com/jobs/ready";
 const JOB_ID = "10000000-0000-4000-8000-000000000001";
@@ -21,18 +21,18 @@ describe("cancelJobAction", () => {
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-cancel-action-"));
     const dbPath = path.join(directory, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     db = new Database(dbPath);
     db.prepare(
       `INSERT INTO jobs (
-         tenant_id, job_id, url, application_url,
+         tenant_id, job_id, url,
          detail_scraped_at, detail_error,
          fit_score, score_reasoning, scored_at,
          tailored_resume_path, tailored_at, tailor_attempts,
          cover_letter_path, cover_letter_at, cover_attempts,
          applied_at, apply_status, apply_error, apply_attempts,
          agent_id, apply_task_id
-       ) VALUES (?, ?, ?, ?, ?, 'retired-detail-error', 10, 'retired-score', ?,
+       ) VALUES (?, ?, ?, ?, 'retired-detail-error', 10, 'retired-score', ?,
                  '/tmp/retired-resume.txt', ?, 4,
                  '/tmp/retired-cover.txt', ?, 3,
                  ?, 'retired-status', 'retired-apply-error', 2,
@@ -41,7 +41,6 @@ describe("cancelJobAction", () => {
       TENANT_ID,
       JOB_ID,
       JOB_URL,
-      `${JOB_URL}/apply`,
       RETIRED_AT,
       RETIRED_AT,
       RETIRED_AT,
@@ -155,34 +154,13 @@ describe("cancelJobAction", () => {
     },
   );
 
-  it("resets enrichment only through the canonical aggregate", () => {
+  it("refuses enrichment reset outside its canonical owner", () => {
     insertStage("enrich", "failed", 2);
-    db.prepare(
-      `INSERT INTO job_enrichments (
-         tenant_id, job_id, current_status, full_description,
-         application_url, enriched_at, extraction_tier, updated_at
-       ) VALUES (?, ?, 'enriched', 'canonical description', ?, ?, 'json_ld', ?)`,
-    ).run(TENANT_ID, JOB_ID, `${JOB_URL}/canonical-apply`, RETIRED_AT, RETIRED_AT);
-    const retiredBefore = retiredJobState();
-
-    const result = resetJobStage(db, JOB_URL, "enrich", { resetAttempts: true });
-    const enrichment = db.prepare(
-      `SELECT current_status, full_description, application_url,
-              enriched_at, extraction_tier
-         FROM job_enrichments
-        WHERE tenant_id = ? AND job_id = ?`,
-    ).get(TENANT_ID, JOB_ID);
-
-    expect(result.stage).toMatchObject({ state: "pending", attemptCount: 0 });
-    expect(enrichment).toEqual({
-      current_status: "pending",
-      full_description: null,
-      application_url: null,
-      enriched_at: null,
-      extraction_tier: null,
-    });
-    expect(retiredJobState()).toEqual(retiredBefore);
-    expect(eventCount("StageReset")).toBe(1);
+    const before = db.prepare("SELECT * FROM job_stage_states").all();
+    expect(() => resetJobStage(db, JOB_URL, "enrich", { resetAttempts: true }))
+      .toThrow("canonical Python retry service");
+    expect(db.prepare("SELECT * FROM job_stage_states").all()).toEqual(before);
+    expect(eventCount("StageReset")).toBe(0);
   });
 
   function insertStage(stage: Stage, state: string, attemptCount: number): void {
@@ -213,4 +191,21 @@ describe("cancelJobAction", () => {
         WHERE tenant_id = ? AND job_id = ?`,
     ).get(TENANT_ID, JOB_ID) as Record<string, unknown>;
   }
+});
+
+it("Skip keeps the active attempt evidence without claiming provider cancellation", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-local-skip-"));
+  const dbPath = path.join(directory, "jobctrl.db");
+  initializeExactDatabase(dbPath);
+  const db = new Database(dbPath);
+  try {
+    db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+    db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,started_at,retryable,metadata_json) VALUES ('local',?,'apply','running',2,3,'2026-10-24','2026-10-24',1,?)").run(JOB_ID, JSON.stringify({ run_id: "original" }));
+    markJobSkipped(db, JOB_ID, {});
+    const row = db.prepare("SELECT state,attempt_count,started_at,metadata_json FROM job_stage_states WHERE job_id=?").get(JOB_ID);
+    expect(row).toMatchObject({ state: "skipped", attempt_count: 2, started_at: "2026-10-24", metadata_json: JSON.stringify({ run_id: "original" }) });
+    expect(db.prepare("SELECT event_type,message FROM job_events").all()).toEqual([
+      { event_type: "StageSkipped", message: expect.stringContaining("in-flight submission may still complete") },
+    ]);
+  } finally { db.close(); fs.rmSync(directory, { recursive: true, force: true }); }
 });

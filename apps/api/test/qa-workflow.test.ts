@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import Database from "better-sqlite3";
+import { acceptCoverLetterPreview, coverLetterAccepted, renderCoverLetterPreview } from "../src/cover-letter-review.js";
 
 import type {
   CredentialBatchOperation,
@@ -16,6 +18,7 @@ import {
   QA_PLATFORM_JOB_ID,
   QA_RISK_JOB_ID,
   removeQaWorkspace,
+  seedQaShippedFitLifecycle,
   type QaWorkspace,
 } from "./qa-seed.js";
 
@@ -55,6 +58,81 @@ afterEach(() => {
 });
 
 describe("seeded local QA workflow", () => {
+  it("switches and restores only the current audit after cover formatting carries resume slots forward", async () => {
+    const db = new Database(workspace.dbPath);
+    try {
+      const initial = coverLetterAccepted(db, QA_PLATFORM_JOB_ID, workspace.appDir)!;
+      const { preview } = await renderCoverLetterPreview(db, workspace.appDir, QA_PLATFORM_JOB_ID, {
+        source: initial.source, expectedAcceptedVersion: initial.acceptedVersion,
+        settings: { ...initial.settings, fontSizePt: 12 },
+      }, async ({ pdfPath }) => { fs.writeFileSync(pdfPath, "%PDF-1.4\nowned synthetic render\n%%EOF"); });
+      acceptCoverLetterPreview(db, workspace.appDir, QA_PLATFORM_JOB_ID, {
+        previewId: preview.previewId, expectedAcceptedVersion: preview.expectedAcceptedVersion,
+      });
+      const snapshot = () => db.prepare("SELECT * FROM job_materials_artifacts WHERE job_id=? ORDER BY generation,artifact_type").all(QA_PLATFORM_JOB_ID);
+      const before = snapshot();
+      const history = db.prepare("SELECT * FROM job_materials_artifacts WHERE job_id=? AND generation=1 ORDER BY artifact_type").all(QA_PLATFORM_JOB_ID);
+      const app = buildApp(options);
+      try {
+        for (const lifecycle of ["post_voice_shipped", "post_acceptance_audit"] as const) {
+          const restore = seedQaShippedFitLifecycle(workspace.dbPath, lifecycle);
+          try {
+            const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+            expect(response.statusCode, response.body).toBe(200);
+            const item = response.json().items.find((row: { jobKey: string }) => row.jobKey === QA_PLATFORM_JOB_ID);
+            expect(item.materialsPreview.materialsGeneration).toBe(2);
+            expect(item.materialsPreview.requirementLedAudit.shippedFit).toMatchObject({
+              lifecycle, score: lifecycle === "post_voice_shipped" ? 6 : 5,
+              mustHaveCoverage: lifecycle === "post_voice_shipped" ? 1 : 0.5,
+              coverageBasis: lifecycle === "post_voice_shipped" ? "grounded_shipped_text_v1" : "judge_claimed_legacy",
+            });
+            expect(db.prepare("SELECT * FROM job_materials_artifacts WHERE job_id=? AND generation=1 ORDER BY artifact_type").all(QA_PLATFORM_JOB_ID)).toEqual(history);
+          } finally { restore(); }
+          expect(snapshot()).toEqual(before);
+        }
+      } finally { await app.close(); }
+    } finally { db.close(); }
+  });
+
+  it.each(["post_voice_shipped", "post_acceptance_audit"] as const)(
+    "projects canonical %s findings separately from the acceptance gate",
+    async (lifecycle) => {
+      if (lifecycle === "post_acceptance_audit") seedQaShippedFitLifecycle(workspace.dbPath, lifecycle);
+      const app = buildApp(options);
+      try {
+        const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+        expect(response.statusCode, response.body).toBe(200);
+        const item = response.json().items.find((candidate: { jobKey: string }) => candidate.jobKey === QA_PLATFORM_JOB_ID);
+        const audit = item.materialsPreview.requirementLedAudit;
+        expect(audit.shippedFit).toEqual({
+          lifecycle,
+          score: lifecycle === "post_voice_shipped" ? 6 : 5,
+          mustHaveCoverage: lifecycle === "post_voice_shipped" ? 1 : 0.5,
+          claimedOnlyRequirementIds: ["r2"],
+          passed: false,
+          warnings: lifecycle === "post_voice_shipped"
+            ? ["Shipped grounded must-have coverage 100% (fit 6/10) is below the revision gate (80% / 7)."]
+            : ["Recorded after acceptance; this audit did not influence the accepted resume."],
+          coverageBasis: lifecycle === "post_voice_shipped" ? "grounded_shipped_text_v1" : "judge_claimed_legacy",
+        });
+        expect(audit.revision).toMatchObject({ score: 7, mustHaveCoverage: 0.5, reviewBlocked: true });
+        expect(audit.coveredRequirements).toMatchObject([{ id: "r1" }]);
+        expect(audit.uncoveredRequirements).toMatchObject([
+          { id: "r2", reason: "Adjacent developer-experience language needs review before approval." },
+        ]);
+        expect(audit.evidenceBackedClaims).toEqual(expect.arrayContaining([
+          expect.objectContaining({ evidenceIds: ["ev-platform"], requirementIds: ["r1"], claimLabels: ["evidence_reframed"] }),
+          expect.objectContaining({ evidenceIds: ["ev-incident"], requirementIds: ["r2"], reviewRequired: true }),
+        ]));
+        expect(response.body).not.toContain("RAW PROMPT SECRET");
+        expect(response.body).not.toContain("FULL PROFILE SECRET");
+        expect(response.body).not.toContain("/private/secret-resume.pdf");
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
   it("soft deletes and restores all matching jobs without touching nonmatching rows", async () => {
     const app = buildApp(options);
 
@@ -237,6 +315,7 @@ describe("seeded local QA workflow", () => {
       preferred_name: "John",
       email: "john.doe@example.com",
     });
+    const dispatchCountBeforeProfileSave = actionDispatcher.mock.calls.length;
     const profileDraft = profileResponse.json().profile;
     profileDraft.personal.full_name = "John Doe Edited";
     const updateProfile = await app.inject({
@@ -249,10 +328,8 @@ describe("seeded local QA workflow", () => {
     const profileAfterUpdate = await app.inject({ method: "GET", url: "/v1/profile" });
     expect(profileAfterUpdate.statusCode, profileAfterUpdate.body).toBe(200);
     expect(profileAfterUpdate.json().profile.personal.full_name).toBe("John Doe Edited");
-    await vi.waitFor(() => expect(actionDispatcher).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "run_stage", stages: ["score", "tailor", "cover"] }),
-      expect.objectContaining({ dbPath: workspace.dbPath }),
-    ));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(actionDispatcher).toHaveBeenCalledTimes(dispatchCountBeforeProfileSave);
 
     const preview = await app.inject({ method: "GET", url: "/v1/profile/preview.pdf" });
     expect(preview.statusCode, preview.body).toBe(200);
@@ -274,7 +351,7 @@ describe("seeded local QA workflow", () => {
     expect(saveCredential.statusCode, saveCredential.body).toBe(200);
     expect(saveCredential.json().credentials.find((credential: { key: string }) => credential.key === "OPENAI_API_KEY")).toMatchObject({
       configured: true,
-      storage: "keychain",
+      storage: "native_store",
     });
 
     const deleteCredential = await app.inject({
@@ -299,7 +376,9 @@ function createMemoryCredentialStore(): CredentialStore {
   const list = async (): Promise<CredentialsResponse> => ({
     ok: true,
     store: {
-      kind: "config_and_macos_keychain",
+      kind: "config_and_native_credential_store",
+      nativeStore: "macos_keychain" as const,
+      maxSecretBytes: 128,
       available: true,
       unavailableReason: null,
       requiresWorkerRestart: true,
@@ -308,8 +387,8 @@ function createMemoryCredentialStore(): CredentialStore {
       key,
       label: key,
       configured: values.has(key),
-      storage: "keychain" as const,
-      effectiveSource: values.has(key) ? "keychain" as const : "absent" as const,
+      storage: "native_store" as const,
+      effectiveSource: values.has(key) ? "native_store" as const : "absent" as const,
       editable: true,
     })),
   });

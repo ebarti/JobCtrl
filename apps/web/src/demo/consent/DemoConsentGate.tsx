@@ -6,6 +6,7 @@ import type {
   DemoConsentDecision,
 } from "./DemoConsentClient.js";
 import { Button } from "../../shared/ui/button.js";
+import { BrandMark } from "../../shared/layout/BrandMark.js";
 import "./DemoConsentGate.css";
 
 export interface DemoConsentGateProps {
@@ -53,7 +54,9 @@ export function DemoConsentGate({
   return (
     <main className="demo-consent-shell">
       <section className="demo-consent-card" aria-labelledby="demo-consent-title">
-        <div className="demo-consent-mark" aria-hidden="true">JC</div>
+        <div className="demo-consent-mark" aria-hidden="true">
+          <BrandMark showWordmark={false} />
+        </div>
         <p className="demo-consent-kicker">JobCtrl public demo</p>
         <h1 id="demo-consent-title">Explore JobCtrl with synthetic data</h1>
         <p className="demo-consent-requirement">

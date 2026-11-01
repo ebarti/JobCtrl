@@ -1,5 +1,9 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { JobCtrlApiError } from "@jobctrl/api-client";
+import type { CredentialsResponse } from "@jobctrl/contracts";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ApiClientPort } from "../../../shared/ports/ApiClientPort.js";
@@ -15,6 +19,7 @@ import {
   removeClaudeProviderBatch,
   removeGoogleProviderBatch,
 } from "../lib/provider-credential-plans.js";
+import { profileKeys } from "../queryKeys.js";
 import { CredentialsPanel } from "./CredentialsPanel.js";
 
 describe("<CredentialsPanel>", () => {
@@ -252,7 +257,7 @@ describe("<CredentialsPanel>", () => {
           effectiveSource: [
             "CLAUDE_CODE_USE_VERTEX",
             "GOOGLE_GENAI_USE_VERTEXAI",
-          ].includes(credential.key) ? "keychain" as const : "absent" as const,
+          ].includes(credential.key) ? "native_store" as const : "absent" as const,
         })),
       })),
       providerStatus: vi.fn(async () => ({
@@ -519,6 +524,172 @@ describe("<CredentialsPanel>", () => {
     expect(updateCredentialsBatch).toHaveBeenCalledWith(removeGoogleProviderBatch());
   });
 
+  it.each(["save", "remove"] as const)("retains newer CapSolver input through a pending %s in the settings panel", async (operation) => {
+    const user = userEvent.setup();
+    const initial = configuredProvidersResponse();
+    let canonical: CredentialsResponse = { ...initial, credentials: initial.credentials.map((entry) =>
+      entry.key === "CAPSOLVER_API_KEY" ? { ...entry, configured: true, effectiveSource: "native_store" as const } : entry) };
+    let resolveWrite!: (response: CredentialsResponse) => void;
+    const delayed = () => new Promise<CredentialsResponse>((resolve) => { resolveWrite = resolve; });
+    const updateCredential = vi.fn<ApiClientPort["updateCredential"]>().mockImplementation(delayed);
+    const deleteCredential = vi.fn<ApiClientPort["deleteCredential"]>().mockImplementation(delayed);
+    renderPanel({ credentials: vi.fn(async () => structuredClone(canonical)), updateCredential, deleteCredential });
+    const heading = await screen.findByRole("heading", { name: "Apply CAPTCHA solver" });
+    const section = heading.closest("section");
+    if (!section) throw new Error("Missing CapSolver section");
+    await user.click(within(section).getByRole("button", { name: /Apply CAPTCHA solver/i }));
+    const input = within(section).getByLabelText("CapSolver API key");
+    await user.type(input, "SYNTHETIC_A");
+    await user.click(within(section).getByRole("button", { name: `${operation === "save" ? "Save" : "Remove"} CapSolver API key` }));
+    await waitFor(() => expect(operation === "save" ? updateCredential : deleteCredential).toHaveBeenCalledOnce());
+    await user.clear(input);
+    await user.type(input, "SYNTHETIC_B");
+    canonical = { ...canonical, credentials: canonical.credentials.map((entry) => entry.key === "CAPSOLVER_API_KEY"
+      ? { ...entry, configured: operation === "save", effectiveSource: operation === "save" ? "native_store" as const : "absent" as const }
+      : entry) };
+    await act(async () => resolveWrite(structuredClone(canonical)));
+    expect(await within(section).findByText(/newer input remains unsaved/i)).toBeInTheDocument();
+    expect(input).toHaveValue("SYNTHETIC_B");
+  });
+
+  it.each([
+    { reason: "partial_failure", expected: /recovery was incomplete.*partially updated/i },
+    { reason: "ownership_unverified", expected: /ownership could not be verified.*previous helper/i },
+  ])("shows truthful $reason guidance after legacy Codex key removal", async ({ reason, expected }) => {
+    const user = userEvent.setup();
+    const updateCredentialsBatch = vi.fn(async () => {
+      throw new JobCtrlApiError(503, "Service Unavailable", "Synthetic private detail", {
+        ok: false, error: "credential_store_unavailable", reason, message: "Synthetic private detail",
+      }, true);
+    });
+    renderPanel({
+      credentials: vi.fn(async () => ({ ...sampleCredentialsResponse,
+        credentials: sampleCredentialsResponse.credentials.map((credential) => credential.key === "OPENAI_API_KEY"
+          ? { ...credential, configured: true, effectiveSource: "native_store" as const }
+          : credential),
+      })),
+      updateCredentialsBatch,
+    });
+    const card = await providerCard("Codex");
+    await user.click(within(card).getByRole("button", { name: "Remove legacy key" }));
+    expect(await within(card).findByText(expected)).toBeInTheDocument();
+    expect(card).not.toHaveTextContent("Synthetic private detail");
+    expect(updateCredentialsBatch).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { provider: "Claude", input: "Anthropic API key (required)" },
+    { provider: "Google", input: "Gemini API key (required)" },
+  ].flatMap((provider) => [
+    { ...provider, failure: "inspection_failed" },
+    { ...provider, failure: "read_error" },
+  ]))("retains the $provider draft and save failure through $failure", async ({ provider, input, failure }) => {
+    const user = userEvent.setup();
+    let inspectionUnavailable = false;
+    let rejectSave!: (reason: Error) => void;
+    const credentials = vi.fn(async () => {
+      if (inspectionUnavailable && failure === "read_error") throw new Error("Synthetic credential read failed");
+      return inspectionUnavailable ? failedInspectionResponse() : configuredProvidersResponse();
+    });
+    const updateCredentialsBatch = vi.fn<ApiClientPort["updateCredentialsBatch"]>()
+      .mockImplementation(() => new Promise((_resolve, reject) => { rejectSave = reject; }));
+    const view = renderPanel({ credentials, updateCredentialsBatch });
+    const card = await providerCard(provider);
+    const field = within(card).getByLabelText(input);
+    await user.type(field, "SYNTHETIC_PLACEHOLDER_A");
+    await user.click(within(card).getByRole("button", { name: `Save ${provider} setup` }));
+    await waitFor(() => expect(updateCredentialsBatch).toHaveBeenCalledOnce());
+    await user.clear(field);
+    await user.type(field, "SYNTHETIC_PLACEHOLDER_B");
+    inspectionUnavailable = true;
+    const message = "Credential update failed and native-store recovery was incomplete. Provider credentials may be partially updated; inspect the native credential store before retrying.";
+    await act(async () => rejectSave(new JobCtrlApiError(503, "Service Unavailable", message, {
+      ok: false, error: "credential_store_unavailable", reason: "partial_failure", message,
+    }, true)));
+    expect(await within(card).findByText(`Could not save provider settings. ${message}`)).toBeInTheDocument();
+    expect(within(card).getByLabelText(input)).toBe(field);
+    expect(field).toHaveValue("SYNTHETIC_PLACEHOLDER_B");
+    expect(field).toBeDisabled();
+    expect(within(card).getByRole("button", { name: `Save ${provider} setup` })).toBeDisabled();
+    expect(within(card).getByText("Status unknown")).toBeInTheDocument();
+    expect(screen.getByLabelText("CapSolver API key")).toBeDisabled();
+    const form = field.closest("form");
+    if (!form) throw new Error("Missing provider form");
+    await act(async () => { fireEvent.submit(form); });
+    expect(updateCredentialsBatch).toHaveBeenCalledOnce();
+    inspectionUnavailable = false;
+    await act(async () => { await view.queryClient.invalidateQueries({ queryKey: profileKeys.credentials(LOCAL_TENANT) }); });
+    await waitFor(() => expect(field).toBeEnabled());
+    expect(field).toHaveValue("SYNTHETIC_PLACEHOLDER_B");
+    expect(within(card).getByText(`Could not save provider settings. ${message}`)).toBeInTheDocument();
+    expect(updateCredentialsBatch).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { provider: "Claude" },
+    { provider: "Google" },
+  ].flatMap((provider) => [
+    { ...provider, reason: "partial_failure", expected: /recovery was incomplete.*partially updated/i },
+    { ...provider, reason: "ownership_unverified", expected: /ownership could not be verified.*previous helper/i },
+  ]))("preserves the $provider removal $reason through a failed inspection", async ({ provider, reason, expected }) => {
+    const user = userEvent.setup();
+    let inspectionUnavailable = false;
+    let rejectRemoval!: (reason: Error) => void;
+    const credentials = vi.fn(async () => inspectionUnavailable ? failedInspectionResponse() : configuredProvidersResponse());
+    const updateCredentialsBatch = vi.fn<ApiClientPort["updateCredentialsBatch"]>()
+      .mockImplementation(() => new Promise((_resolve, reject) => { rejectRemoval = reject; }));
+    const view = renderPanel({ credentials, updateCredentialsBatch });
+    const card = await providerCard(provider);
+    await user.click(within(card).getByRole("button", { name: `Remove ${provider} setup` }));
+    const dialog = screen.getByRole("dialog", { name: `Remove ${provider} provider setup?` });
+    await user.click(within(dialog).getByRole("button", { name: `Remove ${provider} setup` }));
+    await waitFor(() => expect(updateCredentialsBatch).toHaveBeenCalledOnce());
+    inspectionUnavailable = true;
+    await act(async () => rejectRemoval(new JobCtrlApiError(503, "Service Unavailable", "Synthetic server detail", {
+      ok: false, error: "credential_store_unavailable", reason, message: "Synthetic server detail",
+    }, true)));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(expected);
+    expect(within(dialog).getByRole("button", { name: `Remove ${provider} setup` })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(dialog).not.toHaveTextContent("Synthetic server detail");
+    expect(dialog).not.toHaveTextContent("Check config.json access and Keychain Access, then retry.");
+    expect(updateCredentialsBatch).toHaveBeenCalledOnce();
+    inspectionUnavailable = false;
+    await act(async () => { await view.queryClient.invalidateQueries({ queryKey: profileKeys.credentials(LOCAL_TENANT) }); });
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: `Remove ${provider} setup` })).toBeEnabled());
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(expected);
+  });
+
+  it.each([
+    { provider: "Claude", input: "Anthropic API key (required)" },
+    { provider: "Google", input: "Gemini API key (required)" },
+  ])("keeps the $provider removal error and later input if its dialog was closed while pending", async ({ provider, input }) => {
+    const user = userEvent.setup();
+    let inspectionUnavailable = false;
+    let rejectRemoval!: (reason: Error) => void;
+    const credentials = vi.fn(async () => inspectionUnavailable ? failedInspectionResponse() : configuredProvidersResponse());
+    const updateCredentialsBatch = vi.fn<ApiClientPort["updateCredentialsBatch"]>()
+      .mockImplementation(() => new Promise((_resolve, reject) => { rejectRemoval = reject; }));
+    renderPanel({ credentials, updateCredentialsBatch });
+    const card = await providerCard(provider);
+    await user.click(within(card).getByRole("button", { name: `Remove ${provider} setup` }));
+    const dialog = screen.getByRole("dialog", { name: `Remove ${provider} provider setup?` });
+    await user.click(within(dialog).getByRole("button", { name: `Remove ${provider} setup` }));
+    await waitFor(() => expect(updateCredentialsBatch).toHaveBeenCalledOnce());
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const field = within(card).getByLabelText(input);
+    await user.type(field, "SYNTHETIC_PLACEHOLDER_B");
+    inspectionUnavailable = true;
+    await act(async () => rejectRemoval(new JobCtrlApiError(503, "Service Unavailable", "Synthetic server detail", {
+      ok: false, error: "credential_store_unavailable", reason: "partial_failure", message: "Synthetic server detail",
+    }, true)));
+    expect(await within(card).findByText(/recovery was incomplete.*partially updated/i)).toBeInTheDocument();
+    expect(field).toHaveValue("SYNTHETIC_PLACEHOLDER_B");
+    expect(field).toBeDisabled();
+    expect(updateCredentialsBatch).toHaveBeenCalledOnce();
+  });
+
   it("keeps non-secret cloud setup editable when secure secret storage is unsupported", async () => {
     const user = userEvent.setup();
     const updateCredentialsBatch = vi.fn(async () => sampleCredentialsResponse);
@@ -531,7 +702,7 @@ describe("<CredentialsPanel>", () => {
           unavailableReason: "unsupported_platform" as const,
         },
         credentials: sampleCredentialsResponse.credentials.map((credential) =>
-          credential.storage === "keychain"
+          credential.storage === "native_store"
             ? {
                 ...credential,
                 configured: null,
@@ -593,7 +764,7 @@ describe("<CredentialsPanel>", () => {
       verifyCodexProvider,
     });
 
-    expect(await screen.findByText(/could not safely inspect Keychain/i)).toBeInTheDocument();
+    expect(await screen.findByText(/could not safely inspect macOS Keychain/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/Anthropic API key \(required\)/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Gemini API key \(required\)/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText("CapSolver API key")).toBeDisabled();
@@ -608,7 +779,7 @@ describe("<CredentialsPanel>", () => {
     const privacy = within(screen.getByRole("region", { name: "Credential privacy" }));
     expect(screen.getByText(/guided Claude and Google editing/i)).toBeInTheDocument();
     expect(screen.getByText(/Codex verification remains available/i)).toBeInTheDocument();
-    expect(privacy.getAllByText("Keychain status unavailable")).toHaveLength(2);
+    expect(privacy.getAllByText("Credential-store status unavailable")).toHaveLength(2);
   });
 
   it("labels isolated auth accurately when the managed SDK is unavailable", async () => {
@@ -699,7 +870,18 @@ function configuredProvidersResponse() {
         "CLAUDE_CODE_USE_VERTEX",
         "GEMINI_API_KEY",
         "GOOGLE_GENAI_USE_VERTEXAI",
-      ].includes(credential.key) ? "keychain" as const : credential.effectiveSource,
+      ].includes(credential.key) ? "native_store" as const : credential.effectiveSource,
+    })),
+  };
+}
+
+function failedInspectionResponse() {
+  const available = configuredProvidersResponse();
+  return {
+    ...available,
+    store: { ...available.store, available: false, unavailableReason: "inspection_failed" as const },
+    credentials: available.credentials.map((credential) => ({
+      ...credential, configured: null, effectiveSource: "inspection_unknown" as const, editable: false,
     })),
   };
 }

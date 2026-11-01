@@ -8,7 +8,9 @@ See ddd-target.md §5.6. Two driving use cases live here:
                                   Publishes ``ApplyRunStarted``,
                                   ``ApplyRunEventRecorded``,
                                   ``ApplicationSubmitted`` /
-                                  ``ApplicationFailed`` per §6.7.
+                                  ``ApplicationFailed`` per §6.7. Owned email
+                                  submission is published by the durable
+                                  launcher settlement, once.
   ``SubmitBatchUseCase``       — wraps the single-job use case over a
                                   job-acquirer collaborator (the
                                   legacy launcher's ``acquire_job``
@@ -29,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from jobctrl.domain.apply.aggregate import ApplyRun
+from jobctrl.domain.apply.event_privacy import email_event_references
 from jobctrl.domain.apply.process_manager import ApplySaga, EmailApplicationContext, SagaOutcome
 from jobctrl.domain.apply.services import (
     ApplyEligibilityChecker,
@@ -56,6 +59,7 @@ from jobctrl.domain.events import (
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.ports.apply import (
     ApplyRunRepository,
+    ApplyRunWriteConflict,
     AutonomousAgentPort,
     BrowserPort,
 )
@@ -294,14 +298,18 @@ class SubmitApplicationUseCase:
         # may still discover an approval-bound email candidate, but the model
         # never receives browser submit authority.
         agent_transport_locked = True
-        prompt = self._prompt_builder.build(
-            job=job,
-            snapshot=snapshot,
-            cdp_port=cdp_port,
-            dry_run=agent_transport_locked,
-            search_config=search_config,
-            upload_dir=worker_dir,
-        )
+        def prompt_for_browser(session):
+            # Chrome chooses its own endpoint. Bind model transport only after
+            # the BrowserPort has returned that exact verified session.
+            return self._prompt_builder.build(
+                job=job,
+                snapshot=snapshot,
+                cdp_port=session.cdp_port,
+                browser_ws_url=session.browser_ws_url,
+                dry_run=agent_transport_locked,
+                search_config=search_config,
+                upload_dir=worker_dir,
+            )
         browser_config = BrowserWorkerConfig(
             worker_id=worker_id,
             cdp_port=cdp_port,
@@ -314,17 +322,26 @@ class SubmitApplicationUseCase:
         )
 
         # 6. Drive the saga — it persists the aggregate at every step
-        outcome: SagaOutcome = self._saga.run(
-            apply_run=apply_run,
-            browser_config=browser_config,
-            prompt=prompt,
-            model=model,
-            material_version=str(job.get("materials_generation") or ""),
-            materials_generation=job.get("materials_generation"),
-            application_url=str(job.get("application_url") or job.get("url") or ""),
-            profile_version=getattr(snapshot, "version", None),
-            email_application_context=_email_application_context(job, snapshot),
-        )
+        try:
+            outcome: SagaOutcome = self._saga.run(
+                apply_run=apply_run,
+                browser_config=browser_config,
+                prompt=prompt_for_browser,
+                model=model,
+                material_version=str(job.get("materials_generation") or ""),
+                materials_generation=job.get("materials_generation"),
+                application_url=str(job.get("application_url") or job.get("url") or ""),
+                posting_url=str(job.get("url") or ""),
+                profile_version=getattr(snapshot, "version", None),
+                email_application_context=_email_application_context(job, snapshot),
+            )
+        except ApplyRunWriteConflict:
+            # The original invocation retains settlement and recovery authority.
+            # This unpersisted refusal must not publish a competing terminal.
+            return SubmitApplicationOutcome(
+                apply_run=apply_run, ok=False, submission_result=None,
+                skipped=True, skip_reason="apply_run_conflict",
+            )
 
         # 7. Publish per-event records + final result
         self._publish_event_records(outcome.apply_run)
@@ -332,7 +349,16 @@ class SubmitApplicationUseCase:
             outcome.apply_run.is_succeeded
             and isinstance(outcome.apply_run.submission_result, Applied)
         ):
-            self._publish_submitted(outcome.apply_run, outcome.apply_run.submission_result)
+            # The launcher publishes the durable submitted fact after validating
+            # the persisted email receipt. Publishing here too duplicates that
+            # notification and precedes terminal settlement.
+            owned_email = any(
+                event.event_type == "ApplySubmitIntended"
+                and event.payload.get("submission_channel") == "email"
+                for event in outcome.apply_run.events
+            )
+            if not owned_email:
+                self._publish_submitted(outcome.apply_run, outcome.apply_run.submission_result)
         elif outcome.apply_run.submission_result is not None:
             self._publish_failed(
                 outcome.apply_run,
@@ -381,7 +407,9 @@ class SubmitApplicationUseCase:
             try:
                 payload = ApplyRunEventRecordedPayload(
                     run_id=str(run.run_id),
-                    event=event.to_dict(),
+                    event=email_event_references(
+                        "ApplyRunEventRecorded", {"event": event.to_dict()}
+                    )["event"],
                 )
                 self._publisher.publish(
                     create_apply_run_event_recorded(run.tenant_id, payload)
@@ -581,6 +609,8 @@ def _email_application_context(
         attachment_path=resume_path,
         approved_recipient_email=str(job.get("approved_email_recipient") or ""),
         approved_attachment_artifact_id=str(job.get("approved_email_attachment_artifact_id") or ""),
+        source_binding=job.get("email_source_binding"),
+        profile_version=getattr(snapshot, "version", None),
     )
 
 

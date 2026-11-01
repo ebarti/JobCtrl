@@ -9,74 +9,63 @@ market evidence or an extrapolated range as a direct observation.
 
 ## How Compensation Is Calculated
 
-JobCtrl produces independent evidence records and displays them together only
-for comparison:
+### **Employer-posted compensation**
 
-### Employer-posted compensation
+A configured model extracts what the posting states: amounts, currency, period and base/OTE/bonus/equity component, with verbatim citations and a rationale. Code checks exact numbers and quotes, then performs explicit annualization arithmetic. Missing or ambiguous pay remains visible; a nearby salary word or an annual-pay threshold cannot invent a period. The accepted fact cites its extraction determination.
 
-1. **Record parse state.** A deterministic parser reads a bounded copy of the
-   posting's salary text and records `missing`, `unparseable`, `ambiguous`, or
-   `parsed_range` rather than forcing every string into a number.
-2. **Interpret bounds conservatively.** One amount becomes an exact or one-sided
-   range according to wording such as “up to” or “from.” More than two amounts,
-   mixed compensation components, or additive bonus wording becomes ambiguous
-   instead of being summed.
-3. **Annualize only with a known or narrowly inferred period.** Annual amounts
-   stay unchanged, monthly amounts use `12` months, and hourly amounts use
-   `2,080` work hours. A currency-backed amount of at least `12,000` governed by
-   a nearby salary, base-pay, or pay-range cue may be treated as annual when no
-   shorter period is stated; the fact records that inference, keeps medium
-   confidence, and exposes it as a warning. Generic compensation, bonuses,
-   equity, low values, and nearby shorter-period rate cues—such as daily,
-   weekly, biweekly, fortnightly, monthly, quarterly, or per-pay-period wording—do not qualify.
-   Other unknown periods are not annualized. Missing currency/period, hourly
-   conversion, broad ranges, and ambiguity lower confidence and remain visible
-   as warnings.
-4. **Keep cash and equity separate.** When a posting states one cash amount and
-   mentions stock or equity as an additional benefit, the cash amount remains
-   the posted figure and the unpriced equity is not folded into it. Extraction
-   certainty describes the parser only; it is not presented as doubt that the
-   employer stated the amount.
+JobCtrl chooses the salary field first, then a current enriched description,
+the full posting description, and finally the short description. If that
+preferred source changes while extraction is running, the refresh is rejected
+and the previously accepted posted fact remains available.
 
-### Direct and extrapolated market benchmarks
+An explicitly stated annual amount stays unchanged; monthly amounts use 12
+months and hourly amounts use 2,080 work hours. An unknown period remains
+unknown. Unpriced bonus and equity remain separate from the cash amount.
 
-1. **Discover reusable benchmark slices.** At the end of each Discover run,
-   active jobs are classified with JobCtrl's versioned role-family taxonomy and
-   grouped by role family, seniority, country, and compensation component. Jobs
-   whose role family or country cannot be resolved remain explicitly without a
-   market benchmark.
-2. **Refresh only missing or due slices.** A lease-fenced refresh claims each
-   missing slice, or a slice whose seven-day freshness window has expired, at
-   most once for that run. Euro Top Tech is a fixed public source. Levels.fyi
-   and Glassdoor are loaded only when their Settings policy explicitly permits
-   the selected access mode; an absent Levels.fyi preference remains disabled.
-3. **Normalize direct evidence.** Supported observations are canonicalized to
-   EUR per year with source-dated ECB exchange rates when conversion is needed.
-   Direct facts preserve role taxonomy, seniority, exact geography, sample
-   count, source snapshot, freshness, confidence interval, attribution, and
-   evidence hash. Employer-posted compensation is not a direct market fact.
-4. **Extrapolate missing geographies audibly.** When no fresh exact-country
-   benchmark exists, JobCtrl may derive one from another country using Eurostat
-   price-level evidence and same-company cross-country pay ratios. The company
-   bridge is shrunk toward the cost-of-living factor according to its evidence
-   weight. A cost-of-living-only range is allowed at low confidence. The raw
-   factor and numeric range remain visible even outside the supported `0.1x` to
-   `10x` review bound, with a prominent `factor_out_of_bounds` warning.
-5. **Materialize the last good result.** The latest direct or extrapolated fact
-   is attached to every matching active job, with lineage and warning codes. A
-   source outage cannot erase a prior usable range; failed source availability
-   retries after one day, while successful or insufficient slices are checked
-   again after seven days.
+### **Direct and extrapolated market benchmarks**
 
-Employer-posted facts may be parsed when Discovery ingests or refreshes a job
-and are also reparsed during an explicit compensation refresh. When the
-deterministic parser changes, worker startup upgrades known older facts in
-bounded, retry-safe batches before rebuilding their read models. Direct benchmark
-discovery and geographic extrapolation run automatically at the end of
-Discover, after terminal enrichment and before terminal preparation fan-out.
-The existing explicit compensation refresh remains available for focused
-company-role evidence maintenance. Opening Jobs or Apply Review remains a
-passive read of persisted evidence; it does not fetch or recalculate salary.
+Job interpretation and cached provider-row classifications use the same versioned taxonomy of occupation, seniority and place codes. Exact code equality selects comparable rows. Source/sample/freshness and currency arithmetic remain explicit. Provider ranges retain their source currency unless a persisted exchange-rate snapshot supports conversion; missing rates never use a hardcoded conversion. Direct benchmarks use documented EUR/year normalization; the displayed estimate cites row classification IDs. Open **Classification sources** to inspect those determinations. A failed refresh preserves the last accepted estimate. Levels.fyi routing uses code-to-slug tables, while fixed-format Markdown/structured payload parsing stays mechanical.
+
+A failed refresh retains a previously accepted model-backed estimate and reports the blocked reason. It never substitutes a title/location classifier or fixed exchange rate. Compensation remains warning-only and cannot manufacture a hard eligibility blocker. The offline demo reports refresh unavailable. Native schema 13 withdraws old inferred estimates for recomputation from source evidence; the paired pre-upgrade backup remains recoverable.
+
+Ordinary Discovery refreshes missing slices or those whose seven-day freshness
+window has expired. Independent provider-row classifications run concurrently,
+bounded by the configured worker activity capacity. Each keeps its own strict
+source-bound determination; duplicate rows and cached classifications reuse the
+same recorded identity. An interrupted refresh stops new model admissions and
+preserves accepted ranges. A refresh still owned by another attempt, or waiting
+through a recorded failure backoff, reports that deferred state rather than
+claiming fresh completion. Failed source availability retries after one day. A focused
+retry uses the same lease and source policy. Euro Top Tech is a fixed public
+source; Glassdoor and Levels.fyi require an explicitly permitted access mode in
+Settings. An absent Levels.fyi preference leaves it disabled. **Reads are passive:**
+opening a compensation panel neither fetches a provider nor refreshes an estimate.
+
+Levels.fyi refresh diagnostics distinguish supported targets from unsupported
+role or country coverage. A failed lookup applies only to its role, level and
+country; an unrelated target does not inherit that source error. The automatic
+activity's recorded result retains each target's request outcomes, HTTP rejection
+codes when available, source-body hashes and parsing status. Empty, blocked and
+incompatible responses do not establish that salary data is absent. The result
+distinguishes `levels_fyi_public_unavailable` (required pages could not be read),
+`levels_fyi_public_unparsed` (reachable pages yielded no supported salary
+structure), and `levels_fyi_public_page_budget_exhausted` (the bounded traversal
+ended with coverage incomplete). Target receipts retain all applicable error
+codes. Incomplete lookups keep the same retry and accepted-evidence preservation
+rules; a page cap does not establish a provider outage. The result also retains
+the source fingerprint and exact classification ID for up to 128
+rejected observations, with an explicit omitted count if that bound is reached.
+Each diagnostic list retains up to 128 entries and 128 KiB, with explicit
+omission counts. These receipts contain no response bodies, headers or exception
+messages and do not enter the public Jobs read model. Failed refreshes continue
+to preserve accepted ranges.
+
+Conversions use source-dated ECB exchange-rate snapshots. When exact-country
+evidence is missing, an auditable geographic bridge can use official Eurostat
+price levels and matched-company pay ratios. Its raw factor remains visible
+outside the supported 0.1x to 10x review bound, with a
+`factor_out_of_bounds` warning. The bound describes arithmetic for review; it
+does not classify the meaning of source text or create an eligibility blocker.
 
 ## What You Can See And Control
 
@@ -134,12 +123,12 @@ an access mode that the saved policy or provider terms do not permit.
 | Record | Authority | Important boundary |
 | --- | --- | --- |
 | Raw posting salary | Canonical job/source observation | Retained for compatibility and source review; UI reads do not repeatedly parse it. |
-| Posted compensation fact | `job_posted_compensation_facts` | A versioned deterministic parse with explicit missing, ambiguous, unparseable, or legal range state and warnings. |
+| Posted compensation fact | `job_posted_compensation_facts` | A source-bound model extraction with explicit missing, ambiguous, unparseable, or legal range state and warnings. |
 | Direct market benchmark | `compensation_direct_benchmark_facts` | Append-only, source-dated role/level/geography evidence normalized to EUR/year. Never employer-posted compensation. |
 | Price-level evidence | `compensation_price_level_facts` | Append-only official geography inputs used only for an auditable bridge. |
 | Extrapolated market benchmark | `compensation_extrapolated_benchmark_facts` plus lineage tables | Append-only derived range with the exact direct anchor, price-level inputs, matched-company inputs, factor, confidence, and warnings. |
 | Per-job market estimate | `job_market_compensation_estimates` | The latest matching direct or extrapolated benchmark projected onto an active job with sanitized source/evidence lineage. |
-| Refresh state | `compensation_market_refresh_state` | Lease-fenced missing/due/failure status and the latest successful result reference for each reusable benchmark slice. |
+| Refresh state | `compensation_market_refresh_state` | Lease-fenced missing/due/failure status and the latest result reference for each reusable benchmark slice. A failed Levels role-and-level lookup keeps its lower-level direct fallback as that reference and retries after one day; other source-family failures do not mark a slice with a direct fact failed. |
 | Source policy | `config.json` through `/v1/compensation/sources` | Safe enablement/access declarations only. No credentials, feed location, provider rows, or private-account state. |
 | Jobs read model | Compensation JSON in list/detail projections | Displays already-persisted facts and estimates. `GET` routes neither fetch nor estimate. |
 
@@ -162,7 +151,9 @@ source conflict is a warning to inspect, not a hidden decision rule.
 3. **Finish Discovery.** After terminal enrichment, `DiscoverWorkflow` invokes
    the replay-safe `automatic_compensation_refresh` activity. It deduplicates
    active role/level/country slices and skips every slice that is still fresh.
-4. **Parse posted evidence.** The worker deterministically records a posted-fact
+   Healthy work renews its exact publication leases; cancellation and owner
+   replacement fence publication without withdrawing the last accepted result.
+4. **Parse posted evidence.** The worker records a model-backed posted-fact
    state, normalized legal range fields when available, parser identity,
    confidence, and warnings without overwriting the raw salary.
 5. **Refresh and derive market evidence.** Missing or due slices load permitted
@@ -194,3 +185,13 @@ policy.
 | Worker implementation | `workers/automation/src/jobctrl/domain/compensation/` and `workers/automation/src/jobctrl/infrastructure/compensation/`. |
 | Web implementation | `apps/web/src/contexts/enrichment/components/CompensationEvidence.tsx`, `apps/web/src/contexts/scoring/components/CompensationSourcePolicyPanel.tsx`, and Jobs/Apply Review composers. |
 | Deep architecture | [Storage → Schema At A Glance](../architecture/storage.md#schema-at-a-glance), [Apply Feedback & Projections → Evidence, Analytics, And Compensation](../architecture/read-model.md#evidence-analytics-and-compensation), and the [complete compensation contract](../api/complete-contract.md#compensation). |
+
+
+## Comparing An Actual Offer
+
+Job Detail → Application outcomes keeps [actual offer terms](outcomes-and-feedback.md#actual-offer-terms-and-decisions)
+separate from these posting facts and estimates. Its comparison reads existing
+compensation evidence without refreshing sources, converting currencies,
+annualizing amounts or valuing unknown equity. Offer-stage outreach can use
+this recorded evidence as dated context; it cannot promote a benchmark to an
+employer commitment or invent negotiating leverage.

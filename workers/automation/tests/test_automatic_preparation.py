@@ -28,8 +28,11 @@ _NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
 @pytest.fixture
 def conn(tmp_path, monkeypatch):
     connection = init_db(tmp_path / "recovery.db")
-    monkeypatch.setattr("jobctrl.database.get_connection", lambda: connection)
-    monkeypatch.setattr("jobctrl.llm.read_spend_budget_status", lambda: SimpleNamespace(exceeded=False))
+    monkeypatch.setattr("jobctrl.database.get_connection", lambda *_args: connection)
+    monkeypatch.setattr(
+        "jobctrl.llm.read_spend_budget_status",
+        lambda **_kwargs: SimpleNamespace(global_exceeded=False),
+    )
     monkeypatch.setattr("jobctrl.infrastructure.scoring.criteria_provider.read_min_fit_score", lambda **_: 7)
     yield connection
     connection.close()
@@ -67,6 +70,10 @@ def _job(conn, number=1, *, state="failed", attempts=1, retryable=True, enriched
     conn.execute(
         "UPDATE job_stage_states SET updated_at = ? WHERE tenant_id = ? AND job_id = ?", (_OLD, tenant, str(job_id))
     )
+    if enriched:
+        from .availability_fixture import seed_fresh_availability
+
+        seed_fresh_availability(conn, str(job_id), tenant)
     conn.commit()
     return job_id
 
@@ -146,18 +153,38 @@ def test_legacy_dns_block_recovers_only_after_both_destinations_validate_without
     repository = SqliteEnrichmentRepository(conn)
     repository.save(aggregate)
     set_stage_state(
-        conn, job_id, "enrich", "failed", attempt_count=1, finished_at=_OLD,
-        error_code="DETAIL_UNSAFE_URL", error_message=message, retryable=False, validate_transition=False,
+        conn,
+        job_id,
+        "enrich",
+        "failed",
+        attempt_count=1,
+        finished_at=_OLD,
+        error_code="DETAIL_UNSAFE_URL",
+        error_message=message,
+        retryable=False,
+        validate_transition=False,
     )
     record_job_event(
-        conn, job_id, "enrich", "StageFailed", occurred_at=_OLD, message=message,
-        payload={"errorCode": "DETAIL_UNSAFE_URL", "errorMessage": message, "retryable": False,
-                 "securityOutcome": "unsafe_url", "blockedUrl": "https://signin.example.test/button?private=value",
-                 "attemptNumber": 1},
+        conn,
+        job_id,
+        "enrich",
+        "StageFailed",
+        occurred_at=_OLD,
+        message=message,
+        payload={
+            "errorCode": "DETAIL_UNSAFE_URL",
+            "errorMessage": message,
+            "retryable": False,
+            "securityOutcome": "unsafe_url",
+            "blockedUrl": "https://signin.example.test/button?private=value",
+            "attemptNumber": 1,
+        },
     )
     conn.execute("UPDATE job_stage_states SET updated_at=? WHERE job_id=? AND stage='enrich'", (_OLD, str(job_id)))
     conn.commit()
-    before_attempts = conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)).fetchone()[0]
+    before_attempts = conn.execute(
+        "SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)
+    ).fetchone()[0]
     hosts = []
 
     def public_dns(host, port, **_kwargs):
@@ -172,8 +199,16 @@ def test_legacy_dns_block_recovers_only_after_both_destinations_validate_without
     assert client.starts[0][1].stages == ["enrich"]
     assert set(hosts) == {"example.test", "signin.example.test"}
     assert _stage(conn, job_id)["attempt_count"] == 1
-    assert conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)).fetchone()[0] == before_attempts
-    assert conn.execute("SELECT count(*) FROM job_events WHERE job_id=? AND event_type='StageFailed'", (str(job_id),)).fetchone()[0] == 1
+    assert (
+        conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)).fetchone()[0]
+        == before_attempts
+    )
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM job_events WHERE job_id=? AND event_type='StageFailed'", (str(job_id),)
+        ).fetchone()[0]
+        == 1
+    )
 
 
 def test_failed_enrichment_is_reserved_once_with_attempt_history(conn):
@@ -266,6 +301,22 @@ def test_pending_score_is_preferred_and_never_starts_apply(conn):
     assert options["id_reuse_policy"] is WorkflowIDReusePolicy.REJECT_DUPLICATE
 
 
+def test_recovery_snapshots_saved_internal_concurrency_and_reattaches_unchanged(conn, tmp_path, monkeypatch):
+    config = tmp_path / "config.json"
+    config.write_text('{"pipeline_internal_concurrency": 10, "worker_activity_slots": 4}')
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(config))
+    _job(conn, enriched=True)
+    client = _Client()
+    client.lose_ack = True
+    with pytest.raises(RPCError):
+        asyncio.run(_tick(client))
+    assert client.starts[0][1].workers == 10
+    config.write_text('{"pipeline_internal_concurrency": 2}')
+    assert asyncio.run(_tick(client)) == 0
+    assert len(client.starts) == 1
+    assert client.starts[0][1].workers == 10
+
+
 def test_lost_ack_and_second_worker_reattach_to_the_reserved_execution(conn):
     job_id = _job(conn)
     client = _Client()
@@ -322,17 +373,37 @@ async def _interrupted_history(batch, *, canceled=False, timed_out=True, automat
     start = events[0].workflow_execution_started_event_attributes
     start.workflow_type.name = "JobPipelineWorkflow"
     start.original_execution_run_id = f"run:{batch.workflow_id}"
-    start.input.CopyFrom(Payloads(payloads=await DataConverter.default.encode([{
-        "tenant_id": "local", "stages": [batch.stage], "job_ids": list(batch.job_ids),
-        "min_score": batch.min_score, "automatic_recovery": automatic,
-    }])))
+    start.input.CopyFrom(
+        Payloads(
+            payloads=await DataConverter.default.encode(
+                [
+                    {
+                        "tenant_id": "local",
+                        "stages": [batch.stage],
+                        "job_ids": list(batch.job_ids),
+                        "min_score": batch.min_score,
+                        "automatic_recovery": automatic,
+                    }
+                ]
+            )
+        )
+    )
     scheduled = events[1].activity_task_scheduled_event_attributes
     scheduled.activity_type.name = batch.stage
-    scheduled.input.CopyFrom(Payloads(payloads=await DataConverter.default.encode([{
-        "recovery_workflow_id": batch.workflow_id, "job_ids": list(batch.job_ids),
-        "workflow_id": batch.workflow_id if batch.stage == "enrich" else f"run:{batch.workflow_id}",
-        **({"workflow_run_id": f"run:{batch.workflow_id}"} if batch.stage == "enrich" else {}),
-    }])))
+    scheduled.input.CopyFrom(
+        Payloads(
+            payloads=await DataConverter.default.encode(
+                [
+                    {
+                        "recovery_workflow_id": batch.workflow_id,
+                        "job_ids": list(batch.job_ids),
+                        "workflow_id": batch.workflow_id if batch.stage == "enrich" else f"run:{batch.workflow_id}",
+                        **({"workflow_run_id": f"run:{batch.workflow_id}"} if batch.stage == "enrich" else {}),
+                    }
+                ]
+            )
+        )
+    )
     events[2].activity_task_started_event_attributes.scheduled_event_id = 2
     if timed_out:
         timeout = HistoryEvent(event_id=4)
@@ -351,14 +422,26 @@ async def _interrupted_history(batch, *, canceled=False, timed_out=True, automat
 def _consumed_reservation(conn, batch, job_id):
     before = _stage(conn, job_id, batch.stage)
     set_stage_state(
-        conn, job_id, batch.stage, "failed", attempt_count=before["attempt_count"] + 1,
-        error_code=f"{batch.stage.upper()}_ACTIVITY_OWNER_STOPPED", retryable=True,
-        metadata={"recoveredFromWorkflowId": f"run:{batch.workflow_id}"}, validate_transition=False,
+        conn,
+        job_id,
+        batch.stage,
+        "failed",
+        attempt_count=before["attempt_count"] + 1,
+        error_code=f"{batch.stage.upper()}_ACTIVITY_OWNER_STOPPED",
+        retryable=True,
+        metadata={"recoveredFromWorkflowId": f"run:{batch.workflow_id}"},
+        validate_transition=False,
     )
     record_job_event(
-        conn, job_id, batch.stage, "StageFailed",
-        payload={"workflowId": f"run:{batch.workflow_id}", "reason": "orphaned_activity_failed",
-                 "attemptCount": before["attempt_count"] + 1},
+        conn,
+        job_id,
+        batch.stage,
+        "StageFailed",
+        payload={
+            "workflowId": f"run:{batch.workflow_id}",
+            "reason": "orphaned_activity_failed",
+            "attemptCount": before["attempt_count"] + 1,
+        },
     )
     conn.commit()
 
@@ -384,10 +467,19 @@ def test_interrupted_batch_releases_only_unconsumed_reservations_without_spendin
     assert client.starts == []
 
 
-@pytest.mark.parametrize("guard", [
-    "canceled", "terminated", "cancel_requested", "not_timeout", "not_automatic", "no_progress",
-    "copied_reset_history", "wrong_activity_owner",
-])
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "canceled",
+        "terminated",
+        "cancel_requested",
+        "not_timeout",
+        "not_automatic",
+        "no_progress",
+        "copied_reset_history",
+        "wrong_activity_owner",
+    ],
+)
 def test_closed_reservation_requires_interruption_and_durable_progress_before_release(conn, guard):
     consumed, unstarted = _job(conn, 1), _job(conn, 2)
     batch = recovery.reserve_recovery_batch(conn, now=_NOW)
@@ -398,12 +490,18 @@ def test_closed_reservation_requires_interruption_and_durable_progress_before_re
         "canceled": WorkflowExecutionStatus.CANCELED,
         "terminated": WorkflowExecutionStatus.TERMINATED,
     }.get(guard, WorkflowExecutionStatus.COMPLETED)
-    client.histories[batch.workflow_id] = asyncio.run(_interrupted_history(
-        batch, canceled=guard == "cancel_requested", timed_out=guard != "not_timeout",
-        automatic=guard != "not_automatic",
-    ))
+    client.histories[batch.workflow_id] = asyncio.run(
+        _interrupted_history(
+            batch,
+            canceled=guard == "cancel_requested",
+            timed_out=guard != "not_timeout",
+            automatic=guard != "not_automatic",
+        )
+    )
     if guard == "copied_reset_history":
-        client.histories[batch.workflow_id].events[0].workflow_execution_started_event_attributes.original_execution_run_id = "original-run"
+        client.histories[batch.workflow_id].events[
+            0
+        ].workflow_execution_started_event_attributes.original_execution_run_id = "original-run"
     if guard == "wrong_activity_owner":
         from temporalio.api.common.v1 import Payloads
 
@@ -432,7 +530,10 @@ def test_unavailable_temporal_and_live_work_prevent_mutation(conn):
 def test_budget_halt_does_not_reserve_or_dispatch(conn, monkeypatch):
     job_id = _job(conn)
     before = _stage(conn, job_id)
-    monkeypatch.setattr("jobctrl.llm.read_spend_budget_status", lambda: SimpleNamespace(exceeded=True))
+    monkeypatch.setattr(
+        "jobctrl.llm.read_spend_budget_status",
+        lambda **_kwargs: SimpleNamespace(global_exceeded=True),
+    )
     client = _Client()
     assert asyncio.run(_tick(client)) == 0
     assert _stage(conn, job_id) == before
@@ -530,7 +631,7 @@ def test_saved_enrichment_reaches_real_scoring_without_discovery(conn, monkeypat
     batch = client.starts[0][1]
     real_score = scorer.score_job_by_id
     llm = _StrongLlm()
-    monkeypatch.setattr(scorer, "get_connection", lambda: conn)
+    monkeypatch.setattr(scorer, "get_connection", lambda *_args: conn)
 
     def score_with_synthetic_inputs(job_id, **kwargs):
         return real_score(
@@ -540,6 +641,7 @@ def test_saved_enrichment_reaches_real_scoring_without_discovery(conn, monkeypat
             resume_text="Python platform engineer.",
             criteria=ScoringCriteria(),
             repository=SqliteScoreRepository(conn),
+            use_case=__import__("tests.determination_fakes", fromlist=["scoring_case"]).scoring_case(conn, llm),
             llm_port=llm,
             require_employer_analysis=False,
         )
@@ -698,10 +800,167 @@ def test_stopped_score_owner_restores_committed_result(conn):
     assert conn.execute("SELECT COUNT(*) FROM job_scores WHERE job_id = ?", (str(job_id),)).fetchone()[0] == 1
 
 
-@pytest.mark.parametrize("status,cancellation_fenced", [
-    (WorkflowExecutionStatus.TERMINATED, False), (WorkflowExecutionStatus.CANCELED, False),
-    (None, False), (WorkflowExecutionStatus.TERMINATED, True),
-])
+@pytest.mark.parametrize("stage", ["score", "tailor", "cover"])
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (WorkflowExecutionStatus.CANCELED, "canceled"),
+        (WorkflowExecutionStatus.TERMINATED, "failed"),
+        (WorkflowExecutionStatus.RUNNING, "running"),
+        (None, "running"),
+    ],
+)
+def test_stopped_direct_preparation_owner_uses_exact_history(
+    conn, stage, status, expected
+):
+    job_id = _job(conn, enriched=True)
+    workflow_id, run_id = "prep-direct-synthetic", "direct-exact-run"
+    set_stage_state(
+        conn,
+        job_id,
+        stage,
+        "running",
+        attempt_count=0,
+        metadata={"activityOwner": run_id, "priorScoreVersion": 0, "rescore": False},
+        validate_transition=False,
+    )
+    conn.execute(
+        "INSERT INTO workflow_run_projections (workflow_id,tenant_id,workflow_type,status,temporal_run_id,input_summary_json) VALUES (?,'local','JobPreparationWorkflow','canceled',?,?)",
+        (workflow_id, run_id, json.dumps({"jobId": str(job_id), "steps": [stage]})),
+    )
+    conn.commit()
+    client = _Client()
+    client.statuses[workflow_id] = WorkflowExecutionStatus.TERMINATED
+    if status is not None:
+        client.statuses[(workflow_id, run_id)] = status
+    asyncio.run(recovery._reconcile_stopped_activity_owners(client, conn))
+    assert client.describes == [(workflow_id, run_id)]
+    assert _stage(conn, job_id, stage)["state"] == expected
+    assert _stage(conn, job_id, stage)["attempt_count"] == int(expected == "failed")
+
+
+@pytest.mark.parametrize("mismatch", ["job", "stage", "owner"])
+def test_direct_preparation_recovery_rejects_unbound_projection(conn, mismatch):
+    job_id = _job(conn, enriched=True)
+    workflow_id, run_id = "prep-foreign-synthetic", "exact-foreign-run"
+    set_stage_state(
+        conn,
+        job_id,
+        "score",
+        "running",
+        metadata={"activityOwner": run_id},
+        validate_transition=False,
+    )
+    summary = {"jobId": str(job_id), "steps": ["score"]}
+    if mismatch == "job":
+        summary["jobId"] = str(canonical_job_id("90000000-0000-4000-8000-000000000001"))
+    if mismatch == "stage":
+        summary["steps"] = ["tailor"]
+    conn.execute(
+        "INSERT INTO workflow_run_projections (workflow_id,tenant_id,workflow_type,status,temporal_run_id,input_summary_json) VALUES (?,'local','JobPreparationWorkflow','canceled',?,?)",
+        (
+            workflow_id,
+            "other-run" if mismatch == "owner" else run_id,
+            json.dumps(summary),
+        ),
+    )
+    conn.commit()
+    before = _stage(conn, job_id, "score")
+    client = _Client()
+    client.statuses[(workflow_id, run_id)] = WorkflowExecutionStatus.CANCELED
+    asyncio.run(recovery._reconcile_stopped_activity_owners(client, conn))
+    assert client.describes == [] and _stage(conn, job_id, "score") == before
+
+
+def test_stopped_direct_preparation_restores_committed_score(conn):
+    job_id = _job(conn, enriched=True)
+    workflow_id, run_id = "prep-committed-synthetic", "committed-exact-run"
+    set_stage_state(
+        conn,
+        job_id,
+        "score",
+        "running",
+        attempt_count=0,
+        metadata={"activityOwner": run_id, "priorScoreVersion": 0, "rescore": False},
+        validate_transition=False,
+    )
+    conn.execute(
+        "INSERT INTO job_scores (tenant_id,job_id,version,fit_score,breakdown_json,keywords_json,scored_at,criteria_json,trace_json) VALUES ('local',?,1,8,'{}','[]',?,'{}','{}')",
+        (str(job_id), _OLD),
+    )
+    conn.execute(
+        "INSERT INTO workflow_run_projections (workflow_id,tenant_id,workflow_type,status,temporal_run_id,input_summary_json) VALUES (?,'local','JobPreparationWorkflow','canceled',?,?)",
+        (workflow_id, run_id, json.dumps({"jobId": str(job_id), "steps": ["score"]})),
+    )
+    conn.commit()
+    score = tuple(
+        conn.execute(
+            "SELECT * FROM job_scores WHERE job_id=?", (str(job_id),)
+        ).fetchone()
+    )
+    client = _Client()
+    client.statuses[(workflow_id, run_id)] = WorkflowExecutionStatus.CANCELED
+    asyncio.run(recovery._reconcile_stopped_activity_owners(client, conn))
+    assert _stage(conn, job_id, "score")["state"] == "succeeded"
+    assert (
+        tuple(
+            conn.execute(
+                "SELECT * FROM job_scores WHERE job_id=?", (str(job_id),)
+            ).fetchone()
+        )
+        == score
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [WorkflowExecutionStatus.CANCELED, WorkflowExecutionStatus.TERMINATED, None],
+)
+def test_direct_owner_recovery_preserves_unselected_job_and_unknown_status(
+    conn, status
+):
+    selected = _job(conn, number=1, enriched=True)
+    unselected = _job(conn, number=2, enriched=True)
+    workflow_id, run_id = "prep-exact-scope", "exact-scope-run"
+    for job_id in (selected, unselected):
+        set_stage_state(
+            conn,
+            job_id,
+            "score",
+            "running",
+            attempt_count=0,
+            metadata={"activityOwner": run_id},
+            validate_transition=False,
+        )
+    conn.execute(
+        "INSERT INTO workflow_run_projections (workflow_id,tenant_id,workflow_type,status,temporal_run_id,input_summary_json) VALUES (?,'local','JobPreparationWorkflow','canceled',?,?)",
+        (workflow_id, run_id, json.dumps({"jobId": str(selected), "steps": ["score"]})),
+    )
+    conn.commit()
+    before = {
+        str(job_id): _stage(conn, job_id, "score") for job_id in (selected, unselected)
+    }
+    client = _Client()
+    client.statuses[(workflow_id, run_id)] = status
+    asyncio.run(recovery._reconcile_stopped_activity_owners(client, conn))
+    assert _stage(conn, unselected, "score") == before[str(unselected)]
+    if status is None:
+        assert _stage(conn, selected, "score") == before[str(selected)]
+    else:
+        assert _stage(conn, selected, "score")["state"] == (
+            "canceled" if status == WorkflowExecutionStatus.CANCELED else "failed"
+        )
+
+
+@pytest.mark.parametrize(
+    "status,cancellation_fenced",
+    [
+        (WorkflowExecutionStatus.TERMINATED, False),
+        (WorkflowExecutionStatus.CANCELED, False),
+        (None, False),
+        (WorkflowExecutionStatus.TERMINATED, True),
+    ],
+)
 def test_enrichment_owner_recovery_fences_late_worker_and_counts_attempt(conn, status, cancellation_fenced):
     from jobctrl.domain.enrichment import StaleEnrichmentExecutionLease
     from jobctrl.enrichment.detail import _claim_enrich_job_for_activity
@@ -732,8 +991,15 @@ def test_enrichment_owner_recovery_fences_late_worker_and_counts_attempt(conn, s
     conn.commit()
     client = _Client()
     if cancellation_fenced:
-        claim_enrichment_execution_lease_for_run(conn, tenant_id=LOCAL_TENANT, workflow_id=batch.workflow_id,
-            run_id=run_id, owner_token=f"cancellation:{batch.workflow_id}:{run_id}", activity_phase=3, activity_attempt=1)
+        claim_enrichment_execution_lease_for_run(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            workflow_id=batch.workflow_id,
+            run_id=run_id,
+            owner_token=f"cancellation:{batch.workflow_id}:{run_id}",
+            activity_phase=3,
+            activity_attempt=1,
+        )
     if status is not None:
         client.statuses[(batch.workflow_id, run_id)] = status
     asyncio.run(recovery._reconcile_stopped_enrichment_owners(client, conn))
@@ -763,13 +1029,17 @@ def test_unclaimed_enrichment_failure_keeps_one_stopped_reservation(conn, scrape
     batch = recovery.reserve_recovery_batch(conn, now=_NOW)
     conn.execute(
         "UPDATE job_stage_states SET metadata_json = json_set(metadata_json, '$.temporalRunId', 'run-1') "
-        "WHERE job_id = ? AND stage = 'enrich'", (str(job_id),),
+        "WHERE job_id = ? AND stage = 'enrich'",
+        (str(job_id),),
     )
     conn.commit()
     if scraper_release:
         _release_unstarted_enrichment_cohort(
-            conn, (job_id,), tenant_id=LOCAL_TENANT,
-            workflow_id=batch.workflow_id, workflow_run_id="run-1",
+            conn,
+            (job_id,),
+            tenant_id=LOCAL_TENANT,
+            workflow_id=batch.workflow_id,
+            workflow_run_id="run-1",
         )
     client = _Client()
     client.statuses[batch.workflow_id] = WorkflowExecutionStatus.FAILED

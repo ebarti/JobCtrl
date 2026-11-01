@@ -32,8 +32,9 @@ flowchart LR
 ```
 
 The read path never reconstructs domain state from raw events during a request.
-It reads precomputed projections; SSE only tells the client which projection to
-refetch or safely patch.
+It serves precomputed projections with authorized canonical detail overlays,
+including the latest accepted interview prep. SSE tells the client which reads
+to refetch or safely patch.
 
 ## Apply Review And Outcome Feedback
 
@@ -58,14 +59,73 @@ flowchart LR
 ### Approval And At-Most-Once Submission
 
 With `applyApprovalRequired` enabled (the default), the Python launcher checks
-the latest `approve_submit` decision inside the atomic claim transaction. A UI,
+the latest `approve_submit` decision and any recorded email binding inside the
+atomic claim transaction. A UI,
 API, or RPC caller cannot bypass that committed decision. Dry-run claims do not
 need approval because browser-layer guards block submission.
 
 Model-driven browser runs are transport-locked and final browser submit remains
 manual. For an exact-approved email candidate, the saga rechecks the active
 capability and records `ApplySubmitIntended` immediately before invoking the
-owned Gmail sender. If the run dies after that checkpoint without a terminal
+owned Gmail sender. Availability transport runs before acquiring the writer.
+Inside `BEGIN IMMEDIATE`, the launcher rechecks freshness and run/stage ownership,
+then validates the latest canonical approval against current sources and the
+outgoing candidate. The claim carries a source binding covering profile version,
+effective URLs, material generation, accepted artifact identities and file hashes.
+It captures that binding inside claim admission, before committing the running
+stage, so another SQLite writer cannot change sources between claim and capture.
+The API approval transaction records `emailApprovalBinding` on the
+`ApplyReviewDecisionRecorded` event joined by the exact decision ID. Version 1
+contains SHA-256 fingerprints of the complete reviewed candidate and all current
+approved material identities, metadata and nonempty file bytes, as well as the
+posting URL and job/posting inputs. The fingerprints
+use fixed-position arrays encoded as compact UTF-8 JSON in API and worker.
+The final reader also checks cover approval and rehearsal evidence and compares
+the complete current email preview with the outgoing recipient, subject, body and
+attachment **and with the fingerprint retained by the approving decision**.
+A later preview with the same recipient and attachment ID cannot replace the
+approved subject/body. Legacy approvals lacking this binding require fresh review.
+A fresh approval for changed inputs cannot authorize an older run.
+The approval request carries the caller's complete reviewed preview; the API
+compares its content, run ID and timestamp with the canonical preview inside
+the decision transaction. Queue approval reasons also expose a changed preview,
+posting fingerprint or accepted-material fingerprint.
+Latest-decision readers in the API, worker and digest conservatively give any
+non-submit decision precedence over submit approval at equal timestamps. Random
+UUID order cannot restore authority after a tied defer/reset; fresh approval at
+a later timestamp resolves the ambiguity. Preliminary review reads used by
+availability exceptions retain `approval_authority_unavailable` on failure.
+Missing, malformed or unavailable authority refuses before intent. This final
+check is unconditional even when claim-time approval waiting is disabled.
+
+`SqliteApplyRunRepository.save` participates in an inherited transaction without
+committing it; the final authorizer owns commit/rollback. The intent retains the
+authorizing decision ID and hashes of source/candidate bindings. A refusal records
+a stable reason without replacing a newer canonical candidate or deleting review
+or material history. An owned, keyed email-authority refusal records its original
+claim. Settlement or interrupted-run recovery restores only that claim's attempt
+under the writer lock when no submit intent exists; agent-reported lookalikes do
+not grant refund authority. Source-lifetime and native-custody recovery commit
+the same authority park with the refunded attempt and stage transition.
+An unchanged refused authority is parked for standing
+polls using a digest of the current review, rehearsal and source binding. A new
+review or source change wakes the job; an explicit single-job retry may also
+proceed. If authority changes during a run, that older refusal does not park the
+new authority. The historical claim and refusal events remain.
+SQLite serializes participating approval writers through intent commit; a review
+committed afterward cannot cancel the already admitted external effect. Final
+authorization captures an immutable attachment byte copy and validates its hash
+against the approved source binding. After saving the pending intent, the
+authorizer rechecks source-file hashes before committing; a detected replacement
+or unavailable file rolls back the intent with `approval_stale_materials`. SQLite
+does not serialize an independent filesystem write after that last hash read and
+before commit. The admitted copy remains the approved bytes in that interval,
+but the file path can already contain different bytes. The saga
+hands the validated byte copy to Gmail's MIME encoder, which does not reopen the
+artifact path. Later path replacement or deletion cannot change the admitted
+attachment. The intent retains its attachment hash, never the private byte copy.
+
+If the run dies after that checkpoint without a terminal
 result, or the provider raises with an ambiguous outcome, JobCtrl parks it in
 `needs_verification` instead of retrying. A run that never reached submit intent
 can return safely to `pending`.
@@ -76,6 +136,24 @@ does not grant browser-submit authority or bypass the owned email sender's exact
 recipient/attachment approval. The Preferences UI keeps that state visibly
 warned.
 :::
+
+### Late Apply Settlement
+
+Local disposition and original-run outcome have separate authority. When the
+same run returns after Skip, settlement records
+`LockReleased` with `stage_preserved` and `late_status`, leaving the canonical
+stage untouched. A stale predecessor cannot write to a successor. For a late
+settlement with submit intent, the Python projector treats even a conflicting
+rehearsal or submitted label as uncertain unless the unique intent precedes the
+exact operation-bound email receipt, which in turn precedes its
+`ApplicationSubmitted` fact. These uncertain runs use the
+existing `manual` lifecycle status with a `needs_verification` result, so readers
+do not mistake a completed run for active work. A completed rehearsal stays a
+dry run. An ordinary legacy cleanup retains its existing fallback behavior.
+The validated late receipt and submitted fact preserve the local Skip. A
+per-tenant projection backfill repairs previously cached late-settlement rows even when the event
+cursor is current. Repair and its marker share the refresh transaction or
+caller savepoint; original events and canonical application state are preserved.
 
 ### Resume Review Drafts
 
@@ -101,13 +179,99 @@ Interview reflections may link to the prep generation they followed. Notes stay
 in that local table; events carry presence flags and safe references, not note
 text.
 
-The Gmail feedback scanner searches bounded post-application windows using
-known application anchors. It reads a body only after metadata reaches the
-link-confidence threshold, then stores evidence locally and proposes a
-classification. The user accepts, corrects, or declines the suggestion.
+Manual outcomes, prep-linked reflections and user-attested Outreach send logs
+use required UUID request identities. An immediate SQLite writer transaction
+resolves canonical target authority, checks the existing receipt, and only then
+performs fresh-action validation. The event's internal `idempotency_key` has a
+versioned tenant/operation/target/request prefix and a digest binding the
+validated request, accepted fact and event fields. This SQLite metadata is not
+part of the streamed event payload; the payload carries only the safe scope and
+fact reference. The digest may reflect private notes and belongs to the same
+private database boundary as those notes. No schema extension or separate
+receipt table is needed in exact v15.
+
+Fact, event and receipt commit together. Independent writers serialize before
+prefix lookup; rollback removes all three. A malformed or duplicate prefix
+fails closed. Nested calls retain the outer transaction's
+ownership, including the internal first-offer milestone. Equal replay joins the
+recorded fact ID and returns its original IDs/timestamps before mutable gates.
+Changed payloads, accepted facts or event bindings fail closed with a safe
+conflict. The receipt fact ID must agree with the outcomeId or sendLogId recorded
+on that same domain event; an equal-payload fact from another action cannot
+substitute for the original result. An omitted occurrence timestamp remains distinct from an explicitly
+supplied one in the fingerprint.
+
+Outreach send-log responses contain the immutable send log only. Current thread,
+review and reminder state comes from the existing read path. Web mutations
+reconcile only the optimistic log associated with that request and invalidate
+current reads; they never install a historical thread response. Both optimistic
+insertion and settlement check the initiating thread ID against the current
+cached thread. A replacement thread under the same contact key stays unchanged,
+including when it replaces the cache while query cancellation is pending. Form retry
+payloads live only in component memory, with explicit new-action identity after
+acknowledgement or a deliberate user choice. No external send or suggestion
+terminal-decision authority is introduced.
+The app session retains manual outcome and reflection drafts and uncertain
+retry identities separately by tenant and job across top-level navigation,
+keyed drawer changes, nested run detail and cold reads. A delayed acknowledgement
+from a form that has been replaced cannot clear the current owner's draft.
+Reloading discards this in-memory state.
+
+The Gmail feedback scanner searches a recipient and bounded post-application
+window for each known anchor, without employer or outcome keyword filters.
+The client requests at most the configured number of metadata results and checks
+their exact timestamps. A valid source-bound model determination selects the
+application before the body is read; another determination proposes the outcome.
+Repeated provider message IDs do not create duplicate evidence. The user
+accepts, corrects, or declines the suggestion. A bounded result is not proof of
+complete mailbox coverage.
 
 Raw mail bodies never enter events, broad projections, logs, telemetry, or the
 scan API response.
+
+## Interview Preparation And Notes
+
+The public catalog is an installed immutable asset served directly by the
+TypeScript API. Its global list/detail reads require no SQLite, job, live
+worker, or provider. It is authored guidance, not a projection over personal
+facts and not a second evidence store.
+
+Job detail's `interviewPrep` remains the latest accepted canonical generation,
+including while a replacement is pending or failed. The detail handler reads
+that canonical row independently of projection lag and the history page, even
+when many later attempts failed. Python and TypeScript
+project the same nullable `generationContext` and per-item `questionMetadata`.
+Retained card snapshots, evidence excerpts, and input bindings describe the
+original generation; reads must not replace them with current profile prose.
+Unbound legacy rows stay explicitly legacy. A history read includes accepted,
+superseded, and failed attempts instead of pretending every attempt became the
+active generation.
+
+Stale diagnostics compare the recorded catalog/profile/job/employer-analysis/
+approved-material bindings with current canonical inputs. They are a read-side
+annotation, not a mutation of prep history or an automatic regeneration. A stale
+or missing fit report cannot authorize personal factual evidence.
+
+Independent per-question note reads use canonical tenant/job/question revisions.
+Latest reads and append-only note history stay separate from prep-item lifecycle.
+Expected-revision saves preserve newer edits on conflict; generated metadata
+cannot confer passed-audit status on a user edit. If an existing origin was
+deleted, an ordinary edit without origin claims detaches the new revision to
+independent provenance while retaining the old revision's original binding.
+It does not bind the note to a newer prep generation. Notes and relevant source
+excerpts are private authorized detail data. They never enter broad lists,
+curated audit timelines, SSE frames, or telemetry.
+
+`InterviewPrepGenerated`, `InterviewPrepFailed`, and
+`InterviewQuestionNoteSaved` signal which tenant/job/generation/question reads
+need reconciliation. They carry IDs, versions, times, and counts, not outline,
+note, evidence, or binding text. The frontend refetches through Operations and
+keeps the accepted prep and unsaved form draft through failure. Post-interview
+reflections retain the separate Apply outcome boundary.
+
+See [Materials](materials.md#stored-interview-preparation) for authority and
+generation rules and the [complete API contract](../api/complete-contract.md#interview-catalog-preparation-and-notes)
+for history, pagination, and conflict responses.
 
 ## Projection Catalog
 
@@ -128,6 +292,66 @@ scan API response.
 | `due_follow_up_projections` | Scheduled follow-up references and due time; `isDue` is derived at read time. |
 | `operational_attempt_metrics` | Append-only attempt outcomes, failure class, retryability, counts, and duration. |
 
+## Job-list SQLite selection
+
+`job-list-query.ts` owns connection-local SQLite TEMP query tables, independent
+of the canonical projection owners. `/v1/jobs` retains its connection for the
+app lifetime and closes it with the app. A replaced database file gets a new
+exact-v14 admission and a fresh index; a missing file closes the retained handle.
+Changes to the retained file's schema/version headers also require readmission.
+Restart discards all query state. Other read endpoints retain their existing
+connection lifecycle.
+
+After the normal projection refresh, index refresh, SQL count/order/page
+selection and selected-row hydration share one SQLite read transaction. Index
+inputs are tenant/JobId and the scalar portion of the summary mapping: title
+and company defaults, trimmed location, canonical posting/source-observation
+overlays, public failure presentation, timestamps and projected compensation.
+Orphaned projections without a canonical Job are excluded. Index construction
+does not build DTOs or read availability or resume templates. Those reads occur
+only for selected IDs, at most `pageSize` jobs.
+
+Search uses JavaScript Unicode lowercase values, literal SQLite `instr`, and
+an indexed three-code-point substring candidate set for queries of at least
+three code points. Long filters start from tenant/gram postings and intersect
+their candidate IDs before reading scalar fields for the literal recheck.
+Zero candidate IDs require no literal field checks. Shorter queries scan scalar
+values. Fields stay separate,
+so substrings cannot bridge fields; percent, underscore and backslash are
+literal characters. Source filters include the same four provenance fields as
+summaries, while company filters use only the displayed company. Timestamp
+filters use precomputed `Date.parse` milliseconds with the existing two-cutoff
+OR rule. Discovery sorting still compares raw timestamp strings.
+
+During refresh, the shared scalar comparator computes directional ordinal keys
+for every supported sort, including ICU locale ordering, public state keys,
+compensation fallbacks and ascending JobId ties in either direction. Requests
+walk SQLite ordinal indexes for unrestricted and short-query pages; long-query
+pages order only the posting candidates by their precomputed integer ordinals
+inside SQLite. No request sorts DTOs. Canonical tenant/stage
+and score-keyword filters remain on their existing indexed owners. Totals and
+deep offsets can still visit many scalar rows; page hydration alone is bounded
+by page size.
+
+Freshness combines `PRAGMA data_version` for external commits with
+`total_changes()` for writes on the retained connection, including rolled-back
+writes. A changed connection token first compares a SHA-256 fingerprint of the
+tenant's ordered scalar source rows within the read snapshot. Unchanged source
+values renew only the marker, avoiding ordinal sorting and trigram replacement
+for heartbeat or other-tenant commits. Source comparison still reads that
+tenant's scalar inputs; changed values rebuild its index. The freshness marker
+and fingerprint live in TEMP SQLite alongside its rows, so a
+failed build or enclosing transaction rollback restores both. A failed refresh
+fails the request and cannot serve the old index as fresh. Caller-owned older
+snapshots never publish a marker reusable after that transaction. Refresh
+checks the tenant's source snapshot; it does not infer freshness
+from event cursors or timestamps. `jobQueryMetrics` reports TEMP schema/index
+initialization time, source-check count/time, rebuild count, indexed rows,
+rebuild time, selection time and selected rows separately. Rebuild time includes
+its source check; the cumulative source-check time also includes checks that
+avoid rebuilding, so the two durations must not be summed. These are work observations, including builds
+that a later caller rollback may discard.
+
 ## Cross-Runtime Consistency
 
 Python's `ProjectionBuilder` and TypeScript's `refreshProjections` consume their
@@ -139,9 +363,16 @@ read; nested passes preserve the caller's transaction. The
 [consistency contract](data-events-and-projections.md#projection-ownership-and-consistency)
 owns replay and failure recovery.
 
-Both runtimes emit the same JSON shapes. Shared parity fixtures guard the
-dual-written job, contact, research, outreach, follow-up, compensation, and
-audit projections. That makes a one-sided column or shape change a test failure
+TypeScript exclusively materializes `job_detail_projections` using its own
+`typescript:job_detail_projections:v1:<tenant>` cursor. API startup repairs that
+family from canonical state; incremental reads fold bounded event batches and
+Job Detail and Apply Review repair only their requested jobs when necessary and
+read list metadata with detail evidence in a coherent transaction.
+Python CLI/workflow consumers obtain dashboard stages directly from canonical rows.
+
+Shared parity fixtures guard the remaining dual-written list, artifact, contact,
+research, outreach, follow-up, compensation and audit projections. The same
+fixture continues to verify the surviving TypeScript detail shape. That makes a one-sided column or shape change a test failure
 instead of a client surprise.
 
 With both development toolchains installed, the disposable mixed-runtime
@@ -240,3 +471,27 @@ Job detail assembles an allow-listed timeline from lifecycle events and
 append-only review/outcome records. It is an audit explanation, not a debug log:
 raw event payloads, debug messages, local paths, raw notes, email bodies, and
 contact values are excluded.
+
+
+## Offer Read Model
+
+Outcomes owns immutable private `entity_kind = offer` ledger entries in
+`job_events`, keyed by tenant and JobId. `readOffer` folds event order into
+current terms/decision plus separate immutable histories; it does not infer
+meaning or write on GET. Each correction names the prior revision/decision,
+and writes use `BEGIN IMMEDIATE` plus expected-ID comparisons. If no reviewed offer already exists, the first terms
+write and one ordinary `offer` outcome commit atomically. Later decisions do
+not rewrite milestone counts, Apply approvals, submit evidence or stage rows.
+
+Operations queries invalidate on `OfferRecordChanged`. Its SSE envelope is
+redacted to JobId/revision/decision references; general activity and curated
+audit never expose terms, quotations or correction prose. Offer-specific UI
+reads the private ledger directly, so an unrelated projection refresh cannot
+replace a corrected decision with older cached state.
+
+Outreach owns all offer communication generations, claim and quality receipts,
+source snapshots, approval and manual-send attestations. A persisted offer
+source context binds the exact terms revision and decision IDs. Read responses
+mark stale drafts; approval, copy revalidation and send logging refuse them.
+The prior accepted message remains inspectable after a source correction or
+failed replacement. No interview-prep artifact participates in offer decisions.

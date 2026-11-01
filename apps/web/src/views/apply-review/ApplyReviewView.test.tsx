@@ -11,7 +11,7 @@ import type {
 } from "@jobctrl/contracts";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -41,6 +41,7 @@ import { ApplyReviewView } from "./ApplyReviewView.js";
 
 let htmlPreviewResumeText = sampleApplyReviewQueue.items[0]!.materialsPreview.resumeText;
 let htmlPreviewOverride: string | null = null;
+let htmlPreviewLineIds: Record<number,string> = {};
 
 const TEST_RESUME_SECTION_HEADINGS = new Set([
   "core skills",
@@ -73,7 +74,7 @@ function buildPreviewHtmlFromText(text: string): string {
     const clean = lineText.trim().replace(/^[-•○]\s+/, "");
     if (!clean) return "";
     lineNumber += 1;
-    return `<${tag} class="${className}" data-resume-layout-target="${escapeHtml(semanticId)}" data-resume-line-number="${lineNumber}">${escapeHtml(clean)}</${tag}>`;
+    return `<${tag} class="${className}" data-resume-layout-target="${escapeHtml(htmlPreviewLineIds[lineNumber] ?? semanticId)}" data-resume-line-number="${lineNumber}">${escapeHtml(clean)}</${tag}>`;
   };
   const isSection = (line: string) => {
     const trimmed = line.trim();
@@ -135,7 +136,7 @@ function buildPreviewHtmlFromText(text: string): string {
         const label = rawLabel.trim();
         const clean = `${label}: ${values.trim()}`.trim();
         lineNumber += 1;
-        body += `<li class="resume-skill-line" data-resume-layout-target="skills:line:${lineNumber}" data-resume-line-number="${lineNumber}"><b>${escapeHtml(label)}:</b> ${escapeHtml(values.trim())}</li>`;
+        body += `<li class="resume-skill-line" data-resume-layout-target="${escapeHtml(htmlPreviewLineIds[lineNumber] ?? `skills:line:${lineNumber}`)}" data-resume-line-number="${lineNumber}"><b>${escapeHtml(label)}:</b> ${escapeHtml(values.trim())}</li>`;
         continue;
       }
       closeList();
@@ -405,6 +406,7 @@ function jsonResponse(body: unknown) {
 }
 
 beforeEach(() => {
+  htmlPreviewLineIds={};
   htmlPreviewResumeText = sampleApplyReviewQueue.items[0]!.materialsPreview.resumeText;
   htmlPreviewOverride = null;
   const originalFetch = globalThis.fetch.bind(globalThis);
@@ -649,7 +651,6 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
   },
   evidence: {
     requiredIds: ["ev_platform_reliability"],
-    seniorityIds: ["ev_principal_scope"],
     representedIds: ["ev_platform_reliability"],
     missingIds: [],
     verifiedMetricCount: 2,
@@ -666,7 +667,7 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
     passed: true,
     verdict: "PASS",
     score: 0.93,
-    minScore: 0.84,
+
     issues: [],
     unsupportedClaims: [],
     fabrications: [],
@@ -757,7 +758,7 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
       evidenceNotes: ["ev_platform_reliability: platform ownership"],
     },
   ],
-  bulletProvenance: [],
+  bulletProvenance: [{bulletId:"experience:acme#0",section:"experience",sourceId:"ev_platform_reliability",sourceText:["Built platform services."],evidenceIds:["ev_platform_reliability"],requirementIds:["req-platform"],matchedKeywords:["platform reliability"],transformType:"rephrase",control:"evidence_reframing",rationale:"Experience was emphasized because it matches platform reliability.",generatedText:"Owned platform reliability improvements for incident response."}],
   coverageAudit: null,
   voicePass: null,
   models: {
@@ -771,6 +772,7 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
 
 const pinnedTailoringExplanation: ArtifactTailoringExplanation = {
   ...sampleTailoringExplanation,
+  lineFindings:[{lineId:"experience:acme#0",kind:"unsupported_claim",rationale:"Explicit verifier finding",determinationId:"e".repeat(64)}],
   quality: {
     ...sampleTailoringExplanation.quality,
     warnings: [
@@ -800,7 +802,7 @@ const pinnedTailoringExplanation: ArtifactTailoringExplanation = {
   },
   bulletProvenance: [
     {
-      bulletId: "pin-1",
+      bulletId: "experience:acme#0",
       section: "experience",
       sourceId: "ev_platform_reliability",
       evidenceIds: ["ev_platform_reliability"],
@@ -1131,12 +1133,45 @@ describe("<ApplyReviewView>", () => {
     expect(onTargetJobKeyChange).not.toHaveBeenCalled();
   });
 
+  it("retries saving the same review findings without starting a new review", async () => {
+    const user = userEvent.setup();
+    const thread = makeResumeCommentThread();
+    const draft = { ...makeResumeReviewDraft(), commentThreads: [thread] };
+    const seed = vi.fn<ReturnType<typeof buildTestPorts>["api"]["seedResumeReviewCommentThreads"]>()
+      .mockRejectedValueOnce(new Error("Comment storage unavailable"))
+      .mockResolvedValueOnce({ ok: true, draft, commentThreads: [thread], seededCount: 0, updatedCount: 1 });
+    const generateMaterials = vi.fn();
+    const tailorJob = vi.fn();
+    const renderResumeReviewDraft = vi.fn();
+    renderWithProviders(<ApplyReviewView />, { ports: buildTestPorts({ api: {
+      applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+      createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+      seedResumeReviewCommentThreads: seed, generateMaterials, tailorJob, renderResumeReviewDraft,
+    } }) });
+
+    const retry = await screen.findByRole("button", { name: "Retry saving review comments" });
+    expect(screen.getByText(/Retry saving the existing review findings; this does not run a new review/)).toBeInTheDocument();
+    expect(seed).toHaveBeenCalledTimes(1);
+    expect(seed.mock.calls[0]?.[1].threads.length).toBeGreaterThan(0);
+    await user.click(retry);
+    await waitFor(() => expect(seed).toHaveBeenCalledTimes(2));
+    expect(seed.mock.calls[1]).toEqual(seed.mock.calls[0]);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry saving review comments" })).not.toBeInTheDocument());
+    expect(generateMaterials).not.toHaveBeenCalled();
+    expect(tailorJob).not.toHaveBeenCalled();
+    expect(renderResumeReviewDraft).not.toHaveBeenCalled();
+  });
+
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
 
     expect(
       await screen.findByRole("heading", { name: "Principal Platform Engineer" }),
     ).toBeInTheDocument();
+    const coverText = screen.getByRole("region", { name: "Cover letter" });
+    expect(coverText).toHaveAttribute("tabindex", "0");
+    coverText.focus();
+    expect(coverText).toHaveFocus();
     const selectedHeader = document.querySelector(".apply-review-selected-head");
     expect(selectedHeader).toBeInstanceOf(HTMLElement);
     const header = within(selectedHeader as HTMLElement);
@@ -1170,9 +1205,11 @@ describe("<ApplyReviewView>", () => {
       const icon = button.querySelector('svg[data-icon="inline-start"]');
       expect(icon).toHaveAttribute("aria-hidden", "true");
     }
-    const submitGateAlert = screen.getByText("Submit gate: approval not recorded.").closest('[role="alert"]');
-    expect(submitGateAlert).toHaveTextContent("Authorization unavailable");
-    expect(submitGateAlert?.querySelector(".tabler-icon-lock")).toHaveAttribute("aria-hidden", "true");
+    const submitGates = decision.getByRole("table", { name: "Submit gates" });
+    const approvalRow = within(submitGates).getByRole("cell", { name: "Approval recorded" }).closest("tr");
+    expect(approvalRow).toHaveTextContent("not recorded");
+    expect(approvalRow?.querySelector(".tabler-icon-clock")).toHaveAttribute("aria-hidden", "true");
+    expect(approvalRow?.querySelector(".tabler-icon-check")).not.toBeInTheDocument();
     const authorizationDetails = decision.getByText("Technical details").closest("details");
     expect(authorizationDetails).not.toHaveAttribute("open");
     expect(authorizationDetails).toHaveTextContent("Profile version");
@@ -1998,6 +2035,83 @@ describe("<ApplyReviewView>", () => {
     );
   });
 
+  it("acknowledges a multiline HTML paste without remounting or repeating autosaves", async () => {
+    const draft = makeResumeReviewDraft();
+    let acknowledge!: () => void;
+    const save = vi.fn(async (_draftId, body) => {
+      await new Promise<void>((resolve) => { acknowledge = resolve; });
+      const saved = makeResumeReviewDraft(draft.jobKey, { ...body, revisionId: "paste-saved", revisionNumber: 2 });
+      return { ok: true as const, draft: saved, revision: saved.latestRevision! };
+    });
+    const render = vi.fn<ReturnType<typeof buildTestPorts>["api"]["renderResumeReviewDraft"]>();
+    const applyJob = vi.fn();
+    const { rerender } = renderWithProviders(<ApplyReviewView />, { ports: buildTestPorts({ api: {
+      applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+      createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+      saveResumeReviewDraftRevision: save, renderResumeReviewDraft: render, applyJob,
+      seedResumeReviewCommentThreads: vi.fn(async () => ({ ok: true as const, draft, commentThreads: [], seededCount: 0, updatedCount: 0 })),
+    } }) });
+    const editor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    // JSDOM omits contenteditable inheritance; Slate uses it to admit paste and
+    // map DOM selection. Keep this DOM capability shim local to these nodes.
+    Object.defineProperty(editor, "isContentEditable", { value: true });
+    const leaf = editor.querySelector('[data-slate-string]')!;
+    Object.defineProperty(leaf, "isContentEditable", { value: true });
+    await userEvent.click(editor);
+    const range = document.createRange();
+    range.setStart(leaf.firstChild!, 0);
+    range.collapse(true);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    fireEvent(document, new Event("selectionchange"));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 150)));
+    // Slate checks the DataTransfer constructor name for cross-window pastes.
+    const clipboardData = new (class DataTransfer {
+      types = ["text/html", "text/plain"];
+      files = [];
+      getData(type: string) { return type === "text/html" ? "<p>First synthetic pasted paragraph</p><p>Second synthetic pasted paragraph</p>"
+        : type === "text/plain" ? "First synthetic pasted paragraph\nSecond synthetic pasted paragraph" : ""; }
+    })();
+    fireEvent.paste(editor, { clipboardData });
+    await waitFor(() => expect(editor).toHaveTextContent("Second synthetic pasted paragraph"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0]?.[1].editedText).toContain("First synthetic pasted paragraph");
+    expect(save.mock.calls[0]?.[1].editedText).toContain("Second synthetic pasted paragraph");
+    await userEvent.click(editor);
+    const pastedLeaf = editor.querySelector('[data-slate-string]')!;
+    if (!Object.hasOwn(pastedLeaf, "isContentEditable")) Object.defineProperty(pastedLeaf, "isContentEditable", { value: true });
+    const caret = document.createRange();
+    caret.setStart(pastedLeaf.firstChild!, 2);
+    caret.collapse(true);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(caret);
+    // JSDOM does not position the caret on pointer input. Publish the range
+    // through the editor's pointer boundary before a rerender or save settles.
+    fireEvent.pointerUp(pastedLeaf, { button: 0, pointerType: "mouse" });
+    fireEvent(document, new Event("selectionchange"));
+    rerender(<ApplyReviewView />);
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 150)));
+    const selection = window.getSelection();
+    const anchor = selection?.anchorNode;
+    const offset = selection?.anchorOffset;
+    expect(anchor).toBe(pastedLeaf.firstChild);
+    expect(offset).toBe(2);
+    await act(async () => acknowledge());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Render replacement" })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBe(editor);
+    expect(editor).toHaveFocus();
+    expect(window.getSelection()?.anchorNode).toBe(anchor);
+    expect(window.getSelection()?.anchorOffset).toBe(offset);
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    // Longer than the production 1500 ms debounce: acknowledgements must stop it.
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 1700)));
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(render).not.toHaveBeenCalled();
+    expect(applyJob).not.toHaveBeenCalled();
+  });
+
   it("preserves later formatting and focus when a saved snapshot and stale seed response arrive", async () => {
     const draft = makeResumeReviewDraft();
     let acknowledge: (() => void) | undefined;
@@ -2177,6 +2291,7 @@ describe("<ApplyReviewView>", () => {
     const shadow = await findResumeShadowRoot();
     expect(shadowText(shadow)).toContain("Restored human rewrite for incident response.");
     expect(screen.queryByText("loading draft")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Authorize dry run for/ })).toBeDisabled();
     expect(createResumeReviewDraft).toHaveBeenCalled();
   });
 
@@ -2210,11 +2325,12 @@ describe("<ApplyReviewView>", () => {
       },
       layoutBoxCount: 3,
     } satisfies Extract<ResumeReviewDraftRenderResponse, { ok: true }>;
+    let renderCompleted = false;
     let resolveRender: ((response: typeof renderResponse) => void) | null = null;
     const renderResumeReviewDraft = vi.fn(
       () =>
         new Promise<typeof renderResponse>((resolve) => {
-          resolveRender = resolve;
+          resolveRender = (response) => { renderCompleted = true; resolve(response); };
         }),
     );
     const decideApplyReview = vi.fn(
@@ -2234,7 +2350,13 @@ describe("<ApplyReviewView>", () => {
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
         api: {
-          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          applyReviewQueue: vi.fn(async () => renderCompleted ? ({ ...sampleApplyReviewQueue,
+            items: sampleApplyReviewQueue.items.map((item, index) => index ? item : {
+              ...item, approvalGate: { ...item.approvalGate, materialsGeneration: 3 },
+              materialsPreview: { ...item.materialsPreview, resumeTextArtifactId: renderResponse.artifacts.resumeText.artifactId,
+                resumePdfArtifactId: renderResponse.artifacts.resumePdf.artifactId },
+            }),
+          }) : sampleApplyReviewQueue),
           createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
           decideApplyReview,
           renderResumeReviewDraft,
@@ -2252,7 +2374,8 @@ describe("<ApplyReviewView>", () => {
     await findResumeShadowRoot();
     const approveDryRun = screen.getByRole("button", { name: /Authorize dry run/i });
     await waitFor(() => expect(approveDryRun).not.toBeDisabled());
-    expect(screen.getByText("Saved draft will render automatically before approval.")).toBeInTheDocument();
+    const materialsGate = screen.getByRole("cell", { name: "Materials" }).closest("tr");
+    expect(materialsGate).toHaveTextContent("Saved draft will render automatically before approval.");
     expect(screen.getByRole("button", { name: /Defer for Principal Platform Engineer/i })).not.toBeDisabled();
     expect(screen.getByRole("button", { name: /Decline for Principal Platform Engineer/i })).not.toBeDisabled();
 
@@ -2412,6 +2535,16 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByRole("region", { name: "Tailored resume preview" })).toBeInTheDocument();
 
     if (loadNewActiveDraft) {
+      // Promotion belongs to the mounted session. A replacement may still
+      // arrive independently through the canonical draft read surface.
+      act(() => queryClient.setQueryData(applyReviewKeys.draft(LOCAL_TENANT, jobKey), {
+        ok: true, draft: {
+          ...draft, draftId: "draft-after-promotion", baseGeneration: 3,
+          baseResumeTextArtifactId: draftArtifact.artifactId, baseResumePdfArtifactId: "resume-review-pdf",
+          state: "active", currentRevisionId: null, latestRevisionNumber: 0,
+          latestRevision: null, commentThreads: [],
+        },
+      }));
       expect(await screen.findByText("draft ready")).toBeInTheDocument();
       expect(renderButton).toBeDisabled();
       expect(screen.queryByText("replacement rendered")).not.toBeInTheDocument();
@@ -2536,7 +2669,7 @@ describe("<ApplyReviewView>", () => {
     expect(artifact).not.toHaveBeenCalledWith(draftArtifact.artifactId);
   });
 
-  it("lets the user reply to a persisted JobCtrl comment inside its matched resume line", async () => {
+  it("retains a failed reply and retries it inside its matched resume line", async () => {
     htmlPreviewResumeText =
       "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.";
     const existingReply = {
@@ -2592,6 +2725,8 @@ describe("<ApplyReviewView>", () => {
       },
     }));
 
+    replyToResumeReviewComment.mockRejectedValueOnce(new Error("Synthetic reply transport failed. Try again."));
+
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
         api: {
@@ -2637,6 +2772,10 @@ describe("<ApplyReviewView>", () => {
     await userEvent.type(replyBox, "This number is supported by the incident response profile bullet.");
     await userEvent.click(inlineThreadContent.getByRole("button", { name: "Reply" }));
 
+    await screen.findByText("Synthetic reply transport failed. Try again.");
+    expect(replyBox).toHaveValue("This number is supported by the incident response profile bullet.");
+    await userEvent.click(inlineThreadContent.getByRole("button", { name: "Reply" }));
+    await waitFor(() => expect(replyToResumeReviewComment).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(replyToResumeReviewComment).toHaveBeenCalledWith("thread-claim-risk", {
         author: "user",
@@ -2751,6 +2890,7 @@ describe("<ApplyReviewView>", () => {
   });
 
   it("surfaces resume tailoring rationale in the apply review workspace", async () => {
+    htmlPreviewLineIds={2:"experience:acme#0"};
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -2760,7 +2900,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: sampleTailoringExplanation,
     }));
 
@@ -2795,6 +2935,49 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getAllByText("High-fit review").length).toBeGreaterThan(0);
     expect(artifact).toHaveBeenCalledWith("resume-text-2");
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
+  });
+
+  it("does not seed A's pins into B while its HTML is delayed or when B has no lines", async () => {
+    const original = sampleApplyReviewQueue.items[0]!;
+    const draftA = makeResumeReviewDraft(original.jobKey, null);
+    const next = { ...original, materialsPreview: { ...original.materialsPreview,
+      resumeTextArtifactId: "text-B", resumePdfArtifactId: "pdf-B", profileSourceFields: [] } };
+    const draftB = { ...draftA, draftId: "draft-B", baseGeneration: 2,
+      baseResumeTextArtifactId: "text-B", baseResumePdfArtifactId: "pdf-B" };
+    let queue = { ...sampleApplyReviewQueue, items: [original] };
+    const create = vi.fn(async (_jobId: string, body: { resumePdfArtifactId?: string }) => ({
+      ok: true as const, draft: body.resumePdfArtifactId === "pdf-B" ? draftB : draftA,
+    }));
+    const seed = vi.fn(async (draftId: string, _body: ResumeReviewCommentThreadSeedRequest) => ({
+      ok: true as const, draft: draftId === draftB.draftId ? draftB : draftA, commentThreads: [], seededCount: 1, updatedCount: 0,
+    }));
+    const fetchPreview = globalThis.fetch;
+    let releaseHtml!: (response: Response) => void;
+    const pendingHtml = new Promise<Response>((resolve) => { releaseHtml = resolve; });
+    const delayedFetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" || input instanceof URL ? input.toString() : input.url;
+      return url.includes("pdf-B") && url.includes("preview.html") ? pendingHtml : fetchPreview(input, init);
+    });
+    vi.stubGlobal("fetch", delayedFetch);
+    const queryClient = createTestQueryClient();
+    const applyJob = vi.fn();
+    renderWithProviders(<ApplyReviewView />, { queryClient, ports: buildTestPorts({ api: {
+      applyReviewQueue: vi.fn(async () => queue), createResumeReviewDraft: create,
+      seedResumeReviewCommentThreads: seed, applyJob,
+    } }) });
+    await waitFor(() => expect(seed).toHaveBeenCalledWith(draftA.draftId, expect.objectContaining({
+      threads: expect.arrayContaining([expect.objectContaining({ baseArtifactId: "resume-text-2" })]),
+    })));
+    queue = { ...queue, items: [next] };
+    act(() => queryClient.setQueryData(applyReviewKeys.queue(LOCAL_TENANT), queue));
+    await waitFor(() => expect(queryClient.getQueryData<{ draft: ResumeReviewDraft }>(
+      applyReviewKeys.draft(LOCAL_TENANT, original.jobKey))?.draft.draftId).toBe(draftB.draftId));
+    expect(delayedFetch.mock.calls.some(([input]) => String(input).includes("pdf-B"))).toBe(true);
+    expect(seed.mock.calls.filter(([id]) => id === draftB.draftId)).toEqual([]);
+    await act(async () => releaseHtml(new Response('<main class="resume-page"></main>', { status: 200 })));
+    await waitFor(() => expect(document.querySelector(".resume-plate-document .resume-page")).toBeTruthy());
+    expect(seed.mock.calls.filter(([id]) => id === draftB.draftId)).toEqual([]);
+    expect(applyJob).not.toHaveBeenCalled();
   });
 
   it("bounds generated comment seed identifiers for long profile source paths", async () => {
@@ -2856,6 +3039,7 @@ describe("<ApplyReviewView>", () => {
   });
 
   it("uses the resume preview as the selectable line-level claim surface", async () => {
+    htmlPreviewLineIds={2:"experience:acme#0"};
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -2865,7 +3049,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: pinnedTailoringExplanation,
     }));
 
@@ -2937,7 +3121,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: sourceBackedExplanation,
     }));
     const queueWithContextualResume = {
@@ -2968,16 +3152,10 @@ describe("<ApplyReviewView>", () => {
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
     const shadow = await findResumeShadowRoot();
     await selectResumeLine(shadow, "Led incident response handovers.");
-    await waitFor(() => expect(shadowText(shadow)).toContain("profile section"));
-    await waitFor(() => expect(shadowText(shadow)).toMatch(/Closest recorded Profile source field/i));
-    expect(screen.queryByText("source-backed")).not.toBeInTheDocument();
-    expect(screen.queryByText("claim risk")).not.toBeInTheDocument();
-    expect(screen.queryByText("No source evidence recorded for this line.")).not.toBeInTheDocument();
-    expect(shadowText(shadow)).not.toContain("Tailored resume line");
-    expect(shadowText(shadow)).toMatch(/Led incident response handovers/);
-    await waitFor(() => expect(shadowText(shadow)).toMatch(/No exact Profile source field was recorded/i));
-    await waitFor(() => expect(shadowText(shadow)).toMatch(/Signals reflected: platform reliability/i));
-    expect(shadowText(shadow)).not.toContain("Evidence basis");
+    await waitFor(() => expect(shadowText(shadow)).toContain("No recorded source"));
+    expect(shadowText(shadow)).not.toContain("Closest recorded Profile source field");
+    expect(shadowText(shadow)).not.toContain("Built platform services.");
+    expect(shadowText(shadow)).not.toContain("Signals reflected:");
     expect(screen.getByText("Artifact-level grounding and claim risk")).toBeInTheDocument();
     expect(shadowText(shadow)).not.toContain("Audit metadata gaps");
     expect(
@@ -2995,7 +3173,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: null,
     }));
 
@@ -3020,7 +3198,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByRole("region", { name: "Line-by-line resume audit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Resume audit line list" })).not.toBeInTheDocument();
     await selectResumeLine(shadow, "Owned platform reliability improvements for incident response.");
-    expect(shadowText(shadow)).toContain("missing source");
+    expect(shadowText(shadow)).toContain("No recorded source");
     await userEvent.click(lineOne);
     await waitFor(() => expect(shadowElementWithText(shadow, "Principal Platform Engineer").className).toContain("jobctrl-selected-line"));
   });
@@ -3072,9 +3250,10 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: explanationWithSkillProvenance,
     }));
+    htmlPreviewLineIds={4:"skills:platform_and_cloud#0"};
     htmlPreviewResumeText = queueWithSkillsLine.items[0]!.materialsPreview.resumeText;
 
     renderWithProviders(<ApplyReviewView />, {
@@ -3123,10 +3302,11 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: sampleTailoringExplanation,
     }));
     htmlPreviewResumeText = queueWithProfileHeader.items[0]!.materialsPreview.resumeText;
+    htmlPreviewOverride=buildPreviewHtmlFromText(htmlPreviewResumeText!).replace('data-resume-line-number="1"','data-resume-line-number="1" data-resume-profile-field="personal.full_name"');
 
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
@@ -3194,10 +3374,11 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: sampleTailoringExplanation,
     }));
     htmlPreviewResumeText = queueWithPositionSummary.items[0]!.materialsPreview.resumeText;
+    htmlPreviewOverride=buildPreviewHtmlFromText(htmlPreviewResumeText!).replace('data-resume-line-number="5"','data-resume-line-number="5" data-resume-profile-field="resume.experience_entries.0.summary"');
 
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
@@ -3853,7 +4034,11 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByText("Email application")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Email application" })).toBeInTheDocument();
+    const emailBody = screen.getByRole("region", { name: "Email application body" });
+    expect(emailBody).toHaveAttribute("tabindex", "0");
+    emailBody.focus();
+    expect(emailBody).toHaveFocus();
     expect(screen.getAllByText("apply@example.com").length).toBeGreaterThan(0);
     expect(screen.getByText("Jordan_Resume.pdf")).toBeInTheDocument();
 

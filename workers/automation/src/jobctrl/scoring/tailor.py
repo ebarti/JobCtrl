@@ -28,17 +28,22 @@ import logging
 import sqlite3
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
+from uuid import uuid4
 
 from jobctrl import database as db_module
 from jobctrl import config
 from jobctrl.config import TAILORED_DIR
 from jobctrl.database import get_connection, get_jobs_by_stage
+from jobctrl.domain.determinations import serialized_determination_failure
+from jobctrl.domain.errors import MATERIAL_REJECTION_STATUSES
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
 from jobctrl.domain.materials.use_cases import (
     ArtifactBudgetInfeasibleError,
+    MaterialsChangedDuringGeneration,
     TailorOutcome,
     TailoringLlmPolicy,
     TailoringPrerequisiteError,
@@ -48,6 +53,7 @@ from jobctrl.domain.materials.use_cases import (
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmPort
 from jobctrl.domain.ports.materials import (
+    ArtifactTextWriter,
     BulletProvenanceRepository,
     MaterialsRepository,
     PdfRendererPort,
@@ -56,7 +62,6 @@ from jobctrl.domain.ports.materials import (
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring.eligibility import (
     eligibility_blocks_downstream,
-    normalize_eligibility_for_downstream,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.llm import get_llm_adapter
@@ -68,11 +73,20 @@ from jobctrl.infrastructure.materials import (
     SqliteTailoringPolicyRepository,
     SqliteUnitOfWork,
 )
+from jobctrl.infrastructure.materials.artifact_writer import LocalArtifactTextWriter
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
 from jobctrl.infrastructure.preparation_recovery import (
+    MaterialAttemptSuperseded,
+    MaterialActivityAttempt,
+    PreparationReservationLost,
+    assert_direct_material_attempt_not_superseded,
+    assert_material_activity_attempt_not_superseded,
     assert_material_activity_commit_allowed,
     claim_preparation_reservation,
     owns_preparation_reservation,
+    material_admission_write,
+    material_activity_may_recover,
+    material_start_event_id,
     stage_completed_by_activity_owner,
 )
 from jobctrl.infrastructure.scoring import (
@@ -80,7 +94,9 @@ from jobctrl.infrastructure.scoring import (
     SqliteScoreRepository,
 )
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+from jobctrl.scoring.material_lifecycle import preserve_direct_attempt_result
 from jobctrl.scoring.employer_analysis import build_analyze_use_case
+from jobctrl.infrastructure.materials.cover_letter_policy import reconcile_cover_letter_policy
 from jobctrl.state import (
     ensure_job_stage_rows,
     reconcile_score_eligibility_blockers,
@@ -105,6 +121,9 @@ def _tailor_failure_details(result: dict) -> tuple[str, str, str]:
     """Return bounded canonical diagnostics for one Tailor failure."""
 
     status = str(result.get("status") or "error")
+    semantic_failure = serialized_determination_failure(result.get("error"))
+    if semantic_failure is not None:
+        return semantic_failure.code.upper(), str(semantic_failure), "semantic_determination_failed"
     error = str(result.get("error") or "").strip().casefold()
     if any(message in error for message in _TAILOR_INPUTS_CHANGED_ERRORS):
         return (
@@ -127,24 +146,20 @@ def _build_llm_policy(
     *,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
 ) -> TailoringLlmPolicy:
     configured_models = config.get_tailoring_generator_models()
     configured_judge_model = config.get_tailoring_judge_model()
-    judge_min_score = (
-        config.get_tailoring_judge_min_score() if tailor_judge_min_score is None else tailor_judge_min_score
-    )
     return TailoringLlmPolicy(
         candidate_models=tailor_models or configured_models or ((llm_model,) if llm_model else ()),
         judge_model=tailor_judge_model or configured_judge_model or llm_model,
-        judge_min_score=judge_min_score,
     )
 
 
 def _build_analyze_use_case(
     *,
     conn,
+    tenant_id: TenantId = LOCAL_TENANT,
     publisher: EventPublisher | None = None,
 ):
     """Construct the :class:`AnalyzeJobUseCase` for the tailor sub-step (D-20).
@@ -156,34 +171,50 @@ def _build_analyze_use_case(
     projection + SSE). A missing Gemini key degrades the Antigravity leg to a
     recorded per-leg failure (failure mode #2), never a hard fail.
     """
-    return build_analyze_use_case(conn=conn, publisher=publisher, event_stage="tailor")
+    return build_analyze_use_case(conn=conn, tenant_id=tenant_id, publisher=publisher, event_stage="tailor")
 
 
 def _build_voice_port():
-    """Construct the optional Claude voice pass only when provider auth is ready.
-
-    Mirrors ``_build_analyze_use_case``'s SDK wiring: the voice pass is a NEW AI
-    transform, so it runs through the Claude Agent SDK behind the ``VoicePort``
-    seam, not the legacy httpx client (the all-new-AI-via-SDK directive).
-    """
+    """Honor a saved core route; retain the legacy optional Claude default."""
     from jobctrl.infrastructure.setup_probes import probe_claude_auth
+    from jobctrl.infrastructure.llm.provider_availability import provider_route_available
+    from jobctrl.infrastructure.scoring.criteria_provider import read_default_llm_model, read_preferred_model
+
+    if read_default_llm_model():
+        from jobctrl.infrastructure.llm import get_llm_adapter
+        from jobctrl.infrastructure.materials.voice_adapter import LlmVoiceAdapter
+
+        llm = get_llm_adapter()
+        if not provider_route_available(llm.provider_id, llm.model):
+            return None
+        return LlmVoiceAdapter(llm=llm, provider_id=llm.provider_id, model=llm.model)
 
     if not probe_claude_auth().ok:
         return None
 
-    from jobctrl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
+    from jobctrl.infrastructure.materials.voice_adapter import CLAUDE_VOICE_MODEL, ClaudeVoiceAdapter
 
-    return ClaudeVoiceAdapter()
+    selected_model = read_preferred_model("claude") or CLAUDE_VOICE_MODEL
+    if not provider_route_available("claude", selected_model):
+        return None
+    return ClaudeVoiceAdapter(model=selected_model)
 
 
 def _build_use_case(
     *,
+    tenant_id: TenantId = LOCAL_TENANT,
     repository: MaterialsRepository | None = None,
     llm_port: LlmPort | None = None,
     publisher: EventPublisher | None = None,
     validator: ContentValidator | None = None,
+    claim_verifier=None,
+    quality_judge=None,
+    job_interpreter=None,
+    evidence_selector=None,
+    preflight=None,
     assembler: ResumeAssembler | None = None,
     llm_policy: TailoringLlmPolicy | None = None,
+    artifact_writer: ArtifactTextWriter | None = None,
     policy_repository: TailoringPolicyRepository | None = None,
     provenance_repository: BulletProvenanceRepository | None = None,
     requirement_fit_repository=None,
@@ -221,23 +252,66 @@ def _build_use_case(
     if llm_policy is None:
         llm_policy = _build_llm_policy()
     if analyze_use_case is None:
-        analyze_use_case = _build_analyze_use_case(conn=conn, publisher=publisher)
+        analyze_use_case = _build_analyze_use_case(conn=conn, tenant_id=tenant_id, publisher=publisher)
+    voice_skip_reason = "no_voice_port"
     if voice is None:
-        voice = _build_voice_port()
+        if config.get_resume_voice_polish_enabled():
+            voice = _build_voice_port()
+        else:
+            voice_skip_reason = "optional_voice_polish_disabled"
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
+    from jobctrl.infrastructure.determinations import determination_dependencies
+    from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
+
+    deps = determination_dependencies(conn, tenant_id=tenant_id, lane="tailoring", adapter=llm_port)
+    review_deps = deps
+    if (claim_verifier is None or quality_judge is None) and llm_policy.effective_judge_model != DEFAULT_PIPELINE_LLM_MODEL_SPEC:
+        review_deps = determination_dependencies(
+            conn, tenant_id=tenant_id, lane="tailoring", model_spec=llm_policy.effective_judge_model,
+        )
+    from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
+    from jobctrl.domain.materials.evidence_selection import DeferredMaterialEvidenceSelector, ModelMaterialEvidenceSelector
+    from jobctrl.infrastructure.enrichment.interpretation import PersistedJobInterpreter
+
+    def build_evidence_selector():
+        primary = llm_policy.effective_candidate_models[0]
+        selection_deps = deps if primary == DEFAULT_PIPELINE_LLM_MODEL_SPEC else determination_dependencies(
+            conn, tenant_id=tenant_id, lane="tailoring", model_spec=primary,
+        )
+        return ModelMaterialEvidenceSelector(**selection_deps)
+
+    from jobctrl.infrastructure.materials.letter_reviews import ParallelLetterReviews
+
+    database = conn.execute("PRAGMA database_list").fetchone()[2]
+    # Caller-owned ports retain their caller-thread behavior. Production model
+    # reviews use the existing shared bounded pool and thread-owned connections.
+    parallel_reviews = (
+        ParallelLetterReviews(Path(database).resolve(), review_deps)
+        if database and claim_verifier is None and quality_judge is None else None
+    )
     return TailorResumeUseCase(
+        parallel_reviews=parallel_reviews,
         repository=repository,
         llm=llm_port,
         validator=validator,
+        claim_verifier=claim_verifier if claim_verifier is not None else ModelClaimVerifier(**review_deps),
+        preflight=preflight if preflight is not None else deps["preflight"],
         assembler=assembler,
+        job_interpreter=job_interpreter
+        if job_interpreter is not None
+        else PersistedJobInterpreter(conn, tenant_id=tenant_id),
+        quality_judge=quality_judge if quality_judge is not None else ModelArtifactQualityJudge(**review_deps),
+        evidence_selector=evidence_selector if evidence_selector is not None else DeferredMaterialEvidenceSelector(build_evidence_selector),
         publisher=publisher,
         llm_policy=llm_policy,
+        artifact_writer=artifact_writer if artifact_writer is not None else LocalArtifactTextWriter(),
         policy_repository=policy_repository,
         provenance_repository=provenance_repository,
         requirement_fit_repository=requirement_fit_repository,
         analyze_use_case=analyze_use_case,
         voice=voice,
+        voice_skip_reason=voice_skip_reason,
         pdf_renderer=pdf_renderer,
         unit_of_work=unit_of_work if default_flip_repositories else None,
     )
@@ -337,6 +411,7 @@ def _tailor_one_job(
     pdf_renderer: PdfRendererPort | None = None,
     retailor: bool = False,
     suppress_existing_artifacts: bool = False,
+    allow_low_fit_override: bool = False,
     tenant_id: TenantId = LOCAL_TENANT,
     llm_policy: TailoringLlmPolicy | None = None,
     commit_guard=None,
@@ -351,7 +426,7 @@ def _tailor_one_job(
     """
     _ = resume_text  # legacy parameter — ignored
     if use_case is None:
-        use_case = _build_use_case(llm_policy=llm_policy, pdf_renderer=pdf_renderer)
+        use_case = _build_use_case(tenant_id=tenant_id, llm_policy=llm_policy, pdf_renderer=pdf_renderer)
         requirement_fit_report = _load_requirement_fit_report_for_job(
             tenant_id=tenant_id,
             job=job,
@@ -372,6 +447,7 @@ def _tailor_one_job(
         tenant_id=tenant_id,
         retailor=retailor,
         suppress_existing_artifacts=suppress_existing_artifacts,
+        allow_low_fit_override=allow_low_fit_override,
         requirement_fit_report=requirement_fit_report,
         commit_guard=commit_guard,
         audit_execution_id=audit_execution_id,
@@ -454,12 +530,12 @@ def run_tailoring(
     tenant_id: TenantId = LOCAL_TENANT,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict:
     """Freeze an eligible cohort, then use the canonical per-job lifecycle.
 
@@ -476,26 +552,37 @@ def run_tailoring(
     conn = get_connection()
     min_score = db_module.effective_tailoring_min_score(min_score)
     jobs = get_jobs_by_stage(
-        conn=conn, stage="pending_tailor", min_score=min_score,
-        limit=0, retailor=retailor,
+        conn=conn,
+        stage="pending_tailor",
+        min_score=min_score,
+        limit=0,
+        retailor=retailor,
     )
-    job_ids = tuple(dict.fromkeys(
-        canonical_job_id(str(job["job_id"]))
-        for job in jobs
-        if str(job.get("tenant_id") or tenant_id) == str(tenant_id)
-        and (not workflow_id or not stage_completed_by_activity_owner(
-            conn, tenant_id=str(tenant_id), job_id=str(job["job_id"]),
-            stage="tailor", workflow_id=workflow_id,
-        ))
-    ))
+    job_ids = tuple(
+        dict.fromkeys(
+            canonical_job_id(str(job["job_id"]))
+            for job in jobs
+            if str(job.get("tenant_id") or tenant_id) == str(tenant_id)
+            and (
+                not workflow_id
+                or not stage_completed_by_activity_owner(
+                    conn,
+                    tenant_id=str(tenant_id),
+                    job_id=str(job["job_id"]),
+                    stage="tailor",
+                    workflow_id=workflow_id,
+                )
+            )
+        )
+    )
     if limit > 0:
         job_ids = job_ids[:limit]
     if not job_ids:
         return {"approved": 0, "failed": 0, "errors": 0, "elapsed": 0.0}
 
     llm_policy = _build_llm_policy(
-        tailor_models=tailor_models, tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score, llm_model=llm_model,
+        tailor_models=tailor_models,
+        tailor_judge_model=tailor_judge_model,
     )
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
@@ -504,16 +591,26 @@ def run_tailoring(
     def run_one(job_id: JobId) -> dict:
         try:
             return tailor_job_by_id(
-                job_id, min_score=min_score, validation_mode=validation_mode,
-                workers=workers, retailor=retailor, snapshot=snapshot,
-                tenant_id=tenant_id, llm_model=llm_model,
-                tailor_models=tailor_models, tailor_judge_model=tailor_judge_model,
-                tailor_judge_min_score=tailor_judge_min_score,
-                pdf_renderer=pdf_renderer, llm_policy=llm_policy,
-                workflow_id=workflow_id, cancel_event=cancel_event,
+                job_id,
+                min_score=min_score,
+                validation_mode=validation_mode,
+                workers=workers,
+                retailor=retailor,
+                snapshot=snapshot,
+                tenant_id=tenant_id,
+                llm_model=llm_model,
+                tailor_models=tailor_models,
+                tailor_judge_model=tailor_judge_model,
+                pdf_renderer=pdf_renderer,
+                llm_policy=llm_policy,
+                workflow_id=workflow_id,
+                cancel_event=cancel_event,
                 suppress_existing_artifacts=suppress_existing_artifacts,
                 allow_low_fit_override=allow_low_fit_override,
+                **({"temporal_attempt": temporal_attempt} if temporal_attempt is not None else {}),
             )
+        except PreparationReservationLost:
+            raise
         except Exception as exc:  # noqa: BLE001 - finish the cohort before aggregate escalation
             if cancel_event is not None and cancel_event.is_set():
                 raise
@@ -525,8 +622,11 @@ def run_tailoring(
 
     counts = {"approved": 0, "blocked": 0, "failed": 0, "errors": 0, "exhausted": 0}
     for _job_id, result in run_material_jobs(
-        job_ids, workers=workers, cancel_event=cancel_event,
-        stage="tailor", run_one=run_one,
+        job_ids,
+        workers=workers,
+        cancel_event=cancel_event,
+        stage="tailor",
+        run_one=run_one,
     ):
         status = str(result.get("status") or "error")
         if status == "exhausted":
@@ -555,7 +655,6 @@ def tailor_job_by_url(
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     pdf_renderer: PdfRendererPort | None = None,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
@@ -580,7 +679,6 @@ def tailor_job_by_url(
         llm_model=llm_model,
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score,
         pdf_renderer=pdf_renderer,
         suppress_existing_artifacts=suppress_existing_artifacts,
         allow_low_fit_override=allow_low_fit_override,
@@ -588,6 +686,7 @@ def tailor_job_by_url(
     )
 
 
+@preserve_direct_attempt_result("tailor")
 def tailor_job_by_id(
     job_id: JobId,
     *,
@@ -600,14 +699,15 @@ def tailor_job_by_id(
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     pdf_renderer: PdfRendererPort | None = None,
     llm_policy: TailoringLlmPolicy | None = None,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    explicit_material_request: bool = True,
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
     recovery_workflow_id: str | None = None,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict:
     """Tailor one active, eligible JobId for its tenant-scoped preparation step.
 
@@ -620,8 +720,42 @@ def tailor_job_by_id(
         raise RuntimeError("tailor activity canceled before dispatch")
     stable_job_id = canonical_job_id(str(job_id))
     conn = get_connection()
+    direct_start = (
+        material_start_event_id(conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="tailor")
+        if not workflow_id and temporal_attempt is None else None
+    )
+    guarded_admission = temporal_attempt is not None or direct_start is not None
+
+    def admission_write_boundary():
+        if temporal_attempt is not None:
+            return SqliteUnitOfWork(conn)
+        if direct_start is not None:
+            return material_admission_write(conn)
+        return nullcontext()
+
+    def attempt_start_guard() -> None:
+        assert_direct_material_attempt_not_superseded(
+            conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="tailor", observed_start=direct_start,
+        )
+        assert_material_activity_attempt_not_superseded(
+            conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="tailor",
+            workflow_id=workflow_id, attempt=temporal_attempt,
+        )
+
+    attempt_start_guard()
+    from jobctrl.infrastructure.materials.manual_decline import material_request_declined
+
+    if material_request_declined(
+        conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor",
+        explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+    ):
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
     if recovery_workflow_id and not owns_preparation_reservation(
-        conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor", workflow_id=recovery_workflow_id,
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        stage="tailor",
+        workflow_id=recovery_workflow_id,
     ):
         return {"job_id": str(stable_job_id), "status": "skipped", "reason": "reservation_lost"}
     target_reader = SqlitePreparationTargetReader(conn)
@@ -637,13 +771,15 @@ def tailor_job_by_id(
     # salary-only scores may still carry SCORE_ELIGIBILITY_BLOCKED rows from
     # the old policy; clearing them after selection would skip this invocation
     # and strand the preparation workflow until another external trigger.
-    score_skip_reason = _reconcile_score_eligibility_skip(
-        conn,
-        job_id=stable_job_id,
-        tenant_id=tenant_id,
-        min_score=min_score,
-        allow_low_fit_override=allow_low_fit_override,
-    )
+    with admission_write_boundary():
+        attempt_start_guard()
+        score_skip_reason = _reconcile_score_eligibility_skip(
+            conn,
+            job_id=stable_job_id,
+            tenant_id=tenant_id,
+            min_score=min_score,
+            allow_low_fit_override=allow_low_fit_override,
+        )
     if score_skip_reason is not None:
         conn.commit()
         return {
@@ -653,12 +789,17 @@ def tailor_job_by_id(
             "reason": score_skip_reason,
         }
 
+    reconcile_cover_letter_policy(conn, tenant_id=tenant_id, job_id=stable_job_id)
+
     existing_materials = _reconcile_existing_approved_resume(
         conn,
         tenant_id=tenant_id,
         job_id=stable_job_id,
         retailor=retailor,
         workflow_id=workflow_id,
+        commit_guard=attempt_start_guard if guarded_admission else None,
+        preserve_running_owner=direct_start is not None,
+        temporal_attempt=temporal_attempt,
     )
     if existing_materials is not None:
         return {
@@ -693,34 +834,62 @@ def tailor_job_by_id(
         recovery_workflow_id=recovery_workflow_id,
     )
     if job is None:
-        if _record_tailor_enrichment_block(
-            conn,
-            job_id=stable_job_id,
-            tenant_id=tenant_id,
-            discovered_at=target.get("discovered_at"),
-        ):
-            conn.commit()
-            return {
-                "url": target["url"],
-                "job_id": str(stable_job_id),
-                "status": "skipped",
-                "reason": "enrichment_quarantined",
-            }
-        _record_tailor_skip(
-            conn,
-            job_id=stable_job_id,
-            tenant_id=tenant_id,
-            discovered_at=target.get("discovered_at"),
-            reason="not_eligible",
-            message="Tailoring skipped because the job is not currently eligible.",
-        )
-        conn.commit()
+        with admission_write_boundary():
+            attempt_start_guard()
+            if _record_tailor_enrichment_block(
+                conn, job_id=stable_job_id, tenant_id=tenant_id,
+                discovered_at=target.get("discovered_at"),
+            ):
+                if temporal_attempt is None:
+                    conn.commit()
+                return {
+                    "url": target["url"], "job_id": str(stable_job_id),
+                    "status": "skipped", "reason": "enrichment_quarantined",
+                }
+            _record_tailor_skip(
+                conn, job_id=stable_job_id, tenant_id=tenant_id,
+                discovered_at=target.get("discovered_at"), reason="not_eligible",
+                message="Tailoring skipped because the job is not currently eligible.",
+            )
+            if temporal_attempt is None:
+                conn.commit()
         return {
             "url": target["url"],
             "job_id": str(stable_job_id),
             "status": "skipped",
             "reason": "not_eligible",
         }
+
+    # Resolve preparation availability before provider setup; any refresh runs
+    # after releasing reconciler writes. Recent uncertainty needs no acquisition.
+    conn.commit()
+    from jobctrl.enrichment.availability import require_preparation_available
+
+    expected_posting_url = job["url"]
+    require_preparation_available(
+        str(stable_job_id),
+        tenant_id=str(tenant_id),
+        conn=conn,
+        expected_posting_url=expected_posting_url,
+    )
+    with claim_preparation_reservation(
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        stage="tailor",
+        workflow_id=None,
+        cancel_event=cancel_event,
+        expected_posting_url=expected_posting_url,
+    ):
+        attempt_start_guard()
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
+        job = target_reader.load(tenant_id, stable_job_id)
+    if job is None:
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "availability_candidate_changed"}
 
     if snapshot is None:
         from jobctrl.infrastructure.profile import get_profile_repository
@@ -735,7 +904,6 @@ def tailor_job_by_id(
     llm_policy = llm_policy or _build_llm_policy(
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score,
         llm_model=llm_model,
     )
 
@@ -744,9 +912,20 @@ def tailor_job_by_id(
     if recovery_workflow_id:
         conn.commit()
     with claim_preparation_reservation(
-        conn, tenant_id=tenant_id, job_id=stable_job_id,
-        stage="tailor", workflow_id=recovery_workflow_id, cancel_event=cancel_event,
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        stage="tailor",
+        workflow_id=recovery_workflow_id,
+        cancel_event=cancel_event,
+        expected_posting_url=expected_posting_url,
     ):
+        attempt_start_guard()
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
         ensure_job_stage_rows(
             conn,
             stable_job_id,
@@ -754,6 +933,7 @@ def tailor_job_by_id(
             discovered_at=job.get("discovered_at"),
         )
         started_at = utc_now()
+        material_attempt_id = uuid4().hex
         prior_attempts = _tailor_attempt_count(
             conn,
             tenant_id=tenant_id,
@@ -789,18 +969,26 @@ def tailor_job_by_id(
             "StageStarted",
             tenant_id=tenant_id,
             message="Tailoring started",
+            payload={
+                "materialAttemptId": material_attempt_id,
+                **({
+                    "temporalRunId": temporal_attempt.run_id or workflow_id,
+                    "temporalActivityId": temporal_attempt.activity_id,
+                    "temporalAttempt": temporal_attempt.number,
+                } if temporal_attempt is not None else {}),
+            },
         )
         conn.commit()
 
     def commit_guard() -> None:
-        assert_material_activity_commit_allowed(
-            conn,
-            tenant_id=str(tenant_id),
-            job_id=str(stable_job_id),
-            stage="tailor",
-            workflow_id=workflow_id,
-            cancel_event=cancel_event,
-        )
+        try:
+            assert_material_activity_commit_allowed(
+                conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="tailor",
+                workflow_id=workflow_id, cancel_event=cancel_event, attempt_id=material_attempt_id,
+            )
+        except MaterialAttemptSuperseded as exc:
+            exc.material_url = str(target.get("url") or "")
+            raise
 
     try:
         result = _tailor_one_job(
@@ -812,6 +1000,7 @@ def tailor_job_by_id(
             pdf_renderer=pdf_renderer,
             retailor=retailor,
             suppress_existing_artifacts=suppress_existing_artifacts,
+            allow_low_fit_override=allow_low_fit_override,
             tenant_id=tenant_id,
             llm_policy=llm_policy,
             commit_guard=commit_guard,
@@ -819,6 +1008,16 @@ def tailor_job_by_id(
             durable_attempt=current_attempt,
         )
         commit_guard()
+    except MaterialsChangedDuringGeneration:
+        from jobctrl.scoring.material_lifecycle import settle_stale_material_attempt
+
+        settle_stale_material_attempt(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor", attempt_id=material_attempt_id,
+            started_at=started_at, prior_attempts=prior_attempts, workflow_id=workflow_id,
+            reason="materials_changed_during_tailoring",
+        )
+        return {"url": target["url"], "job_id": str(stable_job_id),
+                "status": "skipped", "reason": "materials_changed_during_tailoring"}
     except TailoringPrerequisiteError as exc:
         with SqliteUnitOfWork(conn):
             commit_guard()
@@ -867,6 +1066,7 @@ def tailor_job_by_id(
             retailor=retailor,
             workflow_id=workflow_id,
             commit_guard=commit_guard,
+            temporal_attempt=temporal_attempt,
         )
         if committed is not None:
             return {
@@ -920,10 +1120,16 @@ def tailor_job_by_id(
                 tenant_id=tenant_id,
                 reason="tailor_stage_completed",
             )
+            reconcile_cover_letter_policy(conn, tenant_id=tenant_id, job_id=stable_job_id)
         else:
             exhausted = current_attempt >= MAX_ATTEMPTS
             durable_exhausted = exhausted
             error_code, error_message, failure_reason = _tailor_failure_details(result)
+            semantic_failure = serialized_determination_failure(result.get("error"))
+            retryable = (
+                not exhausted and str(result.get("status") or "error") not in MATERIAL_REJECTION_STATUSES
+                and (semantic_failure is None or semantic_failure.retryable)
+            )
             set_stage_state(
                 conn,
                 stable_job_id,
@@ -936,7 +1142,7 @@ def tailor_job_by_id(
                 finished_at=finished_at,
                 error_code=error_code,
                 error_message=error_message,
-                retryable=not exhausted,
+                retryable=retryable,
                 next_action=(
                     f"jobctrl retry tailor {job['url']} --reset-attempts"
                     if exhausted
@@ -957,7 +1163,7 @@ def tailor_job_by_id(
                     "generationAttempts": generation_attempts,
                     "generationStatus": str(result.get("status") or "error"),
                     "failureReason": failure_reason,
-                    "retryable": not exhausted,
+                    "retryable": retryable,
                 },
             )
     if durable_exhausted:
@@ -1037,6 +1243,8 @@ def _reconcile_existing_approved_resume(
     retailor: bool,
     workflow_id: str | None,
     commit_guard=None,
+    preserve_running_owner: bool = False,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ):
     """Treat the committed resume as authoritative after activity replay."""
     materials = SqliteMaterialsRepository(conn).load_current_approved(
@@ -1077,6 +1285,12 @@ def _reconcile_existing_approved_resume(
         with SqliteUnitOfWork(conn):
             if commit_guard is not None:
                 commit_guard()
+            guarded_recovery = preserve_running_owner or workflow_id or temporal_attempt is not None
+            if guarded_recovery and not material_activity_may_recover(
+                conn, tenant_id=str(tenant_id), job_id=str(job_id), stage="tailor",
+                workflow_id=workflow_id, attempt=temporal_attempt,
+            ):
+                return materials
             set_stage_state(
                 conn,
                 job_id,
@@ -1087,6 +1301,7 @@ def _reconcile_existing_approved_resume(
                 metadata={"activityOwner": workflow_id} if workflow_id else None,
                 validate_transition=False,
             )
+            reconcile_cover_letter_policy(conn, tenant_id=tenant_id, job_id=job_id)
             record_job_event(
                 conn,
                 job_id,
@@ -1111,7 +1326,7 @@ def _reconcile_score_eligibility_skip(
     score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
     if score is None:
         return None
-    eligibility = normalize_eligibility_for_downstream(score.breakdown.eligibility)
+    eligibility = score.breakdown.eligibility
     if not eligibility_blocks_downstream(eligibility):
         reconcile_score_eligibility_blockers(
             conn,
@@ -1119,12 +1334,10 @@ def _reconcile_score_eligibility_skip(
             job_id=score.job_id,
             eligibility_status=eligibility.status,
             hard_blockers=list(eligibility.hard_blockers),
+            hard_blocker_categories=eligibility.hard_blocker_categories,
+            hard_blocker_citations=eligibility.hard_blocker_citations,
         )
-        effective_min_score = (
-            0
-            if allow_low_fit_override
-            else db_module.effective_tailoring_min_score(min_score)
-        )
+        effective_min_score = 0 if allow_low_fit_override else db_module.effective_tailoring_min_score(min_score)
         if score.fit_score.value < effective_min_score:
             row = conn.execute(
                 "SELECT discovered_at FROM jobs WHERE tenant_id = ? AND job_id = ?",
@@ -1162,6 +1375,8 @@ def _reconcile_score_eligibility_skip(
         job_id=score.job_id,
         eligibility_status=eligibility.status,
         hard_blockers=list(eligibility.hard_blockers),
+        hard_blocker_categories=eligibility.hard_blocker_categories,
+        hard_blocker_citations=eligibility.hard_blocker_citations,
     )
     return "score_eligibility_blocked"
 
@@ -1231,10 +1446,7 @@ def _record_tailor_requirement_fit_block(
 ) -> None:
     """Block Tailor on incoherent Score evidence without consuming a retry."""
 
-    message = (
-        "Tailoring is waiting for Scoring to refresh requirement-fit evidence "
-        "for the current posting analysis."
-    )
+    message = "Tailoring is waiting for Scoring to refresh requirement-fit evidence for the current posting analysis."
     block_metadata = {
         **(metadata or {}),
         "condition": error.reason,
@@ -1378,15 +1590,18 @@ def _load_tailor_eligible_job_by_id(
     ).fetchone()
     if score_stage is not None and str(score_stage["state"]) != "succeeded":
         return None
-    if conn.execute(
-        """
+    if (
+        conn.execute(
+            """
         SELECT 1
         FROM job_score_staleness
         WHERE tenant_id = ? AND job_id = ? AND resolved = 0
         LIMIT 1
         """,
-        (str(tenant_id), str(stable_job_id)),
-    ).fetchone() is not None:
+            (str(tenant_id), str(stable_job_id)),
+        ).fetchone()
+        is not None
+    ):
         return None
     posting_state = conn.execute(
         """
@@ -1406,9 +1621,7 @@ def _load_tailor_eligible_job_by_id(
         }:
             return None
         confidence = str(posting_state["latest_confidence"] or "").lower()
-        quarantine_reason = str(
-            posting_state["latest_quarantine_reason"] or ""
-        ).lower()
+        quarantine_reason = str(posting_state["latest_quarantine_reason"] or "").lower()
         if confidence == "low" and quarantine_reason not in {"", "none"}:
             return None
     tailor_stage = conn.execute(
@@ -1425,14 +1638,23 @@ def _load_tailor_eligible_job_by_id(
         if tailor_state == "exhausted" or attempt_count >= MAX_ATTEMPTS:
             return None
         owns_queue = tailor_state == "queued" and owns_preparation_reservation(
-            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor", workflow_id=recovery_workflow_id,
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            stage="tailor",
+            workflow_id=recovery_workflow_id,
         )
-        if not retailor and not owns_queue and tailor_state not in {
-            "pending",
-            "running",
-            "failed",
-            "stale",
-        }:
+        if (
+            not retailor
+            and not owns_queue
+            and tailor_state
+            not in {
+                "pending",
+                "running",
+                "failed",
+                "stale",
+            }
+        ):
             return None
     score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
     if score is None:

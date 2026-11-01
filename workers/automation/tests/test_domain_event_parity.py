@@ -7,7 +7,10 @@ import re
 from pathlib import Path
 
 from jobctrl.domain.events import (
+    ApplicationEmailFeedbackIngestedPayload,
     DOMAIN_EVENT_TYPES,
+    SourceLocationCandidateReviewedPayload,
+    InterviewQuestionNoteSavedPayload,
     EnrichmentFetchRecheckedPayload,
     DiscoveryExecutionRefLike,
     DuplicateJobLinkedPayload,
@@ -102,5 +105,22 @@ def test_pipeline_step_payload_fields_match_typescript() -> None:
     _assert_payload_field_parity(PipelineStepFailedPayload, "PipelineStepFailedPayload")
 
 
+def test_application_email_feedback_payload_fields_match_typescript() -> None:
+    """Gmail feedback identity must stay canonical across both runtimes."""
+    _assert_payload_field_parity(
+        ApplicationEmailFeedbackIngestedPayload,
+        "ApplicationEmailFeedbackIngestedPayload",
+    )
 def test_fetch_recheck_payload_fields_match_typescript() -> None:
     _assert_payload_field_parity(EnrichmentFetchRecheckedPayload, "EnrichmentFetchRecheckedPayload")
+
+
+def test_interview_note_event_contains_only_safe_binding_fields() -> None:
+    _assert_payload_field_parity(InterviewQuestionNoteSavedPayload, "InterviewQuestionNoteSavedPayload")
+    assert {field.name for field in dataclasses.fields(InterviewQuestionNoteSavedPayload)} == {
+        "job_id", "question_id", "revision", "source_generation", "updated_at"
+    }
+
+
+def test_source_candidate_review_payload_fields_match_typescript() -> None:
+    _assert_payload_field_parity(SourceLocationCandidateReviewedPayload, "SourceLocationCandidateReviewedPayload")

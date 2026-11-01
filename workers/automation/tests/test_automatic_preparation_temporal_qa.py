@@ -7,7 +7,7 @@ import json
 import shutil
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -34,7 +34,7 @@ from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
 from jobctrl.infrastructure.temporal.finalize import record_workflow_started, record_workflow_outcome
 from jobctrl.infrastructure.temporal.run_in_activity import shutdown_activity_executors
 from jobctrl.llm import check_spend_budget
-from jobctrl.materials.activities import tailor_activity, cover_activity
+from jobctrl.materials.activities import TailorActivityInput, TailorActivityOutput, TailorJobActivityInput, TailorJobActivityOutput, tailor_activity, cover_activity
 from jobctrl.pipeline import automatic_preparation as recovery
 from jobctrl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 from jobctrl.scoring import scorer, tailor
@@ -45,7 +45,7 @@ from .test_automatic_preparation import _job, _stage
 from .test_discover_reliability import _long_description
 from .test_v7_score_runtime import _StrongLlm, _profile_snapshot
 from .test_scorer import _employer_analysis
-from .politeness_helpers import AllowAllRobots, offline_gateway
+from .politeness_helpers import offline_gateway
 
 ACTIVITIES = [
     check_spend_budget,
@@ -61,23 +61,78 @@ ACTIVITIES = [
 ]
 
 
+def _seed_scoring_interpretation(job_id):
+    """Stand in for Enrich's persisted interpretation before score admission."""
+    from jobctrl.domain.identifiers import canonical_job_id
+    from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
+    from tests.determination_fakes import recorded_job_interpretation
+
+    conn = database.get_connection()
+    job = SqlitePreparationTargetReader(conn).load(LOCAL_TENANT, canonical_job_id(str(job_id)))
+    if job is not None and job.get("full_description"):
+        recorded_job_interpretation(conn, job)
+
+
 @pytest.fixture
 def world(tmp_path, monkeypatch):
+    # This fixture tests cover generation after the user opts in.
+    cover_config = tmp_path / "cover-settings.json"
+    cover_config.write_text('{"cover_letter_generation":true}')
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(cover_config))
     # All state and config belongs to a synthetic temporary sandbox.
     db_path = tmp_path / "jobctrl.db"
     monkeypatch.setattr(config, "APP_DIR", tmp_path)
     monkeypatch.setattr(config, "DB_PATH", db_path)
     monkeypatch.setattr(database, "DB_PATH", db_path)
     connection = database.init_db(db_path)
+    from jobctrl.domain.determinations import Source
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+    from jobctrl.infrastructure.enrichment.interpretation import read_job_interpretation
+
+    original_build = scorer._build_use_case
+
+    def build(**kwargs):
+        kwargs.setdefault(
+            "determination_dependencies",
+            dict(
+                llm=kwargs.get("llm_port"),
+                repository=SqliteDeterminationRepository(database.get_connection(db_path)),
+                tenant_id="local",
+                provider="synthetic",
+                model="synthetic",
+                lane="scoring",
+                preflight=lambda: None,
+            ),
+        )
+        def read_interpretation(job):
+            result = read_job_interpretation(database.get_connection(db_path), job)
+            return result[0] if result else None
+
+        kwargs.setdefault("job_interpretation_reader", read_interpretation)
+        kwargs.setdefault(
+            "confirmed_preferences_reader",
+            lambda snapshot, criteria: [Source(source_id="target:roles:0", text="Synthetic saved target")],
+        )
+        return original_build(**kwargs)
+
+    monkeypatch.setattr(scorer, "_build_use_case", build)
+
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)
     original_start = WorkflowEnvironment.start_local
-    monkeypatch.setattr(
-        WorkflowEnvironment, "start_local", lambda: original_start(dev_server_existing_path=shutil.which("temporal"))
-    )
+
+    def start_local(**kwargs):
+        kwargs.setdefault("dev_server_existing_path", shutil.which("temporal"))
+        return original_start(**kwargs)
+
+    monkeypatch.setattr(WorkflowEnvironment, "start_local", start_local)
+
     def reject_playwright():
         pytest.fail("Temporal enrichment must use the live Chrome transport")
 
     # Keep the real readiness check but isolate its HTTP transport too: page
-    # capture and robots doubles alone still allow a request to the owner's API.
+    # capture doubles alone still allow a request to the owner's API.
     api_url = "http://127.0.0.1:1"
     network_attempts = []
 
@@ -87,25 +142,29 @@ def world(tmp_path, monkeypatch):
 
     def browser_transport(method, url, data, headers, timeout):
         assert (method, url, data) == (
-            "GET", f"{api_url}/v1/discovery/browser-extension/status", None,
+            "GET",
+            f"{api_url}/v1/discovery/browser-extension/status",
+            None,
         )
         assert "Authorization" not in headers
         return 200, b'{"ok":true,"connected":true}'
 
     def browser_client(execution, **kwargs):
         return live_browser.LiveChromeDiscoveryClient(
-            execution, **kwargs, app_dir=tmp_path,
-            api_base_url=api_url, transport=browser_transport,
+            execution,
+            **kwargs,
+            app_dir=tmp_path,
+            api_base_url=api_url,
+            transport=browser_transport,
         )
 
     monkeypatch.setattr(live_browser, "_urllib_transport", reject_network)
     monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", browser_client)
     monkeypatch.setattr(detail, "sync_playwright", reject_playwright)
-    monkeypatch.setattr(detail, "LiveChromeRobotsCache", lambda _browser: AllowAllRobots())
     monkeypatch.setattr(detail, "PolitenessGateway", offline_gateway)
     scrape_calls = []
 
-    def synthetic_scrape(page, url, session=None):
+    def synthetic_scrape(page, url, session=None, **_determination_ports):
         scrape_calls.append(url)
         return {
             "status": "ok",
@@ -124,6 +183,11 @@ def world(tmp_path, monkeypatch):
     original_score = scorer.score_job_by_id
 
     def synthetic_score(job_id, **kwargs):
+        from .availability_fixture import seed_fresh_availability
+
+        seed_fresh_availability(database.get_connection(), str(job_id))
+        database.get_connection().commit()
+        _seed_scoring_interpretation(job_id)
         return original_score(
             job_id,
             **kwargs,
@@ -158,6 +222,9 @@ def seed_for_stage(world, number, stage):
     if stage == "cover":
         _seed_approved_resume(world.conn, world.app, tenant_id=LOCAL_TENANT, job_id=job_id)
         set_stage_state(world.conn, job_id, "tailor", "succeeded", validate_transition=False)
+    from .availability_fixture import seed_fresh_availability
+
+    seed_fresh_availability(world.conn, str(job_id), str(LOCAL_TENANT))
     world.conn.commit()
     return job_id
 
@@ -192,11 +259,21 @@ async def wait_idle(client):
 
 async def history_types(client, workflow_id):
     history = await client.get_workflow_handle(workflow_id).fetch_history()
-    return [
-        event.activity_task_scheduled_event_attributes.activity_type.name
-        for event in history.events
-        if event.HasField("activity_task_scheduled_event_attributes")
-    ]
+    kinds = []
+    for event in history.events:
+        if event.HasField("activity_task_scheduled_event_attributes"):
+            kinds.append(event.activity_task_scheduled_event_attributes.activity_type.name)
+        elif event.HasField("marker_recorded_event_attributes"):
+            marker = event.marker_recorded_event_attributes
+            if marker.marker_name == "core_local_activity":
+                assert len(marker.details["data"].payloads) == 1
+                recorded = json.loads(marker.details["data"].payloads[0].data)
+                assert recorded["activity_type"] in {
+                    "record_workflow_started", "record_workflow_outcome",
+                    "check_spend_budget", "cancel_preparation_state",
+                }
+                kinds.append(recorded["activity_type"])
+    return kinds
 
 
 @pytest.mark.asyncio
@@ -218,14 +295,26 @@ async def test_recorded_dns_failure_rechecks_then_uses_normal_enrich_and_score_w
     # rows; keep normal cooldowns rather than simulating freshly created work.
     world.conn.execute("UPDATE job_stage_states SET updated_at='2026-09-01T10:00:00+00:00'")
     world.conn.commit()
-    attempts_before = world.conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)).fetchone()[0]
-    original_failure = tuple(world.conn.execute("SELECT * FROM job_events WHERE job_id=? AND event_type='StageFailed'", (str(job_id),)).fetchone())
-    blocked_attempts = world.conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(blocked_id),)).fetchone()[0]
+    attempts_before = world.conn.execute(
+        "SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)
+    ).fetchone()[0]
+    original_failure = tuple(
+        world.conn.execute(
+            "SELECT * FROM job_events WHERE job_id=? AND event_type='StageFailed'", (str(job_id),)
+        ).fetchone()
+    )
+    blocked_attempts = world.conn.execute(
+        "SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(blocked_id),)
+    ).fetchone()[0]
     checked_urls = []
 
     async def check(urls):
         checked_urls.append(urls)
-        request = PublicUrlDecision(False, "still non-public", PublicFetchFailureKind.DNS_NON_PUBLIC) if "still-blocked" in urls[1] else PublicUrlDecision(True)
+        request = (
+            PublicUrlDecision(False, "still non-public", PublicFetchFailureKind.DNS_NON_PUBLIC)
+            if "still-blocked" in urls[1]
+            else PublicUrlDecision(True)
+        )
         return PublicUrlDecision(True), request
 
     monkeypatch.setattr(public_fetch_recovery, "_check_destinations", check)
@@ -237,9 +326,19 @@ async def test_recorded_dns_failure_rechecks_then_uses_normal_enrich_and_score_w
             result = await asyncio.wait_for(env.client.get_workflow_handle(enrich_id).result(), 25)
             assert result["stages_completed"] == ["enrich"], result
         assert _stage(world.conn, job_id, "enrich")["attempt_count"] == 2
-        attempts_after = json.loads(world.conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)).fetchone()[0])
+        attempts_after = json.loads(
+            world.conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)).fetchone()[0]
+        )
         assert attempts_after[:1] == json.loads(attempts_before)
-        assert tuple(world.conn.execute("SELECT * FROM job_events WHERE job_id=? AND event_type='StageFailed' ORDER BY event_id LIMIT 1", (str(job_id),)).fetchone()) == original_failure
+        assert (
+            tuple(
+                world.conn.execute(
+                    "SELECT * FROM job_events WHERE job_id=? AND event_type='StageFailed' ORDER BY event_id LIMIT 1",
+                    (str(job_id),),
+                ).fetchone()
+            )
+            == original_failure
+        )
         await wait_idle(env.client)
         assert await tick(env.client, world, queue) == 1
         score_id = reserved_id(world, job_id, "score")
@@ -250,10 +349,25 @@ async def test_recorded_dns_failure_rechecks_then_uses_normal_enrich_and_score_w
         assert world.llm.calls == 1 and len(world.scrape_calls) == 1
         assert len(checked_urls) == 2 and all(len(urls) == 2 for urls in checked_urls)
         assert _stage(world.conn, blocked_id, "enrich")["state"] == "failed"
-        assert world.conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(blocked_id),)).fetchone()[0] == blocked_attempts
+        assert (
+            world.conn.execute(
+                "SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(blocked_id),)
+            ).fetchone()[0]
+            == blocked_attempts
+        )
         assert {run.workflow_type async for run in env.client.list_workflows()} == {"JobPipelineWorkflow"}
-        assert await history_types(env.client, enrich_id) == ["record_workflow_started", "check_spend_budget", "enrich", "record_workflow_outcome"]
-        assert await history_types(env.client, score_id) == ["record_workflow_started", "check_spend_budget", "score", "record_workflow_outcome"]
+        assert await history_types(env.client, enrich_id) == [
+            "record_workflow_started",
+            "check_spend_budget",
+            "enrich",
+            "record_workflow_outcome",
+        ]
+        assert await history_types(env.client, score_id) == [
+            "record_workflow_started",
+            "check_spend_budget",
+            "score",
+            "record_workflow_outcome",
+        ]
 
 
 @pytest.mark.asyncio
@@ -797,19 +911,7 @@ ORIGINAL_TAILOR_FACTORY = tailor._build_use_case
 
 
 class RequirementLlm(_StrongLlm):
-    def chat_json(self, *args, **kwargs):
-        payload = super().chat_json(*args, **kwargs)
-        payload["requirement_assessments"] = [
-            {
-                "requirement_id": "req-python-platform",
-                "requirement_text": "Own Python platform reliability.",
-                "tier": "must_have",
-                "weight": 0.9,
-                "job_evidence_span": "Need Python.",
-                "fit": {"kind": "matched", "evidence_ids": ["platform"]},
-            }
-        ]
-        return payload
+    pass
 
 
 class CanonicalAnalysis:
@@ -826,6 +928,7 @@ def evidence_world(world, monkeypatch):
 
     def score_with_synthetic_provider(job_id, **kwargs):
         # Keep production default repositories and require_employer_analysis=True.
+        _seed_scoring_interpretation(job_id)
         return ORIGINAL_SCORE(
             job_id,
             **kwargs,
@@ -845,7 +948,10 @@ def evidence_world(world, monkeypatch):
         )
 
     def factory(**kwargs):
+        from tests.determination_fakes import tailor_dependencies
+
         return ORIGINAL_TAILOR_FACTORY(
+            **tailor_dependencies(llm),
             **kwargs,
             llm_port=llm,
             analyze_use_case=CanonicalAnalysis(),
@@ -875,6 +981,9 @@ def evidence_world(world, monkeypatch):
 def seed(world, number=1):
     job_id = _job(world.conn, number=number, enriched=True)
     world.conn.execute("UPDATE job_enrichments SET full_description='Need Python.' WHERE job_id=?", (str(job_id),))
+    from .availability_fixture import seed_fresh_availability
+
+    seed_fresh_availability(world.conn, str(job_id), str(LOCAL_TENANT))
     world.conn.commit()
     analysis = _employer_analysis(
         f"https://example.test/jobs/{number}",
@@ -1022,7 +1131,7 @@ async def test_owned_score_persists_report_and_automatic_tailor_consumes_it(evid
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("continuation", ["automatic", "normal"])
-async def test_exact_normal_rescore_repairs_historical_missing_report(evidence_world, continuation):
+async def test_exact_normal_rescore_repairs_historical_missing_report(evidence_world, continuation, monkeypatch):
     world = evidence_world
     job_id = seed(world)
     other_id = seed(world, 2)
@@ -1088,9 +1197,19 @@ async def test_exact_normal_rescore_repairs_historical_missing_report(evidence_w
             assert await tick(env.client, world, queue) == 0
             updated = datetime.fromisoformat(repaired["updated_at"].replace("Z", "+00:00"))
             cooldown = min(1800, 60 * (2 ** repaired["attempt_count"]))
-            remaining = cooldown - (datetime.now(timezone.utc) - updated).total_seconds()
-            await asyncio.sleep(max(0, remaining) + 0.2)
-            await run_auto(env.client, world, queue, job_id, "tailor")
+            # Exercise the real reservation policy on either side of its
+            # deadline; waiting a production minute does not add clock proof.
+            reserve = recovery.reserve_recovery_batch
+            reservation_now = updated + timedelta(seconds=cooldown, microseconds=-1)
+
+            def reserve_at_clock(*args, **kwargs):
+                return reserve(*args, **kwargs, now=reservation_now)
+
+            with monkeypatch.context() as reservation_clock:
+                reservation_clock.setattr(recovery, "reserve_recovery_batch", reserve_at_clock)
+                assert await tick(env.client, world, queue) == 0
+                reservation_now += timedelta(microseconds=1)
+                await run_auto(env.client, world, queue, job_id, "tailor")
         else:
             await wait_idle(env.client)
             tailor_id = f"qa-normal-tailor-{uuid.uuid4()}"
@@ -1118,7 +1237,9 @@ async def test_exact_normal_rescore_repairs_historical_missing_report(evidence_w
                 "record_workflow_outcome",
             ]
         assert_generation(world, job_id, 2)
-        assert world.llm.calls == 2
+        # Identical canonical sources restore the ledger from the accepted
+        # determination without spending another model call.
+        assert world.llm.calls == 1
         assert len([run async for run in env.client.list_workflows()]) == 4
 
 
@@ -1191,6 +1312,7 @@ async def test_revoked_job_after_batch_filter_does_not_strand_other_jobs(world, 
 
     monkeypatch.setattr(recovery, "automatic_recovery_job_ids", revoke_after_filter)
     if stage == "tailor":
+
         def stop_at_generation(job, *args, **kwargs):
             kwargs["commit_guard"]()
             raise RuntimeError("synthetic generation provider unavailable")
@@ -1240,8 +1362,114 @@ async def test_real_enrichment_batch_failure_before_first_claim_stops_recovery(w
             world.conn.commit()
             assert await tick(env.client, world, queue) == 0
         row = _stage(world.conn, job_id, "enrich")
-        assert row["state"] == "blocked"
+        assert row["state"] == "blocked", row["metadata_json"]
         assert row["error_code"] == "PREPARATION_RECOVERY_STOPPED"
         assert row["attempt_count"] == 1
         executions = [run async for run in env.client.list_workflows()]
         assert len(executions) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include_batch", [False, True])
+async def test_recovery_enrich_and_score_overlap_real_preparation(world, monkeypatch, include_batch):
+    from temporalio.worker import Replayer
+    from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
+    from .test_v7_cover_runtime import _seed_approved_resume
+
+    monkeypatch.setattr(recovery, "resolve_pipeline_internal_concurrency", lambda: 3)
+    retry = seed_for_stage(world, 1, "enrich")
+    busy = seed_for_stage(world, 2, "tailor")
+    held_jobs = [busy]
+    batch_busy = seed_for_stage(world, 3, "tailor") if include_batch else None
+    if batch_busy:
+        held_jobs.append(batch_busy)
+    for job in held_jobs:
+        _seed_approved_resume(world.conn, world.app, tenant_id=LOCAL_TENANT, job_id=job)
+    world.conn.commit()
+    accepted = [tuple(row) for row in world.conn.execute("SELECT * FROM job_materials_artifacts ORDER BY artifact_id")]
+    entered, batch_entered, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    @activity.defn(name="tailor_job")
+    async def held_material_port(payload: TailorJobActivityInput) -> TailorJobActivityOutput:
+        set_stage_state(world.conn, payload.job_id, "tailor", "running", attempt_count=1,
+            metadata={"activityOwner": activity.info().workflow_run_id}, validate_transition=False)
+        world.conn.commit()
+        entered.set()
+        await release.wait()
+        set_stage_state(world.conn, payload.job_id, "tailor", "skipped", validate_transition=False)
+        world.conn.commit()
+        return TailorJobActivityOutput(status="skipped", reason="synthetic_hold_released")
+
+    @activity.defn(name="tailor")
+    async def held_batch_port(payload: TailorActivityInput) -> TailorActivityOutput:
+        info = activity.info()
+        assert payload.job_ids == (batch_busy,)
+        set_stage_state(world.conn, batch_busy, "tailor", "running", attempt_count=1,
+            metadata={"activityOwner": info.workflow_run_id, "workflowId": info.workflow_id,
+                      "temporalRunId": info.workflow_run_id, "automaticRecovery": True}, validate_transition=False)
+        world.conn.commit()
+        batch_entered.set()
+        await release.wait()
+        set_stage_state(world.conn, batch_busy, "tailor", "skipped", validate_transition=False)
+        world.conn.commit()
+        return TailorActivityOutput(status="ok", elapsed=0)
+
+    queue = f"qa-overlap-{uuid.uuid4()}"
+    async with local_env() as env:
+        async with Worker(env.client, task_queue=queue,
+            workflows=[JobPipelineWorkflow, JobPreparationWorkflow],
+            activities=[*[port for port in ACTIVITIES if port is not tailor_activity], held_material_port, held_batch_port],
+            max_concurrent_activities=3, workflow_runner=UnsandboxedWorkflowRunner()):
+            handle = await env.client.start_workflow(JobPreparationWorkflow.run,
+                JobPreparationInput(tenant_id="local", job_id=busy, steps=["tailor"],
+                    target_version="synthetic", idempotency_key="held", retailor=True,
+                    expected_app_dir=str(world.app), expected_db_path=str(world.path)),
+                id=f"prep-held-{uuid.uuid4()}", task_queue=queue)
+            held_handles = [handle]
+            histories = []
+            try:
+                await asyncio.wait_for(entered.wait(), 10)
+                if include_batch:
+                    batch_handle = await env.client.start_workflow(JobPipelineWorkflow.run,
+                        JobPipelineWorkflowInput(tenant_id="local", stages=["tailor"], job_ids=(batch_busy,),
+                            workers=1, automatic_recovery=True, expected_app_dir=str(world.app), expected_db_path=str(world.path)),
+                        id=f"prepare-auto-local-tailor-held-{uuid.uuid4()}", task_queue=queue)
+                    held_handles.append(batch_handle)
+                    await asyncio.wait_for(batch_entered.wait(), 10)
+                before = [_stage(world.conn, job, "tailor") for job in held_jobs]
+                for _ in range(100):
+                    visible = {run.id async for run in env.client.list_workflows(query="ExecutionStatus = 'Running'")}
+                    if {held.id for held in held_handles} <= visible:
+                        break
+                    await asyncio.sleep(0.1)
+                else:
+                    raise AssertionError("Held preparations were never visible")
+                for stage in ["enrich", "score"]:
+                    assert await tick(env.client, world, queue) == 1
+                    workflow_id = reserved_id(world, retry, stage)
+                    result = await asyncio.wait_for(env.client.get_workflow_handle(workflow_id).result(), 25)
+                    assert result["stages_completed"] == [stage], result
+                    assert _stage(world.conn, retry, stage)["state"] == "succeeded"
+                    assert [_stage(world.conn, job, "tailor") for job in held_jobs] == before
+                    assert not release.is_set()
+                    histories.append(await env.client.get_workflow_handle(workflow_id).fetch_history())
+                    for _ in range(100):
+                        if workflow_id not in {run.id async for run in env.client.list_workflows(query="ExecutionStatus = 'Running'")}:
+                            break
+                        await asyncio.sleep(0.1)
+                    else:
+                        raise AssertionError("Completed recovery retained active visibility")
+                assert len(world.scrape_calls) == 1 and world.llm.calls == 1
+                assert world.conn.execute("SELECT fit_score FROM job_scores WHERE job_id=?", (str(retry),)).fetchone()[0] == 8
+                assert [tuple(row) for row in world.conn.execute("SELECT * FROM job_materials_artifacts ORDER BY artifact_id")] == accepted
+            finally:
+                release.set()
+                await asyncio.wait_for(asyncio.gather(*(held.result() for held in held_handles)), 10)
+            for held in held_handles:
+                histories.append(await held.fetch_history())
+            runs = [run async for run in env.client.list_workflows()]
+            assert len(runs) == 3 + int(include_batch)
+            assert {run.workflow_type for run in runs} == {"JobPreparationWorkflow", "JobPipelineWorkflow"}
+        replayer = Replayer(workflows=[JobPipelineWorkflow, JobPreparationWorkflow], workflow_runner=UnsandboxedWorkflowRunner())
+        for history in histories:
+            await replayer.replay_workflow(history)

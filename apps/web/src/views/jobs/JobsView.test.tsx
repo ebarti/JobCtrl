@@ -149,8 +149,8 @@ function createColumnDragTransfer() {
   };
 }
 
-describe("<JobsRoute> loader reliability", () => {
-  it("renders the jobs surface instead of the route error boundary when prefetch fails", async () => {
+describe("<JobsRoute> query reliability", () => {
+  it("renders the jobs surface instead of the route error boundary when the list query fails", async () => {
     const ports = buildTestPorts({
       api: {
         jobs: vi.fn(async () => {
@@ -210,6 +210,7 @@ describe("<JobsView> realtime UI state", () => {
       events: [],
     });
     const unrelatedKey = ["tenant", LOCAL_TENANT, "unrelated", "realtime"];
+    const otherTenantKey = ["tenant", "synthetic-other-tenant", "unrelated", "realtime"];
 
     harness.queryClient.setQueryData(
       jobsKeys.detail(LOCAL_TENANT, initialJob.jobKey),
@@ -231,11 +232,18 @@ describe("<JobsView> realtime UI state", () => {
       workflowDetail,
     );
     harness.queryClient.setQueryData(unrelatedKey, { retained: true });
+    harness.queryClient.setQueryData(otherTenantKey, { retained: true });
 
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText(initialJob.title)).toBeInTheDocument();
     await waitFor(() => expect(eventStream.subscriptions).toHaveLength(1));
+    // This port is already open when subscribed, so first-open reconciliation
+    // marks the current tenant's inactive reads stale before any domain event.
+    expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(true);
+    expect(harness.queryClient.getQueryState(otherTenantKey)?.isInvalidated).toBe(false);
+    // Establish a fresh baseline so the assertions below isolate event routing.
+    harness.queryClient.setQueryData(unrelatedKey, { retained: true });
     await user.click(
       screen.getByRole("checkbox", { name: `Select ${initialJob.title}` }),
     );
@@ -313,6 +321,7 @@ describe("<JobsView> realtime UI state", () => {
     expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(
       false,
     );
+    expect(harness.queryClient.getQueryState(otherTenantKey)?.isInvalidated).toBe(false);
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     expect(
       screen.getByRole("checkbox", { name: `Select ${latestJob.title}` }),
@@ -327,7 +336,7 @@ describe("<JobsView> realtime UI state", () => {
 });
 
 describe("<JobsView> compensation source-conflict visibility", () => {
-  it("uses a compact header and hides Sources, Warnings, and Template in Default", async () => {
+  it("uses a compact header and hides optional compensation, Sources, and Template columns in Default", async () => {
     const jobs = vi.fn(async () => makeJobsPage([sampleSecondaryJob]));
     const harness = buildProviderHarness({
       ports: buildTestPorts({ api: { jobs } }),
@@ -343,6 +352,11 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       screen.getByRole("heading", { name: "Jobs" }).closest(".jobs-page-head"),
     ).toBeInTheDocument();
     expect(screen.getByText("1 job")).toBeInTheDocument();
+    for (const name of [/Salary min/, /Salary max/, /Market/, /Confidence/]) {
+      expect(
+        screen.queryByRole("columnheader", { name }),
+      ).not.toBeInTheDocument();
+    }
     expect(
       screen.queryByRole("columnheader", { name: /Sources/ }),
     ).not.toBeInTheDocument();
@@ -389,8 +403,13 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       );
       expect(presentation?.columns.hidden).toEqual([
         "source",
+        "compensation_min_eur",
+        "compensation_max_eur",
+        "compensation_market",
+        "compensation_confidence",
         "compensation_warnings",
         "resume_template",
+        "discovered_at",
       ]);
     });
 
@@ -412,7 +431,16 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       );
       expect(
         persisted.state?.presentationByTable?.[JOBS_TABLE_ID]?.columns?.hidden,
-      ).toEqual(["source", "compensation_warnings", "resume_template"]);
+      ).toEqual([
+        "source",
+        "compensation_min_eur",
+        "compensation_max_eur",
+        "compensation_market",
+        "compensation_confidence",
+        "compensation_warnings",
+        "resume_template",
+        "discovered_at",
+      ]);
     });
 
     await user.click(
@@ -510,7 +538,7 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       "Warnings",
       "Location",
       "Stage",
-      "State",
+      "Stage state",
       "Discovered",
       "Apply",
     ]) {
@@ -561,34 +589,93 @@ describe("<JobsView> compensation source-conflict visibility", () => {
 });
 
 describe("<JobsView> bulk delete integration", () => {
-  it("keeps queue tabs URL-backed without advertising Closed", async () => {
+  it("uses the Job state column filter with static URL-backed options", async () => {
     const user = userEvent.setup();
     const jobs = vi.fn(async () => makeJobsPage([sampleJob]));
     const harness = buildProviderHarness({
       ports: buildTestPorts({ api: { jobs } }),
     });
-    const { router, Wrapper } = buildRouter(harness);
+    const { router, Wrapper } = buildRouter(
+      harness,
+      SEARCH.replace("page=1", "page=2"),
+    );
 
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText(sampleJob.title)).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    const rowCheckbox = screen
+      .getAllByRole("checkbox")
+      .find(
+        (checkbox) =>
+          checkbox.getAttribute("aria-label")?.startsWith("Select ") &&
+          checkbox.getAttribute("aria-label") !==
+            "Select all rows on this page",
+      );
+    expect(rowCheckbox).toBeDefined();
+    await user.click(rowCheckbox!);
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /filter job state column/i }),
+    );
+    const values = screen.getByLabelText("Job state values");
     expect(
-      screen.queryByRole("tab", { name: "Closed" }),
+      within(values).getByRole("checkbox", { name: "Active" }),
+    ).toBeChecked();
+    expect(
+      within(values).getByRole("checkbox", { name: "Deleted" }),
+    ).not.toBeChecked();
+    expect(
+      within(values).getByRole("checkbox", { name: "Hidden" }),
+    ).not.toBeChecked();
+    expect(
+      screen.queryByRole("textbox", { name: "Job state filter text" }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Hidden" }));
+    expect(
+      screen.getByText(
+        "Choose one or more values. With none selected, all values are shown.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(within(values).getByRole("checkbox", { name: "Hidden" }));
 
     await waitFor(() =>
       expect(router.state.location.search).toMatchObject({
-        deleted: "hidden",
+        jobStates: ["active", "hidden"],
         page: 1,
       }),
     );
     expect(jobs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ deleted: "hidden" }),
+      expect.objectContaining({ jobStates: ["active", "hidden"] }),
+    );
+    expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+
+    await user.click(within(values).getByRole("checkbox", { name: "Active" }));
+    await waitFor(() =>
+      expect(router.state.location.search.jobStates).toEqual(["hidden"]),
+    );
+    await user.click(within(values).getByRole("checkbox", { name: "Hidden" }));
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({
+        jobStates: ["active", "deleted", "hidden"],
+        page: 1,
+      }),
+    );
+    expect(jobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        jobStates: ["active", "deleted", "hidden"],
+      }),
+    );
+    act(() => router.history.back());
+    await waitFor(() =>
+      expect(router.state.location.search.jobStates).toEqual(["hidden"]),
+    );
+    expect(jobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({ jobStates: ["hidden"] }),
     );
   });
 
   it("preserves a legacy closed lifecycle URL without presenting it as Hidden", async () => {
+    const user = userEvent.setup();
     const legacyJob: JobSummary = {
       ...sampleJob,
       jobKey: "legacy-expired",
@@ -598,8 +685,13 @@ describe("<JobsView> bulk delete integration", () => {
     const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
       makeJobsPage(query?.deleted === "closed" ? [legacyJob] : []),
     );
+    const deleteJobs = vi.fn(async (body: BulkJobMutationRequest) => ({
+      ok: true as const,
+      count: body.jobKeys.length,
+      jobKeys: body.jobKeys,
+    }));
     const harness = buildProviderHarness({
-      ports: buildTestPorts({ api: { jobs } }),
+      ports: buildTestPorts({ api: { jobs, deleteJobs } }),
     });
     const { router, Wrapper } = buildRouter(
       harness,
@@ -616,15 +708,156 @@ describe("<JobsView> bulk delete integration", () => {
     expect(
       screen.queryByRole("tab", { name: "Closed" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Hidden" })).toHaveAttribute(
-      "aria-selected",
-      "false",
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /filter job state column/i }),
     );
     expect(
-      screen.getByText(
-        "Viewing posting availability exceptions from a legacy link.",
-      ),
-    ).toBeInTheDocument();
+      within(screen.getByLabelText("Job state values")).getByRole("checkbox", {
+        name: "Active",
+      }),
+    ).toBeChecked();
+    await user.keyboard("{Escape}");
+    await user.click(
+      screen.getByRole("button", { name: "Select all matching" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /delete matching active/i }),
+    );
+    await waitFor(() => expect(deleteJobs).toHaveBeenCalledTimes(1));
+    expect(deleteJobs.mock.calls[0]?.[0]).toMatchObject({
+      allMatching: true,
+      filter: expect.objectContaining({ deleted: "closed" }),
+    });
+    expect(deleteJobs.mock.calls[0]?.[0].filter).not.toHaveProperty("jobStates");
+  });
+
+  it("does not expose selected workflow actions for an unavailable posting", async () => {
+    const user = userEvent.setup();
+    const unavailableJob: JobSummary = {
+      ...sampleJob,
+      jobKey: "unavailable-expired",
+      title: "Unavailable expired posting",
+      activeState: "expired",
+      currentState: "failed",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([unavailableJob]));
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const { router, Wrapper } = buildRouter(
+      harness,
+      `${SEARCH.replace("state=all", "state=failed")}&jobStates=active`,
+    );
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(unavailableJob.title)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Select page" }));
+    const operationsMenu = await openJobOperationsMenu(user);
+    expect(
+      within(operationsMenu).queryByRole("menuitem", {
+        name: "Retry selected",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(operationsMenu).queryByRole("menuitem", {
+        name: "Rescore selected",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(operationsMenu).queryByRole("menuitem", {
+        name: "Re-tailor selected",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("mutates only eligible explicitly selected rows in a mixed-state view", async () => {
+    const user = userEvent.setup();
+    const activeJob = {
+      ...sampleJob,
+      jobKey: "mixed-active",
+      title: "Mixed active",
+    };
+    const deletedJob = {
+      ...sampleSecondaryJob,
+      jobKey: "mixed-deleted",
+      title: "Mixed deleted",
+      deletedAt: "2026-09-19T10:00:00.000Z",
+    };
+    const hiddenJob = {
+      ...sampleSecondaryJob,
+      jobKey: "mixed-hidden",
+      title: "Mixed hidden",
+      deletedAt: "2026-09-19T10:00:00.000Z",
+      hiddenAt: "2026-09-20T10:00:00.000Z",
+    };
+    const jobs = vi.fn(async () =>
+      makeJobsPage([activeJob, deletedJob, hiddenJob]),
+    );
+    const deleteJobs = vi.fn(async (body: BulkJobMutationRequest) => ({
+      ok: true as const,
+      count: body.jobKeys.length,
+      jobKeys: body.jobKeys,
+    }));
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs, deleteJobs } }),
+    });
+    const { router, Wrapper } = buildRouter(
+      harness,
+      `${SEARCH}&jobStates=active,deleted,hidden`,
+    );
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText("Mixed active")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Select page" }));
+    await waitFor(() =>
+      expect(screen.getByText("3 selected")).toBeInTheDocument(),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Delete selected active" }),
+    );
+
+    await waitFor(() => expect(deleteJobs).toHaveBeenCalledTimes(1));
+    expect(deleteJobs.mock.calls[0]?.[0]).toEqual({
+      allMatching: false,
+      jobKeys: ["mixed-active"],
+    });
+  });
+
+  it("state-qualifies all-matching mutations in a mixed-state view", async () => {
+    const user = userEvent.setup();
+    const jobs = vi.fn(async () => makeJobsPage([sampleJob]));
+    const restoreJobs = vi.fn(async (body: BulkJobMutationRequest) => ({
+      ok: true as const,
+      count: body.jobKeys.length,
+      jobKeys: body.jobKeys,
+    }));
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs, restoreJobs } }),
+    });
+    const { router, Wrapper } = buildRouter(
+      harness,
+      `${SEARCH}&jobStates=active,deleted,hidden`,
+    );
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(sampleJob.title)).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Select all matching" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Restore matching deleted" }),
+    );
+
+    await waitFor(() => expect(restoreJobs).toHaveBeenCalledTimes(1));
+    expect(restoreJobs.mock.calls[0]?.[0]).toMatchObject({
+      allMatching: true,
+      filter: expect.objectContaining({ jobStates: ["deleted"] }),
+      jobKeys: [],
+    });
   });
 
   it("keeps the product Discover filter as a single discover-stage jobs query", async () => {
@@ -737,6 +970,22 @@ describe("<JobsView> bulk delete integration", () => {
     expect(router.state.location.search).toMatchObject({ stage: "apply" });
 
     await user.click(
+      screen.getByRole("button", { name: /filter job state column/i }),
+    );
+    await user.click(
+      within(screen.getByLabelText("Job state values")).getByRole("checkbox", {
+        name: "Hidden",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: /close/i }));
+    await waitFor(() =>
+      expect(router.state.location.search.jobStates).toEqual([
+        "active",
+        "hidden",
+      ]),
+    );
+
+    await user.click(
       screen.getByRole("button", { name: "Configure table columns" }),
     );
     const columnsDialog = screen.getByRole("dialog", { name: "Columns" });
@@ -789,6 +1038,7 @@ describe("<JobsView> bulk delete integration", () => {
     );
     expect(jobs.mock.lastCall?.[0]).not.toHaveProperty("stage");
     expect(router.state.location.search).toMatchObject({ stage: "all" });
+    expect(router.state.location.search.jobStates).toBeUndefined();
     expect(
       screen.getByRole("columnheader", { name: /Company/ }),
     ).toBeInTheDocument();
@@ -802,7 +1052,10 @@ describe("<JobsView> bulk delete integration", () => {
         expect.objectContaining({ stage: "apply" }),
       ),
     );
-    expect(router.state.location.search).toMatchObject({ stage: "apply" });
+    expect(router.state.location.search).toMatchObject({
+      stage: "apply",
+      jobStates: ["active", "hidden"],
+    });
     expect(
       screen.queryByRole("columnheader", { name: /Company/ }),
     ).not.toBeInTheDocument();
@@ -1205,14 +1458,22 @@ describe("<JobsView> bulk delete integration", () => {
     await waitFor(() =>
       expect(screen.getByText("1 selected")).toBeInTheDocument(),
     );
-    await user.click(screen.getByRole("button", { name: /delete selected/i }));
+    await user.click(
+      screen.getByRole("button", { name: /delete matching active/i }),
+    );
 
     await waitFor(() => expect(deleteJobs).toHaveBeenCalledTimes(1));
     expect(deleteJobs.mock.calls[0]?.[0]).toMatchObject({
       allMatching: true,
-      filter: expect.objectContaining({ stage: "discover" }),
+      filter: expect.objectContaining({
+        stage: "discover",
+        deleted: "active",
+      }),
       jobKeys: [],
     });
+    expect(deleteJobs.mock.calls[0]?.[0].filter).not.toHaveProperty(
+      "jobStates",
+    );
   });
 
   it("checks visible row checkboxes after selecting all matching jobs", async () => {
@@ -1465,10 +1726,15 @@ describe("<JobsView> bulk delete integration", () => {
     expect(calls[0]?.jobKeys?.length).toBe(1);
   });
 
-  it("shows a hidden tab and posts selected hidden jobs to /v1/jobs/bulk-unhide", async () => {
+  it("posts selected hidden jobs to /v1/jobs/bulk-unhide", async () => {
     const user = userEvent.setup();
     const calls: Array<{ jobKeys?: string[] }> = [];
+    const hiddenJob: JobSummary = {
+      ...sampleJob,
+      hiddenAt: "2026-09-19T10:00:00.000Z",
+    };
     server.use(
+      http.get("*/v1/jobs/reviewable-list", () => HttpResponse.json(makeJobsPage([hiddenJob]))),
       http.post("*/v1/jobs/bulk-unhide", async ({ request }) => {
         const body = (await request.json()) as { jobKeys?: string[] };
         calls.push(body);
@@ -1481,21 +1747,14 @@ describe("<JobsView> bulk delete integration", () => {
     );
 
     const harness = buildProviderHarness();
-    const { router, Wrapper } = buildRouter(harness);
+    const { router, Wrapper } = buildRouter(
+      harness,
+      SEARCH.replace("deleted=active", "deleted=hidden"),
+    );
     const { container } = render(<RouterProvider router={router} />, {
       wrapper: Wrapper,
     });
 
-    await waitFor(
-      () =>
-        expect(
-          screen.getByRole("tab", { name: /^hidden$/i }),
-        ).toBeInTheDocument(),
-      {
-        timeout: 5_000,
-      },
-    );
-    await user.click(screen.getByRole("tab", { name: /^hidden$/i }));
     await waitFor(
       () => expect(screen.getByText(/Acme Corp/i)).toBeInTheDocument(),
       {
@@ -1524,10 +1783,20 @@ describe("<JobsView> bulk delete integration", () => {
 
   it("posts selected deleted jobs to /v1/jobs/bulk-delete-permanent", async () => {
     const user = userEvent.setup();
-    const calls: Array<{ jobKeys?: string[] }> = [];
+    const calls: Array<{ jobKeys?: string[]; selectionId?: string }> = [];
+    const preparations: unknown[] = [];
+    const deletedJob: JobSummary = {
+      ...sampleJob,
+      deletedAt: "2026-09-19T10:00:00.000Z",
+    };
     server.use(
+      http.get("*/v1/jobs/reviewable-list", () => HttpResponse.json({ ...makeJobsPage([deletedJob]), observationId: "00000000-0000-4000-8000-000000000001" })),
+      http.post("*/v1/jobs/permanent-delete-selection", async ({ request }) => {
+        preparations.push(await request.json());
+        return HttpResponse.json({ ok: true, selectionId: "reviewed-1", jobKeys: [deletedJob.jobKey] });
+      }),
       http.post("*/v1/jobs/bulk-delete-permanent", async ({ request }) => {
-        const body = (await request.json()) as { jobKeys?: string[] };
+        const body = (await request.json()) as { jobKeys?: string[]; selectionId?: string };
         calls.push(body);
         return HttpResponse.json({
           ok: true,
@@ -1538,21 +1807,14 @@ describe("<JobsView> bulk delete integration", () => {
     );
 
     const harness = buildProviderHarness();
-    const { router, Wrapper } = buildRouter(harness);
+    const { router, Wrapper } = buildRouter(
+      harness,
+      SEARCH.replace("deleted=active", "deleted=deleted"),
+    );
     const { container } = render(<RouterProvider router={router} />, {
       wrapper: Wrapper,
     });
 
-    await waitFor(
-      () =>
-        expect(
-          screen.getByRole("tab", { name: /^deleted$/i }),
-        ).toBeInTheDocument(),
-      {
-        timeout: 5_000,
-      },
-    );
-    await user.click(screen.getByRole("tab", { name: /^deleted$/i }));
     await waitFor(
       () => expect(screen.getByText(/Acme Corp/i)).toBeInTheDocument(),
       {
@@ -1580,7 +1842,69 @@ describe("<JobsView> bulk delete integration", () => {
     );
 
     await waitFor(() => expect(calls.length).toBe(1));
-    expect(calls[0]?.jobKeys?.length).toBe(1);
+    expect(preparations).toEqual([{ observationId: "00000000-0000-4000-8000-000000000001", selections: [{ allMatching: false, jobKeys: [deletedJob.jobKey] }], expected: [{ jobKey: deletedJob.jobKey, deletedAt: deletedJob.deletedAt, hiddenAt: deletedJob.hiddenAt }] }]);
+    expect(calls[0]).toMatchObject({ allMatching: false, jobKeys: [deletedJob.jobKey], selectionId: "reviewed-1" });
+  });
+
+  it("reports a stale removed selection and refreshes instead of claiming success", async () => {
+    const user = userEvent.setup();
+    const deletedJob = { ...sampleJob, deletedAt: "2026-09-19T10:00:00.000Z" };
+    let reads = 0;
+    server.use(
+      http.get("*/v1/jobs/reviewable-list", () => { reads++; return HttpResponse.json({ ...makeJobsPage([deletedJob]), observationId: "00000000-0000-4000-8000-000000000001" }); }),
+      http.post("*/v1/jobs/permanent-delete-selection", () => HttpResponse.json({ ok: true, selectionId: "stale", jobKeys: [deletedJob.jobKey] })),
+      http.post("*/v1/jobs/bulk-delete-permanent", () => HttpResponse.json({ ok: false, error: "permanent_delete_selection_conflict", message: "The selected jobs changed. Refresh and select them again.", deletedJobKeys: [], conflictingJobKeys: [deletedJob.jobKey], unprocessedJobKeys: ["synthetic-other"] }, { status: 409 })),
+    );
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness, SEARCH.replace("deleted=active", "deleted=deleted"));
+    const { container } = render(<RouterProvider router={router} />, { wrapper: Wrapper });
+    await screen.findByText(/Acme Corp/i);
+    const checkboxes = container.querySelectorAll<HTMLInputElement>("input[type='checkbox']");
+    const rowCheckbox = Array.from(checkboxes)
+      .find((input) => input.getAttribute("aria-label")?.includes("Select row")) ?? checkboxes[1];
+    expect(rowCheckbox).toBeDefined();
+    await user.click(rowCheckbox!);
+    await user.click(within(await openJobOperationsMenu(user)).getByRole("menuitem", { name: /permanently delete selected/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/selected jobs changed/i);
+    expect(screen.getByText(/No jobs were deleted\. 1 changed; 1 were not processed/i)).toBeInTheDocument();
+    expect(screen.getByText(/synthetic-other/)).toBeInTheDocument();
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    expect(screen.queryByText(/1 selected/i)).not.toBeInTheDocument();
+  });
+
+  it("refreshes a consumed observation after confirmation is canceled", async () => {
+    const user = userEvent.setup();
+    const deletedJob = { ...sampleJob, deletedAt: "2026-09-19T10:00:00.000Z" };
+    let reads = 0;
+    let deletions = 0;
+    const confirmations = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    window.confirm = confirmations;
+    server.use(
+      http.get("*/v1/jobs/reviewable-list", () => {
+        reads++;
+        return HttpResponse.json({ ...makeJobsPage([deletedJob]), observationId: `00000000-0000-4000-8000-${String(reads).padStart(12, "0")}` });
+      }),
+      http.post("*/v1/jobs/permanent-delete-selection", () => HttpResponse.json({ ok: true, selectionId: "reviewed", jobKeys: [deletedJob.jobKey] })),
+      http.post("*/v1/jobs/bulk-delete-permanent", () => { deletions++; return HttpResponse.json({ ok: true, count: 1, jobKeys: [deletedJob.jobKey] }); }),
+    );
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness, SEARCH.replace("deleted=active", "deleted=deleted"));
+    const { container } = render(<RouterProvider router={router} />, { wrapper: Wrapper });
+    await screen.findByText(/Acme Corp/i);
+    const selectRow = async () => {
+      const boxes = container.querySelectorAll<HTMLInputElement>("input[type='checkbox']");
+      const row = Array.from(boxes).find((input) => input.getAttribute("aria-label")?.includes("Select row")) ?? boxes[1];
+      await user.click(row!);
+    };
+    const invoke = async () => user.click(within(await openJobOperationsMenu(user)).getByRole("menuitem", { name: /permanently delete selected/i }));
+    await selectRow();
+    await invoke();
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    expect(deletions).toBe(0);
+    await selectRow();
+    await invoke();
+    await waitFor(() => expect(deletions).toBe(1));
+    expect(confirmations).toHaveBeenCalledTimes(2);
   });
 
   it("shows stale score state and posts selected stale scores for rescore reset", async () => {
@@ -1601,7 +1925,7 @@ describe("<JobsView> bulk delete integration", () => {
     };
     const calls: Array<{ jobKeys?: string[] }> = [];
     server.use(
-      http.get("*/v1/jobs", () => HttpResponse.json(makeJobsPage([staleJob]))),
+      http.get("*/v1/jobs/reviewable-list", () => HttpResponse.json(makeJobsPage([staleJob]))),
       http.post(
         "*/v1/scoring/stale-scores/actions/reset-for-rescore",
         async ({ request }) => {
@@ -1611,7 +1935,7 @@ describe("<JobsView> bulk delete integration", () => {
             ok: true,
             count: body.jobKeys?.length ?? 0,
             jobKeys: body.jobKeys ?? [],
-            nextAction: "jobctrl run score --rescore",
+            nextAction: "jobctrl score --rescore",
           });
         },
       ),
@@ -1656,10 +1980,10 @@ describe("<JobsView> bulk delete integration", () => {
       .getState()
       .patchStageConfig("score", { workers: "14" });
     const failedSearch =
-      "?stage=all&state=failed&deleted=active&sort=discovered_at&dir=desc&page=1&pageSize=50";
+      "?stage=all&state=failed&deleted=active&jobStates=active&sort=discovered_at&dir=desc&page=1&pageSize=50";
     const calls: Array<{
       allMatching?: boolean;
-      filter?: { state?: string; deleted?: string };
+      filter?: { state?: string; deleted?: string; jobStates?: string[] };
       jobKeys?: string[];
       runAfter?: boolean;
       workers?: number;
@@ -1671,7 +1995,7 @@ describe("<JobsView> bulk delete integration", () => {
       http.post("*/v1/jobs/bulk-retry-failed", async ({ request }) => {
         const body = (await request.json()) as {
           allMatching?: boolean;
-          filter?: { state?: string; deleted?: string };
+          filter?: { state?: string; deleted?: string; jobStates?: string[] };
           jobKeys?: string[];
           runAfter?: boolean;
           workers?: number;
@@ -1701,7 +2025,11 @@ describe("<JobsView> bulk delete integration", () => {
     await waitFor(() => expect(calls.length).toBe(1));
     expect(calls[0]).toMatchObject({
       allMatching: true,
-      filter: { state: "failed", deleted: "active" },
+      filter: {
+        state: "failed",
+        deleted: "active",
+        jobStates: ["active"],
+      },
       jobKeys: [],
       runAfter: true,
       workers: 14,
@@ -1823,3 +2151,148 @@ describe("<JobsView> bulk delete integration", () => {
 });
 
 void vi;
+
+describe("<JobsView> combined stage pages", () => {
+  it("hydrates a saved two-stage selection on a deep page and pages once without reconstruction", async () => {
+    const user = userEvent.setup();
+    const rows = Array.from({ length: 50 }, (_, i) =>
+      jobWithStage(`combined-${i}`, `Combined page ${i}`, i % 2 ? "apply" : "discover"));
+    useSavedTableViewsStore.getState().createView(JOBS_TABLE_ID, "Both stages", {
+      columns: { order: [...JOBS_TABLE_COLUMN_IDS], hidden: [], widths: {} },
+      density: null, grouping: null, colorRules: [],
+      sort: { columnId: "discovered_at", direction: "desc" },
+      urlFilters: { q: "", stage: "all", state: "all", applyStatus: "all", deleted: "active", pageSize: 50 },
+      gridFilters: { current_stage: { operator: "contains", text: "", selectedValues: ["discover", "apply"] } },
+    });
+    const jobs = vi.fn(async (query?: Partial<JobListQuery>) => ({
+      ...makeJobsPage(query?.page === 101 ? [rows[0]!] : rows),
+      pagination: { page: query?.page ?? 1, pageSize: 50, total: 5001, pages: 101 },
+    }));
+    const harness = buildProviderHarness({ ports: buildTestPorts({ api: { jobs } }) });
+    const { router, Wrapper } = buildRouter(harness, SEARCH.replace("page=1&", "page=100&"));
+    const rendered = render(<RouterProvider router={router} />, { wrapper: Wrapper });
+    expect(await screen.findByText("Combined page 49")).toBeInTheDocument();
+    expect(jobs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ stages: ["discover", "apply"], page: 100, pageSize: 50 }));
+    expect(screen.getByText("Page 100 of 101 · 5001 rows")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select all matching" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(jobs).toHaveBeenCalledTimes(2));
+    expect(jobs.mock.lastCall?.[0]).toMatchObject({ stages: ["discover", "apply"], page: 101, pageSize: 50 });
+    await waitFor(() => expect(screen.queryByText("Combined page 49")).not.toBeInTheDocument());
+    rendered.unmount();
+    const remount = buildRouter(harness, SEARCH.replace("page=1&", "page=100&"));
+    render(<RouterProvider router={remount.router} />, { wrapper: Wrapper });
+    expect(await screen.findByText("Combined page 49")).toBeInTheDocument();
+    expect(jobs).toHaveBeenCalledTimes(2); // the saved combined cache key is reused
+  });
+
+  it("retains both grid values in a saved view, resets paging, and scopes all-matching bulk to them", async () => {
+    const user = userEvent.setup();
+    const rows = [jobWithStage("grid-discover", "Grid Discover", "discover"), jobWithStage("grid-apply", "Grid Apply", "apply")];
+    const jobs = vi.fn(async (_query?: Partial<JobListQuery>) => makeJobsPage(rows));
+    const deleteJobs = vi.fn(async (_request: BulkJobMutationRequest) => ({ ok: true as const, count: 2, jobKeys: rows.map((row) => row.jobKey) }));
+    const harness = buildProviderHarness({ ports: buildTestPorts({ api: { jobs, deleteJobs } }) });
+    const { router, Wrapper } = buildRouter(harness, SEARCH.replace("page=1&", "page=3&"));
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+    await screen.findByText("Grid Discover");
+    await user.click(screen.getByRole("button", { name: /filter stage column/i }));
+    await user.click(screen.getByRole("checkbox", { name: "discover" }));
+    await waitFor(() => expect(router.state.location.search.page).toBe(1));
+    await user.click(screen.getByRole("checkbox", { name: "apply" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(jobs.mock.lastCall?.[0]).toMatchObject({ stages: ["discover", "apply"], page: 1 }));
+    expect(jobs.mock.lastCall?.[0]).not.toHaveProperty("stage");
+    await user.click(screen.getByRole("button", { name: "Save as view" }));
+    const saveDialog = screen.getByRole("dialog", { name: "Save view" });
+    await user.type(within(saveDialog).getByLabelText("Name"), "Combined");
+    await user.click(within(saveDialog).getByRole("button", { name: "Save" }));
+    expect(useSavedTableViewsStore.getState().views.find((view) => view.name === "Combined")?.gridFilters.current_stage?.selectedValues)
+      .toEqual(["discover", "apply"]);
+    const viewSelect = screen.getByRole("combobox", { name: "Saved table view" });
+    await user.click(viewSelect);
+    await user.click(await screen.findByRole("option", { name: "Default" }));
+    await waitFor(() => expect(jobs.mock.lastCall?.[0]).not.toHaveProperty("stages"));
+    await user.click(viewSelect);
+    await user.click(await screen.findByRole("option", { name: "Combined" }));
+    await waitFor(() => expect(jobs.mock.lastCall?.[0]).toMatchObject({ stages: ["discover", "apply"] }));
+    await user.click(screen.getByRole("button", { name: "Select all matching" }));
+    await user.click(screen.getByRole("button", { name: "Delete matching active" }));
+    await waitFor(() => expect(deleteJobs).toHaveBeenCalledTimes(1));
+    expect(deleteJobs.mock.calls[0]?.[0]).toMatchObject({ allMatching: true, jobKeys: [], filter: { stages: ["discover", "apply"] } });
+    expect(deleteJobs.mock.calls[0]?.[0].filter).not.toHaveProperty("stage");
+    await user.click(screen.getByRole("button", { name: /filter stage column/i }));
+    await user.click(screen.getByRole("checkbox", { name: "apply" }));
+    await waitFor(() => expect(jobs.mock.lastCall?.[0]).toMatchObject({ stage: "discover", page: 1 }));
+    await user.click(screen.getByRole("checkbox", { name: "discover" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => {
+      expect(jobs.mock.lastCall?.[0]).not.toHaveProperty("stage");
+      expect(jobs.mock.lastCall?.[0]).not.toHaveProperty("stages");
+    });
+  }, 15_000);
+});
+
+it("requests one combined page on the actual Jobs route, then preserves paging and scalar navigation", async () => {
+  const user = userEvent.setup();
+  useSavedTableViewsStore.getState().createView(JOBS_TABLE_ID, "Combined route", {
+    columns: { order: [...JOBS_TABLE_COLUMN_IDS], hidden: [], widths: {} },
+    density: null, grouping: null, colorRules: [],
+    sort: { columnId: "discovered_at", direction: "desc" },
+    urlFilters: { q: "", stage: "all", state: "all", applyStatus: "all", deleted: "active", pageSize: 50 },
+    gridFilters: { current_stage: { operator: "contains", text: "", selectedValues: ["discover", "apply"] } },
+  });
+  const calls: Array<Partial<JobListQuery> | undefined> = [];
+  const ports = buildTestPorts({ api: { jobs: async (input) => {
+    calls.push(input);
+    const page = input?.page ?? 1;
+    const rows = input?.stage === "apply"
+      ? [jobWithStage("scalar-route", "Scalar route job", "apply")]
+      : Array.from({ length: page === 100 ? 50 : 1 }, (_, index) => {
+        const ordinal = (page - 1) * 50 + index;
+        return jobWithStage(`route-${ordinal}`, `Actual combined route ${ordinal}`, index % 2 ? "apply" : "discover");
+      });
+    return { ...makeJobsPage(rows), pagination: input?.stage === "apply"
+      ? { page: 1, pageSize: 50, total: 1, pages: 1 }
+      : { page, pageSize: 50, total: 5001, pages: 101 } };
+  } } });
+  const harness = buildProviderHarness({ ports, withEventStream: true });
+  const router = createRouter({ routeTree,
+    history: createMemoryHistory({ initialEntries: [`/jobs${SEARCH.replace("page=1&", "page=100&")}`] }),
+    context: { ports, queryClient: harness.queryClient, tenantId: LOCAL_TENANT },
+  });
+  render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+  expect(await screen.findByText("Actual combined route 4950")).toBeInTheDocument();
+  expect(screen.getByText("Page 100 of 101 · 5001 rows")).toBeInTheDocument();
+  expect(calls).toEqual([expect.objectContaining({ stages: ["discover", "apply"], page: 100, pageSize: 50 })]);
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  expect(await screen.findByText("Actual combined route 5000")).toBeInTheDocument();
+  expect(calls).toEqual([
+    expect.objectContaining({ stages: ["discover", "apply"], page: 100, pageSize: 50 }),
+    expect.objectContaining({ stages: ["discover", "apply"], page: 101, pageSize: 50 }),
+  ]);
+  await act(async () => {
+    await router.navigate({ to: "/jobs", search: { ...router.state.location.search, stage: "apply", page: 1 } });
+  });
+  expect(await screen.findByText("Scalar route job")).toBeInTheDocument();
+  expect(calls).toHaveLength(3);
+  expect(calls[2]).toMatchObject({ stage: "apply", page: 1, pageSize: 50 });
+  expect(calls[2]).not.toHaveProperty("stages");
+});
+
+describe("<JobsView> server page boundaries", () => {
+  it.each([
+    { requested: 999, page: 101, total: 5001, pages: 101, items: [sampleJob] },
+    { requested: 100, page: 1, total: 0, pages: 1, items: [] },
+  ])("displays the returned page $page after requesting $requested", async ({ requested, page, total, pages, items }) => {
+    const jobs = vi.fn(async () => ({ ...makeJobsPage(items), pagination: { page, pageSize: 50, total, pages } }));
+    const harness = buildProviderHarness({ ports: buildTestPorts({ api: { jobs } }) });
+    const { router, Wrapper } = buildRouter(harness, SEARCH.replace("page=1&", `page=${requested}&`));
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+    expect(await screen.findByText(`Page ${page} of ${pages} · ${total} rows`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    if (!items.length) {
+      expect(await screen.findByText("No jobs match.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Select all matching" })).toBeDisabled();
+    }
+  });
+});

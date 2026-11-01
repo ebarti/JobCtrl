@@ -8,6 +8,8 @@ import {
 import { useApplicationOutcomesQuery } from "../../contexts/operations/hooks/useApplicationOutcomesQuery.js";
 import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDashboardSummaryQuery.js";
 import { useWorkflowRunsListQuery } from "../../contexts/operations/hooks/useWorkflowRunsListQuery.js";
+import { getApiCapabilityAvailability, LOCAL_INSTALL_GUIDE_URL } from "../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
@@ -21,15 +23,23 @@ import { KpiGrid, KpiSkeleton } from "./KpiGrid.js";
 import { RecentActivityCard } from "./RecentActivityCard.js";
 import { SourceHealthCard } from "./SourceHealthCard.js";
 import { WorkStatusCard } from "./WorkStatusCard.js";
-import { IN_PROGRESS_RUNS_INPUT, mergeActiveRuns, STARTING_RUNS_INPUT } from "./active-runs.js";
+import { mergeActiveRuns } from "./active-runs.js";
+import {
+  IN_PROGRESS_RUNS_INPUT,
+  STARTING_RUNS_INPUT,
+} from "../../contexts/operations/activeRuns.js";
 
 export function DashboardView() {
+  const { featureFlags } = usePorts();
+  const learningAvailability = getApiCapabilityAvailability(featureFlags, "learningRecommendations");
+  const policyHistoryAvailability = getApiCapabilityAvailability(featureFlags, "tailoringPolicyRevisions");
   const { data: summary, isLoading, error } = useDashboardSummaryQuery();
   const outcomes = useApplicationOutcomesQuery();
   const startingRuns = useWorkflowRunsListQuery(STARTING_RUNS_INPUT);
   const inProgressRuns = useWorkflowRunsListQuery(IN_PROGRESS_RUNS_INPUT);
   const message = error instanceof Error ? error.message : null;
-  const outcomesError = outcomes.error instanceof Error ? outcomes.error.message : null;
+  const outcomesError =
+    outcomes.error instanceof Error ? outcomes.error.message : null;
   const activeRunsError =
     startingRuns.error instanceof Error
       ? startingRuns.error.message
@@ -82,23 +92,54 @@ export function DashboardView() {
             />
             <RecentActivityCard summary={summary} />
             <ApplyRunsCard summary={summary} />
-            <LearningRecommendationReviewPanel />
-            <TailoringPolicyHistoryPanel />
+            {learningAvailability.available ? (
+              <LearningRecommendationReviewPanel />
+            ) : (
+              <LocalAppFeatureCard title="Learning recommendations" reason={learningAvailability.reason} />
+            )}
+            {policyHistoryAvailability.available ? (
+              <TailoringPolicyHistoryPanel />
+            ) : (
+              <LocalAppFeatureCard title="Tailoring policy history" reason={policyHistoryAvailability.reason} />
+            )}
             <section className="card col-span-full">
               <CardHeader
                 title="Outcome suggestions"
-                meta={outcomes.data ? `${pendingSuggestions.length} pending` : "loading"}
+                meta={
+                  outcomes.data
+                    ? `${pendingSuggestions.length} pending`
+                    : "loading"
+                }
               />
               {outcomes.isFetching && !outcomes.data ? (
                 <Empty title="Loading outcome suggestions." />
               ) : null}
-              {outcomes.data ? <OutcomeSuggestionsPanel suggestions={pendingSuggestions} /> : null}
+              {outcomes.data ? (
+                <OutcomeSuggestionsPanel
+                  suggestions={pendingSuggestions}
+                  interpretationStatus={outcomes.data.interpretationStatus}
+                />
+              ) : null}
             </section>
           </div>
         </div>
       ) : (
-        <Empty title={isLoading ? "Loading dashboard." : "No dashboard data."} />
+        <Empty
+          title={isLoading ? "Loading dashboard." : "No dashboard data."}
+        />
       )}
     </div>
+  );
+}
+
+function LocalAppFeatureCard({ title, reason }: { title: string; reason: string | null }) {
+  return (
+    <section className="card col-span-full">
+      <CardHeader title={title} meta="Local app" />
+      <p className="px-4 py-3">
+        <span>{reason}</span>{" "}
+        <a className="underline underline-offset-2" href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a> to use this feature.
+      </p>
+    </section>
   );
 }

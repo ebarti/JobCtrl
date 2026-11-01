@@ -1,3 +1,4 @@
+import { applyEventReferences } from "./apply-privacy.js";
 /**
  * Apply Automation domain events.
  *
@@ -9,11 +10,15 @@ import { type DomainEvent, createDomainEvent } from "./base.js";
 
 // -- ApplicationSubmitted ---------------------------------------------------
 
+/** Launcher payload as persisted and delivered by SSE (lifecycle keys stay snake_case). */
 export interface ApplicationSubmittedPayload {
   readonly jobId: string;
-  readonly runId: string;
-  readonly appliedAt: string;
-  readonly verificationConfidence: number;
+  readonly run_id: string;
+  readonly result: "applied";
+  readonly finished_at: string;
+  readonly duration_ms: number | null;
+  readonly worker_id: number | null;
+  readonly model: string | null;
 }
 
 export type ApplicationSubmitted = DomainEvent<"ApplicationSubmitted", ApplicationSubmittedPayload>;
@@ -23,6 +28,35 @@ export function createApplicationSubmitted(
   payload: ApplicationSubmittedPayload,
 ): ApplicationSubmitted {
   return createDomainEvent("ApplicationSubmitted", tenantId, payload);
+}
+
+// -- DryRunCompleted --------------------------------------------------------
+
+/** Launcher payload as persisted and delivered by SSE (lifecycle keys stay snake_case). */
+export interface DryRunCompletedPayload {
+  readonly jobId: string;
+  readonly run_id: string;
+  readonly result: "dry_run_complete";
+  readonly finished_at: string;
+  readonly duration_ms: number | null;
+  readonly dry_run: true;
+  readonly worker_id: number | null;
+  readonly model: string | null;
+  readonly coverage: "full" | "partial";
+  readonly blocked_channels: readonly string[];
+  readonly allowed_navigations: readonly Readonly<Record<string, unknown>>[];
+  readonly materials_generation: number | null;
+  readonly application_url: string | null;
+  readonly profile_version: number | null;
+}
+
+export type DryRunCompleted = DomainEvent<"DryRunCompleted", DryRunCompletedPayload>;
+
+export function createDryRunCompleted(
+  tenantId: TenantId,
+  payload: DryRunCompletedPayload,
+): DryRunCompleted {
+  return createDomainEvent("DryRunCompleted", tenantId, payload);
 }
 
 // -- ApplicationFailed ------------------------------------------------------
@@ -40,7 +74,11 @@ export function createApplicationFailed(
   tenantId: TenantId,
   payload: ApplicationFailedPayload,
 ): ApplicationFailed {
-  return createDomainEvent("ApplicationFailed", tenantId, payload);
+  const safe = applyEventReferences("ApplicationFailed", { ...payload });
+  return createDomainEvent("ApplicationFailed", tenantId, {
+    jobId: payload.jobId, runId: payload.runId, attemptNumber: payload.attemptNumber,
+    result: (safe.result ?? payload.result) as Record<string, unknown>,
+  });
 }
 
 // -- ApplyRunStarted --------------------------------------------------------
@@ -95,18 +133,16 @@ export function createApplyRunEventRecorded(
   tenantId: TenantId,
   payload: ApplyRunEventRecordedPayload,
 ): ApplyRunEventRecorded {
-  return createDomainEvent("ApplyRunEventRecorded", tenantId, payload);
+  const safe = applyEventReferences("ApplyRunEventRecorded", { ...payload });
+  return createDomainEvent("ApplyRunEventRecorded", tenantId, {
+    runId: payload.runId, event: safe.event as Record<string, unknown>,
+  });
 }
 
 // -- EmailApplicationCandidateRecorded --------------------------------------
 
 export interface EmailApplicationCandidateRecordedPayload {
   readonly runId: string;
-  readonly recipient: string;
-  readonly subject: string;
-  readonly body: string;
-  readonly attachmentArtifactId: string;
-  readonly attachmentName: string;
 }
 
 export type EmailApplicationCandidateRecorded = DomainEvent<
@@ -114,17 +150,17 @@ export type EmailApplicationCandidateRecorded = DomainEvent<
   EmailApplicationCandidateRecordedPayload
 >;
 
-export function createEmailApplicationCandidateRecorded(
+export function createEmailApplicationCandidateRecorded<T extends EmailApplicationCandidateRecordedPayload>(
   tenantId: TenantId,
-  payload: EmailApplicationCandidateRecordedPayload,
+  payload: T,
 ): EmailApplicationCandidateRecorded {
-  return createDomainEvent("EmailApplicationCandidateRecorded", tenantId, payload);
+  return createDomainEvent("EmailApplicationCandidateRecorded", tenantId, { runId: payload.runId });
 }
 
 // -- ApplicationEmailFeedbackIngested ---------------------------------------
 
 export interface ApplicationEmailFeedbackIngestedPayload {
-  readonly jobKey: string;
+  readonly jobId: string;
   readonly evidenceId: string;
   readonly suggestionId: string;
   readonly provider: "gmail";
@@ -245,4 +281,14 @@ export function createOutcomeSuggestionDecided(
   payload: OutcomeSuggestionDecidedPayload,
 ): OutcomeSuggestionDecided {
   return createDomainEvent("OutcomeSuggestionDecided", tenantId, payload);
+}
+
+/** Public invalidation references; private offer terms are available only in the offer read. */
+export type OfferRecordChanged = DomainEvent<"OfferRecordChanged", {
+  readonly jobId: string;
+  readonly revisionId: string;
+  readonly decisionId: string | null;
+}>;
+export function createOfferRecordChanged(tenantId: TenantId, payload: OfferRecordChanged["payload"]): OfferRecordChanged {
+  return createDomainEvent("OfferRecordChanged", tenantId, payload);
 }

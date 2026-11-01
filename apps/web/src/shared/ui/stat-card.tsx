@@ -8,9 +8,9 @@ import { cardClassName } from "./card.js";
 export type StatTone = "up" | "warn" | "down";
 
 const toneClass: Record<StatTone, string> = {
-  up: "text-success",
-  warn: "text-warning",
-  down: "text-destructive",
+  up: "text-success-text",
+  warn: "text-warning-text",
+  down: "text-destructive-text",
 };
 
 export interface StatCardProps extends Omit<
@@ -62,6 +62,7 @@ export const StatCard = forwardRef<HTMLDivElement, StatCardProps>(
             <span
               data-slot="stat-value"
               data-typography="metric"
+              data-tone={valueTone}
               className={cn(
                 valueTone ? toneClass[valueTone] : "text-foreground",
               )}

@@ -1,6 +1,22 @@
 import { z } from "zod";
+import { CareerLearningCommandSchema, CareerLearningParamsSchema, CareerLearningResponseSchema } from "./career-learning.js";
+import { AcceptedMaterialExportRequestSchema, AcceptedMaterialExportsSchema, ProviderStatusResponseSchema, ProviderModelCatalogResponseSchema, CodexVerifyResponseSchema, MaterialLocaleRequestSchema, MaterialLocaleHistorySchema } from "./schemas.js";
+import { CoverLetterRenderRequestSchema, CoverLetterRenderResponseSchema, CoverLetterSaveRequestSchema, CoverLetterSaveResponseSchema } from "./cover-letter.js";
+import {
+  InterviewCatalogQuerySchema,
+  InterviewCatalogResponseSchema,
+  InterviewQuestionCardSchema,
+  InterviewQuestionResponseSchema,
+  InterviewNotesQuerySchema,
+  InterviewNotesResponseSchema,
+  InterviewPrepHistoryQuerySchema,
+  InterviewPrepHistoryResponseSchema,
+  SaveInterviewQuestionNoteRequestSchema,
+  SaveInterviewQuestionNoteResponseSchema,
+} from "./interview.js";
 
 import {
+  ScreeningCommandSchema, ScreeningReadResponseSchema, ScreeningWriteResponseSchema,
   APPLICATION_OUTCOME_KINDS,
   IsoTimestampSchema,
   LearningPaginationQuerySchema,
@@ -15,14 +31,22 @@ import {
   TAILORING_FEEDBACK_SIGNAL_STATUSES,
   TAILORING_FEEDBACK_SOURCE_KINDS,
   TailoringPolicyLearnedRuleSchema,
+  TailoringPolicyRestoreCommandIdSchema,
 } from "./schemas.js";
 import {
+  ScreeningAnswersParamsSchema, ScreeningAnswersResultSchema,
   JsonRpcErrorCodes,
+  CheckPostingAvailabilityParamsSchema,
+  AvailabilityWorkflowStartSchema,
   ReviewLearningRecommendationParamsSchema,
   ReviewLearningRecommendationResultSchema,
   RollbackTailoringPolicyParamsSchema,
   RollbackTailoringPolicyResultSchema,
   RpcMethods,
+  RpcContracts,
+  type ContractRpcMethod,
+  type RpcParams,
+  type RpcResult,
   type JsonRpcError,
   type RpcMethod,
 } from "./rpc.js";
@@ -32,7 +56,6 @@ export type EndpointHttpMethod = (typeof ENDPOINT_HTTP_METHODS)[number];
 
 export const ENDPOINT_DEMO_CAPABILITY_CLASSES = [
   "browser_local",
-  "simulated_async",
   "rehearsed_external",
   "unavailable",
 ] as const;
@@ -90,23 +113,22 @@ type AnyEndpointPath = string | EndpointPath<any, string>;
 export interface RpcEndpointDispatch<
   TRequestSchema extends AnySchema,
   TPathParam,
-  TRpcParamsSchema extends AnySchema,
-  TRpcResultSchema extends AnySchema,
+  TMethod extends ContractRpcMethod,
 > {
-  readonly rpcMethod: RpcMethod;
+  readonly rpcMethod: TMethod;
   readonly params: (
     input: {
       readonly request: z.output<TRequestSchema>;
       readonly pathParam: TPathParam;
     },
     context: EndpointDispatchContext,
-  ) => z.input<TRpcParamsSchema>;
-  readonly paramsSchema: TRpcParamsSchema;
-  readonly result: TRpcResultSchema;
+  ) => RpcParams<TMethod>;
+  readonly paramsSchema: (typeof RpcContracts)[TMethod]["params"];
+  readonly result: (typeof RpcContracts)[TMethod]["result"];
   readonly response: (input: {
     readonly request: z.output<TRequestSchema>;
     readonly pathParam: TPathParam;
-    readonly result: z.output<TRpcResultSchema>;
+    readonly result: RpcResult<TMethod>;
   }) => unknown | null;
   readonly error: (failure: EndpointDispatchFailure) => EndpointFailureResponse;
 }
@@ -236,7 +258,12 @@ export type LearningRecommendationReviewResponse = z.infer<
 >;
 
 export const TailoringPolicyRollbackRequestSchema = z
-  .object({ targetVersion: z.number().int().positive() })
+  .object({
+    targetVersion: z.number().int().positive(),
+    expectedCurrentVersion: z.number().int().positive(),
+    commandId: TailoringPolicyRestoreCommandIdSchema,
+    reasonCode: z.literal("user_requested"),
+  })
   .strict();
 export type TailoringPolicyRollbackRequest = z.infer<
   typeof TailoringPolicyRollbackRequestSchema
@@ -248,7 +275,11 @@ export const TailoringPolicyRollbackResponseSchema = z
     context: z.literal("materials"),
     policyKind: z.literal("tailoring_rule"),
     version: z.number().int().positive(),
-    status: z.literal("current"),
+    status: z.enum(["current", "superseded"]),
+    currentVersion: z.number().int().positive(),
+    replayed: z.boolean(),
+    expectedCurrentVersion: z.number().int().positive(),
+    commandId: TailoringPolicyRestoreCommandIdSchema,
     learnedRules: z.array(TailoringPolicyLearnedRuleSchema).max(5),
     sourceReviewId: z.null(),
     sourceRecommendationId: z.null(),
@@ -438,7 +469,7 @@ export type GmailOutcomeScanRequest = z.input<typeof GmailOutcomeScanRequestSche
 export const GmailOutcomeScanEvidenceSummarySchema = z
   .object({
     evidenceId: z.string(),
-    jobKey: z.string(),
+    jobId: z.string(),
     providerMessageId: z.string(),
     linkConfidence: z.number(),
   })
@@ -451,7 +482,7 @@ export const GmailOutcomeScanSuggestionSummarySchema = z
   .object({
     suggestionId: z.string(),
     evidenceId: z.string(),
-    jobKey: z.string(),
+    jobId: z.string(),
     kind: z.enum(APPLICATION_OUTCOME_KINDS),
     confidence: z.number(),
   })
@@ -497,6 +528,16 @@ const recommendationReviewPath = defineEndpointPath({
     `/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/reviews`,
 });
 
+const coverLetterRenderPath = defineEndpointPath({
+  route: "/v1/jobs/:jobKey/cover-letter/preview", paramName: "jobKey", paramSchema: z.string().min(1),
+  invalid: { status: 400, error: "invalid_job_key" },
+  build: (jobKey: string) => `/v1/jobs/${encodeURIComponent(jobKey)}/cover-letter/preview`,
+});
+const coverLetterSavePath = defineEndpointPath({
+  route: "/v1/jobs/:jobKey/cover-letter/accept", paramName: "jobKey", paramSchema: z.string().min(1),
+  invalid: { status: 400, error: "invalid_job_key" },
+  build: (jobKey: string) => `/v1/jobs/${encodeURIComponent(jobKey)}/cover-letter/accept`,
+});
 const resumeReviewDraftRenderPath = defineEndpointPath({
   route: "/v1/resume-review/drafts/:draftId/render",
   paramName: "draftId",
@@ -520,18 +561,203 @@ const reviewFailure = (failure: EndpointDispatchFailure): EndpointFailureRespons
   message: "The learning recommendation review could not be completed.",
 });
 
-const rollbackFailure = (failure: EndpointDispatchFailure): EndpointFailureResponse => ({
-  status:
-    failure.kind === "transport"
-      ? 503
-      : failure.kind === "rpc" && failure.error.code === JsonRpcErrorCodes.InvalidParams
-        ? 409
-        : 502,
-  error: "tailoring_policy_rollback_failed",
-  message: "The tailoring policy rollback could not be completed.",
+const rollbackFailure = (failure: EndpointDispatchFailure): EndpointFailureResponse => {
+  if (failure.kind === "rpc" && failure.error.code === JsonRpcErrorCodes.InvalidParams) {
+    if (failure.error.message === "tailoring_policy_stale_review") {
+      return { status: 409, error: "tailoring_policy_stale_review", message: "The current policy changed. Review the latest history before restoring." };
+    }
+    if (failure.error.message === "tailoring_policy_command_conflict") {
+      return { status: 409, error: "tailoring_policy_command_conflict", message: "This restore command is already bound to a different review." };
+    }
+    return { status: 409, error: "tailoring_policy_rollback_failed", message: "The tailoring policy restore could not be completed." };
+  }
+  return { status: failure.kind === "transport" ? 503 : 502, error: "tailoring_policy_rollback_failed", message: "The tailoring policy rollback could not be completed." };
+};
+
+const interviewQuestionPath = defineEndpointPath({
+  route: "/v1/interviews/questions/:questionId",
+  paramName: "questionId",
+  paramSchema: InterviewQuestionCardSchema.shape.id,
+  invalid: { status: 400, error: "invalid_interview_question_id" },
+  build: (questionId: string) => `/v1/interviews/questions/${encodeURIComponent(questionId)}`,
+});
+
+function interviewJobPath(suffix: string) {
+  return defineEndpointPath({
+    route: `/v1/jobs/:jobKey/${suffix}`,
+    paramName: "jobKey",
+    paramSchema: z.string().trim().min(1).max(4096),
+    invalid: { status: 400, error: "invalid_job_key" },
+    build: (jobKey: string) => `/v1/jobs/${encodeURIComponent(jobKey)}/${suffix}`,
+  });
+}
+
+const screeningJobPath = defineEndpointPath({
+  route: "/v1/jobs/:jobId/screening-answers", paramName: "jobId",
+  paramSchema: z.string().min(1).max(160), invalid: { status: 400, error: "invalid_job_id" },
+  build: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/screening-answers`,
+});
+const ScreeningReadRequestSchema = z.object({}).strict().optional();
+const screeningFailure = (failure: EndpointDispatchFailure): EndpointFailureResponse => ({
+  status: failure.kind === "transport" ? 503 : failure.kind === "rpc" && failure.error.code === JsonRpcErrorCodes.InvalidParams ? 409 : 502,
+  error: "screening_answers_failed",
+  message: failure.kind === "rpc" && /^(screening_[a-z_]+|provider_unavailable|provider_error|budget_denied|spend_denied|source_schema_violation|duplicate_source_id|cache_binding_invalid|cache_lock_unavailable|schema_violation|foreign_source_id|non_verbatim_quote|mismatched_value|malformed_json|persistence_error)$/.test(failure.error.message) ? failure.error.message : "Screening answer operation unavailable; saved history is preserved.",
+});
+
+// These legacy routes ignore query/body input; tightening it would break compatibility.
+const ProviderOperationRequestSchema = z.unknown().optional();
+
+const CareerLearningReadSchema = z.object({}).strict().optional();
+const careerLearningFailure = (failure: EndpointDispatchFailure): EndpointFailureResponse => ({
+  status: failure.kind === "transport" ? 503 : failure.kind === "rpc" && failure.error.code === JsonRpcErrorCodes.InvalidParams ? 409 : 502,
+  error: "career_learning_failed",
+  message: failure.kind === "rpc" && /^(provider_unavailable|provider_error|budget_denied|malformed_json|schema_violation|foreign_source_id|non_verbatim_quote|mismatched_value|revision_conflict|sources_changed|invalid_cohort|invalid_command|job_not_found|no_posting_descriptions|cohort_source_budget_exceeded|completion_evidence_required|foreign_proposal_id|cohort_binding_invalid|milestone_binding_invalid|duplicate_source_id|foreign_posting_id|unconfirmed_evidence_id|missing_capability_evidence|foreign_demand_id|duplicate_result_id|inconsistent_verdict|source_schema_violation|cache_binding_invalid|cache_lock_unavailable|persistence_error)$/.test(failure.error.message)
+    ? failure.error.message : "Career comparison unavailable; saved comparisons and milestones are preserved.",
 });
 
 export const ENDPOINTS = {
+  careerLearning: defineEndpoint({
+    name: "careerLearning", method: "GET", path: "/v1/evidence-map/learning",
+    request: CareerLearningReadSchema, response: CareerLearningResponseSchema,
+    dispatch: {
+      rpcMethod: RpcMethods.CareerLearning,
+      params: (_input, context) => ({ tenantId: context.tenantId, expectedAppDir: context.appDir, expectedDbPath: context.dbPath }),
+      paramsSchema: CareerLearningParamsSchema, result: CareerLearningResponseSchema,
+      response: ({ result }) => result, error: careerLearningFailure,
+    } satisfies RpcEndpointDispatch<typeof CareerLearningReadSchema, never, "career_learning">,
+    demo: { class: "unavailable", reason: "Saved cohorts and milestones require the local audited workspace." },
+  }),
+  writeCareerLearning: defineEndpoint({
+    name: "writeCareerLearning", method: "POST", path: "/v1/evidence-map/learning",
+    request: CareerLearningCommandSchema, response: CareerLearningResponseSchema,
+    dispatch: {
+      rpcMethod: RpcMethods.CareerLearning,
+      params: ({ request }, context) => ({ tenantId: context.tenantId, expectedAppDir: context.appDir, expectedDbPath: context.dbPath, command: request }),
+      paramsSchema: CareerLearningParamsSchema, result: CareerLearningResponseSchema,
+      response: ({ request, result }) => request.action === "preview"
+        ? result.preview && JSON.stringify(result.preview.jobs.map((job) => job.jobId)) === JSON.stringify([...new Set(request.jobIds)].sort()) ? result : null
+        : request.action === "compare"
+        ? result.cohorts.some((cohort) => (!request.cohortId || cohort.cohortId === request.cohortId) && cohort.revision === request.expectedRevision + 1 && cohort.title === request.title && cohort.asOf === request.asOf && cohort.aspirations === request.aspirations && JSON.stringify(cohort.jobIds) === JSON.stringify(request.jobIds)) ? result : null
+        : request.action === "choose"
+          ? result.milestones.some((milestone) => milestone.cohortId === request.cohortId && milestone.cohortRevision === request.expectedRevision && milestone.determinationId === request.determinationId && milestone.proposal.proposal_id === request.proposalId) ? result : null
+          : result.milestones.some((milestone) => milestone.milestoneId === request.milestoneId && milestone.revision === request.expectedRevision + 1 && milestone.status === request.status && milestone.completionEvidence === request.completionEvidence) ? result : null,
+      error: careerLearningFailure,
+    } satisfies RpcEndpointDispatch<typeof CareerLearningCommandSchema, never, "career_learning">,
+    demo: { class: "unavailable", reason: "Source-bound comparisons require a configured model; milestone review requires saved local provenance." },
+  }),
+  acceptedMaterialExports: defineEndpoint({
+    name: "acceptedMaterialExports", method: "POST",
+    path: defineEndpointPath({ route: "/v1/jobs/:jobId/material-exports", paramName: "jobId", paramSchema: z.string().uuid(), invalid: { status: 400, error: "invalid_job_id" }, build: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/material-exports` }),
+    request: AcceptedMaterialExportRequestSchema, response: AcceptedMaterialExportsSchema,
+    rpcDependencies: [RpcMethods.AcceptedMaterialExports],
+    demo: { class: "unavailable", reason: "DOCX export requires accepted materials saved in your local workspace." },
+  }),
+  providerStatus: defineEndpoint({
+    name: "providerStatus", method: "GET", path: "/v1/providers/status",
+    request: ProviderOperationRequestSchema, response: ProviderStatusResponseSchema,
+    rpcDependencies: [RpcMethods.ProviderStatus],
+    demo: { class: "browser_local", reason: "Synthetic disconnected status is available offline; no provider is contacted." },
+  }),
+  providerModels: defineEndpoint({
+    name: "providerModels", method: "GET", path: "/v1/providers/models",
+    request: ProviderOperationRequestSchema, response: ProviderModelCatalogResponseSchema,
+    rpcDependencies: [RpcMethods.ProviderModels],
+    demo: { class: "browser_local", reason: "The demo exposes a synthetic model catalog without connecting an account." },
+  }),
+  verifyCodexProvider: defineEndpoint({
+    name: "verifyCodexProvider", method: "POST", path: "/v1/providers/codex/verify",
+    request: ProviderOperationRequestSchema, response: CodexVerifyResponseSchema,
+    rpcDependencies: [RpcMethods.ProviderVerify],
+    demo: { class: "unavailable", reason: "Provider verification requires local credentials." },
+  }),
+  materialLocaleVariants: defineEndpoint({
+    name: "materialLocaleVariants",
+    method: "POST",
+    path: defineEndpointPath({ route: "/v1/jobs/:jobId/material-locales", paramName: "jobId", paramSchema: z.string().uuid(), invalid: { status: 400, error: "invalid_job_id" }, build: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/material-locales` }),
+    request: MaterialLocaleRequestSchema,
+    response: MaterialLocaleHistorySchema,
+    rpcDependencies: [RpcMethods.MaterialLocaleVariants],
+    demo: { class: "unavailable", reason: "Locale translation requires accepted local material and a configured model." },
+  }),
+  screeningAnswers: defineEndpoint({
+    name: "screeningAnswers", method: "GET", path: screeningJobPath,
+    request: ScreeningReadRequestSchema, response: ScreeningReadResponseSchema,
+    dispatch: {
+      rpcMethod: RpcMethods.ScreeningAnswers,
+      params: ({ pathParam }, context) => ({ tenantId: context.tenantId, jobId: pathParam, expectedAppDir: context.appDir, expectedDbPath: context.dbPath }),
+      paramsSchema: ScreeningAnswersParamsSchema, result: ScreeningAnswersResultSchema,
+      response: ({ pathParam, result }) => "questions" in result && result.jobId === pathParam && result.questions.every((question) => question.jobId === pathParam) && result.history.every((question) => question.jobId === pathParam) ? result : null,
+      error: screeningFailure,
+    } satisfies RpcEndpointDispatch<typeof ScreeningReadRequestSchema, string, "screening_answers">,
+    demo: { class: "unavailable", reason: "Private reviewed screening answers require the local worker and saved sources." },
+  }),
+  writeScreeningAnswer: defineEndpoint({
+    name: "writeScreeningAnswer", method: "POST", path: screeningJobPath,
+    request: ScreeningCommandSchema, response: ScreeningWriteResponseSchema,
+    dispatch: {
+      rpcMethod: RpcMethods.ScreeningAnswers,
+      params: ({ request, pathParam }, context) => ({ tenantId: context.tenantId, jobId: pathParam, expectedAppDir: context.appDir, expectedDbPath: context.dbPath, command: request }),
+      paramsSchema: ScreeningAnswersParamsSchema, result: ScreeningAnswersResultSchema,
+      response: ({ request, pathParam, result }) => "state" in result && result.jobId === pathParam && result.state.jobId === pathParam && result.state.action === request.action && result.state.revision === request.expectedRevision + 1 && (!request.questionId || result.state.questionId === request.questionId) ? result : null,
+      error: screeningFailure,
+    } satisfies RpcEndpointDispatch<typeof ScreeningCommandSchema, string, "screening_answers">,
+    demo: { class: "unavailable", reason: "Drafting, review and manual-use attestations require local persisted authority." },
+  }),
+
+  checkPostingAvailability: defineEndpoint({
+    name: "checkPostingAvailability",
+    method: "POST",
+    path: defineEndpointPath({
+      route: "/v1/jobs/:jobId/actions/check-availability", paramName: "jobId",
+      paramSchema: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
+      invalid: { status: 400, error: "invalid_job_id" },
+      build: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/actions/check-availability`,
+    }),
+    request: z.object({}).strict().optional().transform((value) => value ?? {}),
+    response: z.object({ ok: z.literal(true), status: z.literal("queued"), runId: z.string(), workflowId: z.string() }).strict(),
+    rpcDependencies: [RpcMethods.CheckPostingAvailability],
+    demo: { class: "unavailable", reason: "Availability acquisition needs the local worker and employer evidence." },
+  }),
+  interviewCatalog: defineEndpoint({
+    name: "interviewCatalog",
+    method: "GET",
+    path: "/v1/interviews/catalog",
+    request: InterviewCatalogQuerySchema.optional().transform((query) => InterviewCatalogQuerySchema.parse(query ?? {})),
+    response: InterviewCatalogResponseSchema,
+    demo: { class: "browser_local", reason: "The public editorial catalog is available offline." },
+  }),
+  interviewQuestion: defineEndpoint({
+    name: "interviewQuestion",
+    method: "GET",
+    path: interviewQuestionPath,
+    request: z.object({}).strict().optional(),
+    response: InterviewQuestionResponseSchema,
+    demo: { class: "browser_local", reason: "Question guidance reads the public editorial catalog." },
+  }),
+  interviewPrepHistory: defineEndpoint({
+    name: "interviewPrepHistory",
+    method: "GET",
+    path: interviewJobPath("interview-prep/history"),
+    request: InterviewPrepHistoryQuerySchema.optional().transform((query) => InterviewPrepHistoryQuerySchema.parse(query ?? {})),
+    response: InterviewPrepHistoryResponseSchema,
+    demo: { class: "browser_local", reason: "Synthetic preparation history is available in the demo." },
+  }),
+  interviewNotes: defineEndpoint({
+    name: "interviewNotes",
+    method: "GET",
+    path: interviewJobPath("interview-notes"),
+    request: InterviewNotesQuerySchema.optional().transform((query) => InterviewNotesQuerySchema.parse(query ?? {})),
+    response: InterviewNotesResponseSchema,
+    demo: { class: "browser_local", reason: "Interview note revisions are local user edits." },
+  }),
+  saveInterviewNote: defineEndpoint({
+    name: "saveInterviewNote",
+    method: "POST",
+    path: interviewJobPath("interview-notes"),
+    request: SaveInterviewQuestionNoteRequestSchema,
+    response: SaveInterviewQuestionNoteResponseSchema,
+    demo: { class: "browser_local", reason: "Note saving uses local compare-and-swap revisions." },
+  }),
   learningRecommendations: defineEndpoint({
     name: "learningRecommendations",
     method: "GET",
@@ -574,8 +800,7 @@ export const ENDPOINTS = {
     } satisfies RpcEndpointDispatch<
       typeof LearningRecommendationReviewRequestSchema,
       string,
-      typeof ReviewLearningRecommendationParamsSchema,
-      typeof ReviewLearningRecommendationResultSchema
+      "review_learning_recommendation"
     >,
     demo: {
       class: "unavailable",
@@ -593,19 +818,31 @@ export const ENDPOINTS = {
       params: ({ request }, context) => ({
         tenantId: context.tenantId,
         targetVersion: request.targetVersion,
+        expectedCurrentVersion: request.expectedCurrentVersion,
+        commandId: request.commandId,
+        reasonCode: request.reasonCode,
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
       }),
       paramsSchema: RollbackTailoringPolicyParamsSchema,
       result: RollbackTailoringPolicyResultSchema,
       response: ({ request, result }) =>
-        result.rollbackOfVersion === request.targetVersion
+        result.rollbackOfVersion === request.targetVersion &&
+        result.expectedCurrentVersion === request.expectedCurrentVersion &&
+        result.commandId === request.commandId &&
+        result.rollbackReasonCode === request.reasonCode &&
+        result.policyVersion === request.expectedCurrentVersion + 1 &&
+        result.currentVersion >= result.policyVersion
           ? {
               ok: true,
               context: result.context,
               policyKind: result.policyKind,
               version: result.policyVersion,
-              status: "current",
+              status: result.policyVersion === result.currentVersion ? "current" : "superseded",
+              currentVersion: result.currentVersion,
+              replayed: result.replayed,
+              expectedCurrentVersion: result.expectedCurrentVersion,
+              commandId: result.commandId,
               learnedRules: result.learnedRules,
               sourceReviewId: null,
               sourceRecommendationId: null,
@@ -618,13 +855,24 @@ export const ENDPOINTS = {
     } satisfies RpcEndpointDispatch<
       typeof TailoringPolicyRollbackRequestSchema,
       undefined,
-      typeof RollbackTailoringPolicyParamsSchema,
-      typeof RollbackTailoringPolicyResultSchema
+      "rollback_tailoring_policy"
     >,
     demo: {
       class: "unavailable",
       reason: "Tailoring policy rollback requires the local audited database.",
     },
+  }),
+  renderCoverLetterPreview: defineEndpoint({
+    name: "renderCoverLetterPreview", method: "POST", path: coverLetterRenderPath,
+    request: CoverLetterRenderRequestSchema, response: CoverLetterRenderResponseSchema,
+    rpcDependencies: [RpcMethods.RenderCoverLetterPdf],
+    demo: { class: "unavailable", reason: "Cover-letter rendering requires the local renderer and saved materials." },
+  }),
+  acceptCoverLetterPreview: defineEndpoint({
+    name: "acceptCoverLetterPreview", method: "POST", path: coverLetterSavePath,
+    request: CoverLetterSaveRequestSchema, response: CoverLetterSaveResponseSchema,
+    rpcDependencies: [],
+    demo: { class: "unavailable", reason: "Cover-letter acceptance requires the local material history." },
   }),
   renderResumeReviewDraft: defineEndpoint({
     name: "renderResumeReviewDraft",

@@ -96,15 +96,15 @@ test("distribution contracts are complete and every version source resolves", as
   assert.ok(report.componentCount >= 20);
   assert.equal(report.lockedInputCount, 6);
   assert.equal(report.pythonLicenseEvidenceCount, 2);
-  assert.equal(report.nodeLicenseEvidenceCount, 13);
+  assert.equal(report.nodeLicenseEvidenceCount, 12);
   assert.equal(report.capabilityCount, 3);
   assert.deepEqual(report.platforms, ["darwin-arm64"]);
-  assert.equal(report.versions["jobctrl-launcher"], "0.1.1");
-  assert.equal(report.versions["playwright-python"], "1.58.0");
-  assert.equal(report.versions["font-geist"], "5.2.9");
-  assert.equal(report.versions["font-jetbrains-mono"], "5.2.8");
-  assert.equal(report.versions["pdfjs-renderer"], "5.7.284");
-  assert.equal(report.versions["claude-agent-sdk"], "0.2.115");
+  assert.equal(report.versions["jobctrl-launcher"], "0.4.0");
+  assert.equal(report.versions["playwright-python"], "1.64.0");
+  assert.equal(report.versions["font-geist"], "5.3.0");
+  assert.equal(report.versions["font-jetbrains-mono"], "5.3.0");
+  assert.equal(report.versions["pdfjs-renderer"], "6.2.108");
+  assert.equal(report.versions["claude-agent-sdk"], "0.2.121");
   assert.equal(typeof report.sourceDependencyReview.hasRecordDrift, "boolean");
   for (const entry of Object.values(report.sourceDependencyReview.recordCounts)) {
     assert.equal(Number.isInteger(entry.baseline), true);
@@ -178,6 +178,8 @@ test("manifest validation binds component identity and resolved versions to inve
 
 test("manifest app and launcher compatibility versions are contract-bound", async () => {
   const contracts = await loadManifestValidationContracts();
+  const expected = await validManifest(contracts);
+  assert.deepEqual(expected.launcherCompatibility, { minimum: 2, maximum: 2 });
   const wrongApp = await validManifest(contracts);
   wrongApp.appVersion = "3.0.0";
   assert.throws(() => validateDistributionManifest(wrongApp, contracts), /appVersion does not match/);
@@ -185,6 +187,10 @@ test("manifest app and launcher compatibility versions are contract-bound", asyn
   const wrongLauncher = await validManifest(contracts);
   wrongLauncher.launcherCompatibility.maximum += 1;
   assert.throws(() => validateDistributionManifest(wrongLauncher, contracts), /maximum does not match/);
+
+  const historicalController = await validManifest(contracts);
+  historicalController.launcherCompatibility.minimum = 1;
+  assert.throws(() => validateDistributionManifest(historicalController, contracts), /minimum does not match/);
 });
 
 test("manifest validation rejects traversal, overlapping roots, and unowned files", async () => {
@@ -367,7 +373,7 @@ test("license evidence locks are closed, immutable, exact, and bound to dependen
   ].map((file) => readFile(path.join(process.cwd(), file), "utf8")))).join("\n");
 
   assert.equal(validatePythonLicenseEvidenceLocks(pythonLicenseEvidenceLocks, uvLock).inputs.length, 2);
-  assert.equal(validateNodeLicenseEvidenceLocks(nodeLicenseEvidenceLocks, pnpmLocks).inputs.length, 13);
+  assert.equal(validateNodeLicenseEvidenceLocks(nodeLicenseEvidenceLocks, pnpmLocks).inputs.length, 12);
 
   const missingPythonSubject = structuredClone(pythonLicenseEvidenceLocks);
   missingPythonSubject.inputs.pop();
@@ -471,7 +477,7 @@ test("source measurement reports dependency, lockfile, and environment presence"
   assert.equal(report.schemaVersion, 1);
   assert.ok(report.source.javascript.uniqueDirect > 0);
   assert.ok(report.source.javascript.uniqueRuntimeDirect > 0);
-  assert.equal(report.source.python.coreRuntimeDirect, 20);
+  assert.equal(report.source.python.coreRuntimeDirect, 22);
   assert.equal(report.source.python.providerRuntimeDirect, 4);
   assert.ok(report.source.locks.pnpmPackageRecords > 0);
   assert.ok(report.source.locks.uvPackageRecords > 0);

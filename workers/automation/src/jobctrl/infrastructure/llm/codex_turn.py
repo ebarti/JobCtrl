@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from jobctrl.infrastructure.llm.provider_errors import (
     codex_protocol_error,
@@ -32,6 +32,32 @@ def _usage_from(value: object) -> tuple[int | None, int | None]:
     )
 
 
+def _usage_details_from(value: object) -> tuple[int | None, int | None]:
+    total = getattr(value, "total", value)
+    def count(name):
+        value = getattr(total, name, None)
+        return value if type(value) is int and value >= 0 else None
+    return count("cached_input_tokens"), count("reasoning_output_tokens")
+
+
+def _record_observed_usage(value, record_usage, record_usage_details):
+    # Diagnostics must not prevent accounting, including on cancellation.
+    errors = []
+    for callback, counts in (
+        (record_usage, _usage_from(value)),
+        (record_usage_details, _usage_details_from(value)),
+    ):
+        if callback is not None:
+            try:
+                callback(*counts)
+            except BaseException as exc:
+                errors.append(exc)
+    if errors:
+        if len(errors) > 1:
+            errors[0].add_note("Recording Codex usage details also failed.")
+        raise errors[0]
+
+
 def _status_value(turn: object) -> str:
     status = getattr(turn, "status", None)
     return str(getattr(status, "value", status) or "")
@@ -53,7 +79,17 @@ def _final_response(items: list[object]) -> str | None:
     return fallback
 
 
-def _outcome_from_result(*, result: object, model: str, operation: str) -> CodexTurnOutcome:
+def _outcome_from_result(
+    *,
+    result: object,
+    model: str,
+    operation: str,
+    record_usage: Callable[[int | None, int | None], None] | None,
+    record_usage_details: Callable[[int | None, int | None], None] | None,
+) -> CodexTurnOutcome:
+    usage = getattr(result, "usage", None)
+    input_tokens, output_tokens = _usage_from(usage)
+    _record_observed_usage(usage, record_usage, record_usage_details)
     if _status_value(result) != "completed":
         raise codex_turn_error(model=model, operation=operation, error=getattr(result, "error", None))
     final_response = getattr(result, "final_response", None)
@@ -64,7 +100,6 @@ def _outcome_from_result(*, result: object, model: str, operation: str) -> Codex
             code="final_response_missing",
             retryable=True,
         )
-    input_tokens, output_tokens = _usage_from(getattr(result, "usage", None))
     return CodexTurnOutcome(final_response, input_tokens, output_tokens)
 
 
@@ -75,6 +110,8 @@ async def run_codex_turn(
     model: str,
     operation: str,
     run_kwargs: dict[str, Any],
+    record_usage: Callable[[int | None, int | None], None] | None = None,
+    record_usage_details: Callable[[int | None, int | None], None] | None = None,
 ) -> CodexTurnOutcome:
     """Collect a Codex turn without the SDK's lossy ``thread.run()`` wrapper.
 
@@ -88,13 +125,20 @@ async def run_codex_turn(
     turn_method = getattr(thread, "turn", None)
     if not callable(turn_method):
         result = await thread.run(prompt, **run_kwargs)
-        return _outcome_from_result(result=result, model=model, operation=operation)
+        return _outcome_from_result(
+            result=result,
+            model=model,
+            operation=operation,
+            record_usage=record_usage,
+            record_usage_details=record_usage_details,
+        )
 
     handle = await turn_method(prompt, **run_kwargs)
     stream = handle.stream()
     completed_turn: object | None = None
     items: list[object] = []
     usage: object | None = None
+    stream_error: BaseException | None = None
     try:
         async for event in stream:
             payload = getattr(event, "payload", None)
@@ -109,8 +153,35 @@ async def run_codex_turn(
             turn = getattr(payload, "turn", None)
             if turn is not None and getattr(turn, "id", None) == getattr(handle, "id", None):
                 completed_turn = turn
-    finally:
+    except BaseException as exc:
+        stream_error = exc
+
+    close_error: BaseException | None = None
+    try:
         await stream.aclose()
+    except BaseException as exc:
+        close_error = exc
+
+    input_tokens, output_tokens = _usage_from(usage)
+    usage_error: BaseException | None = None
+    if usage is not None:
+        try:
+            _record_observed_usage(usage, record_usage, record_usage_details)
+        except BaseException as exc:
+            usage_error = exc
+
+    if stream_error is not None:
+        if close_error is not None:
+            stream_error.add_note("The Codex turn stream also failed while closing.")
+        if usage_error is not None:
+            stream_error.add_note("Persisting observed Codex usage also failed.")
+        raise stream_error
+    if close_error is not None:
+        if usage_error is not None:
+            close_error.add_note("Persisting observed Codex usage also failed.")
+        raise close_error
+    if usage_error is not None:
+        raise usage_error
 
     if completed_turn is None:
         raise codex_protocol_error(
@@ -133,7 +204,6 @@ async def run_codex_turn(
             code="final_response_missing",
             retryable=True,
         )
-    input_tokens, output_tokens = _usage_from(usage)
     return CodexTurnOutcome(final_response, input_tokens, output_tokens)
 
 

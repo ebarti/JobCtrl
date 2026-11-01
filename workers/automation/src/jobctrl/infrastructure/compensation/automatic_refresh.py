@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
+import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
@@ -21,7 +23,10 @@ from jobctrl.infrastructure.compensation.benchmark_ingestion import (
     FxRateToEur,
     canonicalize_reported_observations,
 )
-from jobctrl.infrastructure.compensation.levels_fyi_public import LevelsFyiPublicTarget
+from jobctrl.infrastructure.compensation.levels_fyi_public import (
+    LEVELS_FYI_PUBLIC_ERROR_CODES,
+    LevelsFyiPublicTarget,
+)
 from jobctrl.infrastructure.compensation.official_data import (
     load_ecb_daily_exchange_rates,
     load_eurostat_actual_individual_consumption_price_levels,
@@ -30,6 +35,7 @@ from jobctrl.infrastructure.compensation.refresh_state import (
     CompensationBenchmarkSlice,
     SqliteCompensationRefreshStateRepository,
 )
+from jobctrl.infrastructure.compensation.refresh_control import CompensationRefreshControl
 from jobctrl.infrastructure.compensation.sqlite_benchmark_repository import (
     SqliteCompensationBenchmarkRepository,
 )
@@ -47,6 +53,9 @@ AUTOMATIC_REFRESH_INTERVAL = timedelta(days=7)
 AUTOMATIC_REFRESH_RETRY_INTERVAL = timedelta(days=1)
 AUTOMATIC_REFRESH_LEASE_DURATION = timedelta(hours=1)
 PRICE_LEVEL_CATEGORY = "actual_individual_consumption"
+MAX_REJECTION_RECEIPTS = 128
+MAX_TARGET_RECEIPTS = 128
+MAX_RECEIPT_LIST_BYTES = 128 * 1024
 
 AutomaticRefreshStatus = Literal["skipped", "succeeded", "completed_with_warnings"]
 ObservationLoader = Callable[[tuple[LevelsFyiPublicTarget, ...]], ReportedCompensationSourceLoad]
@@ -71,6 +80,7 @@ class AutomaticCompensationRefreshResult:
     direct_facts_saved: int
     price_level_facts_saved: int
     warnings: tuple[str, ...] = ()
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -88,6 +98,7 @@ class AutomaticCompensationRefreshResult:
             "directFactsSaved": self.direct_facts_saved,
             "priceLevelFactsSaved": self.price_level_facts_saved,
             "warnings": list(self.warnings),
+            "diagnostics": self.diagnostics,
         }
 
 
@@ -98,6 +109,8 @@ def refresh_automatic_compensation_benchmarks(
     now: str | None = None,
     conn: sqlite3.Connection | None = None,
     opener: Any | None = None,
+    force_slices: tuple[CompensationBenchmarkSlice, ...] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> AutomaticCompensationRefreshResult:
     """Run the production automatic refresh through policy-routed public clients."""
 
@@ -120,7 +133,6 @@ def refresh_automatic_compensation_benchmarks(
             recorder_conn=active_conn,
             run_id=run_id,
             opener=opener,
-            preserve_levels_fyi_source_currency=True,
         )
 
     ecb_client = compensation_feed_client(
@@ -165,6 +177,8 @@ def refresh_automatic_compensation_benchmarks(
             fetch_text=ecb_client.fetch_text,
         ),
         load_price_levels=load_price_levels,
+        force_slices=force_slices,
+        cancel_event=cancel_event,
     )
 
 
@@ -178,8 +192,10 @@ def run_automatic_compensation_refresh(
     load_fx_rates: FxLoader,
     load_price_levels: PriceLevelLoader,
     completion_clock: CompletionClock | None = None,
+    force_slices: tuple[CompensationBenchmarkSlice, ...] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> AutomaticCompensationRefreshResult:
-    """Refresh every missing or due country/role slice exactly once per run."""
+    """Refresh due slices, or an explicitly selected bounded set under the same lease."""
 
     canonical_now = canonical_benchmark_timestamp(now, "now")
     fresh_until = _shift_timestamp(canonical_now, AUTOMATIC_REFRESH_INTERVAL)
@@ -190,16 +206,33 @@ def run_automatic_compensation_refresh(
     benchmark_repository = SqliteCompensationBenchmarkRepository(conn)
 
     discovery = state_repository.discover_active_job_slices(tenant_id)
-    state_repository.ensure_slices(discovery.slices, now=canonical_now)
+    selected = discovery.slices
+    if force_slices is not None:
+        if not force_slices or len(force_slices) > 5:
+            raise ValueError("forced compensation refresh requires one to five active slices")
+        discovered = {item.key: item for item in discovery.slices}
+        if any(item.key not in discovered for item in force_slices):
+            raise ValueError("forced compensation refresh slice is not active")
+        selected = tuple(discovered[key] for key in sorted({item.key for item in force_slices}))
+    state_repository.ensure_slices(selected, now=canonical_now)
     claimed = state_repository.claim_due(
-        discovery.slices,
+        selected,
         owner=owner,
         now=canonical_now,
         lease_expires_at=lease_expires_at,
+        force=force_slices is not None,
     )
+    claimed_keys = {lease.benchmark_slice.key for lease in claimed}
+    deferred_states = tuple(state_repository.get(item) for item in selected if item.key not in claimed_keys)
+    unfinished = any(state is not None and state.refresh_status == "refreshing" for state in deferred_states)
+    deferred_failures = sum(state is not None and state.refresh_status == "failed" for state in deferred_states)
+    deferred_warnings = tuple(code for code, present in (
+        ("compensation_refresh_in_progress", unfinished),
+        ("compensation_refresh_failed_backoff", bool(deferred_failures)),
+    ) if present)
     if not claimed:
         return AutomaticCompensationRefreshResult(
-            status="skipped",
+            status="completed_with_warnings" if deferred_warnings else "skipped",
             jobs_considered=discovery.jobs_considered,
             slices_discovered=len(discovery.slices),
             slices_claimed=0,
@@ -207,183 +240,302 @@ def run_automatic_compensation_refresh(
             extrapolated_results=0,
             level_fallback_results=0,
             insufficient_results=0,
-            failed_results=0,
+            failed_results=deferred_failures,
             observations_loaded=0,
             observations_rejected=0,
             direct_facts_saved=0,
             price_level_facts_saved=0,
+            warnings=deferred_warnings,
+            diagnostics=_refresh_diagnostics(tenant_id, owner),
         )
 
-    warnings: set[str] = set()
-    load_errors: list[str] = []
-    targets = _levels_fyi_targets(tuple(lease.benchmark_slice for lease in claimed))
-    try:
-        source_load = load_observations(targets)
-    except Exception:  # noqa: BLE001 - one source family must not fail discovery
-        log.warning("Automatic compensation source loading failed")
-        source_load = ReportedCompensationSourceLoad(observations=())
-        load_errors.append("reported_sources_unavailable")
-    load_errors.extend(source_load.source_errors)
-    warnings.update(source_load.source_errors)
-
-    needed_fx = {
-        observation.currency.strip().upper()
-        for observation in source_load.observations
-        if observation.currency.strip().upper() != "EUR"
-    }
-    fx_rates: tuple[FxRateToEur, ...] = ()
-    if needed_fx:
-        try:
-            fx_rates = load_fx_rates()
-        except Exception:  # noqa: BLE001 - EUR evidence can still be retained
-            log.warning("Automatic compensation FX loading failed")
-            load_errors.append("ecb_fx_unavailable")
-            warnings.add("ecb_fx_unavailable")
-
-    batch = canonicalize_reported_observations(
-        source_load.observations,
-        tenant_id=tenant_id,
-        fetched_at=canonical_now,
-        fresh_until=fresh_until,
-        fx_rates_to_eur=fx_rates,
+    control = CompensationRefreshControl(
+        conn, state_repository, claimed, clock=lambda: _completion_timestamp(completion_clock),
+        lease_duration=AUTOMATIC_REFRESH_LEASE_DURATION, cancel_event=cancel_event,
     )
-    rejection_reasons = {rejection.reason for rejection in batch.rejected}
-    warnings.update(f"observation_{reason}" for reason in rejection_reasons)
-    if "missing_fx_rate" in rejection_reasons:
-        load_errors.append("ecb_fx_incomplete")
+    with control:
+        control.check(force=True)
 
-    direct_ids: set[str] = set()
-    for fact in batch.facts:
-        if (
-            benchmark_repository.get_direct_by_evidence_hash(
-                fact.tenant_id,
-                fact.evidence_hash,
+        warnings: set[str] = set(deferred_warnings)
+        load_errors: list[str] = []
+        targets = _levels_fyi_targets(tuple(lease.benchmark_slice for lease in claimed))
+        try:
+            source_load = load_observations(targets)
+        except Exception:  # noqa: BLE001 - one source family must not fail discovery
+            log.warning("Automatic compensation source loading failed")
+            source_load = ReportedCompensationSourceLoad(observations=())
+            load_errors.append("reported_sources_unavailable")
+        load_errors.extend(source_load.source_errors)
+        warnings.update(source_load.source_errors)
+        control.check(force=True)
+
+        needed_fx = {
+            observation.currency.strip().upper()
+            for observation in source_load.observations
+            if observation.currency.strip().upper() != "EUR"
+        }
+        fx_rates: tuple[FxRateToEur, ...] = ()
+        if needed_fx:
+            try:
+                fx_rates = load_fx_rates()
+            except Exception:  # noqa: BLE001 - EUR evidence can still be retained
+                log.warning("Automatic compensation FX loading failed")
+                load_errors.append("ecb_fx_unavailable")
+                warnings.add("ecb_fx_unavailable")
+
+        from jobctrl.infrastructure.compensation.interpretation import classify_observations
+
+        try:
+            classified = classify_observations(
+                conn, source_load.observations, tenant_id=tenant_id, execution_guard=control.check,
+                on_abort=control.abort, cancel_event=cancel_event,
             )
-            is None
-        ):
-            direct_ids.add(fact.fact_id)
-        benchmark_repository.save_direct(fact)
-    conn.commit()
-
-    direct_matches = {
-        benchmark_slice.key: _latest_direct_for_slice(
-            benchmark_repository,
-            benchmark_slice,
-            fresh_at=strict_fresh_at,
+            control.check(force=True)
+        except BaseException as failure:
+            control.abort(failure)
+            raise
+        batch = canonicalize_reported_observations(
+            classified,
+            tenant_id=tenant_id,
+            fetched_at=canonical_now,
+            fresh_until=fresh_until,
+            fx_rates_to_eur=fx_rates,
         )
-        for benchmark_slice in (lease.benchmark_slice for lease in claimed)
-    }
-    needs_price_levels = any(fact is None for fact in direct_matches.values())
-    price_ids: set[str] = set()
-    if needs_price_levels:
-        try:
-            for fact in load_price_levels():
-                if fact.tenant_id != tenant_id:
-                    raise ValueError("price-level facts must belong to the refresh tenant")
-                if (
-                    benchmark_repository.get_price_level_by_evidence_hash(
-                        fact.tenant_id,
-                        fact.evidence_hash,
-                    )
-                    is None
-                ):
-                    price_ids.add(fact.fact_id)
-                benchmark_repository.save_price_level(fact)
-            conn.commit()
-        except Exception:  # noqa: BLE001 - direct facts remain independently usable
-            conn.rollback()
-            price_ids.clear()
-            log.warning("Automatic compensation price-level loading failed")
-            load_errors.append("eurostat_price_levels_unavailable")
-            warnings.add("eurostat_price_levels_unavailable")
+        rejection_reasons = {rejection.reason for rejection in batch.rejected}
+        warnings.update(f"observation_{reason}" for reason in rejection_reasons)
+        if "missing_fx_rate" in rejection_reasons:
+            load_errors.append("ecb_fx_incomplete")
 
-    direct_results = 0
-    extrapolated_results = 0
-    level_fallback_results = 0
-    insufficient_results = 0
-    failed_results = 0
-    for lease in claimed:
-        benchmark_slice = lease.benchmark_slice
-        direct = direct_matches[benchmark_slice.key]
-        if direct is not None:
-            state_repository.mark_result(
-                lease,
-                completed_at=_completion_timestamp(completion_clock),
-                next_refresh_at=min(fresh_until, direct.fresh_until),
-                result_kind="direct",
-                fact_id=direct.fact_id,
-            )
-            direct_results += 1
-            level_fallback_results += int(direct.seniority_label != benchmark_slice.seniority_label)
-            continue
+        direct_ids: set[str] = set()
+        for fact in batch.facts:
+            if (
+                benchmark_repository.get_direct_by_evidence_hash(
+                    fact.tenant_id,
+                    fact.evidence_hash,
+                )
+                is None
+            ):
+                direct_ids.add(fact.fact_id)
+            benchmark_repository.save_direct(fact)
+        conn.commit()
 
-        try:
-            extrapolated, missing_reason = _derive_extrapolated_for_slice(
+        direct_matches = {
+            benchmark_slice.key: _latest_direct_for_slice(
                 benchmark_repository,
                 benchmark_slice,
-                derived_at=canonical_now,
                 fresh_at=strict_fresh_at,
             )
-            if extrapolated is not None:
-                saved = benchmark_repository.save_extrapolated(extrapolated)
+            for benchmark_slice in (lease.benchmark_slice for lease in claimed)
+        }
+        needs_price_levels = any(fact is None for fact in direct_matches.values())
+        price_ids: set[str] = set()
+        if needs_price_levels:
+            try:
+                for fact in load_price_levels():
+                    if fact.tenant_id != tenant_id:
+                        raise ValueError("price-level facts must belong to the refresh tenant")
+                    if (
+                        benchmark_repository.get_price_level_by_evidence_hash(
+                            fact.tenant_id,
+                            fact.evidence_hash,
+                        )
+                        is None
+                    ):
+                        price_ids.add(fact.fact_id)
+                    benchmark_repository.save_price_level(fact)
+                conn.commit()
+            except Exception:  # noqa: BLE001 - direct facts remain independently usable
+                conn.rollback()
+                price_ids.clear()
+                log.warning("Automatic compensation price-level loading failed")
+                load_errors.append("eurostat_price_levels_unavailable")
+                warnings.add("eurostat_price_levels_unavailable")
+
+        direct_results = 0
+        extrapolated_results = 0
+        level_fallback_results = 0
+        insufficient_results = 0
+        failed_results = deferred_failures
+        for original in claimed:
+            benchmark_slice = original.benchmark_slice
+            control.check(force=True)
+            lease = control.lease(benchmark_slice)
+            slice_errors = _slice_load_errors(load_errors, source_load, benchmark_slice)
+            warnings.update(slice_errors)
+            direct = direct_matches[benchmark_slice.key]
+            if direct is not None:
+                # Only a failed Levels role/level lookup can turn a lower-level direct
+                # fallback into a failed slice; FX, price-level or derivation errors
+                # never did and never claim that the lookup missed its source pages.
+                lookup_error = (
+                    _levels_lookup_error(slice_errors) if direct.seniority_label != benchmark_slice.seniority_label else None
+                )
+                previous = state_repository.get(benchmark_slice)
+                if lookup_error and previous is not None and previous.last_result_kind != "none":
+                    state_repository.mark_failed(
+                        lease,
+                        completed_at=_completion_timestamp(completion_clock),
+                        retry_at=retry_at,
+                        error_code=lookup_error,
+                    )
+                    failed_results += 1
+                    control.finished(benchmark_slice)
+                    continue
                 state_repository.mark_result(
                     lease,
                     completed_at=_completion_timestamp(completion_clock),
-                    next_refresh_at=min(fresh_until, saved.fresh_until),
-                    result_kind="extrapolated",
-                    fact_id=saved.fact_id,
-                    actionable=saved.is_actionable,
+                    next_refresh_at=retry_at if lookup_error else min(fresh_until, direct.fresh_until),
+                    result_kind="direct",
+                    fact_id=direct.fact_id,
+                    source_error=lookup_error,
                 )
-                extrapolated_results += 1
-                level_fallback_results += int(saved.seniority_label != benchmark_slice.seniority_label)
-                if not saved.is_actionable:
-                    insufficient_results += 1
-                    warnings.add("factor_out_of_bounds")
+                if lookup_error:
+                    failed_results += 1
+                else:
+                    direct_results += 1
+                level_fallback_results += int(direct.seniority_label != benchmark_slice.seniority_label)
+                control.finished(benchmark_slice)
                 continue
-        except Exception:  # noqa: BLE001 - isolate independent benchmark slices
-            conn.rollback()
-            log.warning("Automatic compensation derivation failed for one benchmark slice")
-            missing_reason = "benchmark_derivation_failed"
-            load_errors.append(missing_reason)
+
+            try:
+                extrapolated, missing_reason = _derive_extrapolated_for_slice(
+                    benchmark_repository,
+                    benchmark_slice,
+                    derived_at=canonical_now,
+                    fresh_at=strict_fresh_at,
+                )
+                if extrapolated is not None:
+                    saved = benchmark_repository.save_extrapolated(extrapolated)
+                    state_repository.mark_result(
+                        lease,
+                        completed_at=_completion_timestamp(completion_clock),
+                        next_refresh_at=min(fresh_until, saved.fresh_until),
+                        result_kind="extrapolated",
+                        fact_id=saved.fact_id,
+                        actionable=saved.is_actionable,
+                    )
+                    extrapolated_results += 1
+                    level_fallback_results += int(saved.seniority_label != benchmark_slice.seniority_label)
+                    if not saved.is_actionable:
+                        insufficient_results += 1
+                        warnings.add("factor_out_of_bounds")
+                    control.finished(benchmark_slice)
+                    continue
+            except Exception:  # noqa: BLE001 - isolate independent benchmark slices
+                conn.rollback()
+                log.warning("Automatic compensation derivation failed for one benchmark slice")
+                missing_reason = "benchmark_derivation_failed"
+                slice_errors.append(missing_reason)
+                warnings.add(missing_reason)
+
+            if slice_errors:
+                state_repository.mark_failed(
+                    lease,
+                    completed_at=_completion_timestamp(completion_clock),
+                    retry_at=retry_at,
+                    error_code=slice_errors[0],
+                )
+                failed_results += 1
+            else:
+                state_repository.mark_insufficient(
+                    lease,
+                    completed_at=_completion_timestamp(completion_clock),
+                    next_refresh_at=fresh_until,
+                    error_code=missing_reason,
+                )
+                insufficient_results += 1
+            control.finished(benchmark_slice)
 
         if load_errors:
-            state_repository.mark_failed(
-                lease,
-                completed_at=_completion_timestamp(completion_clock),
-                retry_at=retry_at,
-                error_code=load_errors[0],
-            )
-            failed_results += 1
-        else:
-            state_repository.mark_insufficient(
-                lease,
-                completed_at=_completion_timestamp(completion_clock),
-                next_refresh_at=fresh_until,
-                error_code=missing_reason,
-            )
-            insufficient_results += 1
+            warnings.update(load_errors)
+        status: AutomaticRefreshStatus = (
+            "completed_with_warnings" if warnings or insufficient_results or failed_results else "succeeded"
+        )
+        return AutomaticCompensationRefreshResult(
+            status=status,
+            jobs_considered=discovery.jobs_considered,
+            slices_discovered=len(discovery.slices),
+            slices_claimed=len(claimed),
+            direct_results=direct_results,
+            extrapolated_results=extrapolated_results,
+            level_fallback_results=level_fallback_results,
+            insufficient_results=insufficient_results,
+            failed_results=failed_results,
+            observations_loaded=len(source_load.observations),
+            observations_rejected=len(batch.rejected),
+            direct_facts_saved=len(direct_ids),
+            price_level_facts_saved=len(price_ids),
+            warnings=tuple(sorted(warnings)),
+            diagnostics=_refresh_diagnostics(
+                tenant_id, owner, source_load=source_load, classified=classified, rejected=batch.rejected,
+            ),
+        )
 
-    if load_errors:
-        warnings.update(load_errors)
-    status: AutomaticRefreshStatus = (
-        "completed_with_warnings" if warnings or insufficient_results or failed_results else "succeeded"
+
+def _slice_load_errors(load_errors, source_load, benchmark_slice) -> list[str]:
+    target = LevelsFyiPublicTarget(
+        benchmark_slice.role_family_code, benchmark_slice.geography.country_code, benchmark_slice.seniority_label,
     )
-    return AutomaticCompensationRefreshResult(
-        status=status,
-        jobs_considered=discovery.jobs_considered,
-        slices_discovered=len(discovery.slices),
-        slices_claimed=len(claimed),
-        direct_results=direct_results,
-        extrapolated_results=extrapolated_results,
-        level_fallback_results=level_fallback_results,
-        insufficient_results=insufficient_results,
-        failed_results=failed_results,
-        observations_loaded=len(source_load.observations),
-        observations_rejected=len(batch.rejected),
-        direct_facts_saved=len(direct_ids),
-        price_level_facts_saved=len(price_ids),
-        warnings=tuple(sorted(warnings)),
-    )
+    matching = [outcome for outcome in source_load.levels_fyi_target_outcomes if outcome.target == target]
+    # Legacy/custom loaders without target evidence remain conservative. Only an
+    # explicit supported-success or unsupported-coverage receipt scopes out an
+    # unrelated Levels error; missing diagnostics never prove source success.
+    if not matching:
+        return list(load_errors)
+    errors = [error for error in load_errors if error not in LEVELS_FYI_PUBLIC_ERROR_CODES]
+    errors.extend(dict.fromkeys(code for outcome in matching for code in outcome.error_codes))
+    return errors
+
+
+def _refresh_diagnostics(tenant_id, owner, *, source_load=None, classified=(), rejected=()) -> dict[str, Any]:
+    from jobctrl.domain.compensation.classification import benchmark_classification_source
+
+    receipts = []
+    for rejection in rejected[:MAX_REJECTION_RECEIPTS]:
+        row = classified[rejection.observation_index]
+        fingerprint, _ = benchmark_classification_source(row)
+        receipts.append({
+            "observationIndex": rejection.observation_index, "sourceId": row.source_id,
+            "sourceSnapshotId": row.snapshot_version, "sourceFingerprint": fingerprint,
+            "classificationId": row.determination_id, "classificationEntityId": row.classification_entity_id,
+            "reason": rejection.reason,
+        })
+    targets = source_load.levels_fyi_target_outcomes if source_load else ()
+    target_receipts = _bounded_receipts([outcome.as_dict() for outcome in targets[:MAX_TARGET_RECEIPTS]])
+    receipts = _bounded_receipts(receipts)
+    return {
+        "schemaVersion": "compensation-refresh-diagnostics-v1", "tenantId": tenant_id, "owner": owner,
+        "levelsFyiTargets": target_receipts,
+        "levelsFyiTargetsOmitted": len(targets) - len(target_receipts),
+        "rejectedObservations": receipts,
+        "rejectedObservationsOmitted": max(0, len(rejected) - len(receipts)),
+    }
+
+
+def _bounded_receipts(items):
+    retained = []
+    byte_count = 2  # JSON array delimiters; each list owns an independent payload allowance.
+    for item in items:
+        # Escaped JSON and default spacing conservatively cover Temporal's
+        # compact JSON wire encoding, including non-ASCII source identifiers.
+        size = len(json.dumps(item, ensure_ascii=True).encode("utf-8")) + (2 if retained else 0)
+        if byte_count + size > MAX_RECEIPT_LIST_BYTES:
+            break
+        retained.append(item)
+        byte_count += size
+    return retained
+
+
+LEVELS_LOOKUP_ERROR_CODES: tuple[str, ...] = (
+    *LEVELS_FYI_PUBLIC_ERROR_CODES,
+    "reported_sources_unavailable",
+)
+
+
+def _levels_lookup_error(load_errors: list[str]) -> str | None:
+    """Return the first recorded cause of an incomplete Levels role/level lookup."""
+
+    return next((code for code in load_errors if code in LEVELS_LOOKUP_ERROR_CODES), None)
 
 
 def _latest_direct_for_slice(
@@ -485,14 +637,15 @@ def _derive_extrapolated_for_slice(
 def _levels_fyi_targets(
     slices: tuple[CompensationBenchmarkSlice, ...],
 ) -> tuple[LevelsFyiPublicTarget, ...]:
-    targets: dict[tuple[str, str], LevelsFyiPublicTarget] = {}
+    targets: dict[tuple[str, str, str], LevelsFyiPublicTarget] = {}
     for benchmark_slice in slices:
-        key = (benchmark_slice.title_hint, benchmark_slice.geography.country_code)
+        key = (benchmark_slice.role_family_code, benchmark_slice.seniority_label, benchmark_slice.geography.country_code)
         targets.setdefault(
             key,
             LevelsFyiPublicTarget(
-                role_title=benchmark_slice.title_hint,
-                location=benchmark_slice.geography.country_code,
+                occupation_family_code=benchmark_slice.role_family_code,
+                country_code=benchmark_slice.geography.country_code,
+                seniority_code=benchmark_slice.seniority_label,
             ),
         )
     return tuple(targets[key] for key in sorted(targets))

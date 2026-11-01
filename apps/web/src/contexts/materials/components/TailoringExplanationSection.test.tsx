@@ -42,7 +42,6 @@ const keywordOnlyExplanation: ArtifactTailoringExplanation = {
   },
   evidence: {
     requiredIds: [],
-    seniorityIds: [],
     representedIds: [],
     missingIds: [],
     verifiedMetricCount: null,
@@ -61,7 +60,7 @@ const keywordOnlyExplanation: ArtifactTailoringExplanation = {
     passed: null,
     verdict: null,
     score: null,
-    minScore: null,
+
     issues: [],
     unsupportedClaims: [],
     fabrications: [],
@@ -315,7 +314,6 @@ describe("<TailoringExplanationSection>", () => {
         accepted: false,
         model: "voice-model",
         promptVersion: "voice-v1",
-        proxyDelta: { buzzword_density: -0.2 },
         reason: "Voice edit introduced an unsourced metric and was rejected.",
       },
     };
@@ -330,6 +328,5 @@ describe("<TailoringExplanationSection>", () => {
         "Voice edit introduced an unsourced metric and was rejected.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Buzzword Density: -0.2/)).toBeInTheDocument();
   });
 });

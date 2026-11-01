@@ -40,6 +40,7 @@ export function ContactCreateButton({
     <Dialog
       open={open}
       onOpenChange={(next) => {
+        if (!next && createContact.isPending) return;
         setOpen(next);
         if (!next) {
           createContact.reset();
@@ -61,6 +62,7 @@ export function ContactCreateButton({
         <ContactForm
           submitLabel="add contact"
           pending={createContact.isPending}
+          pauseWhilePending
           {...(createContact.error ? { errorMessage: createContact.error.message } : {})}
           {...(initialValues ? { initialValues } : {})}
           {...(jobId ? { lockedJobId: jobId } : {})}

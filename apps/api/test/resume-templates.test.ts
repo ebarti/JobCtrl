@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
+import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -12,6 +14,7 @@ import {
   listResumeTemplates,
   resolveCurrentResumeArtifactIdForOpen,
   ResumeTemplateInputError,
+  ResumeTemplateVersionConflictError,
   resumeTemplateStateForJob,
   setDefaultResumeTemplate,
   setJobResumeTemplateAssignment,
@@ -46,6 +49,37 @@ afterEach(() => {
 });
 
 describe("resume template service", () => {
+  it("refuses a stale version after an independent writer commits while the save waits for the lock", async () => {
+    const first = createResumeTemplateVersion(db, {
+      displayName: "Synthetic template", theme: BUILT_IN_RESUME_TEMPLATE_THEME, layout: {},
+    }).template;
+    const sqliteModule = createRequire(import.meta.url).resolve("better-sqlite3");
+    const writer = new Worker(`
+      const { parentPort, workerData } = require('node:worker_threads');
+      const Database = require(workerData.sqliteModule);
+      const other = new Database(workerData.dbPath);
+      other.exec('BEGIN IMMEDIATE');
+      other.prepare('UPDATE resume_templates SET display_name = ? WHERE tenant_id = ? AND template_id = ?').run('Concurrent saved template', 'local', workerData.templateId);
+      other.prepare("INSERT INTO resume_template_versions (tenant_id, version_id, template_id, version_number, display_name, status, theme_json, layout_json, content_hash, created_at) SELECT tenant_id, ?, template_id, version_number + 1, ?, status, theme_json, layout_json, content_hash, created_at FROM resume_template_versions WHERE tenant_id = ? AND version_id = ?").run('synthetic-concurrent-version', 'Concurrent saved template', 'local', workerData.versionId);
+      parentPort.postMessage('locked');
+      setTimeout(() => { other.exec('COMMIT'); other.close(); }, 100);
+    `, { eval: true, workerData: { sqliteModule, dbPath: path.join(tempDir, "jobctrl.db"), templateId: first.templateId, versionId: first.activeVersion.versionId } });
+    const exited = new Promise<void>((resolve, reject) => {
+      writer.once("error", reject);
+      writer.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`writer exited ${code}`)));
+    });
+    await new Promise<void>((resolve, reject) => { writer.once("message", () => resolve()); writer.once("error", reject); });
+    expect(() => createResumeTemplateVersion(db, {
+      templateId: first.templateId, expectedVersionId: first.activeVersion.versionId,
+      displayName: "Stale draft", theme: BUILT_IN_RESUME_TEMPLATE_THEME, layout: {},
+    })).toThrow(ResumeTemplateVersionConflictError);
+    await exited;
+    expect(getResumeTemplateDetail(db, first.templateId)?.template).toMatchObject({
+      displayName: "Concurrent saved template", activeVersion: { versionId: "synthetic-concurrent-version" },
+    });
+    const versions = db.prepare("SELECT COUNT(*) AS total FROM resume_template_versions WHERE tenant_id = ? AND template_id = ?").get("local", first.templateId) as { total: number };
+    expect(versions.total).toBe(2);
+  });
   it("saves style-only template versions, default selection, and per-job overrides", async () => {
     const initial = listResumeTemplates(db);
     expect(initial.templates).toHaveLength(1);
@@ -98,6 +132,7 @@ describe("resume template service", () => {
     }).template;
     const second = createResumeTemplateVersion(db, {
       templateId: first.templateId,
+      expectedVersionId: first.activeVersion.versionId,
       displayName: "Pinned template",
       theme: {
         ...BUILT_IN_RESUME_TEMPLATE_THEME,
@@ -126,6 +161,12 @@ describe("resume template service", () => {
   });
 
   it("rejects template payloads that contain profile or job facts", async () => {
+    const retainedUrl = "https://apply.example.test/private-retired-target";
+    db.prepare("INSERT INTO job_application_locators VALUES ('local', ?, ?)").run(JOB_ID, retainedUrl);
+    expect(() => createResumeTemplateVersion(db, {
+      displayName: retainedUrl, theme: BUILT_IN_RESUME_TEMPLATE_THEME, layout: {},
+    })).toThrow("profile or job facts");
+
     expect(() =>
       createResumeTemplateVersion(db, {
         displayName: "Jordan Candidate",
@@ -242,6 +283,40 @@ describe("resume template service", () => {
       .prepare("SELECT payload_json FROM job_events WHERE event_type = 'ResumeTemplateRefreshFailed'")
       .get() as { payload_json: string } | undefined;
     expect(event?.payload_json).toContain("unavailable");
+  });
+
+  it("preserves accepted artifacts and bytes when a render-only refresh fails", async () => {
+    const saved = createResumeTemplateVersion(db, {
+      displayName: "Synthetic failed refresh template",
+      theme: { ...BUILT_IN_RESUME_TEMPLATE_THEME, fontFamily: "serif" },
+      layout: {},
+    });
+    setDefaultResumeTemplate(db, {
+      templateId: saved.template.templateId,
+      versionId: saved.template.activeVersion.versionId,
+    });
+    const readArtifacts = () => db.prepare(
+      "SELECT artifact_id, generation, status, path FROM job_materials_artifacts ORDER BY artifact_id",
+    ).all() as Array<{ artifact_id: string; generation: number; status: string; path: string }>;
+    const originalArtifacts = readArtifacts();
+    expect(originalArtifacts.map(({ artifact_id, status }) => ({ artifact_id, status }))).toEqual([
+      { artifact_id: "resume-pdf-v1", status: "approved" },
+      { artifact_id: "resume-text-v1", status: "approved" },
+    ]);
+    const originalBytes = originalArtifacts.map((artifact) => fs.readFileSync(artifact.path));
+
+    const refresh = await ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, async ({ pdfPath }) => {
+      fs.writeFileSync(pdfPath, "partial synthetic render");
+      throw new Error("Synthetic renderer failure");
+    });
+
+    expect(refresh.status).toBe("failed");
+    expect(refresh.generation).toBeNull();
+    expect(refresh.templateState?.state).toBe("refresh_failed");
+    expect(readArtifacts()).toEqual(originalArtifacts);
+    expect(originalArtifacts.map((artifact) => fs.readFileSync(artifact.path))).toEqual(originalBytes);
+    expect(db.prepare("SELECT generation, status FROM job_materials ORDER BY generation").all())
+      .toEqual([{ generation: 1, status: "resume_approved" }]);
   });
 
   it("renders every line of a long resume across the refreshed PDF without truncation", async () => {
@@ -419,11 +494,13 @@ function seedDatabase(database: Database.Database): void {
       url TEXT NOT NULL,
       title TEXT,
       company TEXT,
-      application_url TEXT,
       discovered_at TEXT,
       PRIMARY KEY (tenant_id, job_id),
       UNIQUE (tenant_id, url)
     );
+    CREATE TABLE job_enrichments (tenant_id TEXT, job_id TEXT, application_url TEXT,
+      PRIMARY KEY (tenant_id, job_id));
+    CREATE TABLE job_application_locators (tenant_id TEXT, job_id TEXT, application_url TEXT);
     CREATE TABLE candidate_profiles (
       tenant_id TEXT NOT NULL,
       profile_id TEXT NOT NULL,
@@ -564,19 +641,23 @@ function seedDatabase(database: Database.Database): void {
   database.pragma("foreign_keys = ON");
   database
     .prepare(
-      "INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url, discovered_at) VALUES ('local', ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at) VALUES ('local', ?, ?, ?, ?, ?)",
     )
-    .run(JOB_ID, JOB_URL, "Senior Platform Engineer", "Globex Infrastructure", "https://apply.example.com/globex", NOW);
+    .run(JOB_ID, JOB_URL, "Senior Platform Engineer", "Globex Infrastructure", NOW);
   database
     .prepare(
-      "INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url, discovered_at) VALUES ('local', ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at) VALUES ('local', ?, ?, ?, ?, ?)",
     )
-    .run(UUID_SHAPED_URL_OWNER_JOB_ID, UUID_SHAPED_URL, "URL-shaped locator", "Example", "https://apply.example.com/uuid", NOW);
+    .run(UUID_SHAPED_URL_OWNER_JOB_ID, UUID_SHAPED_URL, "URL-shaped locator", "Example", NOW);
   database
     .prepare(
-      "INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url, discovered_at) VALUES ('other', ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at) VALUES ('other', ?, ?, ?, ?, ?)",
     )
-    .run(JOB_ID, "https://other.example/jobs/template-engineer", "Other tenant job", "Other", "https://other.example/apply", NOW);
+    .run(JOB_ID, "https://other.example/jobs/template-engineer", "Other tenant job", "Other", NOW);
+  const insertApplication = database.prepare("INSERT INTO job_enrichments VALUES (?, ?, ?)");
+  insertApplication.run("local", JOB_ID, "https://apply.example.com/globex");
+  insertApplication.run("local", UUID_SHAPED_URL_OWNER_JOB_ID, "https://apply.example.com/uuid");
+  insertApplication.run("other", JOB_ID, "https://other.example/apply");
   database
     .prepare(
       `INSERT INTO candidate_profiles (

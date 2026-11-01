@@ -64,30 +64,61 @@ export function listTailoringPolicyRevisions(
 
     return TailoringPolicyRevisionListResponseSchema.parse({
       ok: true,
-      revisions: rows.map((row) => ({
-        context: "materials",
-        policyKind: "tailoring_rule",
-        version: Number(row.version),
-        status: Number(row.version) === Number(row.current_version) ? "current" : "superseded",
-        learnedRules: learnedRules(row.runtime_settings_json),
-        sourceReviewId: row.source_review_id,
-        sourceRecommendationId: row.source_recommendation_id,
-        rollbackOfVersion:
-          row.rollback_of_version === null ? null : Number(row.rollback_of_version),
-        rollbackReasonCode:
-          row.rollback_of_version === null
-            ? null
-            : row.rollback_reason === "user_requested"
-              ? "user_requested"
-              : "historical_or_unspecified",
-        createdAt: canonicalizeWorkerUtcTimestamp(row.created_at),
-      })),
+      revisions: rows.map((row) => {
+        const receipt = restoreReceipt(row);
+        return {
+          context: "materials",
+          policyKind: "tailoring_rule",
+          version: Number(row.version),
+          status: Number(row.version) === Number(row.current_version) ? "current" : "superseded",
+          learnedRules: learnedRules(row.runtime_settings_json),
+          sourceReviewId: row.source_review_id,
+          sourceRecommendationId: row.source_recommendation_id,
+          rollbackOfVersion:
+            row.rollback_of_version === null ? null : Number(row.rollback_of_version),
+          rollbackReasonCode:
+            row.rollback_of_version === null
+              ? null
+              : row.rollback_reason === "user_requested" || receipt !== null
+                ? "user_requested"
+                : "historical_or_unspecified",
+          ...(receipt === null ? {} : {
+            restoreCommandId: receipt.commandId,
+            restoredFromCurrentVersion: receipt.expectedCurrentVersion,
+          }),
+          createdAt: canonicalizeWorkerUtcTimestamp(row.created_at),
+        };
+      }),
       page: query.page,
       pageSize: query.pageSize,
       total,
       totalPages: total === 0 ? 0 : Math.ceil(total / query.pageSize),
     });
   })();
+}
+
+function restoreReceipt(row: TailoringPolicyRevisionRow): {
+  commandId: string;
+  expectedCurrentVersion: number;
+} | null {
+  const prefix = "jobctrl:policy-restore:v1:";
+  if (!row.rollback_reason.startsWith(prefix)) return null;
+  const raw = row.rollback_reason.slice(prefix.length);
+  const separator = raw.indexOf(":");
+  if (separator < 0) return null;
+  const commandId = raw.slice(0, separator);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(commandId)) return null;
+  try {
+    const value: unknown = JSON.parse(raw.slice(separator + 1));
+    if (!isRecord(value) || value.commandId !== commandId || value.reason !== "user_requested" ||
+        value.targetVersion !== row.rollback_of_version ||
+        typeof value.expectedCurrentVersion !== "number" ||
+        !Number.isInteger(value.expectedCurrentVersion) || value.expectedCurrentVersion < 1 ||
+        value.expectedCurrentVersion + 1 !== row.version) return null;
+    return { commandId, expectedCurrentVersion: value.expectedCurrentVersion };
+  } catch {
+    return null;
+  }
 }
 
 function canonicalizeWorkerUtcTimestamp(value: string): string {

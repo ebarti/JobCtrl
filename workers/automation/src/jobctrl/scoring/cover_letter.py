@@ -19,16 +19,24 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from hashlib import sha256
 from pathlib import Path
+from uuid import uuid4
 
 from jobctrl.config import COVER_LETTER_DIR
 from jobctrl.database import effective_tailoring_min_score, get_connection
+from jobctrl.domain.determinations import serialized_determination_failure
+from jobctrl.domain.errors import MATERIAL_REJECTION_STATUSES
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.services import ContentValidator
 from jobctrl.domain.materials.use_cases import (
     CoverLetterOutcome,
     GenerateCoverLetterUseCase,
+    MaterialsChangedDuringGeneration,
+    _discard_pdf_attempt,
+    _pdf_attempt_path,
+    _pdf_with_accepted_source,
 )
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmPort
@@ -40,9 +48,8 @@ from jobctrl.domain.ports.materials import (
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring.eligibility import eligibility_blocks_downstream
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.domain.materials.value_objects import ArtifactStatus
+from jobctrl.domain.ports.artifact_review import ArtifactStatus
 from jobctrl.infrastructure.discovery.sqlite_identity_resolver import SqliteJobIdentityResolver
-from jobctrl.infrastructure.llm import LlmAdapter, get_llm_adapter
 from jobctrl.infrastructure.materials import (
     PlaywrightHtmlPdfAdapter,
     SqliteEmployerAnalysisRepository,
@@ -50,13 +57,21 @@ from jobctrl.infrastructure.materials import (
     SqliteUnitOfWork,
 )
 from jobctrl.infrastructure.preparation_recovery import (
+    MaterialAttemptSuperseded,
+    MaterialActivityAttempt,
+    assert_direct_material_attempt_not_superseded,
+    assert_material_activity_attempt_not_superseded,
     assert_material_activity_commit_allowed,
     claim_preparation_reservation,
     owns_preparation_reservation,
+    material_admission_write,
+    material_activity_may_recover,
+    material_start_event_id,
 )
 from jobctrl.infrastructure.preparation.sqlite_repository import SqlitePreparationTargetReader
 from jobctrl.infrastructure.scoring import SqliteScoreRepository
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+from jobctrl.scoring.material_lifecycle import preserve_direct_attempt_result
 from jobctrl.state import (
     MAX_ATTEMPTS,
     ensure_job_stage_rows,
@@ -84,6 +99,7 @@ def _build_use_case(
     validator: ContentValidator | None = None,
     analysis_repository: EmployerAnalysisRepository | None = None,
     unit_of_work: SqliteUnitOfWork | None = None,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> GenerateCoverLetterUseCase:
     conn = get_connection()
     shared_unit_of_work = unit_of_work or SqliteUnitOfWork(conn)
@@ -93,27 +109,33 @@ def _build_use_case(
             conn,
             unit_of_work=shared_unit_of_work,
         )
-    if llm_port is None:
-        llm_port = (
-            LlmAdapter(default_model=llm_model)
-            if llm_model
-            else get_llm_adapter()
-        )
     if validator is None:
         validator = ContentValidator()
     if analysis_repository is None:
         analysis_repository = SqliteEmployerAnalysisRepository(conn)
+    from jobctrl.infrastructure.determinations import determination_dependencies
+    from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
+    from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
+
+    deps = determination_dependencies(
+        conn, tenant_id=tenant_id, lane="tailoring", adapter=llm_port, model_spec=llm_model
+    )
+    from jobctrl.infrastructure.materials.letter_reviews import ParallelLetterReviews
+
+    database = conn.execute("PRAGMA database_list").fetchone()[2]
+    # A caller-owned in-memory DB cannot be reopened safely on another thread.
+    letter_reviews = ParallelLetterReviews(Path(database).resolve(), deps) if database else None
     return GenerateCoverLetterUseCase(
         repository=repository,
-        llm=llm_port,
+        llm=deps["llm"],
         validator=validator,
+        claim_verifier=ModelClaimVerifier(**deps),
+        quality_judge=ModelArtifactQualityJudge(**deps),
+        preflight=deps["preflight"],
+        letter_reviews=letter_reviews,
         publisher=publisher,
         analysis_repository=analysis_repository,
-        unit_of_work=(
-            shared_unit_of_work
-            if default_repository or unit_of_work is not None
-            else None
-        ),
+        unit_of_work=(shared_unit_of_work if default_repository or unit_of_work is not None else None),
     )
 
 
@@ -161,6 +183,13 @@ def generate_cover_letter(
     keeps its single-call ergonomics. New callers should construct
     :class:`GenerateCoverLetterUseCase` directly.
     """
+    from jobctrl.config import get_cover_letter_generation_enabled
+
+    if not get_cover_letter_generation_enabled():
+        return ""
+    from jobctrl.enrichment.availability import require_preparation_available
+
+    require_preparation_available(str(job["job_id"]), expected_posting_url=job["url"])
     _ = resume_text  # use case reads the tailored resume from the repo
     use_case = _build_use_case()
     use_case._max_retries = max_retries  # noqa: SLF001 — DI seam
@@ -179,6 +208,7 @@ def generate_cover_letter(
     return ""
 
 
+@preserve_direct_attempt_result("cover")
 def cover_letter_by_id(
     job_id: JobId,
     *,
@@ -194,13 +224,46 @@ def cover_letter_by_id(
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
     recovery_workflow_id: str | None = None,
+    allow_low_fit_override: bool = False,
+    explicit_material_request: bool = True,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict:
     """Generate exactly one eligible cover letter by tenant-scoped JobId."""
     stable_job_id = canonical_job_id(str(job_id))
     conn = get_connection()
+    direct_start = (
+        material_start_event_id(conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="cover")
+        if not workflow_id and temporal_attempt is None else None
+    )
+    guarded_admission = temporal_attempt is not None or direct_start is not None
+
+    def attempt_start_guard() -> None:
+        assert_direct_material_attempt_not_superseded(
+            conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="cover", observed_start=direct_start,
+        )
+        assert_material_activity_attempt_not_superseded(
+            conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="cover",
+            workflow_id=workflow_id, attempt=temporal_attempt,
+        )
+
+    attempt_start_guard()
+    from jobctrl.infrastructure.materials.manual_decline import material_request_declined
+
+    if material_request_declined(
+        conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover",
+        explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+    ):
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
     job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
     if job is None:
         return _skipped_result(stable_job_id, reason="job_not_found")
+
+    from jobctrl.infrastructure.materials.cover_letter_policy import cover_letter_request_disabled
+
+    if cover_letter_request_disabled(
+        conn, tenant_id=tenant_id, job_id=stable_job_id, workflow_id=recovery_workflow_id or workflow_id,
+    ):
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "cover_letter_generation_disabled"}
 
     material_unit_of_work: SqliteUnitOfWork | None = None
     if repository is None:
@@ -209,7 +272,7 @@ def cover_letter_by_id(
             conn,
             unit_of_work=material_unit_of_work,
         )
-    min_score = effective_tailoring_min_score(min_score)
+    min_score = 0 if allow_low_fit_override else effective_tailoring_min_score(min_score)
 
     eligibility_reason = _cover_eligibility_reason(
         conn,
@@ -236,6 +299,10 @@ def cover_letter_by_id(
             conn,
             tenant_id=tenant_id,
             job_id=stable_job_id,
+            commit_guard=attempt_start_guard if guarded_admission else None,
+            preserve_running_owner=direct_start is not None,
+            workflow_id=workflow_id,
+            temporal_attempt=temporal_attempt,
         )
         return _skipped_result(
             stable_job_id,
@@ -248,7 +315,41 @@ def cover_letter_by_id(
     if materials.resume_pdf is None or materials.resume_pdf.status is not ArtifactStatus.APPROVED:
         return _skipped_result(stable_job_id, reason="missing_approved_resume_pdf", url=str(job.get("url") or ""))
     if _cover_stage_succeeded(conn, tenant_id=tenant_id, job_id=stable_job_id):
-        return _skipped_result(stable_job_id, reason="already_done", url=str(job.get("url") or ""), status="already_done")
+        return _skipped_result(
+            stable_job_id, reason="already_done", url=str(job.get("url") or ""), status="already_done"
+        )
+
+    from jobctrl.enrichment.availability import require_preparation_available
+
+    expected_posting_url = job["url"]
+    require_preparation_available(
+        str(stable_job_id),
+        tenant_id=str(tenant_id),
+        conn=conn,
+        expected_posting_url=expected_posting_url,
+    )
+    with claim_preparation_reservation(
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        stage="cover",
+        workflow_id=None,
+        cancel_event=cancel_event,
+        expected_posting_url=expected_posting_url,
+    ):
+        attempt_start_guard()
+        if cover_letter_request_disabled(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, workflow_id=recovery_workflow_id or workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "cover_letter_generation_disabled"}
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
+        job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
+    if job is None:
+        return _skipped_result(stable_job_id, reason="availability_candidate_changed")
 
     if snapshot is None:
         from jobctrl.infrastructure.profile import get_profile_repository
@@ -264,6 +365,7 @@ def cover_letter_by_id(
         llm_model=llm_model,
         publisher=publisher,
         unit_of_work=material_unit_of_work,
+        tenant_id=tenant_id,
     )
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
@@ -272,9 +374,24 @@ def cover_letter_by_id(
     if recovery_workflow_id:
         conn.commit()
     with claim_preparation_reservation(
-        conn, tenant_id=tenant_id, job_id=stable_job_id,
-        stage="cover", workflow_id=recovery_workflow_id, cancel_event=cancel_event,
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        stage="cover",
+        workflow_id=recovery_workflow_id,
+        cancel_event=cancel_event,
+        expected_posting_url=expected_posting_url,
     ):
+        attempt_start_guard()
+        if cover_letter_request_disabled(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, workflow_id=recovery_workflow_id or workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "cover_letter_generation_disabled"}
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
         ensure_job_stage_rows(
             conn,
             stable_job_id,
@@ -282,6 +399,7 @@ def cover_letter_by_id(
             discovered_at=job.get("discovered_at"),
         )
         started_at = utc_now()
+        material_attempt_id = uuid4().hex
         prior_attempts = _cover_attempt_count(
             conn,
             tenant_id=tenant_id,
@@ -303,8 +421,11 @@ def cover_letter_by_id(
                 {
                     "activityOwner": workflow_id,
                     "attemptCountBasis": "completed",
-                    **({"automaticRecovery": True, "workflowId": recovery_workflow_id, "temporalRunId": workflow_id}
-                       if recovery_workflow_id else {}),
+                    **(
+                        {"automaticRecovery": True, "workflowId": recovery_workflow_id, "temporalRunId": workflow_id}
+                        if recovery_workflow_id
+                        else {}
+                    ),
                 }
                 if workflow_id
                 else None
@@ -318,18 +439,26 @@ def cover_letter_by_id(
             "StageStarted",
             tenant_id=tenant_id,
             message="Cover letter generation started",
+            payload={
+                "materialAttemptId": material_attempt_id,
+                **({
+                    "temporalRunId": temporal_attempt.run_id or workflow_id,
+                    "temporalActivityId": temporal_attempt.activity_id,
+                    "temporalAttempt": temporal_attempt.number,
+                } if temporal_attempt is not None else {}),
+            },
         )
         conn.commit()
 
     def commit_guard() -> None:
-        assert_material_activity_commit_allowed(
-            conn,
-            tenant_id=str(tenant_id),
-            job_id=str(stable_job_id),
-            stage="cover",
-            workflow_id=workflow_id,
-            cancel_event=cancel_event,
-        )
+        try:
+            assert_material_activity_commit_allowed(
+                conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="cover",
+                workflow_id=workflow_id, cancel_event=cancel_event, attempt_id=material_attempt_id,
+            )
+        except MaterialAttemptSuperseded as exc:
+            exc.material_url = url
+            raise
 
     try:
         outcome = use_case.execute(
@@ -341,6 +470,15 @@ def cover_letter_by_id(
             job_id=stable_job_id,
             commit_guard=commit_guard,
         )
+    except MaterialsChangedDuringGeneration:
+        from jobctrl.scoring.material_lifecycle import settle_stale_material_attempt
+
+        settle_stale_material_attempt(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover", attempt_id=material_attempt_id,
+            started_at=started_at, prior_attempts=prior_attempts, workflow_id=workflow_id,
+            reason="materials_changed_during_cover",
+        )
+        return _skipped_result(stable_job_id, reason="materials_changed_during_cover", url=url)
     except Exception as exc:  # noqa: BLE001
         outcome = CoverLetterOutcome(
             materials=None,
@@ -356,25 +494,34 @@ def cover_letter_by_id(
         # Best-effort PDF render. Failure is non-fatal: the cover letter text
         # is the canonical artifact and the PDF is an optional sibling.
         if outcome.text_path and outcome.materials is not None:
+            text_path = Path(outcome.text_path)
+            pdf_path = _pdf_attempt_path(text_path)
+            publishing = False
             try:
-                text_path = Path(outcome.text_path)
-                pdf_path = text_path.with_suffix(".pdf")
+                source_bytes = text_path.read_bytes()
                 pdf_artifact = pdf_renderer.render_cover_letter_to_pdf(
-                    cover_letter_text=text_path.read_text(encoding="utf-8"),
+                    cover_letter_text=source_bytes.decode("utf-8"),
                     output_path=str(pdf_path),
                     created_at=utc_now(),
                 )
-                materials = outcome.materials.with_cover_letter_pdf(
-                    pdf_artifact, updated_at=utc_now()
-                )
+                if Path(pdf_artifact.path) != pdf_path:
+                    raise ValueError("PDF renderer returned a different output path")
+                pdf_artifact = _pdf_with_accepted_source(pdf_artifact, outcome.materials.cover_letter, outcome.materials.generation)
+                publishing = True
                 if material_unit_of_work is not None:
                     with material_unit_of_work:
-                        commit_guard()
-                        repository.save(materials)
+                        saved = repository.publish_rendered_pdf(
+                            outcome.materials, pdf_artifact, sha256(source_bytes).hexdigest(), commit_guard=commit_guard,
+                        )
                 else:
-                    commit_guard()
-                    repository.save(materials)
+                    saved = repository.publish_rendered_pdf(
+                        outcome.materials, pdf_artifact, sha256(source_bytes).hexdigest(), commit_guard=commit_guard,
+                    )
+                if saved is None:
+                    _discard_pdf_attempt(pdf_path)
             except Exception:
+                if not publishing:
+                    _discard_pdf_attempt(pdf_path)
                 log.debug("PDF generation failed for cover letter", exc_info=True)
 
         with SqliteUnitOfWork(conn):
@@ -410,6 +557,11 @@ def cover_letter_by_id(
 
     failed_attempts = current_attempt
     exhausted = failed_attempts >= _COVER_MAX_ATTEMPTS
+    semantic_failure = serialized_determination_failure(outcome.error)
+    retryable = (
+        not exhausted and outcome.status not in MATERIAL_REJECTION_STATUSES
+        and (semantic_failure is None or semantic_failure.retryable)
+    )
     with SqliteUnitOfWork(conn):
         commit_guard()
         set_stage_state(
@@ -422,10 +574,9 @@ def cover_letter_by_id(
             max_attempts=_COVER_MAX_ATTEMPTS,
             started_at=started_at,
             finished_at=finished_at,
-            error_code="COVER_FAILED",
-            error_message=outcome.error
-            or f"Cover letter generation failed ({outcome.status})",
-            retryable=not exhausted,
+            error_code=semantic_failure.code.upper() if semantic_failure else "COVER_FAILED",
+            error_message=outcome.error or f"Cover letter generation failed ({outcome.status})",
+            retryable=retryable,
             next_action=(
                 f"jobctrl retry cover {url or stable_job_id} --reset-attempts"
                 if exhausted
@@ -440,8 +591,8 @@ def cover_letter_by_id(
             "StageFailed",
             tenant_id=tenant_id,
             level="error",
-            message=outcome.error
-            or f"Cover letter generation failed ({outcome.status})",
+            message=outcome.error or f"Cover letter generation failed ({outcome.status})",
+            payload={"attempts": failed_attempts, "generationStatus": outcome.status, "retryable": retryable},
         )
     return {
         "jobId": str(stable_job_id),
@@ -459,37 +610,49 @@ def _reconcile_existing_approved_cover(
     *,
     tenant_id: TenantId,
     job_id: JobId,
+    commit_guard=None,
+    preserve_running_owner: bool = False,
+    workflow_id: str | None = None,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> None:
     """Close a replayed running row when its cover artifact already committed."""
-    row = conn.execute(
-        """
-        SELECT state
-        FROM job_stage_states
-        WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
-        """,
-        (str(tenant_id), str(job_id)),
-    ).fetchone()
-    if row is not None and str(row["state"]) == "succeeded":
-        return
-    set_stage_state(
-        conn,
-        job_id,
-        "cover",
-        "succeeded",
-        tenant_id=tenant_id,
-        finished_at=utc_now(),
-        validate_transition=False,
-    )
-    record_job_event(
-        conn,
-        job_id,
-        "cover",
-        "StageCompleted",
-        tenant_id=tenant_id,
-        message="Cover generation recovered from the committed approved artifact.",
-        payload={"recoveredAfterActivityReplay": True},
-    )
-    conn.commit()
+    with material_admission_write(conn):
+        if commit_guard is not None:
+            commit_guard()
+        row = conn.execute(
+            """
+            SELECT state, metadata_json
+            FROM job_stage_states
+            WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
+            """,
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+        if row is not None and str(row["state"]) == "succeeded":
+            return
+        guarded_recovery = preserve_running_owner or workflow_id or temporal_attempt is not None
+        if guarded_recovery and not material_activity_may_recover(
+            conn, tenant_id=str(tenant_id), job_id=str(job_id), stage="cover",
+            workflow_id=workflow_id, attempt=temporal_attempt,
+        ):
+            return
+        set_stage_state(
+            conn,
+            job_id,
+            "cover",
+            "succeeded",
+            tenant_id=tenant_id,
+            finished_at=utc_now(),
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            job_id,
+            "cover",
+            "StageCompleted",
+            tenant_id=tenant_id,
+            message="Cover generation recovered from the committed approved artifact.",
+            payload={"recoveredAfterActivityReplay": True},
+        )
 
 
 def cover_letter_by_url(
@@ -564,15 +727,18 @@ def _cover_eligibility_reason(
     ).fetchone()
     if score_stage is not None and str(score_stage["state"]) != "succeeded":
         return "score_not_current"
-    if conn.execute(
-        """
+    if (
+        conn.execute(
+            """
         SELECT 1
         FROM job_score_staleness
         WHERE tenant_id = ? AND job_id = ? AND resolved = 0
         LIMIT 1
         """,
-        (str(tenant_id), str(job_id)),
-    ).fetchone() is not None:
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+        is not None
+    ):
         return "score_stale"
 
     posting_state = conn.execute(
@@ -588,9 +754,7 @@ def _cover_eligibility_reason(
         if active_state in {"closed", "expired", "removed", "location_incompatible"}:
             return "posting_inactive"
         confidence = str(posting_state["latest_confidence"] or "").lower()
-        quarantine_reason = str(
-            posting_state["latest_quarantine_reason"] or ""
-        ).lower()
+        quarantine_reason = str(posting_state["latest_quarantine_reason"] or "").lower()
         if confidence == "low" and quarantine_reason not in {"", "none"}:
             return "posting_quarantined"
 
@@ -610,7 +774,11 @@ def _cover_eligibility_reason(
         if cover_state == "exhausted" or attempt_count >= _COVER_MAX_ATTEMPTS:
             return "cover_exhausted"
         owns_queue = cover_state == "queued" and owns_preparation_reservation(
-            conn, tenant_id=tenant_id, job_id=job_id, stage="cover", workflow_id=recovery_workflow_id,
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+            stage="cover",
+            workflow_id=recovery_workflow_id,
         )
         if cover_state not in {"pending", "running", "failed", "stale"} and not owns_queue:
             return "cover_not_retryable"

@@ -1,54 +1,19 @@
 # OSS Release Remediation — Implementation Spec for Codex
 
-> **Status (2026-07-05 R1 closeout):** archived after #274 regenerated the
-> inventory against current `main`; that first closeout was **not** a
-> release-ready outcome. The 2026-07-06 W1 refresh in
-> `2026-07-05-oss-release-drive-to-done-plan.md` supersedes that W1 snapshot:
-> W1.1-W1.7 are complete and W1.8 is withdrawn. Non-W1 release/owner
-> checkpoints remain open, so do not treat the move to `implemented/` as proof
-> that the OSS release gate passed.
->
-> **W0.6 owner pass (2026-07-07):** owner review closed the W0.6 disposition
-> gate as passed. Private concern details remain off-repo; no W0.6 accepted-risk
-> entry remains a release blocker.
->
-> **Owner release decisions (2026-07-10):** the first public release is
-> **v2.0.0**. W2.4 is explicitly deferred for that release: v2.0.0 keeps P5's
-> application-wide estimated daily USD ceiling and preflight, while per-lane
-> token attribution, per-lane ceilings, apply-lane accounting, and lane-level
-> doctor/health visibility remain an acknowledged backlog item. This is a
-> written deferral, not a claim that W2.4 was implemented.
->
-> **Owner hosted-CI sequencing decision (2026-07-10):** GitHub currently
-> refuses to start private-repository jobs because of the account billing
-> state. After the exact release tree passes the complete local gate, the owner
-> will flip the repository public and immediately rerun Release Privacy, Docs,
-> Python, Homebrew sync, and TypeScript workflows. Docs deployment, release
-> tagging, and package publication stay blocked until those runs are green; a
-> failed privacy run requires an immediate return to private while it is
-> investigated. No failed zero-step run is treated as passing evidence.
->
-> **Owner decision (2026-07-06):** the W1.8 dry-run-by-default requirement is
-> withdrawn. `jobhunter apply` and workflow/RPC apply starts keep the existing
-> non-dry-run default unless the caller passes `--dry-run` / `dryRun: true`.
-> W1.8 is no longer a release requirement, gate, or acceptance criterion.
->
-> **Audience:** an external implementing agent (Codex). This document is
-> self-contained and prescriptive: follow it literally. Where it says STOP,
-> stop and report rather than improvising.
-> **Companions:** `docs/plans/implemented/2026-07-03-temporal-native-rearchitecture.md`
-> (PR #230, the architectural plan) and
-> `docs/plans/implemented/2026-07-03-temporal-rearch-implementation-spec.md` (PR #232,
-> the P1b–P5 implementation spec). Workstream W1 below **builds on top of
-> temporal phase P2** and must not re-implement anything P2 delivers.
-> **Goal:** make this repository safe to publish as open source while
-> preserving every existing capability: live application submission,
-> CapSolver-based CAPTCHA solving, email applications, LinkedIn/Indeed
-> discovery boards, AGPL-3.0-only licensing, and the existing git history.
-> Compliance posture is disclosure and hard operator gates, not capability
-> removal.
+> **Retired publication process (2026-09-22):** JobCtrl is already public.
+> The initial-launch approvals and go/no-go instructions in this archived
+> record are historical, not current workflow requirements. Current contributor
+> verification is owned by `docs/local-reliability-qa.md`; executable release
+> controls remain in `.github/workflows/`.
 
----
+This specification records the July 2026 remediation workstreams. #274 captured
+an initial inventory; the later W1 remediation train completed W1.1–W1.7.
+W1.8's dry-run-by-default proposal was withdrawn, and W0.6 owner review closed
+on 2026-07-07. The historical v2.0.0 scope deferred W2.4's per-lane accounting
+while retaining the application-wide estimated spend ceiling.
+
+The technical plan below is historical context. Current behavior and safety
+contracts are defined by the owning product and architecture documentation.
 
 ## 0. How to use this document
 
@@ -1095,51 +1060,9 @@ describe the full chain and what degrades when a link is missing.
 
 ---
 
-## 5. Release gate — flipping public (owner executes; you prepare)
+## 5. Initial-publication gate (retired)
 
-All boxes below must be checked before the first tag. They must also be checked
-before the visibility flip except for the single hosted-CI sequencing exception
-recorded above: that box closes immediately after the public flip and before
-docs deployment, tagging, or publication. Assemble this checklist, with links,
-as the final deliverable.
-
-- [ ] W0.1–W0.6 merged and Release Privacy green on the exact public-release
-      `main` SHA. The code is merged and the exact release tree is locally
-      green, but private-repository jobs currently fail before running because
-      of GitHub billing. The 2026-07-10 owner sequencing decision supersedes
-      the former every-commit hosted criterion: this box closes only when the
-      immediate post-public exact-SHA run actually executes and passes. A
-      zero-step failure is never accepted as evidence.
-- [x] Temporal P1b–P5 merged (PR #232 program complete).
-- [x] **G1 (crawl politeness) met:** every discovery/enrichment fetch surface
-      (#1–#10 in the crawl-politeness plan) routes through the politeness gateway
-      — robots honored, per-host rate limit + per-run budget, one honest
-      owner-configurable user-agent, blocked/rate-limited/budget-exhausted
-      recorded as non-error outcomes; no spoofed browser UA remains on any
-      product fetch path. Delivered by the R10 train (PRs #297 → #315); ADR in
-      `docs/decisions.md` (2026-07-06); plan
-      `docs/plans/implemented/2026-07-05-crawl-politeness-plan.md`. Check when the R10 train
-      is merged to `main`.
-- [x] W1.1–W1.7 merged, each with review gate `Gate: PASS` and QA gate
-      `Gate: PASS` per repo process.
-- [x] Rename train executed (owner-side, after all W-items): full
-      `JobHunter` → `JobCtrl` rename; `workers/automation/pyproject.toml`
-      distribution name `jobctrl` (re-check availability and configure the
-      Trusted Publisher immediately before first publish; a pending publisher
-      does not reserve the name); the historical `publish.yml` stays disabled
-      while the new release-only `release-pypi.yml` runs only for
-      a published non-prerelease GitHub Release with exact
-      manifest/archive/tag version parity; W0.3 structural check updated/retired.
-- [x] W2.2, W2.3, W2.5, and W2.6 merged; W2.4 explicitly deferred by the
-      owner in writing on 2026-07-10 for v2.0.0.
-- [x] W0.6 dispositions closed: every concern fixed, backlogged
-      (sanitized), or owner-accepted.
-- [ ] Owner has recorded, in the flip PR/issue: acceptance of historical
-      blobs remaining reachable (git history kept), and the capability
-      posture (live submit, CapSolver, email send, LinkedIn/Indeed) as
-      deliberate, disclosed choices.
-- [ ] Final manual QA (human): `jobctrl doctor` clean with expected
-      warnings; seeded `/apply-review` smoke showing approval → dry-run
-      evidence → gated submit controls; one harness dry-run showing the
-      blocked-channel evidence. No real applications.
-- [ ] Owner flips visibility and tags the first release.
+The first-publication checklist has been removed because the repository is
+already public. This archived remediation specification does not authorize or
+block current releases. Current safety requirements, verification and release
+controls remain with their owning documentation and executable workflows.

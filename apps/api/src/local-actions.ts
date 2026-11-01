@@ -1,3 +1,5 @@
+import { OutreachPublicationConflictError, outreachWorkerError } from "./outreach-generation-errors.js";
+import { callRpc } from "./json-rpc-adapter.js";
 /**
  * Local action dispatchers — JSON-RPC backed (Phase 9 / S-34).
  *
@@ -24,12 +26,14 @@ import { randomUUID } from "node:crypto";
 
 import {
   DEFAULT_PIPELINE_LLM_MODEL,
+  GenerateOutreachDraftResultSchema,
   PIPELINE_ACTION_JOB_KEY,
   RederiveLearningRecommendationsResultSchema,
+  GenerateInterviewPrepParamsSchema,
   type ActionCommandPayload,
   type ActionRunResponse,
   type ResumeTemplateTheme,
-  type RpcMethod,
+  type RpcParams,
 } from "./contracts.js";
 import {
   getDefaultJsonRpcDispatcher,
@@ -55,6 +59,11 @@ export interface ActionDispatchResult {
   firstExecutionRunId?: string;
   result?: unknown;
   message?: string;
+  completedWorkflowFailure?: {
+    runId: string;
+    workflowId?: string;
+    errorCode: string;
+  };
 }
 
 export type ActionDispatcher = (
@@ -149,7 +158,7 @@ export function createActionDispatcher(
       };
     }
 
-    const response = await rpc.call(rpcCall.method, rpcCall.params);
+    const response = await callRpc(rpc, rpcCall.method, rpcCall.params);
     if (response.error) {
       return {
         status: "failed",
@@ -158,7 +167,7 @@ export function createActionDispatcher(
       };
     }
     if (rpcCall.method === "cancel_run") {
-      const rpcRunId = isRecord(response.result) && typeof response.result.runId === "string"
+      const rpcRunId = isRecord(response.result) && "runId" in response.result && typeof response.result.runId === "string"
         ? response.result.runId
         : command.runId;
       return {
@@ -168,6 +177,24 @@ export function createActionDispatcher(
       };
     }
     const workflowStart = extractWorkflowStart(response.result);
+    if (rpcCall.method === "run_stage" && "awaitResult" in rpcCall.params && rpcCall.params.awaitResult === true) {
+      const completed = response.result && "result" in response.result ? response.result.result : undefined;
+      if (isRecord(completed) && (completed.failure || (Array.isArray(completed.stages_failed) && completed.stages_failed.length) || (Array.isArray(completed.families_failed) && completed.families_failed.length))) {
+        return {
+          status: "failed",
+          message: typeof completed.failure === "string" ? completed.failure : "Profile continuation failed.",
+          result: response.result,
+          ...(workflowStart.runId ? {
+            completedWorkflowFailure: {
+              runId: workflowStart.runId,
+              ...(workflowStart.workflowId ? { workflowId: workflowStart.workflowId } : {}),
+              errorCode: typeof completed.error_code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(completed.error_code)
+                ? completed.error_code : "workflow_stage_failed",
+            },
+          } : {}),
+        };
+      }
+    }
     if (hasWorkflowStart(workflowStart)) {
       const result: ActionDispatchResult = {
         status: "queued",
@@ -218,7 +245,7 @@ export interface ContactResearchStartInput {
   taskId: string;
   employer: string | null;
   jobId: string | null;
-  sources: { category: string; url: string; label: string }[];
+  sources: NonNullable<RpcParams<"run_contact_research">["sources"]>;
   llmModel?: string;
 }
 
@@ -241,7 +268,7 @@ export function createContactResearchStarter(
 ): ContactResearchStarter {
   return async (input, context) => {
     const rpc = dispatcherFactory(context);
-    const response = await rpc.call("run_contact_research", {
+    const response = await callRpc(rpc, "run_contact_research", {
       tenantId: "local",
       expectedAppDir: context.appDir,
       expectedDbPath: context.dbPath,
@@ -270,8 +297,9 @@ export interface OutreachDraftGeneratorInput {
   threadId: string;
   contactId?: string | null;
   jobId?: string | null;
-  kind?: string;
+  kind?: NonNullable<RpcParams<"generate_outreach_draft">["kind"]>;
   editedBodyText?: string;
+  offerRevisionId?: string;
   applicationRole?: string;
   llmModel?: string;
 }
@@ -303,7 +331,7 @@ export function createOutreachDraftGenerator(
 ): OutreachDraftGenerator {
   return async (input, context) => {
     const rpc = getDefaultJsonRpcDispatcher({ appDir: context.appDir, pythonRuntime });
-    const response = await rpc.call("generate_outreach_draft", {
+    const response = await callRpc(rpc, "generate_outreach_draft", {
       tenantId: "local",
       expectedAppDir: context.appDir,
       expectedDbPath: context.dbPath,
@@ -311,12 +339,13 @@ export function createOutreachDraftGenerator(
       ...(input.contactId ? { contactId: input.contactId } : {}),
       ...(input.jobId ? { jobId: input.jobId } : {}),
       ...(input.kind ? { kind: input.kind } : {}),
+      ...(input.offerRevisionId ? { offerRevisionId: input.offerRevisionId } : {}),
       ...(input.editedBodyText ? { editedBodyText: input.editedBodyText } : {}),
       ...(input.applicationRole ? { applicationRole: input.applicationRole } : {}),
       llmModel: input.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
     });
     if (response.error) {
-      throw new Error(response.error.message);
+      throw outreachWorkerError(response.error.data);
     }
     return parseOutreachDraftResult(response.result);
   };
@@ -325,19 +354,11 @@ export function createOutreachDraftGenerator(
 export const defaultOutreachDraftGenerator: OutreachDraftGenerator = createOutreachDraftGenerator();
 
 function parseOutreachDraftResult(result: unknown): OutreachDraftGeneratorOutcome {
-  if (!isRecord(result)) {
-    throw new Error("Outreach draft generation returned no result.");
+  const parsed = GenerateOutreachDraftResultSchema.parse(result);
+  if ("outcome" in parsed) {
+    throw new OutreachPublicationConflictError(parsed);
   }
-  return {
-    threadId: typeof result.threadId === "string" ? result.threadId : "",
-    contactId: typeof result.contactId === "string" ? result.contactId : "",
-    jobId: typeof result.jobId === "string" ? result.jobId : null,
-    draftId: typeof result.draftId === "string" ? result.draftId : "",
-    generation: typeof result.generation === "number" ? result.generation : 0,
-    kind: typeof result.kind === "string" ? result.kind : "intro_request",
-    status: typeof result.status === "string" ? result.status : "candidate",
-    gatePassed: result.gatePassed === true,
-  };
+  return parsed;
 }
 
 export const defaultArtifactOpener: ArtifactOpener = async (artifactPath) => {
@@ -363,7 +384,7 @@ export function createProfileImporter(
     };
     const actionId = `act-${randomUUID()}`;
     const dispatcher = getDefaultJsonRpcDispatcher({ appDir: context.appDir, pythonRuntime });
-    const response = await dispatcher.call("profile_import", {
+    const response = await callRpc(dispatcher, "profile_import", {
       tenantId: "local",
       expectedAppDir: context.appDir,
       expectedDbPath: context.dbPath,
@@ -476,10 +497,11 @@ export function buildActionResponse(
   return response;
 }
 
-interface RpcCall {
-  method: RpcMethod;
-  params: Record<string, unknown>;
-}
+type ActionRpcMethod = "run_stage" | "rescore_job" | "rescore_jobs_not_on_current_scoring_policy"
+  | "tailor_job" | "retailor_job" | "retailor_current_policy" | "analyze_job"
+  | "refresh_compensation" | "generate_interview_prep" | "apply" | "cancel_run"
+  | "rederive_learning_recommendations";
+type RpcCall = { [M in ActionRpcMethod]: { method: M; params: RpcParams<M> } }[ActionRpcMethod];
 
 function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchContext): RpcCall | null {
   if (command.action === "rederive_learning_recommendations") {
@@ -517,7 +539,7 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
         tenantId: "local",
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
-        jobId: command.jobId,
+        jobId: command.jobId!,
         dryRun: Boolean(command.dryRun),
         ...(command.reason ? { reason: command.reason } : {}),
       },
@@ -562,13 +584,13 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
         tenantId: "local",
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
-        jobId: command.jobId,
+        jobId: command.jobId!,
         force: Boolean(command.retailor),
       },
     };
   }
   if (command.action === "refresh_compensation") {
-    const params: Record<string, unknown> = {
+    const params: RpcParams<"refresh_compensation"> = {
       tenantId: "local",
       expectedAppDir: context.appDir,
       expectedDbPath: context.dbPath,
@@ -589,13 +611,23 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
   if (command.action === "generate_interview_prep") {
     return {
       method: "generate_interview_prep",
-      params: {
+      params: GenerateInterviewPrepParamsSchema.parse({
         tenantId: "local",
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
-        jobId: command.jobId,
+        jobId: command.jobId!,
         llmModel: command.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
-      },
+        ...(command.selectedQuestionIds !== undefined ? { selectedQuestionIds: command.selectedQuestionIds } : {}),
+        ...(command.catalogBinding !== undefined ? { catalogBinding: command.catalogBinding } : {}),
+        ...(command.evidenceSelections !== undefined ? { evidenceSelections: command.evidenceSelections } : {}),
+        ...(command.evidenceProfileVersion !== undefined ? { evidenceProfileVersion: command.evidenceProfileVersion } : {}),
+        ...(command.interviewStage !== undefined ? { interviewStage: command.interviewStage } : {}),
+        ...(command.interviewFormat !== undefined ? { interviewFormat: command.interviewFormat } : {}),
+        ...(command.roleLens !== undefined ? { roleLens: command.roleLens } : {}),
+        ...(command.roleResponsibilities !== undefined ? { roleResponsibilities: command.roleResponsibilities } : {}),
+        ...(command.knownCriteria !== undefined ? { knownCriteria: command.knownCriteria } : {}),
+        ...(command.selectionRationale !== undefined ? { selectionRationale: command.selectionRationale } : {}),
+      }),
     };
   }
   if (command.action === "generate_materials") return null;
@@ -657,18 +689,18 @@ function requiresCanonicalJobId(command: ActionCommandPayload): boolean {
   );
 }
 
-function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatchContext): Record<string, unknown> {
+function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatchContext): RpcParams<"run_stage"> {
   const stages =
     command.stages && command.stages.length > 0
       ? command.stages
       : command.stage
         ? [command.stage]
         : [];
-  const params: Record<string, unknown> = {
+  const params: RpcParams<"run_stage"> = {
     tenantId: "local",
     expectedAppDir: context.appDir,
     expectedDbPath: context.dbPath,
-    stage: command.stage,
+    stage: command.stage!,
     stages,
     limit: command.limit ?? 25,
     workers: command.workers ?? 1,
@@ -682,6 +714,9 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
     llmModel: command.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
     continuous: Boolean(command.continuous),
   };
+  if (command.refreshApplyUrl) {
+    params.refreshApplyUrl = true;
+  }
   if (command.sourceIds && command.sourceIds.length > 0) {
     params.sourceIds = command.sourceIds;
   }
@@ -690,9 +725,6 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
   }
   if (command.tailorJudgeModel) {
     params.tailorJudgeModel = command.tailorJudgeModel;
-  }
-  if (command.tailorJudgeMinScore !== undefined) {
-    params.tailorJudgeMinScore = command.tailorJudgeMinScore;
   }
   if (command.jobId) {
     params.jobId = command.jobId;
@@ -713,8 +745,8 @@ function tailorRpcParams(
   command: ActionCommandPayload,
   context: ActionDispatchContext,
   jobId: string,
-): Record<string, unknown> {
-  const params: Record<string, unknown> = {
+): RpcParams<"tailor_job"> {
+  const params: RpcParams<"tailor_job"> = {
     tenantId: "local",
     expectedAppDir: context.appDir,
     expectedDbPath: context.dbPath,
@@ -731,32 +763,25 @@ function tailorRpcParams(
   if (command.tailorJudgeModel) {
     params.tailorJudgeModel = command.tailorJudgeModel;
   }
-  if (command.tailorJudgeMinScore !== undefined) {
-    params.tailorJudgeMinScore = command.tailorJudgeMinScore;
-  }
   return params;
 }
 
 type PreparationJobLocator = { jobId: string };
 
+function retailorRpcParams(command: ActionCommandPayload, context: ActionDispatchContext, locator: PreparationJobLocator): RpcParams<"retailor_job">;
+function retailorRpcParams(command: ActionCommandPayload, context: ActionDispatchContext): RpcParams<"retailor_current_policy">;
 function retailorRpcParams(
   command: ActionCommandPayload,
   context: ActionDispatchContext,
   locator?: PreparationJobLocator,
-): Record<string, unknown> {
-  const params: Record<string, unknown> = {
+): RpcParams<"retailor_job"> | RpcParams<"retailor_current_policy"> {
+  const params: RpcParams<"retailor_current_policy"> = {
     tenantId: "local",
     expectedAppDir: context.appDir,
     expectedDbPath: context.dbPath,
     dryRun: Boolean(command.dryRun),
     suppressExistingArtifacts: Boolean(command.suppressExistingArtifacts),
   };
-  if (locator) {
-    Object.assign(params, locator);
-  } else {
-    params.limit = command.limit ?? 100;
-    params.jobIds = command.jobIds ?? [];
-  }
   if (command.reason) {
     params.reason = command.reason;
   }
@@ -766,14 +791,11 @@ function retailorRpcParams(
   if (command.tailorJudgeModel) {
     params.tailorJudgeModel = command.tailorJudgeModel;
   }
-  if (command.tailorJudgeMinScore !== undefined) {
-    params.tailorJudgeMinScore = command.tailorJudgeMinScore;
-  }
-  return params;
+  return locator ? { ...params, ...locator } : { ...params, limit: command.limit ?? 100, jobIds: command.jobIds ?? [] };
 }
 
-function applyRpcParams(command: ActionCommandPayload, context: ActionDispatchContext): Record<string, unknown> {
-  const params: Record<string, unknown> = {
+function applyRpcParams(command: ActionCommandPayload, context: ActionDispatchContext): RpcParams<"apply"> {
+  const params: RpcParams<"apply"> = {
     tenantId: "local",
     expectedAppDir: context.appDir,
     expectedDbPath: context.dbPath,

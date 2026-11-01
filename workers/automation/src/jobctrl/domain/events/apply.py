@@ -33,7 +33,9 @@ class ApplicationFailedPayload:
 
 
 def create_application_failed(tenant_id: TenantId, payload: ApplicationFailedPayload) -> DomainEvent:
-    return create_domain_event("ApplicationFailed", tenant_id, asdict(payload))
+    from jobctrl.domain.apply.event_privacy import email_event_references
+
+    return create_domain_event("ApplicationFailed", tenant_id, email_event_references("ApplicationFailed", asdict(payload)))
 
 
 @dataclass(frozen=True)
@@ -70,17 +72,16 @@ class ApplyRunEventRecordedPayload:
 
 
 def create_apply_run_event_recorded(tenant_id: TenantId, payload: ApplyRunEventRecordedPayload) -> DomainEvent:
-    return create_domain_event("ApplyRunEventRecorded", tenant_id, asdict(payload))
+    from jobctrl.domain.apply.event_privacy import email_event_references
+
+    return create_domain_event("ApplyRunEventRecorded", tenant_id, email_event_references("ApplyRunEventRecorded", asdict(payload)))
 
 
 @dataclass(frozen=True)
 class EmailApplicationCandidateRecordedPayload:
+    """Broad invalidation reference; preview lives in canonical Apply Review."""
+
     run_id: str
-    recipient: str
-    subject: str
-    body: str
-    attachment_artifact_id: str
-    attachment_name: str
 
 
 def create_email_application_candidate_recorded(
@@ -92,7 +93,7 @@ def create_email_application_candidate_recorded(
 
 @dataclass(frozen=True)
 class ApplicationEmailFeedbackIngestedPayload:
-    job_key: str
+    job_id: str
     evidence_id: str
     suggestion_id: str
     provider: str = "gmail"

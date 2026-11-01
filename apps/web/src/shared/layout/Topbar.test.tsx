@@ -26,6 +26,7 @@ const ROUTES = [
   "/discovery",
   "/artifacts",
   "/evidence-map",
+  "/interviews",
   "/outreach",
   "/runs",
   "/debug",

@@ -5,6 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import NAMESPACE_URL, uuid5
 
+import pytest
+
 from typer.testing import CliRunner
 
 from jobctrl.cli import app
@@ -30,7 +32,6 @@ from jobctrl.pipeline.current_policy_selectors import tailoring_current_policy_j
 from jobctrl.state import ensure_job_stage_rows, set_stage_state
 from jobctrl.scoring.tailor import (
     _build_pdf_renderer,
-    _build_llm_policy,
     _build_master_tailor_prompt,
     _tailor_one_job,
     tailor_job_by_url,
@@ -125,6 +126,9 @@ def _insert_job(
                 timestamp,
             ),
         )
+    from .availability_fixture import seed_fresh_availability
+
+    seed_fresh_availability(conn, str(job_id))
     conn.commit()
     return job_id
 
@@ -251,10 +255,13 @@ def test_parallel_job_prompts_share_global_policy_until_profile_revision(tmp_pat
             },
         )
 
-        assert tailoring_current_policy_job_ids(
-            conn,
-            tenant_id=str(LOCAL_TENANT),
-        ) == ()
+        assert (
+            tailoring_current_policy_job_ids(
+                conn,
+                tenant_id=str(LOCAL_TENANT),
+            )
+            == ()
+        )
 
         revised = policy_repository.resolve_current(
             _tailoring_policy(profile_snapshot_fingerprint="sha256:profile-v2"),
@@ -333,8 +340,7 @@ def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, m
         assert result["status"] == "approved"
         assert calls == [target_url]
         unrelated_stage = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
             (str(LOCAL_TENANT), str(unrelated_job_id)),
         ).fetchone()
         assert unrelated_stage is None
@@ -348,10 +354,15 @@ def test_build_pdf_renderer_uses_html_resume_renderer() -> None:
     assert isinstance(renderer, HtmlResumePdfAdapter)
 
 
+@pytest.mark.parametrize("cover_enabled", [False, True])
 def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
     tmp_path,
     monkeypatch,
+    cover_enabled,
 ):
+    setting = tmp_path / "config.json"
+    setting.write_text(json.dumps({"cover_letter_generation": cover_enabled}))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(setting))
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
     target_url = "https://example.com/stale-cover"
@@ -429,13 +440,13 @@ def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
             (str(LOCAL_TENANT), str(target_job_id)),
         ).fetchone()
         assert dict(cover) == {
-            "state": "pending",
+            "state": "pending" if cover_enabled else "skipped",
             "attempt_count": 0,
             "started_at": None,
             "finished_at": None,
             "duration_ms": None,
-            "error_code": None,
-            "error_message": None,
+            "error_code": None if cover_enabled else "COVER_LETTER_GENERATION_DISABLED",
+            "error_message": None if cover_enabled else "Cover-letter generation is turned off in Settings.",
             "next_action": None,
         }
         event = conn.execute(
@@ -448,8 +459,11 @@ def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
             """,
             (str(LOCAL_TENANT), str(target_job_id)),
         ).fetchone()
-        assert event["event_type"] == "StageReset"
-        assert event["message"] == "Cover stage reset after tailored resume generation"
+        assert event["event_type"] == ("StageReset" if cover_enabled else "StageSkipped")
+        assert event["message"] == (
+            "Cover stage reset after tailored resume generation" if cover_enabled
+            else "Cover-letter generation disabled by Settings."
+        )
     finally:
         close_connection(db_path)
 
@@ -493,9 +507,7 @@ def test_tailor_job_by_url_skips_score_five_by_default(tmp_path, monkeypatch):
         ).fetchall()
         assert {row["state"] for row in rows} == {"skipped"}
         assert {row["error_code"] for row in rows} == {"MIN_SCORE"}
-        assert {row["error_message"] for row in rows} == {
-            "Fit score 5/10 is below the materials threshold 6/10."
-        }
+        assert {row["error_message"] for row in rows} == {"Fit score 5/10 is below the materials threshold 6/10."}
         assert {row["retryable"] for row in rows} == {0}
     finally:
         close_connection(db_path)
@@ -628,8 +640,6 @@ def test_tailor_cli_passes_tailoring_model_controls(monkeypatch):
             "local:draft-a,gemini:draft-b",
             "--tailor-judge-model",
             "google:judge-c",
-            "--tailor-judge-min-score",
-            "0.9",
         ],
     )
 
@@ -637,54 +647,6 @@ def test_tailor_cli_passes_tailoring_model_controls(monkeypatch):
     assert captured["stage"] == "tailor"
     assert captured["kwargs"]["tailor_models"] == ("local:draft-a", "gemini:draft-b")
     assert captured["kwargs"]["tailor_judge_model"] == "google:judge-c"
-    assert captured["kwargs"]["tailor_judge_min_score"] == 0.9
-
-
-def test_tailor_cli_preserves_omitted_judge_min_score_for_saved_default(monkeypatch):
-    runner = CliRunner()
-    captured = {}
-
-    def fake_run_stage_command(stage: str, **kwargs):
-        captured["stage"] = stage
-        captured["kwargs"] = kwargs
-
-    monkeypatch.setattr("jobctrl.cli._run_stage_command", fake_run_stage_command)
-
-    result = runner.invoke(
-        app,
-        [
-            "tailor",
-            "--tailor-models",
-            "local:draft-a",
-            "--tailor-judge-model",
-            "google:judge-c",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert captured["stage"] == "tailor"
-    assert captured["kwargs"]["tailor_models"] == ("local:draft-a",)
-    assert captured["kwargs"]["tailor_judge_model"] == "google:judge-c"
-    assert captured["kwargs"]["tailor_judge_min_score"] is None
-
-
-def test_tailor_policy_prefers_explicit_judge_min_score_over_legacy_environment(monkeypatch):
-    monkeypatch.setenv("TAILORING_JUDGE_MIN_SCORE", "0.3")
-
-    policy = _build_llm_policy(tailor_judge_min_score=0.9)
-
-    assert policy.judge_min_score == 0.9
-
-
-def test_tailor_policy_uses_saved_judge_min_score_when_omitted(monkeypatch, tmp_path):
-    settings_path = tmp_path / "config.json"
-    settings_path.write_text('{"tailoring_judge_min_score": 0.77}', encoding="utf-8")
-    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(settings_path))
-    monkeypatch.setenv("TAILORING_JUDGE_MIN_SCORE", "0.3")
-
-    policy = _build_llm_policy(tailor_judge_min_score=None)
-
-    assert policy.judge_min_score == 0.77
 
 
 class _RecordingRepository:
@@ -740,9 +702,7 @@ def test_tailor_one_job_surfaces_use_case_pdf_path(tmp_path):
         pdf_path=pdf_path,
     )
 
-    result = _tailor_one_job(
-        job, "", SimpleNamespace(), "normal", use_case=_FakeTailorUseCase(outcome)
-    )
+    result = _tailor_one_job(job, "", SimpleNamespace(), "normal", use_case=_FakeTailorUseCase(outcome))
 
     assert result["status"] == "approved"
     assert result["pdf_path"] == pdf_path
@@ -786,9 +746,7 @@ def test_tailor_one_job_surfaces_use_case_pdf_failure(tmp_path):
         error="PDF render failed: latex failed",
     )
 
-    result = _tailor_one_job(
-        job, "", SimpleNamespace(), "normal", use_case=_FakeTailorUseCase(outcome)
-    )
+    result = _tailor_one_job(job, "", SimpleNamespace(), "normal", use_case=_FakeTailorUseCase(outcome))
 
     assert result["status"] == "error"
     assert result["pdf_path"] is None

@@ -57,7 +57,6 @@ function comparisonSide(
       passed: judge?.passed ?? null,
       verdict: judge?.verdict ?? null,
       score: judge?.score ?? null,
-      minScore: judge?.minScore ?? null,
       issueCount:
         (judge?.issues.length ?? 0) +
         (judge?.unsupportedClaims.length ?? 0) +

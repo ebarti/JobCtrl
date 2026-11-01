@@ -1,0 +1,49 @@
+{
+  "dependencies": {
+    "views/analytics/AnalyticsView.tsx": {
+      "symbols": [
+        "views/dashboard/KpiGrid.tsx"
+      ],
+      "reason": "Existing KPI composition shared with Dashboard; scoped relocation debt."
+    }
+  },
+  "capabilities": {
+    "contexts/outreach/stores/outreach-import-store.ts": {
+      "symbols": [
+        "localStorage"
+      ],
+      "reason": "Existing navigation-surviving wizard persistence; scoped storage-port migration debt."
+    },
+    "contexts/profile/stores/profile-import-store.ts": {
+      "symbols": [
+        "localStorage"
+      ],
+      "reason": "Existing navigation-surviving wizard persistence; scoped storage-port migration debt."
+    },
+    "contexts/pipeline/stores/stage-trigger-store.ts": {
+      "symbols": [
+        "localStorage"
+      ],
+      "reason": "Existing navigation-surviving wizard persistence; scoped storage-port migration debt."
+    },
+    "contexts/materials/components/ResumeAuditPins.tsx": {
+      "symbols": [
+        "fetch"
+      ],
+      "reason": "Existing abortable HTML preview resource load; scoped preview-port migration debt."
+    },
+    "views/apply-review/ApplyReviewView.tsx": {
+      "symbols": [
+        "artifactPreviewPdfUrl",
+        "artifactPreviewHtmlUrl"
+      ],
+      "reason": "Pure preview URL construction; queries and mutations remain context-owned."
+    },
+    "views/artifacts/ArtifactDetailPanel.tsx": {
+      "symbols": [
+        "artifactPreviewPdfUrl"
+      ],
+      "reason": "Pure preview URL construction; queries and mutations remain context-owned."
+    }
+  }
+}

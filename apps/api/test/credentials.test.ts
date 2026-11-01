@@ -17,11 +17,17 @@ import {
   CredentialStoreUnavailableError,
   createSecurityCommandRunner,
   KeychainCredentialStore,
+  type KeychainCredentialStoreOptions,
   type SecurityChildProcess,
   type SecurityCommandRunner,
+  type SecurityProcessSpawner,
 } from "../src/credentials.js";
+import type { NativeCredentialCommandRunner } from "../src/native-credential-store.js";
 
 const SECRET = "test-secret-must-not-appear";
+const syntheticIdentity = process.platform === "linux"
+  ? "linux:00000000-0000-0000-0000-000000000000:1"
+  : process.platform === "win32" ? "windows:1:1" : "darwin:1:1";
 const NOT_FOUND = "The specified item could not be found.";
 
 function result(
@@ -47,7 +53,9 @@ function statefulKeychainRunner(
     const key = args[accountIndex] as CredentialKey;
     if (args[0] === "find-generic-password") {
       if (!state.has(key)) return result(44, NOT_FOUND);
-      return result(0, "", args.includes("-w") ? `${state.get(key) ?? ""}\n` : "");
+      return args.includes("-g")
+        ? result(0, `password: ${JSON.stringify(state.get(key) ?? "")}`)
+        : result();
     }
 
     const currentAttempt = mutationAttempt;
@@ -80,6 +88,14 @@ const PRE_BATCH_STATE = new Map<CredentialKey, string>([
 let configDirectory = "";
 let configPath = "";
 
+function createTestStore(options: KeychainCredentialStoreOptions = {}): KeychainCredentialStore {
+  return new KeychainCredentialStore({
+    mutationLockPath: path.join(configDirectory, "credential-mutations.sqlite3"),
+    processIdentityReader: async () => ({ state: "alive", identity: syntheticIdentity }),
+    ...options,
+  });
+}
+
 describe("KeychainCredentialStore", () => {
   beforeEach(() => {
     configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-credentials-"));
@@ -96,7 +112,7 @@ describe("KeychainCredentialStore", () => {
 
   it("reports environment ownership separately and rejects ineffective writes without echoing values", async () => {
     const runSecurity = vi.fn<SecurityCommandRunner>(async () => result(44, NOT_FOUND));
-    const store = new KeychainCredentialStore({
+    const store = createTestStore({
       platform: "darwin",
       runSecurity,
       env: { CAPSOLVER_API_KEY: SECRET, JOBCTRL_CONFIG_PATH: configPath },
@@ -121,19 +137,37 @@ describe("KeychainCredentialStore", () => {
     expect(JSON.stringify(response)).not.toContain(SECRET);
   });
 
-  it.each(["linux", "win32"] as const)(
-    "keeps config-backed provider settings editable without spawning security on %s",
-    async (platform) => {
+  it.each([
+    ["linux", "linux_secret_service"],
+    ["win32", "windows_credential_manager"],
+  ] as const)(
+    "supports presence-only native credential operations and config-backed settings on %s",
+    async (platform, nativeStore) => {
       const runSecurity = vi.fn<SecurityCommandRunner>();
-      const store = new KeychainCredentialStore({ platform, runSecurity });
+      const values = new Map<CredentialKey, string>();
+      const runNative = vi.fn<NativeCredentialCommandRunner>(async (command) => {
+        if (command.operation === "set") {
+          values.set(command.key, command.value ?? "");
+          return result();
+        }
+        if (command.operation === "delete") {
+          const existed = values.delete(command.key);
+          return existed ? result() : result(44);
+        }
+        if (!values.has(command.key)) return result(44);
+        return result(0, "", command.operation === "read" ? values.get(command.key) : "");
+      });
+      const store = createTestStore({ platform, runNative, runSecurity });
 
       const response = await store.list();
 
       expect(runSecurity).not.toHaveBeenCalled();
       expect(response.store).toEqual({
-        kind: "config_and_macos_keychain",
-        available: false,
-        unavailableReason: "unsupported_platform",
+        kind: "config_and_native_credential_store",
+        nativeStore,
+        maxSecretBytes: platform === "linux" ? 8_191 : 2_560,
+        available: true,
+        unavailableReason: null,
         requiresWorkerRestart: true,
       });
       expect(response.credentials.filter((credential) => credential.storage === "config")).toEqual(
@@ -144,12 +178,12 @@ describe("KeychainCredentialStore", () => {
           editable: true,
         })),
       );
-      expect(response.credentials.filter((credential) => credential.storage === "keychain")).toEqual(
+      expect(response.credentials.filter((credential) => credential.storage === "native_store")).toEqual(
         SecretCredentialKeys.map((key) => expect.objectContaining({
           key,
-          configured: null,
-          effectiveSource: "inspection_unknown",
-          editable: false,
+          configured: false,
+          effectiveSource: "absent",
+          editable: true,
         })),
       );
 
@@ -174,29 +208,38 @@ describe("KeychainCredentialStore", () => {
           },
         },
       });
-      await expect(store.set("OPENAI_API_KEY", SECRET)).rejects.toMatchObject({
-        name: "CredentialStoreUnavailableError",
-        reason: "unsupported_platform",
+      const exact = `  ${SECRET}-héllø  `;
+      await store.set("OPENAI_API_KEY", exact);
+      expect(await store.readForInternalUse("OPENAI_API_KEY")).toBe(exact);
+      expect((await store.list()).credentials.find((entry) => entry.key === "OPENAI_API_KEY")).toMatchObject({
+        configured: true,
+        effectiveSource: "native_store",
+        editable: true,
       });
-      await expect(store.delete("OPENAI_API_KEY")).rejects.toMatchObject({
-        name: "CredentialStoreUnavailableError",
-        reason: "unsupported_platform",
-      });
-      await expect(
-        store.applyBatch([
-          { operation: "delete", key: "ANTHROPIC_API_KEY" },
-        ]),
-      ).rejects.toMatchObject({
-        name: "CredentialStoreUnavailableError",
-        reason: "unsupported_platform",
-      });
+      await store.delete("OPENAI_API_KEY");
+      await store.delete("OPENAI_API_KEY");
+      expect(await store.readForInternalUse("OPENAI_API_KEY")).toBeNull();
       expect(runSecurity).not.toHaveBeenCalled();
     },
   );
 
+  it("keeps unsupported platforms fail-closed while config settings remain editable", async () => {
+    const store = createTestStore({ platform: "freebsd" });
+    const response = await store.list();
+    expect(response.store).toMatchObject({
+      nativeStore: null,
+      maxSecretBytes: null,
+      available: false,
+      unavailableReason: "unsupported_platform",
+    });
+    await expect(store.set("OPENAI_API_KEY", SECRET)).rejects.toMatchObject({
+      reason: "unsupported_platform",
+    });
+  });
+
   it("reports every present Keychain item without requesting its value", async () => {
     const runSecurity = vi.fn<SecurityCommandRunner>(async () => result());
-    const store = new KeychainCredentialStore({
+    const store = createTestStore({
       platform: "darwin",
       runSecurity,
     });
@@ -207,7 +250,7 @@ describe("KeychainCredentialStore", () => {
       available: true,
       unavailableReason: null,
     });
-    expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+    expect(response.credentials.filter((credential) => credential.storage === "native_store").every(
       (credential) => credential.configured === true,
     )).toBe(true);
     expect(response.credentials.filter((credential) => credential.storage === "config").every(
@@ -241,7 +284,7 @@ describe("KeychainCredentialStore", () => {
       const runSecurity = vi.fn<SecurityCommandRunner>(async () =>
         result(code, stderr),
       );
-      const store = new KeychainCredentialStore({
+      const store = createTestStore({
         platform: "darwin",
         runSecurity,
       });
@@ -273,7 +316,7 @@ describe("KeychainCredentialStore", () => {
       const runSecurity = vi.fn<SecurityCommandRunner>(async () =>
         result(code, stderr, SECRET),
       );
-      const store = new KeychainCredentialStore({
+      const store = createTestStore({
         platform: "darwin",
         runSecurity,
       });
@@ -281,12 +324,14 @@ describe("KeychainCredentialStore", () => {
       const response = await store.list();
 
       expect(response.store).toEqual({
-        kind: "config_and_macos_keychain",
+        kind: "config_and_native_credential_store",
+        nativeStore: "macos_keychain" as const,
+        maxSecretBytes: 128,
         available: false,
         unavailableReason: "inspection_failed",
         requiresWorkerRestart: true,
       });
-      expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+      expect(response.credentials.filter((credential) => credential.storage === "native_store").every(
         (credential) => credential.configured === null && credential.editable === false,
       )).toBe(true);
       expect(response.credentials.filter((credential) => credential.storage === "config").every(
@@ -304,7 +349,7 @@ describe("KeychainCredentialStore", () => {
       if (account === "GEMINI_API_KEY") return result(44);
       return result(1, "User interaction is not allowed.");
     });
-    const store = new KeychainCredentialStore({
+    const store = createTestStore({
       platform: "darwin",
       runSecurity,
     });
@@ -333,11 +378,11 @@ describe("KeychainCredentialStore", () => {
     const failingRunner = vi.fn<SecurityCommandRunner>(async () => {
       throw new Error(`spawn failed: ${SECRET}`);
     });
-    const failingStore = new KeychainCredentialStore({
+    const failingStore = createTestStore({
       platform: "darwin",
       runSecurity: failingRunner,
     });
-    const malformedStore = new KeychainCredentialStore({
+    const malformedStore = createTestStore({
       platform: "darwin",
       runSecurity: vi.fn(async () => ({
         code: Number.NaN,
@@ -353,7 +398,7 @@ describe("KeychainCredentialStore", () => {
 
     for (const response of [failed, malformed]) {
       expect(response.store.unavailableReason).toBe("inspection_failed");
-      expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+      expect(response.credentials.filter((credential) => credential.storage === "native_store").every(
         (credential) => credential.configured === null,
       )).toBe(true);
       expect(response.credentials.filter((credential) => credential.storage === "config").every(
@@ -368,7 +413,7 @@ describe("KeychainCredentialStore", () => {
     const runSecurity = vi.fn<SecurityCommandRunner>(
       () => new Promise(() => undefined),
     );
-    const store = new KeychainCredentialStore({
+    const store = createTestStore({
       platform: "darwin",
       runSecurity,
       commandTimeoutMs: 25,
@@ -380,7 +425,7 @@ describe("KeychainCredentialStore", () => {
 
     expect(runSecurity).toHaveBeenCalledTimes(SecretCredentialKeys.length);
     expect(response.store.unavailableReason).toBe("inspection_failed");
-    expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+    expect(response.credentials.filter((credential) => credential.storage === "native_store").every(
       (credential) => credential.configured === null,
     )).toBe(true);
     expect(response.credentials.filter((credential) => credential.storage === "config").every(
@@ -393,7 +438,7 @@ describe("KeychainCredentialStore", () => {
     const runSecurity = vi.fn<SecurityCommandRunner>(async () => {
       throw new Error("synthetic spawn failure");
     });
-    const store = new KeychainCredentialStore({
+    const store = createTestStore({
       platform: "darwin",
       runSecurity,
       commandTimeoutMs: 2_000,
@@ -409,7 +454,7 @@ describe("KeychainCredentialStore", () => {
     const runSecurity = vi.fn<SecurityCommandRunner>(async (args) =>
       result(args[0] === "find-generic-password" ? 0 : 0),
     );
-    const store = new KeychainCredentialStore({
+    const store = createTestStore({
       platform: "darwin",
       runSecurity,
     });
@@ -439,13 +484,31 @@ describe("KeychainCredentialStore", () => {
     expect(JSON.stringify(response)).not.toContain(SECRET);
   });
 
+  it.each([
+    ["snowman-☃", `password: 0x${Buffer.from("snowman-☃", "utf8").toString("hex")} "ignored display"`],
+    ["deadbeef", 'password: "deadbeef"'],
+    ['quote-"', 'password: "quote-""'],
+    ['slash-\\', `password: 0x${Buffer.from("slash-\\", "utf8").toString("hex")} "ignored display"`],
+  ])("decodes typed macOS private reads without confusing literal hexadecimal (%s)", async (expected, stderr) => {
+    const runSecurity = vi.fn<SecurityCommandRunner>(async (args) =>
+      args.includes("-g") ? result(0, stderr) : result(),
+    );
+    const store = createTestStore({ platform: "darwin", runSecurity });
+
+    await expect(store.readForInternalUse("ANTHROPIC_API_KEY")).resolves.toBe(expected);
+    expect(runSecurity).toHaveBeenCalledWith(
+      ["find-generic-password", "-s", "JobCtrl", "-a", "ANTHROPIC_API_KEY", "-g"],
+      expect.objectContaining({ timeoutMs: 2_000 }),
+    );
+  });
+
   it("makes deletion idempotent only for a confirmed absent item", async () => {
     const runSecurity = vi.fn<SecurityCommandRunner>(async (args) =>
       args[0] === "delete-generic-password"
         ? result(44, "untrusted output")
         : result(44, "The specified item could not be found."),
     );
-    const store = new KeychainCredentialStore({
+    const store = createTestStore({
       platform: "darwin",
       runSecurity,
     });
@@ -468,7 +531,7 @@ describe("KeychainCredentialStore", () => {
     const runSecurity = vi.fn<SecurityCommandRunner>(async () =>
       result(1, SECRET, SECRET),
     );
-    const store = new KeychainCredentialStore({
+    const store = createTestStore({
       platform: "darwin",
       runSecurity,
     });
@@ -492,7 +555,7 @@ describe("KeychainCredentialStore", () => {
         google: { mode: "vertex", project_id: `${SECRET}-old-project` },
       },
     }));
-    const store = new KeychainCredentialStore({ platform: "darwin", runSecurity });
+    const store = createTestStore({ platform: "darwin", runSecurity });
 
     const response = await store.applyBatch(BATCH_OPERATIONS);
 
@@ -508,8 +571,28 @@ describe("KeychainCredentialStore", () => {
       "project_id",
     );
     expect(JSON.stringify(response)).not.toContain(SECRET);
-    expect(runSecurity.mock.calls.filter(([args]) => args[0] === "find-generic-password" && args.includes("-w"))).toHaveLength(2);
+    expect(runSecurity.mock.calls.filter(([args]) => args[0] === "find-generic-password" && args.includes("-g"))).toHaveLength(2);
     expect(JSON.stringify(runSecurity.mock.calls.map(([args]) => args))).not.toContain(SECRET);
+  });
+
+  it("refuses a batch before mutation when an existing snapshot cannot be restored safely", async () => {
+    const externalValue = "x".repeat(129);
+    const { runSecurity, state } = statefulKeychainRunner(new Map([
+      ["ANTHROPIC_API_KEY", externalValue],
+    ]));
+    const store = createTestStore({ platform: "darwin", runSecurity });
+
+    const error = await store.applyBatch([
+      { operation: "delete", key: "ANTHROPIC_API_KEY" },
+    ]).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      name: "CredentialValueUnsupportedError",
+      key: "ANTHROPIC_API_KEY",
+      maxBytes: 128,
+    });
+    expect(state.get("ANTHROPIC_API_KEY")).toBe(externalValue);
+    expect(runSecurity.mock.calls.map(([args]) => args[0])).toEqual(["find-generic-password"]);
   });
 
   it.each([
@@ -522,7 +605,7 @@ describe("KeychainCredentialStore", () => {
         PRE_BATCH_STATE,
         new Set([failedMutationAttempt]),
       );
-      const store = new KeychainCredentialStore({ platform: "darwin", runSecurity });
+      const store = createTestStore({ platform: "darwin", runSecurity });
 
       const error = await store.applyBatch(BATCH_OPERATIONS).catch((caught: unknown) => caught);
 
@@ -543,7 +626,7 @@ describe("KeychainCredentialStore", () => {
       PRE_BATCH_STATE,
       new Set([1, 2]),
     );
-    const store = new KeychainCredentialStore({ platform: "darwin", runSecurity });
+    const store = createTestStore({ platform: "darwin", runSecurity });
 
     const error = await store.applyBatch(BATCH_OPERATIONS).catch((caught: unknown) => caught);
 
@@ -554,6 +637,258 @@ describe("KeychainCredentialStore", () => {
     expect(JSON.stringify(error)).not.toContain(SECRET);
     expect(state.get("ANTHROPIC_API_KEY")).toBe(`${SECRET}-new-anthropic`);
     expect(JSON.stringify(runSecurity.mock.calls.map(([args]) => args))).not.toContain(SECRET);
+  });
+
+  it("does not let a failed older batch undo a newer batch from another store", async () => {
+    const { runSecurity: underlyingRunner, state } = statefulKeychainRunner(PRE_BATCH_STATE);
+    let releaseFailure!: () => void;
+    let reportBlocked!: () => void;
+    const blocked = new Promise<void>((resolve) => { reportBlocked = resolve; });
+    const release = new Promise<void>((resolve) => { releaseFailure = resolve; });
+    const runSecurity = vi.fn<SecurityCommandRunner>(async (args, options) => {
+      if (args[0] === "delete-generic-password" && args[args.indexOf("-a") + 1] === "GEMINI_API_KEY") {
+        reportBlocked();
+        await release;
+        return result(1, SECRET, SECRET);
+      }
+      return underlyingRunner(args, options);
+    });
+    const first = createTestStore({ platform: "darwin", runSecurity, configPath, env: {} });
+    const second = createTestStore({ platform: "darwin", runSecurity, configPath, env: {} });
+
+    const older = first.applyBatch([
+      { operation: "set", key: "ANTHROPIC_API_KEY", value: `${SECRET}-older` },
+      { operation: "delete", key: "GEMINI_API_KEY" },
+    ]).catch((error: unknown) => error);
+    await blocked;
+    const newer = second.applyBatch([
+      { operation: "set", key: "ANTHROPIC_API_KEY", value: `${SECRET}-newer` },
+    ]);
+    await Promise.race([newer, new Promise<void>((resolve) => setTimeout(resolve, 50))]);
+    releaseFailure();
+    const [olderResult, newerResult] = await Promise.all([older, newer]);
+
+    expect(olderResult).toMatchObject({ reason: "operational_failure" });
+    expect(newerResult.credentials.find((entry) => entry.key === "ANTHROPIC_API_KEY")).toMatchObject({
+      configured: true,
+      effectiveSource: "native_store",
+    });
+    expect(state.get("ANTHROPIC_API_KEY") === `${SECRET}-newer`).toBe(true);
+    expect(state.get("GEMINI_API_KEY") === PRE_BATCH_STATE.get("GEMINI_API_KEY")).toBe(true);
+    expect(JSON.stringify(newerResult)).not.toContain(SECRET);
+    expect(JSON.stringify(olderResult)).not.toContain(SECRET);
+    expect(JSON.stringify(runSecurity.mock.calls.map(([args]) => args))).not.toContain(SECRET);
+  });
+
+  it.each(["set", "delete"] as const)("serializes a single-key %s against batch compensation", async (method) => {
+    const { runSecurity: underlyingRunner, state } = statefulKeychainRunner(PRE_BATCH_STATE);
+    let releaseFailure!: () => void;
+    let reportBlocked!: () => void;
+    const blocked = new Promise<void>((resolve) => { reportBlocked = resolve; });
+    const release = new Promise<void>((resolve) => { releaseFailure = resolve; });
+    const runSecurity = vi.fn<SecurityCommandRunner>(async (args, options) => {
+      if (args[0] === "delete-generic-password" && args[args.indexOf("-a") + 1] === "GEMINI_API_KEY") {
+        reportBlocked();
+        await release;
+        return result(1, SECRET, SECRET);
+      }
+      return underlyingRunner(args, options);
+    });
+    const first = createTestStore({ platform: "darwin", runSecurity, configPath, env: {} });
+    const second = createTestStore({ platform: "darwin", runSecurity, configPath, env: {} });
+    const older = first.applyBatch([
+      { operation: "set", key: "ANTHROPIC_API_KEY", value: `${SECRET}-older` },
+      { operation: "delete", key: "GEMINI_API_KEY" },
+    ]).catch((error: unknown) => error);
+    await blocked;
+    const newer = method === "set"
+      ? second.set("ANTHROPIC_API_KEY", `${SECRET}-newer`)
+      : second.delete("ANTHROPIC_API_KEY");
+    await Promise.race([newer, new Promise<void>((resolve) => setTimeout(resolve, 50))]);
+    releaseFailure();
+    const [olderResult, newerResult] = await Promise.all([older, newer]);
+    expect(olderResult).toMatchObject({ reason: "operational_failure" });
+    expect(newerResult.credentials.find((entry) => entry.key === "ANTHROPIC_API_KEY")?.configured).toBe(method === "set");
+    expect(method === "set"
+      ? state.get("ANTHROPIC_API_KEY") === `${SECRET}-newer`
+      : !state.has("ANTHROPIC_API_KEY")).toBe(true);
+    expect(JSON.stringify(newerResult)).not.toContain(SECRET);
+  });
+
+  it("retains ownership after a timed-out mutation until the runner really stops", async () => {
+    const { runSecurity: underlyingRunner, state } = statefulKeychainRunner(PRE_BATCH_STATE);
+    let releaseMutation!: () => void;
+    const release = new Promise<void>((resolve) => { releaseMutation = resolve; });
+    const runSecurity = vi.fn<SecurityCommandRunner>(async (args, options) => {
+      if (args[0] === "add-generic-password" && options.sensitiveInput === `${SECRET}-older`) {
+        await release;
+      }
+      return underlyingRunner(args, options);
+    });
+    const olderStore = createTestStore({ platform: "darwin", runSecurity, configPath, env: {}, commandTimeoutMs: 25 });
+    const newerStore = createTestStore({ platform: "darwin", runSecurity, configPath, env: {}, mutationLockTimeoutMs: 60 });
+
+    const oldResult = await olderStore.applyBatch([
+      { operation: "set", key: "ANTHROPIC_API_KEY", value: `${SECRET}-older` },
+    ]).catch((error: unknown) => error);
+    expect(oldResult).toMatchObject({ reason: "partial_failure" });
+    const environmentOwned = createTestStore({
+      platform: "darwin", runSecurity, configPath, env: { ANTHROPIC_API_KEY: SECRET },
+      mutationLockTimeoutMs: 60,
+    });
+    await expect(environmentOwned.set("ANTHROPIC_API_KEY", `${SECRET}-newer`)).rejects.toMatchObject({
+      name: "CredentialManagedByEnvironmentError",
+    });
+    const blockedResult = await newerStore.set("ANTHROPIC_API_KEY", `${SECRET}-newer`).catch((error: unknown) => error);
+    expect(blockedResult).toMatchObject({ reason: "busy" });
+    expect(state.get("ANTHROPIC_API_KEY") === PRE_BATCH_STATE.get("ANTHROPIC_API_KEY")).toBe(true);
+    releaseMutation();
+    const successor = await newerStore.set("ANTHROPIC_API_KEY", `${SECRET}-newer`);
+    expect(successor.credentials.find((entry) => entry.key === "ANTHROPIC_API_KEY")?.configured).toBe(true);
+    expect(state.get("ANTHROPIC_API_KEY") === `${SECRET}-newer`).toBe(true);
+    expect(JSON.stringify([oldResult, blockedResult, successor])).not.toContain(SECRET);
+    expect(JSON.stringify(runSecurity.mock.calls.map(([args]) => args))).not.toContain(SECRET);
+  });
+
+  it.each(["linux", "win32"] as const)("fences a timed-out %s native mutation until it settles", async (platform) => {
+    let releaseMutation!: () => void;
+    const release = new Promise<void>((resolve) => { releaseMutation = resolve; });
+    const state = new Map<CredentialKey, string>();
+    const runNative = vi.fn<NativeCredentialCommandRunner>(async (command) => {
+      if (command.operation === "set") {
+        if (command.value === `${SECRET}-older`) await release;
+        state.set(command.key, command.value ?? "");
+        return result();
+      }
+      return state.has(command.key)
+        ? result(0, "", command.operation === "read" ? state.get(command.key) : "")
+        : result(44);
+    });
+    const older = createTestStore({ platform, runNative, configPath, env: {}, commandTimeoutMs: 25 });
+    const newer = createTestStore({ platform, runNative, configPath, env: {}, mutationLockTimeoutMs: 60 });
+    const oldResult = await older.set("ANTHROPIC_API_KEY", `${SECRET}-older`).catch((error: unknown) => error);
+    expect(oldResult).toMatchObject({ reason: "partial_failure" });
+    const busy = await newer.set("ANTHROPIC_API_KEY", `${SECRET}-newer`).catch((error: unknown) => error);
+    expect(busy).toMatchObject({ reason: "busy" });
+    releaseMutation();
+    const saved = await newer.set("ANTHROPIC_API_KEY", `${SECRET}-newer`);
+    expect(saved.credentials.find((entry) => entry.key === "ANTHROPIC_API_KEY")?.configured).toBe(true);
+    expect(state.get("ANTHROPIC_API_KEY") === `${SECRET}-newer`).toBe(true);
+    expect(JSON.stringify([oldResult, busy, saved])).not.toContain(SECRET);
+  });
+
+  it("refuses an unfamiliar coordinator file without touching credentials", async () => {
+    const lockPath = path.join(configDirectory, "unfamiliar-lock.sqlite3");
+    const contents = "unrelated synthetic file";
+    fs.writeFileSync(lockPath, contents);
+    const runSecurity = vi.fn<SecurityCommandRunner>();
+    const store = createTestStore({ platform: "darwin", runSecurity, env: {}, configPath, mutationLockPath: lockPath });
+    const error = await store.set("ANTHROPIC_API_KEY", SECRET).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ reason: "operational_failure" });
+    expect(String(error)).not.toContain(SECRET);
+    expect(runSecurity).not.toHaveBeenCalled();
+    expect(fs.readFileSync(lockPath, "utf8")).toBe(contents);
+  });
+
+  it("reports an unverified process identity without touching credentials", async () => {
+    const runSecurity = vi.fn<SecurityCommandRunner>();
+    const store = createTestStore({
+      platform: "darwin", runSecurity, env: {}, configPath,
+      processIdentityReader: async () => ({ state: "unverified" }),
+    });
+    const error = await store.set("ANTHROPIC_API_KEY", SECRET).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ reason: "ownership_unverified" });
+    expect(String(error)).not.toContain(SECRET);
+    expect(runSecurity).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(configDirectory, "credential-mutations.sqlite3.inflight"))).toBe(false);
+  });
+
+  it("withholds helper input when the spawned helper identity is unverified", async () => {
+    const stdin = Object.assign(new EventEmitter(), { destroy: vi.fn(), end: vi.fn() });
+    const stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    const stderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    const child = Object.assign(new EventEmitter(), {
+      pid: 42, stdin, stdout, stderr,
+      kill: vi.fn(() => { queueMicrotask(() => child.emit("close", 1)); return true; }),
+    });
+    const runSecurity = createSecurityCommandRunner(() => child as SecurityChildProcess);
+    const store = createTestStore({
+      platform: "darwin", runSecurity, env: {}, configPath,
+      processIdentityReader: async (pid) => pid === process.pid
+        ? { state: "alive", identity: syntheticIdentity }
+        : { state: "unverified" },
+    });
+    const error = await store.set("ANTHROPIC_API_KEY", SECRET).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ reason: "ownership_unverified" });
+    expect(stdin.end).not.toHaveBeenCalled();
+    expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGKILL");
+    expect(fs.existsSync(path.join(configDirectory, "credential-mutations.sqlite3.inflight"))).toBe(false);
+    expect(String(error)).not.toContain(SECRET);
+  });
+
+  it("does not record or signal a helper that exits during identity registration", async () => {
+    const stdin = Object.assign(new EventEmitter(), { destroy: vi.fn(), end: vi.fn() });
+    const stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    const stderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    const child = Object.assign(new EventEmitter(), { pid: 42, stdin, stdout, stderr, kill: vi.fn(() => true) });
+    let reportInspection!: () => void;
+    let finishInspection!: () => void;
+    const inspecting = new Promise<void>((resolve) => { reportInspection = resolve; });
+    const release = new Promise<void>((resolve) => { finishInspection = resolve; });
+    const store = createTestStore({
+      platform: "darwin", runSecurity: createSecurityCommandRunner(() => child as SecurityChildProcess), env: {}, configPath,
+      processIdentityReader: async (pid) => {
+        if (pid !== process.pid) { reportInspection(); await release; }
+        return { state: "alive", identity: syntheticIdentity };
+      },
+    });
+    const update = store.set("ANTHROPIC_API_KEY", SECRET).catch((caught: unknown) => caught);
+    await inspecting;
+    child.emit("exit", 1);
+    child.emit("close", 1);
+    finishInspection();
+    const error = await update;
+    expect(error).toMatchObject({ reason: "ownership_unverified" });
+    expect(stdin.end).not.toHaveBeenCalled();
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(configDirectory, "credential-mutations.sqlite3.inflight"))).toBe(false);
+  });
+
+  it("clears an unstarted helper marker after a synchronous runner failure", async () => {
+    let fail = true;
+    const runSecurity = vi.fn<SecurityCommandRunner>((args) => {
+      if (args[0] === "add-generic-password" && fail) {
+        fail = false;
+        throw new Error(SECRET);
+      }
+      return Promise.resolve(result());
+    });
+    const store = createTestStore({ platform: "darwin", runSecurity, env: {}, configPath });
+    const failed = await store.set("ANTHROPIC_API_KEY", SECRET).catch((error: unknown) => error);
+    expect(failed).toMatchObject({ reason: "operational_failure" });
+    expect(String(failed)).not.toContain(SECRET);
+    expect(fs.existsSync(path.join(configDirectory, "credential-mutations.sqlite3.inflight"))).toBe(false);
+    await expect(store.set("ANTHROPIC_API_KEY", SECRET)).resolves.toMatchObject({ ok: true });
+  });
+
+  it("retains a recorded helper fence when a runner throws after registration", async () => {
+    const runSecurity = vi.fn<SecurityCommandRunner>((args, options) => {
+      if (args[0] === "add-generic-password") {
+        options.onSpawn?.(process.pid);
+        throw new Error(SECRET);
+      }
+      return Promise.resolve(result(44));
+    });
+    const store = createTestStore({ platform: "darwin", runSecurity, env: {}, configPath });
+    const failed = await store.applyBatch([
+      { operation: "set", key: "ANTHROPIC_API_KEY", value: SECRET },
+    ]).catch((error: unknown) => error);
+    expect(failed).toMatchObject({ reason: "partial_failure" });
+    expect(runSecurity.mock.calls.filter(([args]) => args[0] !== "find-generic-password")).toHaveLength(1);
+    const next = createTestStore({ platform: "darwin", runSecurity, env: {}, configPath, mutationLockTimeoutMs: 60 });
+    const busy = await next.set("ANTHROPIC_API_KEY", SECRET).catch((error: unknown) => error);
+    expect(busy).toMatchObject({ reason: "busy" });
+    expect(JSON.stringify([failed, busy])).not.toContain(SECRET);
   });
 });
 
@@ -581,7 +916,7 @@ describe("default security command runner", () => {
       kill: vi.fn(() => true),
     });
     const child = childEmitter as SecurityChildProcess;
-    const spawnSecurity = vi.fn(() => child);
+    const spawnSecurity = vi.fn<SecurityProcessSpawner>(() => child);
     const runner = createSecurityCommandRunner(spawnSecurity);
     let settlements = 0;
 
@@ -606,6 +941,7 @@ describe("default security command runner", () => {
       },
     );
     await vi.advanceTimersByTimeAsync(2_000);
+    expect(settlements).toBe(0);
     childEmitter.emit("close", 0);
     await vi.runAllTimersAsync();
 
@@ -614,7 +950,7 @@ describe("default security command runner", () => {
     expect(String(error)).not.toContain(SECRET);
     expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGKILL");
     expect(stdin.end).toHaveBeenCalledExactlyOnceWith(
-      `${SECRET}\n${SECRET}\n`,
+      `1${SECRET}\n${SECRET}\n`,
       "utf8",
     );
     expect(stdin.destroy).toHaveBeenCalledTimes(1);
@@ -635,7 +971,7 @@ describe("default security command runner", () => {
       kill: vi.fn(() => true),
     });
     const child = childEmitter as SecurityChildProcess;
-    const spawnSecurity = vi.fn(() => child);
+    const spawnSecurity = vi.fn<SecurityProcessSpawner>(() => child);
     const runner = createSecurityCommandRunner(spawnSecurity);
     const args = [
       "add-generic-password",
@@ -654,13 +990,14 @@ describe("default security command runner", () => {
     childEmitter.emit("close", 0);
 
     await expect(command).resolves.toEqual(result());
-    expect(spawnSecurity).toHaveBeenCalledWith("/usr/bin/security", args, {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const [binary, forwardedArgs] = spawnSecurity.mock.calls[0] ?? [];
+    expect(binary).toBe("/bin/sh");
+    expect(JSON.stringify(forwardedArgs?.slice(-args.length)) === JSON.stringify(args)).toBe(true);
+    expect(JSON.stringify(forwardedArgs).includes(SECRET)).toBe(false);
     expect(args).not.toContain(SECRET);
     expect(args.at(-1)).toBe("-w");
     expect(stdin.end).toHaveBeenCalledExactlyOnceWith(
-      `${SECRET}\n${SECRET}\n`,
+      `1${SECRET}\n${SECRET}\n`,
       "utf8",
     );
     expect(stdin.destroy).not.toHaveBeenCalled();
@@ -874,6 +1211,7 @@ describe("default security command runner", () => {
       timeoutMs: 2_000,
     }).catch((caught: unknown) => caught);
     childEmitter.emit("error", new Error(`async ${SECRET}`));
+    childEmitter.emit("close", 1);
 
     for (const failure of [
       syncRunner(["find-generic-password"], { timeoutMs: 2_000 }).catch(

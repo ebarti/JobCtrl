@@ -1,3 +1,5 @@
+# Always acquire the bootstrap pinned to the current published stable release.
+/install.sh https://github.com/ebarti/JobCtrl/releases/latest/download/install.sh 302
 # Preserve the established public Product Tour URL. Fragments are client-side,
 # so the source stays path-only; Cloudflare Pages applies this before static assets.
 /user/screenshots /user/product-tour 301

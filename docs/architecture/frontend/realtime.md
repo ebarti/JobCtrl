@@ -142,6 +142,8 @@ streams from the current tail (no backfill).
   current tail.
 - The browser's auto-reconnect sends `Last-Event-ID` automatically; no
   application code needed for the common case.
+- When the stream first opens, reconcile the current tenant's cached reads:
+  without a cursor, changes before that connection are outside the stream.
 - For IndexedDB-hydrated cold start (§9.7), the application explicitly
   passes `?since=<persistedWatermark>` on first connect.
 - Parse each `event` + `data` frame with `parseDomainEvent` — it validates
@@ -196,6 +198,18 @@ and above the theme/density providers. It also exposes `useEventStreamStatus`
 (consumed by `<ConnectionStatusPill>`). It renders no UI of its own — it
 manages the subscription lifecycle.
 
+A detected workspace database change carries an empty SSE `id:` to clear the
+native reconnect cursor and reports `workspace_changed`. The adapter keeps that
+status and ignores events on the old subscription even if the transport reconnects.
+The status pill shows the stopped-runtime inspection, JobCtrl restart, and page
+reload steps. A fresh subscription clears the latch; explicit `?since` callers
+must discard their own URL cursor. A tab that was offline when the server sent
+the reset cannot establish event-history continuity from its old numeric cursor.
+Path checks can also miss an A → B → A replacement during initial SQLite open;
+always stop JobCtrl before a database restore or replacement.
+The [API contract](../../api/complete-contract.md#database-failures) owns the
+wire format and recovery boundary.
+
 ## 7.4 The Invalidation Router
 
 A pure function maps each `DomainEvent` to tenant-scoped invalidation or exact
@@ -204,21 +218,15 @@ patch instructions. The router lives in
 registered aggregate-owned handler:
 
 ```ts
-export const jobActiveStateChangedHandler = (event) => [
-  patchQuery(jobsKeys.detail(event.tenantId, event.payload.jobId),
-    (current) => patchJobActiveState(current, event.payload)),
-  invalidate(jobsKeys.lists(event.tenantId)),
-  invalidate(dashboardKeys.summary(event.tenantId)),
+export const jobUpdatedHandler = (event) => [
+  reconcileQuery(jobsKeys.lists(event.tenantId), (current, key) =>
+    reconcileJobUpdatedPage(current, key[4], event.payload)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
 ];
 
-export const resumeApprovedHandler = (event) => [
-  patchQuery(jobsKeys.detail(event.tenantId, event.payload.jobId),
-    (current) => patchResumeApproved(current, event.payload)),
-  patchQuery(artifactsKeys.detail(event.tenantId, event.payload.artifactId),
-    (current) => patchResumeApproved(current, event.payload)),
-  invalidate(jobsKeys.lists(event.tenantId)),
-  invalidate(artifactsKeys.lists(event.tenantId)),
-];
+// reconcileQuery inspects existing tenant-scoped pages. Its updater returns
+// undefined when membership/order cannot be determined, causing exact-page
+// invalidation. Eligible pages update without refetching or replacing metadata.
 
 // Workflow lifecycle handlers patch the existing detail, then invalidate the
 // list/dashboard reads whose membership or aggregation may have changed.
@@ -228,7 +236,7 @@ export const resumeApprovedHandler = (event) => [
 In practice the per-event handler functions are authored in each aggregate
 context's `handlers.ts` (seven files: `discovery`, `enrichment`, `profile`,
 `scoring`, `materials`, `apply`, `pipeline`) and registered centrally in
-`invalidation-router.ts`, which exports `invalidate`, `patchQuery`,
+`invalidation-router.ts`, which exports `invalidate`, `patchQuery`, `reconcileQuery`,
 `patchApplyRunEvent`, and `useInvalidationRouter`. The illustration above
 inlines representative handlers for
 clarity; Operations itself has no `handlers.ts`.
@@ -287,20 +295,66 @@ Two patterns exist; both have a place:
 
 **Exact patch rules:**
 
-- `JobActiveStateChanged` patches an open job detail immediately; job lists and
-  Dashboard invalidate because active-state filters and aggregates can change.
-- `ResumeApproved` changes status only on an artifact already present in an
-  open job/artifact detail. It never creates a missing artifact; list pages
-  invalidate so persisted registration and filtering remain authoritative.
+- `JobUpdated` patches existing job-list title/company labels only when the
+  query's search, company filter and sort do not depend on those changed fields.
+  Unknown fields or malformed values retain exact-page invalidation. Dashboard
+  activity and stuck-work labels update immediately; its bundled activity,
+  aggregates and runtime data still require a bounded summary refresh. Apply-run
+  labels remain owned by their separately refreshed server projection.
+- `JobActiveStateChanged` patches job pages when the active/closed queue boundary
+  does not change, or when the query is for all, deleted or hidden jobs. A change
+  between active and closed classes invalidates active/closed pages, including
+  pages without the job, because page boundaries and totals can move.
+- `ResumeApproved` changes status on an artifact already present in a detail or
+  an eligible unfiltered, non-status-sorted artifact page. Artifact pages still
+  invalidate: approval can also register a PDF and suppress an older generation.
+  Status/search-filtered pages, missing artifacts and suppressed rows wait for
+  the canonical response. `PdfRendered` lacks the path/size/status needed to
+  patch a complete artifact, so bounded invalidation remains necessary.
+- List reconciliation never creates missing query entries, invents rows, alters
+  pagination totals or reorders a partial page. Already-invalidated or fetching
+  queries retain exact invalidation instead of making a partial update fresh.
 - `Workflow*` lifecycle events patch the matching run detail by exact workflow
   identity and append a deduplicated timeline entry. Run lists, Dashboard, and
   operations invalidate because status membership and aggregation can change.
 - `ApplyRunEventRecorded` directly appends its complete ordered event. This
   high-frequency path avoids a refetch per event; a later read still provides
-  reconciliation.
+  reconciliation. Events arriving during an observed initial run read are
+  retained until the timeline mounts; the job timeline displays only events
+  bearing its selected job identity.
 
 The router never resets component-owned filters, selection, pagination, or
 scroll position. A query update changes data under the existing view state.
+
+### Interview preparation and independent notes
+
+Materials handles `InterviewPrepGenerated` and `InterviewPrepFailed` by
+reconciling the affected job's current prep and paginated history. A failed
+refresh cannot clear the accepted generation. `InterviewQuestionNoteSaved`
+reconciles tenant/job/question note reads and revision history; its safe payload
+has no note text or private input bindings. The form keeps unsaved edits while
+Operations refreshes canonical data, and an older completion cannot overwrite
+a newer note revision. The catalog is an immutable local asset and browsing
+needs no job detail, SSE event, live worker, or provider. Event payloads signal
+refresh; they cannot manufacture an audited answer or supported user statement.
+
+### Submission completion
+
+`ApplicationSubmitted` retains the launcher's persisted `run_id` through SSE
+parsing. Its apply-owned handler uses that identity for both apply-run and
+workflow-run detail invalidation, so open run details refetch their terminal
+projection. Job list/detail, run lists, Dashboard and submission analytics also
+refresh; other runs and tenants keep their detail caches.
+
+### Dry-run completion
+
+`DryRunCompleted` uses the launcher's persisted `run_id` to invalidate apply-run
+and workflow-run list/detail reads. Its apply-owned handler also refreshes the
+review queue, job list/detail and Dashboard, where apply history is bundled.
+It does not patch a job as applied or invalidate submission analytics. The
+projection remains responsible for the `dry_run_complete` status and review
+eligibility; other stage events and later reads remain independent freshness
+backstops.
 
 ### Runtime snapshot polling complements SSE
 
@@ -347,10 +401,18 @@ sequenceDiagram
 The `EventStreamProvider` exposes `status` to the AppShell. When
 `status === "closed"` for more than 30s, the shell renders a banner
 "Connection lost — events paused; data will refresh when reconnected."
-On reconnection, the provider triggers a one-shot
-`queryClient.invalidateQueries()` (full cache invalidation) to recover
-from any events lost during the gap. (`Last-Event-ID` covers the common
-case; the full invalidation is a backstop.)
+On first connection and each subsequent reconnection, the provider invalidates
+the current tenant's reads once to recover changes outside the stream's cursor.
+Active cached reads refetch; inactive reads are marked stale. An unfinished
+initial read is allowed to settle for any awaiting route loader, then invalidated
+independently so its older response cannot be the final cached result. Repeated
+open or heartbeat notifications do not repeat the reconciliation. Mutations
+and locally edited form state remain separate from these canonical reads. The
+locally patched apply-run timeline is a disabled presentation cache;
+the workflow-run detail refresh returns separate workflow and Apply histories.
+The timeline retains live entries and reconciles matching Apply entries by
+their run-scoped event IDs, without treating equal-length lists as equivalent.
+`Last-Event-ID` covers the common reconnect case; reconciliation is a backstop.
 
 ## 7.8 Tenant Scoping in Realtime
 
@@ -380,3 +442,14 @@ Named-not-built evolution paths (also see §9):
   semantics in the port, with the SSE endpoint accepting filter params.
 
 ---
+
+### Posting availability
+
+Enrichment handles `JobAvailabilityObserved` by invalidating the exact tenant/job
+detail and tenant job lists. The observation DTO keeps the latest unknown
+attempt separate from an earlier successful verification. Internal
+`AvailabilityLeaseChanged` invalidates detail/lists for persisted job-scoped
+request deferral feedback. Workspace/host leases return an empty invalidation
+result; reservation churn does not reload unrelated views.
+Ordinary reconnect invalidation refreshes overdue wall-clock state without
+requesting employer acquisition.

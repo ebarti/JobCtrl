@@ -1,3 +1,10 @@
+import { isPrivateApplyEvent } from "@jobctrl/domain-types";
+import { readApplyAuditControls } from "./apply-controls.js";
+import { companyBriefingSummaries } from "./company-briefings.js";
+import { resolveJobLocator } from "./job-locators.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "./contracts.js";
+import { scoreProfileFreshness } from "./score-profile-freshness.js";
+import { readDetermination, readArtifactLineAnchors, determinationOwnsArtifact } from "./semantic-determinations.js";
 /**
  * TS read-model — projection-backed (Phase 9 / S-33).
  *
@@ -48,6 +55,7 @@ import type {
   InterviewPrep,
   JobListQuery,
   JobSummary,
+  PostingAvailability,
   OutcomeAnalyticsSummary,
   PaginatedResponse,
   PreparationSummary,
@@ -77,14 +85,14 @@ import {
   ProfileSchema,
   STAGES,
   WORKFLOW_RUN_STATUSES,
-  STATE_RANK,
-  compareJobs,
+  effectiveJobStages,
   compareValues,
-  filterJob,
   paginate,
   timestampAtOrAfter,
   timestampBefore,
 } from "./contracts.js";
+import { requirementFitForCurrentAnalysis } from "./application-feedback.js";
+import { missingApplicationAttestationFields } from "./application-attestations.js";
 import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
@@ -92,7 +100,9 @@ import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-po
 import { canonicalSourceDisplayName, sourceDisplayNames } from "./source-display-names.js";
 import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { normalizeJobLocation } from "./location-normalization.js";
-import { refreshProjections } from "./projections.js";
+import { ensureJobDetailProjection, refreshProjections } from "./projections.js";
+import { jobQuerySelection, querySourceVersion, refreshJobQueryIndex, selectJobPage } from "./job-list-query.js";
+import type { JobQueryScalars } from "./contracts.js";
 import {
   resumeTemplateStateForArtifact,
   resumeTemplateStateForJob,
@@ -158,6 +168,9 @@ interface JobListProjectionRow extends Record<string, unknown> {
   score_stale_old_policy_version: number | null;
   score_stale_new_policy_version: number | null;
   score_stale_marked_at: string | null;
+  current_analysis_generation: number | null;
+  assessed_analysis_generation: number | null;
+  assessed_score_version: number | null;
   current_stage: string;
   current_substage: string;
   current_state: string;
@@ -214,14 +227,6 @@ interface ArtifactProjectionRow extends Record<string, unknown> {
   bullet_provenance_json: string | null;
   coverage_audit_json: string | null;
   voice_pass_json: string | null;
-}
-
-interface ProfileEvidencePointer {
-  entryId: string;
-  evidenceId: string;
-  sourceText: string;
-  normalizedSourceText: string;
-  senioritySignal: boolean;
 }
 
 interface DashboardProjectionRow extends Record<string, unknown> {
@@ -348,27 +353,6 @@ interface OperationalRollup {
   lastErrorClass: string | null;
   lastRunId: string | null;
 }
-
-const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
-  discovered_at: "discovered_at",
-  title: "LOWER(title)",
-  company: "LOWER(employer)",
-  location: "LOWER(location)",
-  fit_score: "COALESCE(fit_score, -1)",
-  current_stage: "LOWER(current_stage)",
-  current_state: `(${sqlRankCase("current_state", STATE_RANK, 999)} || ':' || LOWER(COALESCE(current_substage, current_stage)))`,
-};
-
-const IN_MEMORY_JOB_SORT_FIELDS = new Set([
-  "source",
-  "compensation_min_eur",
-  "compensation_max_eur",
-  "compensation_posted",
-  "compensation_market",
-  "compensation_confidence",
-  "compensation_warnings",
-  "apply_status",
-]);
 
 const SQL_ACTIVITY_SORT_COLUMNS: Partial<Record<string, string>> = {
   occurred_at: "e.occurred_at",
@@ -557,32 +541,32 @@ export function acknowledgeDigest(
   options: AcknowledgeDigestOptions = {},
 ): DigestAcknowledgeResponse {
   ensureDigestStateTable(db);
-  const previous = readDigestState(db).lastAcknowledgedAt;
-  const now = options.now ?? new Date();
-  const nowIso = now.toISOString();
-  const requestedAcknowledgedAt = options.acknowledgedAt ?? nowIso;
-  const acknowledgedAt = boundedAcknowledgeTimestamp(requestedAcknowledgedAt, nowIso);
-  const nextAcknowledgedAt =
-    previous && Date.parse(previous) > Date.parse(acknowledgedAt) ? previous : acknowledgedAt;
+  return db.transaction((): DigestAcknowledgeResponse => {
+    const previous = readDigestState(db).lastAcknowledgedAt;
+    const now = options.now ?? new Date();
+    const nowIso = now.toISOString();
+    const requestedAcknowledgedAt = options.acknowledgedAt ?? nowIso;
+    const acknowledgedAt = boundedAcknowledgeTimestamp(requestedAcknowledgedAt, nowIso);
+    const comparison = previous ? compareDigestTimestamps(previous, acknowledgedAt) : 0;
+    if (comparison === null) throw new Error("digest watermark is not a valid timestamp");
+    const nextAcknowledgedAt = previous && comparison > 0 ? previous : acknowledgedAt;
 
-  db.prepare(
-    `INSERT INTO digest_state (tenant_id, last_acknowledged_at, updated_at)
-     VALUES (?, ?, ?)
-     ON CONFLICT(tenant_id) DO UPDATE SET
-       last_acknowledged_at = excluded.last_acknowledged_at,
-       updated_at = excluded.updated_at`,
-  ).run(DEFAULT_TENANT, nextAcknowledgedAt, nowIso);
+    db.prepare(
+      `INSERT INTO digest_state (tenant_id, last_acknowledged_at, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(tenant_id) DO UPDATE SET
+         last_acknowledged_at = excluded.last_acknowledged_at,
+         updated_at = excluded.updated_at`,
+    ).run(DEFAULT_TENANT, nextAcknowledgedAt, nowIso);
 
-  recordDigestReviewedEvent(db, {
-    acknowledgedAt: nextAcknowledgedAt,
-    previousAcknowledgedAt: previous,
-    reviewedAt: nowIso,
-  });
+    recordDigestReviewedEvent(db, {
+      acknowledgedAt: nextAcknowledgedAt,
+      previousAcknowledgedAt: previous,
+      reviewedAt: nowIso,
+    });
 
-  return {
-    ok: true,
-    state: readDigestState(db),
-  };
+    return { ok: true, state: readDigestState(db) };
+  }).immediate();
 }
 
 export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}): DailyDigest {
@@ -591,13 +575,18 @@ export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}
   const generatedAt = now.toISOString();
   const since = readDigestState(db).lastAcknowledgedAt;
   const highFitThreshold = normalizeDigestThreshold(options.minFitScore);
-  const queueItems = options.applyReviewQueue?.items ?? [];
+  const queue = options.applyReviewQueue?.items ?? [];
+  const canonicalJobs = queue.length
+    ? new Set(allRows<{ job_id: string }>(db, "SELECT job_id FROM jobs WHERE tenant_id = ?", [DEFAULT_TENANT]).map((row) => row.job_id))
+    : null;
+  const queueItems = canonicalJobs ? queue.filter((item) => canonicalJobs.has(item.jobKey)) : queue;
   const preparation = buildPreparationSummary(db, DEFAULT_TENANT);
   return {
     ok: true,
     generatedAt,
     since,
     highFitThreshold,
+    companyBriefings: companyBriefingSummaries(db, DEFAULT_TENANT, now),
     newMatches: countDigestNewMatches(db, since, highFitThreshold),
     blockedSources: digestBlockedSources(db),
     reviewNeededMaterials: {
@@ -621,11 +610,26 @@ export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}
 }
 
 function boundedAcknowledgeTimestamp(candidate: string, nowIso: string): string {
-  const candidateTime = Date.parse(candidate);
-  const nowTime = Date.parse(nowIso);
-  if (!Number.isFinite(candidateTime)) return nowIso;
-  if (candidateTime > nowTime) return nowIso;
+  const comparison = compareDigestTimestamps(candidate, nowIso);
+  if (comparison === null || comparison > 0) return nowIso;
   return candidate;
+}
+
+function compareDigestTimestamps(left: string, right: string): number | null {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  if (!Number.isFinite(leftMs) || !Number.isFinite(rightMs)) return null;
+  if (leftMs !== rightMs) return leftMs < rightMs ? -1 : 1;
+  // Date.parse truncates after milliseconds. Retain later fractional digits
+  // when protecting a historical watermark that was stored more precisely.
+  const tail = (value: string): string =>
+    (value.trim().match(/[T ]\d{2}:\d{2}:\d{2}\.(\d+)(?=Z|[+-]\d{2}:?\d{2}$|$)/i)?.[1] ?? "").slice(3);
+  const leftTail = tail(left);
+  const rightTail = tail(right);
+  const length = Math.max(leftTail.length, rightTail.length);
+  const a = leftTail.padEnd(length, "0");
+  const b = rightTail.padEnd(length, "0");
+  return a === b ? 0 : a < b ? -1 : 1;
 }
 
 function recordDigestReviewedEvent(
@@ -731,10 +735,27 @@ function countDigestNewMatches(
   highFitThreshold: number,
 ): DailyDigest["newMatches"] {
   const activeFilter = jobSqlFilter(digestBaseJobQuery());
-  const sinceClause = since ? " AND (discovered_at >= ? OR scored_at >= ?)" : "";
-  const sinceParams: SqliteValue[] = since ? [since, since] : [];
-  const where = `${activeFilter.where}${sinceClause}`;
-  const params = [...activeFilter.params, ...sinceParams];
+  const where = `${activeFilter.where} AND EXISTS (
+    SELECT 1 FROM jobs j
+    WHERE j.tenant_id = job_list_projections.tenant_id AND j.job_id = job_list_projections.job_id
+  )`;
+  const params = activeFilter.params;
+  if (since) {
+    const watermark = Date.parse(since);
+    if (!Number.isFinite(watermark)) throw new Error("digest watermark is not a valid timestamp");
+    let count = 0;
+    let highFitCount = 0;
+    const rows = db.prepare(`SELECT discovered_at, scored_at, fit_score FROM job_list_projections${where}`)
+      .iterate(...params) as Iterable<{ discovered_at: string | null; scored_at: string | null; fit_score: number | null }>;
+    for (const row of rows) {
+      const discovered = Date.parse(row.discovered_at ?? "");
+      const scored = Date.parse(row.scored_at ?? "");
+      if (!(Number.isFinite(discovered) && discovered >= watermark) && !(Number.isFinite(scored) && scored >= watermark)) continue;
+      count++;
+      if (row.fit_score !== null && row.fit_score >= highFitThreshold) highFitCount++;
+    }
+    return { count, highFitCount };
+  }
   return {
     count: countRows(db, `SELECT COUNT(*) AS count FROM job_list_projections${where}`, params),
     highFitCount: countRows(
@@ -772,7 +793,7 @@ const FOLLOW_UP_STOP_OUTCOMES = new Set([
 ]);
 
 function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
-  const cutoff = new Date(now.getTime() - DIGEST_FOLLOW_UP_THRESHOLD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const cutoff = now.getTime() - DIGEST_FOLLOW_UP_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
   const rows = allRows<{
     job_id: string;
     kind: string;
@@ -780,32 +801,38 @@ function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
     recorded_at: string | null;
   }>(
     db,
-    `SELECT job_id, kind, occurred_at, recorded_at
-       FROM application_outcomes
-      WHERE tenant_id = ?
-      ORDER BY job_id ASC, occurred_at ASC, recorded_at ASC`,
+    `SELECT o.job_id, o.kind, o.occurred_at, o.recorded_at
+       FROM application_outcomes o
+      WHERE o.tenant_id = ?
+        AND EXISTS (SELECT 1 FROM jobs j WHERE j.tenant_id = o.tenant_id AND j.job_id = o.job_id)`,
     [DEFAULT_TENANT],
   );
-  const byJob = new Map<string, { appliedAt: string | null; lastActivityAt: string | null; stopped: boolean }>();
-  for (const row of rows) {
+  const events = rows.map((row) => ({
+    ...row,
+    occurredMs: Date.parse(row.occurred_at || row.recorded_at || ""),
+    recordedMs: Date.parse(row.recorded_at || row.occurred_at || ""),
+  })).filter((row) => Number.isFinite(row.occurredMs));
+  events.sort((a, b) => a.job_id.localeCompare(b.job_id) || a.occurredMs - b.occurredMs
+    || (Number.isFinite(a.recordedMs) ? a.recordedMs : a.occurredMs) - (Number.isFinite(b.recordedMs) ? b.recordedMs : b.occurredMs));
+  const byJob = new Map<string, { appliedAt: number | null; lastActivityAt: number | null; stopped: boolean }>();
+  for (const row of events) {
     const jobKey = row.job_id;
     const current = byJob.get(jobKey) ?? {
       appliedAt: null,
       lastActivityAt: null,
       stopped: false,
     };
-    const occurredAt = row.occurred_at || row.recorded_at || "";
-    if (!occurredAt) continue;
-    if (!current.lastActivityAt || occurredAt > current.lastActivityAt) {
+    const occurredAt = row.occurredMs;
+    if (current.lastActivityAt === null || occurredAt > current.lastActivityAt) {
       current.lastActivityAt = occurredAt;
     }
     if (row.kind === "applied_confirmation") {
-      if (!current.appliedAt || occurredAt > current.appliedAt) {
+      if (current.appliedAt === null || occurredAt > current.appliedAt) {
         current.appliedAt = occurredAt;
         current.stopped = false;
       }
     } else if (
-      current.appliedAt &&
+      current.appliedAt !== null &&
       occurredAt > current.appliedAt &&
       FOLLOW_UP_STOP_OUTCOMES.has(row.kind)
     ) {
@@ -815,7 +842,7 @@ function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
   }
   let count = 0;
   for (const item of byJob.values()) {
-    if (item.appliedAt && !item.stopped && item.lastActivityAt && item.lastActivityAt <= cutoff) {
+    if (item.appliedAt !== null && !item.stopped && item.lastActivityAt !== null && item.lastActivityAt <= cutoff) {
       count += 1;
     }
   }
@@ -906,8 +933,7 @@ function countOutdatedScores(
         AND s.job_id = stale.job_id
         AND s.version = latest.max_version
       WHERE stale.tenant_id = ?
-        AND stale.resolved = 0
-        AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')`,
+        AND stale.resolved = 0`,
     [tenantId, tenantId],
   );
   return rows.filter((row) => activeJobs.has(row.job_id)).length;
@@ -989,7 +1015,8 @@ function activeJobIdSet(db: SqliteDatabase): Set<string> {
   });
   const rows = allRows<{ job_id: string }>(
     db,
-    `SELECT job_id FROM job_list_projections${filter.where}`,
+    `SELECT job_id FROM job_list_projections${filter.where}
+      AND EXISTS (SELECT 1 FROM jobs j WHERE j.tenant_id = job_list_projections.tenant_id AND j.job_id = job_list_projections.job_id)`,
     filter.params,
   );
   return new Set(rows.map((row) => row.job_id).filter(Boolean));
@@ -1005,41 +1032,63 @@ function policyVersionFromJson(value: string | null, fields: readonly string[]):
   return null;
 }
 
-export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
+/** Index construction, selection and page hydration share a refreshed snapshot. */
+function withJobQuerySnapshot<T>(db: SqliteDatabase, read: () => T): T {
+  const callerTransaction = db.inTransaction;
   refreshProjections(db, DEFAULT_TENANT);
-  const sortColumn = SQL_JOB_SORT_COLUMNS[query.sort] ?? "discovered_at";
-  const filter = jobSqlFilter(query);
-  const projectionSelect = jobProjectionSelect();
+  return db.transaction(() => {
+    // A caller may already hold an older WAL snapshot. Never reuse or publish
+    // a reusable freshness token for caller-owned transactions.
+    const version = callerTransaction ? -1 : querySourceVersion(db);
+    refreshJobQueryIndex(db, DEFAULT_TENANT, version, () => allRows<JobListProjectionRow>(db,
+      `SELECT job_list_projections.tenant_id, job_list_projections.job_id,
+        title, employer, source, strategy, location, salary, compensation_summary_json,
+        discovered_at, scored_at, fit_score, current_stage, current_substage, current_state,
+        current_error_code, current_error_message, current_next_action, apply_status, applied_at,
+        (SELECT j.url FROM jobs j WHERE j.tenant_id = job_list_projections.tenant_id
+          AND j.job_id = job_list_projections.job_id) AS url,
+        ${discoverySourceSqlExpression()} AS discovery_source,
+        ${postingSourceUrlSqlExpression()} AS posting_source_url,
+        ${postingSourceAtsKindSqlExpression()} AS posting_source_ats_kind
+       FROM job_list_projections WHERE tenant_id = ? AND EXISTS (
+         SELECT 1 FROM jobs j WHERE j.tenant_id = job_list_projections.tenant_id
+           AND j.job_id = job_list_projections.job_id)
+       ORDER BY job_list_projections.job_id`, [DEFAULT_TENANT],
+    ).map(rowToJobQueryScalars));
+    return read();
+  })();
+}
 
-  if (!query.q && !IN_MEMORY_JOB_SORT_FIELDS.has(query.sort)) {
-    const total = countJobProjections(db, filter);
-    const pages = Math.max(1, Math.ceil(total / query.pageSize));
-    const page = Math.min(query.page, pages);
-    const offset = (page - 1) * query.pageSize;
-    const direction = query.dir === "asc" ? "ASC" : "DESC";
-    const rows = allRows<JobListProjectionRow>(
-      db,
-      `SELECT ${projectionSelect} FROM job_list_projections${filter.where} ORDER BY ${sortColumn} ${direction}, job_id ASC LIMIT ? OFFSET ?`,
-      [...filter.params, query.pageSize, offset],
-    );
-    const summaries = rows.map((row) => rowToJobSummary(row, db));
-    return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
-  }
+function listJobsInSnapshot(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
+  const { ids, total, page } = selectJobPage(db, query, jobSqlFilter(query));
+  // Hydrate only selected IDs, in selection order. Auxiliary availability and
+  // template reads are deliberately absent from index construction.
+  const statement = db.prepare(`SELECT ${jobProjectionSelect()} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`);
+  const summaries = ids.map((id) => rowToJobSummary(statement.get(DEFAULT_TENANT, id) as JobListProjectionRow, db));
+  return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+}
 
-  // Free-text search and projected-JSON sort fields use the in-memory path.
-  // The projection table is already denormalised, and this keeps compensation
-  // sorting tied to the typed projected summary instead of SQLite JSON quirks.
-  const allMatching = allRows<JobListProjectionRow>(
-    db,
-    `SELECT ${projectionSelect} FROM job_list_projections${filter.where}`,
-    filter.params,
-  );
-  const normalizedQuery = query.q.toLowerCase();
-  const filtered = allMatching
-    .map((row) => rowToJobSummary(row, db))
-    .filter((job) => !query.q || filterJob(job, query, normalizedQuery));
-  filtered.sort((left, right) => compareJobs(left, right, query.sort, query.dir));
-  return paginate(filtered, query.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
+  return withJobQuerySnapshot(db, () => listJobsInSnapshot(db, query));
+}
+
+/** Read a visible page, a bounded matching cohort and caller data in one snapshot. */
+export function withJobsSelectionSnapshot<T>(
+  db: SqliteDatabase,
+  query: JobListQuery,
+  filter: Partial<BulkJobMutationFilter>,
+  limit: number,
+  read: (page: PaginatedResponse<JobSummary>, ids: string[]) => T,
+): T {
+  return withJobQuerySnapshot(db, () => {
+    const page = listJobsInSnapshot(db, query);
+    const normalized = normalizeMutationFilter(filter);
+    const selection = jobQuerySelection(normalized, jobSqlFilter(normalized));
+    const ids = allRows<{ job_id: string }>(db,
+      `SELECT qi.job_id FROM ${selection.from}${selection.where} LIMIT ?`, [...selection.params, limit])
+      .map((row) => row.job_id);
+    return read(page, ids);
+  });
 }
 
 /**
@@ -1081,20 +1130,37 @@ export function listScoringKeywords(db: SqliteDatabase): ScoringKeywordAggregati
   };
 }
 
-export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}): string[] {
+export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}, limit?: number): string[] {
   const query = normalizeMutationFilter(filter);
-  refreshProjections(db, DEFAULT_TENANT);
-  const sqlFilter = jobSqlFilter(query);
-  const rows = allRows<JobListProjectionRow>(
-    db,
-    `SELECT ${jobProjectionSelect()} FROM job_list_projections${sqlFilter.where}`,
-    sqlFilter.params,
-  );
-  const normalizedQuery = query.q.toLowerCase();
-  return rows
-    .map((row) => rowToJobSummary(row, db))
-    .filter((job) => filterJob(job, query, normalizedQuery))
-    .map((job) => job.jobKey);
+  return withJobQuerySnapshot(db, () => {
+    const selection = jobQuerySelection(query, jobSqlFilter(query));
+    const limitSql = limit === undefined ? "" : " LIMIT ?";
+    const params = limit === undefined ? selection.params : [...selection.params, limit];
+    return allRows<{ job_id: string }>(db,
+      `SELECT qi.job_id FROM ${selection.from}${selection.where}${limitSql}`, params).map((row) => row.job_id);
+  });
+}
+
+/** Check filter membership only within a reviewed canonical cohort. */
+export function matchingJobKeysWithin(
+  db: SqliteDatabase,
+  filter: Partial<BulkJobMutationFilter>,
+  jobKeys: readonly string[],
+): string[] {
+  if (!jobKeys.length) return [];
+  const query = normalizeMutationFilter(filter);
+  return withJobQuerySnapshot(db, () => {
+    const selection = jobQuerySelection(query, jobSqlFilter(query));
+    const matching: string[] = [];
+    for (let offset = 0; offset < jobKeys.length; offset += 250) {
+      const batch = jobKeys.slice(offset, offset + 250);
+      const ids = allRows<{ job_id: string }>(db,
+        `SELECT qi.job_id FROM ${selection.from}${selection.where} AND qi.job_id IN (${batch.map(() => "?").join(", ")})`,
+        [...selection.params, ...batch]);
+      matching.push(...ids.map((row) => row.job_id));
+    }
+    return matching;
+  });
 }
 
 export function listEvidenceMap(db: SqliteDatabase): EvidenceMapResponse {
@@ -1132,21 +1198,39 @@ export function listEvidenceMap(db: SqliteDatabase): EvidenceMapResponse {
 
 export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | null {
   refreshProjections(db, DEFAULT_TENANT);
-  const listRow = findJobListRow(db, jobKey);
-  if (!listRow) return null;
-  const jobId = canonicalJobId(listRow.job_id);
-  if (!jobId) return null;
-  const detailRow = getRow<JobDetailProjectionRow>(
-    db,
-    "SELECT * FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?",
-    [DEFAULT_TENANT, jobId],
-  );
+  const snapshot = db.transaction(() => {
+    let listRow = findJobListRow(db, jobKey);
+    if (!listRow) return null;
+    const jobId = canonicalJobId(listRow.job_id);
+    if (!jobId) return null;
+    if (ensureJobDetailProjection(db, DEFAULT_TENANT, jobId)) {
+      listRow = findJobListRow(db, jobId);
+      if (!listRow) return null;
+    }
+    const detailRow = getRow<JobDetailProjectionRow>(
+      db,
+      "SELECT * FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?",
+      [DEFAULT_TENANT, jobId],
+    );
+    return { listRow, detailRow, jobId };
+  }).immediate();
+  if (!snapshot) return null;
+  const { listRow, detailRow, jobId } = snapshot;
   const stages = reconcileStageRetryability(db, jobId, parseStages(detailRow?.stages_json));
   const artifacts = artifactsForJob(db, jobId);
   const auditHistory = buildJobAuditHistory(db, jobId);
   const jobSummary = rowToJobSummary(listRow, db);
   const latestApplyRun = latestApplyRunForJob(db, jobId);
   const activeApplyRun = activeApplyRunForJob(db, jobId);
+  const employerAnalysis = parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null);
+  const projectedFitReport = parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null);
+  if (employerAnalysis) {
+    const refs = allRows<{determination_id: string}>(db,
+      "SELECT determination_id FROM semantic_entity_bindings WHERE tenant_id=? AND entity_kind='employer_analysis' AND entity_id=? AND entity_version=? ORDER BY determination_kind",
+      [DEFAULT_TENANT, jobId, String(employerAnalysis.generation)]);
+    employerAnalysis.determinations = refs.map(ref => readDetermination(db, DEFAULT_TENANT, ref.determination_id)).filter(value => value !== null);
+    if (employerAnalysis.determinations.some(value => value.entity_id !== jobId)) throw new Error("analysis_determination_binding_invalid");
+  }
   return {
     ok: true,
     job: {
@@ -1155,6 +1239,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
       scoreReasoning: detailRow?.score_reasoning ?? listRow.score_reasoning,
     },
     applyAudit: buildApplyAudit({
+      missingProfileData: missingApplicationAttestationFields(db),
       applicationUrl: applyAuditApplicationUrl(listRow),
       hasResume: Boolean(listRow.has_resume),
       hasCoverLetter: Boolean(listRow.has_cover_letter),
@@ -1164,6 +1249,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
       currentErrorCode: jobSummary.errorCode,
       currentErrorMessage: jobSummary.errorMessage,
       latestApplyRun,
+      ...readApplyAuditControls(db, DEFAULT_TENANT, jobId),
       scoreBreakdown: jobSummary.scoreBreakdown,
       reviewEvidenceAvailable: Boolean(
         jobSummary.scoreBreakdown ||
@@ -1177,8 +1263,13 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     stages,
     artifacts,
     auditHistory,
-    employerAnalysis: parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null),
-    requirementFitReport: parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
+    employerAnalysis,
+    requirementFitReport: jobSummary.scoreAnalysisFreshness?.status === "current"
+      && projectedFitReport?.scoreVersion === jobSummary.scoreVersion
+      ? requirementFitForCurrentAnalysis(
+        db, jobId, employerAnalysis, projectedFitReport,
+      )
+      : null,
     interviewPrep: parseInterviewPrep(detailRow?.interview_prep_json ?? null),
     compensationAudit: parseCompensationAudit(detailRow?.compensation_audit_json ?? null),
   };
@@ -1242,7 +1333,9 @@ function applyAuditApplicationUrl(row: JobListProjectionRow): string | null {
 function parseEmployerAnalysis(value: string | null): EmployerAnalysis | null {
   if (!value) return null;
   try {
-    return JSON.parse(value) as EmployerAnalysis;
+    const analysis: unknown = JSON.parse(value);
+    if (!isRecord(analysis) || analysis.prompt_version !== EMPLOYER_ANALYSIS_PROMPT_VERSION) return null;
+    return analysis as unknown as EmployerAnalysis;
   } catch {
     return null;
   }
@@ -1308,7 +1401,7 @@ function isCompensationAuditMarket(value: unknown): boolean {
   if (value.recordStatus === "recorded") {
     return isRecord(value.estimate) && typeof value.estimate.jobId === "string";
   }
-  return value.recordStatus === "not_requested" && typeof value.jobId === "string";
+  return (value.recordStatus === "not_requested" || (value.recordStatus === "unavailable" && typeof value.failureCode === "string")) && typeof value.jobId === "string";
 }
 
 function containsLegacyJobKey(value: unknown): boolean {
@@ -1694,14 +1787,23 @@ function jobEventToAuditEntry(
       const quarantineReason = payloadText(payload, "quarantineReason", "quarantine_reason");
       const quarantineLabel =
         quarantineReason && quarantineReason !== "none" ? humanizeToken(quarantineReason) : "";
+      const confidence = payloadText(payload, "confidence").toLowerCase();
+      const availabilityOnly = quarantineReason === "unknown_active_state" && ["medium", "high"].includes(confidence);
+      const tailoringBlocked = snapshotQuarantined && confidence === "low";
       return makeAuditEntry({
         ...base,
         category: "enrichment",
         tone: snapshotQuarantined ? "warning" : "success",
         title: "Content snapshot captured",
-        description: snapshotQuarantined
-          ? "A low-confidence posting snapshot was stored and quarantined from tailoring; the job stays scoreable and visible."
-          : "A posting content snapshot was stored for future comparisons.",
+        description: availabilityOnly
+          ? "Posting availability was unverified; the captured content remains usable for preparation."
+          : quarantineReason === "posting_inactive"
+            ? "The posting was confirmed unavailable; its content snapshot remains stored."
+            : tailoringBlocked
+              ? "A low-confidence posting snapshot was stored and quarantined from tailoring; the job stays scoreable and visible."
+              : snapshotQuarantined
+                ? "A posting content snapshot was stored with a review flag."
+                : "A posting content snapshot was stored for future comparisons.",
         actor: "system",
         details: auditDetails(
           ["Source", payloadText(payload, "sourceId", "source_id")],
@@ -1997,6 +2099,16 @@ function jobEventToAuditEntry(
     case "PreparationWorkItemCompleted":
     case "PreparationWorkItemFailed":
       return preparationWorkItemAuditEntry(base, row.event_type, payload);
+    case "RepeatApplicationCheckBlocked":
+      return makeAuditEntry({
+        ...base,
+        category: "apply",
+        tone: "warning",
+        title: "Repeat application check blocked",
+        description: "This candidate awaits a valid repeat-application determination. Other candidates can proceed.",
+        actor: "system",
+        details: auditDetails(["Reason", humanizeToken(payloadText(payload, "failureCode"))]),
+      });
     case "ApplyRunStarted":
       return makeAuditEntry({
         ...base,
@@ -2076,6 +2188,9 @@ function jobEventToAuditEntry(
           ["Reason", payloadBoolean(payload, "reasonPresent", "reason_present") ? "Provided" : ""],
         ),
       });
+    case "OfferRecordChanged":
+      return makeAuditEntry({ ...base, category: "outcome", tone: "info",
+        title: "Offer record updated", description: "User-confirmed terms or an offer decision were recorded. Private terms and sources are available in Application outcomes.", actor: "user", details: [] });
     case "ApplicationOutcomeRecorded":
       return makeAuditEntry({
         ...base,
@@ -2394,32 +2509,12 @@ function findJobListRow(db: SqliteDatabase, jobKey: string): JobListProjectionRo
     [DEFAULT_TENANT, jobKey],
   );
   if (direct) return direct;
-  // URLs remain locators; canonical job ids remain the relation key.
-  return (
-    getRow<JobListProjectionRow>(
-      db,
-      `SELECT ${jobProjectionSelect()}
-         FROM job_list_projections
-        WHERE job_list_projections.tenant_id = ?
-          AND (
-            job_list_projections.application_url = ?
-            OR EXISTS (
-              SELECT 1 FROM jobs j
-               WHERE j.tenant_id = job_list_projections.tenant_id
-                 AND j.job_id = job_list_projections.job_id
-                 AND (j.url = ? OR j.application_url = ?)
-            )
-            OR EXISTS (
-              SELECT 1 FROM job_locators l
-               WHERE l.tenant_id = job_list_projections.tenant_id
-                 AND l.job_id = job_list_projections.job_id
-                 AND l.locator_value = ?
-            )
-          )
-        LIMIT 1`,
-      [DEFAULT_TENANT, jobKey, jobKey, jobKey, jobKey],
-    ) ?? null
-  );
+  const identity = resolveJobLocator(db, DEFAULT_TENANT, jobKey);
+  return identity ? getRow<JobListProjectionRow>(
+    db,
+    `SELECT ${jobProjectionSelect()} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`,
+    [DEFAULT_TENANT, identity.jobId],
+  ) ?? null : null;
 }
 
 export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): PaginatedResponse<ArtifactSummary> {
@@ -2484,6 +2579,7 @@ export function getArtifactDetail(db: SqliteDatabase, artifactId: string): Artif
     ok: true,
     artifact: rowToArtifactSummary(row, db),
     layoutBoxes: parseResumeLayoutBoxes(row.layout_boxes_json),
+    determinations: artifactDeterminations(db, row),
     tailoringExplanation: tailoringExplanationForArtifact(db, row),
   };
 }
@@ -2551,7 +2647,63 @@ export function readSettingsConfig(
 
 // ============================================================== mappings
 
-function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSummary {
+/** Persisted observations and wall-clock freshness only; Jobs GET never acquires. */
+export function postingAvailability(db: SqliteDatabase, jobId: string, now = Date.now()): PostingAvailability {
+  const latest = getRow<{ payload_json: string | null }>(db,
+    "SELECT payload_json FROM job_events INDEXED BY idx_job_events_entity WHERE tenant_id = ? AND entity_kind = 'posting_availability' " +
+    "AND entity_ref = ? ORDER BY event_id DESC LIMIT 1", [DEFAULT_TENANT, jobId]);
+  const lease = getRow<{ payload_json: string | null }>(db,
+    "SELECT payload_json FROM job_events INDEXED BY idx_job_events_entity WHERE tenant_id = ? AND entity_kind = 'availability_lease' " +
+    "AND entity_ref = ? ORDER BY event_id DESC LIMIT 1", [DEFAULT_TENANT, `job:${jobId}`]);
+  const value = parseJsonRecord(latest?.payload_json ?? null) ?? {};
+  const reservation = parseJsonRecord(lease?.payload_json ?? null) ?? {};
+  const requestRow = getRow<{ payload_json: string | null }>(db,
+    "SELECT payload_json FROM job_events INDEXED BY idx_job_events_entity WHERE tenant_id = ? AND entity_kind = 'posting_availability_request' " +
+    "AND entity_ref = ? ORDER BY event_id DESC LIMIT 1", [DEFAULT_TENANT, jobId]);
+  const request = parseJsonRecord(requestRow?.payload_json ?? null) ?? {};
+  const requestedAt = nullableString(request.requestedAt);
+  const lastAttemptedAt = nullableString(value.lastAttemptedAt);
+  const nextDueAt = nullableString(value.nextDueAt);
+  const rawLineage = Array.isArray(value.lineage) ? value.lineage.slice(0, 24) : [];
+  return {
+    jobId, postingUrl: nullableString(value.postingUrl),
+    verdict: isActiveState(value.verdict) ? value.verdict : "unknown",
+    reason: nullableString(value.reason) ?? "not_yet_checked", method: nullableString(value.method) ?? "unknown",
+    lastAttemptedAt: nullableString(value.lastAttemptedAt),
+    failureCode: nullableString(value.failureCode),
+    determinations: Array.from(new Set((Array.isArray(value.lineage) ? value.lineage : []).flatMap((entry: unknown) => {
+      if (!isRecord(entry) || !Array.isArray(entry.signals)) return [];
+      return entry.signals.flatMap((signal: unknown) => isRecord(signal) && signal.kind === "page_determination" && typeof signal.determination_id === "string" ? [signal.determination_id] : []);
+    }))).map(id => readDetermination(db,"local",id)).filter((row): row is NonNullable<typeof row> => row !== null),
+    lastSuccessfullyVerifiedAt: nullableString(value.lastSuccessfullyVerifiedAt),
+    lastSuccessfulState: isActiveState(value.lastSuccessfulState) ? value.lastSuccessfulState : null,
+    lastSuccessfulEvidenceRef: nullableString(value.lastSuccessfulEvidenceRef),
+    nextDueAt, evidenceRef: nullableString(value.evidenceRef),
+    overdue: !nextDueAt || !Number.isFinite(Date.parse(nextDueAt)) || Date.parse(nextDueAt) <= now,
+    checkInProgress: Boolean(reservation.owner && Date.parse(String(reservation.expiresAt)) > now),
+    ...(request.status === "deferred" && requestedAt && Number.isFinite(Date.parse(requestedAt)) &&
+      (!lastAttemptedAt || Date.parse(requestedAt) >= Date.parse(lastAttemptedAt)) ? {
+        request: { status: "deferred" as const, reason: nullableString(request.reason) ?? "check_deferred",
+          requestedAt, retryAt: nullableString(request.retryAt) },
+      } : {}),
+    lineage: rawLineage.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const item = entry as Record<string, unknown>;
+      const signals = Array.isArray(item.signals) ? item.signals.slice(0, 24).flatMap((signal) => {
+        if (!signal || typeof signal !== "object") return [];
+        const value = signal as Record<string, unknown>;
+        if (typeof value.kind !== "string" || !["string", "boolean"].includes(typeof value.value)) return [];
+        return [{ kind: value.kind, value: value.value as string | boolean,
+          ...(typeof value.past === "boolean" ? { past: value.past } : {}) }];
+      }) : [];
+      return [{ sourceUrl: nullableString(item.sourceUrl) ?? "", finalUrl: nullableString(item.finalUrl),
+        status: nullableNumber(item.status), method: nullableString(item.method) ?? "unknown",
+        rawHash: nullableString(item.rawHash), signals }];
+    }),
+  };
+}
+
+function rowToJobQueryScalars(row: JobListProjectionRow): JobQueryScalars {
   const jobKey = requireCanonicalJobId(row.job_id);
   const currentStagePresentation = publicStagePresentation(
     row.current_state,
@@ -2574,8 +2726,28 @@ function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSum
     salary: row.salary ?? "",
     compensationSummary: parseCompensationSummary(row.compensation_summary_json),
     discoveredAt: row.discovered_at,
-    applicationUrl: row.application_url,
     fitScore: row.fit_score === null || row.fit_score === undefined ? null : Number(row.fit_score),
+    scoredAt: nullableString(row.scored_at),
+    currentStage: (isStage(row.current_stage) ? row.current_stage : "discover") as Stage,
+    currentSubstage: (isStage(row.current_substage) ? row.current_substage : row.current_stage) as Stage,
+    currentState: currentStagePresentation.state,
+    failureReason: currentStagePresentation.failureReason,
+    applyStatus: row.apply_status,
+    appliedAt: row.applied_at,
+  };
+}
+
+function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSummary {
+  const scalars = rowToJobQueryScalars(row);
+  const presentation = publicStagePresentation(row.current_state, row.current_error_code,
+    row.current_error_message, row.current_next_action, true);
+  const jobKey = scalars.jobKey;
+  return {
+    ...scalars,
+    applicationUrl: row.application_url,
+    errorCode: presentation.errorCode,
+    errorMessage: presentation.errorMessage,
+    nextAction: presentation.nextAction,
     scoreBreakdown: parseScoreBreakdown(row.score_breakdown_json),
     scoreKeywords: parseScoreKeywords(row.score_keywords_json),
     scoreReasoning: row.score_reasoning ?? "",
@@ -2585,17 +2757,13 @@ function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSum
     scoreTrace: parseScoreTrace(row.score_trace_json),
     scoreCorrection: parseScoreCorrection(row.score_correction_json),
     scoreStaleness: parseScoreStaleness(row),
-    currentStage: (isStage(row.current_stage) ? row.current_stage : "discover") as Stage,
-    currentSubstage: (isStage(row.current_substage) ? row.current_substage : row.current_stage) as Stage,
-    currentState: currentStagePresentation.state,
-    errorCode: currentStagePresentation.errorCode,
-    errorMessage: currentStagePresentation.errorMessage,
-    failureReason: currentStagePresentation.failureReason,
-    nextAction: currentStagePresentation.nextAction,
+    scoreAnalysisFreshness: parseScoreAnalysisFreshness(row),
+    ...(db ? { scoreProfileFreshness: scoreProfileFreshness(db, jobKey, nullableNumber(row.score_version), row.score_trace_json) } : {}),
     artifactCount: Number(row.artifact_count ?? 0),
     applyStatus: row.apply_status,
     appliedAt: row.applied_at,
     activeState: isActiveState(row.active_state) ? row.active_state : "unknown",
+    ...(db ? { availability: postingAvailability(db, jobKey) } : {}),
     deletedAt: row.deleted_at,
     hiddenAt: row.hidden_at,
     resumeTemplate: db ? resumeTemplateStateForJob(db, jobKey) : null,
@@ -2710,6 +2878,21 @@ function parseScoreStaleness(row: JobListProjectionRow): JobSummary["scoreStalen
   };
 }
 
+function parseScoreAnalysisFreshness(row: JobListProjectionRow): NonNullable<JobSummary["scoreAnalysisFreshness"]> {
+  const currentAnalysisGeneration = nullableNumber(row.current_analysis_generation);
+  const assessedAnalysisGeneration = nullableNumber(row.assessed_analysis_generation);
+  const assessedScoreVersion = nullableNumber(row.assessed_score_version);
+  const scoreVersion = nullableNumber(row.score_version);
+  const status = currentAnalysisGeneration === null
+    ? "no_analysis"
+    : assessedAnalysisGeneration === null || assessedScoreVersion === null
+      ? "not_assessed"
+      : assessedAnalysisGeneration === currentAnalysisGeneration && assessedScoreVersion === scoreVersion
+        ? "current"
+        : "outdated";
+  return { status, currentAnalysisGeneration, assessedAnalysisGeneration, assessedScoreVersion };
+}
+
 function parseScoreCorrection(value: string | null): JobSummary["scoreCorrection"] {
   const parsed = parseJsonRecord(value);
   return parsed ? parseCorrectionRecord(parsed) : null;
@@ -2751,96 +2934,6 @@ const TAILORING_ARTIFACT_TYPES = new Set([
   "tailored_resume_pdf",
 ]);
 const TAILORING_PDF_ARTIFACT_TYPES = new Set(["resume_pdf", "tailored_resume_pdf"]);
-const KEYWORD_TOKEN_RE = /[a-z0-9][a-z0-9+#./-]*/gi;
-const DISPLAY_METRIC_CLAIM_RE =
-  /^(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?|\d+(?:\.\d+)?%|\d+(?:\.\d+)?x|\d+(?:\.\d+)?\s?(?:ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|qps|req\/s))$/i;
-const LOW_SIGNAL_KEYWORDS = new Set([
-  "about",
-  "across",
-  "barcelona",
-  "believe",
-  "care",
-  "chain",
-  "clinic",
-  "clinics",
-  "combine",
-  "company",
-  "cool",
-  "cutting",
-  "deserves",
-  "edge",
-  "europe",
-  "everyone",
-  "expert",
-  "fast",
-  "growth",
-  "head",
-  "health",
-  "impress",
-  "innovator",
-  "invisible",
-  "join",
-  "largest",
-  "leading",
-  "love",
-  "office",
-  "ortho",
-  "orthodontics",
-  "rapid",
-  "revolutionizing",
-  "since",
-  "smile",
-  "team",
-  "teams",
-  "tech",
-  "they",
-  "worldwide",
-]);
-const HIGH_SIGNAL_SINGLE_KEYWORDS = new Set([
-  "ai",
-  "ai-first",
-  "ai-native",
-  "architecture",
-  "automation",
-  "aws",
-  "azure",
-  "backend",
-  "cloud",
-  "ci/cd",
-  "cicd",
-  "cost",
-  "developer",
-  "devops",
-  "docker",
-  "gcp",
-  "incident",
-  "infrastructure",
-  "java",
-  "javascript",
-  "kafka",
-  "kubernetes",
-  "leadership",
-  "management",
-  "node",
-  "node.js",
-  "observability",
-  "optimization",
-  "platform",
-  "postgres",
-  "postgresql",
-  "productivity",
-  "python",
-  "react",
-  "redis",
-  "reliability",
-  "resiliency",
-  "saas",
-  "scalability",
-  "security",
-  "sre",
-  "terraform",
-  "typescript",
-]);
 function tailoringExplanationForArtifact(
   db: SqliteDatabase,
   row: ArtifactProjectionRow,
@@ -2871,8 +2964,7 @@ function tailoringExplanationForArtifact(
   // time. Honest empty when no canonical coverage exists for this generation.
   explanation.keywords = keywordsBlockFromCoverageAudit(explanation.coverageAudit);
   attachCoverageKeywordsToBulletProvenance(explanation);
-  backfillLegacyProfileEvidenceMapping(db, row, explanation);
-  attachProfileSourceTextToBulletProvenance(db, row.tenant_id, explanation);
+  attachRecordedLineAudit(db, row, explanation);
   const missingAuditFields = missingTailoringAuditFields(explanation);
   if (missingAuditFields.length) {
     explanation.quality.errors = [
@@ -2973,10 +3065,10 @@ function bulletProvenanceForArtifact(
           AND artifact_type IN ('tailored_resume', 'tailored_resume_txt')
           AND bullet_provenance_json IS NOT NULL
           AND TRIM(bullet_provenance_json) != ''
-          AND (? IS NULL OR generation = ? OR generation IS NULL)
-        ORDER BY CASE WHEN generation = ? THEN 0 ELSE 1 END, created_at DESC
+          AND generation = ?
+        ORDER BY created_at DESC
         LIMIT 1`,
-      [row.tenant_id, row.job_id, row.generation, row.generation, row.generation],
+      [row.tenant_id, row.job_id, row.generation],
     );
     provenanceJson = sibling?.bullet_provenance_json ?? null;
   }
@@ -3020,413 +3112,76 @@ function parseBulletProvenance(value: string | null): BulletProvenanceEntry[] {
   return entries;
 }
 
-function attachProfileSourceTextToBulletProvenance(
-  db: SqliteDatabase,
-  tenantId: string,
-  explanation: ArtifactTailoringExplanation,
-): void {
-  const pointers = profileEvidencePointers(db, tenantId);
-  if (!pointers.length) return;
-
-  const byEvidenceId = new Map<string, ProfileEvidencePointer>();
-  const byEntryId = new Map<string, ProfileEvidencePointer[]>();
-  for (const pointer of pointers) {
-    byEvidenceId.set(pointer.evidenceId, pointer);
-    const entryPointers = byEntryId.get(pointer.entryId) ?? [];
-    entryPointers.push(pointer);
-    byEntryId.set(pointer.entryId, entryPointers);
-  }
-
-  explanation.bulletProvenance = explanation.bulletProvenance.map((entry) => {
-    const sourceText: string[] = [];
-    const sourceId = safeAuditText(entry.sourceId, 160);
-    const sourceIdPointers = sourceId ? (byEntryId.get(sourceId) ?? []) : [];
-    if (entry.section === "skills" && sourceIdPointers.length) {
-      for (const pointer of sourceIdPointers) {
-        sourceText.push(pointer.sourceText);
-      }
-    }
-    if (!sourceText.length) {
-      for (const evidenceId of entry.evidenceIds) {
-        const pointer = byEvidenceId.get(evidenceId);
-        if (pointer) sourceText.push(pointer.sourceText);
-      }
-    }
-    if (sourceId) {
-      const exactPointer = byEvidenceId.get(sourceId);
-      if (exactPointer) sourceText.push(exactPointer.sourceText);
-      if (!sourceText.length) {
-        for (const pointer of sourceIdPointers) {
-          sourceText.push(pointer.sourceText);
-        }
-      }
-    }
-
-    const resolvedSourceText = uniqueSourceTexts(sourceText.length ? sourceText : entry.sourceText).slice(0, 8);
-    return { ...entry, sourceText: resolvedSourceText };
-  });
-}
-
-function backfillLegacyProfileEvidenceMapping(
-  db: SqliteDatabase,
-  row: ArtifactProjectionRow,
-  explanation: ArtifactTailoringExplanation,
-): void {
-  const pointers = profileEvidencePointers(db, row.tenant_id);
-  if (!pointers.length) return;
-
-  const discoveredIds: string[] = [];
-  explanation.annotatedChanges = explanation.annotatedChanges.map((change) => {
-    if (change.evidenceIds.length) {
-      discoveredIds.push(...change.evidenceIds);
-      return change;
-    }
-    const evidenceIds = matchProfileEvidencePointers(
-      pointers,
-      change.sourceId,
-      [change.label, ...change.sourceText, ...change.tailoredText, change.rationale ?? ""],
-    );
-    if (!evidenceIds.length) return change;
-    discoveredIds.push(...evidenceIds);
-    return { ...change, evidenceIds };
-  });
-
-  explanation.bulletProvenance = explanation.bulletProvenance.map((entry) => {
-    if (entry.evidenceIds.length) {
-      discoveredIds.push(...entry.evidenceIds);
-      return entry;
-    }
-    const evidenceIds = matchProfileEvidencePointers(
-      pointers,
-      entry.sourceId,
-      [entry.generatedText, entry.rationale, ...entry.matchedKeywords],
-    );
-    if (!evidenceIds.length) return entry;
-    discoveredIds.push(...evidenceIds);
-    return { ...entry, evidenceIds };
-  });
-
-  const backfilledIds = uniqueEvidenceIds(discoveredIds).slice(0, 32);
-  if (!backfilledIds.length) return;
-
-  if (!explanation.evidence.requiredIds.length) {
-    explanation.evidence.requiredIds = backfilledIds;
-  }
-  if (!explanation.evidence.seniorityIds.length) {
-    const seniorityIds = backfilledIds.filter((id) => pointers.some((pointer) => pointer.evidenceId === id && pointer.senioritySignal));
-    explanation.evidence.seniorityIds = seniorityIds.slice(0, 32);
-  }
-  if (!explanation.evidence.representedIds.length) {
-    explanation.evidence.representedIds = backfilledIds;
-  }
-}
-
-function profileEvidencePointers(db: SqliteDatabase, tenantId: string): ProfileEvidencePointer[] {
-  const pointers: ProfileEvidencePointer[] = [];
-  if (tableExists(db, "candidate_profile_achievement_evidence")) {
-    const rows = allRows<{
-      entry_id: string;
-      evidence_id: string;
-      source_text: string;
-      scope: string;
-      action: string;
-      outcome: string;
-      seniority_signal: string;
-    }>(
-      db,
-      `SELECT evidence.entry_id,
-              evidence.evidence_id,
-              evidence.source_text,
-              evidence.scope,
-              evidence.action,
-              evidence.outcome,
-              evidence.seniority_signal
-         FROM candidate_profile_achievement_evidence AS evidence
-        WHERE evidence.tenant_id = ?
-          AND evidence.profile_id = ?
-          AND TRIM(evidence.evidence_id) != ''
-          AND TRIM(evidence.source_text) != ''
-        ORDER BY evidence.entry_id, evidence.evidence_index`,
-      [tenantId, DEFAULT_PROFILE_ID],
-    );
-    for (const evidence of rows) {
-      const sourceText = safeAuditText(evidence.source_text, 1200);
-      const evidenceId = safeEvidenceId(evidence.evidence_id);
-      const entryId = safeAuditText(evidence.entry_id, 160);
-      if (!sourceText || !evidenceId || !entryId) continue;
-      pointers.push({
-        entryId,
-        evidenceId,
-        sourceText,
-        normalizedSourceText: normalizeEvidenceText(sourceText),
-        senioritySignal: hasSenioritySignal([
-          evidence.scope,
-          evidence.action,
-          evidence.outcome,
-          evidence.seniority_signal,
-          sourceText,
-        ]),
-      });
-    }
-  }
-  const canonicalEvidenceIds = new Set(pointers.map((pointer) => pointer.evidenceId));
-  if (tableExists(db, "candidate_profile_experience_entries") && tableExists(db, "candidate_profile_experience_bullets")) {
-    const rows = allRows<{
-      entry_id: string;
-      title: string;
-      company: string;
-      bullet_index: number;
-      bullet_text: string;
-    }>(
-      db,
-      `SELECT entries.entry_id,
-              entries.title,
-              entries.company,
-              bullets.bullet_index,
-              bullets.bullet_text
-         FROM candidate_profile_experience_entries AS entries
-         JOIN candidate_profile_experience_bullets AS bullets
-           ON bullets.tenant_id = entries.tenant_id
-          AND bullets.profile_id = entries.profile_id
-          AND bullets.entry_id = entries.entry_id
-        WHERE entries.tenant_id = ?
-          AND entries.profile_id = ?
-          AND TRIM(bullets.bullet_text) != ''
-        ORDER BY entries.position_index, bullets.bullet_index`,
-      [tenantId, DEFAULT_PROFILE_ID],
-    );
-    for (const bullet of rows) {
-      const entryId = safeAuditText(bullet.entry_id, 160);
-      const sourceText = safeAuditText(bullet.bullet_text, 1200);
-      if (!entryId || !sourceText) continue;
-      const evidenceId = legacyBulletEvidenceId(entryId, Number(bullet.bullet_index ?? 0) + 1);
-      if (canonicalEvidenceIds.has(evidenceId)) continue;
-      pointers.push({
-        entryId,
-        evidenceId,
-        sourceText,
-        normalizedSourceText: normalizeEvidenceText(sourceText),
-        senioritySignal: hasSenioritySignal([bullet.title, bullet.company, sourceText]),
-      });
-    }
-  }
-  addSkillSourcePointers(db, tenantId, pointers);
-  return pointers;
-}
-
-function addSkillSourcePointers(db: SqliteDatabase, tenantId: string, pointers: ProfileEvidencePointer[]): void {
-  const hasSkillCategoryLabels = tableExists(db, "candidate_profile_skill_categories");
-  const grouped = new Map<string, { label: string; skills: string[] }>();
-  if (tableExists(db, "candidate_profile_skill_items")) {
-    const rows = allRows<{
-      category_id: string;
-      label: string;
-      skill_index: number;
-      skill_text: string;
-    }>(
-      db,
-      hasSkillCategoryLabels
-        ? `SELECT skills.category_id,
-                  COALESCE(NULLIF(categories.label, ''), skills.category_id) AS label,
-                  skills.item_index AS skill_index,
-                  skills.item_text AS skill_text
-             FROM candidate_profile_skill_items AS skills
-             LEFT JOIN candidate_profile_skill_categories AS categories
-               ON categories.tenant_id = skills.tenant_id
-              AND categories.profile_id = skills.profile_id
-              AND categories.category_id = skills.category_id
-            WHERE skills.tenant_id = ?
-              AND skills.profile_id = ?
-              AND TRIM(skills.category_id) != ''
-              AND TRIM(skills.item_text) != ''
-            ORDER BY categories.position_index, skills.item_index`
-        : `SELECT category_id,
-                  category_id AS label,
-                  item_index AS skill_index,
-                  item_text AS skill_text
-             FROM candidate_profile_skill_items
-            WHERE tenant_id = ?
-              AND profile_id = ?
-              AND TRIM(category_id) != ''
-              AND TRIM(item_text) != ''
-            ORDER BY category_id, item_index`,
-      [tenantId, DEFAULT_PROFILE_ID],
-    );
-    appendSkillSourceGroups(grouped, rows);
-  }
-  if (tableExists(db, "candidate_profile_required_skills")) {
-    const rows = allRows<{
-      category_id: string;
-      label: string;
-      skill_index: number;
-      skill_text: string;
-    }>(
-      db,
-      hasSkillCategoryLabels
-        ? `SELECT skills.category_id,
-                  COALESCE(NULLIF(categories.label, ''), skills.category_id) AS label,
-                  skills.skill_index,
-                  skills.skill_text
-             FROM candidate_profile_required_skills AS skills
-             LEFT JOIN candidate_profile_skill_categories AS categories
-               ON categories.tenant_id = skills.tenant_id
-              AND categories.profile_id = skills.profile_id
-              AND categories.category_id = skills.category_id
-            WHERE skills.tenant_id = ?
-              AND skills.profile_id = ?
-              AND TRIM(skills.category_id) != ''
-              AND TRIM(skills.skill_text) != ''
-            ORDER BY skills.category_id, skills.skill_index`
-        : `SELECT category_id,
-                  category_id AS label,
-                  skill_index,
-                  skill_text
-             FROM candidate_profile_required_skills
-            WHERE tenant_id = ?
-              AND profile_id = ?
-              AND TRIM(category_id) != ''
-              AND TRIM(skill_text) != ''
-            ORDER BY category_id, skill_index`,
-      [tenantId, DEFAULT_PROFILE_ID],
-    );
-    appendSkillSourceGroups(grouped, rows, { onlyMissingCategories: true });
-  }
-  for (const [categoryId, group] of grouped) {
-    const sourceText = `${group.label}: ${uniqueSourceTexts(group.skills).join(", ")}`;
-    pointers.push({
-      entryId: categoryId,
-      evidenceId: skillCategoryEvidenceId(categoryId),
-      sourceText,
-      normalizedSourceText: normalizeEvidenceText(sourceText),
-      senioritySignal: hasSenioritySignal([categoryId, sourceText]),
-    });
-  }
-}
-
-function appendSkillSourceGroups(
-  grouped: Map<string, { label: string; skills: string[] }>,
-  rows: readonly { category_id: string; label: string; skill_index: number; skill_text: string }[],
-  options: { onlyMissingCategories?: boolean } = {},
-): void {
-  for (const row of rows) {
-    const categoryId = safeAuditText(row.category_id, 160);
-    if (!categoryId || (options.onlyMissingCategories && grouped.has(categoryId))) continue;
-    const label = safeAuditText(row.label, 160) || profileSkillCategoryLabel(categoryId);
-    const skillText = safeAuditText(row.skill_text, 220);
-    if (!skillText) continue;
-    const group = grouped.get(categoryId) ?? { label, skills: [] };
-    group.skills.push(skillText);
-    grouped.set(categoryId, group);
-  }
-}
-
-function uniqueSourceTexts(texts: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of texts) {
-    const text = safeAuditText(raw, 1200);
-    const key = text.toLowerCase();
-    if (!text || seen.has(key)) continue;
-    seen.add(key);
-    out.push(text);
-  }
-  return out;
-}
-
-function skillCategoryEvidenceId(categoryId: string): string {
-  return `skills_${safeEvidenceId(categoryId) || "category"}`;
-}
-
-function profileSkillCategoryLabel(categoryId: string): string {
-  const words = categoryId.replace(/[_-]+/g, " ").trim();
-  if (!words) return "Skills";
-  return words.replace(/\b[a-z]/g, (char) => char.toUpperCase());
-}
-
-function matchProfileEvidencePointers(
-  pointers: readonly ProfileEvidencePointer[],
-  sourceId: string | null,
-  rawTexts: readonly string[],
-): string[] {
-  const normalizedSourceId = safeAuditText(sourceId, 160);
-  const texts = rawTexts.map((text) => normalizeEvidenceText(text)).filter(Boolean);
-  const textTokenSets = texts.map((text) => new Set(evidenceTokens(text)));
-  const scored: Array<{ id: string; score: number }> = [];
-  for (const pointer of pointers) {
-    let score = 0;
-    if (normalizedSourceId && pointer.entryId === normalizedSourceId) score += 6;
-    if (normalizedSourceId && pointer.evidenceId === normalizedSourceId) score += 8;
-    for (const text of texts) {
-      if (text && pointer.normalizedSourceText && text.includes(pointer.normalizedSourceText)) score += 6;
-      if (text && pointer.normalizedSourceText && pointer.normalizedSourceText.includes(text) && text.length >= 24) score += 4;
-    }
-    const pointerTokens = evidenceTokens(pointer.normalizedSourceText);
-    const overlap = Math.max(
-      0,
-      ...textTokenSets.map((tokens) => pointerTokens.filter((token) => tokens.has(token)).length),
-    );
-    if (overlap >= 2) score += overlap;
-    if (score >= 6 || overlap >= 4) {
-      scored.push({ id: pointer.evidenceId, score });
-    }
-  }
-  scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
-  return uniqueEvidenceIds(scored.map((item) => item.id)).slice(0, 6);
-}
-
-function uniqueEvidenceIds(ids: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const id of ids) {
-    const safe = safeEvidenceId(id);
-    if (!safe || seen.has(safe)) continue;
-    seen.add(safe);
-    out.push(safe);
-  }
-  return out;
-}
-
 function safeEvidenceId(value: unknown): string {
-  return safeAuditText(value, 160).replace(/[^a-zA-Z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+  return safeAuditText(value, 240);
 }
 
-function legacyBulletEvidenceId(entryId: string, oneBasedBulletIndex: number): string {
-  return `${safeEvidenceId(entryId) || "experience"}_bullet_${Math.max(1, Math.trunc(oneBasedBulletIndex || 1))}`;
+/** Join only the artifact's recorded IDs. Source quotes come from its verifier. */
+function artifactDeterminations(db: SqliteDatabase, row: ArtifactProjectionRow) {
+  const metadata = metadataRecord(JSON.parse(row.metadata_json ?? "{}"));
+  return (["claim_verification", "artifact_quality", "resume_adversarial"] as const).flatMap(kind => {
+    const key = kind === "artifact_quality" ? "quality_determination_id" : `${kind}_id`;
+    const id = metadataText(metadata[key], 64);
+    if (!id) return [];
+    const envelope = readDetermination(db, row.tenant_id, id);
+    if (!envelope || envelope.kind !== kind || row.generation === null || !determinationOwnsArtifact(db,row.tenant_id,row.artifact_id,row.generation,row.job_id,envelope)) {
+      throw new Error("artifact_binding_invalid");
+    }
+    return [envelope];
+  });
 }
 
-const PROFILE_EVIDENCE_SENIORITY_TERMS = [
-  "own",
-  "owned",
-  "ownership",
-  "scope",
-  "influence",
-  "influenced",
-  "cross-team",
-  "stakeholder",
-  "stakeholders",
-  "led",
-  "lead",
-  "mentor",
-  "mentored",
-  "architect",
-  "architected",
-  "strategy",
-  "technical leadership",
-];
-
-function hasSenioritySignal(values: readonly unknown[]): boolean {
-  const text = values.map((value) => safeAuditText(value, 300)).join(" ").toLowerCase();
-  return PROFILE_EVIDENCE_SENIORITY_TERMS.some((term) => text.includes(term));
-}
-
-function normalizeEvidenceText(value: unknown): string {
-  return (safeAuditText(value, 1200).toLowerCase().match(KEYWORD_TOKEN_RE) ?? []).join(" ");
-}
-
-function evidenceTokens(value: string): string[] {
-  return (value.match(KEYWORD_TOKEN_RE) ?? [])
-    .map((token) => token.toLowerCase())
-    .filter((token) => token.length >= 3 && !LOW_SIGNAL_KEYWORDS.has(token) && !/^\d+$/.test(token));
+function attachRecordedLineAudit(db: SqliteDatabase, row: ArtifactProjectionRow, explanation: ArtifactTailoringExplanation): void {
+  const metadata = metadataRecord(JSON.parse(row.metadata_json ?? "{}"));
+  const verificationId = metadataText(metadata.claim_verification_id, 64);
+  const qualityId = metadataText(metadata.quality_determination_id, 64);
+  explanation.determinations = artifactDeterminations(db, row);
+  const verification = explanation.determinations.find(item => item.kind === "claim_verification");
+  const quality = explanation.determinations.find(item => item.kind === "artifact_quality");
+  explanation.lineFindings = [];
+  const lines = new Map<string, Record<string, unknown>>();
+  for (const raw of Array.isArray(verification?.result.lines) ? verification.result.lines : []) {
+    const line = metadataRecord(raw);
+    const lineId = metadataText(line.line_id, 240);
+    if (!lineId) continue;
+    lines.set(lineId, line);
+    for (const rawFinding of Array.isArray(line.findings) ? line.findings : []) {
+      const finding = metadataRecord(rawFinding);
+      explanation.lineFindings.push({lineId, kind: metadataText(finding.kind) ?? "unknown", rationale: metadataText(finding.rationale, 1500) ?? "", determinationId: verificationId!});
+    }
+  }
+  for (const raw of Array.isArray(quality?.result.findings) ? quality.result.findings : []) {
+    const finding = metadataRecord(raw);
+    const lineId = metadataText(finding.line_id, 240);
+    if (lineId) explanation.lineFindings.push({lineId, kind: metadataText(finding.category) ?? "quality", rationale: metadataText(finding.rationale, 1500) ?? "", determinationId: qualityId!});
+  }
+  const revisionId = metadataText(metadata.draft_revision_id,240);
+  const revision = revisionId ? db.prepare("SELECT edited_text FROM resume_review_draft_revisions WHERE tenant_id=? AND job_id=? AND revision_id=?").get(row.tenant_id,row.job_id,revisionId) as {edited_text:string}|undefined : undefined;
+  const editedLines = new Map(revision ? revision.edited_text.replace(/\r\n/g,"\n").split("\n").map(line=>line.trim()).filter(Boolean).map((text,index)=>[`edited:line:${index+1}`,text]) : []);
+  const anchors = row.generation === null ? new Map() : readArtifactLineAnchors(db, row.tenant_id, row.artifact_type, row.artifact_id, row.generation, row.job_id);
+  const existing = new Map(explanation.bulletProvenance.map(entry=>[entry.bulletId,entry]));
+  explanation.bulletProvenance = Array.from(anchors.values()).map((anchor) => {
+    const entry = existing.get(anchor.lineId) ?? {bulletId:anchor.lineId,section:"document",sourceId:null,evidenceIds:[],requirementIds:[],sourceText:[],matchedKeywords:[],transformType:anchor.transformType,control:"recorded_verification",rationale:anchor.reason,generatedText:editedLines.get(anchor.lineId) ?? ""};
+    const line = lines.get(entry.bulletId);
+    const sourceText: string[] = [];
+    for (const rawCitation of Array.isArray(line?.source_evidence) ? line.source_evidence : []) {
+      const citation=metadataRecord(rawCitation);
+      if (anchor.evidenceIds.includes(citation.source_id)) {
+        const quote=metadataText(citation.quote,4000);
+        if(quote && !sourceText.includes(quote))sourceText.push(quote);
+      }
+    }
+    for (const rawClaim of Array.isArray(line?.claims) ? line.claims : []) {
+      const claim = metadataRecord(rawClaim);
+      for (const rawCitation of Array.isArray(claim.evidence) ? claim.evidence : []) {
+        const citation = metadataRecord(rawCitation);
+        if (!anchor.evidenceIds.includes(citation.source_id)) continue;
+        const quote = metadataText(citation.quote, 4000);
+        if (quote && !sourceText.includes(quote)) sourceText.push(quote);
+      }
+    }
+    return {...entry, evidenceIds: anchor.evidenceIds, requirementIds: anchor.requirementIds, transformType: anchor.transformType, rationale: anchor.reason, sourceText};
+  });
 }
 
 /**
@@ -3452,10 +3207,10 @@ function provenanceSetColumnForArtifact(
         AND artifact_type IN ('tailored_resume', 'tailored_resume_txt')
         AND ${column} IS NOT NULL
         AND TRIM(${column}) != ''
-        AND (? IS NULL OR generation = ? OR generation IS NULL)
-      ORDER BY CASE WHEN generation = ? THEN 0 ELSE 1 END, created_at DESC
+        AND generation = ?
+      ORDER BY created_at DESC
       LIMIT 1`,
-    [row.tenant_id, row.job_id, row.generation, row.generation, row.generation],
+    [row.tenant_id, row.job_id, row.generation],
   );
   return sibling?.[column] ?? null;
 }
@@ -3533,13 +3288,11 @@ function parseVoicePass(value: string | null): VoicePassAudit | null {
     return null;
   }
   const record = metadataRecord(parsed);
-  const proxyDelta = metadataRecord(record.proxy_delta);
   return {
     ran: record.ran === true,
     accepted: record.accepted === true,
     model: metadataText(record.model, 120) ?? "",
     promptVersion: metadataText(record.prompt_version, 64) ?? "",
-    proxyDelta,
     reason: metadataText(record.reason, 600) ?? "",
     summaryRejectionReason: metadataText(record.summary_rejection_reason, 600) ?? "",
     scopeViolations: metadataTextList(record.scope_violations).slice(0, 20),
@@ -3612,7 +3365,6 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
   const judge = metadataRecord(metadata.judge);
   const adversarialReview = parseAdversarialReview(metadata.adversarial_review);
   const reviewFeedback = metadataRecord(metadata.review_feedback);
-  const judgeMinScore = metadataNumber(metadata.judge_min_score);
   const qualityMessages = {
     errors: metadataTextList(qualityChecks.errors, 8, 220),
     warnings: metadataTextList(qualityChecks.warnings, 8, 220),
@@ -3643,7 +3395,6 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
     keywords: emptyKeywordsBlock(),
     evidence: {
       requiredIds: metadataTextList(qualityPlan.required_evidence_ids, 32),
-      seniorityIds: metadataTextList(qualityPlan.seniority_evidence_ids, 32),
       representedIds: metadataTextList(evidenceSupport.represented_ids, 32),
       missingIds: metadataTextList(evidenceSupport.missing_ids, 32),
       verifiedMetricCount: metadataNumber(qualityPlan.verified_metric_count),
@@ -3660,7 +3411,6 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
       passed: metadataBoolean(judge.passed),
       verdict: metadataText(judge.verdict),
       score: metadataNumber(judge.score),
-      minScore: judgeMinScore,
       issues: metadataTextList(judge.issues, 8, 220),
       unsupportedClaims: metadataTextList(judge.unsupported_claims, 8, 220),
       fabrications: metadataTextList(judge.fabrications, 8, 220),
@@ -3702,14 +3452,13 @@ function missingTailoringAuditFields(explanation: ArtifactTailoringExplanation):
     missing.push("quality gate");
   }
   if (explanation.evidence.verifiedMetricCount === null) missing.push("verified metric count");
-  if (!explanation.evidence.requiredIds.length && !explanation.evidence.seniorityIds.length) {
+  if (!explanation.evidence.requiredIds.length) {
     missing.push("profile evidence mapping");
   }
   if (!explanation.annotatedChanges.length) missing.push("resume change annotations");
   if (explanation.judge.passed === null && !explanation.judge.verdict && explanation.judge.score === null) {
     missing.push("judge result");
   }
-  if (explanation.judge.minScore === null) missing.push("judge threshold");
   if (!explanation.models.selectedModel) missing.push("selected model");
   if (!explanation.models.judgeModel) missing.push("judge model");
   if (!explanation.models.candidateModels.length) missing.push("candidate models");
@@ -3719,8 +3468,12 @@ function missingTailoringAuditFields(explanation: ArtifactTailoringExplanation):
     missing.push("persona review");
   } else if (explanation.adversarialReview.ran) {
     if (!explanation.adversarialReview.personas.length) missing.push("persona judgments");
-    if (!explanation.adversarialReview.audit?.promptMessages.length) missing.push("persona LLM request");
-    if (!explanation.adversarialReview.audit?.response) missing.push("persona LLM response");
+    if (explanation.adversarialReview.determinationId) {
+      if (!explanation.determinations?.some(item => item.kind === "resume_adversarial" && item.determination_id === explanation.adversarialReview?.determinationId)) missing.push("persona determination");
+    } else {
+      if (!explanation.adversarialReview.audit?.promptMessages.length) missing.push("persona LLM request");
+      if (!explanation.adversarialReview.audit?.response) missing.push("persona LLM response");
+    }
   }
   return missing;
 }
@@ -3733,6 +3486,7 @@ function parseAdversarialReview(
   if (ran === null) return null;
   return {
     ran,
+    determinationId: metadataText(review.determination_id, 64),
     passed: metadataBoolean(review.passed),
     score: metadataNumber(review.score),
     scoreRationale: metadataText(review.score_rationale ?? review.scoreRationale, 360),
@@ -3921,54 +3675,11 @@ function metadataTextList(value: unknown, limit = 12, maxLength = 120): string[]
 }
 
 function metadataKeywordList(value: unknown, limit = 12, maxLength = 120): string[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of value) {
-    const text = metadataText(raw, maxLength);
-    const key = normalizedKeywordKey(text);
-    if (!text || !key || !isMeaningfulDisplayKeyword(text, key) || seen.has(key)) continue;
-    seen.add(key);
-    out.push(text);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
-
-function normalizedKeywordKey(value: string | null): string | null {
-  if (!value) return null;
-  const tokens = value.toLowerCase().match(KEYWORD_TOKEN_RE) ?? [];
-  return tokens.length ? tokens.join(" ") : null;
-}
-
-function isMeaningfulDisplayKeyword(text: string, normalized: string): boolean {
-  const tokens = normalized.split(" ").filter(Boolean);
-  if (!tokens.length || tokens.length > 4) return false;
-  if (tokens.every((token) => LOW_SIGNAL_KEYWORDS.has(token) || /^\d+$/.test(token))) {
-    return false;
-  }
-  if (tokens.length > 1) {
-    return tokens.some((token) => !LOW_SIGNAL_KEYWORDS.has(token) && !/^\d+$/.test(token));
-  }
-  const token = tokens[0]!;
-  if (LOW_SIGNAL_KEYWORDS.has(token) || /^\d+$/.test(token)) return false;
-  return HIGH_SIGNAL_SINGLE_KEYWORDS.has(token) || /[+#./-]/.test(text);
+  return metadataTextList(value, limit, maxLength);
 }
 
 function metadataMetricClaims(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of value) {
-    const text = metadataText(raw, 80);
-    if (!text || !DISPLAY_METRIC_CLAIM_RE.test(text)) continue;
-    const key = text.toLowerCase().replace(/\s+/g, "");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(text);
-    if (out.length >= 8) break;
-  }
-  return out;
+  return metadataTextList(value, 8, 80);
 }
 
 function metadataRepeatedKeywords(value: unknown): string[] {
@@ -4067,12 +3778,16 @@ function rowToArtifactSummary(row: ArtifactProjectionRow, db?: SqliteDatabase): 
     company: row.job_employer || "Unknown company",
     type: row.artifact_type || "artifact",
     status,
+    generation: nullableNumber(row.generation),
     localPath,
     createdAt: row.created_at,
     sizeBytes,
     size: formatSize(sizeBytes),
     resumeTemplate: db
       && jobId
+      // Locale snapshots have their own revision-bound formatting review.
+      // Reading them must not resolve or refresh the original resume template.
+      && !row.artifact_type?.startsWith("locale_")
       ? resumeTemplateStateForArtifact(db, jobId, row.metadata_json)
       : null,
   };
@@ -4727,44 +4442,59 @@ function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobLis
     sort: "discovered_at",
     dir: "desc",
     stage: filter.stage,
+    stages: filter.stages,
     state: filter.state,
     deleted: filter.deleted ?? "active",
+    jobStates: filter.jobStates,
     applyStatus: filter.applyStatus ?? "all",
     source: filter.source ?? "",
     company: filter.company ?? "",
+    normalizedScoreKeyword: filter.normalizedScoreKeyword,
     minFitScore: filter.minFitScore,
     maxFitScore: filter.maxFitScore,
-    discoveredSince: undefined,
-    scoredSince: undefined,
+    discoveredSince: filter.discoveredSince,
+    scoredSince: filter.scoredSince,
   };
 }
 
 function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue[] } {
   const clauses: string[] = ["job_list_projections.tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
+  const hiddenPredicate = "EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)";
   const closedPredicate = closedActiveStatePredicate(
     "job_list_projections.tenant_id",
     "job_list_projections.job_id",
   );
-  if (query.deleted === "active") {
+  if (query.jobStates) {
+    const statePredicates = query.jobStates.map((jobState) => {
+      if (jobState === "hidden") return hiddenPredicate;
+      if (jobState === "deleted") {
+        return `(job_list_projections.deleted_at IS NOT NULL AND NOT ${hiddenPredicate})`;
+      }
+      params.push(...closedPredicate.params);
+      return `(job_list_projections.deleted_at IS NULL AND NOT ${hiddenPredicate} AND NOT (${closedPredicate.sql}))`;
+    });
+    clauses.push(`(${statePredicates.join(" OR ")})`);
+  } else if (query.deleted === "active") {
     clauses.push("job_list_projections.deleted_at IS NULL");
-    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(`NOT ${hiddenPredicate}`);
     clauses.push(`NOT (${closedPredicate.sql})`);
     params.push(...closedPredicate.params);
   } else if (query.deleted === "closed") {
     clauses.push("job_list_projections.deleted_at IS NULL");
-    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(`NOT ${hiddenPredicate}`);
     clauses.push(closedPredicate.sql);
     params.push(...closedPredicate.params);
   } else if (query.deleted === "deleted") {
     clauses.push("job_list_projections.deleted_at IS NOT NULL");
-    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(`NOT ${hiddenPredicate}`);
   } else if (query.deleted === "hidden") {
-    clauses.push("EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(hiddenPredicate);
   }
-  if (query.stage) {
-    clauses.push("job_list_projections.current_stage = ?");
-    params.push(query.stage);
+  const stages = effectiveJobStages(query);
+  if (stages.length) {
+    clauses.push(`job_list_projections.current_stage IN (${stages.map(() => "?").join(", ")})`);
+    params.push(...stages);
   }
   if (query.state) {
     if (query.state === "failed") {
@@ -4775,37 +4505,11 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
     }
   }
   if (query.applyStatus === "applied") {
-    clauses.push("(job_list_projections.applied_at IS NOT NULL OR LOWER(COALESCE(job_list_projections.apply_status, '')) = 'applied')");
+    clauses.push("(COALESCE(job_list_projections.applied_at, '') != '' OR LOWER(COALESCE(job_list_projections.apply_status, '')) = 'applied')");
   }
-  if (query.source) {
-    const postingSourceUrlSql = postingSourceUrlSqlExpression();
-    const postingSourceAtsKindSql = postingSourceAtsKindSqlExpression();
-    clauses.push(
-      `(LOWER(job_list_projections.source) LIKE ?
-        OR LOWER(${discoverySourceSqlExpression()}) LIKE ?
-        OR LOWER(COALESCE(${postingSourceUrlSql}, '')) LIKE ?
-        OR LOWER(COALESCE(${postingSourceAtsKindSql}, '')) LIKE ?
-        OR (
-          LOWER(COALESCE(${postingSourceAtsKindSql}, '')) LIKE ?
-          AND LOWER(COALESCE(${postingSourceUrlSql}, '')) LIKE ?
-        ))`,
-    );
-    const normalizedSource = query.source.toLowerCase();
-    const [postingSourceKind, ...postingSourceOwnerParts] = normalizedSource.split(":");
-    const postingSourceOwner = postingSourceOwnerParts.join(":") || normalizedSource;
-    params.push(
-      `%${normalizedSource}%`,
-      `%${normalizedSource}%`,
-      `%${normalizedSource}%`,
-      `%${normalizedSource}%`,
-      `%${postingSourceKind}%`,
-      `%${postingSourceOwner}%`,
-    );
-  }
-  if (query.company) {
-    clauses.push("LOWER(job_list_projections.employer) LIKE ?");
-    params.push(`%${query.company.toLowerCase()}%`);
-  }
+  // Source/company are literal, Unicode-lowercased substring filters over the
+  // rendered scalar summary. The derived query index handles these, never SQL LIKE
+  // (wildcards, ASCII-only LOWER, and ATS kind/owner approximations differ).
   if (query.normalizedScoreKeyword) {
     // This is the exact canonical key returned by listScoringKeywords. Do not
     // re-normalize it in TypeScript: persistence owns Unicode casefolding.
@@ -4827,18 +4531,10 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
     clauses.push("COALESCE(job_list_projections.fit_score, 999) <= ?");
     params.push(query.maxFitScore);
   }
-  if (query.discoveredSince && query.scoredSince) {
-    clauses.push(
-      "((job_list_projections.discovered_at IS NOT NULL AND job_list_projections.discovered_at >= ?) OR (job_list_projections.scored_at IS NOT NULL AND job_list_projections.scored_at >= ?))",
-    );
-    params.push(query.discoveredSince, query.scoredSince);
-  } else if (query.discoveredSince) {
-    clauses.push("job_list_projections.discovered_at IS NOT NULL AND job_list_projections.discovered_at >= ?");
-    params.push(query.discoveredSince);
-  } else if (query.scoredSince) {
-    clauses.push("job_list_projections.scored_at IS NOT NULL AND job_list_projections.scored_at >= ?");
-    params.push(query.scoredSince);
-  }
+  // Stored timestamps have mixed precision/offsets. Text comparisons can both
+  // admit older instants and discard equal instants before filterJob sees them.
+  // The derived query index records Date.parse millisecond values (including
+  // the two-cutoff OR rule) before totals and all-matching mutation selection.
   return { where: ` WHERE ${clauses.join(" AND ")}`, params };
 }
 
@@ -4899,6 +4595,21 @@ function jobProjectionSelect(): string {
          WHERE pss.tenant_id = job_list_projections.tenant_id
            AND pss.job_id = job_list_projections.job_id
          LIMIT 1) AS active_state`;
+  const analysisFreshnessSelect = `(SELECT MAX(a.generation)
+          FROM job_employer_analysis a
+         WHERE a.tenant_id = job_list_projections.tenant_id
+           AND a.job_id = job_list_projections.job_id
+           AND a.prompt_version = '${EMPLOYER_ANALYSIS_PROMPT_VERSION}') AS current_analysis_generation,
+       (SELECT r.employer_analysis_generation
+          FROM job_requirement_fit_reports r
+         WHERE r.tenant_id = job_list_projections.tenant_id
+           AND r.job_id = job_list_projections.job_id
+         ORDER BY r.score_version DESC LIMIT 1) AS assessed_analysis_generation,
+       (SELECT r.score_version
+          FROM job_requirement_fit_reports r
+         WHERE r.tenant_id = job_list_projections.tenant_id
+           AND r.job_id = job_list_projections.job_id
+         ORDER BY r.score_version DESC LIMIT 1) AS assessed_score_version`;
   return `job_list_projections.*,
           (SELECT j.url
              FROM jobs j
@@ -4909,6 +4620,7 @@ function jobProjectionSelect(): string {
           ${postingSourceUrlSqlExpression()} AS posting_source_url,
           ${postingSourceAtsKindSqlExpression()} AS posting_source_ats_kind,
           ${activeStateSelect},
+          ${analysisFreshnessSelect},
           ${hiddenSelect},
           ${stalenessSelect}`;
 }
@@ -4978,6 +4690,7 @@ function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
   return {
     q: query.q,
     stage: query.stage ?? "",
+    stages: effectiveJobStages(query),
     state: query.state ?? "",
     source: query.source,
     company: query.company,
@@ -4988,15 +4701,8 @@ function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
     discoveredSince: query.discoveredSince ?? null,
     scoredSince: query.scoredSince ?? null,
     deleted: query.deleted,
+    jobStates: query.jobStates ?? null,
   };
-}
-
-function countJobProjections(
-  db: SqliteDatabase,
-  filter: { where: string; params: SqliteValue[] },
-): number {
-  const row = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM job_list_projections${filter.where}`, filter.params);
-  return Number(row?.count ?? 0);
 }
 
 function countRows(db: SqliteDatabase, sql: string, params: SqliteValue[]): number {
@@ -5498,12 +5204,17 @@ function listActivityFromEvents(
   }
   const normalizedQuery = query.q.trim();
   if (normalizedQuery) {
+    // Search the same public message presented by activity, never raw
+    // historical Apply messages or payloads that the response redacts.
+    db.function("jobctrl_public_activity_message", { deterministic: true },
+      (eventType: string | null, payload: string | null, message: string | null) =>
+        publicActivityMessage(eventType, payload, message));
     const search = `%${normalizedQuery.toLowerCase()}%`;
     activityClauses.push(`(
       LOWER(COALESCE(e.level, '')) LIKE ?
       OR LOWER(COALESCE(e.stage, '')) LIKE ?
       OR LOWER(${eventTypePredicate}) LIKE ?
-      OR LOWER(COALESCE(e.message, '')) LIKE ?
+      OR LOWER(jobctrl_public_activity_message(e.event_type, e.payload_json, e.message)) LIKE ?
       OR LOWER(COALESCE(jp.title, '')) LIKE ?
       OR LOWER(COALESCE(jp.employer, '')) LIKE ?
       OR LOWER(COALESCE(e.job_id, '')) LIKE ?
@@ -5553,6 +5264,7 @@ function listActivityFromEvents(
       e.stage,
       e.level,
       e.message,
+      e.payload_json,
       e.occurred_at,
       jp.title    AS title,
       jp.employer AS employer
@@ -5594,6 +5306,7 @@ function getActivityEventFromEvents(db: SqliteDatabase, eventId: string): Activi
        e.stage,
        e.level,
        e.message,
+      e.payload_json,
        e.occurred_at,
        jp.title    AS title,
        jp.employer AS employer
@@ -5634,9 +5347,15 @@ function activityRowToSummary(row: Record<string, unknown>): ActivityEventSummar
     company: nullableString(row.employer),
     stage: stringField(row.stage) || "system",
     level: stringField(row.level) || "info",
-    message: stringField(row.message) || "event",
+    message: publicActivityMessage(row.event_type, row.payload_json, row.message),
     at: nullableString(row.occurred_at),
   };
+}
+
+function publicActivityMessage(eventType: unknown, payload: unknown, message: unknown): string {
+  return isPrivateApplyEvent(eventType, parseJsonRecord(nullableString(payload)) ?? {}) || eventType === "ApplyRunEventRecorded"
+    ? "Apply status changed"
+    : stringField(message) || "event";
 }
 
 /**
@@ -5964,6 +5683,7 @@ function workflowRunsFilterPayload(query: WorkflowRunsListQuery): Record<string,
 export function getWorkflowRunDetail(
   db: SqliteDatabase,
   runId: string,
+  requestedJobId?: string,
 ): WorkflowRunDetail | null {
   refreshProjections(db, DEFAULT_TENANT);
   const applyJoin = ` LEFT JOIN apply_run_projections arp
@@ -6031,7 +5751,69 @@ export function getWorkflowRunDetail(
     finishedAt: summary.finishedAt,
     durationMs: summary.durationMs,
     events: parseWorkflowRunTimeline(row.events_json),
+    applyEvents: summary.workflowType === "ApplyWorkflow" || (!summary.workflowType && row.apply_job_id)
+      ? readWorkflowApplyTimeline(db, runId, nullableString(row.apply_job_id), inputSummary, requestedJobId)
+      : [],
   };
+}
+
+function readWorkflowApplyTimeline(
+  db: SqliteDatabase,
+  runId: string,
+  projectedJobId: string | null,
+  inputSummary: Record<string, unknown>,
+  requestedJobId?: string,
+): NonNullable<WorkflowRunDetail["applyEvents"]> {
+  const inputJobId = nullableString(inputSummary.jobId);
+  const legacyInputJobId = nullableString(inputSummary.job_id);
+  const candidate = inputJobId && legacyInputJobId && inputJobId !== legacyInputJobId
+    ? null : inputJobId ?? legacyInputJobId;
+  if (requestedJobId && projectedJobId && requestedJobId !== projectedJobId) return [];
+  const jobId = projectedJobId ?? requestedJobId ?? candidate;
+  if (!jobId) return [];
+  const rows = allRows<{
+    event_id: number | string;
+    job_id: string | null;
+    event_type: string | null;
+    level: string | null;
+    message: string | null;
+    occurred_at: string | null;
+    payload_json: string | null;
+  }>(db, `SELECT event_id, job_id, event_type, level, message, occurred_at, payload_json
+    FROM job_events INDEXED BY idx_job_events_job_time
+    WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'
+      AND CASE WHEN json_valid(payload_json)
+        THEN COALESCE(json_extract(payload_json, '$.run_id'), json_extract(payload_json, '$.runId')) = ?
+        ELSE 0 END
+    ORDER BY event_id`, [DEFAULT_TENANT, jobId, runId]);
+
+  // A workflow input alone is not evidence that the run acquired this job.
+  // While its projection lags, require a matching durable start at this job.
+  if (!projectedJobId && !rows.some((row) => {
+    if (row.event_type !== "ApplyRunStarted") return false;
+    try {
+      const payload: unknown = JSON.parse(row.payload_json ?? "{}");
+      return isRecord(payload) && !(typeof payload.run_id === "string" && typeof payload.runId === "string" && payload.run_id !== payload.runId);
+    } catch { return false; }
+  })) return [];
+  return rows.flatMap((row) => {
+    if (row.job_id !== jobId) return [];
+    let payload: unknown;
+    try { payload = JSON.parse(row.payload_json ?? "{}"); } catch { return []; }
+    if (!isRecord(payload)) return [];
+    if (typeof payload.run_id === "string" && typeof payload.runId === "string" && payload.run_id !== payload.runId) return [];
+    const nested = row.event_type === "ApplyRunEventRecorded" && isRecord(payload.event) ? payload.event : null;
+    const event = nested ?? payload;
+    const runEventId = event.event_id ?? event.eventId;
+    return [{
+      sourceEventId: String(row.event_id),
+      runEventId: typeof runEventId === "number" && Number.isSafeInteger(runEventId) && runEventId > 0 ? runEventId : null,
+      at: nested ? nullableString(nested.occurred_at ?? nested.occurredAt ?? nested.at) ?? row.occurred_at : row.occurred_at,
+      type: nested ? stringField(nested.event_type ?? nested.eventType ?? nested.type) || "event" : stringField(row.event_type) || "event",
+      level: nested ? stringField(nested.level) || "info" : stringField(row.level) || "info",
+      message: nested ? nullableString(nested.message) : row.message,
+    }];
+  });
 }
 
 const PROVIDER_FAILURE_MAX_TOTAL = 100;
@@ -6319,7 +6101,7 @@ function parseWorkflowRunTimeline(value: unknown): WorkflowRunTimelineEvent[] {
     eventType: stringField(event.eventType ?? event.event_type) || "event",
     occurredAt: nullableString(event.occurredAt ?? event.occurred_at),
     status: nullableString(event.status),
-    message: nullableString(event.message),
+    message: (isPrivateApplyEvent(event.eventType ?? event.event_type, isRecord(event.payload) ? event.payload : event) || (event.eventType ?? event.event_type) === "ApplyRunEventRecorded") ? null : nullableString(event.message),
   }));
 }
 
@@ -6454,7 +6236,7 @@ function parseApplyRunTimelineEvents(value: string | null): DashboardSummary["ap
     const type = stringField(event.event_type ?? event.eventType ?? event.type) || "event";
     const at = nullableString(event.occurred_at ?? event.occurredAt ?? event.at);
     const level = stringField(event.level) || "info";
-    const message = nullableString(event.message);
+    const message = (isPrivateApplyEvent(type, isRecord(event.payload) ? event.payload : event) || type === "ApplyRunEventRecorded") ? null : nullableString(event.message);
     return { at, type, level, message };
   });
 }
@@ -6513,6 +6295,9 @@ function publicStagePresentation(
   nextAction: string | null;
   retryable: boolean;
 } {
+  if (errorCode === "APPLY_NEEDS_VERIFICATION") {
+    errorMessage = "Apply reached submit intent; verify the employer site or confirmation email before retrying.";
+  }
   if (rawState === "exhausted") {
     return {
       state: "failed",

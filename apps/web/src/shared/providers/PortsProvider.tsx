@@ -1,7 +1,10 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { BrowserRequestIdentityAdapter } from "../adapters/local/BrowserRequestIdentityAdapter.js";
+import type { RequestIdentityPort } from "../ports/RequestIdentityPort.js";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
 
 import type {
   ApiClientPort,
+  ArtifactDownloadPort,
   ClipboardPort,
   EventStreamPort,
   FeatureFlagPort,
@@ -13,7 +16,9 @@ import type {
 } from "../ports/index.js";
 
 export interface Ports {
+  requestIdentity?: RequestIdentityPort;
   api: ApiClientPort;
+  artifactDownload: ArtifactDownloadPort;
   eventStream: EventStreamPort;
   storage: StoragePort;
   session: SessionPort;
@@ -24,13 +29,32 @@ export interface Ports {
   featureFlags: FeatureFlagPort;
 }
 
-const PortsContext = createContext<Ports | null>(null);
+type ResolvedPorts = Ports & { requestIdentity: RequestIdentityPort };
+const PortsContext = createContext<ResolvedPorts | null>(null);
+const defaultRequestIdentity = new BrowserRequestIdentityAdapter();
 
 export function PortsProvider({ ports, children }: { ports: Ports; children: ReactNode }) {
-  return <PortsContext.Provider value={ports}>{children}</PortsContext.Provider>;
+  const resolved = useMemo(() => ({
+    ...ports,
+    requestIdentity: ports.requestIdentity ?? defaultRequestIdentity,
+  }), [
+    ports,
+    ports.api,
+    ports.artifactDownload,
+    ports.eventStream,
+    ports.storage,
+    ports.session,
+    ports.clipboard,
+    ports.openInOs,
+    ports.pdfExport,
+    ports.telemetry,
+    ports.featureFlags,
+    ports.requestIdentity,
+  ]);
+  return <PortsContext.Provider value={resolved}>{children}</PortsContext.Provider>;
 }
 
-export function usePorts(): Ports {
+export function usePorts(): ResolvedPorts {
   const ctx = useContext(PortsContext);
   if (!ctx) {
     throw new Error("usePorts must be called within <PortsProvider>.");

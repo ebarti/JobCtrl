@@ -72,7 +72,7 @@ Branch: `temporal/pipeline-workflow` off `temporal/foundation`.
   workflow. `ApplyWorkflow` (one per `(TenantId, JobId)`) drives apply
   per-job. Per-`(TenantId, JobId)` batching for non-apply stages is
   deferred until the underlying runners accept a `job_url` parameter —
-  tracked in [`docs/backlog.md`](../../backlog.md) under "Worker
+  tracked in [`docs/backlog.md`](https://github.com/ebarti/JobCtrl/blob/a1526649a395b9febb4c20ef30dd946945014a21/docs/backlog.md) under "Worker
   Reliability".
 - New `ApplyWorkflow` at `apply/workflow.py` — handles the long-lived
   apply-automation flow with cooperative cancellation. The activity

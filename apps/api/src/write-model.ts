@@ -1,3 +1,5 @@
+import { applySubmitIntentRunIds, hasUnsettledApplyRun, hasUnresolvedSkippedOutcome, hasManualApplyStop, hasRecordedAppliedAuthority, hasSkippedQueuedAuthority, hasRetainedPolicySkip } from "./apply-controls.js";
+import { resolveJobLocator } from "./job-locators.js";
 import crypto from "node:crypto";
 
 import type {
@@ -25,6 +27,7 @@ import { updateConfigObject } from "./config-file.js";
 import { rebuildTenantDeleteProjections } from "./projections.js";
 
 export class InputError extends Error {}
+export class ApplyResetRefusedError extends InputError {}
 
 export interface RetryFailedJobTarget {
   readonly jobUrl: string;
@@ -147,27 +150,35 @@ function resolveJobIdentity(
   tenantId: string,
   jobLocator: string,
 ): ResolvedJobIdentity | null {
-  const row = getRow<{ job_id?: string; url?: string }>(
-    db,
-    `SELECT job_id, url
-       FROM jobs
-      WHERE tenant_id = ?
-        AND (
-          job_id = ?
-          OR url = ?
-          OR application_url = ?
-          OR EXISTS (
-            SELECT 1
-              FROM job_locators
-             WHERE job_locators.tenant_id = jobs.tenant_id
-               AND job_locators.job_id = jobs.job_id
-               AND job_locators.locator_value = ?
-          )
-        )
-      LIMIT 1`,
-    [tenantId, jobLocator, jobLocator, jobLocator, jobLocator],
-  );
-  return row?.job_id && row.url ? { jobId: row.job_id, jobUrl: row.url } : null;
+  return resolveJobLocator(db, tenantId, jobLocator);
+}
+
+
+function assertSafeApplyReset(db: SqliteDatabase, tenantId: string, jobId: string): void {
+  if (applySubmitIntentRunIds(db, tenantId, jobId).length) {
+    throw new ApplyResetRefusedError("Apply submission intent is recorded. Verify the external outcome; reset cannot authorize retry.");
+  }
+  if (hasUnresolvedSkippedOutcome(db, tenantId, jobId)) {
+    throw new ApplyResetRefusedError("Apply outcome still needs verification. Skip and reset do not resolve external uncertainty.");
+  }
+  if (hasRecordedAppliedAuthority(db, tenantId, jobId)) {
+    throw new ApplyResetRefusedError("Apply reset refused: an applied outcome is recorded.");
+  }
+  if (hasSkippedQueuedAuthority(db, tenantId, jobId)) {
+    throw new ApplyResetRefusedError("Apply reset refused: queued work was skipped without a confirmed settlement.");
+  }
+  if (hasRetainedPolicySkip(db, tenantId, jobId)) {
+    throw new ApplyResetRefusedError("Apply reset refused: the prior policy-owned skip remains in effect.");
+  }
+  const row = getRow<{ state: string; error_code: string | null }>(db,
+    "SELECT state,error_code FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='apply'", [tenantId, jobId]);
+  if (hasUnsettledApplyRun(db, tenantId, jobId)) {
+    throw new ApplyResetRefusedError("Apply reset refused: the prior admitted run has no confirmed local settlement. Stop and verify that run first.");
+  }
+  if (row && (["queued", "running", "succeeded", "needs_verification"].includes(row.state) ||
+      (row.state === "skipped" && row.error_code !== null && row.error_code !== "DRY_RUN"))) {
+    throw new ApplyResetRefusedError("Apply reset refused: active, applied or unresolved state requires explicit resolution.");
+  }
 }
 
 export function resetJobStage(
@@ -178,7 +189,7 @@ export function resetJobStage(
 ): { jobUrl: string; stage: StageSummary } {
   const job = resolveJobIdentity(db, LOCAL_TENANT, jobKey);
   if (!job) throw new InputError("Job not found.");
-  return resetResolvedJobStage(db, job, stage, options);
+  return db.transaction(() => resetResolvedJobStage(db, job, stage, options)).immediate();
 }
 
 function resetResolvedJobStage(
@@ -192,7 +203,7 @@ function resetResolvedJobStage(
   // when the gate is opt-in, this entry-point bypasses §8.5 — the user is
   // explicitly forcing the stage back to pending.
   if (stage === "enrich") {
-    resetEnrichmentAggregate(db, LOCAL_TENANT, job.jobId);
+    throw new InputError("Enrichment resets require the canonical Python retry service.");
   }
   const current = getRow<{ state: string }>(
     db,
@@ -202,6 +213,16 @@ function resetResolvedJobStage(
       LIMIT 1`,
     [LOCAL_TENANT, job.jobId, stage],
   );
+  let releasePayload = {};
+  if (stage === "apply") {
+    assertSafeApplyReset(db, LOCAL_TENANT, job.jobId);
+    const stopped = getRow<{ event_id: number | null }>(db, `SELECT MAX(event_id) AS event_id FROM job_events
+      WHERE tenant_id=? AND job_id=? AND stage='apply' AND event_type='StageSkipped'
+      AND (json_extract(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END,'$.manualDisposition')='skip'
+        OR message='Job marked skipped from the local API.')`,
+    [LOCAL_TENANT, job.jobId]);
+    releasePayload = { resetAuthority: "explicit_safe_apply_reset", manualSkipReleasedThroughEventId: stopped?.event_id ?? null };
+  }
   const resetAttempts = options.resetAttempts || current?.state === "exhausted";
   const stageOptions: Parameters<typeof upsertStageStateById>[5] = {
     retryable: true,
@@ -223,23 +244,24 @@ function resetResolvedJobStage(
     eventType: "StageReset",
     level: "info",
     message: `Retry reset requested for ${stage}`,
-    payload: { reset_attempts: resetAttempts },
+    payload: { reset_attempts: resetAttempts, ...releasePayload },
   });
   return { jobUrl: job.jobUrl, stage: getStageStateById(db, LOCAL_TENANT, job.jobId, stage) };
 }
 
 export function retryFailedJobs(db: SqliteDatabase, request: BulkJobMutationRequest): RetryFailedJobsResult {
-  const targets = retryFailedJobTargets(db, request).map((target) => {
-    const job = resolveJobIdentity(db, LOCAL_TENANT, target.jobUrl);
-    if (!job) throw new InputError("Job not found.");
-    return { job, stage: target.stage };
-  });
-  const transaction = db.transaction((rows: typeof targets) => {
-    for (const { job, stage } of rows) {
+  const transaction = db.transaction(() => {
+    const targets = retryFailedJobTargets(db, request).map((target) => {
+      const job = resolveJobIdentity(db, LOCAL_TENANT, target.jobUrl);
+      if (!job) throw new InputError("Job not found.");
+      return { job, stage: target.stage };
+    });
+    for (const { job, stage } of targets) {
       resetResolvedJobStage(db, job, stage, { resetAttempts: false });
     }
+    return targets;
   });
-  transaction(targets);
+  const targets = transaction.immediate();
   const responseTargets = targets.map(({ job, stage }) => ({ jobUrl: job.jobUrl, stage }));
   return {
     ok: true,
@@ -386,29 +408,39 @@ export function markJobSkipped(
   if (!job) {
     throw new InputError("Job not found.");
   }
-  // Manual mark-skipped — admin override, bypasses §8.5 (parity with
-  // Python's `mark_skipped` JSON-RPC handler).
-  upsertStageStateById(db, LOCAL_TENANT, job.jobId, "apply", "skipped", {
-    retryable: false,
-    finishedAt: new Date().toISOString(),
-    skipValidation: true,
-  });
-  recordActionEventById(db, {
-    tenantId: LOCAL_TENANT,
-    jobId: job.jobId,
-    stage: "apply",
-    // H1 (round-1 review): align with domain catalog — `StageSkipped`
-    // already exists in `domain/events/orchestration.py`.  The Python RPC
-    // `mark_skipped` handler writes the same string.
-    eventType: "StageSkipped",
-    level: "info",
-    message: "Job marked skipped from the local API.",
-    payload: { reason: request.reason ?? "" },
-  });
-  return {
-    jobUrl: job.jobUrl,
-    stage: getStageStateById(db, LOCAL_TENANT, job.jobId, "apply"),
-  };
+  return db.transaction(() => {
+    const previous = getStageStateById(db, LOCAL_TENANT, job.jobId, "apply");
+    const previousState = previous.state;
+    // Manual mark-skipped — admin override, bypasses §8.5 (parity with
+    // Python's `mark_skipped` JSON-RPC handler).
+    // The manual stop is an independent control; do not erase an existing
+    // Applied, uncertain, queued, or policy-owned disposition to record it.
+    const preserveDisposition = ["queued", "succeeded", "needs_verification"].includes(previousState) ||
+      (previousState === "skipped" && previous.errorCode !== null && previous.errorCode !== "DRY_RUN");
+    if (!preserveDisposition) {
+      upsertStageStateById(db, LOCAL_TENANT, job.jobId, "apply", "skipped", {
+        retryable: false,
+        finishedAt: new Date().toISOString(),
+        skipValidation: true,
+      });
+    }
+    recordActionEventById(db, {
+      tenantId: LOCAL_TENANT,
+      jobId: job.jobId,
+      stage: "apply",
+      // H1 (round-1 review): align with domain catalog — `StageSkipped`
+      // already exists in `domain/events/orchestration.py`.  The Python RPC
+      // `mark_skipped` handler writes the same string.
+      eventType: "StageSkipped",
+      level: "info",
+      message: "Skipped locally. Future Apply is stopped; an in-flight submission may still complete. Verify any uncertain external outcome.",
+      payload: { reason: request.reason ?? "", previousState, previousErrorCode: previous.errorCode, manualDisposition: "skip" },
+    });
+    return {
+      jobUrl: job.jobUrl,
+      stage: getStageStateById(db, LOCAL_TENANT, job.jobId, "apply"),
+    };
+  }).immediate();
 }
 
 export function cancelJobAction(
@@ -543,68 +575,114 @@ export function resetStaleScoresForRescore(
   const selectedWhere = request.jobIds === undefined
     ? ""
     : jobIdsFilter.length
-      ? ` AND job_id IN (${jobIdsFilter.map(() => "?").join(", ")})`
+      ? ` AND marker.job_id IN (${jobIdsFilter.map(() => "?").join(", ")})`
       : " AND 0";
-  const rows = allRows<Record<string, unknown>>(
-    db,
-    `SELECT tenant_id, job_id, stale_reason, old_policy_version, new_policy_version
-     FROM job_score_staleness
-     WHERE tenant_id = ? AND resolved = 0
-       ${selectedWhere}
-     ORDER BY marked_at ASC${limit > 0 ? " LIMIT ?" : ""}`,
-    [LOCAL_TENANT, ...jobIdsFilter, ...(limit > 0 ? [limit] : [])],
-  );
-  const now = new Date().toISOString();
-  const jobKeys = rows.map((row) => String(row.job_id ?? "")).filter(Boolean);
-  for (const row of rows) {
-    const tenantId = String(row.tenant_id ?? "");
-    const jobId = String(row.job_id ?? "");
-    if (!tenantId || !jobId) {
-      continue;
-    }
-    upsertStageStateById(db, tenantId, jobId, "score", "pending", {
-      attemptCount: 0,
-      clearTiming: true,
-      skipValidation: true,
-    });
-    db.prepare(
-      `UPDATE job_score_staleness
-          SET resolved = 1,
-              resolved_at = ?
-        WHERE tenant_id = ?
-          AND job_id = ?
-          AND stale_reason = ?
-          AND old_policy_version = ?
-          AND new_policy_version = ?`,
-    ).run(
-      now,
-      tenantId,
-      jobId,
-      String(row.stale_reason ?? ""),
-      Number(row.old_policy_version ?? 0),
-      Number(row.new_policy_version ?? 0),
+  // Match the jobs list's active lifecycle using its source tables, before
+  // selecting owners or applying the bounded reset limit.
+  const activeWhere = `
+    AND EXISTS (SELECT 1 FROM jobs j WHERE j.tenant_id = marker.tenant_id AND j.job_id = marker.job_id)
+    AND NOT EXISTS (
+      SELECT 1 FROM jobctrl_deleted_jobs d
+       WHERE d.tenant_id = marker.tenant_id AND d.job_id = marker.job_id
+         AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM jobctrl_hidden_jobs h
+       WHERE h.tenant_id = marker.tenant_id AND h.job_id = marker.job_id AND h.unhidden_at IS NULL
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM posting_snapshot_sets pss
+       WHERE pss.tenant_id = marker.tenant_id AND pss.job_id = marker.job_id
+         AND pss.latest_active_state IN ('closed', 'expired', 'removed', 'location_incompatible')
+    )`;
+  return db.transaction((): ResetStaleScoresForRescoreResponse => {
+    const waiting = allRows<{ job_id: string; state: string; metadata_json: string | null }>(
+      db,
+      `SELECT DISTINCT marker.job_id, score_stage.state, score_stage.metadata_json
+         FROM job_score_staleness marker
+         JOIN job_stage_states score_stage
+           ON score_stage.tenant_id = marker.tenant_id
+          AND score_stage.job_id = marker.job_id AND score_stage.stage = 'score'
+        WHERE marker.tenant_id = ? AND marker.resolved = 0 ${selectedWhere} ${activeWhere}
+          AND score_stage.state IN ('pending', 'queued', 'running')
+        ORDER BY marker.job_id`,
+      [LOCAL_TENANT, ...jobIdsFilter],
     );
-    recordActionEventById(db, {
-      tenantId,
-      jobId,
-      stage: "score",
-      eventType: "ScoreRescoreRequested",
-      level: "info",
-      message: "Stale score reset for explicit rescore.",
-      payload: {
-        staleReason: String(row.stale_reason ?? ""),
-        oldPolicyVersion: Number(row.old_policy_version ?? 0),
-        newPolicyVersion: Number(row.new_policy_version ?? 0),
-        nextAction: "jobctrl run score --rescore",
-      },
-    });
-  }
-  return {
-    ok: true,
-    count: jobKeys.length,
-    jobKeys,
-    nextAction: "jobctrl run score --rescore",
-  };
+    const skippedActiveJobKeys: string[] = [];
+    const alreadyPendingJobKeys: string[] = [];
+    for (const row of waiting) {
+      const metadata = parseJsonRecord(row.metadata_json);
+      const automatic = metadata?.automaticPreparation;
+      const hasOwner = Boolean(
+        metadata?.activityOwner || metadata?.workflowId || metadata?.temporalRunId ||
+        (isRecord(automatic) && automatic.workflowId),
+      );
+      if (row.state !== "pending" || hasOwner) skippedActiveJobKeys.push(row.job_id);
+      else alreadyPendingJobKeys.push(row.job_id);
+    }
+    const rows = allRows<Record<string, unknown>>(
+      db,
+      `WITH markers AS (
+         SELECT tenant_id, job_id, stale_reason, old_policy_version, new_policy_version, marked_at,
+                ROW_NUMBER() OVER (
+                  PARTITION BY tenant_id, job_id
+                  ORDER BY marked_at, stale_reason, old_policy_version, new_policy_version
+                ) AS marker_rank
+           FROM job_score_staleness marker
+          WHERE marker.tenant_id = ? AND marker.resolved = 0 ${selectedWhere} ${activeWhere}
+       )
+       SELECT markers.tenant_id, markers.job_id, markers.stale_reason,
+              markers.old_policy_version, markers.new_policy_version,
+              score_stage.metadata_json AS stage_metadata_json
+         FROM markers
+         LEFT JOIN job_stage_states score_stage
+           ON score_stage.tenant_id = markers.tenant_id
+          AND score_stage.job_id = markers.job_id AND score_stage.stage = 'score'
+        WHERE markers.marker_rank = 1
+          AND (score_stage.state IS NULL OR score_stage.state NOT IN ('pending', 'queued', 'running'))
+        ORDER BY markers.marked_at, markers.job_id${limit > 0 ? " LIMIT ?" : ""}`,
+      [LOCAL_TENANT, ...jobIdsFilter, ...(limit > 0 ? [limit] : [])],
+    );
+    const jobKeys = rows.map((row) => String(row.job_id ?? "")).filter(Boolean);
+    for (const row of rows) {
+      const tenantId = String(row.tenant_id ?? "");
+      const jobId = String(row.job_id ?? "");
+      if (!tenantId || !jobId) continue;
+      upsertStageStateById(db, tenantId, jobId, "score", "pending", {
+        attemptCount: 0,
+        clearTiming: true,
+        skipValidation: true,
+      });
+      const metadata = parseJsonRecord(nullableString(row.stage_metadata_json));
+      if (metadata) {
+        const { activityOwner, workflowId, temporalRunId, automaticPreparation, activityAttempt, ...retained } = metadata;
+        db.prepare("UPDATE job_stage_states SET metadata_json = ? WHERE tenant_id = ? AND job_id = ? AND stage = 'score'")
+          .run(Object.keys(retained).length ? JSON.stringify(retained) : null, tenantId, jobId);
+      }
+      recordActionEventById(db, {
+        tenantId,
+        jobId,
+        stage: "score",
+        eventType: "ScoreRescoreRequested",
+        level: "info",
+        message: "Stale score reset for explicit rescore.",
+        payload: {
+          staleReason: String(row.stale_reason ?? ""),
+          oldPolicyVersion: Number(row.old_policy_version ?? 0),
+          newPolicyVersion: Number(row.new_policy_version ?? 0),
+          nextAction: "jobctrl score --rescore",
+        },
+      });
+    }
+    return {
+      ok: true,
+      count: jobKeys.length,
+      jobKeys,
+      nextAction: "jobctrl score --rescore",
+      skippedActiveJobKeys,
+      alreadyPendingJobKeys,
+    };
+  }).immediate();
 }
 
 export function softDeleteJob(db: SqliteDatabase, jobKey: string, request: DeleteJobRequest = {}): JobMutationResponse {
@@ -775,10 +853,22 @@ export function writeSettingsConfig(
     }
     if (request.workerActivitySlots !== undefined) assign("worker_activity_slots", request.workerActivitySlots);
     if (request.dailyBudgetUsd !== undefined) assign("daily_budget_usd", request.dailyBudgetUsd);
+    if (request.laneTokenLimits !== undefined) assign("lane_token_limits", request.laneTokenLimits);
     if (request.analysisLegs !== undefined) assign("analysis_legs", request.analysisLegs);
+    if (request.defaultLlmModel !== undefined) assign("default_llm_model", request.defaultLlmModel);
+    if (request.codexReasoningEfforts !== undefined) {
+      const current = isRecord(next.codex_reasoning_efforts) ? next.codex_reasoning_efforts : {};
+      const efforts = new Map(Object.entries(current).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+      for (const [model, effort] of Object.entries(request.codexReasoningEfforts)) {
+        if (effort === null) efforts.delete(model);
+        else efforts.set(model, effort);
+      }
+      assign("codex_reasoning_efforts", Object.fromEntries(efforts));
+    }
     if (request.tailoringGeneratorModels !== undefined) assign("tailoring_generator_models", request.tailoringGeneratorModels);
     if (request.tailoringJudgeModel !== undefined) assign("tailoring_judge_model", request.tailoringJudgeModel);
-    if (request.tailoringJudgeMinScore !== undefined) assign("tailoring_judge_min_score", request.tailoringJudgeMinScore);
+    if (request.resumeVoicePolish !== undefined) assign("resume_voice_polish", request.resumeVoicePolish);
+    if (request.coverLetterGeneration !== undefined) assign("cover_letter_generation", request.coverLetterGeneration);
     if (request.applyMaxBudgetUsd !== undefined) assign("apply_max_budget_usd", request.applyMaxBudgetUsd);
     if (request.applyTimeoutSeconds !== undefined) assign("apply_timeout_seconds", request.applyTimeoutSeconds);
     if (request.scoreCriteria !== undefined) assign("score_criteria", request.scoreCriteria);
@@ -801,38 +891,6 @@ export function writeSettingsConfig(
     if (!wrote) throw new InputError("At least one settings field is required.");
   });
   return readSettingsConfig(paths);
-}
-
-/**
- * Phase 7 (S-26 round-1 review B2): reset the ``job_enrichments`` row
- * for one job back to the ``pending`` lifecycle state.
- *
- * Mirror of Python's ``state.py::_reset_enrichment_aggregate`` — both
- * paths (CLI ``jobctrl retry enrich URL`` and API
- * ``POST /v1/jobs/{key}/retry?stage=enrich``) MUST clear the
- * aggregate's terminal-state fields, otherwise the worker's
- * ``_ENRICHMENT_PENDING`` predicate excludes the row and retry is a
- * silent no-op.
- *
- * The reset preserves the attempt history (audit trail intact) and
- * only clears the success-side fields plus rolls ``current_status``
- * back to ``pending``. Idempotent — safe to call when no row exists.
- */
-function resetEnrichmentAggregate(db: SqliteDatabase, tenantId: string, jobId: string): void {
-  if (!tableExists(db, "job_enrichments")) {
-    return;
-  }
-  const now = new Date().toISOString();
-  db.prepare(
-    `UPDATE job_enrichments
-       SET current_status = 'pending',
-           full_description = NULL,
-           application_url = NULL,
-           enriched_at = NULL,
-           extraction_tier = NULL,
-           updated_at = ?
-     WHERE tenant_id = ? AND job_id = ?`,
-  ).run(now, tenantId, jobId);
 }
 
 function mutableResolvedJobs(db: SqliteDatabase, request: BulkJobMutationRequest): ResolvedJobIdentity[] {
@@ -875,6 +933,16 @@ function purgeJobRows(db: SqliteDatabase, tenantId: string, jobId: string): void
     [tenantId, jobId, jobId],
   );
   for (const locatorValue of locatorValues) {
+    // An application form can belong to several jobs. Retain another job's
+    // duplicate-rejection evidence when a shared locator survives this purge.
+    if (getRow(db, `SELECT 1 FROM jobs j WHERE j.tenant_id = ? AND j.job_id != ? AND (
+      j.url = ? OR EXISTS (SELECT 1 FROM job_enrichments e WHERE e.tenant_id = j.tenant_id
+        AND e.job_id = j.job_id AND e.application_url = ?)
+      OR EXISTS (SELECT 1 FROM job_application_locators a WHERE a.tenant_id = j.tenant_id
+        AND a.job_id = j.job_id AND a.application_url = ?)
+      OR EXISTS (SELECT 1 FROM job_locators l WHERE l.tenant_id = j.tenant_id
+        AND l.job_id = j.job_id AND l.locator_value = ?)
+    ) LIMIT 1`, [tenantId, jobId, locatorValue, locatorValue, locatorValue, locatorValue])) continue;
     deleteExactV7Rows(
       db,
       "job_rejected_duplicate_links",
@@ -892,11 +960,18 @@ function jobLocatorValues(db: SqliteDatabase, tenantId: string, jobId: string): 
   const values = new Set<string>();
   const job = getRow<{ url: string | null; application_url: string | null }>(
     db,
-    "SELECT url, application_url FROM jobs WHERE tenant_id = ? AND job_id = ?",
+    "SELECT j.url, e.application_url FROM jobs j LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id WHERE j.tenant_id = ? AND j.job_id = ?",
     [tenantId, jobId],
   );
   for (const value of [job?.url, job?.application_url]) {
     if (value?.trim()) values.add(value);
+  }
+  for (const row of allRows<{ application_url: string }>(
+    db,
+    "SELECT application_url FROM job_application_locators WHERE tenant_id = ? AND job_id = ?",
+    [tenantId, jobId],
+  )) {
+    if (row.application_url.trim()) values.add(row.application_url);
   }
   for (const row of allRows<{ locator_value: string }>(
     db,
@@ -1647,7 +1722,7 @@ function upsertStageStateById(
   const updateEntries = Object.entries(updates);
   const assignments = updateEntries.map(([name]) => `${name} = ?`).join(", ");
   const result = db
-    .prepare(`UPDATE job_stage_states SET ${assignments} WHERE tenant_id = ? AND job_id = ? AND stage = ?`)
+    .prepare(`UPDATE job_stage_states SET ${assignments}, version = version + CASE WHEN stage = 'apply' THEN 1 ELSE 0 END WHERE tenant_id = ? AND job_id = ? AND stage = ?`)
     .run(...updateEntries.map(([, value]) => value), tenantId, jobId, stage);
   if (result.changes > 0) {
     return;
@@ -1675,7 +1750,7 @@ function upsertStageStateById(
   ).run(...insertEntries.map(([, value]) => value));
 }
 
-function getStageStateById(db: SqliteDatabase, tenantId: string, jobId: string, stage: Stage): StageSummary {
+export function getStageStateById(db: SqliteDatabase, tenantId: string, jobId: string, stage: Stage): StageSummary {
   const row = getRow<Record<string, unknown>>(
     db,
     "SELECT * FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = ? LIMIT 1",

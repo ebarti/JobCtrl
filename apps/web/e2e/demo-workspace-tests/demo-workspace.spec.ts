@@ -27,6 +27,14 @@ function configuredOrigin(baseURL: string | undefined): string {
   return new URL(baseURL).origin;
 }
 
+function isDemoGoogleTagRequest(requestUrl: URL): boolean {
+  return (
+    requestUrl.origin === GOOGLE_TAG_ORIGIN &&
+    requestUrl.pathname === "/gtag/js" &&
+    requestUrl.searchParams.get("id") === GOOGLE_TAG_MEASUREMENT_ID
+  );
+}
+
 const scenarioTest = test.extend<{ demoNetworkBoundary: void }>({
   demoNetworkBoundary: [
     async ({ baseURL, context }, use) => {
@@ -140,6 +148,18 @@ function jobRow(page: Page, title: string): Locator {
 
 function visible(page: Page, locator: Locator): Locator {
   return locator.and(page.locator(":visible"));
+}
+
+async function openJobActions(page: Page): Promise<Locator> {
+  const actions = page.locator("#job-detail-workflow-commands");
+  if (!(await actions.isVisible())) {
+    await page
+      .getByRole("button", { name: "More job actions", exact: true })
+      .click();
+  }
+  await expect(actions).toBeVisible();
+  await expect(actions).toHaveAttribute("aria-label", "Job workflow actions");
+  return actions;
 }
 
 async function expectJobState(
@@ -272,6 +292,20 @@ scenarioTest("pipeline demo capability actions stay contained at 320 CSS pixels"
     layout.scrollWidth,
     "pipeline capability alert should not create horizontal overflow",
   ).toBeLessThanOrEqual(layout.viewportWidth + 1);
+});
+
+scenarioTest("Required coaching demo shows the supported local path without provider calls", async ({ page }) => {
+  await page.goto("/profile");
+  await initializeWorkspace(page);
+  const before = await snapshot(page);
+  const card = page.locator('[data-slot="card"]').filter({ hasText: "Required bullet coaching" });
+  await expect(card.getByRole("button", { name: "Inspect Required bullets" })).toBeDisabled();
+  await expect(card.getByText(/local JobCtrl app with a configured LLM provider/)).toBeVisible();
+  await expect(card.getByText(/edit the synthetic profile manually/)).toBeVisible();
+  await expect(card.getByRole("link", { name: "Install JobCtrl" })).toHaveAttribute("href", "https://jobctrl.dev/user/getting-started");
+  await expect(card.getByText(/Your configured provider receives/)).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Full name" })).toBeEditable();
+  expect((await snapshot(page)).state).toEqual(before.state);
 });
 
 test("consent grant precedes Google Analytics, IndexedDB, health, telemetry, and populated demo entry", async ({
@@ -490,8 +524,9 @@ scenarioTest(
     ).toBeVisible();
     await expectJobState(second, "Systems delivery director", "failed");
 
+    const actions = await openJobActions(page);
     acceptNextConfirmation(page);
-    await page
+    await actions
       .getByRole("button", { name: "Run current stage", exact: true })
       .click();
 
@@ -524,8 +559,9 @@ scenarioTest(
     ).toBeVisible();
     await expect(drawer.getByText("accepted", { exact: true })).toHaveCount(2);
 
+    const actions = await openJobActions(page);
     acceptNextConfirmation(page);
-    await drawer
+    await actions
       .getByRole("button", { name: "Re-tailor current policy", exact: true })
       .click();
     await expect(drawer.getByText("failed", { exact: true })).toBeVisible({
@@ -536,7 +572,9 @@ scenarioTest(
       0,
     );
 
-    await drawer.getByRole("button", { name: "Retry", exact: true }).click();
+    await (await openJobActions(page))
+      .getByRole("button", { name: "Retry", exact: true })
+      .click();
     await expect(drawer.getByText("succeeded", { exact: true })).toBeVisible({
       timeout: 3_000,
     });
@@ -595,11 +633,10 @@ scenarioTest(
       page.goto("/jobs/job-fabrikam-systems"),
       second.goto("/jobs/job-fabrikam-systems"),
     ]);
-    const drawer = page.getByRole("article", { name: "Job details" });
     const initialCount = await receiptCount(page);
     await expectReceiptCount(second, initialCount);
 
-    await drawer
+    await (await openJobActions(page))
       .getByRole("button", { name: "Rehearse application", exact: true })
       .click();
     await expectReceiptCount(page, initialCount + 1);
@@ -609,7 +646,7 @@ scenarioTest(
       /no browser automation.*application destination.*accessed/i,
     );
 
-    await drawer
+    await (await openJobActions(page))
       .getByRole("button", { name: "Record simulated application", exact: true })
       .click();
     await expectReceiptCount(page, initialCount + 2);
@@ -663,6 +700,13 @@ scenarioTest(
     await popup.close();
   },
 );
+
+scenarioTest("demo dashboard explains unavailable learning features without errors", async ({ page }) => {
+  await page.goto("/dashboard");
+  await expect(page.getByText("Learning recommendations require the local audited database.")).toBeVisible();
+  await expect(page.getByText("Tailoring policy history requires the local audited database.")).toBeVisible();
+  await expect(page.getByText(/Demo capability .* is not available/)).toHaveCount(0);
+});
 
 scenarioTest("demo shell renders the browser-profile isolation and personal-data boundary without product network", async ({
   page,
@@ -779,7 +823,7 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
     if (url.pathname.startsWith("/v1/")) {
       productRequests.push(url.pathname);
     }
-    if (url.origin !== demoOrigin) {
+    if (url.origin !== demoOrigin && !isDemoGoogleTagRequest(url)) {
       externalRequests.push(request.url());
     }
   });
@@ -827,17 +871,16 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
     ],
     ["/discovery", "Discovery", "Bundled synthetic source"],
     ["/pipelines", "Pipelines", "Configuring"],
-    ["/debug", "Debug", "Synthetic score recorded."],
+    ["/debug", "Debug", "Synthetic score completed."],
     [
       "/activity/event-demo-score",
-      "Synthetic score recorded.",
+      "Synthetic score completed.",
       "Projected event payload",
       "article",
     ],
   ] as const;
 
   for (const [route, identity, populatedText, role = "heading"] of routes) {
-    await page.goto(STATIC_HOST);
     await page.goto(route);
     const identityLocator = visible(
       page,
@@ -898,27 +941,23 @@ scenarioTest("same-context tabs share, serialize concurrent writes, and survive 
     page.evaluate(async () => {
       if (!window.__jobctrlDemoWorkspace)
         throw new Error("workspace not initialized");
-      await window.__jobctrlDemoWorkspace.queueScenario({
-        scenarioId: "tab-one",
-        deadlineAt: "2026-07-11T12:01:00.000Z",
-        resetEpoch: 0,
+      await window.__jobctrlDemoWorkspace.mutate((draft) => {
+        (draft.state as {title:string}).title = "Authored concurrent title";
       });
     }),
     second.evaluate(async () => {
       if (!window.__jobctrlDemoWorkspace)
         throw new Error("workspace not initialized");
-      await window.__jobctrlDemoWorkspace.queueScenario({
-        scenarioId: "tab-two",
-        deadlineAt: "2026-07-11T12:02:00.000Z",
-        resetEpoch: 0,
+      await window.__jobctrlDemoWorkspace.mutate((draft) => {
+        (draft.state as {generatedAt:string}).generatedAt = "2026-10-07T12:00:00.000Z";
       });
     }),
   ]);
   const shared = await snapshot(page);
   expect(shared.revision).toBe(2);
-  expect(
-    shared.pendingScenarios.map((scenario) => scenario.scenarioId).toSorted(),
-  ).toEqual(["tab-one", "tab-two"]);
+  expect(shared.state).toMatchObject({
+    title: "Authored concurrent title", generatedAt: "2026-10-07T12:00:00.000Z",
+  });
 
   await page.reload();
   const reloaded = await initializeWorkspace(page);
@@ -943,7 +982,9 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
   context.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
-    if (url.origin !== demoOrigin) externalRequests.push(request.url());
+    if (url.origin !== demoOrigin && !isDemoGoogleTagRequest(url)) {
+      externalRequests.push(request.url());
+    }
   });
   const second = await context.newPage();
 
@@ -971,17 +1012,25 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
   await expect(secondResultsPerBoard).toHaveValue("23");
 
   await Promise.all([page.goto("/settings"), second.goto("/settings")]);
-  await expect(page.getByLabel("Concurrent applications")).toHaveValue("1");
-  await expect(second.getByLabel("Concurrent applications")).toHaveValue("1");
-  await page.getByLabel("Concurrent applications").fill("3");
+  const applyConcurrency = page.getByRole("spinbutton", {
+    name: "Concurrent applications",
+    exact: true,
+  });
+  const secondApplyConcurrency = second.getByRole("spinbutton", {
+    name: "Concurrent applications",
+    exact: true,
+  });
+  await expect(applyConcurrency).toHaveValue("1");
+  await expect(secondApplyConcurrency).toHaveValue("1");
+  await applyConcurrency.fill("3");
   const executionForm = page.locator("form").filter({
-    has: page.getByLabel("Concurrent applications"),
+    has: applyConcurrency,
   });
   await executionForm.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(executionForm.getByRole("status")).toHaveText("Settings saved.");
-  await expect(second.getByLabel("Concurrent applications")).toHaveValue("3");
+  await expect(secondApplyConcurrency).toHaveValue("3");
   await second.reload();
-  await expect(second.getByLabel("Concurrent applications")).toHaveValue("3");
+  await expect(secondApplyConcurrency).toHaveValue("3");
 
   expect(productRequests).toEqual([]);
   expect(externalRequests).toEqual([]);
@@ -998,7 +1047,9 @@ scenarioTest("discovery promotes a source and imports a manual capture through t
   context.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
-    if (url.origin !== demoOrigin) externalRequests.push(request.url());
+    if (url.origin !== demoOrigin && !isDemoGoogleTagRequest(url)) {
+      externalRequests.push(request.url());
+    }
   });
 
   await page.goto("/discovery");
@@ -1037,7 +1088,9 @@ scenarioTest("score correction is browser-local, cross-tab visible, reload durab
   context.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
-    if (url.origin !== demoOrigin) externalRequests.push(request.url());
+    if (url.origin !== demoOrigin && !isDemoGoogleTagRequest(url)) {
+      externalRequests.push(request.url());
+    }
   });
 
   const second = await context.newPage();
@@ -1102,11 +1155,7 @@ scenarioTest("reset rotates identity, fences state, and deletes generated blobs"
       "generated-preview",
       new Blob(["synthetic visitor edit"], { type: "text/plain" }),
     );
-    await window.__jobctrlDemoWorkspace.queueScenario({
-      scenarioId: "reset-me",
-      deadlineAt: "2026-07-11T12:03:00.000Z",
-      resetEpoch: 0,
-    });
+
     await window.__jobctrlDemoWorkspace.reset();
   });
   const reset = await snapshot(page);
@@ -1114,7 +1163,6 @@ scenarioTest("reset rotates identity, fences state, and deletes generated blobs"
   expect(reset).toMatchObject({
     resetEpoch: 1,
     resetCount: 1,
-    pendingScenarios: [],
   });
   expect(
     await page.evaluate(async () => {
@@ -1159,11 +1207,10 @@ scenarioTest("an older seed refreshes once and clears generated browser state", 
   expect(refreshed.kind).toBe("ready");
   if (refreshed.kind !== "ready") return;
   expect(refreshed.snapshot).toMatchObject({
-    schemaVersion: 4,
+    schemaVersion: 5,
     seedVersion: CURRENT_DEMO_SEED_VERSION,
     resetCount: stale.resetCount + 1,
     resetEpoch: stale.resetEpoch + 1,
-    pendingScenarios: [],
     blobIds: [],
     state: { title: "JobCtrl product tour" },
   });

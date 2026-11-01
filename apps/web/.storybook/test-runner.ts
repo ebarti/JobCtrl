@@ -15,8 +15,9 @@ interface StoryA11yConfig {
 //
 // A story may use either supported escape hatch (`a11y.test: "off"` or
 // `a11y.disable: true`) only for a pre-existing production defect with a
-// matching entry in docs/backlog.md. The backlog, not this policy comment,
-// owns the live deferral inventory.
+// linked GitHub issue recording the story path, affected production file and
+// defect type. GitHub Issues owns the live deferral inventory:
+// https://github.com/ebarti/JobCtrl/issues
 const config: TestRunnerConfig = {
   async preVisit(page) {
     await injectAxe(page);

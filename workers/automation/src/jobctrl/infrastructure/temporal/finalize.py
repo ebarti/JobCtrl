@@ -21,15 +21,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+import hashlib
+import json
 from typing import Any
 
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
+
+from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
 # The finalize activities are tiny local SQLite writes; a run's terminal state
 # is only durable once recorded, so they retry a handful of times but stay
 # fast.
 _FINALIZE_TIMEOUT = timedelta(seconds=30)
+_LOCAL_FINALIZE_SCHEDULE_TIMEOUT = timedelta(minutes=3)
+_LOCAL_FINALIZE_PATCH = "workflow-local-lifecycle-activities-v1"
 _FINALIZE_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=1),
     maximum_interval=timedelta(seconds=10),
@@ -87,13 +94,21 @@ async def record_workflow_started(payload: WorkflowStartedInput) -> None:
             temporal_run_id=payload.temporal_run_id,
         ),
     )
-    _emit(payload.expected_app_dir, payload.expected_db_path, event)
+    await run_blocking_with_heartbeat(
+        lambda: _emit(payload.expected_app_dir, payload.expected_db_path, event),
+        starting_message="recording workflow start",
+        control=True,
+    )
 
 
 @activity.defn(name="record_workflow_outcome")
 async def record_workflow_outcome(payload: WorkflowOutcomeInput) -> None:
     event = build_workflow_outcome_event(payload)
-    _emit(payload.expected_app_dir, payload.expected_db_path, event)
+    await run_blocking_with_heartbeat(
+        lambda: _emit(payload.expected_app_dir, payload.expected_db_path, event),
+        starting_message="recording workflow outcome",
+        control=True,
+    )
 
 
 def build_workflow_outcome_event(payload: WorkflowOutcomeInput):
@@ -178,7 +193,7 @@ def build_workflow_outcome_event(payload: WorkflowOutcomeInput):
 
 
 def _emit(expected_app_dir: str | None, expected_db_path: str | None, event) -> None:
-    from jobctrl.database import get_connection
+    from jobctrl.database import close_connection, get_connection
     from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
     from jobctrl.state import record_job_event
@@ -188,22 +203,51 @@ def _emit(expected_app_dir: str | None, expected_db_path: str | None, event) -> 
         expected_db_path=expected_db_path,
     )
     conn = get_connection()
-    # Workflow lifecycle events are not tied to a single job (a pipeline run is
-    # a batch), so ``job_url`` is NULL; the run identity lives in the payload.
-    record_job_event(
-        conn,
-        None,
-        "workflow",
-        event.event_type,
-        payload=dict(event.payload),
-    )
-    conn.commit()
-    # Refresh explicitly so ``workflow_run_projections`` updates even when the
-    # process has no bus-subscribed ProjectionBuilder (idempotent otherwise).
-    ProjectionBuilder(conn_factory=get_connection).refresh()
+    try:
+        payload = dict(event.payload)
+        run_id = payload.get("temporalRunId")
+        lifecycle_key = None
+        if isinstance(run_id, str) and run_id.strip():
+            identity = [str(event.tenant_id), payload["workflowId"], run_id, event.event_type]
+            lifecycle_key = "workflow-lifecycle:" + hashlib.sha256(json.dumps(identity).encode()).hexdigest()
+        # Workflow lifecycle events are not tied to a single job (a pipeline
+        # run is a batch); the run identity lives in the payload.
+        record_job_event(
+            conn,
+            None,
+            "workflow",
+            event.event_type,
+            tenant_id=event.tenant_id,
+            payload=payload,
+            idempotency_key=lifecycle_key,
+        )
+        conn.commit()
+        # Refresh explicitly even without a bus-subscribed builder. A failed
+        # refresh can retry from the already committed canonical event.
+        ProjectionBuilder(conn_factory=get_connection).refresh()
+    finally:
+        # Also covers direct activity runners without the production pool.
+        # Closing rolls back unfinished writes and retains committed events.
+        close_connection()
 
 
 # ------------------------------------------------------- workflow-side helpers
+
+
+async def _execute_lifecycle_activity(activity_fn, payload, *, abandon_on_cancel: bool = False) -> None:
+    options = {
+        "start_to_close_timeout": _FINALIZE_TIMEOUT,
+        "retry_policy": _FINALIZE_RETRY,
+    }
+    if abandon_on_cancel:
+        options["cancellation_type"] = workflow.ActivityCancellationType.ABANDON
+    if workflow.patched(_LOCAL_FINALIZE_PATCH):
+        await workflow.execute_local_activity(
+            activity_fn, payload, schedule_to_close_timeout=_LOCAL_FINALIZE_SCHEDULE_TIMEOUT, **options,
+        )
+    else:
+        # Replay existing server-dispatched lifecycle histories unchanged.
+        await workflow.execute_activity(activity_fn, payload, **options)
 
 
 async def emit_workflow_started(
@@ -217,21 +261,37 @@ async def emit_workflow_started(
 ) -> None:
     """Record the start marker. Called at the top of a workflow's ``run``."""
     info = workflow.info()
-    await workflow.execute_activity(
-        record_workflow_started,
-        WorkflowStartedInput(
-            tenant_id=tenant_id,
-            workflow_id=info.workflow_id,
-            workflow_type=workflow_type,
-            input_summary=input_summary,
-            started_at=started_at.isoformat(),
-            temporal_run_id=info.run_id,
-            expected_app_dir=expected_app_dir,
-            expected_db_path=expected_db_path,
-        ),
-        start_to_close_timeout=_FINALIZE_TIMEOUT,
-        retry_policy=_FINALIZE_RETRY,
-    )
+    try:
+        await _execute_lifecycle_activity(
+            record_workflow_started,
+            WorkflowStartedInput(
+                tenant_id=tenant_id,
+                workflow_id=info.workflow_id,
+                workflow_type=workflow_type,
+                input_summary=input_summary,
+                started_at=started_at.isoformat(),
+                temporal_run_id=info.run_id,
+                expected_app_dir=expected_app_dir,
+                expected_db_path=expected_db_path,
+            ),
+        )
+    except (ActivityError, ApplicationError) as error:
+        cause = error.cause if isinstance(error, ActivityError) else error
+        if isinstance(cause, CancelledError):
+            raise
+        if workflow.patched("workflow-start-failure-outcome-v1"):
+            await emit_workflow_outcome(
+                tenant_id=tenant_id,
+                workflow_type=workflow_type,
+                status="failed",
+                started_at=started_at,
+                error_code=(cause.type if isinstance(cause, ApplicationError) else None)
+                or "workflow_start_failed",
+                error_message="Workflow start recording failed.",
+                expected_app_dir=expected_app_dir,
+                expected_db_path=expected_db_path,
+            )
+        raise
 
 
 async def emit_workflow_outcome(
@@ -250,7 +310,7 @@ async def emit_workflow_outcome(
     info = workflow.info()
     now = workflow.now()
     duration_ms = int((now - started_at).total_seconds() * 1000)
-    await workflow.execute_activity(
+    await _execute_lifecycle_activity(
         record_workflow_outcome,
         WorkflowOutcomeInput(
             tenant_id=tenant_id,
@@ -266,9 +326,7 @@ async def emit_workflow_outcome(
             expected_app_dir=expected_app_dir,
             expected_db_path=expected_db_path,
         ),
-        start_to_close_timeout=_FINALIZE_TIMEOUT,
-        retry_policy=_FINALIZE_RETRY,
-        cancellation_type=workflow.ActivityCancellationType.ABANDON,
+        abandon_on_cancel=True,
     )
 
 

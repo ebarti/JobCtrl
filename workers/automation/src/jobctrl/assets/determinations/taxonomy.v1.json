@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "1",
+  "track": {
+    "ic": "Individual contributor",
+    "management": "Management",
+    "executive": "Executive",
+    "unknown": "Unknown"
+  },
+  "seniority": {
+    "junior": "Junior",
+    "mid": "Mid-level",
+    "senior": "Senior",
+    "staff": "Staff",
+    "principal": "Principal",
+    "manager": "Manager",
+    "senior_manager": "Senior manager",
+    "director": "Director",
+    "vp": "Vice president",
+    "svp": "Senior vice president",
+    "c_level": "C-level",
+    "unknown": "Unknown"
+  },
+  "occupationFamily": {
+    "software_engineering": "Software engineering",
+    "engineering_management": "Engineering management",
+    "executive_leadership": "Executive leadership",
+    "data_science": "Data science",
+    "data_engineering": "Data engineering",
+    "machine_learning": "Machine learning",
+    "information_technology": "Information technology",
+    "product_management": "Product management",
+    "product_design": "Product design",
+    "sales": "Sales",
+    "marketing": "Marketing",
+    "finance": "Finance",
+    "human_resources": "Human resources",
+    "operations": "Operations",
+    "other": "Other",
+    "unknown": "Unknown"
+  },
+  "workModel": {
+    "remote": "Remote",
+    "hybrid": "Hybrid",
+    "onsite": "On-site",
+    "unknown": "Unknown"
+  },
+  "region": {
+    "africa": "Africa",
+    "asia": "Asia",
+    "europe": "Europe",
+    "north_america": "North america",
+    "south_america": "South america",
+    "oceania": "Oceania",
+    "global": "Global",
+    "unknown": "Unknown"
+  }
+}

@@ -9,7 +9,7 @@ multi-tenant rollout per ddd-target.md §9):
 
 * ``job_list_projections``    — denormalised row per job
 * ``dashboard_projections``   — singleton per tenant
-* ``job_detail_projections``  — full detail row per job
+* ``job_detail_projections``  — schema only; TypeScript owns live detail rows
 * ``artifact_list_projections`` — denormalised artifact rows
 * ``apply_run_projections``   — apply-run telemetry per run
 * ``workflow_run_projections`` — Temporal workflow lifecycle per execution
@@ -34,7 +34,6 @@ from jobctrl.domain.operations.projections import (
     ContactResearchTaskProjection,
     DashboardProjection,
     DueFollowUpProjection,
-    JobDetailProjection,
     JobListProjection,
     OutreachThreadProjection,
     SourceQualityStats,
@@ -753,88 +752,6 @@ class SqliteProjectionStore:
             ),
         )
 
-    def upsert_job_detail(self, projection: JobDetailProjection) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO job_detail_projections (
-                tenant_id, job_id, description_preview, compensation_summary_json,
-                compensation_audit_json, score_breakdown_json, score_keywords_json,
-                score_reasoning, score_version, scored_at,
-                score_criteria_json, score_trace_json, score_correction_json,
-                stages_json, employer_analysis_json, requirement_fit_report_json,
-                interview_prep_json,
-                last_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(tenant_id, job_id) DO UPDATE SET
-                description_preview    = excluded.description_preview,
-                compensation_summary_json = excluded.compensation_summary_json,
-                compensation_audit_json = excluded.compensation_audit_json,
-                score_breakdown_json   = excluded.score_breakdown_json,
-                score_keywords_json    = excluded.score_keywords_json,
-                score_reasoning        = excluded.score_reasoning,
-                score_version          = excluded.score_version,
-                scored_at              = excluded.scored_at,
-                score_criteria_json    = excluded.score_criteria_json,
-                score_trace_json       = excluded.score_trace_json,
-                score_correction_json  = excluded.score_correction_json,
-                stages_json            = excluded.stages_json,
-                employer_analysis_json = excluded.employer_analysis_json,
-                requirement_fit_report_json = excluded.requirement_fit_report_json,
-                interview_prep_json    = excluded.interview_prep_json,
-                last_updated_at        = excluded.last_updated_at
-            """,
-            (
-                str(projection.tenant_id),
-                projection.job_id,
-                projection.description_preview,
-                projection.compensation_summary_json,
-                projection.compensation_audit_json,
-                projection.score_breakdown_json,
-                projection.score_keywords_json,
-                projection.score_reasoning,
-                projection.score_version,
-                projection.scored_at,
-                projection.score_criteria_json,
-                projection.score_trace_json,
-                projection.score_correction_json,
-                json.dumps(
-                    [
-                        {
-                            "stage": stage.stage,
-                            "state": stage.state,
-                            "attempt_count": stage.attempt_count,
-                            "max_attempts": stage.max_attempts,
-                            "started_at": stage.started_at,
-                            "updated_at": stage.updated_at,
-                            "finished_at": stage.finished_at,
-                            "duration_ms": stage.duration_ms,
-                            "error_code": stage.error_code,
-                            "error_message": stage.error_message,
-                            "retryable": stage.retryable,
-                            "blocked_by": list(stage.blocked_by),
-                            "next_action": stage.next_action,
-                            "fetch_failure": stage.fetch_failure,
-                            "apply_url_outcome": (
-                                {
-                                    "code": stage.apply_url_outcome.code,
-                                    "message": stage.apply_url_outcome.message,
-                                    "retryable": stage.apply_url_outcome.retryable,
-                                    "method": stage.apply_url_outcome.method,
-                                }
-                                if stage.apply_url_outcome is not None
-                                else None
-                            ),
-                        }
-                        for stage in projection.stages
-                    ]
-                ),
-                projection.employer_analysis_json,
-                projection.requirement_fit_report_json,
-                projection.interview_prep_json,
-                projection.last_updated_at,
-            ),
-        )
-
     def upsert_artifact(self, projection: ArtifactListProjection) -> None:
         self._conn.execute(
             """
@@ -1416,15 +1333,6 @@ class SqliteProjectionStore:
         return self._conn.execute(
             "SELECT * FROM dashboard_projections WHERE tenant_id = ?",
             (tenant_id,),
-        ).fetchone()
-
-    def fetch_job_detail(self, tenant_id: str, job_id: str) -> sqlite3.Row | None:
-        return self._conn.execute(
-            """
-            SELECT * FROM job_detail_projections
-            WHERE tenant_id = ? AND job_id = ?
-            """,
-            (tenant_id, job_id),
         ).fetchone()
 
     def fetch_artifacts(self, tenant_id: str) -> list[sqlite3.Row]:

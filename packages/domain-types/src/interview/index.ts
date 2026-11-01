@@ -6,11 +6,15 @@
  * websocket, or real-time assistance state.
  */
 
+import type { InterviewGenerationContext, InterviewQuestionMetadata, InterviewStaleReason } from "./catalog.js";
+export * from "./catalog.js";
+
 export const INTERVIEW_PREP_ITEM_KINDS = [
   "theme",
   "star_draft",
   "gap_drill",
   "company_note",
+  "question_outline",
 ] as const;
 export type InterviewPrepItemKind = (typeof INTERVIEW_PREP_ITEM_KINDS)[number];
 
@@ -18,34 +22,37 @@ export const INTERVIEW_PREP_STATUSES = ["accepted", "failed", "superseded"] as c
 export type InterviewPrepStatus = (typeof INTERVIEW_PREP_STATUSES)[number];
 
 export interface InterviewPrepGateAudit {
-  readonly status: "passed" | "failed";
-  readonly fabricationFindings: readonly string[];
-  readonly groundingFindings: readonly string[];
-  readonly judgeVerdict: string | null;
-  readonly warnings: readonly string[];
+  status: "passed" | "failed";
+  fabricationFindings: string[];
+  groundingFindings: string[];
+  judgeVerdict: string | null;
+  warnings: string[];
 }
 
 export interface InterviewPrepItem {
-  readonly itemId: string;
-  readonly kind: InterviewPrepItemKind;
-  readonly title: string;
-  readonly generatedText: string;
-  readonly evidenceIds: readonly string[];
-  readonly requirementIds: readonly string[];
-  readonly sourceText: readonly string[];
-  readonly transformType: string;
-  readonly control: string;
-  readonly groundingAudit: readonly string[];
-  readonly warnings: readonly string[];
-  readonly position: number;
+  itemId: string;
+  kind: InterviewPrepItemKind;
+  title: string;
+  generatedText: string;
+  evidenceIds: string[];
+  requirementIds: string[];
+  sourceText: string[];
+  transformType: string;
+  control: string;
+  groundingAudit: string[];
+  warnings: string[];
+  position: number;
+  questionMetadata?: InterviewQuestionMetadata | null | undefined;
 }
 
 export interface InterviewPrep {
-  readonly jobId: string;
-  readonly generation: number;
-  readonly status: InterviewPrepStatus;
-  readonly generatedAt: string;
-  readonly model: string | null;
-  readonly gateAudit: InterviewPrepGateAudit;
-  readonly items: readonly InterviewPrepItem[];
+  jobId: string;
+  generation: number;
+  status: InterviewPrepStatus;
+  generatedAt: string;
+  model: string | null;
+  gateAudit: InterviewPrepGateAudit;
+  items: InterviewPrepItem[];
+  generationContext?: InterviewGenerationContext | null | undefined;
+  staleReasons?: InterviewStaleReason[] | undefined;
 }

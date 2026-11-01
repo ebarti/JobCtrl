@@ -102,6 +102,19 @@ describe("estimatePipelineEta", () => {
     expect(estimatePipelineEta(input({ membershipOpen: false }))).toMatchObject({ status: "available" });
   });
 
+  it("prices positive stage demand while membership is open without claiming zero work", () => {
+    const scoped = input({ membershipOpen: true, estimateScope: "stage", remainingPaths: [] });
+    expect(estimatePipelineEta(scoped)).toMatchObject({ status: "available" });
+    const empty = { ...scoped, stages: [stage({ remainingCurrentStage: 0 })] };
+    expect(estimatePipelineEta(empty)).toMatchObject({
+      status: "calibrating", reason: "membership_open", completedSamples: 0,
+    });
+    expect(estimatePipelineEta({ ...empty, membershipOpen: false }))
+      .toEqual({ status: "unavailable", reason: "no_work", asOf: AS_OF });
+    expect(estimatePipelineEta({ ...scoped, telemetryFresh: false }))
+      .toEqual({ status: "stale", reason: "telemetry_stale", asOf: AS_OF });
+  });
+
   it("does not treat open membership or runtime-only activity as proof of no work", () => {
     expect(
       estimatePipelineEta(input({

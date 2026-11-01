@@ -1,0 +1,177 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import Database from "better-sqlite3";
+import { describe, expect, it } from "vitest";
+
+import {
+  assertAscending,
+  assertHash,
+  DATASET_SIZES,
+  distribution,
+  offlineEnvironment,
+  parseCliArgs,
+  seedSyntheticDataset,
+  withOwnedWorkspace,
+} from "./local-scale.js";
+
+const uvAvailable = spawnSync("uv", ["--version"], { stdio: "ignore" }).status === 0;
+
+describe("local scale benchmark support", () => {
+  it("reports nearest-rank p50, p95, and max while retaining raw samples", () => {
+    expect(distribution([10, 1, 9, 2, 8, 3, 7, 4, 6, 5])).toEqual({
+      samples: [10, 1, 9, 2, 8, 3, 7, 4, 6, 5], p50: 5, p95: 10, max: 10,
+    });
+    expect(() => distribution([])).toThrow("at least one sample");
+    expect(() => distribution([1, Number.NaN])).toThrow("finite non-negative");
+  });
+
+  it("rejects input workspace flags and refuses existing report outputs", () => {
+    expect(() => parseCliArgs(["--db", "/tmp/private.db"])).toThrow("unsupported argument");
+    expect(() => parseCliArgs(["--app-dir", "/tmp/existing"])).toThrow("unsupported argument");
+    expect(() => parseCliArgs(["--json-out", "report.txt"])).toThrow("must end in .json");
+    expect(() => parseCliArgs(["--json-out", path.resolve(import.meta.dirname, "../package.json")]))
+      .toThrow("refuses to overwrite");
+    expect(() => parseCliArgs(["--dirty-exclusion-path", "../private"])).toThrow("stay within the repository");
+    expect(() => parseCliArgs(["--dirty-exclusion-path", "workers/automation/uv.lock"]))
+      .toThrow("requires path, content SHA-256, and note together");
+  });
+
+  it("removes the owned workspace after a failing run", async () => {
+    let directory = "";
+    await expect(withOwnedWorkspace((workspace) => {
+      directory = workspace.directory;
+      throw new Error("injected failure");
+    }, () => undefined)).rejects.toThrow("injected failure");
+    expect(directory).not.toBe("");
+    expect(fs.existsSync(directory)).toBe(false);
+  });
+
+  it.runIf(uvAvailable)("seeds the smallest declared exact-v15 dataset with fixed totals", async () => {
+    await withOwnedWorkspace((workspace) => {
+      const db = new Database(workspace.dbPath, { readonly: true });
+      const template = db.prepare("SELECT * FROM resume_templates WHERE tenant_id = 'local' AND template_id = 'built_in:modern-html'").get();
+      const versions = db.prepare("SELECT * FROM resume_template_versions WHERE tenant_id = 'local' AND template_id = 'built_in:modern-html'").all();
+      try {
+        expect(template).toBeDefined();
+        expect(versions).toHaveLength(1);
+        const result = seedSyntheticDataset(workspace, DATASET_SIZES[0]);
+        expect(result).toMatchObject({ jobs: 100, events: 300, eventsPerJob: 3 });
+        expect(result.artifacts.pdfBytes).toBe(256 * 1_024);
+        expect(result.artifacts.htmlBytes).toBe(128 * 1_024);
+        expect(db.prepare("SELECT * FROM resume_templates WHERE tenant_id = 'local' AND template_id = 'built_in:modern-html'").get()).toEqual(template);
+        expect(db.prepare("SELECT * FROM resume_template_versions WHERE tenant_id = 'local' AND template_id = 'built_in:modern-html'").all()).toEqual(versions);
+      } finally { db.close(); }
+    });
+  }, 30_000);
+
+  it.runIf(uvAvailable)("exercises the real HTTP, timer SSE, preview, projection, and production RPC paths", async () => {
+    const { runDataset } = await import("./run-local-scale.js");
+    await withOwnedWorkspace(async (workspace) => {
+      const result = await runDataset(workspace, DATASET_SIZES[0]);
+      expect(result.projection.projectionRows).toBe(100);
+      expect(result.http.searchObserved).toBe(result.http.searchExpected);
+      expect(result.sse).toMatchObject({ orderingVerified: true, countVerified: true, eventsPerBurst: 1_000 });
+      expect(result.preview.pdfSha256).toBe(result.seed.artifacts.pdfSha256);
+      expect(result.preview.htmlSha256).toBe(result.seed.artifacts.htmlSha256);
+      expect(result.rpc).toMatchObject({ method: "provider_models", responseHasResult: true, providerModelCalls: 0 });
+      expect(result.rpc.providers).toEqual([
+        { provider: "codex", configured: false, ready: false, modelCount: 0 },
+        { provider: "claude", configured: false, ready: false, modelCount: 0 },
+        { provider: "google", configured: false, ready: false, modelCount: 0 },
+      ]);
+    });
+  }, 120_000);
+
+  it.runIf(uvAvailable)("verifies separate combined-stage pages, ties, deep reads, and retained memory samples", async () => {
+    const { runCombinedStageDataset } = await import("./run-local-scale.js");
+    await withOwnedWorkspace(async (workspace) => {
+      const result = await runCombinedStageDataset(workspace, DATASET_SIZES[0]);
+      expect(result).toMatchObject({ jobs: 100, stageCounts: { discover: 66, apply: 34 }, correctnessVerified: true });
+      expect(result.scenarios).toHaveLength(16);
+      expect(result.queryIndex.cold).toMatchObject({ refreshes: 1, indexedRows: 100, selectedRows: 10 });
+      expect(result.queryIndex.warm.refreshes).toBe(1);
+      expect(result.queryIndex.warm.refreshMs).toBe(result.queryIndex.cold.refreshMs);
+      expect(result.queryIndex.cold.sourceChecks).toBe(1);
+      expect(result.queryIndex.warm.sourceChecks).toBe(1);
+      expect(result.queryIndex.warm.sourceCheckMs).toBe(result.queryIndex.cold.sourceCheckMs);
+      expect(result.queryIndex.cold.initializationMs).toBeGreaterThan(0);
+      expect(result.queryIndex.warm.initializationMs).toBe(result.queryIndex.cold.initializationMs);
+      console.info("query index measurements", JSON.stringify(result.queryIndex));
+      for (const scenario of result.scenarios) {
+        expect(scenario.latency.samples).toHaveLength(7);
+        expect(scenario.memory.samples).toHaveLength(7);
+        expect(scenario.observedJobIds).toEqual(scenario.expectedJobIds);
+      }
+      expect(result.scenarios.find((scenario) => scenario.name === "sql-clamped"))
+        .toMatchObject({ expectedPage: 4, expectedTotal: 100 });
+      expect(result.scenarios.find((scenario) => scenario.name === "empty-membership"))
+        .toMatchObject({ expectedPage: 1, expectedTotal: 0, observedJobIds: [] });
+      for (const [name, page] of [["first", 1], ["adjacent", 2], ["deep", 3], ["clamped", 4]] as const) {
+        const scenario = result.scenarios.find((item) => item.name === `fit-score-${name}`)!;
+        expect(scenario).toMatchObject({ expectedPage: page, expectedTotal: 100 });
+        expect(new URLSearchParams(scenario.query).get("sort")).toBe("fit_score");
+      }
+    });
+  }, 120_000);
+
+  it.runIf(uvAvailable)("keeps production RPC offline with ambient Bedrock, AWS, and provider credentials", async () => {
+    const ambientHome = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-hostile-home-"));
+    const awsDirectory = path.join(ambientHome, ".aws");
+    fs.mkdirSync(awsDirectory, { recursive: true });
+    const credentialsPath = path.join(awsDirectory, "credentials");
+    fs.writeFileSync(credentialsPath, "[ambient]\naws_access_key_id = ambient\naws_secret_access_key = ambient\n");
+    const hostile = {
+      HOME: ambientHome,
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      AWS_PROFILE: "ambient",
+      AWS_ACCESS_KEY_ID: "ambient",
+      AWS_SECRET_ACCESS_KEY: "ambient",
+      AWS_SESSION_TOKEN: "ambient",
+      AWS_SHARED_CREDENTIALS_FILE: credentialsPath,
+      CODEX_API_KEY: "ambient",
+      OPENAI_API_KEY: "ambient",
+      ANTHROPIC_API_KEY: "ambient",
+      GEMINI_API_KEY: "ambient",
+      GOOGLE_API_KEY: "ambient",
+      GOOGLE_APPLICATION_CREDENTIALS: path.join(ambientHome, "google.json"),
+    } as const;
+    const previous = new Map(Object.keys(hostile).map((key) => [key, process.env[key]]));
+    try {
+      Object.assign(process.env, hostile);
+      await withOwnedWorkspace(async (workspace) => {
+        const isolated = offlineEnvironment(workspace.directory);
+        expect(isolated.HOME).toBe(path.join(workspace.directory, ".benchmark-home"));
+        expect(isolated.AWS_SHARED_CREDENTIALS_FILE).toBe(
+          path.join(workspace.directory, ".benchmark-home", "aws", "credentials"),
+        );
+        for (const key of Object.keys(hostile)) {
+          if (key !== "HOME" && key !== "AWS_SHARED_CREDENTIALS_FILE") expect(isolated[key]).toBeUndefined();
+        }
+        const { measureRpc } = await import("./run-local-scale.js");
+        const result = await measureRpc(workspace);
+        expect(result).toMatchObject({
+          preflightMethod: "provider_status",
+          providerStatusesNonReady: true,
+          catalogEnvelopeVerified: true,
+          providerModelCalls: 0,
+        });
+        expect(result.providers.every((provider) => !provider.configured && !provider.ready && provider.modelCount === 0))
+          .toBe(true);
+      });
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      fs.rmSync(ambientHome, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("fails correctness oracles when ordering or bytes are perturbed", () => {
+    expect(() => assertAscending(["a", "b"], "test")).not.toThrow();
+    expect(() => assertAscending(["b", "a"], "test")).toThrow("ordering oracle failed");
+    expect(() => assertHash(Buffer.from("changed"), "0".repeat(64), "preview")).toThrow("hash oracle failed");
+  });
+});

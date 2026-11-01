@@ -19,12 +19,12 @@ from typing import Any
 from jobctrl import config
 from jobctrl.domain.events.base import create_domain_event
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.materials.analysis import PROMPT_VERSION as ANALYSIS_PROMPT_VERSION
 from jobctrl.domain.pipeline.aggregate import OptimisticLockError
 from jobctrl.domain.pipeline.state_machine import is_valid_transition
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.scoring.eligibility import (
     eligibility_blocks_downstream,
-    normalize_eligibility_for_downstream,
 )
 from jobctrl.domain.scoring.value_objects import EligibilityAssessment
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
@@ -492,7 +492,8 @@ def _reconcile_requirement_fit_blockers(
                        WHERE tenant_id = blocked.tenant_id AND job_id = blocked.job_id)
                   AND report.employer_analysis_generation = (SELECT MAX(generation)
                        FROM job_employer_analysis
-                       WHERE tenant_id = blocked.tenant_id AND job_id = blocked.job_id)
+                       WHERE tenant_id = blocked.tenant_id AND job_id = blocked.job_id
+                         AND prompt_version = '{ANALYSIS_PROMPT_VERSION}')
                   AND report.profile_snapshot_version =
                        json_extract(score.trace_json, '$.profile_snapshot_version')
                   AND EXISTS (SELECT 1 FROM job_requirement_fit_items AS item
@@ -666,16 +667,18 @@ def reconcile_score_eligibility_blockers(
     job_id: JobId,
     eligibility_status: str | None,
     hard_blockers: list[str] | tuple[str, ...] | None = None,
+    hard_blocker_categories: tuple[str, ...] = (),
+    hard_blocker_citations: tuple[tuple[dict, ...], ...] = (),
     now: str | None = None,
 ) -> int:
     """Keep downstream stage rows aligned with score hard-blocker eligibility."""
     stable_job_id = canonical_job_id(str(job_id))
     raw_blockers = _clean_blocker_reasons(hard_blockers)
-    eligibility = normalize_eligibility_for_downstream(
-        EligibilityAssessment(
-            status=str(eligibility_status or "unknown"),
-            hard_blockers=tuple(raw_blockers),
-        )
+    eligibility = EligibilityAssessment(
+        status=str(eligibility_status or "unknown"),
+        hard_blockers=tuple(raw_blockers),
+        hard_blocker_categories=hard_blocker_categories,
+        hard_blocker_citations=hard_blocker_citations,
     )
     blockers = list(eligibility.hard_blockers)
     blocked = eligibility_blocks_downstream(eligibility)
@@ -1152,6 +1155,7 @@ def record_job_event(
     payload: dict[str, Any] | None = None,
     occurred_at: str | None = None,
     publisher: EventPublisher | None = None,
+    defer_publication: bool = False,
     entity_kind: str | None = None,
     entity_ref: str | None = None,
     idempotency_key: str | None = None,
@@ -1164,6 +1168,11 @@ def record_job_event(
     custom ``publisher`` for tests; the production default is the
     process-wide singleton from
     :func:`jobctrl.infrastructure.events.get_default_publisher`.
+
+    Owned Apply aggregate writes use ``defer_publication``: callbacks run only
+    after the owning connection commits and still contains the exact event row.
+    Caller rollback/savepoint rollback discards these notifications. A stopped
+    process can recover notifications through durable event replay.
 
     **Phase-3 deviation from §6.3** (round-1 review M2): the canonical §6.3
     pattern is "dispatch happens AFTER the producing transaction commits",
@@ -1247,13 +1256,31 @@ def record_job_event(
         from jobctrl.infrastructure.events import get_default_publisher
 
         publisher = get_default_publisher()
+    from jobctrl.domain.apply.event_privacy import email_event_references
+
     event = create_domain_event(
         event_type=event_type,
         tenant_id=tenant_id,
-        payload=current_payload,
+        payload=email_event_references(event_type, current_payload),
         occurred_at=ts,
     )
-    publisher.publish(event)
+    if defer_publication:
+        from jobctrl.infrastructure.commit_notifications import NotificationConnection
+
+        if not isinstance(conn, NotificationConnection):
+            raise RuntimeError("Owned Apply publication requires a commit-aware connection")
+        row_id = cursor.lastrowid
+        # Compare the complete inserted row: a savepoint rollback can reuse IDs.
+        expected = tuple(conn.execute("SELECT * FROM job_events WHERE event_id=?", (row_id,)).fetchone())
+
+        def publish_committed() -> None:
+            row = conn.execute("SELECT * FROM job_events WHERE event_id=?", (row_id,)).fetchone()
+            if row is not None and tuple(row) == expected:
+                publisher.publish(event)
+
+        conn.defer_notification(("job_event", row_id, expected), publish_committed)
+    else:
+        publisher.publish(event)
 
 
 def record_job_artifact(
@@ -1367,42 +1394,6 @@ def get_job_stage_states(
         else:
             states.append(_default_state(stage))
     return states
-
-
-def _reset_enrichment_aggregate(
-    conn,
-    *,
-    tenant_id: TenantId,
-    job_id: JobId,
-) -> None:
-    """Reset the JobEnrichment aggregate for a job back to ``pending``.
-
-    Phase 7 (S-26 round-1 review B1). The mirror of
-    :func:`_reset_materials_artifacts` for the enrichment context. After
-    a stage reset for "enrich":
-
-      * the legacy ``jobs.detail_scraped_at`` / ``jobs.detail_error``
-        columns are nulled by ``reset_job_stage``'s standard UPDATE so
-        un-migrated rows reading the legacy fallback also reset;
-      * AND the ``job_enrichments`` row's ``current_status`` is set
-        back to ``pending`` and the terminal-state fields cleared,
-        otherwise the new ``_ENRICHMENT_PENDING`` predicate would
-        permanently exclude the row and retry would silently no-op.
-
-    The repository is loaded inline so we don't hit a circular import
-    (the enrichment package imports ``state``).
-    """
-    from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
-
-    repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(tenant_id, job_id)
-    if aggregate is None:
-        # Nothing to reset — the next pipeline run will create the row
-        # in the empty state when start_attempt fires.
-        return
-    if aggregate.is_pending and aggregate.full_description is None:
-        return
-    repo.save(aggregate.reset(reset_at=utc_now()))
 
 
 def _resettable_material_generation(
@@ -1553,19 +1544,22 @@ def reset_job_stage(
     if stage not in (*STAGE_ORDER, "apply"):
         raise ValueError(f"unknown stage: {stage}")
 
-    row = conn.execute(
-        """
-        SELECT job_id, url
-        FROM jobs
-        WHERE tenant_id = ? AND (url = ? OR application_url = ?)
-        """,
-        (str(tenant_id), job_url_or_application_url, job_url_or_application_url),
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"no matching job found: {job_url_or_application_url}")
+    if stage in {"enrich", "apply"}:
+        from jobctrl.pipeline.retry import reset_retry_stages
 
-    job_url = row["url"]
-    stable_job_id = canonical_job_id(str(row["job_id"]))
+        return reset_retry_stages(
+            conn, [(job_url_or_application_url, stage)],
+            tenant_id=tenant_id, reset_attempts=reset_attempts,
+            _allow_apply_only=stage == "apply",
+        )[0]["jobUrl"]
+
+    from jobctrl.infrastructure.job_locators import resolve_job_locator
+
+    identity = resolve_job_locator(conn, str(tenant_id), job_url_or_application_url)
+    if identity is None:
+        raise ValueError(f"no unique matching job found: {job_url_or_application_url}")
+    stable_job_id = canonical_job_id(identity[0])
+    job_url = identity[1]
     # Reset only the canonical stage-owned aggregate. The retired projection
     # columns on ``jobs`` are historical migration facts, not write targets.
     if stage in ("tailor", "cover"):
@@ -1574,16 +1568,6 @@ def reset_job_stage(
             tenant_id=tenant_id,
             job_id=stable_job_id,
             stage=stage,
-        )
-    # Enrichment-side reset (Phase 7, round-1 B1). Mirror of the
-    # materials reset for the enrichment aggregate. Without this the
-    # ``_ENRICHMENT_PENDING`` queue predicate excludes the row and the
-    # retry-enrich is a silent no-op.
-    if stage == "enrich":
-        _reset_enrichment_aggregate(
-            conn,
-            tenant_id=tenant_id,
-            job_id=stable_job_id,
         )
     set_stage_state(
         conn,

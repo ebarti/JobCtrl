@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -40,7 +41,7 @@ var (
 )
 
 const (
-	launcherProtocol   = 1
+	launcherProtocol   = 2
 	stateSchemaVersion = 1
 	logLineLimit       = 200
 	startupTimeout     = 30 * time.Second
@@ -49,9 +50,17 @@ const (
 	// within those valid phase deadlines.
 	detachedStartupTimeout = 2*startupTimeout + 5*time.Second
 	shutdownTimeout        = 5 * time.Second
+	// API shutdown may spend up to 30 seconds closing requests and another 30
+	// seconds draining RPC children. Allow that sequence to complete before
+	// falling back to the recorded-group termination policy.
+	cooperativeShutdownTimeout = 65 * time.Second
+	// The supervisor drains API and worker sequentially, then Temporal. Do not
+	// race that cleanup by signaling the components from another controller.
+	supervisorShutdownTimeout = 3 * time.Minute
 )
 
 var (
+	errUntrackedOwnership = errors.New("this legacy runtime has no durable child-ownership record; recorded processes were checked, but cleanup cannot certify already-detached children. Automatic recovery is unavailable; keep the runtime registry and workspace intact and seek support")
 	ErrAlreadyRunning     = errors.New("an active JobCtrl instance already owns this state directory")
 	ErrPortInUse          = errors.New("a required fixed loopback port is already in use")
 	ErrLockHeld           = errors.New("the JobCtrl instance lock is held")
@@ -231,6 +240,8 @@ type instanceState struct {
 	Ports             runtimePorts               `json:"ports"`
 	StartedAt         time.Time                  `json:"startedAt"`
 	StoppedAt         *time.Time                 `json:"stoppedAt,omitempty"`
+	ExecutionScopeID  string                     `json:"executionScopeId,omitempty"`
+	OwnershipVerified bool                       `json:"ownershipVerified,omitempty"`
 	Supervisor        componentRecord            `json:"supervisor"`
 	Components        map[string]componentRecord `json:"components"`
 }
@@ -259,6 +270,7 @@ type launchContext struct {
 	Instance     instance
 	Environment  []string
 	selection    *release.Lock
+	SourcePython string
 }
 type readyMessage struct {
 	Error string `json:"error,omitempty"`
@@ -272,16 +284,54 @@ var signalProcessGroup groupSignaler = func(pgid int, signal syscall.Signal) err
 var openBrowser = func(url string) error { return exec.Command("/usr/bin/open", url).Run() }
 var temporalHealthProbe = probeTemporal
 var startCommand = executeStart
+var ownedExecutionRunner = runInOwnedExecution
+var stopCompletionCheckpoint func(string) error
 
 // Run is the only public CLI entrypoint. __supervise is reachable only through
 // the re-exec made by `jobctrl start`.
 func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Writer) error {
+	if handled, err := ownedExecutionHelper(args); handled {
+		return err
+	}
+	runtimeHome, err := runtimeHomeFromEnv(inheritedEnv)
+	if err != nil {
+		return err
+	}
+	if err := refusePendingBridgeHandoff(runtimeHome); err != nil {
+		return err
+	}
+	if len(args) == 1 && args[0] == "update" && environmentMap(inheritedEnv)["JOBCTRL_TRANSITION_TARGET"] == "" {
+		if handled, err := resumeForwardUpdate(inheritedEnv, stdout); handled {
+			return err
+		}
+	}
+	if len(args) == 1 && args[0] == "stop" {
+		if handled, err := stopForwardUpdate(inheritedEnv, stdout); handled {
+			return err
+		}
+	}
+	if err := refuseUnfinishedForwardUpdate(runtimeHome, args, inheritedEnv); err != nil {
+		return err
+	}
 	if len(args) > 0 && args[0] == "rollback" {
+		if handled, err := recoverBridgeBeforeBootstrap(inheritedEnv, args, stdout); handled {
+			return err
+		}
+		_, controllerErr := homebrewBootstrap(executable, args, inheritedEnv, stdout, stderr, true)
 		if handled, recoveryErr := recoverRevokedTransitionBeforePrepare(inheritedEnv, stdout); handled {
+			if recoveryErr != nil && controllerErr != nil {
+				return fmt.Errorf("prepare recovery controller: %v; recovery: %w", controllerErr, recoveryErr)
+			}
 			return recoveryErr
 		}
 		if handled, recoveryErr := recoverInterruptedTransitionBeforeBootstrap(inheritedEnv, stdout); handled {
+			if recoveryErr != nil && controllerErr != nil {
+				return fmt.Errorf("prepare recovery controller: %v; recovery: %w", controllerErr, recoveryErr)
+			}
 			return recoveryErr
+		}
+		if controllerErr != nil {
+			return controllerErr
 		}
 	}
 	if handled, uninstallErr := uninstallUnsafeActiveBeforePrepare(args, inheritedEnv, stdout); handled {
@@ -295,11 +345,55 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 		return err
 	}
 	defer func() { _ = ctx.selection.Close() }()
+	// A source migration is resumed by its source controller. Product commands
+	// must not start another writer while that recovery record is present.
+	if len(args) == 0 || (args[0] != "stop" && args[0] != "status" && args[0] != "logs" && args[0] != "version" && args[0] != "help" && args[0] != "--help") {
+		if err := refusePendingSourceMigration(ctx); err != nil {
+			return err
+		}
+	}
+	if err := refusePendingBridgeHandoff(ctx.Instance.RuntimeHome); err != nil {
+		return err
+	}
 	if store, storeErr := release.Open(ctx.Instance.RuntimeHome); storeErr == nil {
-		if journal, journalErr := store.ReadJournal(); journalErr == nil && journal.Resumable() && !transitionRecoveryCommand(args) {
+		if journal, journalErr := store.ReadJournal(); journalErr == nil && journal.Resumable() && !transitionRecoveryCommand(args) && !authenticatedTransitionStartup(ctx, args) {
+			if transitionRecoveryUnavailable(journal) {
+				return fmt.Errorf("unfinished %s transition at %s; automatic recovery is unavailable and commands remain blocked; preserve the live databases and transition journal", journal.Operation, journal.State)
+			}
 			return fmt.Errorf("unfinished %s transition at %s; run `jobctrl rollback` to recover before starting or dispatching commands", journal.Operation, journal.State)
 		} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
 			return fmt.Errorf("read release transition journal: %w", journalErr)
+		}
+	}
+	if len(args) > 0 && args[0] == applyExecutionArgument {
+		if len(args) != 1 {
+			return errors.New("invalid private Apply execution arguments")
+		}
+		// Each activity receives its own existing OS execution boundary, even
+		// when invoked by a worker in the long-lived supervisor's scope.
+		return ownedExecutionRunner(ctx, []string{applyWorkerArgument}, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == applyWorkerArgument {
+		if len(args) != 1 {
+			return errors.New("invalid private Apply worker arguments")
+		}
+		values := environmentMap(ctx.Environment)
+		if values[applyExecutionVariable] == "" || values[applyExecutionVariable] != values[executionScopeVariable] {
+			return errors.New("Apply worker requires its dedicated native execution")
+		}
+		owned, err := authenticatedApplyExecution(ctx)
+		if err != nil || !owned {
+			return errors.Join(errors.New("Apply worker requires an authenticated native execution"), err)
+		}
+		return dispatchApplyWorker(ctx)
+	}
+	if commandRequiresOwnedExecution(args) {
+		owned, err := authenticatedOwnedExecution(ctx)
+		if err != nil {
+			return err
+		}
+		if !owned {
+			return ownedExecutionRunner(ctx, args, stdout, stderr)
 		}
 	}
 	if len(args) > 0 && args[0] == "__supervise" {
@@ -308,8 +402,69 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 	return dispatchCommand(ctx, args, stdout, stderr)
 }
 
+// Later protected milestones cannot use the early bridge cancellation path.
+// Legacy journals have the same ambiguity once a paired backup or activation
+// may have occurred, even though they lack the preservation flag.
+func transitionRecoveryUnavailable(journal release.Journal) bool {
+	switch journal.State {
+	case release.MetadataVerified, release.ReleaseCommitted, release.SelectorHandoffPending, release.SelectorReplaced:
+		return false
+	case release.PairBackedUp, release.PolicyPending, release.MigrationCandidateReady,
+		release.MigrationActivated, release.CandidateStarting, release.CandidateHealthy, release.PolicyFinalized:
+		return true
+	case release.RollbackRestoring:
+		return journal.PreserveLiveOnFailure || journal.BackupID != "" || journal.TargetBackupID != ""
+	default:
+		return journal.PreserveLiveOnFailure
+	}
+}
+
+// Control/read-only commands run outside the runtime's execution boundary.
+// Every public entry that can leave runtime children gets a durable OS scope.
+func commandRequiresOwnedExecution(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "start", "dev", "__supervise":
+		return true
+	case "status":
+		return len(args) == 2 && args[1] == "--pipeline"
+	case "help", "--help", "stop", "logs", "open", "version", "update", "rollback", "backup", "uninstall":
+		return false
+	default:
+		return true
+	}
+}
+
 func transitionRecoveryCommand(args []string) bool {
 	return len(args) > 0 && (args[0] == "rollback" || args[0] == "uninstall")
+}
+
+func authenticatedTransitionStartup(ctx launchContext, args []string) bool {
+	starting := len(args) == 2 && args[0] == "start" && args[1] == "--no-open"
+	supervising := len(args) == 1 && args[0] == "__supervise"
+	if !starting && !supervising {
+		return false
+	}
+	if environmentMap(ctx.Environment)["JOBCTRL_TRANSITION_TARGET"] != "" {
+		// prepare already authenticated the controller bytes and complete target
+		// tree. Revalidate the live journal/receipt here without hashing the full
+		// distribution again at every dispatch and migration boundary.
+		if !sameExecutable(ctx.Executable, filepath.Join(ctx.Instance.RuntimeHome, "bin", "jobctrl")) || environmentMap(ctx.Environment)["JOBCTRL_TRANSITION_TARGET"] != ctx.Distribution.BuildID {
+			return false
+		}
+		return verifyDirectTransitionExecution(ctx.PayloadRoot, ctx.Distribution, ctx.Environment) == nil
+	}
+	executable, err := filepath.EvalSymlinks(ctx.Executable)
+	root, rootErr := filepath.EvalSymlinks(ctx.PayloadRoot)
+	if err != nil || rootErr != nil || executable != filepath.Join(root, "launcher", "jobctrl") {
+		return false
+	}
+	// Internal readiness starts are the work that completes the journal. Bind
+	// the exception to its current state, release and immutable manifest again;
+	// neither a public selector nor an environment flag alone grants access.
+	return verifyDirectTransitionExecution(ctx.PayloadRoot, ctx.Distribution, ctx.Environment) == nil
 }
 
 // dispatchCommand keeps the one-release dev compatibility alias on the exact
@@ -373,6 +528,21 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
+	if err := requireLegacySourceOwnership(ctx); err != nil {
+		return err
+	}
+	if err := migrateHistoricalTransition(ctx); err != nil {
+		return fmt.Errorf("prepare target schema for historical update: %w", err)
+	}
+	if err := checkStartSchemaVersion(ctx); err != nil {
+		return err
+	}
 	if foreground {
 		return supervise(ctx, nil)
 	}
@@ -386,9 +556,35 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 	return err
 }
 
+// An installed build must explain a version mismatch before a worker exit can
+// hide its cause. Normal release updates perform the migration before start.
+func checkStartSchemaVersion(ctx launchContext) error {
+	database := filepath.Join(ctx.Instance.StateDir, "jobctrl.db")
+	if _, err := os.Lstat(database); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	version, err := jobCtrlSchemaVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect the workspace database before startup: %w", err)
+	}
+	if version > currentJobCtrlSchemaVersion {
+		return errors.New("this workspace was upgraded by a newer JobCtrl build; update the installed app before starting it")
+	}
+	if version < currentJobCtrlSchemaVersion {
+		return errors.New("the workspace database needs an upgrade; use the supported JobCtrl installer or update path before starting")
+	}
+	return nil
+}
+
 func ExitCode(err error) int {
 	if err == nil {
 		return 0
+	}
+	var status interface{ ExitCode() int }
+	if errors.As(err, &status) {
+		return status.ExitCode()
 	}
 	if errors.Is(err, ErrAlreadyRunning) || errors.Is(err, ErrLockHeld) {
 		return 75
@@ -397,6 +593,23 @@ func ExitCode(err error) int {
 		return 69
 	}
 	return 1
+}
+
+// The internal Apply controller reserves one status for an authenticated
+// helper's bounded inspection failure. Ordinary child and startup failures
+// all use a different status, so they cannot impersonate that category.
+func ExitCodeForCommand(err error, args []string) int {
+	if err == nil {
+		return 0
+	}
+	if len(args) == 1 && args[0] == "__apply-execution" {
+		var reason interface{ ApplyCleanupCategory() string }
+		if errors.As(err, &reason) && reason.ApplyCleanupCategory() == "inspection_denied" {
+			return 211
+		}
+		return 1
+	}
+	return ExitCode(err)
 }
 func printHelp(out io.Writer) {
 	fmt.Fprint(out, "JobCtrl bundled launcher\n\nUsage:\n  jobctrl start [--no-open] [--foreground]\n  jobctrl dev [--no-open] [--foreground]  (deprecated alias for start)\n  jobctrl stop\n  jobctrl status [--pipeline] [--json]\n  jobctrl logs [temporal|worker|api]\n  jobctrl open\n  jobctrl version [--json]\n  jobctrl update\n  jobctrl rollback [--to BUILD_ID]\n  jobctrl backup [--output DIRECTORY]\n  jobctrl uninstall [--remove-data]\n  jobctrl pipeline-status\n  jobctrl <Python domain command>\n")
@@ -470,7 +683,7 @@ func prepare(executable string, inheritedEnv []string) (launchContext, error) {
 		return launchContext{}, err
 	}
 	keepSelection = true
-	return launchContext{executable, payloadRoot, manifest, distribution, inst, childEnvironment(inheritedEnv, payloadRoot, inst.StateDir, manifest), selection}, nil
+	return launchContext{Executable: executable, PayloadRoot: payloadRoot, Manifest: manifest, Distribution: distribution, Instance: inst, Environment: childEnvironment(inheritedEnv, payloadRoot, inst.StateDir, manifest), selection: selection}, nil
 }
 
 // Stable and prerelease payload launchers are never a second public command
@@ -536,6 +749,10 @@ func locatePayloadRootLocked(executable string, inheritedEnv []string) (string, 
 	if err != nil {
 		return "", nil, nil, err
 	}
+	if environmentMap(inheritedEnv)["JOBCTRL_TRANSITION_TARGET"] != "" {
+		root, receipt, err := transitionSelectorPayload(path, inheritedEnv)
+		return root, receipt, nil, err
+	}
 	if filepath.Base(path) == "jobctrl" && filepath.Base(filepath.Dir(path)) == "launcher" {
 		return filepath.Dir(filepath.Dir(path)), nil, nil, nil
 	}
@@ -570,6 +787,9 @@ func locatePayloadRootLocked(executable string, inheritedEnv []string) (string, 
 	fail := func(cause error) (string, *selectorReceipt, *release.Lock, error) {
 		_ = lock.Close()
 		return "", nil, nil, cause
+	}
+	if err := refusePendingBridgeHandoff(home); err != nil {
+		return fail(err)
 	}
 	selector := filepath.Join(home, "bin", "jobctrl")
 	if path != selector {
@@ -1368,8 +1588,16 @@ func childEnvironment(inherited []string, payloadRoot, stateDir string, manifest
 	}
 	return result
 }
-func substitute(argument string, ctx launchContext) string {
-	return strings.NewReplacer("${PAYLOAD_ROOT}", ctx.PayloadRoot, "${TEMPORAL_GRPC_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalGRPC), "${TEMPORAL_UI_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalUI), "${TEMPORAL_DB}", filepath.Join(ctx.Instance.StateDir, "temporal.db")).Replace(argument)
+func substitute(argument string, ctx launchContext) (string, error) {
+	temporal := ""
+	if strings.Contains(argument, "${TEMPORAL_DB}") {
+		var err error
+		temporal, err = temporalHistoryPath(ctx.Instance.StateDir)
+		if err != nil {
+			return "", err
+		}
+	}
+	return strings.NewReplacer("${PAYLOAD_ROOT}", ctx.PayloadRoot, "${TEMPORAL_GRPC_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalGRPC), "${TEMPORAL_UI_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalUI), "${TEMPORAL_DB}", temporal).Replace(argument), nil
 }
 func componentByName(manifest runtimeManifest, name string) (commandSpec, error) {
 	for _, component := range manifest.Components {
@@ -1408,25 +1636,48 @@ func writeState(path string, state instanceState) error {
 	if err != nil {
 		return err
 	}
-	temporary := path + ".tmp-" + strconv.Itoa(os.Getpid())
-	if err := os.WriteFile(temporary, append(encoded, '\n'), 0o600); err != nil {
+	file, err := os.CreateTemp(filepath.Dir(path), ".runtime-state-*")
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(temporary, 0o600); err != nil {
-		_ = os.Remove(temporary)
+	temporary := file.Name()
+	defer os.Remove(temporary)
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
 		return err
 	}
-	return os.Rename(temporary, path)
+	if _, err := file.Write(append(encoded, '\n')); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
 }
 func readState(path string) (instanceState, error) {
 	var state instanceState
 	if err := decodeStrict(path, &state); err != nil {
 		return state, err
 	}
-	if state.SchemaVersion != stateSchemaVersion || state.InstanceID == "" || state.CanonicalStateDir == "" || state.PayloadRoot == "" || state.BuildID == "" || state.ManifestSHA256 == "" || state.Components == nil {
-		return state, errors.New("invalid runtime registry state")
+	return state, validateRuntimeState(state)
+}
+
+func validateRuntimeState(state instanceState) error {
+	if (state.OwnershipVerified && state.StoppedAt == nil) || (state.ExecutionScopeID != "" && !executionIDValid(state.ExecutionScopeID)) {
+		return errors.New("invalid runtime ownership state")
 	}
-	return state, nil
+	if state.SchemaVersion != stateSchemaVersion || state.InstanceID == "" || state.CanonicalStateDir == "" || state.PayloadRoot == "" || state.BuildID == "" || state.ManifestSHA256 == "" || state.Components == nil {
+		return errors.New("invalid runtime registry state")
+	}
+	return nil
 }
 
 func manifestDigest(payloadRoot string) (string, error) {
@@ -1457,11 +1708,14 @@ func validateStateBinding(ctx launchContext, state instanceState) error {
 	return nil
 }
 func stateHasLiveProcesses(state instanceState) bool {
-	if recordMatchesLiveProcess(state.Supervisor) {
+	// A reused or unreadable PID cannot prove that the registered supervisor
+	// exited. Never signal it without an identity match, but do not use that
+	// mismatch as evidence that the runtime is quiescent either.
+	if supervisorMayBeLive(state.Supervisor) {
 		return true
 	}
 	for _, record := range state.Components {
-		if recordMatchesLiveProcess(record) {
+		if componentMayBeLive(record) {
 			return true
 		}
 	}
@@ -1472,16 +1726,25 @@ func validateStartState(ctx launchContext, state instanceState) error {
 	if err := validateStateIdentity(ctx, state); err != nil {
 		return err
 	}
+	if err := requireExecutionReceipt(ctx, state); err != nil {
+		return err
+	}
+	if state.OwnershipVerified && state.StoppedAt != nil {
+		return nil
+	}
 	if err := validateStateBinding(ctx, state); err != nil && stateHasLiveProcesses(state) {
 		return fmt.Errorf("different JobCtrl release is still running for this state directory; run jobctrl status then jobctrl stop before starting this release")
 	}
-	if recordMatchesLiveProcess(state.Supervisor) {
+	if supervisorMayBeLive(state.Supervisor) {
 		return ErrAlreadyRunning
 	}
-	for _, name := range []string{"temporal", "worker", "api"} {
-		if record, exists := state.Components[name]; exists && recordMatchesLiveProcess(record) {
-			return fmt.Errorf("%w: recorded %s component is still live; run jobctrl stop before starting", ErrAlreadyRunning, name)
+	for name, record := range state.Components {
+		if componentMayBeLive(record) {
+			return fmt.Errorf("%w: recorded %s component may still have live processes or unverifiable ownership; inspect jobctrl status and safely stop it before starting", ErrAlreadyRunning, name)
 		}
+	}
+	if state.ExecutionScopeID == "" && !state.OwnershipVerified && len(state.Components) > 0 {
+		return errUntrackedOwnership
 	}
 	return nil
 }
@@ -1536,10 +1799,45 @@ func processPIDAlive(pid int) bool {
 		return false
 	}
 	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+	// Only ESRCH proves absence. Permission or unexpected kernel errors leave
+	// ownership unresolved and must not permit a destructive transition.
+	return !errors.Is(err, syscall.ESRCH)
+}
+
+// componentMayBeLive is deliberately more conservative than identity
+// matching: a missing leader does not prove that its process group is empty.
+// Group existence is not authority to signal it, since a PGID can be reused.
+func componentMayBeLive(record componentRecord) bool {
+	if record.PID <= 0 || record.PGID <= 0 || record.StartIdentity == "" || record.Executable == "" {
+		return true
+	}
+	return processPIDAlive(record.PID) || processGroupAlive(record.PGID)
+}
+
+// A missing supervisor record is valid before one has been registered. A
+// partially populated record is not evidence that the supervisor has exited.
+// Do not probe its process group: a foreground supervisor can share the
+// caller's group and is not the group leader of the managed components.
+func supervisorMayBeLive(record componentRecord) bool {
+	if record == (componentRecord{}) {
+		return false
+	}
+	if record.PID <= 0 || record.PGID <= 0 || record.StartIdentity == "" || record.Executable == "" {
+		return true
+	}
+	return processPIDAlive(record.PID)
 }
 
 func startDetached(ctx launchContext) error {
+	existing, err := readState(ctx.Instance.StatePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if processes, err := inspectOwnedProcesses(ctx, existing); err != nil {
+		return err
+	} else if len(processes) > 0 {
+		return fmt.Errorf("%w; run jobctrl stop to clean up the remaining instance processes", ErrAlreadyRunning)
+	}
 	if state, err := readState(ctx.Instance.StatePath); err == nil {
 		if err := validateStartState(ctx, state); err != nil {
 			return err
@@ -1553,7 +1851,7 @@ func startDetached(ctx launchContext) error {
 	}
 	defer read.Close()
 	command := exec.Command(ctx.Executable, "__supervise")
-	command.Env = append(ctx.Environment, "JOBCTRL_READY_FD=3")
+	command.Env = append(ownedProcessEnvironment(ctx), "JOBCTRL_READY_FD=3")
 	command.ExtraFiles = []*os.File{write}
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
@@ -1615,12 +1913,23 @@ func sendReady(writer io.Writer, err error) {
 }
 
 func supervise(ctx launchContext, ready io.Writer) (result error) {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		sendReady(ready, err)
+		return err
+	}
 	lock, err := acquireLock(ctx.Instance.LockPath, true)
 	if err != nil {
 		sendReady(ready, err)
 		return err
 	}
 	defer releaseLock(lock)
+	// Resolve after claiming the workspace: source and installed releases must
+	// operate on the same existing history, or refuse an ambiguous workspace.
+	ctx, err = withTemporalHistory(ctx)
+	if err != nil {
+		sendReady(ready, err)
+		return err
+	}
 	// startDetached validates before it forks. Repeat under the instance lock so
 	// a supervisor killed between that check and this re-exec cannot have its
 	// still-live component registry overwritten.
@@ -1644,7 +1953,7 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 		sendReady(ready, err)
 		return err
 	}
-	state := instanceState{SchemaVersion: stateSchemaVersion, InstanceID: ctx.Instance.ID, CanonicalStateDir: ctx.Instance.StateDir, PayloadRoot: ctx.PayloadRoot, BuildID: ctx.Distribution.BuildID, ManifestSHA256: digest, Ports: runtimePorts{TemporalGRPC: ctx.Manifest.Ports.TemporalGRPC, TemporalUI: ctx.Manifest.Ports.TemporalUI, API: ctx.Manifest.Ports.API}, StartedAt: time.Now().UTC(), Supervisor: supervisor, Components: map[string]componentRecord{}}
+	state := instanceState{SchemaVersion: stateSchemaVersion, InstanceID: ctx.Instance.ID, CanonicalStateDir: ctx.Instance.StateDir, PayloadRoot: ctx.PayloadRoot, BuildID: ctx.Distribution.BuildID, ManifestSHA256: digest, Ports: runtimePorts{TemporalGRPC: ctx.Manifest.Ports.TemporalGRPC, TemporalUI: ctx.Manifest.Ports.TemporalUI, API: ctx.Manifest.Ports.API}, StartedAt: time.Now().UTC(), Supervisor: supervisor, Components: map[string]componentRecord{}, ExecutionScopeID: environmentMap(ctx.Environment)[executionScopeVariable]}
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		sendReady(ready, err)
 		return err
@@ -1656,7 +1965,12 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 	children := map[string]*exec.Cmd{}
 	defer func() {
 		shutdownComponents(&state, children, ctx.Instance.StatePath)
-		if allRecordedComponentsStopped(state) {
+		cleanupErr := terminateOwnedProcesses(ctx, state)
+		if cleanupErr != nil && result == nil {
+			result = fmt.Errorf("clean up remaining instance processes: %w", cleanupErr)
+		}
+		if cleanupErr == nil && state.ExecutionScopeID != "" {
+			state.OwnershipVerified = true
 			now := time.Now().UTC()
 			state.StoppedAt = &now
 		} else {
@@ -1673,7 +1987,7 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 	if err := ensureFixedPortsAvailable(ctx.Manifest); err != nil {
 		return err
 	}
-	if children["temporal"], err = startComponent(ctx, state.Components, "temporal"); err != nil {
+	if children["temporal"], err = startComponent(ctx, &state, "temporal"); err != nil {
 		return err
 	}
 	go waitComponent("temporal", children["temporal"], exits)
@@ -1687,14 +2001,14 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 		markStartupComponentExit(&state, err)
 		return err
 	}
-	if children["worker"], err = startComponent(ctx, state.Components, "worker"); err != nil {
+	if children["worker"], err = startComponent(ctx, &state, "worker"); err != nil {
 		return err
 	}
 	go waitComponent("worker", children["worker"], exits)
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		return err
 	}
-	if children["api"], err = startComponent(ctx, state.Components, "api"); err != nil {
+	if children["api"], err = startComponent(ctx, &state, "api"); err != nil {
 		return err
 	}
 	go waitComponent("api", children["api"], exits)
@@ -1773,7 +2087,20 @@ func markStartupComponentExit(state *instanceState, cause error) {
 func waitComponent(name string, command *exec.Cmd, exits chan<- componentExit) {
 	exits <- componentExit{name, command.Wait()}
 }
-func startComponent(ctx launchContext, records map[string]componentRecord, name string) (*exec.Cmd, error) {
+
+// A gated child cannot execute its component until the supervisor has durably
+// published its identity. EOF on the gate (including supervisor death) causes
+// the shell to exit without executing the component.
+const gatedComponentScript = `IFS= builtin read -r gate <&3 || exit 75
+[ "$gate" = "start" ] || exit 75
+builtin exec 3<&-
+builtin exec "$@"`
+
+func startComponent(ctx launchContext, state *instanceState, name string) (*exec.Cmd, error) {
+	ctx, err := withTemporalHistory(ctx)
+	if err != nil {
+		return nil, err
+	}
 	spec, err := componentByName(ctx.Manifest, name)
 	if err != nil {
 		return nil, err
@@ -1784,7 +2111,10 @@ func startComponent(ctx launchContext, records map[string]componentRecord, name 
 	}
 	arguments := make([]string, len(spec.Arguments))
 	for index, argument := range spec.Arguments {
-		arguments[index] = substitute(argument, ctx)
+		arguments[index], err = substitute(argument, ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	logPath := filepath.Join(ctx.Instance.LogDir, name+".log")
 	if info, err := os.Stat(logPath); err == nil && info.Size() > 0 {
@@ -1797,20 +2127,48 @@ func startComponent(ctx launchContext, records map[string]componentRecord, name 
 	if err != nil {
 		return nil, err
 	}
-	command := exec.Command(executable, arguments...)
-	command.Env, command.Dir, command.Stdout, command.Stderr = ctx.Environment, ctx.Instance.StateDir, logFile, logFile
+	gateRead, gateWrite, err := os.Pipe()
+	if err != nil {
+		_ = logFile.Close()
+		return nil, err
+	}
+	argv := append([]string{"-p", "-c", gatedComponentScript, "jobctrl-component", executable}, arguments...)
+	command := exec.Command("/bin/bash", argv...)
+	command.Env, command.Dir, command.Stdout, command.Stderr = temporalGateEnvironment(ownedProcessEnvironment(ctx)), ctx.Instance.StateDir, logFile, logFile
+	command.ExtraFiles = []*os.File{gateRead}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := command.Start(); err != nil {
+		_ = gateRead.Close()
+		_ = gateWrite.Close()
 		logFile.Close()
 		return nil, fmt.Errorf("start %s: %w", name, err)
 	}
+	_ = gateRead.Close()
 	_ = logFile.Close()
 	record, err := recordForProcess(command.Process.Pid, logPath, executable)
 	if err != nil {
-		_ = signalProcessGroup(command.Process.Pid, syscall.SIGTERM)
+		_ = gateWrite.Close()
+		_ = command.Wait()
 		return nil, err
 	}
-	records[name] = record
+	state.Components[name] = record
+	if err := writeState(ctx.Instance.StatePath, *state); err != nil {
+		_ = gateWrite.Close()
+		_ = command.Wait()
+		return nil, fmt.Errorf("publish %s before launch: %w", name, err)
+	}
+	written, writeErr := io.WriteString(gateWrite, "start\n")
+	_ = gateWrite.Close()
+	// A complete gate message authorizes execution even if a writer reports
+	// a simultaneous error. Only wait on failure when execution was not
+	// authorized; otherwise waiting here could hang on the live component.
+	if written != len("start\n") {
+		_ = command.Wait()
+		if writeErr == nil {
+			writeErr = io.ErrShortWrite
+		}
+		return nil, fmt.Errorf("release %s launch gate: wrote %d bytes: %w", name, written, writeErr)
+	}
 	return command, nil
 }
 func waitForTemporal(ctx launchContext, temporal *exec.Cmd, exits <-chan componentExit, signals <-chan os.Signal) error {
@@ -1838,6 +2196,10 @@ func waitForTemporal(ctx launchContext, temporal *exec.Cmd, exits <-chan compone
 }
 
 func probeTemporal(ctx launchContext) error {
+	ctx, err := withTemporalHistory(ctx)
+	if err != nil {
+		return err
+	}
 	spec, err := componentByName(ctx.Manifest, ctx.Manifest.Health.Temporal.Component)
 	if err != nil {
 		return err
@@ -1845,7 +2207,10 @@ func probeTemporal(ctx launchContext) error {
 	executable := filepath.Join(ctx.PayloadRoot, spec.Executable)
 	arguments := make([]string, len(ctx.Manifest.Health.Temporal.Arguments))
 	for i, argument := range ctx.Manifest.Health.Temporal.Arguments {
-		arguments[i] = substitute(argument, ctx)
+		arguments[i], err = substitute(argument, ctx)
+		if err != nil {
+			return err
+		}
 	}
 	probe := exec.Command(executable, arguments...)
 	probe.Env, probe.Dir = ctx.Environment, ctx.Instance.StateDir
@@ -1927,7 +2292,7 @@ func processGroupAlive(pgid int) bool {
 		return false
 	}
 	err := syscall.Kill(-pgid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+	return !errors.Is(err, syscall.ESRCH)
 }
 
 func waitForProcessGroupExit(pgid int, timeout time.Duration) bool {
@@ -1942,6 +2307,12 @@ func waitForProcessGroupExit(pgid int, timeout time.Duration) bool {
 }
 
 func signalOwnedRecord(record componentRecord, signal syscall.Signal) error {
+	// Managed components and migration helpers are started as their own
+	// process-group leaders. A record naming a shared group is never enough
+	// authority to signal its other members, even if its PID still matches.
+	if record.PID <= 0 || record.PGID != record.PID {
+		return errors.New("record does not identify a dedicated owned process group")
+	}
 	if !recordMatchesLiveProcess(record) {
 		return errors.New("record does not match a live owned process")
 	}
@@ -1984,13 +2355,95 @@ func terminateRecord(record componentRecord) error {
 	}
 	return errors.New("component process tree remained live after SIGTERM and SIGKILL")
 }
+
+// terminateCooperativeRecord gives the verified component leader the first
+// opportunity to drain its own children. A surviving group after its leader
+// exits is unresolved: its numeric PGID alone is never authority to signal it.
+func terminateCooperativeRecord(record componentRecord, grace time.Duration) error {
+	if record.PID <= 0 || record.PGID != record.PID {
+		return errors.New("record does not identify a dedicated owned process group")
+	}
+	if !recordMatchesLiveProcess(record) {
+		return errors.New("record does not match a live owned process")
+	}
+	if err := syscall.Kill(record.PID, syscall.SIGTERM); err != nil {
+		return fmt.Errorf("signal owned component leader: %w", err)
+	}
+	if waitForPIDExit(record.PID, grace) {
+		if waitForProcessGroupExit(record.PGID, shutdownTimeout) {
+			return nil
+		}
+		return errors.New("component leader exited but its process group remains live; group ownership is unresolved")
+	}
+	// A still-live leader must be revalidated by terminateRecord before it may
+	// authorize the existing bounded process-group escalation.
+	return terminateRecord(record)
+}
+
+// Modern scope cleanup never expands kill authority to a numeric process
+// group. The leader gets its clean-shutdown grace; the later coalition drain
+// handles independently verified leftovers.
+func terminateScopedLeader(name string, record componentRecord) error {
+	if !recordMatchesLiveProcess(record) {
+		return errors.New("component leader identity is unresolved")
+	}
+	if err := syscall.Kill(record.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	grace := shutdownTimeout
+	if name == "api" || name == "worker" {
+		grace = cooperativeShutdownTimeout
+	}
+	if waitForOwnedRecordExit(record, grace) {
+		return nil
+	}
+	return errors.New("component clean-shutdown deadline exceeded")
+}
+
+func waitForOwnedRecordExit(record componentRecord, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		info, err := processBSDInfoIncludingZombies(record.PID)
+		if errors.Is(err, syscall.ESRCH) || (err == nil && (binary.LittleEndian.Uint32(info[4:]) == 5 || processIdentityFromBSD(info) != record.StartIdentity)) {
+			return true
+		}
+		if err != nil || time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func terminateComponentRecord(name string, record componentRecord) error {
+	if name == "api" || name == "worker" {
+		return terminateCooperativeRecord(record, cooperativeShutdownTimeout)
+	}
+	return terminateRecord(record)
+}
+
 func shutdownComponents(state *instanceState, children map[string]*exec.Cmd, statePath string) {
 	for _, name := range []string{"api", "worker", "temporal"} {
 		record, exists := state.Components[name]
-		if !exists || record.ExitedAt != nil {
+		if !exists || !componentMayBeLive(record) {
 			continue
 		}
-		if err := terminateRecord(record); err == nil {
+		var cleanupErr error
+		if state.ExecutionScopeID != "" {
+			own, ownErr := processCoalitionIDs(os.Getpid())
+			target, targetErr := processCoalitionIDs(record.PID)
+			if ownErr != nil {
+				cleanupErr = ownErr
+			} else if targetErr != nil {
+				cleanupErr = targetErr
+			} else if own != target {
+				cleanupErr = errors.New("component left its execution scope; signal refused")
+			} else {
+				cleanupErr = terminateScopedLeader(name, record)
+			}
+		} else {
+			cleanupErr = terminateComponentRecord(name, record)
+		}
+		if err := cleanupErr; err == nil {
 			now := time.Now().UTC()
 			record.ExitedAt = &now
 		} else {
@@ -2003,15 +2456,23 @@ func shutdownComponents(state *instanceState, children map[string]*exec.Cmd, sta
 
 func allRecordedComponentsStopped(state instanceState) bool {
 	for _, record := range state.Components {
-		// A still-existing PID might have been reused after identity verification
-		// failed. Keep the registry in a recoverable non-stopped state rather
-		// than claim that an unknown live process exited.
-		if processPIDAlive(record.PID) {
+		// A reused PID, a surviving group, or incomplete ownership metadata
+		// cannot certify quiescence, even when the recorded leader has exited.
+		if componentMayBeLive(record) {
 			return false
 		}
 	}
 	return true
 }
+
+func sameRuntimeGeneration(first, second instanceState) bool {
+	return first.StartedAt.Equal(second.StartedAt) &&
+		first.Supervisor.PID == second.Supervisor.PID &&
+		first.Supervisor.PGID == second.Supervisor.PGID &&
+		first.Supervisor.StartIdentity == second.Supervisor.StartIdentity &&
+		first.Supervisor.Executable == second.Supervisor.Executable
+}
+
 func stop(ctx launchContext) error {
 	control, err := acquireLock(ctx.Instance.ControlPath, false)
 	if err != nil {
@@ -2020,7 +2481,26 @@ func stop(ctx launchContext) error {
 	defer releaseLock(control)
 	state, err := readState(ctx.Instance.StatePath)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		if err := terminateOwnedProcesses(ctx, instanceState{}); err != nil {
+			return err
+		}
+		instanceLock, err := acquireLock(ctx.Instance.LockPath, true)
+		if err != nil {
+			return err
+		}
+		defer releaseLock(instanceLock)
+		if latest, err := readState(ctx.Instance.StatePath); err == nil {
+			if err := validateStateIdentity(ctx, latest); err != nil {
+				return err
+			}
+			if err := requireExecutionReceipt(ctx, latest); err != nil {
+				return err
+			}
+			return completeStoppedState(ctx, latest)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return retireOwnedExecutionScopes(ctx)
 	}
 	if err != nil {
 		return err
@@ -2028,40 +2508,160 @@ func stop(ctx launchContext) error {
 	if err := validateStateIdentity(ctx, state); err != nil {
 		return err
 	}
+	initialState := state
+	if err := requireExecutionReceipt(ctx, state); err != nil {
+		return err
+	}
+	witnesses := make(executionWitnesses)
+	ownedBeforeShutdown, err := inspectOwnedProcesses(ctx, state, witnesses)
+	if err != nil {
+		return err
+	}
+	// The supervisor is the owner of component shutdown. Ask it to drain first
+	// while holding the stop control lock, then reload its final state before
+	// handling any remaining groups. Signaling components concurrently with its
+	// cleanup could deliver a second TERM while a worker is draining.
+	durableOwnership := state.ExecutionScopeID != "" || state.OwnershipVerified
+	supervisorOwned := !durableOwnership
+	for _, member := range ownedBeforeShutdown {
+		if member.PID == state.Supervisor.PID && member.Identity == state.Supervisor.StartIdentity {
+			supervisorOwned = true
+		}
+	}
+	if supervisorOwned && recordMatchesLiveProcess(state.Supervisor) {
+		if err := syscall.Kill(state.Supervisor.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("signal verified supervisor: %w", err)
+		}
+		if !waitForOwnedRecordExit(state.Supervisor, supervisorShutdownTimeout) {
+			if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown, witnesses); err != nil {
+				return fmt.Errorf("supervisor cleanup exceeded its deadline: %w", err)
+			}
+		}
+	} else if supervisorMayBeLive(state.Supervisor) && state.ExecutionScopeID == "" {
+		return errors.New("supervisor ownership is unresolved; refusing concurrent component termination")
+	}
+	// A new supervisor could start after the old one exits. Reserve its same
+	// instance lock before re-reading state; a live or concurrently starting
+	// successor owns that lock and must never be signaled by this stop request.
+	instanceLock, err := acquireLock(ctx.Instance.LockPath, true)
+	if err != nil {
+		return fmt.Errorf("reserve stopped instance before registry readback: %w", err)
+	}
+	defer releaseLock(instanceLock)
+	state, err = readState(ctx.Instance.StatePath)
+	if err != nil {
+		return fmt.Errorf("read runtime registry after supervisor shutdown: %w", err)
+	}
+	if err := validateStateIdentity(ctx, state); err != nil {
+		return err
+	}
+	if !sameRuntimeGeneration(initialState, state) {
+		return errors.New("runtime generation changed during stop; refusing to signal or overwrite its registry")
+	}
 	failed := make([]string, 0)
 	for _, name := range []string{"api", "worker", "temporal"} {
-		if record, exists := state.Components[name]; exists {
-			if err := terminateRecord(record); err != nil && processPIDAlive(record.PID) {
-				failed = append(failed, name+": "+err.Error())
+		if record, exists := state.Components[name]; exists && componentMayBeLive(record) {
+			var cleanupErr error
+			if durableOwnership {
+				for _, member := range ownedBeforeShutdown {
+					if member.PID == record.PID && member.Identity == record.StartIdentity {
+						cleanupErr = terminateScopedLeader(name, record)
+						break
+					}
+				}
+			} else {
+				cleanupErr = terminateComponentRecord(name, record)
+			}
+			if cleanupErr != nil && componentMayBeLive(record) {
+				failed = append(failed, name+": "+cleanupErr.Error())
 			}
 		}
 	}
-	if recordMatchesLiveProcess(state.Supervisor) {
-		_ = syscall.Kill(state.Supervisor.PID, syscall.SIGTERM)
-		deadline := time.Now().Add(shutdownTimeout)
-		for time.Now().Before(deadline) {
-			if !recordMatchesLiveProcess(state.Supervisor) {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
+	if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown, witnesses); err != nil {
+		return fmt.Errorf("verify instance-wide shutdown: %w", err)
 	}
-	if len(failed) > 0 || !allRecordedComponentsStopped(state) {
-		state.StoppedAt = nil
-		if err := writeState(ctx.Instance.StatePath, state); err != nil {
-			return err
-		}
+	// A verified child cleanup can resolve an earlier group-drain failure.
+	durableScope := state.ExecutionScopeID != "" || state.OwnershipVerified
+	if durableScope || (allRecordedComponentsStopped(state) && !supervisorMayBeLive(state.Supervisor)) {
+		failed = nil
+	}
+	if !durableScope && (len(failed) > 0 || !allRecordedComponentsStopped(state) || supervisorMayBeLive(state.Supervisor)) {
 		if len(failed) > 0 {
 			return fmt.Errorf("could not safely stop live component groups: %s", strings.Join(failed, ", "))
 		}
-		return errors.New("JobCtrl still has live recorded component PIDs after stop")
+		return errors.New("JobCtrl may still have live recorded processes or unverifiable component ownership after stop")
 	}
+	return completeStoppedState(ctx, state)
+}
+
+func requireExecutionReceipt(ctx launchContext, state instanceState) error {
+	if state.ExecutionScopeID == "" || (state.OwnershipVerified && state.StoppedAt != nil) {
+		return nil
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil {
+		return err
+	}
+	for _, scope := range scopes {
+		if scope.ID == state.ExecutionScopeID {
+			return nil
+		}
+	}
+	return errors.New("the runtime execution receipt is missing; preserve the registry and workspace for recovery")
+}
+
+func completeStoppedState(ctx launchContext, state instanceState) error {
+	if state.ExecutionScopeID == "" && !state.OwnershipVerified && (len(state.Components) > 0 || state.Supervisor != (componentRecord{})) {
+		return errUntrackedOwnership
+	}
+	// Preserve an exact proof for every verified scope before recording the
+	// stopped registry, so an interrupted Stop can recover after kernel reap.
+	if err := attestStoppedExecutionScopes(ctx); err != nil {
+		return fmt.Errorf("persist stopped execution proofs: %w", err)
+	}
+	// Publish the verified stopped proof before retiring its receipt. A
+	// process interruption must never leave an active-looking registry with
+	// the only durable ownership record already deleted.
 	now := time.Now().UTC()
 	state.StoppedAt = &now
-	return writeState(ctx.Instance.StatePath, state)
+	state.OwnershipVerified = true
+	if err := writeState(ctx.Instance.StatePath, state); err != nil {
+		return err
+	}
+	if stopCompletionCheckpoint != nil {
+		if err := stopCompletionCheckpoint("stopped-proof-durable"); err != nil {
+			return err
+		}
+	}
+	if err := retireOwnedExecutionScopes(ctx); err != nil {
+		return fmt.Errorf("processes are stopped; retire execution records: %w", err)
+	}
+	if stopCompletionCheckpoint != nil {
+		if err := stopCompletionCheckpoint("execution-receipts-retired"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
+
 func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	state, err := readState(ctx.Instance.StatePath)
+	if err == nil {
+		if err := requireExecutionReceipt(ctx, state); err != nil {
+			return err
+		}
+	}
+	processes, ownershipErr := inspectOwnedProcesses(ctx, state)
+	if ownershipErr != nil {
+		return ownershipErr
+	}
+	if errors.Is(err, os.ErrNotExist) && len(processes) > 0 {
+		if jsonOutput {
+			return json.NewEncoder(output).Encode(map[string]any{"status": "orphaned", "components": map[string]any{}})
+		}
+		_, err := io.WriteString(output, "JobCtrl has remaining owned processes; run jobctrl stop to clean them up.\n")
+		return err
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		if jsonOutput {
 			_, _ = io.WriteString(output, "{\"status\":\"stopped\",\"components\":{}}\n")
@@ -2108,7 +2708,9 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 			}
 		} else {
 			allReady = false
-			if found && record.ExitedAt == nil {
+			if found && componentMayBeLive(record) {
+				stateName = "orphaned"
+			} else if found && record.ExitedAt == nil {
 				stateName = "stale"
 			}
 		}
@@ -2122,13 +2724,33 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 		overall = "degraded"
 	} else if allReady {
 		overall = "orphaned"
+	} else if stateHasLiveProcesses(state) {
+		// A dead leader can leave an occupied group, and a reused PID cannot
+		// establish quiescence. Neither is a verified stopped runtime.
+		overall = "orphaned"
 	}
 	if differentRelease {
 		overall = "different-release"
 	}
+	if state.BuildID == "source" && supervisorLive {
+		overall = "source-running"
+		// The source supervisor owns its own component records; reporting the
+		// empty native component map as stopped would be misleading.
+		components = map[string]componentStatus{}
+	}
 	if state.StoppedAt != nil && !stateHasLiveProcesses(state) {
 		overall = "stopped"
 	}
+	if overall == "stopped" && len(processes) > 0 {
+		overall = "orphaned"
+	}
+	if state.OwnershipVerified && state.StoppedAt != nil && len(processes) == 0 {
+		overall = "stopped"
+	}
+	if state.ExecutionScopeID == "" && !state.OwnershipVerified && (len(state.Components) > 0 || state.Supervisor != (componentRecord{})) && overall == "stopped" {
+		overall = "ownership-unverified"
+	}
+
 	if jsonOutput {
 		return json.NewEncoder(output).Encode(struct {
 			Status        string                     `json:"status"`
@@ -2137,6 +2759,10 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 			SupervisorPID int                        `json:"supervisorPid"`
 			Components    map[string]componentStatus `json:"components"`
 		}{overall, state.InstanceID, state.CanonicalStateDir, state.Supervisor.PID, components})
+	}
+	if overall == "source-running" {
+		_, err := fmt.Fprintf(output, "JobCtrl: source supervisor running (pid=%d). Use corepack pnpm dev:status in its checkout for component health.\n", state.Supervisor.PID)
+		return err
 	}
 	fmt.Fprintf(output, "JobCtrl: %s\n", overall)
 	for _, name := range []string{"temporal", "worker", "api"} {
@@ -2224,7 +2850,31 @@ func version(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	return err
 }
 func dispatchPython(ctx launchContext, args []string) error {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
 	argv := append([]string{python, "-I", "-B", "-m", "jobctrl"}, args...)
-	return syscall.Exec(python, argv, ctx.Environment)
+	// An installed selector must retain its shared selection lock for the
+	// lifetime of the Python command. Without this handoff, Go closes the lock
+	// on exec and lifecycle operations can snapshot while that command writes.
+	restore, err := ctx.selection.InheritOnExec()
+	if err != nil {
+		return fmt.Errorf("retain release selection lock for command: %w", err)
+	}
+	defer restore()
+	return syscall.Exec(python, argv, ownedProcessEnvironment(ctx))
+}
+
+func dispatchApplyWorker(ctx launchContext) error {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
+	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
+	restore, err := ctx.selection.InheritOnExec()
+	if err != nil {
+		return fmt.Errorf("retain release selection lock for Apply worker: %w", err)
+	}
+	defer restore()
+	return syscall.Exec(python, []string{python, "-I", "-B", "-m", "jobctrl.apply.execution"}, ownedProcessEnvironment(ctx))
 }

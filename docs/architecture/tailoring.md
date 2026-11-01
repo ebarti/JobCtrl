@@ -1,944 +1,492 @@
 # Tailoring Contract
 
-This page explains how JobCtrl generates a tailored resume for one job,
-what question it asks the model, what the model is allowed to change, and which
-checks decide whether the result becomes an approved artifact.
-
-**Read this if** you need to know what tailoring guarantees, what the model may
-and may not change, or why a resume was rejected.
+Tailoring generates a resume that keeps as many applicable baseline accomplishments as possible within saved per-role limits from saved profile sources and the current employer analysis/requirement-fit ledger. [Semantic Judgments Are LLM Determinations](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) defines model authority. [Materials Audit](materials.md) owns shared truthfulness and line provenance.
 
 ## The Contract At A Glance
 
-Tailoring is a constrained rewrite of the candidate's own profile toward one job,
-behind a stack of gates. What it guarantees:
+| Work | Authority |
+| --- | --- |
+| Candidate fact, seniority, relevance, prohibited claim, voice and self-talk meaning | Structured model determination |
+| Posting seniority and requirement scope | Accepted job interpretation |
+| Artifact support | Separate claim-verification determination |
+| Quality acceptance | Independent quality-judge verdict |
+| IDs, verbatim quotes, exact numbers/dates/currency, schema, fences | Code |
+| Fit bands, weights and caps over typed requirement verdicts | Code |
+| Line-to-source and line-to-finding display | Persisted ID joins |
 
-- Every candidate fact comes only from the profile; the target job is context,
-  never candidate evidence.
-- Required experience and skill-category IDs and required bullets are preserved;
-  the model cannot add sections, experiences, skill categories, or education.
-- Optional achievements are selected, not copied wholesale. The planner keeps
-  one strongest grounded achievement edge per requirement, and the generator
-  emits the smallest sufficient set. A per-role maximum is a ceiling, never a
-  fill target.
-- Every experience bullet maps to one achievement. Each numeric claim must be
-  present in that same achievement's evidence; a global metric inventory is not
-  claim authority.
-- When rewriting the executive profile, baseline tenure estimates are omitted
-  or expressed qualitatively unless the mapped achievement evidence supports
-  them. The generator preserves each retained metric and verified content pin;
-  it is not instructed to copy every number from the baseline summary.
-- No fabricated metric, date, title, employer, or ungrounded named technology
-  survives into an approved artifact.
-- Keyword coverage is computed against the rendered resume text, never inferred
-  from the job description.
-- A failed re-tailor never destroys the last accepted generation's artifact or
-  provenance.
+Generation, factual verification, quality review and the high-fit persona review
+receive the same summary-quantity and selected-role rendering constraints before
+their first decision. A rewritten summary uses a quantity only when its cited
+achievement supports that exact claim; baseline-only quantities are omitted and
+tenure is not inferred from dates. Only selected experience updates render, so a
+summary using evidence from an omitted role must supply its employer attribution
+within the permitted mutable text. These constraints do not add roles, bullets,
+source permissions or layout changes. Quality reviews evaluate every supplied
+criterion and report all actionable defects together, while retaining their own
+pass/fail authority. The shared rules enter determination fingerprints; prior
+accepted receipts remain immutable.
 
-Approval must clear every gate below (each detailed under
-[Validation Layers](#validation-layers)):
-
-| Gate | What it enforces | Kind |
-| --- | --- | --- |
-| Schema + field validation | JSON shape, required IDs, allowed skills, title safety, max bullets | deterministic |
-| Rendered-text + quality | required anchors present, evidence/metrics verified, prohibited claims absent, keyword stuffing bounded | deterministic |
-| Fabrication gate | never-fabricate token scan + prose skill/tool allowlist before paid review; changed voice text is checked afresh | deterministic |
-| Post-generation fit | fit score and must-have coverage against grounded candidate text and the target profile | deterministic |
-| Structured judge | independent pass/fail safety, selection focus, semantic fidelity, and professional register; re-run on accepted post-voice text (skipped only in lenient mode) | LLM |
-| Adversarial review | six-persona challenge for high-fit jobs | LLM |
-
-Tailoring is owned by the Materials bounded context. The main implementation is
-in `workers/automation/src/jobctrl/domain/materials/use_cases.py`, supported
-by deterministic quality checks in `quality.py`, content validation and assembly
-in `services.py`, profile helpers in `resume_profile.py`, provenance
-construction in `provenance_builder.py`, the requirement coverage graph in
-`requirement_coverage.py`, the fabrication detectors in
-`fabrication_detector.py`, claim grounding in `claim_grounding.py`, and the
-rendered-text keyword coverage audit in `coverage_audit.py`.
+Provider availability never selects a lexical path. A blocked refresh retains the last accepted generation and records its safe failure code.
 
 ## Short Version
 
-Requirement coverage is planned before writing. The model is not asked to write
-one resume section per job requirement.
-
-The model is asked:
-
-```text
-Here is the candidate's canonical master resume, the target job, the tailoring
-policy, target profile, requirement-achievement coverage graph, required
-profile evidence, allowed skills, achievement-owned metrics, and the quality
-plan.
-
-Rewrite only these mutable resume fields and return JSON plus generated claim
-mapping:
-- executive_profile
-- executive_profile_sentences (ordered explicit sentence boundaries whose
-  one-space join exactly equals executive_profile)
-- experience_updates for existing profile experience IDs
-- skill_category_updates for existing profile skill category IDs
-- generated_claim_mappings that link each generated claim to coverage edges,
-  requirement IDs, evidence IDs, or a non-requirement reason such as pinned or
-  positioning content; exactly one bound mapping is required for every summary
-  sentence, generated experience bullet, and complete rendered skill group;
-  executive_profile is valid only when executive_profile_sentences contains one
-  item, while multi-sentence summaries use executive_profile.sentence[N] for every
-  explicit item
-```
-
-The target job and employer analysis decide what to emphasize. The existing
-profile structure decides where generated text can go.
+Canonical facts enter bounded prompts by ID. The generator returns strict JSON with explicit line anchors. The claim verifier independently reads the final lines and affirms their sources, claims and served requirements. The quality judge returns a separate typed verdict. Repair consumes the cited reasons; acceptance commits bytes, provenance and determination references together.
 
 ## End-to-End Flow
 
-```mermaid
-flowchart TB
-    INPUTS["1. Plan: job, profile, analysis and fit"]
-    DRAFT["2. Draft structured output"]
-    CHECK["3. Normalize and evaluate schema, rendered quality, provenance, fabrication and fit"]
-    GATE["4. Paid judge and applicable adversarial review"]
-    VOICE["5. Optional voice rewrite"]
-    SAVE["6. Persist accepted text, evidence and artifacts"]
+1. Load the saved profile version, employer-analysis generation, accepted job interpretation, requirement-fit report and confirmed tailoring policy.
+2. Build the artifact budget, required selections and allowed evidence inventory. Structural infeasibility is actionable; code cannot silently drop pinned evidence.
+3. Generate strict line/claim mappings tied to known source and requirement IDs.
+4. Assemble and check format, IDs, immutable fields and exact values.
+5. Verify final claims and provenance with the model, then judge artifact quality separately. High-fit resumes (normalized fit at least 0.8) retain a separate, cited six-persona review. Its typed verdict decides acceptance; the persona score is diagnostic.
+6. Repair from model findings within the attempt budget. No lexical gate or score cutoff replaces the verdict.
+7. Extra post-approval voice polish is opt-in (`resume_voice_polish`, default `false`). With it disabled, retain the exact selected candidate and its factual, quality and applicable persona receipts, recording a skipped voice audit linked to those reviews. Explicit injected voice ports retain their requested behavior. If voice is requested, the model chooses wording changes; changed text receives fresh claim verification, quality and applicable persona review. An optional rewrite provider or shape failure records a rejected voice attempt and retains the already-verified candidate. A failure of verification for changed text blocks that refresh.
+8. Commit the accepted generation and audit together. A failed attempt cannot replace the accepted resume/PDF or its approval.
 
-    INPUTS --> DRAFT
-    DRAFT --> CHECK
-    CHECK -->|deterministic gates pass| GATE
-    CHECK -.->|generator rejected: typed repair| DRAFT
-    GATE -.->|generator rejected: typed repair| DRAFT
-    GATE -->|selected evaluated candidate| VOICE
-    VOICE -->|unchanged or rejected rewrite: retain base evidence| SAVE
-    VOICE -->|changed text: evaluate and review afresh| CHECK
-    CHECK -.->|voice rejected: retain base| SAVE
-    GATE -.->|voice rejected: retain base| SAVE
-    GATE -->|accepted voice candidate| SAVE
-```
+## Local Application Boundary
 
-The loop is deliberate: a candidate is persisted as approved only after the
-structured, rendered, quality, and fabrication checks agree. The sections below
-spell out each input, gate, and persisted audit field.
+`scoring/tailor.py` resolves configured model choices and explicit request
+overrides into the frozen `TailoringLlmPolicy` before constructing
+`TailorResumeUseCase`. The use case requires this value; it never reads ambient
+configuration. Saved profile controls and versioned policy history remain
+canonical inputs, with the existing profile/policy fence at generation commit.
+
+Each resume attempt writes its own text, PDF and diagnostic paths, even when
+two attempts allocated the same generation. Tailor and Cover re-read the
+captured material snapshot in their SQLite writer transaction before publishing;
+a stale result cannot replace a newer accepted row. A cover generation also
+checks that its accepted resume source still has the bytes it read. A stale
+attempt marks its own stage stale only if its exact start event still owns that
+running stage; a successor's state and attempt count remain untouched. Direct
+and workflow-owned calls require their own start event to remain current for
+publication and terminal stage writes. Direct callers receive the existing
+stale/skipped result if another attempt takes ownership. Before claiming, a
+direct call also checks that the latest start has not changed since its initial
+database observation. Approved-artifact recovery checks the current running
+owner and recorded activity identity under the same SQLite writer lock as its
+stage transition. Reusing an approved artifact leaves another execution's
+running stage, start token and publication authority intact, including a direct
+attempt with its own start token. Once a higher numbered attempt of the same
+workflow activity records its
+start, a delayed retry cannot recover or claim over it. The same ownership
+check fences the PDF produced by Cover. Selected, current-policy and unscoped
+material batches carry the activity's Temporal run and attempt separately from
+their workflow owner. Batch retry recovery is job-scoped and skips newer or
+other-activity starts when their activity identity is recorded. Legacy starts
+without that identity retain workflow-owner recovery behavior.
+
+Policy restore is a separate reviewed command. Its tenant, target, expected
+current version, UUIDv4 command identity and user-requested reason bind the
+intent. The SQLite writer checks for a matching receipt before comparing the
+current head under `BEGIN IMMEDIATE`. A stale new intent refuses; an identical
+accepted command returns its original revision and the head observed on retry.
+The new revision stores its versioned command receipt in its rollback provenance
+field together with the selected target and reviewed predecessor. This keeps
+receipt and revision atomic within the existing exact-v15 manifest and leaves
+historical rows and configuration copies intact. History readers decode only
+recognized structured receipts and preserve legacy provenance. A different
+payload for the same tenant and command ID is a conflict.
+
+An explicit manual materials request carries its existing low-fit exception
+through both Tailor and Cover activity payloads to their canonical per-job
+admission checks. Default and legacy payloads keep the ordinary score floor.
+The exception changes only the numeric threshold for that request; hard
+eligibility blockers, current-score and posting checks, artifact ownership,
+attempt limits, claim verification and quality review still apply. PDF exports
+consume the accepted materials without changing the score or global policy.
+
+Preparation targets carry the latest canonical Score grade and version, joined
+by tenant and JobId. The legacy grade on `jobs` cannot choose review behavior.
+The target passes its saved grade to the resume review gate, so a
+normalized fit of at least 0.8 receives its independent six-persona review.
+A manual low-fit exception leaves that grade unchanged. Unscored targets remain
+readable for scoring; material admission still requires a current Score.
+
+The generation graph distinguishes selected achievements from canonical
+context. Its `required_generated_evidence_ids` manifest requires selected
+achievement claims and explicit user pins. Role dates, role metadata, education,
+skills and baseline context remain available sources without forcing them into
+new summary prose. This structural ownership flag does not decide relevance or
+grant shipped coverage: the final model verifier must affirm every declared
+source contribution and served requirement. Unused context cannot become an
+extra provenance anchor, and an unrepresented context edge receives no automatic
+generated-coverage credit.
+
+The plan stores `baseline_evidence_ids_by_role` and the configured
+`max_experience_bullets`, separately from explicit pins and target coverage.
+Each baseline ID of a selected role must occur once in a bound experience claim
+or once in `experience_omissions`. Every omission proposal supplies its exact
+role/source IDs, a rationale and the typed reason `clearly_inapplicable` or
+`role_bullet_limit`. Code rejects missing, foreign, duplicate and contradictory
+decisions, dropped explicit pins and cap omissions when the role is not full.
+The configured maximum remains a hard cap; baseline length never raises it.
+
+Generation keeps as many applicable accomplishments as possible up to that cap.
+The existing independent quality determination reads the full baseline inventory,
+final lines and omission proposals. It rejects unjustified omissions, underfilled
+roles and weaker evidence chosen over more useful available proof. Missing job
+keywords or an active fit edge do not establish irrelevance. Code does not decide
+applicability or infer semantic equivalence. Multiple related baseline sources
+and at most one additional achievement source may share a coherent bullet only
+when independent factual and quality reviews affirm their contributions and
+preserve agency, action, scope, outcomes, tools and metrics. Retention never
+grants target coverage or an explicit user pin. `baseline_retained` identifies
+a retained factual claim without a target edge. A fully inapplicable baseline
+can leave role metadata alone after its omission proposals pass quality review.
+
+These selection proposals are part of the existing generation response and
+quality request, not another paid model stage. Their IDs and decisions remain
+in the attempt audit; the quality receipt remains authoritative. Current prompts
+use `tailor.v18.applicable-baseline-retention` and `tailored-resume.v6`. Existing
+accepted artifacts and historical plan metadata remain unchanged.
+
+An overflowing seeded graph is still an evidence menu. If explicit user pins
+fit but the seeded selection exceeds the configured per-role bullet ceiling, Materials
+requests a `material_evidence_selection` determination from the configured
+generator route before drafting. It selects only admitted requirement/evidence
+edges, cites their canonical sources, and records a reason for each requirement
+left uncovered. Code enforces exact IDs, pins and the configured ceiling; the
+existing artifact-budget guard runs again on the selected plan. The plan audit
+stores the determination ID. Feasible seeds make no additional call, impossible
+pins still block before spend, and failed selection preserves accepted materials.
+Selection never establishes shipped coverage or replaces independent reviews.
+
+Exhausted factual or quality correction returns the non-retryable
+`material_rejected` error. It preserves the rejected audit and last accepted
+artifacts; Temporal does not restart the whole correction budget as though a
+provider transport had failed. The durable Tailor/Cover stage flag and failure
+event retain that same non-retryable classification, so automatic preparation
+cannot start another complete correction cycle after the workflow has stopped.
+An explicit new request remains available within the durable attempt limit.
+Adapter retry authority also survives the safe
+semantic failure protocol: `provider_non_retryable` stops automatic material
+retries, while `provider_error` retains transient recovery. Structural resume
+rejections pass their candidate and exact validator errors to the next bounded
+attempt as untrusted user-message repair data, even without a paid-review receipt.
+They never become generator system instructions. Provider/network faults retain
+their separate transient retry behavior when classified retryable. A new explicit request can use the existing recovery
+controls after the owner addresses the recorded finding.
+
+Selected Tailor and Cover cohorts isolate typed per-job prerequisite failures
+that occur before a stage claim. Missing inputs skip that member, and temporary
+source unavailability remains a bounded item error while healthy peers finish.
+This boundary does not claim or terminalize an unowned stage. Cancellation,
+spend-budget failures and unclassified exceptions still propagate; accepted
+artifacts and the existing ownership fences remain authoritative.
+
+The effective judge model binds the claim-verification and quality/persona
+adapters, independently of the generator model pool. Default review shares the
+operation's default adapter. An explicit reviewer selection binds that route
+and records its actual provider/model; unavailability fails visibly without
+substituting the generator adapter. Explicitly injected review ports retain
+their own authority and are not replaced by composition.
+
+The same composition root injects `ArtifactTextWriter`, implemented locally by
+`LocalArtifactTextWriter`. This small capability creates directories, writes exact
+UTF-8 text and reports its byte size. The use case retains candidate selection,
+rejected-candidate inspection content, generation filenames and side-file
+formatting. Validation, selection, evidence construction and aggregate transitions
+do not perform file I/O. The writer does not register or accept artifacts:
+`MaterialsRepository` registers the generation and `UnitOfWork` preserves the
+atomic acceptance/provenance transition. `PdfRendererPort` still renders before
+that transition. Candidate write errors propagate before acceptance; diagnostic
+`_JOB.txt` and `_REPORT.json` writes remain best effort after persistence.
 
 ## Inputs To Tailoring
 
-Tailoring combines several inputs. Each input has a different authority.
-
-| Input | Source | What It Controls |
-| --- | --- | --- |
-| Candidate master resume | `ProfileSnapshot` / profile aggregate | The only source of candidate facts: summary, experience, education, skill categories, required bullets, and achievement-owned metrics. The flat `real_metrics` field is a non-authoritative compatibility projection; unmatched legacy values are preserved but remain unassigned. |
-| Tailoring policy | Profile tailoring rules | Claim policy, generation permissions, required content pins, max bullets, and advanced auto-approval |
-| Writing style | Profile writing preferences | Tone, bullet standards, verbosity, advisory keyword emphasis, first-person preference |
-| Target job | Job record | The target role, description, responsibilities, skills, and company context |
-| Employer analysis | `EmployerAnalysis` aggregate | Grounded role framing, inferred seniority, requirements, and reasoned keywords |
-| Requirement fit report | Scoring context | Pre-tailoring fit by requirement, allowed evidence IDs, target keywords, prohibited claims, tailoring directives; its employer-analysis generation must match the current posting analysis |
-| Requirement-led coverage graph | Deterministic target-profile adapter plus constrained planner | Which profile achievements can cover resume-scoped target requirements, which resume requirements are uncovered, which achievements are unused, and what claim policy each edge requires. Logistics, eligibility, and employer conditions remain context-only outside the resume denominator. |
-| Previous attempt outcome | Tailoring retry loop | Typed, code-owned retry reason only; free-form validator, judge, adversarial, and prior-output text remains audit data |
-
-The rollbackable tailoring-policy revision contains only tenant-wide generation
-controls: the complete tailoring-relevant `ProfileSnapshot` projection,
-profile/custom policy, learned rules, prompt/schema versions, generator and
-judge settings, and validation mode. The projection covers rendered contact
-fields, experience metadata, resume facts and evidence, constraints, and
-tailoring rules. It deliberately excludes application-only sections such as
-compensation, work authorization, availability, EEO answers, application
-preferences, and the stored application password. The target-job plan is not a
-global policy revision. Every artifact records its own job-prompt fingerprint
-separately from the global
-policy fingerprint and version. That artifact fingerprint hashes the exact
-role/content message set sent for the selected candidate, including its target
-job and any typed retry guidance; it is not a digest of only the reusable
-system-prompt base. Parallel jobs with identical generation controls therefore
-reuse one global policy version while retaining distinct job-prompt audit facts.
-A tailoring-relevant profile or control change advances the global version;
-an application-only edit does not. Immediately before artifact persistence,
-the same SQLite write transaction derives the current canonical
-tailoring-relevant projection and compares its fingerprint plus the policy
-against the generation inputs, so a concurrent resume-evidence or policy change
-rejects the stale artifact rather than committing it after the user's change.
-
-The target job is context, not candidate evidence. The prompt explicitly tells
-the model not to copy target-job tools, systems, responsibilities, or business
-claims into the candidate resume unless the same fact appears in the candidate's
-master evidence.
+Inputs are versioned profile facts and confirmed evidence, canonical posting text, accepted job interpretation, employer requirements, model-backed requirement-fit verdicts and user-authored selections/policy. Unconfirmed evidence cards, interview notes and new recollections do not become facts. The prompt does not dump credentials or unrelated private profile fields.
 
 ## The Actual Model Prompt
 
-`build_master_tailor_prompt()` builds the generator system prompt. The user
-message then appends:
+The generator and review rubric serialize the tailoring plan as compact JSON.
+When the complete ordered achievement catalogues in the target profile and
+coverage graph are identical JSON values, the prompt retains the catalogue once
+and replaces the duplicate with an explicit reference local to that plan object.
+Different or empty catalogues stay inline. This encoding preserves every field,
+record and source ID, does not choose evidence or remove facts, and leaves the
+canonical plan and persisted metadata unchanged.
 
-```text
-ORIGINAL RESUME:
-[baseline executive profile]
-
----
-
-TARGET JOB:
-[job blob]
-
-Return the JSON:
-```
-
-That text is prompt-level guidance, not the main schema contract. The generator
-call uses `LlmPort.chat_json(..., response_schema=TAILORED_RESUME_RESPONSE_SCHEMA)`,
-so providers that support structured output receive the schema at the LLM
-gateway boundary. If an adapter lacks `chat_json()`, `_chat_json_payload()` falls
-back to `chat(..., response_schema=schema)` and parses the returned text. The
-deterministic validators still run after the gateway returns a parsed payload.
-On retries, the system message may add only fixed guidance selected from
-code-owned reason codes such as `validation_failed`, `judge_rejected`, or
-`fabrication_detected`. Free-form prior model or reviewer text is never copied
-into a later generator message.
-
-The system prompt contains these sections:
-
-- Mutable content boundary: executive profile, experience bullets, title field
-  only where policy allows it, and skill category items.
-- Fixed structure boundary: contact header, experience metadata, education, and
-  section order are injected by code.
-- Source-of-truth rules: profile data and required bullets are the only candidate
-  evidence; metrics are extracted from and remain scoped to their owning
-  achievement.
-- Hard rules: return every required profile ID exactly once, preserve required
-  bullets, include the pruned strongest requirement-covered achievements, do not
-  add/remove experience, education, or skill categories, do not invent skills
-  or metrics, cite one achievement per bullet, and treat max bullet count as a
-  ceiling rather than a quota.
-- Writing method: retain explicit pins, select the smallest sufficient
-  achievement set, order it strongest-to-weakest, express precise action and
-  outcome without changing agency or causality, order existing skills by
-  truthful target overlap, and write a concise grounded summary.
-- Master resume payloads: existing experience rows, education rows, and skill
-  categories.
-- Tailoring policy and writing style.
-- Tailoring quality plan.
-- Required experience IDs, required skill category IDs, and required bullets.
-- Required output JSON shape.
+Prompts contain minimized canonical source IDs/text, allowed mappings, artifact constraints and repair findings. All source text is untrusted data. Lane binding and BR-050 preflight precede calls; envelopes record schema/prompt versions, provider/model and input fingerprint.
 
 ## Output Schema
 
-The generator must return JSON matching `TAILORED_RESUME_RESPONSE_SCHEMA`:
+`GeneratedResumeDraft` contains explicit summary sentences, experience updates, skill updates and `generated_claim_mappings`. Each mapping records a line ID, location, evidence/requirement IDs, transform and rationale. Code rejects foreign IDs, duplicate IDs and locations that do not map to the shipped line. The verifier cites exact final text and sources; generator assertions alone never establish support or coverage.
 
-```json
-{
-  "executive_profile": "Grounded executive profile.",
-  "executive_profile_sentences": ["Grounded executive profile."],
-  "experience_updates": [
-    {
-      "id": "existing_profile_experience_id",
-      "title": "",
-      "bullets": ["Generated bullet text."]
-    }
-  ],
-  "skill_category_updates": [
-    {
-      "id": "existing_profile_skill_category_id",
-      "items": ["existing skill 1", "existing skill 2"]
-    }
-  ],
-  "generated_claim_mappings": [
-    {
-      "claim_id": "claim_summary_1",
-      "location": "executive_profile.sentence[0]",
-      "text": "Grounded executive profile.",
-      "claim_label": "positioning",
-      "coverage_edge_ids": [],
-      "requirement_ids": [],
-      "evidence_ids": [],
-      "non_requirement_reason": "positioning",
-      "review_required": false
-    },
-    {
-      "claim_id": "claim_1",
-      "location": "experience.existing_profile_experience_id.bullets[0]",
-      "text": "Generated bullet text.",
-      "claim_label": "evidence_reframed",
-      "coverage_edge_ids": ["edge_req_1_ev_1_direct"],
-      "requirement_ids": ["req_1"],
-      "evidence_ids": ["ev_1"],
-      "non_requirement_reason": "positioning",
-      "review_required": false
-    },
-    {
-      "claim_id": "claim_skills_1",
-      "location": "skills.existing_profile_skill_category_id",
-      "text": "existing skill 1, existing skill 2",
-      "claim_label": "structure",
-      "coverage_edge_ids": [],
-      "requirement_ids": [],
-      "evidence_ids": [],
-      "non_requirement_reason": "structure",
-      "review_required": false
-    }
-  ]
-}
-```
-
-The model cannot return contact info, education rows, new sections, comments,
-warnings, or PDFs. The claim map is a sidecar audit contract; code still owns
-assembly, provenance rows, final artifact metadata, and read models. Mapping
-locations are range-checked, complete rendered skill groups bind by exact text,
-and the schema-valid raw response is retained unchanged in attempt audit.
+Generation describes the renderer's literal bindings: every summary sentence
+uses `executive_profile#0`, bullet N uses `experience:<entry-id>#N`, and a selected
+skill group uses `skills:<category-id>#0`. The prompt supplies the exact evidence
+IDs belonging to each experience entry. The response schema permits only claim
+labels allowed by the active claim policy; validation independently enforces the
+same policy and checks every emitted binding.
 
 ## What "Profile-Row Based" Means
 
-The generated JSON is keyed by existing profile object IDs.
-
-| Generated Field | Key | Based On | What The Model Can Do |
-| --- | --- | --- | --- |
-| `executive_profile` | No row ID | Baseline executive profile plus target role and quality plan | Rewrite the summary when policy allows it |
-| `experience_updates[]` | Existing experience entry ID | One existing profile experience entry | Rewrite/order bullets for that entry, within max bullet count and evidence rules |
-| `skill_category_updates[]` | Existing skill category ID | One existing profile skill category | Select/order exact existing skills from that category |
-| Education | No model field | Existing profile education entries | Nothing; code injects it unchanged |
-| Contact/header | No model field | Existing profile personal data | Nothing; code injects it |
-
-Requirement directives influence which evidence and terms should be emphasized
-inside those profile rows. They do not create one generated row per requirement.
-
-For example, if the job has requirements for AI SDLC, developer platforms, and
-security, the model does not return three requirement rows. It returns updated
-bullets for the candidate's existing experience rows and selected existing
-skills that best cover those requirements.
+Authored experience, education and skill rows remain canonical. Exact row IDs control selection and rendering. Reframing prose requires source-bound model verification; immutable employer/title/date fields retain literal binding. Selection does not convert a draft evidence card into confirmed history.
 
 ## Tailoring Plan
 
-`build_tailoring_plan()` converts analysis and profile data into a compact plan
-that both the generator and validators can use.
-
-The plan includes:
-
-- `target_seniority`: inferred from the job title/responsibilities.
-- `job_keywords`: grounded keywords from `EmployerAnalysis` and requirement
-  directives.
-- `requirement_directives`: requirement-level instructions derived from the
-  requirement fit report when it matches the same job and analysis generation.
-- `required_evidence_ids`: only evidence explicitly pinned by a required
-  baseline bullet; relevance or seniority never silently creates a hard pin.
-- `seniority_evidence_ids`: profile evidence that supports senior/staff/director
-  positioning.
-- `verified_metrics`: a compatibility index derived from achievement evidence
-  and baseline bullets. Claim validation still checks each number against the
-  specific evidence ID mapped to that claim.
-- `prohibited_claims`: claims that must not appear because the requirement fit
-  says they are missing/blocked or explicitly avoidable.
-- `requirement_led_controls`: claim policy, generation permissions, required
-  pins, writing style, revision gates, and advanced auto-approval policy after
-  migrating legacy Preferences values.
-- `target_profile`: every must-have and nice-to-have requirement with a safe
-  excerpt and explicit `resume`, `logistics`, `eligibility`, or
-  `employer_condition` scope, plus weights, keywords, and profile achievement
-  IDs. Only `resume` requirements enter the generation/coverage lists; the
-  others remain inspectable as context-only requirements. Employer-analysis
-  prompt v2 asks every leg and the synthesizer to declare this scope. The
-  target-profile adapter uses that reconciled declaration for ambiguous wording
-  and applies deterministic non-resume safety rules plus an old-analysis
-  fallback, so an obvious office/work-authorization/employer condition cannot
-  be promoted to resume coverage by one bad declaration.
-- `coverage_graph`: requirement nodes, achievement nodes, coverage edges,
-  uncovered requirements, and unused achievements. Existing
-  `RequirementFitReport.fit.evidence_ids` seed direct/transferable candidates;
-  deterministic ranking retains one strongest achievement per requirement while
-  allowing one achievement to cover several requirements.
-- `deterministic_checks`: a prompt-visible summary of important hard checks.
-
-Requirement directives are sorted by priority, weight, and requirement ID. They
-can say, for example:
-
-- double down on a matched requirement,
-- bridge a transferable gap using specific evidence,
-- avoid claiming a missing or blocked requirement,
-- retain logistics, eligibility, and employer conditions as context-only facts
-  for review rather than résumé claims,
-- target specific grounded keywords.
+`target_seniority` comes from the accepted job interpretation. Requirement scope and protected-class flags come from that interpretation, without regex overrides or old-analysis fallbacks. `required_evidence_ids`, selections and budgets are structural/user authorities. Requirement-fit evidence IDs must belong to the supplied profile inventory. No substring “seniority signal” or token overlap adds evidence or coverage.
 
 ## Attempt Loop And Candidate Selection
 
-Before `_run_attempts()` builds or sends any generator message, the domain
-computes the distinct mandatory achievement set for each experience role. User
-pins and requirement-coverage edges share one slot when they reference the same
-canonical evidence. If that union exceeds `max_experience_bullets`, Tailor
-blocks with `ARTIFACT_BUDGET_INFEASIBLE`, records the role, required count, and
-ceiling, preserves the durable attempt count, and asks the user to reduce pins
-or raise the ceiling. An impossible profile configuration never consumes model
-or retry budget. Selected payloads receive an internal artifact-budget version;
-render-only refreshes preserve mandatory overflow on older accepted mapped
-payloads that predate that marker instead of silently changing reviewed text.
+Each candidate attempt receives a fresh opaque UUID before provider I/O. The ID
+stays with its parse/provider failure, reviews, correction feedback and persisted
+selection. Repeated or common-prefix prompts and parallel attempts still create
+distinct candidates. The complete request has a separate prompt fingerprint;
+candidate identity does not decide semantic equality or invalidate determination
+reuse. Historical IDs remain as recorded, scoped by their generation and attempt.
 
-`_run_attempts()` owns the generator retry loop.
+A generated candidate must pass structural binding, claim verification and the separate quality judge. Model findings supply repair reasons and exact line IDs. Arithmetic may compare accepted typed fit results; it does not assess prose. Provider, spend, JSON, schema and source-binding failures remain distinct and preserve accepted material.
 
-For each attempt:
+For a structurally valid résumé draft, production factual verification and quality
+review share the bounded review pool and run concurrently on independent
+thread-owned database connections. Facts remain the authority for provenance.
+A quality verdict is used only after every factual/local gate passes and the
+complete quality request (artifact kind, entity, ordered lines and allowlists,
+sources and rubric) still has the same fingerprint. A changed request gets a
+fresh quality determination; a rejected candidate records the unused receipt.
+Its completed quality findings are retained separately as
+`parallel_quality_feedback` for the next generator repair. They do not fill the
+candidate's `judge` record, enter accepted review history or authorize approval.
+Repair evidence selections still intersect the current canonical retry catalogue;
+a later final judge takes precedence over speculative feedback.
+High-fit six-persona review still follows the accepted pair. Custom ports and
+in-memory databases retain sequential execution. Cancellation and shutdown
+drain admitted siblings before releasing resources.
 
-1. Start with the base tailor prompt.
-2. Map earlier parse, validation, judge, adversarial, fabrication, or warning
-   outcomes to a bounded code-owned retry reason and append only its fixed
-   guidance to the system prompt. Keep original free-form findings in attempt
-   history for audit, never in a later generator message.
-3. Build two LLM messages:
-   - system: the tailor prompt,
-   - user: original resume baseline, target job blob, and JSON-only reminder.
-4. Run each configured candidate model through `chat_json()` with
-   `TAILORED_RESUME_RESPONSE_SCHEMA`.
-5. Normalize the current artifact-budget policy before assembling candidate
-   text. Evaluate schema, rendered quality, provenance, fabrication and grounded
-   fit once for that exact payload. Hard fabrications trigger typed repair
-   guidance with zero judge or adversarial calls.
-6. Judge each deterministically valid candidate unless `validation_mode` is `lenient`.
-7. Optionally run adversarial review for high-fit jobs.
-8. Select the best clean approved candidate by judge score, retaining its
-   evaluated payload, text and evidence together.
-9. If only warning-bearing approved candidates exist, retry while retry budget
-   remains, then accept the best residual warning candidate only when allowed
-   by the loop logic.
-10. Reuse the selected evidence for no voice/no-op paths. A changed voice payload
-    receives fresh evaluation and paid review; rejection retains the accepted
-    base candidate. Write the accepted candidate's already evaluated text.
+### Bounded Persona Diagnostics
 
-The retry loop is separate from the durable preparation work-item retry budget.
-The inner loop improves one tailoring run. The durable work item controls how
-many failed runs the background preparation queue auto-requeues.
+The final high-fit review still assesses every supplied line and the complete
+rubric from all six personas. New `resume-adversarial-v3` requests use a bounded
+response model: each persona records one explicit verdict, up to three cited
+source spans and six actionable findings. Rationale and repair strings are
+limited to 512 characters, quotes to 240, and each citation's literal-value
+list to four values of at most 64 characters. These limits control response
+size; they never compute a semantic verdict or permit a pass when a defect
+remains. The reviewer groups repeated defects, prioritizes repairs and retains
+fail for any unresolved issue, including issues summarized in its rationale.
 
-A provider-call failure is not a JSON parse failure. Candidate attempt audit
-records use `provider_error` only for an application-owned, allowlisted failure
-envelope: provider/model/operation, category/type/code, retryability, known
-structured provider codes, candidate and inner/durable attempt, workflow
-identity, prompt fingerprint, schema version, and available trace/span IDs.
-Provider messages, `additional_details` text, SDK objects, prompts, responses,
-resume/job text, paths, URLs, and secrets are never copied into that envelope.
-The workflow-run detail projects bounded counts and the latest safe summary for
-the matching execution, so repeated provider failures remain distinguishable
-from a validation or parsing failure.
+The provider receives these nested bounds in its structured-output schema.
+Structural, source-ID and verbatim-span validation plus the existing bounded
+correction budget still apply. Every persona and the overall model verdict
+must pass before acceptance. Scores remain diagnostic. The canonical stored
+review reader retains its historical wider shape, so old accepted receipts and
+their original diagnostics remain readable without truncation or rewriting.
+The prompt revision and response schema participate in determination identity.
+The response model explicitly names its wider `stored_result_schema`; generated
+TypeScript readers publish that canonical shape and current/compatible prompt
+versions rather than applying new response-size limits to historical receipts.
 
-For pre-instrumentation records only, the run detail has one deliberately exact
-legacy bridge: a matching Temporal execution whose candidate is a Codex-routed
-model with `status: "parse_error"` and literal `parse_error: "builder error"`.
-It is labeled `legacy_inferred`, has unknown per-call retryability, and omits
-all structured provider fields. No other parse error is reclassified.
+
+
+For each cover-letter draft, factual verification and quality review read separate
+copies of the same frozen lines, sources and rubric. The production runner overlaps
+these independent calls in the bounded [letter-review pool](pipeline/concurrency.md).
+Both durable results join before acceptance or an ordered correction. Review IDs,
+cache fingerprints, model/effort, citation validation and attempt budgets stay the
+same. Resume checks retain their dependencies on factual grounding and pruning.
+Custom directly injected reviewers and in-memory repositories run sequentially.
+
+Each bounded resume or cover correction carries an ordered review history:
+recorded determination IDs and their complete typed quality/persona results.
+Later generators and reviewers receive that history, including after a changed
+voice proposal. The reviewer considers earlier repairs and explains any reversal
+with a feasible correction addressing the competing concerns. Its independent
+typed verdict still decides acceptance; history cannot force a pass or expand
+generation permissions.
+
+History is context, never an additional factual or citation source. Current
+canonical sources and rendered lines retain their exact ID/quote fences. The
+history participates in determination fingerprints, so changed review context
+requires a new decision while unchanged factual inputs can reuse verification.
+Resume attempt audits retain per-candidate and final review context; cover
+artifact metadata retains the history supplied to its final review. Rejected
+voice review context remains in the voice audit. Existing attempt/spend limits
+and accepted-artifact preservation apply unchanged.
+
+Quality and persona reviewers receive the canonical posting plus the same user
+generation permissions, required roles, bullet limits and current coverage plan
+as the generator. Their shared rubric also carries the exact canonical evidence
+IDs eligible for a bounded revision. Review requests cannot authorize a new
+coverage edge or expand the artifact budget. A required role without active
+coverage or a bullet pin retains its single positioning-bullet constraint;
+additional saved evidence outside the permitted revision set cannot become an
+impossible drafting requirement.
+
+Empty-bullet permissions use the plan's actual achievement inventory, including
+authored baseline bullets as well as confirmed achievement-ledger records.
+Standalone prompt construction and field validation share the canonical profile
+source inventory. Fixed role metadata and unconfirmed ledger records do not
+become achievement evidence. A required role with baseline evidence cannot be
+listed as allowing empty bullets solely because its separate ledger is empty;
+a role with neither evidence nor a bullet pin preserves its fixed metadata.
+
+Required skill-category IDs are a minimum, independent of the full allowed
+source catalogue. The first prompt exposes all authored categories. Field
+validation checks required inclusion against that minimum and foreign IDs against
+the entire catalogue. Text and ResumeDocument share the selection of required
+plus model-selected known categories in source order. Individual skill pins
+require their owning category; existing default-all behavior and item-rewriting
+permissions remain. Source and quality determinations still decide factual
+support and relevance.
+Quality correction IDs are checked against admitted revision targets plus
+canonical sources already bound to the verified rendered candidate. The full
+profile remains available for factual review; its mere presence cannot grant a
+new coverage edge. An out-of-scope correction gets exact private ID feedback in
+the existing bounded repair, without changing the model's quality verdict.
+Review permissions also record renderer-owned layout and the exact fixed skill
+category order. Skill-item reordering never grants category or section-layout
+edits; those remain under the saved profile and template.
+Seniority does not imply direct reports, and omitted optional roles alone do not
+require a complete career inventory. Reviewers assess the truthful artifact;
+unsupported qualification gaps remain gaps rather than requests to invent proof.
+Repairs receive the rejected typed candidate and exact unaffirmed source IDs as
+untrusted data, with the current source and coverage allowlists remaining authoritative.
 
 ## Validation Layers
 
-Tailoring has multiple gates. Some are deterministic, some are LLM-judged.
+The canonical contact formatter keeps professional-link destination hosts and
+paths visible in both text and PDF labels. Two platforms may use the same
+handle; display text must still distinguish the saved links while preserving
+their exact hyperlink targets. Generated edits do not change contact facts.
 
 ### 1. Structured Output Schema
 
-The LLM gateway is called with `TAILORED_RESUME_RESPONSE_SCHEMA` through
-`chat_json()`. Provider adapters pass that schema as structured-output metadata
-where supported and return a parsed dict. The prompt's "Return the JSON" wording
-is redundant guardrail text, not the primary enforcement mechanism.
-
-This catches malformed JSON and many shape errors before the tailoring
-validators run.
+Strict schemas reject extra fields, unknown enums and missing inventory items.
 
 ### 2. JSON Field Validation
 
-`ContentValidator.validate_json_fields()` checks the returned JSON against the
-profile contract:
-
-- `executive_profile` must exist and be non-empty.
-- `experience_updates` must exist and be non-empty.
-- `skill_category_updates` must exist and be non-empty.
-- Each required experience ID must appear exactly once.
-- Unknown or duplicate experience IDs are rejected.
-- Experience bullet count cannot exceed the profile max. Requirement coverage
-  and explicit pins do not bypass this hard ceiling.
-- Every experience bullet must have exactly one bound claim mapping and exactly
-  one primary achievement evidence ID; the same achievement cannot produce
-  several bullets.
-- A covered or explicitly pinned role cannot carry positioning-only filler. A
-  required role with neither receives exactly one positioning bullet when it
-  has achievement evidence. A required role with neither achievement evidence
-  nor required bullet pins keeps its fixed role details and an empty bullet list;
-  the generator must not invent a claim or borrow another role's achievement.
-  Pinned bullets remain mandatory, so roles with pins are excluded from the
-  prompt's empty-bullet exception. A pin without supporting evidence from its own
-  role requires a profile correction: restore the evidence or remove the pin.
-  An optional unsupported role is omitted.
-- Generated title must be empty or exactly match the source title.
-- Each required skill category ID must appear exactly once.
-- Unknown or duplicate skill category IDs are rejected.
-- Skill items must exactly match skills already present in that profile
-  category.
-- LLM self-talk phrases are rejected.
-- Watchlisted fabricated skills are rejected unless they are present in the
-  allowed profile skills (the later fabrication gate additionally scans ALL
-  prose skills/tools against the profile vocabulary and evidence corpus).
-- Banned words are warnings in normal mode, errors in strict mode, and ignored
-  in lenient mode.
-
-Field validation must pass before assembly. A parsed object with malformed
-nested fields remains a rejected candidate with inspectable JSON and validation
-errors; it cannot abort the bounded repair loop through an assembler exception.
+Code validates row/line membership, immutable fields, explicit selections and numeric/date/currency binding. Self-talk, named-technology claims and register are model decisions.
 
 ### 3. Resume Assembly
 
-`ResumeAssembler` turns the approved JSON payload into plain text.
+Rendering preserves stable line IDs through text, HTML and PDF layout boxes. No reader reconstructs sources by matching strings.
 
-It injects:
-
-- name and contact,
-- `EXECUTIVE PROFILE`,
-- `EXPERIENCE` rows with source title/company/location/date metadata,
-- `EDUCATION` from the profile,
-- `SKILLS` with profile skill category labels.
-
-It applies profile policy helpers:
-
-- If summary rewrite is disabled, the baseline summary ships instead of the
-  model's proposed summary.
-- If achievement rewriting is disabled, source bullets ship instead of generated
-  bullets.
-- Required baseline bullets are appended if the model omitted them.
-- If skill reordering is disabled, source skill order ships instead of generated
-  order.
+The shared HTML print renderer repeats the selected template padding on every
+physical page fragment. A4 and Letter continuation pages retain their top and
+bottom insets without shrinking the font or changing accepted text. Section
+headings stay with their following content across a page break. Content
+may still flow onto another page; inset preservation does not impose a page
+count or establish the accuracy of the pre-print layout-box approximation.
 
 ### 4. Rendered Resume Validation
 
-`validate_tailored_resume()` checks the assembled text, not only the JSON:
+Sections, layout and quote existence are mechanical. Meaning is assessed against actual final text.
 
-- required section headings are present,
-- required companies are still present,
-- required education entries are still present,
-- required skill category labels are still present.
+### 5. Structural Tailoring Checks
 
-### 5. Deterministic Tailoring Quality
+Required IDs, pins, artifact budget and exact-value checks remain code. Representation of an achievement, seniority alignment, stuffing and style remain model judgments.
 
-`evaluate_tailoring_quality()` checks the payload and rendered text against the
-`TailoringPlan`:
+### 6. Claim Verification
 
-- standard resume sections exist,
-- required evidence IDs are represented,
-- all metrics are recognized from achievement-owned evidence,
-- every summary or experience metric is supported by that claim's mapped
-  achievement rather than merely appearing elsewhere in the profile,
-- prohibited claims do not appear,
-- target keyword coverage is not extremely low,
-- keyword repetition stays below stuffing thresholds,
-- consecutive repeated words are warned,
-- senior/staff/director jobs include supported ownership/scope/influence
-  language when seniority evidence exists,
-- executive phrasing on non-senior jobs is warned,
-- stock phrase markers are warnings only.
+Every final line receives a typed verdict, factual propositions, verbatim supporting evidence, source contributions and findings. Unsupported/uncertain factual claims fail. Generation anchors must reconcile with verifier-affirmed source IDs. The technology/title/employer lexicons and stemmer are deleted.
 
-Quality errors fail the candidate. Quality warnings can trigger a retry unless
-they are label-only low-quality signals such as stock phrase markers.
-
-### 6. Deterministic Fabrication Gate
-
-The deterministic gate runs on each candidate before the structured judge or
-adversarial review. Its findings and provenance belong to that exact normalized
-payload. Unchanged selected text reuses them; a changed voice payload receives
-a fresh gate evaluation before paid review:
-
-- The never-fabricate detector scans numeric/date/title/employer tokens in the
-  shipped prose against the profile evidence corpus. SKILLS section rows are
-  grounded against the declared skill items themselves, so a declared
-  versioned skill (`Java 17`, `OAuth 2.0`) is not flagged as a fabricated
-  number, while a skills numeric absent from every declared item still fails.
-- The prose skill/tool gate hard-rejects any job-target skill/tool keyword
-  woven into experience bullets or the executive summary that grounds in
-  neither the profile skill vocabulary nor the evidence corpus. The gate is
-  scoped to named technologies with word-form-tolerant grounding, so
-  profile-backed tools, corpus-grounded concept terms, and ordinary English
-  words never false-fire.
-
-A hard finding with retry budget remaining records its per-candidate
-`failed_fabrication_gate` repair-loop history and triggers the fixed
-`fabrication_detected` retry guidance. The finding's free-form text never enters
-the later system or user message. When every candidate trips the gate, the
-resume is NOT approved and the prior accepted generation is preserved. The
-cover-letter body runs the same never-fabricate and prose skill/tool gates
-before acceptance. Job-post numbers and dates never enter the candidate evidence
-corpus. The Cover generator must describe posting-only timelines, team sizes,
-goals, and requirements qualitatively; a numeric/date grounding failure adds only
-bounded code-owned retry guidance to remove posting-derived values, never the
-free-form finding or prior output. A failed first attempt remains a rejected
-artifact while the aggregate stays `resume_approved`. A failed refresh is written
-to a distinct rejected audit path and appended to `cover_letter_attempts`; the
-approved cover letter bytes, artifact slot, lifecycle state, and projection remain
-authoritative until a replacement passes validation and its versioned path is
-durably saved.
-Successful refresh candidates also use new immutable paths, so a repository
-failure cannot mutate the bytes referenced by the prior approved artifact. When
-new cover-letter text is approved, any prior cover-letter PDF is persisted as
-`superseded` and the aggregate returns to `cover_letter_ready`; a failed PDF
-render therefore remains pending instead of projecting stale PDF bytes as
-approved.
+The factual response uses request-local short citation references, expanded
+into full canonical evidence before validation and persistence. Every line and
+claim is still reviewed. Whole-source selection is explicit and bounded;
+final-line claims and findings require verbatim spans. The
+[Materials audit contract](materials.md#source-bound-claim-verification) owns the
+format, cache and historical-reader guarantees.
 
 ### 7. Post-Generation Fit Gate
 
-After assembly, requirement-led candidates are scored against the target
-profile. The scorer records:
-
-- final fit score,
-- must-have coverage ratio,
-- covered and uncovered requirement IDs,
-- prioritized fixes,
-- review blockers from adjacent or draft claims.
-
-The versioned default gates are minimum fit score 8/10, must-have coverage
-0.85, and one revision/enhancement attempt. If thresholds fail and claim policy
-allows adjacent translation or draft confirmation, the retry loop receives the
-prioritized fixes and uncovered requirements. Deterministic validators still
-own fact safety: scoring can request revision, but it cannot approve unsupported
-claims. The resulting revision decision has one disposition: `passed`,
-`revise`, `review_required`, or `accept_with_residual_gap`. Once the bounded
-revision budget is exhausted—or when canonical profile evidence cannot support
-an enhancement—an otherwise-safe candidate continues through judge,
-adversarial, and fabrication gates with a persisted residual warning. It does
-not fail Tailor or spend more retries trying to manufacture missing experience;
-Scoring remains the owner of fit and eligibility.
-
-Coverage-bearing claims are grounded against the shipped rendered text before
-they count: a claim binds to a shipped line (location + text binding, honoring
-the same bullet's pre-voice text for voice-reworded lines), claimed-only
-requirements with no shipped line fail the gate with explicit shipped-resume
-fixes feeding the revision loop, and the shipped artifact persists a
-lifecycle-labeled post-voice grounded fit record
-(`post_generation_fit_final`). Apply Review labels the gate's coverage basis
-(`grounded_shipped_text_v1` vs `judge_claimed_legacy`) instead of hiding it.
+Coverage counts only requirements the verifier declares served by shipped line IDs. The requirement-fit policy owns arithmetic and bands over those typed verdicts. No keyword union launders provenance.
 
 ### 8. Structured Judge
 
-`build_judge_prompt()` asks a separate judge model whether the exact candidate is
-safe to show the user. The judge receives canonical profile evidence, allowed
-skills, achievement-owned metrics, the tailoring quality plan, the target job,
-the tailored JSON, and the rendered resume.
-
-In lenient mode, candidate and changed-voice audits retain `SKIPPED` with reason
-`lenient_validation_mode`. The acceptance verdict does not imply that paid review
-ran; voice and final artifact metadata reuse the actual candidate review record.
-
-The judge returns `TAILORING_JUDGE_RESPONSE_SCHEMA`:
-
-- `verdict`: `PASS` or `FAIL`,
-- `score`: 0-1,
-- `criterion_scores`,
-- `issues`,
-- `unsupported_claims`,
-- `fabrications`,
-- `missing_required_evidence`,
-- `repair_instructions`.
-
-Approval requires:
-
-- `verdict == PASS`,
-- score at or above `tailorJudgeMinScore`,
-- every required criterion score, including `semantic_fidelity`,
-  `bullet_selection_focus`, and `professional_register`,
-- no unsupported claims, fabrications, or missing required evidence.
-
-In `lenient` mode, the structured judge is skipped.
+The existing quality judge remains a separate call. Its typed pass/fail verdict controls quality acceptance; scores are diagnostic rather than a semantic threshold.
 
 ### 9. Adversarial Review
 
-High-fit jobs (fit at or above the adversarial threshold of 0.8, i.e. 8/10)
-run an additional adversarial review after the judge approves. Six personas
-challenge the resume — `ats_parser`, `skeptical_recruiter`,
-`hiring_manager_domain_expert`, `evidence_auditor`, `anti_ai_voice_critic`,
-and `interview_defensibility_critic` — each with its own rubric.
-If it finds blockers, the candidate becomes rejected. Its blockers and repair
-instructions remain inspectable audit data; only the code-owned
-`adversarial_rejected` reason can influence the next generator prompt.
+Any additional model review uses canonical sources, explicit line IDs and strict findings. Code never reclassifies its prose by keywords.
 
 ### 10. Optional Voice Pass
 
-If a `VoicePort` is injected, it may rewrite only lines that contain a configured
-buzzword. Clean lines must remain byte-for-byte unchanged. A rewrite is eligible
-only when it reduces buzzword density; opening-verb or length variety is audit
-diagnostic data, not an optimization target. Before the voiced payload can ship,
-claim text is rebound to the final prose and JobCtrl re-runs mapping validation,
-rendered quality, provenance, fabrication, final fit, the structured judge, and
-the high-fit adversarial review when applicable. Any scope, semantic, grounding,
-or judge regression keeps the already accepted pre-voice candidate and its
-evidence. Unchanged/no-op text is not evaluated again. Final fit audit records
-label the retained measurement as `post_voice_shipped` without recomputing it.
+The model chooses prose changes by stable line identity. Skill/structural inventories remain unchanged. Final changed lines require fresh claim verification and quality review; no buzzword density or structural-variety proxy decides adoption.
 
 ## Persistence And Audit Data
 
-After a parseable payload exists, the use case writes a text artifact for
-inspection even when the final status is not approved. If field validation
-prevented assembly, this file contains the rejected JSON and validation errors,
-labelled as a rejected candidate. Otherwise it retains the exact evaluated
-resume text. The artifact metadata is the main audit surface for tailoring.
-
-Approved resume metadata includes:
-
-- validation mode and attempt count,
-- tailoring policy ID/version,
-- prompt/schema/judge schema versions,
-- candidate models and selected model,
-- selected candidate ID,
-- judge model and judge threshold,
-- quality plan,
-- quality checks,
-- post-generation fit score and revision decision,
-- bullet-limit violations on rejected candidates or legacy artifacts,
-- adversarial review,
-- retry/review feedback,
-- change annotations,
-- candidate summaries,
-- judge result,
-- voice pass result,
-- keyword coverage read model (computed by the coverage audit against the
-  actual rendered resume text; a keyword counts as covered only when a
-  provenance-backed grounded bullet demonstrates it).
-
-Requirement-led audit data exposed to Apply Review is bounded and safe. It can
-show covered requirements, uncovered requirements, unused achievement IDs,
-evidence-backed generated claims, pinned claims, adjacent/draft claim labels,
-legacy bullet-limit violations, revision decisions, and review blockers. It
-must not expose raw prompts, full profile payloads, full job descriptions, local
-paths, PDFs, logs, browser data, or SQLite contents.
-
-For accepted generations, `build_bullet_provenance()` records canonical
-provenance rows. These rows are computed against the same final payload that
-ships to the user, so `generated_text` matches the rendered resume text.
-
-Provenance rows exist for:
-
-- the executive profile line,
-- each rendered experience bullet,
-- each rendered skill category line.
-
-Each provenance row records:
-
-- section and source profile ID,
-- profile evidence IDs,
-- employer requirement IDs served by generated text,
-- matched keywords present in generated text,
-- transform type,
-- governing control rule,
-- rationale,
-- generated text.
-
-Failed re-tailor attempts do not destroy the last accepted generation's
-artifact or provenance rows.
+Accepted artifacts carry claim-verification and quality-determination IDs. `artifact_line_anchors` records line, evidence, requirement, transform and reason. `semantic_determinations` holds accepted envelopes; bindings fence entity versions. Blocked attempts are separate from accepted artifacts. Apply Review joins anchors/findings by line ID and displays “No recorded source” for unanchored lines.
 
 ## Deterministic Versus LLM-Owned Work
 
-| Area | Type | Notes |
-| --- | --- | --- |
-| Employer analysis drafting/synthesis | LLM/agentic | Produces grounded requirements and keywords before tailoring |
-| Requirement fit scoring | LLM plus parser/domain model | Can provide requirement directives to tailor |
-| Tailoring prompt assembly | Deterministic | Built from profile, job, analysis, fit report, policy, and style |
-| Resume JSON generation | LLM | Constrained by strict output schema |
-| JSON schema validation | Deterministic | Gateway/schema-level |
-| Profile contract validation | Deterministic | Required IDs, allowed skills, title safety, max bullets |
-| Text assembly | Deterministic | Code injects fixed sections and profile metadata |
-| Rendered text validation | Deterministic | Checks final text has required structure/profile anchors |
-| Tailoring quality checks | Deterministic | Evidence-scoped metrics, prohibited claims, keyword coverage/repetition, seniority signals, stock phrases, and smallest-set bullet curation |
-| Structured judge | LLM | Independent pass/fail quality, semantic-fidelity, selection-focus, and register gate; repeated on accepted post-voice text |
-| Adversarial review | LLM | Optional high-fit challenge review |
-| Voice pass | LLM plus deterministic gates | Optional buzzword-only edit; clean lines are immutable and final text must reduce buzzwords and pass all final gates |
-| Fabrication + skill gate | Deterministic | Never-fabricate token scan plus prose skill/tool allowlist gate; hard reject with repair-loop feedback |
-| Claim grounding | Deterministic | Binds coverage-bearing claims to shipped rendered lines before they count |
-| Provenance and coverage rows | Deterministic | Built from final generated text, profile evidence, and employer analysis |
+Code owns formats, identity, schema, source binding, security and arithmetic. Models own support, relevance, voice, seniority and requirement demonstration. Literal user filters remain literal. No read-side lexical matching is allowed.
 
 ## Current Constraints
 
-The current schema is intentionally narrow. It does not let the model return:
-
-- `has_metric`,
-- `dropped`,
-- `warnings`,
-- requirement-row output,
-- new experience entries,
-- new skill categories,
-- education changes.
-
-Those concepts can be added only by changing the schema and every owning layer:
-prompt, validator, assembler, provenance builder, artifact metadata, tests, API
-read models, and UI inspection surfaces.
-
-The current implementation can safely:
-
-- rewrite the executive profile when policy allows it,
-- rewrite and order bullets inside existing experience entries,
-- select and order existing skill strings inside existing skill categories,
-- preserve required bullets,
-- choose the smallest sufficient set from the pruned strongest
-  requirement-achievement edges while treating the max bullet budget as a
-  ceiling,
-- bind one achievement to each experience bullet and keep its metrics scoped to
-  that achievement,
-- label generated claims with requirement/evidence coverage or pinned/
-  positioning reasons,
-- score generated output against the target profile and route one gated
-  revision/enhancement pass,
-- keep non-resume requirements visible without counting them in grounded resume
-  coverage or its retry gate,
-- compute post-generation provenance and requirement coverage.
-
-The current implementation cannot safely:
-
-- add a new job requirement as a new resume row,
-- invent a new skill because the job asks for it,
-- rewrite source work-history titles with job keywords,
-- reorder experience entries independently of the profile order,
-- remove education or required experience,
-- treat a keyword as covered unless it appears in the generated resume text or
-  generation-time provenance.
-- treat office attendance, remote/hybrid arrangements, work authorization, or
-  employer compensation/benefits as achievements the resume must cover.
+A configured provider and spend allowance are required. The offline demo reports generation and verification unavailable. Catalog browsing, authored edits and historical reads remain available under their existing safety boundaries. Merge and release remain owner-authorized actions.
 
 ## Common Failure Reasons
 
-`failed_validation` usually means a deterministic gate failed. Common examples:
-
-- missing `executive_profile`, `experience_updates`, or `skill_category_updates`,
-- missing required experience or skill category IDs,
-- unknown extra IDs,
-- duplicate IDs,
-- too many optional bullets for the profile max,
-- non-empty generated title that does not exactly match the source title,
-- fabricated skill,
-- LLM self-talk,
-- required company/education/category missing after rendering,
-- required evidence missing,
-- unknown metric,
-- prohibited claim,
-- severe keyword stuffing,
-- seniority mismatch for senior/staff/director jobs.
-
-`failed_judge` means deterministic validation passed, but the structured judge
-did not approve or scored below the configured threshold.
-
-`failed_adversarial_review` means the structured judge approved, but the
-adversarial review found blockers.
-
-`failed_fabrication_gate` means the deterministic fabrication gate rejected the
-candidate — a fabricated numeric/date/title/employer token or an ungrounded
-job-target skill/tool in the prose. The finding is kept as per-candidate
-repair-loop history.
-
-`exhausted_retries` means the inner tailoring loop could not produce an
-acceptable candidate within its retry budget. The durable preparation queue has
-its own retry budget outside this inner loop. The stage `attempt_count` advances
-once per durable Tailor execution, not once per candidate-repair call; inner
-attempts remain in an append-only generation audit keyed by workflow execution,
-durable attempt, and recorded time, so a later retry or a rerun of the same
-durable attempt cannot overwrite earlier prompts, candidates, validation, or
-judge evidence. A fifth failed durable execution retains the compatibility
-`exhausted` marker until an explicit attempt reset; product read models expose
-it as a retryable failure with `attempt_budget_exhausted` as the reason.
-
-Tailoring does not silently discard a missing, cross-job, or stale-generation
-requirement-fit report. That condition blocks Tailor on Score before candidate
-generation, preserves the durable Tailor attempt count, records both generation
-identities, and asks for a fresh score. Scoring resolves employer analysis
-through its complete cache identity first, so the replacement fit report and
-the Tailoring coverage graph describe the same posting snapshot.
-
-Tailoring also does not retry an impossible artifact budget. The stage is
-blocked non-retryably before candidate generation, with bounded per-role
-violation facts and no synthetic judge result. Once the profile constraint is
-changed, a new Tailor execution can proceed normally.
+Provider unavailable, budget denied, malformed JSON, schema violation, foreign IDs, non-verbatim quotes, mismatched values and stale source versions are distinct actionable failures. An unsupported model verdict drives repair or failure with its cited reason. A refresh never erases the accepted generation.
 
 ## How To Change Tailoring Safely
 
-When changing tailoring behavior, update the owning layer rather than masking
-the symptom in the UI.
-
-| Desired Change | Owning Layer |
-| --- | --- |
-| Change what the generator is asked to do | `build_master_tailor_prompt()`, prompt version, prompt tests |
-| Change allowed output fields | `TAILORED_RESUME_RESPONSE_SCHEMA`, validator, assembler, provenance, tests, API/UI read models |
-| Change deterministic validation | `ContentValidator` or `evaluate_tailoring_quality()` plus focused tests |
-| Change keyword source | `EmployerAnalysis` / `build_tailoring_plan()` |
-| Change requirement-level tailoring directives | requirement fit report/domain scoring layer and `_requirement_directive_items()` |
-| Change approval semantics | judge schema/prompt, `_judge_resume()`, retry loop tests |
-| Change displayed audit trail | persist the missing audit data first, then update projections/API/UI |
-| Change final rendered content | assembler/render pipeline plus provenance and coverage tests |
-
-At minimum, prompt or validator changes should update the focused materials
-tests under `workers/automation/tests/test_materials_use_cases.py` and
-`workers/automation/tests/test_materials_quality.py`. User-facing inspection
-changes should also exercise the API/web path that displays the audit data.
-
-## Key Code Pointers
-
-- `TailorResumeUseCase.execute()`: overall transaction, generation, voice/audit,
-  artifact write, metadata, persistence.
-- `_run_analyze()`: resolves or produces canonical employer analysis.
-- `_run_attempts()`: retry loop, candidate fan-out, warning retry, candidate
-  selection.
-- `build_master_tailor_prompt()`: generator prompt and output contract.
-- `TAILORED_RESUME_RESPONSE_SCHEMA`: strict generator output schema.
-- `_run_candidate()`: candidate generation and safe provider/parse failure records.
-- `_evaluate_candidate()`: normalized payload/text, deterministic evidence and
-  paid review retained in `_TailorCandidate`.
-- `build_judge_prompt()` and `_judge_resume()`: independent structured judge.
-- `build_tailoring_plan()`: analysis/fit/profile to quality plan.
-- `evaluate_tailoring_quality()`: deterministic quality gate.
-- `ContentValidator`: JSON and rendered resume validation.
-- `ResumeAssembler`: JSON payload to final resume text.
-- `build_bullet_provenance()`: final text to provenance rows.
+Update the owning schemas/prompts and source contracts together. Prove the model controls the result using opposite valid fake-model verdicts on the same sources. Exercise each failure without fallback, last-accepted preservation and actual product persistence. Do not add eval sets, sentence corpora, baselines or recorded-output replay fixtures.
 
 ## Outreach Draft Gates (Reused Materials Stack)
 
-Outreach messages (Contact & Outreach, Phase 3) are first-person, claims-bearing
-documents sent to a real person, so they reuse the same truthfulness stack this
-page documents for resumes — exactly as the **cover-letter path** already does
-(`scan_cover_letter` runs the resume never-fabricate and prose skill/tool gates
-verbatim over first-person prose). Outreach adds no parallel gate machinery; it
-wraps the materials gates in
-`workers/automation/src/jobctrl/domain/contact/outreach_gates.py`.
+Outreach calls claim verification through a port, using confirmed contact facts and canonical profile sources. An independent quality judge assesses tone. User edits receive the same model checks before approval. The user confirms a draft and records sending separately; generation never sends a message.
 
-Every gate runs against the **actual draft text** (`OutreachDraft.body_text`),
-never inferred from the recipient or the target company. The recipient's own facts
-(name, title, employer) come from the **confirmed contact record** and are passed
-as the legitimately-named `target_company` / role context — mirroring how a cover
-letter names the job it targets — so referencing them is not a fabrication, while a
-fabricated relationship ("we worked together at X") is caught by the judge.
+### Outreach Publication Boundary
 
-The stack, in order:
+`SqliteOutreachThreadRepository.load` reads the complete tenant/thread row,
+all draft generations and all send logs in one SQLite snapshot. An immutable,
+exact canonical-state tuple accompanies the aggregate through its replacements;
+expected absence is distinct from overwrite authority. Generation captures this
+base before synthesis, and revision before verification. Read transactions end
+before model calls; model authority, lane/spend preflight and offer/profile
+source fences keep their existing owners.
 
-1. **Deterministic never-fabricate detector** (`scan_outreach_draft`, delegating to
-   the materials `scan_cover_letter`). A draft may reference only facts grounded in
-   the candidate profile evidence corpus, the confirmed contact record, and the
-   application — no invented metric, date, title, employer, or named technology.
-   Any finding is a hard block.
-2. **Content validator** (`validate_outreach_draft`). Reuses the materials
-   `BANNED_WORDS` + `LLM_LEAK_PHRASES` lists (stock phrases downgrade quality;
-   model self-talk is fatal) plus outreach-appropriate structure: a greeting, a
-   short sign-off, and a length ceiling (an outreach message is short, not a cover
-   letter).
-3. **LLM-as-judge** (`build_outreach_judge_prompt` +
-   `OUTREACH_JUDGE_RESPONSE_SCHEMA` + `parse_outreach_judge_response`). An
-   outreach-specific rubric (`relevance_to_recipient`, `evidence_support`,
-   `fabrication_safety`, `relationship_accuracy`, `tone_professionalism`) that
-   PASSes only with an explicit PASS verdict, a score at or above the floor, and no
-   blockers — any unsupported claim or fabricated relationship is an automatic
-   FAIL. A judge error is treated as a FAIL, never a crash.
-4. **Claim → fact provenance** (`compute_outreach_claim_provenance`). Each claim
-   (paragraph) binds to the confirmed contact attribute ids and the profile
-   evidence it rests on, computed against the rendered draft text — the same
-   "computed against rendered text" discipline as `build_bullet_provenance()`.
+At save, SQLite writer ownership precedes comparison. A changed or deleted base,
+or competing first creation for the same tenant/contact/job, raises
+`OutreachPublicationConflict` before canonical mutation. This migration-free
+comparison uses full canonical rows, not timestamp equality or a process-local
+counter. Unrelated tenants and threads do not invalidate the base. Concurrent
+revisions from one base can publish at most one next generation.
 
-Gates 1–3 aggregate into a persisted `DraftGateResults` whose `passed` is the
-**single authority draft approval is gated on** (INV-5): a draft passes only when
-the deterministic detector found no fabrications, the validator passed, and the
-judge approved. `passed` is stored in `outreach_drafts.gate_results_json`; both the
-Python aggregate (`OutreachDraft.approve`) and the TypeScript approve transition
-(`approveOutreachDraft` in `apps/api/src/outreach.ts`) refuse to approve a draft
-whose persisted record does not confirm `passed`. The gate results and claim
-provenance are surfaced in the review UI, labelled by lifecycle, per the
-root-cause / auditability discipline.
+Persistence inserts new draft and send-log identities, updates existing draft
+lifecycle columns explicitly, and never deletes/recreates accepted history.
+Bodies, gate/provenance records and prior review evidence remain immutable.
+Canonical changes, new determination anchors and durable lifecycle events commit
+as one transaction; subscriber fanout runs best effort after commit. A failed
+publication rolls them all back. Completed model determinations have their own
+persistence lifecycle and can survive a conflict without becoming draft authority.
 
-**Lifecycle and generation versioning.** A draft reuses the materials
-`ArtifactStatus` semantics — `candidate | approved | rejected | superseded`
-(`suppressed` is materials-only and never used for a draft). Generating or editing
-a draft mints a **new generation** (`OutreachThread.next_generation`) and
-supersedes prior *candidate* generations, but the last **approved** draft stays
-readable until a replacement is itself approved — the same "never destroy the last
-accepted artifact" rule that governs re-tailoring. A user edit is not an in-place
-mutation: `ReviseOutreachDraftUseCase` accepts the edited body as a new generation
-and **re-runs the identical gate stack**, exactly as an Apply Review resume edit
-creates a validated replacement generation. Rejecting a candidate never touches the
-approved draft.
+TypeScript approval/rejection, send logging and reminder transitions acquire
+writer ownership before loading or validating the current state, including offer
+bindings and approved-draft requirements. Their fact and event writes share the
+same transaction. The Python RPC transports a stale proposal as a separate result
+variant; the API maps it to HTTP 409. No accepted ID or generation is assigned to
+the returned private proposal. The web editor is mounted independently of the
+current review card, retaining text and completed results across refetch/SSE,
+and asks for deliberate reconciliation before another verification attempt.
+When a revision succeeds, the editor closes only if its current input still
+matches the submitted input snapshot. Newer typing stays available and unverified;
+the completed request never submits those later edits automatically.
+Open-page sessions partition the mounted review/editor state by tenant, contact
+and optional job. Inactive recipient/job sessions remain hidden and inert,
+including their reconciliation controls; returning to the original target resumes
+its work. Pending callbacks retain that target's own mutation context. Tenant
+changes reset these sessions. Generation also partitions by purpose and offer
+revision, retains its private conflict separately from the mutation error and
+presents the completed body, checks and provenance. Another generation requires
+explicit comparison, and a failed deliberate retry preserves the last proposal.
+Neither generation nor conflict recovery automatically retries a model call.
+This retention ends when the panel unmounts or the page reloads. The protocol does not add contact
+edit CAS, command replay identities or any send transport.
 
-**No send (INV-1).** The gate stack terminates at an `approved`, copyable draft.
-There is no send transport anywhere on the outreach path, and the aggregate cannot
-represent a "sent" state.
-- `fabrication_detector.py`: never-fabricate token scan and the prose
-  skill/tool allowlist gate.
-- `claim_grounding.py`: grounds coverage-bearing claims in shipped rendered
-  lines for the post-generation fit gate.
-- `coverage_audit.py` (`compute_keyword_coverage`): honest keyword coverage
-  against the rendered resume text.
-- `requirement_coverage.py`: requirement-achievement coverage graph and the
-  constrained planner.
+## Key Code Pointers
+
+- `domain/materials/claim_verification.py` and `domain/ports/claim_verification.py`.
+- `domain/materials/artifact_quality.py`, `generation.py`, `provenance_builder.py` and `claim_grounding.py`.
+- `domain/enrichment/interpretation.py`, `domain/profile/canonical_sources.py`.
+- `infrastructure/determinations.py`, Materials repositories and `apps/api/src/semantic-determinations.ts`.
+
+
+Legacy confirmed achievement rows retain saved cells and confirmation history,
+but an unresolved `confirmation_review_required` marker fails canonical source
+construction with `legacy_evidence_review_required`. A refresh cannot silently
+substitute an empty evidence inventory or replace accepted material IDs, bytes
+or anchors. Only a current-state-bound explicit human review resolves this
+structural authority; see [Storage](storage.md#legacy-achievement-confirmation-history).

@@ -1,3 +1,4 @@
+import type { OutreachDraftKind } from "@jobctrl/contracts";
 import type { OutreachDraftDto, OutreachThreadDetail } from "@jobctrl/contracts";
 import { useIsMutating } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type JSX } from "react";
@@ -19,12 +20,17 @@ import { DraftStatusBadge } from "./DraftStatusBadge.js";
 import { FollowUpPanel } from "./FollowUpPanel.js";
 import { GenerateDraftButton } from "./GenerateDraftButton.js";
 import { OutreachSendLogList } from "./OutreachSendLogList.js";
+import { RetainedOutreachSessions } from "./RetainedOutreachSessions.js";
 import { RejectDraftButton } from "./RejectDraftButton.js";
 
 export interface OutreachThreadPanelProps {
   contactId: string;
   jobId?: string;
+  draftKind?: OutreachDraftKind;
+  offerRevisionId?: string;
 }
+
+type Revision = { threadId: string; target: "approved" | "candidate"; bodyText: string };
 
 type DraftDecision = "approve" | "reject";
 
@@ -66,13 +72,17 @@ function OutreachThreadBody({
   thread,
   contactId,
   jobId,
+  revision,
+  onRevisionChange,
 }: {
+  revision: Revision | null;
+  onRevisionChange: (revision: Revision | null) => void;
   thread: OutreachThreadDetail;
   contactId: string;
   jobId?: string;
 }): JSX.Element {
-  const [revisionTarget, setRevisionTarget] = useState<"approved" | "candidate" | null>(null);
-  const [loggingSend, setLoggingSend] = useState(false);
+  const revisionTarget = revision?.target ?? null;
+  const [loggingSend, setLoggingSend] = useState<string | null>(null);
   const [pendingDecision, setPendingDecision] = useState<DraftDecision | null>(null);
   const decisionLock = useRef<DraftDecision | null>(null);
   const decisionMutationObserved = useRef(false);
@@ -83,7 +93,7 @@ function OutreachThreadBody({
   const approved = approvedDraftOf(thread);
   const candidate = candidateUnderReviewOf(thread);
   const history = historyNewestFirst(thread);
-  const canApprove = candidate ? candidate.gateResults.passed : false;
+  const canApprove = candidate ? candidate.gateResults.passed && candidate.offerSourcesCurrent !== false : false;
   const revisingApproved = revisionTarget === "approved";
   const revisingCandidate = revisionTarget === "candidate";
   const threadActionPending = pendingDecision !== null || activeThreadMutations > 0;
@@ -137,10 +147,11 @@ function OutreachThreadBody({
       {approved ? (
         <div className="outreach-approved-draft">
           <h4>Approved message</h4>
+          {approved.offerSourcesCurrent === false ? <p role="status">Offer terms or decision changed. This approved message remains in history; generate and review a new offer draft before copying.</p> : null}
           <DraftMeta draft={approved} timestamp={`approved ${formatDateTime(approved.approvedAt)}`} />
           <DraftBody bodyText={approved.bodyText} />
           <div className="outreach-draft-actions">
-            <CopyDraftButton draft={approved} />
+            <CopyDraftButton draft={approved} contactId={contactId} {...(jobId ? { jobId } : {})} />
             <Button
               type="button"
               variant="outline"
@@ -148,21 +159,13 @@ function OutreachThreadBody({
               disabled={revisionToggleDisabled("approved")}
               onClick={() => {
                 if (revisionToggleDisabled("approved")) return;
-                setRevisionTarget((value) => (value === "approved" ? null : "approved"));
+                onRevisionChange(revisingApproved ? null : { threadId: thread.threadId, target: "approved", bodyText: approved.bodyText });
               }}
             >
               {revisingApproved ? "Cancel revision" : "Revise approved message"}
             </Button>
           </div>
-          {revisingApproved ? (
-            <ReviseDraftForm
-              threadId={thread.threadId}
-              contactId={contactId}
-              initialBodyText={approved.bodyText}
-              onRevised={() => setRevisionTarget(null)}
-              {...(jobId ? { jobId } : {})}
-            />
-          ) : null}
+
           <details className="outreach-draft-audit">
             <summary>Provenance and gate results</summary>
             <DraftClaimProvenanceList provenance={approved.provenance} />
@@ -178,13 +181,13 @@ function OutreachThreadBody({
           here so the thread reflects it.
         </p>
         <OutreachSendLogList thread={thread} />
-        {approved ? (
+        {approved || loggingSend ? (
           <div className="outreach-send-log-actions">
             <Button
               type="button"
               variant="outline"
-              aria-expanded={loggingSend}
-              onClick={() => setLoggingSend((value) => !value)}
+              aria-expanded={Boolean(loggingSend)}
+              onClick={() => setLoggingSend((value) => value ? null : approved?.draftId ?? null)}
             >
               {loggingSend ? "Cancel" : "Log a send"}
             </Button>
@@ -192,8 +195,8 @@ function OutreachThreadBody({
               <SendLogForm
                 threadId={thread.threadId}
                 contactId={contactId}
-                draftId={approved.draftId}
-                onLogged={() => setLoggingSend(false)}
+                draftId={loggingSend}
+                onLogged={() => setLoggingSend(null)}
                 {...(jobId ? { jobId } : {})}
               />
             ) : null}
@@ -246,21 +249,13 @@ function OutreachThreadBody({
               disabled={revisionToggleDisabled("candidate")}
               onClick={() => {
                 if (revisionToggleDisabled("candidate")) return;
-                setRevisionTarget((value) => (value === "candidate" ? null : "candidate"));
+                onRevisionChange(revisingCandidate ? null : { threadId: thread.threadId, target: "candidate", bodyText: candidate.bodyText });
               }}
             >
               {revisingCandidate ? "Cancel revision" : "Revise draft"}
             </Button>
           </div>
-          {revisingCandidate ? (
-            <ReviseDraftForm
-              threadId={thread.threadId}
-              contactId={contactId}
-              initialBodyText={candidate.bodyText}
-              onRevised={() => setRevisionTarget(null)}
-              {...(jobId ? { jobId } : {})}
-            />
-          ) : null}
+
         </div>
       ) : null}
 
@@ -289,7 +284,17 @@ function OutreachThreadBody({
 // review with its gate results + claim provenance + approve/reject/revise actions,
 // and the full generation history so a re-draft never hides prior generations
 // (INV-5). There is no send action anywhere (INV-1).
-export function OutreachThreadPanel({ contactId, jobId }: OutreachThreadPanelProps): JSX.Element {
+export function OutreachThreadPanel(props: OutreachThreadPanelProps): JSX.Element {
+  const tenantId = useTenantId();
+  return (
+    <RetainedOutreachSessions key={tenantId} targetKey={JSON.stringify([props.contactId, props.jobId ?? null])}>
+      <OutreachThreadPanelSession {...props} />
+    </RetainedOutreachSessions>
+  );
+}
+
+function OutreachThreadPanelSession({ contactId, jobId, draftKind, offerRevisionId }: OutreachThreadPanelProps): JSX.Element {
+  const [revision, setRevision] = useState<Revision | null>(null);
   const query = useOutreachThreadQuery({ contactId, ...(jobId ? { jobId } : {}) });
   const errorMessage = query.error instanceof Error ? query.error.message : "";
   const thread = query.data?.thread ?? null;
@@ -298,14 +303,27 @@ export function OutreachThreadPanel({ contactId, jobId }: OutreachThreadPanelPro
     <section className="section outreach-thread-panel" aria-label="Outreach">
       <div className="outreach-thread-head">
         <h3>Outreach</h3>
-        <GenerateDraftButton contactId={contactId} {...(jobId ? { jobId } : {})} />
+        <GenerateDraftButton contactId={contactId} {...(jobId ? { jobId } : {})} {...(draftKind ? { kind: draftKind } : {})} {...(offerRevisionId ? { offerRevisionId, label: "Generate offer draft" } : {})} />
       </div>
       {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
       {!thread && !errorMessage ? (
         <Empty title="No outreach drafts yet. Generate one to review it before you send." />
       ) : null}
+      {revision ? (
+        <div className="outreach-retained-revision">
+          <h4>Your message revision</h4>
+          <ReviseDraftForm
+            threadId={revision.threadId}
+            contactId={contactId}
+            initialBodyText={revision.bodyText}
+            onRevised={() => setRevision(null)}
+            onDiscard={() => setRevision(null)}
+            {...(jobId ? { jobId } : {})}
+          />
+        </div>
+      ) : null}
       {thread ? (
-        <OutreachThreadBody thread={thread} contactId={contactId} {...(jobId ? { jobId } : {})} />
+        <OutreachThreadBody key={thread.threadId} revision={revision} onRevisionChange={setRevision} thread={thread} contactId={contactId} {...(jobId ? { jobId } : {})} />
       ) : null}
     </section>
   );

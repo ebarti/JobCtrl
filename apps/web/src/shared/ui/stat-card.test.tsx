@@ -31,20 +31,20 @@ describe("<StatCard>", () => {
     const { rerender } = render(
       <StatCard label="X" value="1" delta="up" deltaTone="up" />,
     );
-    expect(screen.getByText("up")).toHaveClass("text-success");
+    expect(screen.getByText("up")).toHaveClass("text-success-text");
 
     rerender(<StatCard label="X" value="1" delta="warn" deltaTone="warn" />);
-    expect(screen.getByText("warn")).toHaveClass("text-warning");
+    expect(screen.getByText("warn")).toHaveClass("text-warning-text");
 
     rerender(<StatCard label="X" value="1" delta="down" deltaTone="down" />);
-    expect(screen.getByText("down")).toHaveClass("text-destructive");
+    expect(screen.getByText("down")).toHaveClass("text-destructive-text");
   });
 
   it("omits the delta line when no delta is provided", () => {
     const { container } = render(<StatCard label="Jobs" value="1,204" />);
 
     expect(screen.queryByText(/vs/)).not.toBeInTheDocument();
-    expect(container.querySelector(".text-success")).toBeNull();
+    expect(container.querySelector(".text-success-text")).toBeNull();
   });
 
   it("renders the delta muted when no delta tone is set", () => {
@@ -58,7 +58,7 @@ describe("<StatCard>", () => {
   it("applies the value tone class", () => {
     render(<StatCard label="Failures" value="3" valueTone="down" />);
 
-    expect(screen.getByText("3")).toHaveClass("text-destructive");
+    expect(screen.getByText("3")).toHaveClass("text-destructive-text");
   });
 
   it("composes the stat layout into the rendered element", () => {

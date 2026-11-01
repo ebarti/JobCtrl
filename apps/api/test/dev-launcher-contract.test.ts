@@ -24,8 +24,44 @@ function fixtureDevScript(tempDir: string): string {
   mkdirSync(join(tempDir, "repo", "scripts"), { recursive: true });
   copyFileSync(sourceDevScript, script);
   chmodSync(script, 0o755);
+  const go = join(tempDir, "go");
+  writeFileSync(go, `#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == "-C" && "$3" == "run" && "$4" == "./cmd/jobctrl-source" ]]
+if [[ "$5" == "stop" || "$5" == "switch" ]]; then
+  controller="$JOBCTRL_DEV_DIR/pids/source-controller.pid"
+  if [[ -f "$controller" ]]; then
+    pid=$(cat "$controller")
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 100); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.05
+    done
+    rm -f "$controller"
+  fi
+  exit 0
+fi
+[[ "$5" != "verify" ]] || exit 0
+[[ "$5" == "run" ]]
+root="$6"
+shift 6
+export JOBCTRL_DEV_INNER=1
+echo "$$" > "$JOBCTRL_DEV_DIR/pids/source-controller.pid"
+exec "$root/scripts/dev" run "$@"
+`);
+  chmodSync(go, 0o755);
   return script;
 }
+function fixtureExtensionBuild(tempDir: string, callsLog: string): void {
+  const corepack = join(tempDir, "corepack");
+  writeFileSync(corepack, `#!/usr/bin/env bash
+if [[ "$*" != "pnpm extension:build" ]]; then exit 1; fi
+echo "fake corepack $*" >> "${callsLog}"
+exit 0
+`);
+  chmodSync(corepack, 0o755);
+}
+
 type DevLauncherProcess = ChildProcessByStdio<null, Readable, Readable>;
 
 function waitForOutput(child: DevLauncherProcess, text: string): Promise<void> {
@@ -155,6 +191,8 @@ function devScriptEnv(devDir: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Pro
     JOBCTRL_DB_PATH: join(appDir, "jobctrl.db"),
     JOBCTRL_CONFIG_PATH: join(appDir, "config.json"),
     JOBCTRL_DEV_DIR: devDir,
+    // Fixtures launch fake processes and must not probe a real developer API.
+    JOBCTRL_API_PORT: "0",
     JOBCTRL_USER_ENV_PATH: join(home, "JobCtrl", ".env"),
     TMPDIR: tempDir,
     TMP: tempDir,
@@ -222,6 +260,25 @@ echo '{"worker":{"status":"stale"}}'
 
       expect(output).toContain("HEALTH");
       expect(output).toMatch(/worker\s+up\s+\d+\s+stale\s+/);
+    } finally {
+      rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("distinguishes a running API watcher from a schema-blocked API", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const devScript = fixtureDevScript(tempDir);
+    const devDir = join(tempDir, "dev-state");
+    try {
+      mkdirSync(join(devDir, "pids"), { recursive: true });
+      writeFileSync(join(devDir, "pids/api.pid"), String(process.pid));
+      writeFileSync(join(tempDir, "curl"), "#!/usr/bin/env bash\necho '{\"ok\":false,\"error\":\"database_migration_required\"}'\n");
+      chmodSync(join(tempDir, "curl"), 0o755);
+      const output = execFileSync(devScript, ["status", "api"], {
+        cwd: repoRoot, encoding: "utf8",
+        env: devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}` }),
+      });
+      expect(output).toMatch(/api\s+up\s+\d+\s+migration\s+/);
     } finally {
       rmSync(tempDir, { force: true, recursive: true });
     }
@@ -296,7 +353,7 @@ while true; do sleep 1; done
         `fake pnpm --filter @jobctrl/api dev jobctrl_dir=${join(home, ".jobctrl")}`,
       );
 
-      expect(output).toContain("api: started");
+      expect(output).toMatch(/api: started|detached source stack started/);
       expect(processExists(apiPid)).toBe(true);
       expect(existsSync(join(home, ".jobctrl"))).toBe(true);
       expect(existsSync(join(home, legacyDirname))).toBe(true);
@@ -355,7 +412,9 @@ while true; do sleep 1; done
       expect(readFileSync(callsLog, "utf8").match(/fake pnpm --filter @jobctrl\/api dev/g)).toHaveLength(2);
     } finally {
       try {
-        execFileSync(devScript, ["stop", "api"], { cwd: repoRoot, env: devScriptEnv(devDir) });
+        execFileSync(devScript, ["stop", "api"], {
+          cwd: repoRoot, env: devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}` }),
+        });
       } catch {
         // The process may already be stopped if an assertion failed late.
       }
@@ -379,6 +438,7 @@ while true; do sleep 1; done
     let env: NodeJS.ProcessEnv | undefined;
 
     try {
+      fixtureExtensionBuild(tempDir, callsLog);
       writeFileSync(
         join(tempDir, "pnpm"),
         `#!/usr/bin/env bash
@@ -408,6 +468,7 @@ while true; do sleep 1; done
 
       expect(output).toContain("dev: bindings");
       expect(output).toContain("web: http://127.0.0.1:5175/");
+      expect(readFileSync(callsLog, "utf8").split("\n")[0]).toBe("fake corepack pnpm extension:build");
       expect(processExists(webPid)).toBe(true);
     } finally {
       try {
@@ -435,6 +496,7 @@ while true; do sleep 1; done
     let env: NodeJS.ProcessEnv | undefined;
 
     try {
+      fixtureExtensionBuild(tempDir, callsLog);
       mkdirSync(join(tempDir, "JobCtrl"), { recursive: true });
       writeFileSync(join(tempDir, "JobCtrl", ".env"), "VITE_GOOGLE_MAPS_API_KEY=maps-test-key\n");
       writeFileSync(
@@ -461,6 +523,7 @@ while true; do sleep 1; done
       webPid = await waitForPidFile(pidFile);
       await waitForFileText(callsLog, "maps=maps-test-key");
 
+      expect(readFileSync(callsLog, "utf8").split("\n")[0]).toBe("fake corepack pnpm extension:build");
       expect(processExists(webPid)).toBe(true);
     } finally {
       try {
@@ -579,7 +642,7 @@ while true; do sleep 1; done
       temporalPid = await waitForPidFile(pidFile);
       await waitForFileText(
         callsLog,
-        `fake temporal server start-dev --db-filename ${join(devDir, "app/temporal/temporal.db")}`,
+        `fake temporal server start-dev --db-filename ${join(devDir, "app/temporal.db")}`,
       );
 
       expect(processExists(temporalPid)).toBe(true);

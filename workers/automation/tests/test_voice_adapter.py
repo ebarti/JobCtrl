@@ -20,7 +20,41 @@ import pytest
 
 from jobctrl.domain.materials.voice import VoiceRequest
 from jobctrl.infrastructure.materials import voice_adapter
-from jobctrl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
+from jobctrl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter, LlmVoiceAdapter
+
+
+@pytest.mark.asyncio
+async def test_saved_core_voice_adapter_retains_model_schema_and_source_identity():
+    calls = []
+
+    class Llm:
+        def chat_json(self, messages, **kwargs):
+            from jobctrl.llm_lanes import current_llm_lane
+
+            calls.append((messages, kwargs, current_llm_lane()))
+            return {"executive_profile": "Synthetic.", "executive_profile_sentences": ["Synthetic."], "experience_updates": [{"id": "owned-source", "bullets": ["Synthetic."]}]}
+
+    port = LlmVoiceAdapter(llm=Llm(), provider_id="codex", model="gpt-6.1-sol")
+    result = await port.rewrite("System instruction", VoiceRequest(executive_profile="Synthetic.", experience_bullets=(("owned-source", ("Synthetic.",)),), executive_profile_sentences=("Synthetic.",)))
+    assert port.model_id == "codex:gpt-6.1-sol"
+    assert result.experience_bullets == (("owned-source", ("Synthetic.",)),)
+    assert calls[0][0][0].content == "System instruction"
+    assert calls[0][1]["response_schema"]["title"] == "VoicePayload"
+    assert calls[0][2] == "tailoring"
+
+
+@pytest.mark.asyncio
+async def test_saved_core_voice_adapter_preserves_provider_failure():
+    failure = RuntimeError("synthetic provider failure")
+
+    class Llm:
+        def chat_json(self, messages, **kwargs):
+            raise failure
+
+    port = LlmVoiceAdapter(llm=Llm(), provider_id="codex", model="gpt-6.1-sol")
+    with pytest.raises(RuntimeError) as raised:
+        await port.rewrite("System instruction", VoiceRequest(executive_profile="Synthetic.", experience_bullets=()))
+    assert raised.value is failure
 
 
 class ResultMessage:
@@ -44,6 +78,7 @@ class ResultMessage:
 class _FakeClaudeOptions:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
+        self.__dict__.update(kwargs)
 
 
 def _isolated_sdk_options() -> dict[str, object]:
@@ -86,19 +121,14 @@ def _request() -> VoiceRequest:
         executive_profile="Spearheaded robust scalable solutions.",
         executive_profile_sentences=("Spearheaded robust scalable solutions.",),
         experience_bullets=(("acme", ("Leveraged synergy to drive value.",)),),
-        banned_terms=("spearheaded", "robust", "synergy"),
     )
 
 
 def _voiced_structured() -> dict[str, Any]:
     return {
         "executive_profile": "Rebuilt the deploy pipeline so releases dropped to ten minutes.",
-        "executive_profile_sentences": [
-            "Rebuilt the deploy pipeline so releases dropped to ten minutes."
-        ],
-        "experience_updates": [
-            {"id": "acme", "bullets": ["Cut API latency 40% by batching writes."]}
-        ],
+        "executive_profile_sentences": ["Rebuilt the deploy pipeline so releases dropped to ten minutes."],
+        "experience_updates": [{"id": "acme", "bullets": ["Cut API latency 40% by batching writes."]}],
     }
 
 
@@ -110,9 +140,7 @@ async def test_parses_structured_output_into_voice_result() -> None:
     )
     result = await adapter.rewrite("system", _request())
     assert result.executive_profile.startswith("Rebuilt the deploy pipeline")
-    assert result.executive_profile_sentences == (
-        "Rebuilt the deploy pipeline so releases dropped to ten minutes.",
-    )
+    assert result.executive_profile_sentences == ("Rebuilt the deploy pipeline so releases dropped to ten minutes.",)
     assert result.experience_bullets == (("acme", ("Cut API latency 40% by batching writes.",)),)
 
 

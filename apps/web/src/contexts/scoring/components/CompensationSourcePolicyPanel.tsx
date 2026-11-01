@@ -5,7 +5,7 @@ import {
 } from "@jobctrl/contracts";
 import { useState } from "react";
 
-import type { CompensationSourcePolicySummary } from "../../operations/types.js";
+import type { CompensationSourcePolicySummary } from "@jobctrl/contracts";
 import { useCompensationSourcePolicyQuery } from "../../operations/hooks/useCompensationSourcePolicyQuery.js";
 import { useUpdateCompensationSourcePolicyMutation } from "../hooks/useUpdateCompensationSourcePolicyMutation.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";

@@ -155,8 +155,9 @@ file-based plugin.** Rationale:
   chunk; bundle size scales with usage, not with feature count. (Resolves
   §6 question 12.)
 - **Route loaders give a clean prefetch seam.** A route can declare
-  `loader: ({ context }) => context.queryClient.ensureQueryData(...)`,
-  prefetching the first paint's data before the component mounts.
+  `loader: ({ context }) => prefetchDashboard(context)`,
+  delegating to a context-owned helper before the component mounts. Routes
+  never invoke the API port or QueryClient directly; see §5.2.
 - **The "import convention shift" objection is small.** Route files import
   `createFileRoute(...)`. This is a one-time learning cost paid once;
   the alternative (code-based) loses generated type safety.
@@ -199,7 +200,8 @@ const jobsSearchSchema = z.object({
   q: z.string().default(""),
   stage: z.enum([...STAGES, "all"]).default("all"),
   state: z.enum([...STAGE_STATE_KINDS, "all"]).default("all"),
-  deleted: z.enum(["active", "deleted"]).default("active"),
+  deleted: z.enum(["active", "closed", "deleted", "hidden"]).default("active"),
+  jobStates: JobStatesFilterSchema.optional(),
   sort: z.enum([...JOB_SORT_FIELDS]).default("discovered_at"),
   dir: z.enum(["asc", "desc"]).default("desc"),
   page: z.number().int().min(1).default(1),
@@ -227,7 +229,7 @@ View composition (Dashboard, Jobs, Artifacts) is treated separately in §4.5.
 | Mutations | None — Operations is read-only. |
 | SSE keys consumed | All — Operations *owns* the invalidation router. |
 | Components | None directly. Owns the `<EventStreamProvider />` and the configured `QueryClient`. |
-| Provides | The `queryKeys` registry; the `invalidationRouter`; projection types via the ACL re-export (§6.5). |
+| Provides | The `queryKeys` registry; the `invalidationRouter`; frontend input refinements (§6.5); canonical DTOs are imported from their owning packages. |
 
 ### 4.4.2 Job Discovery
 
@@ -291,8 +293,32 @@ View composition (Dashboard, Jobs, Artifacts) is treated separately in §4.5.
 | Queries | None directly — apply-run reads are owned by Operations (`useApplyRunsListQuery`, derived from the dashboard summary; there is no `useApplyRunQuery`). Apply Review reads (`useApplyReviewQueueQuery`, `useResumeReviewDraftQuery`, `useApplicationOutcomesQuery`) are also Operations hooks. |
 | Mutations | `useApplyJobMutation({ jobId })` (returns `runId`, 202), `useDryRunApplyMutation({ jobId })`, `useCancelApplyMutation({ jobId, runId })`, plus Apply Review mutations for `useCreateResumeReviewDraftMutation`, `useSaveResumeReviewDraftRevisionMutation`, `useSeedResumeReviewCommentThreadsMutation`, `useReplyToResumeReviewCommentMutation`, and `useRenderResumeReviewDraftMutation`. Draft save/reply/render mutations invalidate the Apply Review queue, draft, feedback, job detail, and outcome surfaces; render promotion also allows the queue to refresh to the replacement artifacts. |
 | SSE keys consumed | `ApplyRunStarted`, `ApplySubmitIntended`, `ApplyRunEventRecorded`, `ApplicationEmailFeedbackIngested`, `ApplicationSubmitted`, `ApplicationFailed`. |
-| Components | `<ApplyButton jobId={...} />`, `<DryRunButton jobId={...} />`, `<CancelApplyButton jobId={...} runId={...} />`, `<ApplyRunBadge result={...} />`, `<RunStatusBadge />`, `<ApplyRunTimeline runId={...} />`, `<ApplyHistory jobId={...} />`, `<ApplyReviewDecisionControls>`, and the `<ApplicationOutcomes>` family (`<JobOutcomePanel>`, `<ManualOutcomeForm>`, `<OutcomeTimeline>`, `<OutcomeSuggestionsPanel>`). Apply Review decision controls compose with the Materials-owned `<ResumePlateEditor>` for the live resume draft surface. Its direct PDF export includes unsaved editor state but does not save the draft or affect replacement-artifact and approval gates. Approval buttons are disabled when the selected draft is dirty, invalid, or not rendered into replacement artifacts; defer/decline/reset remain available. |
+| Components | `<ApplyButton jobId={...} />`, `<DryRunButton jobId={...} />`, `<CancelApplyButton jobId={...} runId={...} />`, `<ApplyRunBadge result={...} />`, `<RunStatusBadge />`, `<ApplyRunTimeline runId={...} />`, `<ApplyHistory jobId={...} />`, `<ApplyReviewDecisionControls>`, and the `<ApplicationOutcomes>` family (`<JobOutcomePanel>`, `<ManualOutcomeForm>`, `<OutcomeTimeline>`, `<OutcomeSuggestionsPanel>`). Apply Review decision controls compose with the Materials-owned `<ResumePlateEditor>` for the live resume draft surface. Its direct PDF export includes unsaved editor state but does not save the draft or affect replacement-artifact and approval gates. Dirty, saving, invalid or failed draft state blocks approval; a clean saved revision can render during approval preparation. Defer/decline/reset remain available. |
 | Notes | There is no `useApplyRunQuery`; the timeline reads from the derived apply-runs list, and the invalidation router (§7.5) calls `setQueryData` on `applyRunsKeys.detail(tenantId, runId)` for each `ApplyRunEventRecorded` rather than `invalidateQueries`, because event volume during a run is high (one event every few seconds for several minutes). |
+
+`useApplyReviewSession` coordinates the review lifecycle through the public Apply
+contract. The view composes its state with Materials' controlled document and
+comparison components. Document saves and renders are ordered; comments reconcile
+independently by recorded IDs. Each acknowledgement belongs to its initiating
+tenant/job, draft/base generation, revision and submitted document. Failed loads,
+saves and renders expose retry actions while retaining the accepted artifact and
+evidence snapshot. Rejected render attempts are separate from the last successful
+comparison.
+
+Initial loading also preserves edits made against the generated HTML before an
+existing saved revision arrives. Promotion of this session's rendered output
+does not reopen it as a replacement draft or discard edits made during rendering.
+Decision controls delegate actions to the session; they do not prepare approvals
+or write decisions themselves. Pending button presentation belongs to the
+initiating tenant/job and cannot settle another session's action.
+
+Approval preparation waits for pending document writes, renders the saved revision
+when required, and reads canonical queue bindings after rendering. It reconciles
+the current draft cache again before recording the decision. Edits, replacement
+drafts, session switches, validation failures and changed profile, URL or email
+bindings prevent authorization; live approval also rechecks repeat protection and
+the selected dry-run evidence. Decisions record authorization only and never
+dispatch automation. Defer, decline and reset do not require rendering.
 
 ### 4.4.8 Pipeline Orchestration
 
@@ -300,9 +326,45 @@ View composition (Dashboard, Jobs, Artifacts) is treated separately in §4.5.
 |---|---|
 | Routes | None (component + mutation context). |
 | Queries | `usePipelineOperationsQuery()` is owned by Operations and keyed by Pipeline's `pipelineKeys.operations(tenantId)`. It reads the current `PipelineOperationsSnapshot`; per-job stage data remains in `JobDetailProjection.stages`. The query has a 10-second stale time, polls every 15 seconds while phase is `discovering`/`draining` and every 60 seconds otherwise, and never polls in the background. |
-| Mutations | `useRunPipelineStagesMutation({ stages, limit, workers, minScore, validationMode, dryRun, ... })` for global/batch stage starts, `useRetryStageMutation({ jobId, stage, resetAttempts?, runAfter? })`, `useCancelStageMutation({ jobId, stage })`, `useMarkAppliedMutation({ jobId })` (`MarkAppliedUseCase` per backend §5.7), `useMarkSkippedMutation({ jobId })` (`SkipJobUseCase` per backend §5.7). Per-job stage mutations optimistically patch the `JobDetailProjection.stages` array; SSE event reconciles. `useRetryStageMutation` with `runAfter: true` follows the async (202) pattern; the job-detail action toolbar uses it for failed preparation stages so a retry resumes the selected job through the remaining preparation pipeline. Global/batch stage starts are hybrid: non-apply-only requests return synchronously with worker action results, while requests that queue apply return 202 and finish through SSE-driven invalidation. |
+| Mutations | `useRunPipelineStagesMutation({ stages, limit, workers, minScore, validationMode, dryRun, ... })` for global/batch stage starts, `useRetryStageMutation({ jobId, stage, resetAttempts?, runAfter? })`, `useCancelStageMutation({ jobId, stage })`, `useMarkAppliedMutation({ jobId })` (`MarkAppliedUseCase` per backend §5.7), `useMarkSkippedMutation({ jobId })` (`SkipJobUseCase` per backend §5.7). Per-job stage mutations optimistically patch the `JobDetailProjection.stages` array and reconcile on invalidation or SSE. A reset-only retry optimistically shows `pending` and rolls back on failure; `runAfter: true` shows `running` while dispatch is requested. The retry patch also updates the detail's workflow summary when the retried stage is its current substage, leaving another current substage alone. The job-detail action toolbar resets failed Discover without dispatch and uses `runAfter: true` for supported preparation stages so a retry resumes the selected job through the remaining preparation pipeline. Global/batch stage starts are hybrid: non-apply-only requests return synchronously with worker action results, while requests that queue apply return 202 and finish through SSE-driven invalidation. |
 | SSE keys consumed | All `Stage*`, `PreparationWorkItem*`, `PipelineStep*`, and `Workflow*` lifecycle events invalidate `pipelineKeys.operations`; the owning handlers also retain their existing jobs/dashboard/workflow-run targets. Runtime heartbeat and task-queue changes have no domain event, so polling is the correctness complement. |
 | Components | `<StageTriggerPanel />` for global starts with per-stage persisted tab config, stage-specific controls, the user-facing **Internal concurrency** label, and immediate start feedback (`starting`, `queued`, `succeeded`, `dry_run`, `failed`; run/action id when returned), `<StageBadge state={...} />` (exhaustive `switch` on `state.kind` per §2.4 data-orientation; covered by the `STAGE_STATE_KINDS` parity test in §10.2), `<StageTimeline stages={...} />`, `<RetryStageButton jobId={...} stage={...} />`, `<CancelStageButton jobId={...} stage={...} />`, `<MarkAppliedButton jobId={...} />`, `<MarkSkippedButton jobId={...} />`, `<JobActions jobId={...} />` (toolbar composer). `PipelinesView` itself renders the operations ledger because it composes an Operations read hook with Pipeline's control component. |
+
+Retry controls and timeline diagnostics consult the demo's `retryStage`
+capability, including when a retained synthetic failure has `retryable: true`.
+The presentation does not rewrite that saved history; local retry remains
+available under its normal stage rules.
+
+When retry dispatch fails after a reset commits, the retry mutation applies the
+returned reset stage and reports the dispatch failure separately. A queued
+dispatch keeps optimistic progress until the next authoritative read. A later
+cache publication fences both response settlement and rollback, so a delayed
+retry response cannot replace a newer Job Detail state. Since the current stage
+and retry response do not expose a shared ordering revision, an intervening
+publication or recreated query leaves the displayed stage uncertain; a notice
+scoped to that tenant, canonical job, and detail locator offers **Refresh stage
+status**. A distinct successful post-response detail read for the same
+canonical job clears only that locator's notice, regardless of which component
+subscribed to the query. Failed
+reads leave it available for retry, and reopening an inactive Job Detail starts
+confirmation again. An earlier in-flight read must settle before a distinct
+confirmation read starts. If a matching later read has already confirmed the
+notice, the waiting operation stops without another read; leaving the detail
+also cancels its waiting operation without canceling shared queries.
+When Job Detail was opened by an alias, retry keeps the canonical job ID for
+the action and notice, and uses the route identifier for its detail-cache patch,
+ownership fence, and readback. Other cached detail locators in the same tenant
+whose returned job key matches are invalidated without an optimistic data patch.
+Active alternates refetch and retain their own notice until confirmed. An
+older in-flight read is checked again on completion, even if its cache was
+empty at settlement; only the same query instance returning the same canonical
+job is invalidated, so an active view starts a later read. Inactive alternates
+remain stale and display their notice on reopening.
+Overlapping retries that capture the same in-flight read for one locator share
+one deferred confirmation; retries separated by another in-flight read retain
+separate confirmation boundaries.
+Application-target refreshes share the action endpoint but do not create
+stage-retry uncertainty notices, including when eligibility is rejected.
 
 ## 4.5 View Composition
 
@@ -336,7 +398,7 @@ lives under `shared/ui/` but is imported by no view.
 | View | Owned files | Composes from |
 |---|---|---|
 | `views/dashboard/` | `DashboardView.tsx`, `KpiGrid.tsx`, `ConversionPanel.tsx`, `Funnel.tsx`, `SourceHealthCard.tsx`, `ApplyRunsCard.tsx`, `apply-run-dot-state.ts` | operations (`useDashboardSummaryQuery`, `useApplicationOutcomesQuery`); pipeline (`<StageBadge>`); apply (`<ApplyRunBadge>`, `<OutcomeSuggestionsPanel>`) |
-| `views/jobs/` | `JobsView.tsx`, `JobsTable.tsx`, `JobBulkActions.tsx`, `JobDetailDrawer.tsx`, `JobOverview.tsx`, `JobDescription.tsx`, `JobAuditTriage.tsx`, `columns.tsx`, `jobStageFilters.ts`, `selectors/jobsSelectors.ts` | operations (`useJobsListQuery`, `useJobDetailQuery`, `<JobAuditHistory>`); discovery (the user-facing Active / Deleted / Hidden Tabs plus bulk delete / hide / unhide / restore / permanent-delete); scoring (`<ScoreBadge>`, `<ScoreCorrectionControl>`, `<RescoreJobButton>`); pipeline (`<StageBadge>`, `<StageTimeline>`, `<JobActions>`); materials (`<RetailorCurrentPolicyButton>`, `<EmployerAnalysisPanel>`, artifact badges + `<OpenArtifactButton>`); apply (`<ApplyHistory>`, `<JobOutcomePanel>`); enrichment (`<CompensationAuditSection>`) |
+| `views/jobs/` | `JobsView.tsx`, `JobsTable.tsx`, `JobBulkActions.tsx`, `JobDetailDrawer.tsx`, `JobOverview.tsx`, `JobDescription.tsx`, `JobAuditTriage.tsx`, `columns.tsx`, `jobStageFilters.ts`, `selectors/jobsSelectors.ts` | operations (`useJobsListQuery`, `useJobDetailQuery`, `<JobAuditHistory>`); discovery (the URL-backed Job state column filter plus bulk delete / hide / unhide / restore / permanent-delete); scoring (`<ScoreBadge>`, `<ScoreCorrectionControl>`, `<RescoreJobButton>`); pipeline (`<StageBadge>`, `<StageTimeline>`, `<JobActions>`); materials (`<RetailorCurrentPolicyButton>`, `<EmployerAnalysisPanel>`, artifact badges + `<OpenArtifactButton>`); apply (`<ApplyHistory>`, `<JobOutcomePanel>`); enrichment (`<CompensationAuditSection>`) |
 | `views/artifacts/` | `ArtifactsView.tsx`, `ArtifactsTable.tsx`, `ArtifactFilterBar.tsx`, `ArtifactDetailPanel.tsx`, `columns.tsx` | operations (`useArtifactsListQuery`, `useArtifactDetailQuery`); materials (`<OpenArtifactButton>`, artifact badges, `<TailoringExplanationSection>`) |
 | `views/apply-review/` | `ApplyReviewView.tsx` | operations (`useApplyReviewQueueQuery`, `useResumeReviewDraftQuery`); apply (review mutations, `<ApplyReviewDecisionControls>`, `<CancelApplyButton>`); materials (`<ResumePlateEditor>`, `<ArtifactGroundingRiskPanel>`, `<JobResumeTemplateSelect>`); enrichment (`<CompensationSummaryStrip>`); profile (`useResumeTemplatesQuery`) |
 | `views/runs/` | `RunsView.tsx`, `RunsTable.tsx`, `RunsFilterBar.tsx`, `WorkflowRunDrawer.tsx`, `columns.tsx`, `temporal-web-ui.ts` | operations (`useWorkflowRunsListQuery`, `useWorkflowRunDetailQuery`); apply (`<RunStatusBadge>`); pipeline (`<CancelWorkflowRunButton>`) |
@@ -344,12 +406,17 @@ lives under `shared/ui/` but is imported by no view.
 | `views/discovery/` | `DiscoveryView.tsx` | discovery (`<DiscoveryProductControls>`, `<DiscoveryRuntimeSettingsPanel>`); profile (`<TargetSearchSettingsPanel>`, `<DiscoveryAutomationSettingsPanel>`) |
 | `views/debug/` | `DebugView.tsx`, `DebugActivityTable.tsx`, `DebugFilterBar.tsx`, `ActivityDetailDrawer.tsx`, `activity-columns.tsx`, `activity-tone.ts` | operations (`useActivityListQuery`, `useActivityEventQuery`); URL-bound event search, sorting, pagination |
 
-Jobs presents its queues as the Active, Deleted, and Hidden Tabs. `closed`
-remains a compatible URL/read-model filter for old links, not a normal
-user-facing queue. The default saved-table presentation keeps Sources and
-Warnings available but hidden, and active posting rows omit redundant
-`open`/`active` lifecycle copy. Delete and permanent-delete controls use the
-destructive primitive; restore and unhide remain ordinary recovery actions.
+Jobs presents one table with a static, multi-select **Job state** column filter
+for Active, Deleted, and Hidden. The filter is server-backed before count and
+pagination, defaults to Active, and is stored in the URL and saved-table views.
+Clearing or deselecting all state values means all three states. `closed`
+remains a compatible URL/read-model filter for old links when `jobStates` is
+absent, not a normal user-facing state. The default saved-table presentation
+keeps Sources and Warnings available but hidden, and active posting rows omit
+redundant `open` lifecycle copy. Mixed-state selections send state-qualified
+bulk filters so each mutation targets only eligible rows. Delete and
+permanent-delete controls use the destructive primitive; restore and unhide
+remain ordinary recovery actions.
 
 Apply Review keeps the queue as a left rail while the surface can support it;
 the selected application then reads as full-width decision, evidence, and
@@ -488,7 +555,8 @@ Visible product icons use `@tabler/icons-react`; do not add new
 **Tailwind utility-first.** Co-located with components; no CSS-in-JS
 runtime. Tailwind CSS 4 is configured CSS-first: `globals.css` imports
 `tailwindcss`, `tw-animate-css`, `shadcn/tailwind.css`, Fontsource's
-Geist and JetBrains Mono variable fonts, and `tokens.css`; the same file
+Geist (for resume templates) and JetBrains Mono variable fonts, and
+`tokens.css`; product UI uses the system Helvetica Neue/Helvetica/Arial stack. The same file
 uses `@theme inline` to map CSS variables into standard shadcn utilities
 such as `bg-background`, `text-foreground`, `bg-card`, `border-border`,
 `ring-ring`, `bg-primary`, and `bg-popover`.
@@ -496,7 +564,7 @@ such as `bg-background`, `text-foreground`, `bg-card`, `border-border`,
 `tokens.css` is the source of the app's token values. It defines the
 light `:root` and dark `:root[data-theme="dark"]` shadcn semantic
 variables, chart tokens, sidebar/menu tokens, radius scale inputs,
-Fontsource-backed font stacks, and JobCtrl status extensions
+system product and Fontsource-backed technical font stacks, and JobCtrl status extensions
 (`success`, `warning`, `status-info`). The Tailwind config bridge
 is not part of the active contract; generated utilities come from `@theme inline`
 plus the active CSS variables.
@@ -547,8 +615,16 @@ changes geometry, not typography.
   `jh:stage-trigger-config`.
 - **Saved table views** — table-scoped view templates and presentation state
   for high-density operational tables; persisted to `jh:saved-table-views`.
-  Active Jobs filters/sort remain URL state, and applying a view writes the URL
-  rather than creating a second live copy of those facts.
+  Jobs filters, including the multi-select Job state filter, and sort remain URL
+  state; applying a view writes the URL rather than creating a second live copy
+  of those facts. Older views without `jobStates` retain their legacy `deleted`
+  behavior.
+- **Discovery source review** uses that same saved-table-view store under the
+  `discovery-sources` table ID, independent of `jobs`. Column visibility, order,
+  widths and density remain local presentation preferences; active source
+  filters and sorting belong to the Discovery URL. Applying a view updates
+  those URL fields explicitly; mounting or reloading does not replay its saved
+  filter snapshot over the current link.
 - **Anything cross-cutting that we discover later** that fits the pattern
   "I want to dispatch from a deep tree without prop drilling, and the
   state is not server-derived." Examples we anticipate: a `commandPalette`
@@ -615,13 +691,14 @@ the leaf, not the root.
    `onError`; the global toast is suppressed for that mutation by passing
    `meta: { suppressGlobalErrorToast: true }` and re-checked in the global
    handler.
-3. **Route-level error boundaries.** Every route declares
-   `errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />`.
-   The boundary renders a friendly "this view failed to load" panel and a
-   retry button that invokes `queryClient.invalidateQueries({ queryKey: route.key })`.
+3. **Loader versus observer errors.** Best-effort prefetch failures remain in
+   the query cache for context-owned observers to display and retry. Activity
+   detail propagates an ensure-read failure to TanStack Router's error boundary.
+   Query invalidation and retry authority remain in contexts; the routes do not
+   call QueryClient methods.
 
-**Retry policy lives in the query client config** (`shared/providers/query-client.ts`).
-Network-class errors retry; 4xx do not. Mutation retries are explicit
-(none by default; surface failure to the user).
+**Retry policy lives in the query client config** (`shared/lib/queryClient.ts`).
+Queries retry once by default, including HTTP errors. Mutation retries are
+disabled by default; surface failure to the user.
 
 ---

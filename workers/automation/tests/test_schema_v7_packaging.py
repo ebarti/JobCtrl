@@ -14,6 +14,7 @@ _SCHEMA_MEMBERS = {
     "jobctrl/infrastructure/migrations/schema_v7.sql",
     "jobctrl/infrastructure/migrations/schema_v8.sql",
     "jobctrl/infrastructure/migrations/schema_v9.sql",
+    "jobctrl/infrastructure/migrations/schema_v10.sql",
 }
 
 

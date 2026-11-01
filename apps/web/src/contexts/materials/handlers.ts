@@ -4,6 +4,7 @@ import type {
   EmployerAnalyzed,
   InterviewPrepFailed,
   InterviewPrepGenerated,
+  InterviewQuestionNoteSaved,
   MaterialsExhausted,
   PdfRendered,
   ResumeApproved,
@@ -23,17 +24,24 @@ import { dashboardKeys } from "../operations/dashboardKeys.js";
 import {
   invalidate,
   patchQuery,
+  reconcileQuery,
   type InvalidationItem,
 } from "../operations/invalidation-router.js";
+import { interviewKeys } from "../operations/interviewKeys.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
-import { patchResumeApproved } from "../operations/realtimePatches.js";
+import { patchResumeApproved, reconcileResumeApprovedPage } from "../operations/realtimePatches.js";
+import { materialsKeys } from "./queryKeys.js";
 import { profileKeys } from "../profile/queryKeys.js";
+import type { ArtifactsListInput } from "../operations/types.js";
 
 export const resumeApprovedHandler = (
   event: ResumeApproved,
 ): readonly InvalidationItem[] => [
-  // Patch only already-registered detail rows. This event does not carry the
-  // complete artifact summary needed to insert or refilter an artifact page.
+  invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
+  invalidate(materialsKeys.exports(event.tenantId, event.payload.jobId)),
+  invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
+  // Patch already-registered rows. Approval can also register PDFs and suppress
+  // older artifacts, so every artifact page still needs canonical reconciliation.
   patchQuery(
     jobsKeys.detail(event.tenantId, event.payload.jobId),
     (current) => patchResumeApproved(current, event.payload),
@@ -44,7 +52,11 @@ export const resumeApprovedHandler = (
   ),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
-  invalidate(artifactsKeys.lists(event.tenantId)),
+  reconcileQuery(
+    artifactsKeys.lists(event.tenantId),
+    (current, key) => reconcileResumeApprovedPage(current, key[4] as ArtifactsListInput, event.payload),
+    { invalidateAfterPatch: true },
+  ),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 
@@ -57,6 +69,8 @@ export const resumeFailedHandler = (event: ResumeFailed): readonly InvalidationI
 export const coverLetterGeneratedHandler = (
   event: CoverLetterGenerated,
 ): readonly InvalidationItem[] => [
+  invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
+  invalidate(materialsKeys.exports(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(artifactsKeys.lists(event.tenantId)),
@@ -81,6 +95,7 @@ export const materialsExhaustedHandler = (
 export const employerAnalyzedHandler = (
   event: EmployerAnalyzed,
 ): readonly InvalidationItem[] => [
+  invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
   // The canonical employer analysis is served on the job detail; refresh it so
   // the inspector (Phase 5) shows the latest generation.
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
@@ -100,6 +115,7 @@ export const bulletProvenanceRecordedHandler = (
 export const interviewPrepGeneratedHandler = (
   event: InterviewPrepGenerated,
 ): readonly InvalidationItem[] => [
+  invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
@@ -108,6 +124,7 @@ export const interviewPrepGeneratedHandler = (
 export const interviewPrepFailedHandler = (
   event: InterviewPrepFailed,
 ): readonly InvalidationItem[] => [
+  invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
@@ -124,6 +141,8 @@ export const tailorRetailorRequestedHandler = (
 export const tailoredArtifactsSuppressedHandler = (
   event: TailoredArtifactsSuppressed,
 ): readonly InvalidationItem[] => [
+  invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
+  invalidate(materialsKeys.exports(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(artifactsKeys.lists(event.tenantId)),
@@ -159,6 +178,8 @@ export const jobResumeTemplateAssignedHandler = (
 export const resumeTemplateRefreshCompletedHandler = (
   event: ResumeTemplateRefreshCompleted,
 ): readonly InvalidationItem[] => [
+  invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
+  invalidate(materialsKeys.exports(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(artifactsKeys.lists(event.tenantId)),
@@ -172,4 +193,8 @@ export const resumeTemplateRefreshFailedHandler = (
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(applyReviewKeys.all(event.tenantId)),
+];
+
+export const interviewQuestionNoteSavedHandler = (event: InterviewQuestionNoteSaved): readonly InvalidationItem[] => [
+  invalidate(interviewKeys.note(event.tenantId, event.payload.jobId, event.payload.questionId)),
 ];

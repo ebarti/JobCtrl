@@ -1,3 +1,6 @@
+import { actionIdentity, actionReceiptKey, assertActionReceipt, readActionReceipt, ActionReceiptConflictError } from "./action-receipts.js";
+import { LogOutreachSendRequestSchema, type LogOutreachSendRequest } from "@jobctrl/contracts";
+import { readOffer } from "./offers.js";
 /**
  * Contact & Outreach (ninth context) — outreach-thread read model + the
  * approve/reject write transitions (R6 Phase 3).
@@ -96,28 +99,29 @@ export function approveOutreachDraft(
   threadId: string,
   draftId: string,
 ): OutreachThreadDetail {
-  const thread = loadThreadRow(db, threadId);
-  if (!thread) {
-    throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
-  }
-  const draft = loadDraftRow(db, threadId, draftId);
-  if (!draft) {
-    throw new OutreachNotFoundError(`Outreach draft ${draftId} not found`);
-  }
-  // INV-5: the persisted gate outcome is the only approval authority. A draft
-  // whose gate record does not confirm ``passed`` can never be approved.
-  if (!gateResultsPassed(draft.gate_results_json)) {
-    throw new OutreachDraftGatesNotPassedError(
-      `Outreach draft ${draftId} did not pass the truthfulness gate stack`,
-    );
-  }
-  if (String(draft.status) !== "candidate") {
-    throw new OutreachInputError(`Outreach draft ${draftId} is not awaiting approval`);
-  }
-
-  const now = new Date().toISOString();
-  const jobId = thread.job_id ?? null;
   const transaction = db.transaction(() => {
+    const thread = loadThreadRow(db, threadId);
+    if (!thread) {
+      throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
+    }
+    const draft = loadDraftRow(db, threadId, draftId);
+    if (!draft) {
+      throw new OutreachNotFoundError(`Outreach draft ${draftId} not found`);
+    }
+    // INV-5: the persisted gate outcome is the only approval authority. A draft
+    // whose gate record does not confirm ``passed`` can never be approved.
+    assertCurrentOfferDraft(db, thread.job_id, draft);
+    if (!gateResultsPassed(draft.gate_results_json)) {
+      throw new OutreachDraftGatesNotPassedError(
+        `Outreach draft ${draftId} did not pass the truthfulness gate stack`,
+      );
+    }
+    if (String(draft.status) !== "candidate") {
+      throw new OutreachInputError(`Outreach draft ${draftId} is not awaiting approval`);
+    }
+
+    const now = new Date().toISOString();
+    const jobId = thread.job_id ?? null;
     // Supersede the prior approved draft (if any). This is internal generation
     // bookkeeping — it emits no event, exactly like the Python repository.
     db.prepare(
@@ -143,11 +147,12 @@ export function approveOutreachDraft(
         approvedAt: now,
       },
     });
+    return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
   });
-  transaction();
+  const result = transaction.immediate();
 
   refreshOutreachProjections(db, TENANT_ID);
-  return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
+  return result;
 }
 
 export function rejectOutreachDraft(
@@ -156,23 +161,23 @@ export function rejectOutreachDraft(
   draftId: string,
   reason = "",
 ): OutreachThreadDetail {
-  const thread = loadThreadRow(db, threadId);
-  if (!thread) {
-    throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
-  }
-  const draft = loadDraftRow(db, threadId, draftId);
-  if (!draft) {
-    throw new OutreachNotFoundError(`Outreach draft ${draftId} not found`);
-  }
-  // INV-5: only a candidate can be rejected. An approved draft is never touched —
-  // the last accepted artifact stays reviewable until a replacement is approved.
-  if (String(draft.status) !== "candidate") {
-    throw new OutreachInputError(`Outreach draft ${draftId} is not awaiting review`);
-  }
-
-  const now = new Date().toISOString();
-  const jobId = thread.job_id ?? null;
   const transaction = db.transaction(() => {
+    const thread = loadThreadRow(db, threadId);
+    if (!thread) {
+      throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
+    }
+    const draft = loadDraftRow(db, threadId, draftId);
+    if (!draft) {
+      throw new OutreachNotFoundError(`Outreach draft ${draftId} not found`);
+    }
+    // INV-5: only a candidate can be rejected. An approved draft is never touched —
+    // the last accepted artifact stays reviewable until a replacement is approved.
+    if (String(draft.status) !== "candidate") {
+      throw new OutreachInputError(`Outreach draft ${draftId} is not awaiting review`);
+    }
+
+    const now = new Date().toISOString();
+    const jobId = thread.job_id ?? null;
     db.prepare(
       `UPDATE outreach_drafts SET status = 'rejected', rejected_at = ?, reason = ?
        WHERE tenant_id = ? AND thread_id = ? AND draft_id = ?`,
@@ -192,11 +197,12 @@ export function rejectOutreachDraft(
         rejectedAt: now,
       },
     });
+    return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
   });
-  transaction();
+  const result = transaction.immediate();
 
   refreshOutreachProjections(db, TENANT_ID);
-  return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,37 +218,48 @@ export function rejectOutreachDraft(
 export function logOutreachSend(
   db: SqliteDatabase,
   threadId: string,
-  draftId: string,
-  channel: string,
-  sentAt: string,
-): OutreachThreadDetail {
-  const thread = loadThreadRow(db, threadId);
-  if (!thread) {
-    throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
-  }
-  const draft = loadDraftRow(db, threadId, draftId);
-  if (!draft) {
-    throw new OutreachNotFoundError(`Outreach draft ${draftId} not found`);
-  }
-  // INV-1: a thread can only be "sent" over a draft the user actually approved.
-  if (String(draft.status) !== "approved") {
-    throw new OutreachInputError(
-      `Outreach draft ${draftId} must be approved before a send can be logged`,
-    );
-  }
-  const trimmedChannel = channel.trim();
-  const trimmedSentAt = sentAt.trim();
-  if (!trimmedChannel || !trimmedSentAt) {
-    throw new OutreachInputError("A send log requires a channel and a sent date");
-  }
-  if (!OUTREACH_SEND_CHANNEL_SET.has(trimmedChannel)) {
-    throw new OutreachInputError("A send log channel must be one of the supported labels");
-  }
+  request: LogOutreachSendRequest,
+): OutreachSendLogDto {
+  request = LogOutreachSendRequestSchema.parse(request);
+  const { draftId, channel, sentAt } = request;
+  const identity = actionIdentity(TENANT_ID, "outreach-send-log", threadId, request.requestId, request);
+  const result = db.transaction(() => {
+    const receipt = readActionReceipt(db, TENANT_ID, identity, "OutreachSendLogged", "outreach");
+    if (receipt) {
+      const sendLog = loadSendLogs(db, threadId).find((log) => log.sendLogId === receipt.factId);
+      if (!sendLog || sendLog.draftId !== draftId || sendLog.channel !== channel || sendLog.sentAt !== sentAt) {
+        throw new ActionReceiptConflictError();
+      }
+      assertActionReceipt(identity, receipt, sendLog);
+      return sendLog;
+    }
+    const thread = loadThreadRow(db, threadId);
+    if (!thread) {
+      throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
+    }
+    const draft = loadDraftRow(db, threadId, draftId);
+    if (!draft) {
+      throw new OutreachNotFoundError(`Outreach draft ${draftId} not found`);
+    }
+    // INV-1: a thread can only be "sent" over a draft the user actually approved.
+    assertCurrentOfferDraft(db, thread.job_id, draft);
+    if (String(draft.status) !== "approved") {
+      throw new OutreachInputError(
+        `Outreach draft ${draftId} must be approved before a send can be logged`,
+      );
+    }
+    const trimmedChannel = channel.trim();
+    const trimmedSentAt = sentAt.trim();
+    if (!trimmedChannel || !trimmedSentAt) {
+      throw new OutreachInputError("A send log requires a channel and a sent date");
+    }
+    if (!OUTREACH_SEND_CHANNEL_SET.has(trimmedChannel)) {
+      throw new OutreachInputError("A send log channel must be one of the supported labels");
+    }
 
-  const now = new Date().toISOString();
-  const sendLogId = randomUUID();
-  const jobId = thread.job_id ?? null;
-  const transaction = db.transaction(() => {
+    const now = new Date().toISOString();
+    const sendLogId = randomUUID();
+    const jobId = thread.job_id ?? null;
     db.prepare(
       `INSERT INTO outreach_send_logs (
          tenant_id, send_log_id, thread_id, draft_id, channel, sent_at, logged_at
@@ -251,24 +268,27 @@ export function logOutreachSend(
     db.prepare(
       `UPDATE outreach_threads SET updated_at = ? WHERE tenant_id = ? AND thread_id = ?`,
     ).run(now, TENANT_ID, threadId);
+    const sendLog = { sendLogId, threadId, draftId, channel: trimmedChannel, sentAt: trimmedSentAt, loggedAt: now };
+    const event = {
+      sendLogId,
+      tenantId: TENANT_ID,
+      threadId,
+      draftId,
+      channel: trimmedChannel,
+      sentAt: trimmedSentAt,
+      loggedAt: now,
+    };
     recordEvent(db, {
+      idempotencyKey: actionReceiptKey(identity, sendLog, event),
       jobId,
       eventType: "OutreachSendLogged",
       threadId,
-      payload: {
-        tenantId: TENANT_ID,
-        threadId,
-        draftId,
-        channel: trimmedChannel,
-        sentAt: trimmedSentAt,
-        loggedAt: now,
-      },
+      payload: { ...event, receipt: { ...identity.binding, factId: sendLogId } },
     });
-  });
-  transaction();
-
+    return sendLog;
+  }).immediate();
   refreshOutreachProjections(db, TENANT_ID);
-  return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
+  return result;
 }
 
 export function scheduleOutreachFollowUp(
@@ -280,32 +300,32 @@ export function scheduleOutreachFollowUp(
     hasLoggedReply?: boolean;
   } = {},
 ): OutreachThreadDetail {
-  const thread = loadThreadRow(db, threadId);
-  if (!thread) {
-    throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
-  }
-  let dueAt = (options.dueAt ?? "").trim();
-  let basis = options.basis ?? "";
-  if (!dueAt) {
-    const submittedAt = latestApplicationSubmittedAt(db, thread);
-    const suggestion = deriveFollowUpDueAt({
-      submittedAt,
-      lastDueAt: thread.follow_up_due_at ?? "",
-      hasLoggedReply: options.hasLoggedReply ?? false,
-    });
-    if (!suggestion) {
-      throw new OutreachInputError(
-        "Cannot suggest a follow-up date: record an application submission first, or provide a due date",
-      );
-    }
-    dueAt = suggestion.dueAt;
-    basis = basis || suggestion.basis;
-  }
-  basis = basis || "manual";
-
-  const now = new Date().toISOString();
-  const jobId = thread.job_id ?? null;
   const transaction = db.transaction(() => {
+    const thread = loadThreadRow(db, threadId);
+    if (!thread) {
+      throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
+    }
+    let dueAt = (options.dueAt ?? "").trim();
+    let basis = options.basis ?? "";
+    if (!dueAt) {
+      const submittedAt = latestApplicationSubmittedAt(db, thread);
+      const suggestion = deriveFollowUpDueAt({
+        submittedAt,
+        lastDueAt: thread.follow_up_due_at ?? "",
+        hasLoggedReply: options.hasLoggedReply ?? false,
+      });
+      if (!suggestion) {
+        throw new OutreachInputError(
+          "Cannot suggest a follow-up date: record an application submission first, or provide a due date",
+        );
+      }
+      dueAt = suggestion.dueAt;
+      basis = basis || suggestion.basis;
+    }
+    basis = basis || "manual";
+
+    const now = new Date().toISOString();
+    const jobId = thread.job_id ?? null;
     db.prepare(
       `UPDATE outreach_threads
        SET follow_up_due_at = ?, follow_up_basis = ?, follow_up_state = 'scheduled', updated_at = ?
@@ -324,11 +344,12 @@ export function scheduleOutreachFollowUp(
         scheduledAt: now,
       },
     });
+    return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
   });
-  transaction();
+  const result = transaction.immediate();
 
   refreshOutreachProjections(db, TENANT_ID);
-  return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
+  return result;
 }
 
 export function completeOutreachFollowUp(
@@ -362,16 +383,16 @@ function transitionFollowUp(
     buildPayload: (now: string) => Record<string, unknown>;
   },
 ): OutreachThreadDetail {
-  const thread = loadThreadRow(db, threadId);
-  if (!thread) {
-    throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
-  }
-  if (normalizeFollowUpState(thread.follow_up_state) !== "scheduled") {
-    throw new OutreachInputError(`Outreach thread ${threadId} has no scheduled follow-up`);
-  }
-  const now = new Date().toISOString();
-  const jobId = thread.job_id ?? null;
   const transaction = db.transaction(() => {
+    const thread = loadThreadRow(db, threadId);
+    if (!thread) {
+      throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
+    }
+    if (normalizeFollowUpState(thread.follow_up_state) !== "scheduled") {
+      throw new OutreachInputError(`Outreach thread ${threadId} has no scheduled follow-up`);
+    }
+    const now = new Date().toISOString();
+    const jobId = thread.job_id ?? null;
     db.prepare(
       `UPDATE outreach_threads SET follow_up_state = ?, updated_at = ?
        WHERE tenant_id = ? AND thread_id = ?`,
@@ -382,11 +403,12 @@ function transitionFollowUp(
       threadId,
       payload: spec.buildPayload(now),
     });
+    return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
   });
-  transaction();
+  const result = transaction.immediate();
 
   refreshOutreachProjections(db, TENANT_ID);
-  return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
+  return result;
 }
 
 /**
@@ -689,7 +711,9 @@ function loadDrafts(db: SqliteDatabase, threadId: string): OutreachDraftDto[] {
      ORDER BY generation ASC, draft_id ASC`,
     [TENANT_ID, threadId],
   );
+  const jobId = loadThreadRow(db, threadId)?.job_id ?? null;
   return rows.map((row) => ({
+    ...(String(row.kind).startsWith("offer_") ? { offerSourcesCurrent: offerDraftCurrent(db, jobId, row) } : {}),
     draftId: String(row.draft_id),
     threadId: String(row.thread_id),
     generation: Number(row.generation ?? 0),
@@ -764,6 +788,7 @@ function recordEvent(
   event: {
     jobId: string | null;
     eventType: string;
+    idempotencyKey?: string;
     threadId: string;
     payload: Record<string, unknown>;
   },
@@ -785,7 +810,7 @@ function recordEvent(
     JSON.stringify(event.payload),
     "outreach",
     event.threadId,
-    null,
+    event.idempotencyKey ?? null,
   );
 }
 
@@ -797,4 +822,18 @@ function canonicalJobId(value: string | null | undefined): string | null {
     throw new OutreachInputError("jobId must be a canonical UUID");
   }
   return value;
+}
+
+function assertCurrentOfferDraft(db: SqliteDatabase, jobId: string | null, draft: DraftRow): void {
+  if (!String(draft.kind).startsWith("offer_")) return;
+  const binding = parseGateResults(draft.gate_results_json).sourceContext?.binding;
+  if (!jobId || !binding || binding.jobId !== jobId) throw new OutreachDraftGatesNotPassedError("Offer draft has no recorded source binding.");
+  const current = readOffer(db, jobId);
+  if (binding.termsRevisionId !== current.currentTerms?.revisionId || binding.decisionId !== (current.currentDecision?.decisionId ?? null)) {
+    throw new OutreachDraftGatesNotPassedError("Offer terms or decision changed. Generate and review a new draft.");
+  }
+}
+
+function offerDraftCurrent(db: SqliteDatabase, jobId: string | null, draft: DraftRow): boolean {
+  try { assertCurrentOfferDraft(db, jobId, draft); return true; } catch { return false; }
 }

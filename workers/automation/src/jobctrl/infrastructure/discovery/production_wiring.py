@@ -8,6 +8,10 @@ into the TS API or the scoring context.
 
 from __future__ import annotations
 
+from jobctrl.domain.determinations import DeterminationFailure
+from jobctrl.infrastructure.enrichment.page_interpretation import build_page_interpreter
+from jobctrl.domain.enrichment.snapshot_services import ActiveStateVerifier
+
 import base64
 import hashlib
 import json
@@ -41,7 +45,6 @@ from jobctrl.domain.discovery.source_registry import (
 )
 from jobctrl.domain.discovery.use_cases import (
     DiscoverJobsUseCase,
-    PostingAcceptance,
     default_canonical_identity,
 )
 from jobctrl.domain.discovery.value_objects import (
@@ -64,21 +67,23 @@ from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.discovery.target_queries import query_specs_for_source, title_matches_any_query
+from jobctrl.discovery.target_queries import query_specs_for_source
+from jobctrl.infrastructure.discovery.posting_source_proposals import (
+    automatic_learning_blocked,
+    propose_posting_source,
+    registry_overlaps,
+    source_coordinate,
+)
 from jobctrl.infrastructure.discovery.ats_adapters import (
     AshbyBoardAdapter,
     GreenhouseBoardAdapter,
     HttpFetcher,
     LeverBoardAdapter,
 )
-from jobctrl.infrastructure.discovery.location_filter import (
-    configured_location_filters,
-    location_matches_target,
-)
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveChromeDiscoveryClient,
-    LiveChromeRobotsCache,
     PoliteLiveChromeHttpClient,
+    prefer_live_browser,
 )
 from jobctrl.infrastructure.network import (
     GatewayHttpClient,
@@ -87,6 +92,7 @@ from jobctrl.infrastructure.network import (
     PolitenessSourceContext,
 )
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultBudget, DiscoveryResultLimitReached
 from jobctrl.infrastructure.enrichment import (
     SqliteEnrichmentRepository,
     SqlitePostingSnapshotSetRepository,
@@ -255,7 +261,8 @@ def seed_source_registry_controls(
                 display_name = excluded.display_name,
                 owner = excluded.owner,
                 priority = excluded.priority,
-                state = excluded.state,
+                state = CASE WHEN source_registry_entries.state IN ('disabled', 'quarantined')
+                             THEN source_registry_entries.state ELSE excluded.state END,
                 policy_id = excluded.policy_id,
                 seed_url = excluded.seed_url,
                 updated_at = excluded.updated_at
@@ -314,7 +321,11 @@ def run_deterministic_source_locator(
 
     persisted = 0
     manual_actions = 0
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     for candidate in candidates:
+        if automatic_learning_blocked(conn, candidate.candidate_url):
+            continue
         decision = validate_locator_candidate(candidate, active_policy)
         is_new = _locator_candidate_is_new(conn, candidate)
         persisted += 1
@@ -343,6 +354,9 @@ def learn_posting_source_from_url(
     observed_at: str,
     write_fence: Callable[[], None] | None = None,
     event_idempotency_prefix: str | None = None,
+    proposal_only: bool = False,
+    proposal_evidence: dict[str, Any] | None = None,
+    proposal_url_validator: Callable | None = None,
 ) -> LearnedPostingSource:
     """Learn a durable owner source from a broad-board posting URL.
 
@@ -361,8 +375,16 @@ def learn_posting_source_from_url(
             action="skipped",
         )
 
+    if proposal_only:
+        _apply_optional_write_fence(write_fence)
+        action, candidate_id = propose_posting_source(
+            conn, candidate_url, proposal_evidence or {}, validator=proposal_url_validator,
+        )
+        return LearnedPostingSource(None, None, candidate_id, action)
     ensure_worker_discovery_tables(conn)
     _apply_optional_write_fence(write_fence)
+    if automatic_learning_blocked(conn, candidate_url):
+        return LearnedPostingSource(None, None, None, "suppressed")
     detected = _detect_ats_kind(candidate_url)
     if detected is None:
         candidate = _source_location_candidate(
@@ -539,6 +561,7 @@ def run_scheduled_ats_sources(
     limit: int = 0,
     cancel_event: threading.Event | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
 ) -> dict[str, Any]:
     """Run Greenhouse, Lever, and Ashby through the Discovery use case.
 
@@ -548,12 +571,10 @@ def run_scheduled_ats_sources(
     (exempt for documented APIs, D2), per-host rate/concurrency, the per-run
     request budget, and the honest UA all apply. Standalone tests may inject
     ``http`` to bypass the network; an execution-scoped Discover run rejects
-    that override so it cannot bypass the live extension transport.
+    that override so it cannot bypass transport selection and source policy.
     """
     if discovery_execution is not None and http is not None:
-        raise ConfigurationError(
-            "Integrated Discovery cannot override the live Chrome extension transport."
-        )
+        raise ConfigurationError("Integrated Discovery cannot override transport selection and source policy.")
     ensure_worker_discovery_tables(conn)
     resolved_gateway = gateway if gateway is not None else (PolitenessGateway() if http is None else None)
     runnable = tuple(source for source in sources if getattr(source, "should_run", True))
@@ -581,9 +602,9 @@ def run_scheduled_ats_sources(
     )
     enrichment_repository = SqliteEnrichmentRepository(conn)
     use_case = DiscoverJobsUseCase(
+        exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
         repository=job_repository,
         publisher=DurableJobEventPublisher(conn, stage="discover"),
-        acceptance_policy=_posting_acceptance_policy(search_cfg),
     )
     total = 0
     new_jobs = 0
@@ -593,13 +614,26 @@ def run_scheduled_ats_sources(
     sources_run: list[str] = []
     failed_sources: list[str] = []
     remaining_new = limit if limit > 0 else None
-    query_specs = tuple(_ats_query_specs(search_cfg))
     locations = tuple(_location_values(search_cfg))
     for adapter in adapters:
         if cancel_event is not None and cancel_event.is_set():
             raise TransientNetworkError("ATS discovery canceled")
         if remaining_new is not None and remaining_new <= 0:
             break
+        if result_budget is not None:
+            if result_budget.run_exhausted():
+                break
+            if result_budget.source_exhausted(adapter.source_id):
+                continue
+            job_repository = SqliteJobRepository(
+                conn, discovery_execution=discovery_execution, source_family="ats_api",
+                result_budget=result_budget, result_budget_source_id=adapter.source_id,
+            )
+            use_case = DiscoverJobsUseCase(
+                exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
+                repository=job_repository,
+                publisher=DurableJobEventPublisher(conn, stage="discover"),
+            )
         source_processed = False
         seen_postings: set[tuple[str, str, str]] = set()
         try:
@@ -617,10 +651,10 @@ def run_scheduled_ats_sources(
                         raise TransientNetworkError("ATS discovery canceled")
                     if remaining_new is not None and remaining_new <= 0:
                         break
-                    if not title_matches_any_query(posting.metadata.title, query_specs):
-                        continue
-                    if not str(posting.metadata.description or "").strip():
-                        continue
+                    if result_budget is not None and (
+                        result_budget.run_exhausted() or result_budget.source_exhausted(adapter.source_id)
+                    ):
+                        break
                     posting_key = _scraped_posting_key(posting)
                     if posting_key in seen_postings:
                         continue
@@ -646,7 +680,11 @@ def run_scheduled_ats_sources(
                     source_processed = True
                     if remaining_new is not None and summary.new_jobs > 0:
                         remaining_new -= summary.new_jobs
-        except (ConfigurationError, TransientNetworkError):
+        except DiscoveryResultLimitReached:
+            # A competing writer consumed the allowance; its canonical claim
+            # committed and ours rolled back. This is a limit, not a source error.
+            pass
+        except (ConfigurationError, TransientNetworkError, DeterminationFailure):
             raise
         except Exception as exc:
             failed_sources.append(adapter.source_id)
@@ -763,186 +801,6 @@ def _promote_ats_source_description_to_enrichment(
     return True
 
 
-def retire_invalid_source_jobs(
-    conn: sqlite3.Connection,
-    *,
-    search_cfg: Mapping[str, Any],
-    run_id: str = "discovery:hygiene",
-    ensure_tables: bool = True,
-    commit: bool = True,
-) -> dict[str, Any]:
-    """Soft-delete active discovered jobs that fail today's discovery contract."""
-
-    if ensure_tables:
-        ensure_source_observation_tables(conn)
-    query_specs_by_family = _query_specs_by_family(search_cfg)
-    accept_locs, reject_locs = configured_location_filters(search_cfg)
-    locations = tuple(_location_values(search_cfg))
-    now = utc_now()
-    retired: list[dict[str, str]] = []
-
-    rows = conn.execute(
-        """
-        SELECT
-            j.job_id,
-            j.url,
-            COALESCE(j.title, '') AS title,
-            COALESCE(j.location, '') AS location,
-            COALESCE(e.full_description, '') AS enrichment_description,
-            COALESCE(j.full_description, '') AS job_full_description,
-            COALESCE(j.description, '') AS job_description,
-            COALESCE(j.strategy, '') AS strategy,
-            COALESCE(c.ats_kind, '') AS ats_kind,
-            COALESCE(MIN(o.source_id), '') AS source_id
-        FROM jobs j
-        LEFT JOIN job_enrichments e
-          ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
-        LEFT JOIN job_canonical_identities c
-          ON c.tenant_id = j.tenant_id AND c.job_id = j.job_id
-        LEFT JOIN job_source_observations o
-          ON o.tenant_id = j.tenant_id AND o.job_id = j.job_id
-        LEFT JOIN jobctrl_deleted_jobs d
-          ON d.tenant_id = j.tenant_id AND d.job_id = j.job_id
-         AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-        WHERE j.tenant_id = ? AND d.job_id IS NULL
-        GROUP BY j.tenant_id, j.job_id
-        """,
-        (str(LOCAL_TENANT),),
-    ).fetchall()
-
-    for row in rows:
-        family = _source_family(
-            source_id=str(row["source_id"] or ""),
-            strategy=str(row["strategy"] or ""),
-            ats_kind=str(row["ats_kind"] or ""),
-        )
-        if family is None:
-            continue
-        reasons = _source_rejection_reasons(
-            title=str(row["title"] or ""),
-            location=str(row["location"] or ""),
-            description=_first_usable_description(
-                row["enrichment_description"],
-                row["job_full_description"],
-                row["job_description"],
-            ),
-            query_specs=query_specs_by_family.get(family, ()),
-            accept_locs=accept_locs,
-            reject_locs=reject_locs,
-            locations=locations,
-            # Match the intake boundary: broad-board rows are durable listing
-            # leads even when Detail Enrichment is deferred or fails. Direct
-            # sources still promise usable content at discovery time.
-            require_description=family != "jobspy",
-        )
-        if not reasons:
-            continue
-        source_id = str(row["source_id"] or row["ats_kind"] or family)
-        reason = f"discovery hygiene rejected {source_id}: {', '.join(reasons)}"
-        job_id = canonical_job_id(str(row["job_id"]))
-        job_url = str(row["url"])
-        conn.execute(
-            """
-            INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, ?, NULL)
-            ON CONFLICT(tenant_id, job_id) DO UPDATE SET
-                deleted_at = excluded.deleted_at,
-                reason = excluded.reason,
-                restored_at = NULL
-            """,
-            (str(LOCAL_TENANT), str(job_id), now, reason),
-        )
-        record_job_event(
-            conn,
-            job_id,
-            "discover",
-            "JobDeleted",
-            message=reason,
-            payload={
-                "reason": reason,
-                "deleted_at": now,
-                "run_id": run_id,
-                "source_id": source_id,
-                "rejection_reasons": reasons,
-            },
-            occurred_at=now,
-        )
-        retired.append({"job_url": job_url, "reason": reason})
-
-    if retired and commit:
-        conn.commit()
-    return {"retired_jobs": len(retired), "jobs": retired}
-
-
-def _query_specs_by_family(search_cfg: Mapping[str, Any]) -> dict[str, tuple[dict[str, object], ...]]:
-    query_specs_by_family = {
-        "ats_api": tuple(_ats_query_specs(search_cfg)),
-        "jobspy": tuple(query_specs_for_source(search_cfg.get("queries", []), "jobspy")),
-        "smartextract": tuple(query_specs_for_source(search_cfg.get("queries", []), "smartextract")),
-        "workday": tuple(
-            query_specs_for_source(
-                search_cfg.get("queries", []),
-                "workday",
-                max_tier=int(search_cfg.get("workday_max_tier") or 2),
-            )
-        ),
-    }
-    if not query_specs_by_family["workday"]:
-        query_specs_by_family["workday"] = tuple(query_specs_for_source(search_cfg.get("queries", []), "workday"))
-    return query_specs_by_family
-
-
-def _posting_acceptance_policy(search_cfg: Mapping[str, Any]):
-    query_specs_by_family = _query_specs_by_family(search_cfg)
-    accept_locs, reject_locs = configured_location_filters(search_cfg)
-    locations = tuple(_location_values(search_cfg))
-
-    def policy(posting: ScrapedJobPosting) -> PostingAcceptance:
-        strategy = str(getattr(posting.strategy, "value", posting.strategy) or "")
-        ats_kind = str(getattr(posting.ats_kind, "value", posting.ats_kind) or "")
-        family = _source_family(
-            source_id=str(posting.source_id or ""),
-            strategy=strategy,
-            ats_kind=ats_kind,
-        )
-        if family is None:
-            return PostingAcceptance.accept()
-        reasons = _source_rejection_reasons(
-            title=str(posting.metadata.title or ""),
-            location=str(posting.metadata.location or ""),
-            description=str(posting.metadata.description or ""),
-            query_specs=query_specs_by_family.get(family, ()),
-            accept_locs=accept_locs,
-            reject_locs=reject_locs,
-            locations=locations,
-            # Broad boards are lead generators. Their accepted listing metadata
-            # is enough to enter canonical Detail Enrichment, which owns the
-            # full-description requirement. Direct sources still need content
-            # at their intake boundary.
-            require_description=family != "jobspy",
-        )
-        if not reasons:
-            return PostingAcceptance.accept()
-        source_id = str(posting.source_id or ats_kind or family)
-        return PostingAcceptance.reject(
-            reason=f"discovery policy rejected {source_id}",
-            rejection_reasons=reasons,
-        )
-
-    return policy
-
-
-def retire_invalid_canonical_ats_jobs(
-    conn: sqlite3.Connection,
-    *,
-    search_cfg: Mapping[str, Any],
-    run_id: str = "discovery:hygiene",
-) -> dict[str, Any]:
-    """Backward-compatible wrapper for the broader source hygiene pass."""
-
-    return retire_invalid_source_jobs(conn, search_cfg=search_cfg, run_id=run_id)
-
-
 def _source_family(*, source_id: str, strategy: str, ats_kind: str) -> str | None:
     if ats_kind in {"greenhouse", "lever", "ashby"} or source_id.startswith(("greenhouse:", "lever:", "ashby:")):
         return "ats_api"
@@ -979,37 +837,6 @@ def _usable_description_text(value: object) -> str:
     if text.casefold() in _NULL_DESCRIPTION_SENTINELS:
         return ""
     return text
-
-
-def _source_rejection_reasons(
-    *,
-    title: str,
-    location: str,
-    description: str,
-    query_specs: tuple[dict[str, object], ...],
-    accept_locs: list[str],
-    reject_locs: list[str],
-    locations: tuple[str, ...],
-    require_description: bool = True,
-) -> list[str]:
-    reasons: list[str] = []
-    effective_accept_locs = accept_locs or [location for location in locations if location]
-    location_evidence = " ".join(str(part).strip() for part in (location, title) if str(part or "").strip())
-    if require_description and not _usable_description_text(description):
-        reasons.append("missing_description")
-    if query_specs and not title_matches_any_query(title, query_specs):
-        reasons.append("title_mismatch")
-    if not any(
-        location_matches_target(
-            location_evidence,
-            accept=effective_accept_locs,
-            reject=reject_locs,
-            search_location=target_location,
-        )
-        for target_location in locations
-    ):
-        reasons.append("location_mismatch")
-    return reasons
 
 
 def _scraped_posting_key(posting: ScrapedJobPosting) -> tuple[str, str, str]:
@@ -1364,6 +1191,8 @@ def _upsert_locator_candidate(
     conn: sqlite3.Connection,
     candidate: SourceLocationCandidate,
 ) -> None:
+    if automatic_learning_blocked(conn, candidate.candidate_url):
+        return
     conn.execute(
         """
         INSERT INTO source_locator_candidates (
@@ -1400,6 +1229,10 @@ def _promote_locator_candidate(
     *,
     event_idempotency_prefix: str | None = None,
 ) -> bool:
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    if automatic_learning_blocked(conn, candidate.candidate_url):
+        return False
     source_id = _source_id_from_locator_candidate(conn, candidate)
     now = utc_now()
     existing = conn.execute(
@@ -1446,6 +1279,8 @@ def _promote_locator_candidate(
         )
         changed = True
     else:
+        if str(existing["state"]) in {"disabled", "quarantined"}:
+            return False
         changed_fields: list[str] = []
         if str(existing["state"]) != "active":
             changed_fields.append("state")
@@ -1705,6 +1540,7 @@ def _enqueue_manual_capture(
     reason: str,
     retry_context: dict[str, Any],
     required_at: str,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> str:
     item_id = f"manual:{hashlib.sha256(originating_url.encode('utf-8')).hexdigest()[:16]}"
     conn.execute(
@@ -1730,7 +1566,7 @@ def _enqueue_manual_capture(
             END
         """,
         (
-            str(LOCAL_TENANT),
+            str(tenant_id),
             item_id,
             originating_url,
             source_id,
@@ -1793,6 +1629,10 @@ def _source_id_from_locator_candidate(
     conn: sqlite3.Connection,
     candidate: SourceLocationCandidate,
 ) -> str:
+    coordinate = source_coordinate(candidate.candidate_url)
+    overlaps = registry_overlaps(conn, coordinate) if coordinate is not None else []
+    if overlaps:
+        return str(overlaps[0]["source_id"])
     slug = _source_slug_from_locator_url(
         candidate.candidate_url,
         candidate.evidence.detected_ats_kind,
@@ -1825,6 +1665,8 @@ def _source_id_from_locator_candidate(
     ).fetchone()
     if existing is not None:
         return str(existing["source_id"])
+    if coordinate is not None and coordinate.ats_kind is not None:
+        return coordinate.source_id
     if candidate.evidence.detected_ats_kind:
         return f"{candidate.evidence.detected_ats_kind}:{slug}"
     return f"{candidate.source_kind.value}:{slug}"
@@ -1960,7 +1802,6 @@ def _adapter_for_source(
         return None
     adapter_config = dict(getattr(source, "adapter_config", {}) or {})
     ats_kind = _source_ats_kind(source_id, adapter_config)
-    location_accept, location_reject = configured_location_filters(search_cfg)
     if ats_kind not in (AtsKind.GREENHOUSE, AtsKind.LEVER, AtsKind.ASHBY):
         return None
     fetcher = http
@@ -1988,8 +1829,6 @@ def _adapter_for_source(
         source_id=source_id,
         company=_company_name(source, adapter_config),
         http=fetcher,
-        location_accept=location_accept,
-        location_reject=location_reject,
     )
     if ats_kind is AtsKind.GREENHOUSE:
         return GreenhouseBoardAdapter(board_token=_board_token(source_id, adapter_config), **common)
@@ -2039,8 +1878,8 @@ def _live_browser_ats_fetcher(
     run_id: str | None,
     discovery_execution: DiscoveryExecutionRef,
     cancel_event: threading.Event | None,
-) -> HttpFetcher:
-    """Build an ATS JSON fetcher that preserves policy and uses live Chrome."""
+) -> HttpFetcher | None:
+    """Use live Chrome when connected; otherwise select the guarded HTTP path."""
 
     policy: SourcePolicy = getattr(source, "policy", None) or ATS_API_POLICY
     browser = LiveChromeDiscoveryClient(
@@ -2049,9 +1888,9 @@ def _live_browser_ats_fetcher(
         source_id=source_id,
         cancel_event=cancel_event,
     )
-    active_gateway = (gateway if gateway is not None else PolitenessGateway()).with_robots(
-        LiveChromeRobotsCache(browser)
-    )
+    if prefer_live_browser(browser, cancel_event=cancel_event) is None:
+        return None
+    active_gateway = gateway if gateway is not None else PolitenessGateway()
     session = PolitenessSession(
         active_gateway,
         policy=policy,
@@ -2113,6 +1952,7 @@ def _manual_capture_snapshot_use_case(
             return _detail_page_from_manual_content(captured_url, content)
 
     acquisition = ContentAcquisitionService(
+        active_verifier=ActiveStateVerifier(page_interpreter=build_page_interpreter(conn)),
         fetcher=_ManualFetcher(),
         extractors=(
             TierExtractor(tier=ExtractionTier.JSON_LD, extractor=JsonLdExtractor()),
@@ -2260,13 +2100,13 @@ def _seed_url(entry: SourceRegistryEntry) -> str | None:
 
 def _detect_ats_kind(url: str) -> AtsKind | None:
     host = (urlparse(url).hostname or "").lower()
-    if "greenhouse.io" in host:
+    if host == "greenhouse.io" or host.endswith(".greenhouse.io"):
         return AtsKind.GREENHOUSE
-    if "lever.co" in host:
+    if host == "lever.co" or host.endswith(".lever.co"):
         return AtsKind.LEVER
-    if "ashbyhq.com" in host:
+    if host == "ashbyhq.com" or host.endswith(".ashbyhq.com"):
         return AtsKind.ASHBY
-    if "myworkdayjobs.com" in host:
+    if host == "myworkdayjobs.com" or host.endswith(".myworkdayjobs.com"):
         return AtsKind.WORKDAY
     return None
 

@@ -1,8 +1,30 @@
+import type { CompanyBriefingView, CompanyBriefingSummary } from "./company-briefings.js";
+import type { InterviewPrep, InterviewSelectionInput } from "@jobctrl/domain-types";
 import { z } from "zod";
+import { type DeterminationEnvelope, type DeterminationCitation, DeterminationCitationSchema, DeterminationEnvelopeSchema, TrackCodeSchema, SeniorityCodeSchema, WorkModelCodeSchema } from "./semantic-determinations.js";
 import { CONTACT_ROLES, CONTACT_SOURCE_KINDS } from "@jobctrl/domain-types";
 
 export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"] as const;
 export type Stage = (typeof STAGES)[number];
+/** Comma serialization and repeated query values share the JSON-array contract. */
+export const JobStagesFilterSchema = z.preprocess(
+  (value) => {
+    if (typeof value === "string") {
+      return value.trim() ? value.split(",", STAGES.length + 1).map((item) => item.trim()) : [];
+    }
+    if (Array.isArray(value)) {
+      if (value.length > STAGES.length) return value;
+      return value.flatMap((item: unknown) =>
+        typeof item === "string" ? item.split(",", STAGES.length + 1).map((stage) => stage.trim()) : [item],
+      );
+    }
+    return value;
+  },
+  z.array(z.enum(STAGES)).max(STAGES.length).transform((values) => Array.from(new Set(values))),
+);
+// Accept undefined before array preprocessing so typed optional filters retain
+// scalar fallback; malformed optional arrays use the same absence value.
+const OptionalJobStagesFilterSchema = z.union([z.undefined(), JobStagesFilterSchema]).catch(undefined).optional();
 export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "cover", "apply"] as const;
 export type PipelineRunStage = (typeof PIPELINE_RUN_STAGES)[number];
 export const DEFAULT_PIPELINE_LLM_MODEL = "default" as const;
@@ -53,6 +75,28 @@ export const ACTIVE_STATES = [
 export type ActiveState = (typeof ACTIVE_STATES)[number];
 export const JOB_DELETED_FILTERS = ["active", "closed", "deleted", "hidden", "all"] as const;
 export type JobDeletedFilter = (typeof JOB_DELETED_FILTERS)[number];
+export const JOB_STATES = ["active", "deleted", "hidden"] as const;
+export type JobState = (typeof JOB_STATES)[number];
+export const JobStatesFilterSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") return value;
+    const normalized = value.trim();
+    if (!normalized) return [];
+    if (normalized.startsWith("[")) {
+      try {
+        return JSON.parse(normalized) as unknown;
+      } catch {
+        return value;
+      }
+    }
+    return normalized.split(",").map((item) => item.trim());
+  },
+  z
+    .array(z.enum(JOB_STATES))
+    .min(1)
+    .max(JOB_STATES.length)
+    .transform((values) => Array.from(new Set(values))),
+);
 export const JOB_APPLY_STATUS_FILTERS = ["all", "applied"] as const;
 export type JobApplyStatusFilter = (typeof JOB_APPLY_STATUS_FILTERS)[number];
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
@@ -132,11 +176,13 @@ export const SavedTableViewUrlFiltersSchema = z
     state: z.enum(STATE_OR_ALL).optional().catch(undefined),
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).optional().catch(undefined),
     deleted: z.enum(["active", "closed", "deleted", "hidden"]).optional().catch(undefined),
+    jobStates: JobStatesFilterSchema.optional().catch(undefined),
     pageSize: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
     minFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
     maxFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
     discoveredSince: z.string().trim().min(1).optional().catch(undefined),
     scoredSince: z.string().trim().min(1).optional().catch(undefined),
+    sourceFilters: SavedTableViewGridFiltersSchema.optional().catch(undefined),
   })
   .strict();
 export type SavedTableViewUrlFilters = z.infer<typeof SavedTableViewUrlFiltersSchema>;
@@ -227,6 +273,7 @@ export const RetryStageRequestSchema = z
     resetAttempts: z.boolean().default(false),
     runAfter: z.boolean().default(false),
     dryRun: z.boolean().default(false),
+    refreshApplyUrl: z.boolean().optional(),
   })
   .strict();
 export type RetryStageRequest = z.infer<typeof RetryStageRequestSchema>;
@@ -258,6 +305,8 @@ export interface ResetStaleScoresForRescoreResponse {
   count: number;
   jobKeys: string[];
   nextAction: string;
+  skippedActiveJobKeys?: string[];
+  alreadyPendingJobKeys?: string[];
 }
 
 export const RescoreJobRequestSchema = z
@@ -296,7 +345,6 @@ export const RetailorJobRequestSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
   })
   .strict();
 export type RetailorJobRequest = z.infer<typeof RetailorJobRequestSchema>;
@@ -307,7 +355,6 @@ export const TailorJobRequestSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
   })
   .strict();
 export type TailorJobRequest = z.infer<typeof TailorJobRequestSchema>;
@@ -321,26 +368,21 @@ export const BulkRetailorCurrentPolicyRequestSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
   })
   .strict();
 export type BulkRetailorCurrentPolicyRequest = z.infer<typeof BulkRetailorCurrentPolicyRequestSchema>;
 
 export const GenerateMaterialsRequestSchema = z
   .object({
-    stages: z.array(z.enum(MATERIAL_STAGES)).min(1).default(["tailor", "cover"]),
+    stages: z.array(z.enum(MATERIAL_STAGES)).min(1).optional(),
     dryRun: z.boolean().default(false),
     limit: z.number().int().min(1).max(200).default(1),
   })
   .strict();
 export type GenerateMaterialsRequest = z.infer<typeof GenerateMaterialsRequestSchema>;
 
-export const GenerateInterviewPrepRequestSchema = z
-  .object({
-    llmModel: z.string().trim().min(1).max(120).optional(),
-  })
-  .strict();
-export type GenerateInterviewPrepRequest = z.infer<typeof GenerateInterviewPrepRequestSchema>;
+export { GenerateInterviewPrepRequestSchema } from "./interview.js";
+export type { GenerateInterviewPrepRequest } from "./interview.js";
 
 export const ApplyJobRequestSchema = z
   .object({
@@ -361,17 +403,29 @@ export const APPLY_REVIEW_DECISION_VALUES = [
 ] as const;
 export type ApplyReviewDecisionValue = (typeof APPLY_REVIEW_DECISION_VALUES)[number];
 
+export const ApplyReviewEmailApplicationPreviewSchema = z.object({
+  recipient: z.string().email(),
+  subject: z.string().min(1),
+  body: z.string().min(1),
+  attachmentArtifactId: z.string().min(1),
+  attachmentName: z.string().min(1),
+  candidateRunId: z.string().min(1),
+  recordedAt: z.string().nullable(),
+}).strict();
+
 export const ApplyReviewDecisionRequestSchema = z
   .object({
     decision: z.enum(APPLY_REVIEW_DECISION_VALUES),
     reason: z.string().trim().max(400).optional(),
     decidedBy: z.string().trim().min(1).max(120).default("user"),
     materialsGeneration: z.number().int().nonnegative().nullable().optional(),
+    coverLetterAcceptedVersion: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
     profileVersion: z.number().int().positive().nullable().optional(),
     applicationUrl: z.string().trim().min(1).max(2048).nullable().optional(),
     partialOverrideRunId: z.string().trim().min(1).max(120).optional(),
     emailRecipient: z.string().trim().email().optional(),
     emailAttachmentArtifactId: z.string().trim().min(1).max(160).optional(),
+    reviewedEmailCandidate: ApplyReviewEmailApplicationPreviewSchema.optional(),
   })
   .strict();
 export type ApplyReviewDecisionRequest = z.infer<typeof ApplyReviewDecisionRequestSchema>;
@@ -521,6 +575,8 @@ export interface ApplyReviewRequirementLedAudit {
 }
 
 export interface ApplyReviewMaterialsPreview {
+  coverLetter?: import("./cover-letter.js").CoverLetterAccepted | null;
+  coverLetterPdfError?: string | null;
   materialsGeneration: number | null;
   resumeText: string | null;
   resumeTextArtifactId: string | null;
@@ -699,11 +755,16 @@ export interface ResumeTemplateDetailResponse {
 export const ResumeTemplateVersionSaveRequestSchema = z
   .object({
     templateId: z.string().trim().min(1).max(120).optional(),
+    expectedVersionId: z.string().trim().min(1).max(200).optional(),
     displayName: z.string().trim().min(1).max(120),
     theme: ResumeTemplateThemeSchema,
     layout: ResumeTemplateLayoutSchema.optional().default({}),
   })
-  .strict();
+  .strict()
+  .refine((value) => Boolean(value.templateId) === Boolean(value.expectedVersionId), {
+    path: ["expectedVersionId"],
+    message: "Updating a template requires the current version; new templates must not specify one.",
+  });
 export type ResumeTemplateVersionSaveRequest = z.infer<
   typeof ResumeTemplateVersionSaveRequestSchema
 >;
@@ -717,6 +778,7 @@ export const ResumeTemplateDefaultSelectionRequestSchema = z
   .object({
     templateId: z.string().trim().min(1).max(120),
     versionId: z.string().trim().min(1).max(160).optional(),
+    expectedActiveVersionId: z.string().trim().min(1).max(160).optional(),
   })
   .strict();
 export type ResumeTemplateDefaultSelectionRequest = z.infer<
@@ -824,6 +886,8 @@ export type RepeatApplicationFactKind =
   | "legacy_applied_status";
 
 export type RepeatApplicationStatus =
+  | "unavailable"
+  | "uncertain"
   | "clear"
   | "blocked"
   | "confirmation_required"
@@ -919,15 +983,7 @@ export interface ApplyReviewApprovalGate {
   reasons: ApplyReviewApprovalGateReason[];
 }
 
-export interface ApplyReviewEmailApplicationPreview {
-  recipient: string;
-  subject: string;
-  body: string;
-  attachmentArtifactId: string;
-  attachmentName: string;
-  candidateRunId: string;
-  recordedAt: string | null;
-}
+export type ApplyReviewEmailApplicationPreview = z.infer<typeof ApplyReviewEmailApplicationPreviewSchema>;
 
 export interface ApplyReviewQueueItem {
   jobKey: string;
@@ -1273,6 +1329,7 @@ export interface ResumeReviewDraftResponse {
 }
 
 export interface ResumeReviewDraftRevisionResponse {
+  editIntent?: {status:"accepted";determinationId:string|null}|{status:"unavailable";failureCode:string};
   ok: true;
   draft: ResumeReviewDraft;
   revision: ResumeReviewDraftRevision;
@@ -1348,6 +1405,7 @@ export type ApplicationOutcomeSource = (typeof APPLICATION_OUTCOME_SOURCES)[numb
 
 export const ManualApplicationOutcomeRequestSchema = z
   .object({
+    requestId: z.string().uuid(),
     kind: z.enum(APPLICATION_OUTCOME_KINDS),
     occurredAt: IsoTimestampSchema.optional(),
     note: z.string().trim().max(4000).optional(),
@@ -1404,6 +1462,8 @@ export interface ApplicationEmailEvidence {
 }
 
 export interface OutcomeSuggestion {
+  determination: DeterminationEnvelope | null;
+  citations: readonly DeterminationCitation[];
   suggestionId: string;
   jobKey: string;
   evidenceId: string | null;
@@ -1442,6 +1502,7 @@ export interface OutcomeSuggestionDecisionResponse {
 
 export interface ApplicationOutcomeListResponse {
   ok: true;
+  interpretationStatus?: {status:"available"|"unavailable"|"not_requested";failureCode:string|null};
   outcomes: ApplicationOutcome[];
   suggestions: OutcomeSuggestion[];
 }
@@ -1465,7 +1526,6 @@ export const RunPipelineStagesRequestSchema = z
     llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
     continuous: z.boolean().default(false),
     sourceIds: z.array(z.string().trim().min(1).max(160)).max(50).optional(),
   })
@@ -1509,13 +1569,18 @@ export const BulkJobMutationFilterSchema = z
   .object({
     q: optionalText,
     stage: z.enum(STAGES).optional().catch(undefined),
+    stages: OptionalJobStagesFilterSchema,
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
+    jobStates: JobStatesFilterSchema.optional().catch(undefined),
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all").catch("all"),
     source: optionalText,
     company: optionalText,
+    normalizedScoreKeyword: z.string().min(1).optional(),
     minFitScore: optionalNumber,
     maxFitScore: optionalNumber,
+    discoveredSince: IsoTimestampSchema.optional().catch(undefined),
+    scoredSince: IsoTimestampSchema.optional().catch(undefined),
   })
   .strict();
 export type BulkJobMutationFilter = z.infer<typeof BulkJobMutationFilterSchema>;
@@ -1533,6 +1598,34 @@ export const BulkJobMutationRequestSchema = BulkJobMutationRequestBaseSchema
     message: "Provide jobKeys or set allMatching.",
   });
 export type BulkJobMutationRequest = z.infer<typeof BulkJobMutationRequestSchema>;
+
+/** An explicit removed-job confirmation is prepared from a frozen cohort. */
+export const PreparePermanentDeleteSelectionRequestSchema = z.object({
+  observationId: z.string().uuid(),
+  selections: z.array(BulkJobMutationRequestSchema).min(1).max(50),
+  expected: z.array(z.object({
+    jobKey: z.string().trim().min(1),
+    deletedAt: z.string().nullable(),
+    hiddenAt: z.string().nullable(),
+  }).strict()).max(5000).optional(),
+}).strict();
+export type PreparePermanentDeleteSelectionRequest = z.infer<typeof PreparePermanentDeleteSelectionRequestSchema>;
+
+export const PreparePermanentDeleteSelectionResponseSchema = z.object({
+  ok: z.literal(true),
+  selectionId: z.string().uuid(),
+  jobKeys: z.array(z.string().min(1)).max(5000),
+}).strict();
+export type PreparePermanentDeleteSelectionResponse = z.infer<typeof PreparePermanentDeleteSelectionResponseSchema>;
+
+export const BulkPermanentDeleteRequestSchema = BulkJobMutationRequestBaseSchema.extend({
+  selectionId: z.string().uuid().optional(),
+}).strict().refine((value) => value.allMatching || value.jobKeys.length > 0, {
+  message: "Provide jobKeys or set allMatching.",
+}).refine((value) => !value.selectionId || !value.allMatching, {
+  message: "A reviewed selection must use its exact job keys.",
+});
+export type BulkPermanentDeleteRequest = z.infer<typeof BulkPermanentDeleteRequestSchema>;
 
 export const BulkRetryFailedRequestSchema = BulkJobMutationRequestBaseSchema
   .extend({
@@ -1659,10 +1752,10 @@ const ProfileAchievementEvidenceSchema = z.object({
   tools: z.array(z.string()).default([]),
   metrics: z.array(z.string()).default([]),
   outcome: z.string().default(""),
-  seniority_signal: z.string().default(""),
-  evidence_strength: z.enum(EVIDENCE_STRENGTHS).default("supported"),
+  evidence_strength: z.enum(EVIDENCE_STRENGTHS).default("draft"),
   claim_confidence: z.number().min(0).max(1).default(0),
   user_confirmed: z.boolean().default(false),
+  confirmation_review_required: z.boolean().optional(),
   tags: z.array(z.string()).default([]),
 });
 
@@ -1768,12 +1861,25 @@ const ProfileRevisionGatesSchema = z
   })
   .partial();
 
+// z.record silently drops an own __proto__ key. Experience IDs are opaque
+// saved data keys, so validate every own value and copy with CreateDataProperty
+// semantics rather than treating that key as an object setter.
+const ProfileRequiredBulletMapSchema = z
+  .custom<Record<string, string[]>>((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return (prototype === null || prototype === Object.prototype)
+      && Object.values(value).every((bullets) =>
+        Array.isArray(bullets) && bullets.every((bullet) => typeof bullet === "string"));
+  }, { message: "Expected a record of string arrays" })
+  .transform((value) => Object.fromEntries(Object.entries(value)) as Record<string, string[]>);
+
 const ProfileTailoringRulesSchema = z
   .object({
     required_experience_entry_ids: z.array(z.string()).default([]),
     required_education_entry_ids: z.array(z.string()).default([]),
     required_skill_category_ids: z.array(z.string()).default([]),
-    required_bullets_by_experience_id: z.record(z.string(), z.array(z.string())).default({}),
+    required_bullets_by_experience_id: ProfileRequiredBulletMapSchema.default({}),
     required_skills_by_category_id: z.record(z.string(), z.array(z.string())).default({}),
     max_experience_bullets: z.number().int().positive().default(4),
     custom_tailoring_prompt: z.string().default(""),
@@ -1856,9 +1962,136 @@ export const ProfileUpdateRequestSchema = z
     style: z.unknown().optional(),
     styleText: z.string().optional(),
     templateText: z.string().optional(),
+    expectedProfileVersion: z.number().int().positive().optional(),
+    acceptedCandidateInterpretationId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   })
   .strict();
 export type ProfileUpdateRequest = z.infer<typeof ProfileUpdateRequestSchema>;
+
+const ProfileEvidenceIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(160)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/, "invalid evidence id");
+
+export const TargetRoleSuggestionRequestSchema = z
+  .object({
+    expectedProfileVersion: z.number().int().positive(),
+    maximumSuggestions: z.number().int().min(1).max(5).default(3),
+  })
+  .strict();
+export type TargetRoleSuggestionRequest = z.infer<typeof TargetRoleSuggestionRequestSchema>;
+
+export const TargetRoleSuggestionSchema = z
+  .object({
+    title: z.string().trim().min(1).max(100),
+    classification: z.enum(["direct", "adjacent"]),
+    track: TrackCodeSchema,
+    seniority: SeniorityCodeSchema,
+    evidenceIds: z.array(ProfileEvidenceIdSchema).min(1).max(8),
+    citations: z.array(DeterminationCitationSchema).min(1).max(8),
+    rationale: z.string().trim().min(1).max(240),
+  })
+  .strict();
+export type TargetRoleSuggestion = z.infer<typeof TargetRoleSuggestionSchema>;
+
+export const TargetPreferenceSuggestionSchema = z
+  .object({
+    location: z.string().max(100),
+    workModel: WorkModelCodeSchema,
+    evidenceIds: z.array(ProfileEvidenceIdSchema).min(1).max(8),
+    citations: z.array(DeterminationCitationSchema).min(1).max(8),
+    rationale: z.string().min(1).max(240),
+  })
+  .strict()
+  .refine((value) => value.location.length > 0 || value.workModel.length > 0);
+export type TargetPreferenceSuggestion = z.infer<typeof TargetPreferenceSuggestionSchema>;
+
+export const TargetRoleSuggestionResultSchema = z
+  .object({
+    profileVersion: z.number().int().positive(),
+    determinationId: z.string().regex(/^[a-f0-9]{64}$/),
+    status: z.enum(["pending_confirmation", "confirmed"]),
+    suggestions: z.array(TargetRoleSuggestionSchema).max(5),
+    preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5).default([]),
+    strategy: z.literal("model"),
+    warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
+  })
+  .strict();
+export type TargetRoleSuggestionResult = z.infer<typeof TargetRoleSuggestionResultSchema>;
+
+export const TargetRoleSuggestionResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    profileVersion: z.number().int().positive(),
+    determinationId: z.string().regex(/^[a-f0-9]{64}$/),
+    status: z.enum(["pending_confirmation", "confirmed"]),
+    suggestions: z.array(TargetRoleSuggestionSchema).max(5),
+    preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5).optional(),
+    strategy: z.literal("model"),
+    warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
+  })
+  .strict();
+export type TargetRoleSuggestionResponse = z.infer<typeof TargetRoleSuggestionResponseSchema>;
+
+export const RequiredBulletSuggestionRequestSchema = z
+  .object({
+    expectedProfileVersion: z.number().int().positive(),
+    maximumSuggestions: z.number().int().min(1).max(24).default(12),
+  })
+  .strict();
+export type RequiredBulletSuggestionRequest = z.infer<typeof RequiredBulletSuggestionRequestSchema>;
+
+export const RequiredBulletSuggestionSourceSchema = z
+  .object({
+    sourceId: z.string().min(1).max(240).refine((value) => value.trim().length > 0),
+    identityKind: z.enum(["canonical_achievement", "snapshot_bullet"]),
+    excerpt: z.string().min(1).max(500),
+    fieldPath: z.string().trim().min(1).max(240),
+    experienceId: z.string().min(1).max(160).refine((value) => value.trim().length > 0),
+    experienceTitle: z.string().min(1).max(160).refine((value) => value.trim().length > 0),
+    experienceCompany: z.string().min(1).max(160).refine((value) => value.trim().length > 0),
+    bulletIndex: z.number().int().nonnegative(),
+    requiredBulletIndex: z.number().int().nonnegative(),
+  })
+  .strict();
+export type RequiredBulletSuggestionSource = z.infer<typeof RequiredBulletSuggestionSourceSchema>;
+
+export const RequiredBulletSuggestionSchema = z
+  .object({
+    id: z.string().trim().min(1).max(320),
+    kind: z.enum(["grammar", "relevance", "achievement_framing", "missing_evidence"]),
+    originalText: z.string().min(1).max(2_000),
+    proposedText: z.string().min(1).max(2_000).nullable(),
+    canApply: z.boolean(),
+    guidance: z.string().trim().min(1).max(500),
+    source: RequiredBulletSuggestionSourceSchema,
+  })
+  .strict()
+  .superRefine((suggestion, context) => {
+    if (suggestion.canApply !== (suggestion.proposedText !== null)) {
+      context.addIssue({
+        code: "custom",
+        path: ["proposedText"],
+        message: "proposedText must be present exactly when canApply is true",
+      });
+    }
+  });
+export type RequiredBulletSuggestion = z.infer<typeof RequiredBulletSuggestionSchema>;
+
+export const RequiredBulletSuggestionResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    profileVersion: z.number().int().positive(),
+    suggestions: z.array(RequiredBulletSuggestionSchema).max(24),
+    strategy: z.literal("model_v1"),
+    modelUsed: z.boolean(),
+    truncated: z.boolean(),
+    determination: DeterminationEnvelopeSchema.optional(),
+  })
+  .strict().refine(value=>!value.modelUsed || Boolean(value.determination), "A model judgment requires its persisted determination");
+export type RequiredBulletSuggestionResponse = z.infer<typeof RequiredBulletSuggestionResponseSchema>;
 
 export const ProfileImportRequestSchema = z
   .object({
@@ -1870,16 +2103,47 @@ export const ProfileImportRequestSchema = z
   .strict();
 export type ProfileImportRequest = z.infer<typeof ProfileImportRequestSchema>;
 
+export const LlmLaneValues = [
+  "discovery",
+  "enrichment",
+  "scoring",
+  "tailoring",
+  "apply",
+  "contact",
+  "interview",
+  "profile",
+  "compensation",
+] as const;
+export type LlmLane = (typeof LlmLaneValues)[number];
+
+const laneTokenLimitsSchema = z
+  .object({
+    discovery: z.number().int().min(0).optional(),
+    enrichment: z.number().int().min(0).optional(),
+    scoring: z.number().int().min(0).optional(),
+    tailoring: z.number().int().min(0).optional(),
+    apply: z.number().int().min(0).optional(),
+    contact: z.number().int().min(0).optional(),
+    interview: z.number().int().min(0).optional(),
+    profile: z.number().int().min(0).optional(),
+    compensation: z.number().int().min(0).optional(),
+  })
+  .strict();
+
 export const SettingsUpdateRequestSchema = z
   .object({
     applyConcurrency: z.coerce.number().int().min(1).max(16).optional(),
     pipelineInternalConcurrency: z.coerce.number().int().min(1).max(16).optional(),
     workerActivitySlots: z.coerce.number().int().min(1).max(64).optional(),
     dailyBudgetUsd: z.coerce.number().min(0).optional(),
+    laneTokenLimits: laneTokenLimitsSchema.optional(),
     analysisLegs: z.array(z.enum(["codex", "claude", "google"])).min(1).optional(),
+    defaultLlmModel: z.string().trim().min(1).max(160).nullable().optional(),
+    codexReasoningEfforts: z.record(z.string().trim().min(1).max(160), z.string().trim().min(1).max(40).nullable()).refine((value) => Object.keys(value).length <= 512).optional(),
     tailoringGeneratorModels: z.array(z.string().trim().min(1).max(160)).min(1).nullable().optional(),
     tailoringJudgeModel: z.string().trim().min(1).max(160).nullable().optional(),
-    tailoringJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
+    resumeVoicePolish: z.boolean().optional(),
+    coverLetterGeneration: z.boolean().optional(),
     applyMaxBudgetUsd: z.coerce.number().min(0).optional(),
     applyTimeoutSeconds: z.coerce.number().int().min(60).max(3600).optional(),
     scoreCriteria: z.string().max(8000).optional(),
@@ -2018,6 +2282,8 @@ export const ProviderModelSchema = z
     id: z.string().trim().min(1).max(160),
     displayName: z.string().trim().min(1).max(160),
     isDefault: z.boolean().optional(),
+    supportedReasoningEfforts: z.array(z.object({ reasoningEffort: z.string().trim().min(1).max(40), description: z.string().trim().min(1).max(240).optional() }).strict()).max(32).optional(),
+    defaultReasoningEffort: z.string().trim().min(1).max(40).optional(),
   })
   .strict();
 export type ProviderModel = z.infer<typeof ProviderModelSchema>;
@@ -2102,8 +2368,10 @@ export const JobListQuerySchema = z
     dir: SortDirectionSchema,
     q: optionalText,
     stage: z.enum(STAGES).optional().catch(undefined),
+    stages: OptionalJobStagesFilterSchema,
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
+    jobStates: JobStatesFilterSchema.optional().catch(undefined),
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all").catch("all"),
     source: optionalText,
     company: optionalText,
@@ -2213,6 +2481,10 @@ export const TailoringPolicyLearnedRuleSchema = z.discriminatedUnion("ruleKey", 
 ]);
 export type TailoringPolicyLearnedRule = z.infer<typeof TailoringPolicyLearnedRuleSchema>;
 
+export const TailoringPolicyRestoreCommandIdSchema = z.string().regex(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+);
+
 export const TailoringPolicyRevisionSummarySchema = z
   .object({
     context: z.literal("materials"),
@@ -2224,6 +2496,8 @@ export const TailoringPolicyRevisionSummarySchema = z
     sourceRecommendationId: LearningRecommendationIdSchema.nullable(),
     rollbackOfVersion: z.number().int().positive().nullable(),
     rollbackReasonCode: z.enum(["user_requested", "historical_or_unspecified"]).nullable(),
+    restoreCommandId: TailoringPolicyRestoreCommandIdSchema.optional(),
+    restoredFromCurrentVersion: z.number().int().positive().optional(),
     createdAt: IsoTimestampSchema,
   })
   .strict()
@@ -2234,6 +2508,10 @@ export const TailoringPolicyRevisionSummarySchema = z
   .refine(
     (value) => (value.rollbackOfVersion === null) === (value.rollbackReasonCode === null),
     "Policy rollback version and reason must be present together.",
+  )
+  .refine(
+    (value) => (value.restoreCommandId === undefined) === (value.restoredFromCurrentVersion === undefined),
+    "Restore command and reviewed predecessor must be present together.",
   );
 export type TailoringPolicyRevisionSummary = z.infer<
   typeof TailoringPolicyRevisionSummarySchema
@@ -2479,6 +2757,17 @@ export interface WorkflowRunTimelineEvent {
   readonly message: string | null;
 }
 
+/** A persisted Apply event, scoped to its workflow run and job. */
+export interface WorkflowApplyTimelineEvent {
+  readonly sourceEventId: string;
+  /** Monotonic event identity within the Apply run, when the writer supplied it. */
+  readonly runEventId: number | null;
+  readonly at: string | null;
+  readonly type: string;
+  readonly level: string;
+  readonly message: string | null;
+}
+
 /**
  * Privacy-safe aggregation of provider failures recorded for one tailoring
  * workflow. No prompts, provider messages, SDK objects, or generated content
@@ -2557,6 +2846,8 @@ export interface WorkflowRunDetail {
   readonly finishedAt: string | null;
   readonly durationMs: number | null;
   readonly events: readonly WorkflowRunTimelineEvent[];
+  /** Separate Apply history; omitted by older or browser-local adapters. */
+  readonly applyEvents?: readonly WorkflowApplyTimelineEvent[];
 }
 
 export const APPLY_URL_OUTCOME_CODES = [
@@ -2665,6 +2956,8 @@ export interface RequirementScoreContribution {
   awardedPoints: number;
   weightedImpact: number;
   rationale: string;
+  scope?: "resume" | "eligibility" | "logistics" | "employer_condition";
+  scopeSourceId?: string;
 }
 
 export interface RequirementTailoringDirective {
@@ -2767,6 +3060,7 @@ export interface EvidenceUsageRef {
 }
 
 export interface EvidenceFreshness {
+  confirmationReviewRequired?: boolean;
   evidenceDateRange: string | null;
   evidenceStrength: "verified" | "supported" | "inferred" | "draft" | string | null;
   userConfirmed: boolean;
@@ -2817,49 +3111,8 @@ export interface EvidenceMapResponse {
   generatedAt: string;
 }
 
-export const INTERVIEW_PREP_ITEM_KINDS = [
-  "theme",
-  "star_draft",
-  "gap_drill",
-  "company_note",
-] as const;
-export type InterviewPrepItemKind = (typeof INTERVIEW_PREP_ITEM_KINDS)[number];
-
-export const INTERVIEW_PREP_STATUSES = ["accepted", "failed", "superseded"] as const;
-export type InterviewPrepStatus = (typeof INTERVIEW_PREP_STATUSES)[number];
-
-export interface InterviewPrepGateAudit {
-  status: "passed" | "failed";
-  fabricationFindings: string[];
-  groundingFindings: string[];
-  judgeVerdict: string | null;
-  warnings: string[];
-}
-
-export interface InterviewPrepItem {
-  itemId: string;
-  kind: InterviewPrepItemKind;
-  title: string;
-  generatedText: string;
-  evidenceIds: string[];
-  requirementIds: string[];
-  sourceText: string[];
-  transformType: string;
-  control: string;
-  groundingAudit: string[];
-  warnings: string[];
-  position: number;
-}
-
-export interface InterviewPrep {
-  jobId: string;
-  generation: number;
-  status: InterviewPrepStatus;
-  generatedAt: string;
-  model: string | null;
-  gateAudit: InterviewPrepGateAudit;
-  items: InterviewPrepItem[];
-}
+export { INTERVIEW_PREP_ITEM_KINDS, INTERVIEW_PREP_STATUSES } from "@jobctrl/domain-types";
+export type { InterviewPrepItemKind, InterviewPrepStatus, InterviewPrepGateAudit, InterviewPrepItem, InterviewPrep } from "@jobctrl/domain-types";
 
 export interface InterviewPrepResponse {
   ok: true;
@@ -2916,6 +3169,30 @@ export interface ScoreStaleness {
   pendingExplicitRescore: boolean;
 }
 
+/** Profile edits never schedule scoring. Reviews retain the score's original sources. */
+export interface ScoreProfileFreshness {
+  status: "not_scored" | "unknown" | "current" | "profile_updated" | "reviewed_unchanged";
+  scoredProfileVersion: number | null;
+  currentProfileVersion: number | null;
+  review: {
+    determinationId: string;
+    verdict: "significant" | "insignificant";
+    rationale: string;
+    provider: string;
+    model: string;
+    reasoningEffort: string | null;
+    reviewedAt: string;
+  } | null;
+}
+
+/** Whether the saved requirement-fit assessment belongs to the current analysis and score. */
+export interface ScoreAnalysisFreshness {
+  status: "no_analysis" | "not_assessed" | "outdated" | "current";
+  currentAnalysisGeneration: number | null;
+  assessedAnalysisGeneration: number | null;
+  assessedScoreVersion: number | null;
+}
+
 export interface JobCompensationRangeSummary {
   currency: string | null;
   period: string;
@@ -2931,7 +3208,8 @@ export interface JobCompensationRangeSummary {
 
 export interface JobPostedCompensationSummary {
   sourceKind: "posted";
-  recordStatus: "recorded" | "not_recorded";
+  recordStatus: "recorded" | "not_recorded" | "unavailable";
+  failureCode?: string;
   parseState: PostedCompensationParseState | null;
   confidence: PostedCompensationConfidence;
   warningCount: number;
@@ -2942,7 +3220,8 @@ export interface JobPostedCompensationSummary {
 export interface JobMarketCompensationSummary {
   sourceKind: "reported_company_role_market";
   benchmarkKind: "direct" | "extrapolated" | null;
-  recordStatus: "recorded" | "not_requested";
+  recordStatus: "recorded" | "not_requested" | "unavailable";
+  failureCode?: string;
   estimateState: MarketCompensationEstimateState;
   confidenceBand: MarketCompensationConfidenceBand;
   confidenceScore: number | null;
@@ -2967,6 +3246,27 @@ export interface JobCompensationAudit {
   projectionVersion: number;
   posted: JobCompensationAuditPostedResponse;
   market: JobCompensationAuditMarketResponse;
+}
+
+export interface PostingAvailability {
+  failureCode: string | null;
+  determinations: DeterminationEnvelope[];
+  jobId: string;
+  postingUrl: string | null;
+  verdict: ActiveState;
+  reason: string;
+  method: string;
+  lastAttemptedAt: string | null;
+  lastSuccessfullyVerifiedAt: string | null;
+  lastSuccessfulState: ActiveState | null;
+  lastSuccessfulEvidenceRef: string | null;
+  nextDueAt: string | null;
+  evidenceRef: string | null;
+  overdue: boolean;
+  checkInProgress: boolean;
+  request?: { status: "deferred"; reason: string; requestedAt: string; retryAt: string | null };
+  lineage: { sourceUrl: string; finalUrl: string | null; status: number | null; method: string; rawHash: string | null;
+    signals?: { kind: string; value: string | boolean; past?: boolean }[] }[];
 }
 
 export interface JobSummary {
@@ -2994,6 +3294,8 @@ export interface JobSummary {
   scoreTrace: ScoreTrace | null;
   scoreCorrection: ScoreCorrection | null;
   scoreStaleness: ScoreStaleness;
+  scoreAnalysisFreshness?: ScoreAnalysisFreshness;
+  scoreProfileFreshness?: ScoreProfileFreshness;
   currentStage: Stage;
   currentSubstage: Stage;
   currentState: StageState;
@@ -3005,6 +3307,7 @@ export interface JobSummary {
   applyStatus: string | null;
   appliedAt: string | null;
   activeState: ActiveState;
+  availability?: PostingAvailability;
   deletedAt: string | null;
   hiddenAt: string | null;
   resumeTemplate?: ResumeTemplateState | null;
@@ -3017,6 +3320,8 @@ export interface ArtifactSummary {
   company: string;
   type: string;
   status: string;
+  /** Canonical material generation when this artifact belongs to one. */
+  generation?: number | null;
   localPath: string;
   createdAt: string | null;
   sizeBytes: number | null;
@@ -3038,6 +3343,10 @@ export interface PaginatedResponse<T> {
     dir: "asc" | "desc";
   };
   filter: Record<string, unknown>;
+}
+
+export interface ReviewableJobsResponse extends PaginatedResponse<JobSummary> {
+  observationId: string | null;
 }
 
 export interface ActivityEventSummary {
@@ -3267,10 +3576,22 @@ const PipelineAvailableCapacityBaseSchema = z.object({
   staleWorkerCount: z.number().int().nonnegative(),
   invalidWorkerCount: z.number().int().nonnegative(),
   configuredSlots: z.number().int().nonnegative(),
+  /** Fresh workers only; a stale worker makes global occupancy unknown. */
   activeSlots: z.number().int().nonnegative(),
   availableSlots: z.number().int().nonnegative(),
   executorThreads: z.number().int().nonnegative(),
   slotSaturation: z.number().min(0).max(1).nullable(),
+  blockingExecutor: z.object({
+    acceptingWorkers: z.number().int().nonnegative(),
+    refusingWorkers: z.number().int().nonnegative(),
+    unknownWorkers: z.number().int().nonnegative(),
+    unfinishedRetiredGenerations: z.number().int().nonnegative(),
+    unfinishedRetiredCalls: z.number().int().nonnegative(),
+    controlAcceptingWorkers: z.number().int().nonnegative().optional(),
+    controlRefusingWorkers: z.number().int().nonnegative().optional(),
+    controlUnknownWorkers: z.number().int().nonnegative().optional(),
+    controlUnfinishedCalls: z.number().int().nonnegative().optional(),
+  }).strict().nullable().optional(),
   approximateTaskQueue: PipelineApproximateTaskQueueSchema,
 });
 
@@ -3552,9 +3873,9 @@ export const PipelineOperationsSnapshotSchema = z
     /** Exact fresh runtime activity totals grouped by known operational stage. */
     activeStageCounts: z.array(PipelineActiveStageCountSchema).nullable(),
     activeItems: z.array(PipelineActiveItemSchema).max(20),
-    /** Null when worker runtime inventory cannot make an exact statement. */
+    /** Exact allowlisted activity count, not total occupancy; null if inventory is unavailable. */
     activeItemsTotal: z.number().int().nonnegative().nullable(),
-    /** Null when the inventory itself is unavailable or stale. */
+    /** True when activity details are omitted or bounded; null when inventory is unavailable or stale. */
     activeItemsTruncated: z.boolean().nullable(),
     overallEta: PipelineEtaSchema,
   })
@@ -3791,6 +4112,7 @@ export interface DailyDigestBudget {
 }
 
 export interface DailyDigest {
+  companyBriefings?: CompanyBriefingSummary[];
   ok: true;
   generatedAt: string;
   since: string | null;
@@ -3902,7 +4224,7 @@ export interface EmployerAnalysisKeyword {
 }
 
 export interface EmployerAnalysisAgreement {
-  score: number;
+  score: number | null;
   flagged_requirements: string[];
   flagged_keywords: string[];
 }
@@ -3941,9 +4263,12 @@ export interface EmployerAnalysis {
   keywords: EmployerAnalysisKeyword[];
   sub_analyses: EmployerAnalysisSubAnalysis[];
   failures: EmployerAnalysisFailure[];
+  /** Persisted model provenance, joined through the accepted analysis generation. */
+  determinations?: DeterminationEnvelope[];
 }
 
 export interface JobDetail {
+  companyBriefing?: CompanyBriefingView | null;
   ok: true;
   job: JobSummary & {
     descriptionPreview: string;
@@ -3986,6 +4311,7 @@ export interface ArtifactDetail {
   ok: true;
   artifact: ArtifactSummary;
   layoutBoxes: ResumeLayoutBox[];
+  determinations: DeterminationEnvelope[];
   tailoringExplanation: ArtifactTailoringExplanation | null;
 }
 
@@ -4026,7 +4352,6 @@ export interface ArtifactComparisonSide {
     passed: boolean | null;
     verdict: string | null;
     score: number | null;
-    minScore: number | null;
     issueCount: number;
   };
 }
@@ -4107,23 +4432,12 @@ export interface BulletCoverageAudit {
   };
 }
 
-/**
- * Phase 3 — the voice-pass audit (VOICE-02): the de-buzzword/vary-structure pass
- * is inspectable, not a hidden prompt tweak.
- *
- * Mirrors the Python ``VoicePassRecord.to_dict()``: whether the pass ``ran``, was
- * ``accepted`` (kept over the pre-voice candidate because the deterministic proxies
- * improved AND grounding re-validated), the ``model`` that produced it, the prompt
- * version, the deterministic ``proxyDelta`` (buzzword density + structural variety
- * before/after), and a ``reason`` when it was not accepted (e.g. a voice edit that
- * introduced an unsourced metric was rejected — VOICE-03).
- */
+/** The voice pass records its model, prompt version and separately verified acceptance. */
 export interface VoicePassAudit {
   ran: boolean;
   accepted: boolean;
   model: string;
   promptVersion: string;
-  proxyDelta: Record<string, unknown>;
   reason: string;
   summaryRejectionReason?: string;
   scopeViolations?: string[];
@@ -4131,6 +4445,8 @@ export interface VoicePassAudit {
 }
 
 export interface ArtifactTailoringExplanation {
+  determinations?: import("./semantic-determinations.js").DeterminationEnvelope[] | undefined;
+  lineFindings?: Array<{lineId: string; kind: string; rationale: string; determinationId: string}> | undefined;
   targetSeniority: string | null;
   claimMode: string | null;
   validationMode: string | null;
@@ -4166,7 +4482,6 @@ export interface ArtifactTailoringExplanation {
   };
   evidence: {
     requiredIds: string[];
-    seniorityIds: string[];
     representedIds: string[];
     missingIds: string[];
     verifiedMetricCount: number | null;
@@ -4183,7 +4498,6 @@ export interface ArtifactTailoringExplanation {
     passed: boolean | null;
     verdict: string | null;
     score: number | null;
-    minScore: number | null;
     issues: string[];
     unsupportedClaims: string[];
     fabrications: string[];
@@ -4191,6 +4505,7 @@ export interface ArtifactTailoringExplanation {
     repairInstructions: string[];
   };
   adversarialReview: {
+    determinationId?: string | null;
     ran: boolean;
     passed: boolean | null;
     score: number | null;
@@ -4293,6 +4608,10 @@ export interface ArtifactOpenResponse {
 
 export interface ProfileConfigResponse {
   ok: true;
+  legacyEvidenceReview?: { status: "review_required"; count: number };
+  candidateInterpretation?: {status:"missing"|"pending_confirmation"|"confirmed"|"unavailable";failureCode:string|null;determination:import("./semantic-determinations.js").DeterminationEnvelope|null};
+  /** Monotonic version of the canonical saved profile, or null before setup. */
+  profileVersion: number | null;
   /** Profile data. Validated against ``ProfileSchema`` server-side; the wire
    * type stays ``unknown`` so partial drafts can flow through explicit review
    * and import paths. Programmatic consumers should re-parse with
@@ -4312,7 +4631,7 @@ export interface ProfileImportResponse {
   action?: ActionRunResponse;
 }
 
-export interface ActionCommandPayload {
+export interface ActionCommandPayload extends InterviewSelectionInput {
   action:
     | "run_stage"
     | "retry_stage"
@@ -4337,6 +4656,7 @@ export interface ActionCommandPayload {
   stages?: Stage[];
   resetAttempts?: boolean;
   runAfter?: boolean;
+  refreshApplyUrl?: boolean;
   dryRun?: boolean;
   jobIds?: string[];
   limit?: number;
@@ -4349,7 +4669,6 @@ export interface ActionCommandPayload {
   llmModel?: string;
   tailorModels?: string[];
   tailorJudgeModel?: string;
-  tailorJudgeMinScore?: number;
   suppressExistingArtifacts?: boolean;
   headless?: boolean;
   continuous?: boolean;
@@ -4442,10 +4761,14 @@ export interface JobCtrlSettings {
   pipelineInternalConcurrency: number;
   workerActivitySlots: number;
   dailyBudgetUsd: number;
+  laneTokenLimits: Record<LlmLane, number>;
   analysisLegs: ProviderId[];
+  defaultLlmModel: string | null;
+  codexReasoningEfforts: Record<string, string>;
   tailoringGeneratorModels: string[] | null;
   tailoringJudgeModel: string | null;
-  tailoringJudgeMinScore: number;
+  resumeVoicePolish: boolean;
+  coverLetterGeneration: boolean;
   applyMaxBudgetUsd: number;
   applyTimeoutSeconds: number;
   scoreCriteria: string;
@@ -4484,13 +4807,17 @@ export type EffectiveSetting<T> = {
 
 export interface EffectiveJobCtrlSettings {
   dailyBudgetUsd: EffectiveSetting<number>;
+  laneTokenLimits: EffectiveSetting<Record<LlmLane, number>>;
   applyConcurrency: EffectiveSetting<number>;
   pipelineInternalConcurrency: EffectiveSetting<number>;
   workerActivitySlots: EffectiveSetting<number>;
   analysisLegs: EffectiveSetting<ProviderId[]>;
+  defaultLlmModel: EffectiveSetting<string | null>;
+  codexReasoningEfforts: EffectiveSetting<Record<string, string>>;
   tailoringGeneratorModels: EffectiveSetting<string[] | null>;
   tailoringJudgeModel: EffectiveSetting<string | null>;
-  tailoringJudgeMinScore: EffectiveSetting<number>;
+  resumeVoicePolish: EffectiveSetting<boolean>;
+  coverLetterGeneration: EffectiveSetting<boolean>;
   applyMaxBudgetUsd: EffectiveSetting<number>;
   applyTimeoutSeconds: EffectiveSetting<number>;
   scoreCriteria: EffectiveSetting<string>;
@@ -4506,10 +4833,14 @@ export const SettingsResponseSchema = z
         pipelineInternalConcurrency: z.number(),
         workerActivitySlots: z.number(),
         dailyBudgetUsd: z.number(),
+        laneTokenLimits: laneTokenLimitsSchema.required(),
         analysisLegs: z.array(z.enum(ProviderIds)),
+        defaultLlmModel: z.string().nullable(),
+        codexReasoningEfforts: z.record(z.string(), z.string()),
         tailoringGeneratorModels: z.array(z.string()).nullable(),
         tailoringJudgeModel: z.string().nullable(),
-        tailoringJudgeMinScore: z.number(),
+        resumeVoicePolish: z.boolean(),
+        coverLetterGeneration: z.boolean(),
         applyMaxBudgetUsd: z.number(),
         applyTimeoutSeconds: z.number(),
         scoreCriteria: z.string(),
@@ -4526,13 +4857,17 @@ export const SettingsResponseSchema = z
     effectiveSettings: z
       .object({
         dailyBudgetUsd: effectiveSettingSchema(z.number()),
+        laneTokenLimits: effectiveSettingSchema(laneTokenLimitsSchema.required()),
         applyConcurrency: effectiveSettingSchema(z.number()),
         pipelineInternalConcurrency: effectiveSettingSchema(z.number()),
         workerActivitySlots: effectiveSettingSchema(z.number()),
         analysisLegs: effectiveSettingSchema(z.array(z.enum(ProviderIds))),
+        defaultLlmModel: effectiveSettingSchema(z.string().nullable()),
+        codexReasoningEfforts: effectiveSettingSchema(z.record(z.string(), z.string())),
         tailoringGeneratorModels: effectiveSettingSchema(z.array(z.string()).nullable()),
         tailoringJudgeModel: effectiveSettingSchema(z.string().nullable()),
-        tailoringJudgeMinScore: effectiveSettingSchema(z.number()),
+        resumeVoicePolish: effectiveSettingSchema(z.boolean()),
+        coverLetterGeneration: effectiveSettingSchema(z.boolean()),
         applyMaxBudgetUsd: effectiveSettingSchema(z.number()),
         applyTimeoutSeconds: effectiveSettingSchema(z.number()),
         scoreCriteria: effectiveSettingSchema(z.string()),
@@ -4716,6 +5051,10 @@ export const DiscoveryBrowserTaskResultSchema = z.discriminatedUnion("status", [
       browserUserAgent: z.string().max(500).optional(),
       bodyText: DiscoveryBrowserResultBodySchema,
       bodyHtml: DiscoveryBrowserResultBodySchema.optional(),
+      visibleApplyControls: z.array(z.object({
+        href: z.string().trim().min(1).max(2048),
+        jobId: z.string().trim().min(1).max(200),
+      }).strict()).max(20).optional(),
     })
     .strict(),
   z
@@ -4974,9 +5313,8 @@ export const DiscoverySettingsUpdateRequestSchema = z
     hoursOld: z.coerce.number().int().min(1).max(8760).optional(),
     schedulingEnabled: z.boolean().optional(),
     scheduleCron: z.string().min(1).optional(),
-    roleFilterMode: z.enum(["auto", "deterministic", "llm"]).optional(),
-    roleFilterModel: z.string().trim().max(160).nullable().optional(),
     maxParallelFamilies: z.coerce.number().int().min(1).max(4).optional(),
+    useBrowserHeaders: z.boolean().optional(),
     crawlUserAgentProduct: z.string().trim().min(1).max(80).optional(),
     crawlUserAgentContact: z.string().trim().max(240).optional(),
   })
@@ -4992,9 +5330,8 @@ export interface DiscoverySettings {
   hoursOld: number;
   schedulingEnabled: boolean;
   scheduleCron: string;
-  roleFilterMode: "auto" | "deterministic" | "llm";
-  roleFilterModel: string | null;
   maxParallelFamilies: number;
+  useBrowserHeaders: boolean;
   crawlUserAgentProduct: string;
   crawlUserAgentContact: string;
   source: "database";
@@ -5009,9 +5346,8 @@ export interface EffectiveDiscoverySettings {
   hoursOld: EffectiveSetting<number>;
   schedulingEnabled: EffectiveSetting<boolean>;
   scheduleCron: EffectiveSetting<string>;
-  roleFilterMode: EffectiveSetting<DiscoverySettings["roleFilterMode"]>;
-  roleFilterModel: EffectiveSetting<string | null>;
   maxParallelFamilies: EffectiveSetting<number>;
+  useBrowserHeaders: EffectiveSetting<boolean>;
   crawlUserAgentProduct: EffectiveSetting<string>;
   crawlUserAgentContact: EffectiveSetting<string>;
 }
@@ -5029,9 +5365,8 @@ export const DiscoverySettingsResponseSchema = z
         hoursOld: z.number(),
         schedulingEnabled: z.boolean(),
         scheduleCron: z.string(),
-        roleFilterMode: z.enum(["auto", "deterministic", "llm"]),
-        roleFilterModel: z.string().nullable(),
         maxParallelFamilies: z.number(),
+        useBrowserHeaders: z.boolean(),
         crawlUserAgentProduct: z.string(),
         crawlUserAgentContact: z.string(),
         source: z.literal("database"),
@@ -5049,9 +5384,8 @@ export const DiscoverySettingsResponseSchema = z
         hoursOld: effectiveSettingSchema(z.number()),
         schedulingEnabled: effectiveSettingSchema(z.boolean()),
         scheduleCron: effectiveSettingSchema(z.string()),
-        roleFilterMode: effectiveSettingSchema(z.enum(["auto", "deterministic", "llm"])),
-        roleFilterModel: effectiveSettingSchema(z.string().nullable()),
         maxParallelFamilies: effectiveSettingSchema(z.number()),
+        useBrowserHeaders: effectiveSettingSchema(z.boolean()),
         crawlUserAgentProduct: effectiveSettingSchema(z.string()),
         crawlUserAgentContact: effectiveSettingSchema(z.string()),
       })
@@ -5068,7 +5402,9 @@ export interface DiscoverySettingsResponse {
 export interface CredentialsResponse {
   ok: true;
   store: {
-    kind: "config_and_macos_keychain";
+    kind: "config_and_native_credential_store";
+    nativeStore: "macos_keychain" | "windows_credential_manager" | "linux_secret_service" | null;
+    maxSecretBytes: number | null;
     available: boolean;
     unavailableReason: "inspection_failed" | "unsupported_platform" | null;
     requiresWorkerRestart: true;
@@ -5076,10 +5412,10 @@ export interface CredentialsResponse {
   credentials: Array<{
     key: CredentialKey;
     label: string;
-    /** Keychain inspection is reported separately from the effective owner. */
+    /** Native-store inspection is reported separately from the effective owner. */
     configured: boolean | null;
-    storage: "keychain" | "config";
-    effectiveSource: "environment" | "keychain" | "config" | "absent" | "inspection_unknown";
+    storage: "native_store" | "config";
+    effectiveSource: "environment" | "native_store" | "config" | "absent" | "inspection_unknown";
     editable: boolean;
   }>;
 }
@@ -5092,10 +5428,18 @@ export interface CredentialManagedByEnvironmentResponse {
   message: string;
 }
 
+export interface CredentialValueUnsupportedResponse {
+  ok: false;
+  error: "credential_value_unsupported";
+  key: SecretCredentialKey;
+  maxBytes: number;
+  message: string;
+}
+
 export interface CredentialStoreErrorResponse {
   ok: false;
   error: "credential_store_unavailable";
-  reason: "operational_failure" | "partial_failure" | "unsupported_platform";
+  reason: "busy" | "ownership_unverified" | "operational_failure" | "partial_failure" | "unsupported_platform";
   message: string;
 }
 
@@ -5207,20 +5551,17 @@ export interface BrowserCapabilityErrorResponse {
   message: string;
 }
 
-export interface ProviderStatusResponse {
-  ok: true;
-  providers: ProviderStatusItem[];
-}
+export const ProviderStatusResponseSchema = ProviderStatusResultSchema.safeExtend({ ok: z.literal(true) });
+export type ProviderStatusResponse = z.infer<typeof ProviderStatusResponseSchema>;
 
-export interface ProviderModelCatalogResponse {
-  ok: true;
-  providers: ProviderModelCatalogItem[];
-}
+export const ProviderModelCatalogResponseSchema = ProviderModelCatalogResultSchema.safeExtend({ ok: z.literal(true) });
+export type ProviderModelCatalogResponse = z.infer<typeof ProviderModelCatalogResponseSchema>;
 
-export interface CodexVerifyResponse {
-  ok: true;
-  verification: z.infer<typeof CodexVerifyResultSchema>;
-}
+export const CodexVerifyResponseSchema = z.object({
+  ok: z.literal(true),
+  verification: CodexVerifyResultSchema,
+}).strict();
+export type CodexVerifyResponse = z.infer<typeof CodexVerifyResponseSchema>;
 
 export interface ProviderOperationErrorResponse {
   ok: false;
@@ -5325,6 +5666,35 @@ export const MANUAL_CAPTURE_MODE_VALUES = [
 ] as const;
 export type ManualCaptureModeValue = (typeof MANUAL_CAPTURE_MODE_VALUES)[number];
 
+export const SourceProposalEvidenceSchema = z.object({
+  originJobId: z.string(),
+  originPostingUrl: z.string(),
+  inputUrl: z.string(),
+  urlKind: z.enum(["posting_url", "canonical_url", "application_url"]),
+  observations: z.array(z.object({
+    observationId: z.string(), sourceId: z.string(), runId: z.string(),
+    observedUrl: z.string(), observedAt: z.string(),
+  })),
+  extraction: z.object({
+    tier: z.string().nullable(), enrichedAt: z.string().nullable(), snapshotVersion: z.number().nullable(),
+    descriptionSha256: z.string().nullable(), snapshotSha256: z.string().nullable(),
+    snapshotEvidence: z.array(z.string()).optional(),
+  }),
+  sample: z.object({ title: z.string(), company: z.string(), descriptionExcerpt: z.string() }),
+});
+export type SourceProposalEvidence = z.infer<typeof SourceProposalEvidenceSchema>;
+
+export interface SourceProposalReview {
+  coordinateKey: string;
+  sourceId: string;
+  atsKind: string | null;
+  boardToken: string | null;
+  completeness: "unknown";
+  promotionBlockedReason?: string | null;
+  evidence: SourceProposalEvidence[];
+  overlaps: { sourceId: string; state: string; seedUrl: string | null }[];
+}
+
 export interface SourceLocatorCandidateSummary {
   candidateId: string;
   candidateUrl: string;
@@ -5334,6 +5704,7 @@ export interface SourceLocatorCandidateSummary {
   employerDomainMatched: boolean;
   manualActionReason: ManualActionReasonValue | null;
   discoveredAt: string;
+  proposal?: SourceProposalReview;
 }
 
 export interface SourceLocatorListResponse {
@@ -5632,6 +6003,7 @@ export interface PostedCompensationFactRecordedResponse {
   ok: true;
   recordStatus: "recorded";
   fact: PostedCompensationFact;
+  determination: import("./semantic-determinations.js").DeterminationEnvelope;
 }
 
 export interface PostedCompensationFactNotRecordedResponse {
@@ -5643,7 +6015,8 @@ export interface PostedCompensationFactNotRecordedResponse {
 
 export type PostedCompensationFactResponse =
   | PostedCompensationFactRecordedResponse
-  | PostedCompensationFactNotRecordedResponse;
+  | PostedCompensationFactNotRecordedResponse
+  | {ok:true; recordStatus:"unavailable"; jobKey:string; legacyRawSalary:string|null; failureCode:string};
 
 type CompensationAuditJobIdentity<T> = T extends { jobKey: string }
   ? Omit<T, "jobKey"> & { jobId: string }
@@ -5658,13 +6031,15 @@ export type JobCompensationAuditPostedResponse =
       ok: true;
       recordStatus: "recorded";
       fact: JobCompensationAuditPostedFact;
+      determination: import("./semantic-determinations.js").DeterminationEnvelope;
     }
   | {
       ok: true;
       recordStatus: "not_recorded";
       jobId: string;
       legacyRawSalary: string | null;
-    };
+    }
+  | {ok:true;recordStatus:"unavailable";jobId:string;legacyRawSalary:string|null;failureCode:string};
 
 export const MARKET_COMPENSATION_ESTIMATE_STATES = [
   "not_requested",
@@ -5792,6 +6167,7 @@ export interface MarketCompensationSourceSnapshot {
 }
 
 export interface MarketCompensationEvidenceRow {
+  determinationId: string | null;
   sourceId: MarketCompensationSourceId;
   displayName: string;
   sourceUrl: string | null;
@@ -5900,6 +6276,7 @@ export type MarketCompensationBenchmarkLineage =
   | MarketCompensationExtrapolatedBenchmarkLineage;
 
 interface MarketCompensationEstimateBase {
+  determinations: DeterminationEnvelope[];
   tenantId: string;
   jobKey: string;
   estimateState: MarketCompensationEstimateState;
@@ -5981,13 +6358,15 @@ export interface MarketCompensationEstimateNotRequestedResponse {
 
 export type MarketCompensationEstimateResponse =
   | MarketCompensationEstimateRecordedResponse
-  | MarketCompensationEstimateNotRequestedResponse;
+  | MarketCompensationEstimateNotRequestedResponse
+  | { ok: true; recordStatus: "unavailable"; jobKey: string; failureCode: string };
 
 export type JobCompensationAuditMarketEstimate = CompensationAuditJobIdentity<
   MarketCompensationEstimate
 >;
 
 export type JobCompensationAuditMarketResponse =
+  | { ok: true; recordStatus: "unavailable"; jobId: string; failureCode: string }
   | {
       ok: true;
       recordStatus: "recorded";
@@ -6034,11 +6413,12 @@ export const JobUrlImportUrlSchema = z
 export const JobUrlImportRequestSchema = z
   .object({
     url: JobUrlImportUrlSchema,
+    awaitResult: z.boolean().optional(),
   })
   .strict();
 export type JobUrlImportRequest = z.infer<typeof JobUrlImportRequestSchema>;
 
-export type JobUrlImportResponse =
+export type JobUrlImportCompletedResponse =
   | {
       ok: true;
       status: "imported";
@@ -6052,6 +6432,22 @@ export type JobUrlImportResponse =
       itemId: string;
       reason: ManualActionReasonValue;
     };
+
+export interface JobUrlImportExecution {
+  workflowId: string;
+  executionId: string;
+}
+
+export type JobUrlImportResponse = JobUrlImportCompletedResponse | (
+  JobUrlImportExecution & { ok: true; status: "started" }
+);
+
+export type JobUrlImportStatusResponse = JobUrlImportCompletedResponse | (
+  JobUrlImportExecution & (
+    | { ok: true; status: "pending" }
+    | { ok: true; status: "failed" | "canceled" | "timed_out" | "terminated"; message: string; failureCode?: string }
+  )
+);
 
 export const ManualCaptureImportSchema = z
   .object({
@@ -6219,6 +6615,8 @@ export interface ContactSummary {
 }
 
 export interface ContactDetail {
+  /** Opaque canonical edit base; required unchanged on replacement saves. */
+  fingerprint: string;
   contactId: string;
   displayName: string;
   role: ContactRole;
@@ -6269,23 +6667,83 @@ export const ContactCreateRequestSchema = z
   );
 export type ContactCreateRequest = z.infer<typeof ContactCreateRequestSchema>;
 
+// A retained saved fact may predate current input limits or use an unsupported
+// kind. The contact writer validates kind and normalized value if it creates a
+// new fact, after it has checked whether this input retains an existing row.
+const ContactUpdateAttributeInputSchema = z.object({
+  kind: z.string(),
+  value: z.string(),
+  attributeId: z.string().min(1).optional(),
+}).strict();
+
 export const ContactUpdateRequestSchema = z
   .object({
+    expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     role: ContactRoleSchema.optional(),
     employer: contactEmployerField,
     jobId: contactApiJobIdField,
-    attributes: z.array(ContactAttributeInputSchema).max(50).optional(),
+    attributes: z.array(ContactUpdateAttributeInputSchema).max(50).optional(),
   })
   .strict();
 export type ContactUpdateRequest = z.infer<typeof ContactUpdateRequestSchema>;
 
-export const ContactImportRequestSchema = z
+const ContactImportLegacyRequestSchema = z
   .object({
     filename: z.string().trim().min(1).max(300),
     csvText: z.string().min(1).max(1_000_000),
   })
   .strict();
+
+const ContactImportReviewedRequestSchema = z
+  .object({
+    filename: z.string().trim().min(1).max(300),
+    format: z.enum(["csv", "vcard"]),
+    mode: z.enum(["preview", "commit"]),
+    content: z.string().min(1).max(1_000_000),
+  })
+  .strict();
+
+/** Legacy CSV requests remain commits; new callers use the reviewed preview/commit flow. */
+export const ContactImportRequestSchema = z.union([
+  ContactImportReviewedRequestSchema,
+  ContactImportLegacyRequestSchema,
+]);
 export type ContactImportRequest = z.infer<typeof ContactImportRequestSchema>;
+
+export type ContactImportFormat = "csv" | "vcard";
+export type ContactImportMode = "preview" | "commit";
+export type ContactImportItemStatus = "ready" | "duplicate" | "invalid";
+
+export interface ContactImportIssue {
+  code: string;
+  message: string;
+  severity: "warning" | "error";
+  property: string | null;
+}
+
+export interface ContactImportPreviewAttribute {
+  kind: ContactAttributeKind;
+  value: string;
+}
+
+export interface ContactImportDuplicate {
+  scope: "existing" | "batch";
+  contactId: string | null;
+  itemIndex: number | null;
+}
+
+export interface ContactImportItem {
+  index: number;
+  status: ContactImportItemStatus;
+  displayName: string;
+  employer: string | null;
+  jobId: string | null;
+  role: ContactRole;
+  attributes: ContactImportPreviewAttribute[];
+  duplicate: ContactImportDuplicate | null;
+  issues: ContactImportIssue[];
+  importedContactId: string | null;
+}
 
 export const ContactListQuerySchema = z
   .object({
@@ -6317,9 +6775,19 @@ export interface ContactMutationResponse {
 
 export interface ContactImportResponse {
   ok: true;
+  format: ContactImportFormat;
+  mode: ContactImportMode;
   imported: number;
   skipped: number;
   contactIds: string[];
+  summary: {
+    total: number;
+    ready: number;
+    duplicates: number;
+    invalid: number;
+    unsupported: number;
+  };
+  items: ContactImportItem[];
 }
 
 export interface ContactDeleteResponse {
@@ -6360,6 +6828,16 @@ export const RESEARCH_SOURCE_OUTCOMES = [
   "manual_capture_required",
   "rejected",
   "extraction_failed",
+  "provider_unavailable",
+  "provider_failed",
+  "spend_denied",
+  "invalid_output",
+  "empty_content",
+  "response_too_large",
+  "acquisition_timeout",
+  "redirect_failed",
+  "transport_failed",
+  "http_error",
 ] as const;
 export type ResearchSourceOutcome = (typeof RESEARCH_SOURCE_OUTCOMES)[number];
 
@@ -6377,6 +6855,7 @@ export interface ContactResearchSourceAttempt {
   outcome: ResearchSourceOutcome | string;
   attemptedAt: string;
   detail: string;
+  determinationId?: string | null;
 }
 
 /** A proposed candidate. `attributes` carry values (served only in the detail DTO). */
@@ -6487,8 +6966,8 @@ export interface ConfirmContactCandidateResponse {
 // an approved draft is copied out via the browser clipboard, never sent.
 // ---------------------------------------------------------------------------
 
-export const OUTREACH_DRAFT_KINDS = ["intro_request", "follow_up"] as const;
-export const OutreachDraftKindSchema = z.enum(OUTREACH_DRAFT_KINDS).catch("intro_request");
+export const OUTREACH_DRAFT_KINDS = ["intro_request", "follow_up", "offer_negotiation", "offer_clarification", "offer_acceptance", "offer_decline"] as const;
+export const OutreachDraftKindSchema = z.enum(OUTREACH_DRAFT_KINDS);
 export type OutreachDraftKind = (typeof OUTREACH_DRAFT_KINDS)[number];
 
 export const OUTREACH_DRAFT_STATUSES = [
@@ -6526,6 +7005,7 @@ export interface OutreachGateJudge {
 export interface OutreachDraftGateResults {
   passed: boolean;
   computedAgainst: string;
+  sourceContext?: { binding: { jobId: string; termsRevisionId: string; decisionId: string | null }; fingerprint: string; sources: { source_id: string; text: string }[] } | null;
   fabrications: OutreachGateFabrication[];
   validation: OutreachGateValidation;
   judge: OutreachGateJudge | null;
@@ -6533,6 +7013,7 @@ export interface OutreachDraftGateResults {
 
 /** One claim in a draft bound to the confirmed fact(s) it rests on (INV-2). */
 export interface OutreachClaimProvenanceDto {
+  sourceCitations?: { sourceId: string; quote: string }[];
   claimId: string;
   section: string;
   generatedText: string;
@@ -6542,6 +7023,7 @@ export interface OutreachClaimProvenanceDto {
 }
 
 export interface OutreachDraftDto {
+  offerSourcesCurrent?: boolean;
   draftId: string;
   threadId: string;
   generation: number;
@@ -6583,6 +7065,7 @@ export const GenerateOutreachDraftRequestSchema = z
   .object({
     jobId: outreachJobIdField,
     kind: OutreachDraftKindSchema.optional(),
+    offerRevisionId: z.uuid().optional(),
     applicationRole: z.string().trim().max(200).optional(),
     llmModel: z.string().trim().min(1).max(120).optional(),
   })
@@ -6593,6 +7076,7 @@ export const ReviseOutreachDraftRequestSchema = z
   .object({
     editedBodyText: z.string().trim().min(1).max(8000),
     kind: OutreachDraftKindSchema.optional(),
+    offerRevisionId: z.uuid().optional(),
     applicationRole: z.string().trim().max(200).optional(),
     llmModel: z.string().trim().min(1).max(120).optional(),
   })
@@ -6617,6 +7101,11 @@ export type OutreachThreadQuery = z.infer<typeof OutreachThreadQuerySchema>;
 export interface OutreachThreadResponse {
   ok: true;
   thread: OutreachThreadDetail | null;
+}
+
+/** Revision acknowledgement identifying the draft published by this request. */
+export interface ReviseOutreachDraftResponse extends OutreachThreadResponse {
+  publication: { threadId: string; draftId: string; generation: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -6647,6 +7136,11 @@ export interface OutreachSendLogDto {
   channel: string;
   sentAt: string;
   loggedAt: string;
+}
+
+export interface LogOutreachSendResponse {
+  ok: true;
+  sendLog: OutreachSendLogDto;
 }
 
 export const FOLLOW_UP_STATES = ["none", "scheduled", "completed", "dismissed"] as const;
@@ -6685,6 +7179,7 @@ export interface DueFollowUpsResponse {
 
 export const LogOutreachSendRequestSchema = z
   .object({
+    requestId: z.string().uuid(),
     draftId: z.string().trim().min(1).max(200),
     channel: z.enum(OUTREACH_SEND_CHANNELS),
     sentAt: z.string().trim().min(1).max(40),
@@ -6700,3 +7195,124 @@ export const ScheduleFollowUpRequestSchema = z
   })
   .strict();
 export type ScheduleFollowUpRequest = z.infer<typeof ScheduleFollowUpRequestSchema>;
+
+// Original accepted-material exports keep source selection and receipts explicit.
+const MaterialExportDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const AcceptedMaterialExportSourceSchema = z.object({
+  artifactId: z.string().min(1).max(240), generation: z.number().int().positive(),
+  kind: z.enum(["tailored_resume", "cover_letter"]), locale: z.string().nullable(),
+  sha256: MaterialExportDigestSchema.nullable(), metadataSha256: MaterialExportDigestSchema.nullable(),
+  unavailableReason: z.string().nullable(),
+}).strict();
+export const AcceptedMaterialExportReceiptSchema = z.object({
+  contract: z.literal("accepted-material-docx-v1"), tenantId: z.string().min(1), jobId: z.string().uuid(),
+  artifactId: z.string().regex(/^[1-9][0-9]*$/), sourceArtifactId: z.string().min(1).max(240),
+  generation: z.number().int().positive(), kind: z.enum(["tailored_resume", "cover_letter"]),
+  sourceSha256: MaterialExportDigestSchema, sourceMetadataSha256: MaterialExportDigestSchema,
+  settings: z.object({ format: z.literal("docx"), layout: z.literal("semantic-v1"), paper: z.enum(["A4", "Letter"]), locale: z.string().min(1) }).strict(),
+  settingsSha256: MaterialExportDigestSchema, sha256: MaterialExportDigestSchema,
+  createdAt: z.string().min(1), warnings: z.array(z.string()),
+}).strict();
+export const AcceptedMaterialExportsSchema = z.object({
+  tenantId: z.string().min(1), jobId: z.string().uuid(), sources: z.array(AcceptedMaterialExportSourceSchema),
+  exports: z.array(AcceptedMaterialExportReceiptSchema), exportedArtifactId: z.string().nullable(),
+}).strict();
+export const AcceptedMaterialExportRequestSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("history") }).strict(),
+  z.object({ operation: z.literal("export"), sourceArtifactId: z.string().min(1).max(240),
+    expectedGeneration: z.number().int().positive(), expectedSourceSha256: MaterialExportDigestSchema,
+    expectedMetadataSha256: MaterialExportDigestSchema, paper: z.enum(["A4", "Letter"]),
+  }).strict(),
+]);
+export type AcceptedMaterialExports = z.infer<typeof AcceptedMaterialExportsSchema>;
+export type AcceptedMaterialExportReceipt = z.infer<typeof AcceptedMaterialExportReceiptSchema>;
+export type AcceptedMaterialExportRequest = z.infer<typeof AcceptedMaterialExportRequestSchema>;
+
+// Locale variants are a separately versioned Materials contract on schema 14.
+const LocaleCitationSchema = z.object({ source_id: z.string(), quote: z.string(), exact_values: z.array(z.string()) }).strict();
+export const LocaleFindingSchema = z.object({
+  kind: z.enum(["missing_term", "unsupported_language", "ambiguous_credential"]),
+  line_id: z.string(), source: LocaleCitationSchema, detail: z.string(),
+}).strict();
+const LocaleLineSchema = z.object({ line_id: z.string(), text: z.string(), source: LocaleCitationSchema, fact_ids: z.array(z.string()) }).strict();
+const LocaleReviewSchema = z.object({ dimension: z.enum(["terminology", "formatting"]), decision: z.enum(["accepted", "rejected"]), revisionId: z.string(), textSha256: z.string(), recordedAt: z.string(), note: z.string() }).strict();
+export const MaterialLocaleVariantSchema = z.object({
+  authorityStatus: z.enum(["recorded", "unavailable"]),
+  contract: z.literal("material-locale-v1"), tenantId: z.string(), jobId: z.string(), entityId: z.string(),
+  source: z.object({ artifactId: z.string(), generation: z.number().int().positive(), kind: z.enum(["tailored_resume", "cover_letter"]), sha256: z.string(), text: z.string() }).strict(),
+  sourceLocale: z.string(), targetLocale: z.string(), profileVersion: z.number().int().positive(),
+  facts: z.array(z.object({ source_id: z.string(), text: z.string() }).strict()), protectedValues: z.array(z.string()),
+  revisionId: z.string().uuid(), version: z.number().int().positive(), createdAt: z.string(), accepted: z.boolean(),
+  reviews: z.array(LocaleReviewSchema),
+  acceptanceHistory: z.array(z.object({ decision: z.enum(["accepted", "rejected"]), recordedAt: z.string(), revisionId: z.string(), textSha256: z.string() }).strict()),
+  exports: z.array(z.object({ format: z.enum(["txt", "html", "pdf", "docx"]), sha256: z.string(), textSha256: z.string(), createdAt: z.string(), artifactId: z.string() }).strict()),
+  translationId: z.string().nullable(), verificationId: z.string().nullable(),
+  provider: z.string(), model: z.string(), promptVersion: z.string(), schemaVersion: z.string(),
+  lines: z.array(LocaleLineSchema), findings: z.array(LocaleFindingSchema), verificationVerdict: z.enum(["pass", "fail"]),
+  text: z.string(), textSha256: z.string(),
+  verification: z.array(z.object({ line_id: z.string(), verdict: z.enum(["pass", "fail"]), original: LocaleCitationSchema, translated: LocaleCitationSchema, reason: z.string() }).strict()),
+}).strict();
+export type MaterialLocaleVariant = z.infer<typeof MaterialLocaleVariantSchema>;
+export const MaterialLocaleHistorySchema = z.object({
+  supportedLocales: z.array(z.string()), variants: z.array(MaterialLocaleVariantSchema), profileVersion: z.number().int().positive().nullable(),
+  sources: z.array(z.object({ artifactId: z.string(), generation: z.number().int().positive(), kind: z.enum(["tailored_resume", "cover_letter"]) }).strict()),
+}).strict();
+export type MaterialLocaleHistory = z.infer<typeof MaterialLocaleHistorySchema>;
+const localeRevisionFields = { revisionId: z.string().uuid(), expectedVersion: z.number().int().positive() };
+export const MaterialLocaleRequestSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("history") }).strict(),
+  z.object({ operation: z.literal("generate"), sourceArtifactId: z.string().min(1).max(240), sourceLocale: z.string().min(2).max(35), targetLocale: z.string().min(2).max(35), expectedGeneration: z.number().int().positive(), expectedProfileVersion: z.number().int().positive() }).strict(),
+  z.object({ operation: z.literal("review"), ...localeRevisionFields, dimension: z.enum(["terminology", "formatting"]), decision: z.enum(["accepted", "rejected"]), note: z.string().max(2000) }).strict(),
+  z.object({ operation: z.literal("accept"), ...localeRevisionFields }).strict(),
+  z.object({ operation: z.literal("reject"), ...localeRevisionFields }).strict(),
+  z.object({ operation: z.literal("export"), ...localeRevisionFields, format: z.enum(["txt", "html", "pdf", "docx"]) }).strict(),
+]);
+export type MaterialLocaleRequest = z.infer<typeof MaterialLocaleRequestSchema>;
+// Private screening answers: generated endpoint clients share these exact shapes.
+const ScreeningIdSchema = z.string().min(1).max(160);
+export const ScreeningFactSchema = z.object({ id: z.string().min(1).max(240), text: z.string().max(64000), sensitive: z.boolean() }).strict();
+export const ScreeningBindingSchema = z.object({
+  profileVersion: z.number().int().positive(), profileHash: z.string().length(64),
+  postingHash: z.string().length(64), destination: z.string().min(1), posting: z.string(),
+  materials: z.array(z.record(z.string(), z.unknown())), facts: z.array(ScreeningFactSchema),
+  sensitiveFactIds: z.array(z.string()), question: z.string().optional(), context: z.string().optional(), applicationId: ScreeningIdSchema.optional(),
+}).strict();
+export const ScreeningAnswerSchema = z.object({
+  answerId: ScreeningIdSchema, text: z.string().min(1).max(16000), uncertainty: z.string().max(1500),
+  binding: ScreeningBindingSchema, question: z.string(), context: z.string(),
+  determinationIds: z.array(z.string().length(64)).min(3), libraryId: ScreeningIdSchema.nullable(),
+  reviewId: ScreeningIdSchema.optional(), staleReason: z.string().nullable().optional(),
+}).strict();
+export const ScreeningStateSchema = z.object({
+  questionId: ScreeningIdSchema, jobId: ScreeningIdSchema, applicationId: ScreeningIdSchema,
+  revision: z.number().int().positive(), question: z.string(), context: z.string(),
+  captureBinding: ScreeningBindingSchema, draft: ScreeningAnswerSchema.nullable(), accepted: ScreeningAnswerSchema.nullable(),
+  action: z.enum(["capture", "draft", "edit", "review", "reuse", "use"]), snapshotId: ScreeningIdSchema, recordedAt: z.string(),
+  decision: z.enum(["approved", "rejected"]).optional(),
+  selection: z.object({ factIds: z.array(z.string()), sensitiveFactIds: z.array(z.string()) }).strict().optional(),
+  manualUse: z.object({ useId: ScreeningIdSchema, reviewId: ScreeningIdSchema, answerId: ScreeningIdSchema, text: z.string().max(16000), attested: z.literal(true), changed: z.boolean() }).strict().optional(),
+}).strict();
+export const ScreeningLibraryEntrySchema = z.object({
+  libraryId: ScreeningIdSchema, questionId: ScreeningIdSchema, jobId: ScreeningIdSchema, applicationId: ScreeningIdSchema,
+  snapshotId: ScreeningIdSchema, recordedAt: z.string(), answer: ScreeningAnswerSchema, originSnapshot: ScreeningStateSchema,
+}).strict();
+export const ScreeningReadResponseSchema = z.object({
+  ok: z.literal(true), jobId: ScreeningIdSchema, questions: z.array(ScreeningStateSchema), history: z.array(ScreeningStateSchema),
+  library: z.array(ScreeningLibraryEntrySchema), facts: z.array(ScreeningFactSchema), sourceBinding: ScreeningBindingSchema.nullable(), sourceFailure: z.string().nullable(),
+  determinations: z.array(z.record(z.string(), z.unknown())),
+  failures: z.array(z.object({ jobId: ScreeningIdSchema, questionId: ScreeningIdSchema.nullable(), action: z.string(), expectedRevision: z.number().int(), code: z.string(), requestHash: z.string().length(64), recordedAt: z.string() }).strict()),
+}).strict();
+export const ScreeningCommandSchema = z.object({
+  action: z.enum(["capture", "draft", "edit", "review", "reuse", "use"]),
+  idempotencyKey: ScreeningIdSchema, expectedRevision: z.number().int().nonnegative(),
+  questionId: ScreeningIdSchema.optional(), applicationId: ScreeningIdSchema.optional(),
+  question: z.string().min(1).max(4000).optional(), context: z.string().min(1).max(4000).optional(),
+  selectedFactIds: z.array(z.string().min(1).max(240)).max(100).default([]),
+  sensitiveFactIds: z.array(z.string().min(1).max(240)).max(100).default([]),
+  text: z.string().min(1).max(16000).optional(), decision: z.enum(["approved", "rejected"]).optional(),
+  libraryId: ScreeningIdSchema.optional(), attested: z.boolean().default(false),
+}).strict();
+export const ScreeningWriteResponseSchema = z.object({ ok: z.literal(true), jobId: ScreeningIdSchema, state: ScreeningStateSchema }).strict();
+export type ScreeningCommand = z.infer<typeof ScreeningCommandSchema>;
+export type ScreeningReadResponse = z.infer<typeof ScreeningReadResponseSchema>;
+export type ScreeningState = z.infer<typeof ScreeningStateSchema>;

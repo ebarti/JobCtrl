@@ -26,6 +26,8 @@ import contextvars
 from contextlib import contextmanager
 from typing import Callable, Iterator, TypeVar
 
+from opentelemetry import context as otel_context
+
 _T = TypeVar("_T")
 
 _WORKFLOW_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -69,13 +71,20 @@ def carry_workflow_run_context(fn: Callable[..., _T]) -> Callable[..., _T]:
     Temporal activity context). The returned callable re-binds it wherever it
     executes, so executor fan-out keeps the owning run of the submitting
     activity. Safe to share across pool threads: the binding is scoped to each
-    invocation's thread context.
+    invocation's thread context. OpenTelemetry context crosses the same
+    boundary so model and stage spans remain children of the submitting run.
+    Other Python context variables are deliberately not transferred.
     """
     workflow_id = current_workflow_id()
+    tracing_context = otel_context.get_current()
 
     def bound(*args: object, **kwargs: object) -> _T:
-        with workflow_run_context(workflow_id):
-            return fn(*args, **kwargs)
+        token = otel_context.attach(tracing_context)
+        try:
+            with workflow_run_context(workflow_id):
+                return fn(*args, **kwargs)
+        finally:
+            otel_context.detach(token)
 
     return bound
 

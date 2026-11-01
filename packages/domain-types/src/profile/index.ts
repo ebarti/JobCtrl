@@ -6,3 +6,4 @@
 
 export * from "./profile.js";
 export * from "./snapshot.js";
+export * from "./required-bullet-suggestions.js";

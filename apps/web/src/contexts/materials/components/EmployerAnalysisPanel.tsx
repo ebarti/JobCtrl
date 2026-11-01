@@ -7,10 +7,11 @@ import type {
   RequirementFitAssessment,
   RequirementFitReport,
 } from "@jobctrl/contracts";
-import type { JSX } from "react";
+import { useState, type JSX } from "react";
 
 import { Badge } from "../../../shared/ui/badge.js";
 import { Button } from "../../../shared/ui/button.js";
+import { ContextHelp } from "../../../shared/ui/context-help.js";
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import {
   Card,
@@ -154,18 +155,10 @@ function matchingRequirementFit(
   report: RequirementFitReport | null | undefined,
 ): RequirementFitAssessment | null {
   if (!report?.assessments.length) return null;
-  const byId = report.assessments.find(
-    (assessment) => assessment.requirementId === requirement.id,
-  );
-  if (byId) return byId;
-
-  const requirementText = normalizeText(requirement.text);
-  return (
-    report.assessments.find(
-      (assessment) =>
-        normalizeText(assessment.requirementText) === requirementText,
-    ) ?? null
-  );
+  return report.assessments.find((assessment) =>
+    assessment.requirementId === requirement.id &&
+    assessment.requirementText.trim().replace(/\s+/g, " ") === requirement.text.trim().replace(/\s+/g, " "),
+  ) ?? null;
 }
 
 function requirementFitAssessment(
@@ -387,7 +380,7 @@ function ProfileEvidenceReferences({
     >
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-medium text-muted-foreground">
-          Profile evidence
+          Profile evidence <ContextHelp label="Profile evidence" description="References to candidate facts in the Evidence Map used for this requirement assessment. An unavailable reference means the saved identifier could not be resolved here; it is not replaced with an inferred claim." />
         </span>
         <Badge variant="outline">
           {evidenceIds.length} source{evidenceIds.length === 1 ? "" : "s"}
@@ -430,7 +423,7 @@ function RequirementFitMetric({
       className="flex min-w-0 flex-col gap-1"
       data-slot="requirement-fit-metric"
     >
-      <dt className="text-xs font-medium text-muted-foreground">{row.label}</dt>
+      <dt className="text-xs font-medium text-muted-foreground">{row.label} <ContextHelp label={row.label} description={row.label === "Score contribution" ? "Recorded points this requirement contributes to the current requirement-fit score; its weight comes from the analyzed job requirement." : "Recorded action for tailoring materials against this requirement. Review the source evidence before using it."} /></dt>
       <dd className="m-0 flex min-w-0 flex-col gap-1 font-medium leading-snug">
         {row.values.map((value) => (
           <span className="break-words" key={`${row.label}:${value}`}>
@@ -453,7 +446,6 @@ function RequirementAuditDetails({
       <CollapsibleTrigger
         render={
           <Button
-            aria-label="Additional audit details"
             className="w-full justify-between"
             size="sm"
             type="button"
@@ -500,6 +492,7 @@ function RequirementItem({
   readonly resolveEvidenceReference: EmployerAnalysisPanelProps["resolveEvidenceReference"];
 }): JSX.Element {
   const assessment = requirementAssessment(requirement, requirementFitReport);
+  const [open, setOpen] = useState(true);
   const flagged = isFlaggedByAgreement(requirement, flaggedRequirements);
   const primaryRows = assessment.rows.filter(
     (row): row is RequirementAssessmentTextRow =>
@@ -518,11 +511,17 @@ function RequirementItem({
       row.label !== "Tailoring directive",
   );
   return (
-    <Card
-      aria-label={`Requirement: ${requirement.text}`}
-      className="employer-analysis-requirement employer-analysis-requirement-card [--card-spacing:--spacing(3)]"
-      role="article"
-      size="sm"
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      render={
+        <Card
+          aria-label={`Requirement: ${requirement.text}`}
+          className="employer-analysis-requirement employer-analysis-requirement-card [--card-spacing:--spacing(3)]"
+          role="article"
+          size="sm"
+        />
+      }
     >
       <CardHeader>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -533,6 +532,7 @@ function RequirementItem({
           >
             importance {weightPercent(requirement.weight)}
           </Badge>
+          <ContextHelp label="Requirement tier and importance" description="The must-have or nice-to-have tier and relative weight come from the saved employer-side analysis of the job posting. They describe the role's priority, not how well the candidate matches it." />
           {flagged ? (
             <AuditTechnicalDetails>
               <StatusBadge
@@ -549,66 +549,83 @@ function RequirementItem({
             {requirement.text}
           </h5>
         </CardTitle>
-        {requirement.evidence_span ? (
-          <CardDescription>
-            <blockquote className="employer-analysis-evidence" data-typography="body">
-              {requirement.evidence_span}
-            </blockquote>
-          </CardDescription>
-        ) : (
-          <CardDescription>
-            No job-description evidence span recorded.
-          </CardDescription>
-        )}
-        <CardAction>
-          <StatusBadge
-            title={assessment.title}
-            tone={assessment.tone}
-          >
+        <CardAction className="flex flex-wrap items-center gap-2">
+          <StatusBadge title={assessment.title} tone={assessment.tone}>
             {assessment.label}
           </StatusBadge>
+          <ContextHelp label="Requirement status" description="Candidate fit for this requirement comes from the matching current requirement-fit report. Without one, the status is not assessed; the job-side requirement alone cannot establish a candidate match." />
+          <CollapsibleTrigger
+            render={
+              <Button
+                aria-label={`${open ? "Hide" : "Show"} evidence for requirement: ${requirement.text}`}
+                size="sm"
+                type="button"
+                variant="ghost"
+              />
+            }
+          >
+            {open ? "Hide evidence" : "Show evidence"}
+          </CollapsibleTrigger>
         </CardAction>
       </CardHeader>
-      <Separator />
-      <CardContent>
-        <div
-          aria-label="Fit summary"
-          className="grid min-w-0 gap-4 sm:grid-cols-[minmax(0,1.1fr)_minmax(220px,0.9fr)]"
-          data-slot="requirement-fit-summary"
-          role="group"
-        >
-          <div className="flex min-w-0 flex-col gap-3">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                Requirement fit
-              </span>
-              <p className="m-0 leading-relaxed">{assessment.explanation}</p>
+      <CollapsibleContent className="flex flex-col gap-3">
+        <CardContent>
+          {requirement.evidence_span ? (
+            <CardDescription>
+              <blockquote
+                className="employer-analysis-evidence"
+                data-typography="body"
+              >
+                {requirement.evidence_span}
+              </blockquote>
+            </CardDescription>
+          ) : (
+            <CardDescription>
+              No job-description evidence span recorded.
+            </CardDescription>
+          )}
+        </CardContent>
+        <Separator />
+        <CardContent>
+          <div
+            aria-label="Fit summary"
+            className="grid min-w-0 gap-4 sm:grid-cols-[minmax(0,1.1fr)_minmax(220px,0.9fr)]"
+            data-slot="requirement-fit-summary"
+            role="group"
+          >
+            <div className="flex min-w-0 flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Requirement fit <ContextHelp label="Requirement fit assessment" description="Candidate evidence assessed against this employer requirement. The status and explanation come from the current requirement-fit report; without a matching report they remain unassessed rather than inferred from the job text." />
+                </span>
+                <p className="m-0 leading-relaxed">{assessment.explanation}</p>
+              </div>
+              {primaryRows.length ? (
+                <dl className="grid grid-cols-2 gap-3">
+                  {primaryRows.map((row) => (
+                    <RequirementFitMetric key={row.label} row={row} />
+                  ))}
+                </dl>
+              ) : null}
             </div>
-            {primaryRows.length ? (
-              <dl className="grid grid-cols-2 gap-3">
-                {primaryRows.map((row) => (
-                  <RequirementFitMetric key={row.label} row={row} />
-                ))}
-              </dl>
+            {evidenceRow ? (
+              <ProfileEvidenceReferences
+                evidenceIds={evidenceRow.evidenceIds}
+                resolveEvidenceReference={resolveEvidenceReference}
+              />
             ) : null}
           </div>
-          {evidenceRow ? (
-            <ProfileEvidenceReferences
-              evidenceIds={evidenceRow.evidenceIds}
-              resolveEvidenceReference={resolveEvidenceReference}
-            />
-          ) : null}
-        </div>
-      </CardContent>
-      {auditRows.length ? (
-        <>
-          <Separator />
-          <CardContent>
-            <RequirementAuditDetails rows={auditRows} />
-          </CardContent>
-        </>
-      ) : null}
-    </Card>
+        </CardContent>
+        {auditRows.length ? (
+          <>
+            <Separator />
+            <CardContent>
+              <RequirementAuditDetails rows={auditRows} />
+            </CardContent>
+          </>
+        ) : null}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -617,10 +634,7 @@ function KeywordItem({
   requirementsById,
 }: {
   readonly keyword: EmployerAnalysisKeyword;
-  readonly requirementsById: ReadonlyMap<
-    string,
-    EmployerAnalysisRequirement
-  >;
+  readonly requirementsById: ReadonlyMap<string, EmployerAnalysisRequirement>;
 }): JSX.Element {
   const requirement = keyword.requirement_ref
     ? requirementsById.get(keyword.requirement_ref)
@@ -630,16 +644,16 @@ function KeywordItem({
       <header>
         <b>{keyword.keyword}</b>
         {keyword.is_orphan ? (
-          <StatusBadge
-            tone="warn"
-            title="Not tied to a specific requirement"
-          >
+          <StatusBadge tone="warn" title="Not tied to a specific requirement">
             Orphan
           </StatusBadge>
         ) : null}
       </header>
       {keyword.evidence_span ? (
-        <blockquote className="employer-analysis-evidence" data-typography="body">
+        <blockquote
+          className="employer-analysis-evidence"
+          data-typography="body"
+        >
           {keyword.evidence_span}
         </blockquote>
       ) : (
@@ -687,6 +701,7 @@ function SubAnalysisDetails({
         {subAnalyses.length === 1 ? "" : "s"})
       </summary>
       <div className="employer-analysis-ensemble-body">
+        <ContextHelp label="Ensemble audit trail" description="Saved individual model drafts and failures behind the merged role analysis. Divergence flags show text or keywords that did not appear in every surviving draft; agreement does not establish factual truth." />
         {subAnalyses.map((sub) => (
           <article className="employer-analysis-sub" key={sub.model_id}>
             <header>
@@ -739,7 +754,7 @@ export function EmployerAnalysisPanel({
   if (!analysis) {
     return (
       <section className={className} aria-label="Role Analysis">
-        <h3>Role Analysis</h3>
+        <h3 aria-label="Role Analysis">Role Analysis <ContextHelp label="Role analysis" description="No employer analysis is recorded yet. It is generated during materials preparation; no requirement or model-agreement claim is available until then." /></h3>
         <p className="muted">
           No role analysis has been recorded for this job yet. It is produced
           when materials are generated.
@@ -748,25 +763,27 @@ export function EmployerAnalysisPanel({
     );
   }
 
+  const currentFitReport = requirementFitReport?.employerAnalysisGeneration === analysis.generation
+    ? requirementFitReport : null;
   const requirementsById = new Map(
     analysis.requirements.map((requirement) => [requirement.id, requirement]),
   );
 
   return (
     <section className={className} aria-label="Role Analysis">
-      <h3>Role Analysis</h3>
+      <h3 aria-label="Role Analysis">Role Analysis <ContextHelp label="Role analysis" description="Saved employer-side interpretation of the job post: seniority, role framing, requirements, keywords, and model audit trail. These are generated interpretations with inspectable posting evidence, not verified employer facts." /></h3>
       <div className="employer-analysis">
         <dl className="evidence-summary-grid">
           <div>
-            <dt>Inferred seniority</dt>
+            <dt>Inferred seniority <ContextHelp label="Inferred seniority" description="Level inferred from the captured job description by the employer-analysis process; it is not a verified employer classification." /></dt>
             <dd>{formatToken(analysis.inferred_seniority) || "-"}</dd>
           </div>
           <div>
-            <dt>Model agreement</dt>
+            <dt>Model agreement <ContextHelp label="Model agreement" description="A persisted model determination compares the meaning of surviving drafts and cites divergent requirements or keywords. The agreement score is diagnostic and does not gate acceptance. With one draft, there is no cross-draft comparison. It does not establish factual support." /></dt>
             <dd>{scorePercent(analysis.agreement.score)}</dd>
           </div>
           <div>
-            <dt>Ensemble</dt>
+            <dt>Ensemble <ContextHelp label="Ensemble" description="How many analysis model legs completed. Degraded means some legs failed; their failures remain in the audit trail. A complete ensemble is not a correctness guarantee." /></dt>
             <dd>
               {analysis.is_degraded ? (
                 <StatusBadge
@@ -783,33 +800,33 @@ export function EmployerAnalysisPanel({
             </dd>
           </div>
           <div>
-            <dt>Generation</dt>
+            <dt>Generation <ContextHelp label="Analysis generation" description="Stored version number of this role analysis. Requirement-fit details are shown as current only when their employer-analysis generation matches this one." /></dt>
             <dd>{analysis.generation}</dd>
           </div>
         </dl>
 
         {analysis.role_framing ? (
           <div className="evidence-block">
-            <h4>Role framing</h4>
+            <h4 aria-label="Role framing">Role framing <ContextHelp label="Role framing" description="Generated summary of the role's scope and expectations, based on the captured posting and saved model analysis. Compare it with the source text before relying on it." /></h4>
             <p>{analysis.role_framing}</p>
           </div>
         ) : null}
         {analysis.ideal_candidate_narrative ? (
           <div className="evidence-block">
-            <h4>Ideal candidate</h4>
+            <h4 aria-label="Ideal candidate">Ideal candidate <ContextHelp label="Ideal candidate" description="Generated description of the employer's likely ideal applicant from the posting. This is an interpretation, not a claim that the candidate has these qualifications." /></h4>
             <p>{analysis.ideal_candidate_narrative}</p>
           </div>
         ) : null}
 
         <div className="evidence-block">
-          <h4>Requirements ({analysis.requirements.length})</h4>
+          <h4 aria-label={`Requirements (${analysis.requirements.length})`}>Requirements ({analysis.requirements.length}) <ContextHelp label="Role requirements" description="Extracted employer requirements with must-have or nice-to-have tier, relative importance, and posting evidence when saved. Requirement fit separately assesses candidate evidence; an empty list means none were recorded." /></h4>
           {analysis.requirements.length ? (
             <div className="employer-analysis-requirement-list">
               {analysis.requirements.map((requirement) => (
                 <RequirementItem
-                  key={requirement.id}
+                  key={`${analysis.generation}:${analysis.cache_key}:${requirement.id}:${matchingRequirementFit(requirement, currentFitReport)?.fit.kind ?? "unknown"}`}
                   requirement={requirement}
-                  requirementFitReport={requirementFitReport}
+                  requirementFitReport={currentFitReport}
                   flaggedRequirements={analysis.agreement.flagged_requirements}
                   resolveEvidenceReference={resolveEvidenceReference}
                 />
@@ -823,7 +840,7 @@ export function EmployerAnalysisPanel({
         </div>
 
         <div className="evidence-block">
-          <h4>Reasoned keywords ({analysis.keywords.length})</h4>
+          <h4 aria-label={`Reasoned keywords (${analysis.keywords.length})`}>Reasoned keywords ({analysis.keywords.length}) <ContextHelp label="Reasoned keywords" description="Keywords selected by the role analysis with rationale and job-description evidence when available. An orphan keyword has no requirement link; these are not proof that a tailored artifact contains the term." /></h4>
           {analysis.keywords.length ? (
             <div className="employer-analysis-keyword-list">
               {analysis.keywords.map((keyword) => (

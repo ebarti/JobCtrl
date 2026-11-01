@@ -2,6 +2,7 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import type { ApplyReviewQueueResponse } from "@jobctrl/contracts";
 
 import { QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
+import { QA_PROFILE } from "../../../api/test/qa-seed.js";
 import {
   makeApplyAudit,
   makeJobsPage,
@@ -221,9 +222,9 @@ const VISUAL_SYSTEM_AUDIT_ROUTES = [
 ] as const;
 
 const APPROVED_ROLE_METRICS = {
-  "page-title": "24px/30px/700",
-  "section-title": "18px/24px/600",
-  "component-title": "16px/22px/600",
+  "page-title": "28px/34px/700",
+  "section-title": "18px/24px/700",
+  "component-title": "16px/22px/700",
   body: "14px/20px/400",
   "strong-body": "14px/20px/600",
   control: "14px/20px/600",
@@ -256,9 +257,9 @@ async function collectTypographyAudit(
   return page.locator(".app-shell").evaluate((shell, approvedRoleMetrics) => {
     const approved = approvedRoleMetrics as Record<string, string>;
     const metricFallback: Record<string, string> = {
-      "24px/30px/700": "page-title",
-      "18px/24px/600": "section-title",
-      "16px/22px/600": "component-title",
+      "28px/34px/700": "page-title",
+      "18px/24px/700": "section-title",
+      "16px/22px/700": "component-title",
       "14px/20px/400": "body",
       "14px/20px/600": "strong-body",
       "12px/16px/600": "label",
@@ -926,7 +927,7 @@ async function readJobDetailDensityGeometry(
   const action = page.locator(".job-detail-top-actions .jh-control").first();
   const header = page.locator(".route-workspace__header");
   const section = page
-    .locator(".job-detail-workspace__content > .section")
+    .locator(".job-detail-major-section > .configuration-section__header > .configuration-section__trigger")
     .first();
   const title = page.locator(".job-overview h1");
 
@@ -1072,11 +1073,11 @@ test("compact, regular, and comfortable modes preserve typography metrics", asyn
 test("stale score status keeps the shared transparent status treatment", async ({
   page,
 }) => {
-  await page.route(/\/v1\/jobs(?:\?.*)?$/, async (route) => {
+  await page.route(/\/v1\/jobs\/reviewable-list(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(
-        makeJobsPage([
+      body: JSON.stringify({
+        ...makeJobsPage([
           {
             ...sampleJob,
             scoreStaleness: {
@@ -1089,7 +1090,8 @@ test("stale score status keeps the shared transparent status treatment", async (
             },
           },
         ]),
-      ),
+        observationId: null,
+      }),
     });
   });
 
@@ -1569,7 +1571,8 @@ test("Discovery settings pack related controls and reflow with available width",
       Math.min(...desktopBoards.map(({ left }) => left)),
   ).toBeLessThanOrEqual(700);
   await expect(page.getByText(/Saved in SQLite/i)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /^Help for / })).toHaveCount(10);
+  await expect(page.getByRole("button", { name: /^Help for / })).toHaveCount(7);
+  await expect(page.getByRole("button", { name: "Help for Use browser headers", exact: true })).toHaveCount(1);
   await page.getByRole("button", { name: "Help for Results per board" }).click();
   const settingHelp = page.getByRole("dialog", { name: "Results per board help" });
   await expect(settingHelp).toBeVisible();
@@ -1701,7 +1704,7 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
     .check();
   await expect(page.getByText("1 selected")).toBeVisible();
   const deleteSelected = page.getByRole("button", {
-    name: /^delete selected$/i,
+    name: /^delete selected active$/i,
   });
   await expect(deleteSelected).toBeVisible();
 
@@ -1833,6 +1836,47 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
     role: null,
   });
 });
+test("warning actions use the contrasting focus token in both themes", async ({ page }) => {
+  test.setTimeout(60_000);
+  for (const theme of ["light", "dark"] as const) {
+    await page.goto("/jobs");
+    if (theme === "dark") {
+      await page.getByRole("button", { name: "Light theme: Switch to dark theme" }).click();
+    }
+    await page
+      .getByRole("button", { name: /^Open job Senior Engineering Manager - Risk/ })
+      .press("Enter");
+    await page.getByRole("button", { name: "More job actions" }).click();
+    const stop = page.getByRole("button", { name: "Stop current stage" });
+    await expectKeyboardFocusIndicator(page, stop, `${theme} warning action`);
+    const focus = await stop.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const colorProbe = document.createElement("span");
+      colorProbe.style.position = "absolute";
+      colorProbe.style.visibility = "hidden";
+      element.append(colorProbe);
+      const resolveTokenColor = (token: string) => {
+        const value = style.getPropertyValue(token).trim();
+        if (!value || !CSS.supports("color", value)) {
+          throw new Error(`Warning action has no valid ${token} color`);
+        }
+        colorProbe.style.color = value;
+        return getComputedStyle(colorProbe).color;
+      };
+      // Resolve custom properties through the same browser serializer as the
+      // box shadow, including production CSS's percentage/decimal spelling.
+      const ring = resolveTokenColor("--tw-ring-color");
+      const expected = resolveTokenColor("--ring");
+      colorProbe.remove();
+      return { ring, expected };
+    });
+    expect(focus.ring).toBe(focus.expected);
+    await expect
+      .poll(() => stop.evaluate((element) => getComputedStyle(element).boxShadow))
+      .toContain(focus.ring);
+  }
+});
+
 test("Crawl sources keeps provider traversal separate from exact outcomes", async ({
   page,
 }) => {
@@ -1912,7 +1956,7 @@ test("Crawl sources keeps provider traversal separate from exact outcomes", asyn
   expect(mobile.providerBottom).toBeLessThanOrEqual(mobile.outcomesTop + 1);
 });
 
-test("pipeline recovery explains the automatic previous-run check in plain language", async ({
+test("pipeline recovery explains the current run record check in plain language", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1491, height: 1245 });
@@ -1923,19 +1967,20 @@ test("pipeline recovery explains the automatic previous-run check in plain langu
 
   const alert = page
     .getByRole("alert")
-    .filter({ hasText: "Checking previous run records" });
-  await expect(alert).toContainText("Checking previous run records");
-  await expect(alert).toContainText("15 of 72 linked jobs checked");
-  await expect(alert).toContainText("3 of 8 stage records checked");
-  await expect(alert).toContainText("finishes automatically and needs no restart");
+    .filter({ hasText: "Checking current run records" });
+  await expect(alert).toContainText("Checking current run records");
+  await expect(alert).toContainText("15 of 72 linked jobs recorded");
+  await expect(alert).toContainText("3 of 8 stage records stored");
+  await expect(alert.locator("time")).toHaveAttribute("datetime", pipelinesRecoveringProjectionSnapshot.projectionCoverage!.updatedAt!);
+  await expect(alert).toContainText("updates every 15 seconds while visible");
   await expect(alert).not.toContainText(/restoring history|terminal/i);
 
   const summary = page.getByLabel("Pipeline operations summary");
-  await expect(summary).toContainText("Checking previous run");
+  await expect(summary).toContainText("Checking current run");
   await expect(summary).not.toContainText("Restoring history");
 });
 
-test("busy replacement guidance keeps its title readable without an action", async ({
+test("draining preparation guidance keeps its title readable without an action", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1491, height: 1245 });
@@ -1965,7 +2010,7 @@ test("busy replacement guidance keeps its title readable without an action", asy
   await page.goto("/pipelines");
 
   const alert = page.getByRole("alert").filter({
-    hasText: "This Discover run has ended",
+    hasText: "Source collection complete",
   });
   const title = alert.locator('[data-slot="alert-title"]');
   await expect(title).toBeVisible({ timeout: 30_000 });
@@ -2036,8 +2081,8 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
     expect(
       style.borderWidths,
       `Profile card ${index + 1} border widths`,
-    ).toEqual(["1px", "1px", "1px", "1px"]);
-    expect(style.borderRadius, `Profile card ${index + 1} radius`).toBe("8px");
+    ).toEqual(["2px", "1px", "1px", "1px"]);
+    expect(style.borderRadius, `Profile card ${index + 1} radius`).toBe("0px");
     if (index > 0) {
       expect(
         style.top - cardStyles[index - 1]!.bottom,
@@ -2139,9 +2184,9 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
     expect(
       section.borderWidths,
       `Preferences card ${index + 1} border widths`,
-    ).toEqual(["1px", "1px", "1px", "1px"]);
+    ).toEqual(["2px", "1px", "1px", "1px"]);
     expect(section.borderRadius, `Preferences card ${index + 1} radius`).toBe(
-      "8px",
+      "0px",
     );
     if (index > 0) {
       expect(
@@ -2386,7 +2431,9 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
           Math.min(...decisionButtons.map((rect) => rect.top))
         : 0,
       contextWidth: context?.getBoundingClientRect().width ?? 0,
-      cardHeight: element.getBoundingClientRect().height,
+      summaryHeight:
+        (element.querySelector(".apply-review-gates")?.getBoundingClientRect().top ??
+          element.getBoundingClientRect().bottom) - element.getBoundingClientRect().top,
       maxSummaryItemHeight: summaryItems.length
         ? Math.max(...summaryItems.map((rect) => rect.height))
         : 0,
@@ -2428,8 +2475,8 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
     "audit summary items should remain readable",
   ).toBeLessThan(140);
   expect(
-    layout.cardHeight,
-    "decision card should remain a compact summary",
+    layout.summaryHeight,
+    "decision summary above the gates table should remain compact",
   ).toBeLessThan(720);
   expect(
     layout.scrollWidth,
@@ -2439,18 +2486,62 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
 
 test("Job Detail requirement-fit card has visual regression coverage", async ({
   page,
+  baseURL,
 }) => {
+  // Earlier profile-edit tests change these owned facts. This positive source
+  // binding case requires the canonical evidence ID that the score cites.
+  const apiOrigin = `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"] ?? "8767"}`;
+  const initialResponse = await page.request.get(`${apiOrigin}/v1/profile`);
+  expect(initialResponse.status()).toBe(200);
+  const initial = await initialResponse.json();
+  const profile = structuredClone(initial.profile);
+  const source = structuredClone(QA_PROFILE.resume.experience_entries[0]!);
+  const entry = profile.resume.experience_entries.find((item: { id: string }) => item.id === source.id);
+  if (entry) entry.achievement_evidence = source.achievement_evidence;
+  else profile.resume.experience_entries.push(source);
+  const saved = await page.request.patch(`${apiOrigin}/v1/profile`, {
+    headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+    data: { profile, expectedProfileVersion: initial.profileVersion },
+  });
+  expect(saved.status(), await saved.text()).toBe(200);
   await installDeterministicRequirementFitScrollbars(page);
   await page.goto(
     `/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}?${JOB_FILTER_PARAMS}`,
   );
   const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 30_000 });
+  await drawer.getByRole("button", { name: "Sections", exact: true }).click();
+  await page.getByRole("button", { name: "Expand all", exact: true }).click();
 
   const drawerRequirement = drawer
     .locator(".employer-analysis-requirement")
     .filter({ hasText: PRIMARY_REQUIREMENT_TEXT });
   await expect(drawerRequirement).toHaveCount(1);
+  const ranking = drawer.getByLabel("Ranking summary");
+  await expect(ranking.locator(":scope > div")).toHaveCount(6);
+  expect(
+    await ranking.evaluate(
+      (element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
+    ),
+  ).toBe(3);
+  expect(
+    await ranking.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+    "three balanced metric columns should not overflow their container",
+  ).toBe(true);
+  const disclosure = drawerRequirement.getByRole("button", {
+    name: / evidence for requirement:/,
+  });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    drawerRequirement.locator('[data-slot="requirement-fit-summary"]'),
+  ).toBeVisible();
+  await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    drawerRequirement.locator('[data-slot="requirement-fit-summary"]'),
+  ).not.toBeVisible();
+  await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
   await expect(drawerRequirement).toContainText("Requirement fit");
   await expect(drawerRequirement).toContainText("matched");
   await expect(drawerRequirement).toContainText("Score contribution");
@@ -2465,13 +2556,28 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
     drawerRequirement.locator('[data-slot="requirement-profile-evidence"]'),
   ).toBeVisible();
   await expect(
-    drawerRequirement.getByRole("button", { name: "Additional audit details" }),
+    drawerRequirement.getByRole("button", { name: /^Additional audit details \d+ signals?$/ }),
   ).toHaveAttribute("aria-expanded", "false");
   await expectVisualSnapshot(
     drawerRequirement,
     "job-drawer-requirement-fit-card.png",
     "job drawer requirement-fit card",
   );
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileLayout = await ranking.evaluate((element) => ({
+    columnCount: getComputedStyle(element).gridTemplateColumns.split(" ").length,
+    overflow: element.scrollWidth - element.clientWidth,
+  }));
+  expect(mobileLayout.columnCount).toBe(1);
+  expect(mobileLayout.overflow).toBeLessThanOrEqual(1);
+  const jobMetadata = drawer.getByLabel("Job metadata");
+  await expect(jobMetadata).toBeVisible();
+  expect(
+    await jobMetadata.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
 });
 
 test("Apply Review requirement-fit card has visual regression coverage", async ({

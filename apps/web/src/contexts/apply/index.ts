@@ -1,9 +1,11 @@
 export { applyKeys } from "./queryKeys.js";
+export { CoverLetterReviewSurface } from "./components/CoverLetterReviewSurface.js";
 
 export { useApplyJobMutation } from "./hooks/useApplyJobMutation.js";
 export {
   useApplyReviewDecisionMutation,
   useRepeatApplicationOverrideMutation,
+  useRepeatApplicationCheckMutation,
   useCreateResumeReviewDraftMutation,
   useOutcomeSuggestionDecisionMutation,
   useRecordManualApplicationOutcomeMutation,
@@ -22,6 +24,7 @@ export {
   InterviewReflectionPanel,
   JobOutcomePanel,
   ManualOutcomeForm,
+  OutcomeDraftRetentionProvider,
   OutcomeSuggestionsPanel,
   OutcomeTimeline,
   outcomeLabel,
@@ -51,3 +54,5 @@ export {
   applyRunEventRecordedHandler,
   applyRunStartedHandler,
 } from "./handlers.js";
+
+export { useApplyReviewSession, type ApplyReviewSession } from "./hooks/useApplyReviewSession.js";

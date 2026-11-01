@@ -1,16 +1,17 @@
 """ClaudeCodeCliAdapter — local-mode ``AutonomousAgentPort`` adapter.
 
 Spawns the resolved Claude apply runtime as a subprocess, pipes the rendered
-prompt in via stdin, streams the JSON output, parses ``RESULT:...`` lines, and
+prompt in via stdin, streams the JSON output, validates a typed terminal report, and
 assembles an ``AgentResult``. The logic is lifted out of the legacy
 ``apply/launcher.run_job`` function — same Popen invocation, same stdout reader
-thread pattern, same RESULT parsing — but relocated behind the port so the use
+thread pattern, typed terminal-report validation — but relocated behind the port so the use
 cases never touch ``subprocess`` or ``threading`` directly.
 """
 
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import platform
@@ -23,16 +24,12 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
+from weakref import WeakValueDictionary
 
 from jobctrl import config
 from jobctrl.domain.apply.value_objects import (
     ApplyPrompt,
-    Captcha,
-    DryRunComplete,
-    EmailOnlyApplication,
-    Expired,
     Failed,
-    LoginIssue,
     Manual,
     SubmissionResult,
     TokenUsage,
@@ -93,8 +90,7 @@ PLAYWRIGHT_TOOL_EXCLUSIONS = frozenset(
     }
 )
 PLAYWRIGHT_APPLY_TOOLS = frozenset(
-    f"mcp__playwright__{tool}"
-    for tool in sorted(PINNED_PLAYWRIGHT_MCP_TOOLS - PLAYWRIGHT_TOOL_EXCLUSIONS)
+    f"mcp__playwright__{tool}" for tool in sorted(PINNED_PLAYWRIGHT_MCP_TOOLS - PLAYWRIGHT_TOOL_EXCLUSIONS)
 )
 GMAIL_APPLY_TOOLS = frozenset()
 BASE_OWNED_APPLY_TOOLS = frozenset()
@@ -125,9 +121,7 @@ DISALLOWED_CLAUDE_TOOLS = (
     UPLOAD_ARTIFACT_TOOL,
     *sorted(PLAYWRIGHT_WRITE_TOOLS),
 )
-_ALLOWED_TOOLS = ",".join(
-    sorted(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS)
-)
+_ALLOWED_TOOLS = ",".join(sorted(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS))
 _DISALLOWED_TOOLS = ",".join(DISALLOWED_CLAUDE_TOOLS)
 
 _ENV_ALLOWLIST = {
@@ -138,22 +132,82 @@ _ENV_ALLOWLIST = {
     "TMPDIR",
 }
 
-# The dedicated terminal result field accepts one exact record. Assistant
-# narration is retained for audit, but never enters these parsers.
-_RESULT_RECORD_RE = re.compile(
-    r"RESULT:(APPLIED|DRY_RUN|EXPIRED|CAPTCHA|LOGIN_ISSUE)\Z"
-)
-_EMAIL_ONLY_RE = re.compile(
-    r"RESULT:EMAIL_ONLY:([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\Z"
-)
-_FAILED_RE = re.compile(r"RESULT:FAILED(?::([^\r\n]{1,500}))?\Z")
-
-# Reasons that get promoted from ``RESULT:FAILED:reason`` to a
-# dedicated SubmissionResult variant.
-_PROMOTED_FAILED_REASONS = {"captcha", "expired", "login_issue"}
 _DEFAULT_MODEL_SENTINELS = {"", "default"}
 _ACTIVE_CLAUDE_PROCS: dict[int, subprocess.Popen] = {}
+_ACTIVE_CLAUDE_IDENTITIES: dict[int, tuple[subprocess.Popen, int]] = {}
+_ACTIVE_CLAUDE_UNPUBLISHED: dict[int, list[tuple[subprocess.Popen, int]]] = {}
+_ACTIVE_CLAUDE_LAUNCHING: dict[int, object] = {}
+_ACTIVE_CLAUDE_RESERVATIONS: dict[int, object] = {}
 _ACTIVE_CLAUDE_LOCK = threading.Lock()
+_ACTIVE_CLAUDE_WORKER_GUARDS: WeakValueDictionary = WeakValueDictionary()
+
+
+def _agent_worker_guard_locked(worker_id: int) -> threading.RLock:
+    guard = _ACTIVE_CLAUDE_WORKER_GUARDS.get(worker_id)
+    if guard is None:
+        guard = threading.RLock()
+        _ACTIVE_CLAUDE_WORKER_GUARDS[worker_id] = guard
+    return guard
+
+
+def _agent_worker_guard(worker_id: int) -> threading.RLock:
+    from jobctrl.infrastructure.process_ownership import cleanup_lock
+
+    with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+        return _agent_worker_guard_locked(worker_id)
+
+
+def _reserve_agent_launch(worker_id: int) -> object:
+    from jobctrl.infrastructure.process_ownership import ProcessOwnershipError
+
+    with _agent_worker_guard(worker_id):
+        with _ACTIVE_CLAUDE_LOCK:
+            if (worker_id in _ACTIVE_CLAUDE_PROCS or worker_id in _ACTIVE_CLAUDE_UNPUBLISHED
+                    or worker_id in _ACTIVE_CLAUDE_RESERVATIONS or worker_id in _ACTIVE_CLAUDE_LAUNCHING):
+                raise ProcessOwnershipError("Apply agent worker already has an owner")
+            token = object()
+            _ACTIVE_CLAUDE_RESERVATIONS[worker_id] = token
+            _ACTIVE_CLAUDE_LAUNCHING[worker_id] = token
+            return token
+
+
+def _release_agent_launch(worker_id: int, token: object) -> None:
+    with _agent_worker_guard(worker_id):
+        with _ACTIVE_CLAUDE_LOCK:
+            if _ACTIVE_CLAUDE_LAUNCHING.get(worker_id) is token:
+                _ACTIVE_CLAUDE_LAUNCHING.pop(worker_id, None)
+            if _ACTIVE_CLAUDE_RESERVATIONS.get(worker_id) is token:
+                _ACTIVE_CLAUDE_RESERVATIONS.pop(worker_id, None)
+
+
+def _retain_unpublished_agent(worker_id: int, process: subprocess.Popen, launched_pid: int) -> None:
+    with _ACTIVE_CLAUDE_LOCK:
+        pending = _ACTIVE_CLAUDE_UNPUBLISHED.setdefault(worker_id, [])
+        if not any(owned is process and pid == launched_pid for owned, pid in pending):
+            pending.append((process, launched_pid))
+
+
+def _cleanup_unpublished_agent(worker_id: int) -> list[Exception]:
+    from jobctrl.infrastructure.process_ownership import cleanup_lock, terminate_owned_process
+
+    failures = []
+    with cleanup_lock(_agent_worker_guard(worker_id)):
+        with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+            pending = tuple(_ACTIVE_CLAUDE_UNPUBLISHED.get(worker_id, ()))
+        for process, launched_pid in pending:
+            try:
+                terminate_owned_process(process, launched_pid=launched_pid)
+            except Exception as exc:
+                failures.append(exc)
+            else:
+                with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+                    remaining = [(owned, pid) for owned, pid in _ACTIVE_CLAUDE_UNPUBLISHED.get(worker_id, ())
+                                 if owned is not process or pid != launched_pid]
+                    if remaining:
+                        _ACTIVE_CLAUDE_UNPUBLISHED[worker_id] = remaining
+                    else:
+                        _ACTIVE_CLAUDE_UNPUBLISHED.pop(worker_id, None)
+    return failures
 
 
 def _utc_now() -> str:
@@ -168,19 +222,66 @@ def _enqueue_stdout_lines(stream: Any, out: "queue.Queue[str | None]") -> None:
         out.put(None)
 
 
-def _clean_reason(s: str) -> str:
-    return re.sub(r'[*`"]+$', '', s).strip()
+def kill_active_claude_processes(*, worker_ids: tuple[int, ...] | None = None) -> None:
+    """Clean selected launch-owned agents, retaining any unverified handles."""
+    from jobctrl.infrastructure.process_ownership import (
+        INSPECTION_AND_SIGNAL_DENIED_MESSAGE, INSPECTION_DENIED_MESSAGE, SIGNAL_DENIED_MESSAGE,
+        ProcessInspectionAndSignalDenied, ProcessInspectionDenied, ProcessOwnershipError, ProcessSignalDenied,
+        cleanup_lock, is_process_inspection_denied, is_process_signal_denied,
+    )
 
-
-def kill_active_claude_processes() -> None:
-    """Best-effort cleanup hook for launcher Ctrl-C handling."""
-    with _ACTIVE_CLAUDE_LOCK:
+    with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
         procs = tuple(_ACTIVE_CLAUDE_PROCS.items())
+        pending_workers = tuple(worker_id for worker_id in _ACTIVE_CLAUDE_UNPUBLISHED
+                                if worker_ids is None or worker_id in worker_ids)
 
+    failures = []
+    inspection_denied = False
+    signal_denied = False
     for worker_id, proc in procs:
-        if proc.poll() is None:
-            _kill_process_tree_if_alive(proc)
-        _unregister_active_claude_process(worker_id, proc)
+        if worker_ids is not None and worker_id not in worker_ids:
+            continue
+        try:
+            with cleanup_lock(_agent_worker_guard(worker_id)):
+                with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+                    current = _ACTIVE_CLAUDE_PROCS.get(worker_id)
+                    if current is None:
+                        continue
+                    if current is not proc:
+                        raise ProcessOwnershipError("Cannot verify Apply agent process ownership")
+                _kill_process_tree_if_alive(proc)
+                _unregister_active_claude_process(worker_id, proc)
+        except Exception as exc:
+            log.exception("Apply agent cleanup incomplete for worker %s", worker_id)
+            failures.append(worker_id)
+            inspection_denied = inspection_denied or is_process_inspection_denied(exc)
+            signal_denied = signal_denied or is_process_signal_denied(exc)
+    for worker_id in pending_workers:
+        try:
+            pending_failures = _cleanup_unpublished_agent(worker_id)
+        except Exception as exc:
+            pending_failures = [exc]
+        for exc in pending_failures:
+            failures.append(worker_id)
+            inspection_denied = inspection_denied or is_process_inspection_denied(exc)
+            signal_denied = signal_denied or is_process_signal_denied(exc)
+    try:
+        with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+            # The longer reservation protects the MCP file after the child
+            # is joined; only an unpublished launch is process uncertainty.
+            outstanding = set(_ACTIVE_CLAUDE_LAUNCHING) | set(_ACTIVE_CLAUDE_UNPUBLISHED)
+            failures.extend(worker_id for worker_id in outstanding if worker_ids is None or worker_id in worker_ids)
+    except Exception:
+        if not (inspection_denied or signal_denied):
+            raise
+    if inspection_denied and signal_denied:
+        raise ProcessInspectionAndSignalDenied(INSPECTION_AND_SIGNAL_DENIED_MESSAGE)
+    if inspection_denied:
+        raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE)
+    if signal_denied:
+        raise ProcessSignalDenied(SIGNAL_DENIED_MESSAGE)
+    if failures:
+        raise RuntimeError(f"Apply agent cleanup could not verify exit for workers {failures}")
 
 
 class ClaudeCodeCliAdapter:
@@ -205,14 +306,10 @@ class ClaudeCodeCliAdapter:
         self._log_dir = Path(log_dir) if log_dir else config.LOG_DIR
         self._app_dir = Path(app_dir) if app_dir else config.APP_DIR
         self._default_timeout = (
-            int(default_timeout_seconds)
-            if default_timeout_seconds is not None
-            else config.get_apply_timeout_seconds()
+            int(default_timeout_seconds) if default_timeout_seconds is not None else config.get_apply_timeout_seconds()
         )
         self._max_budget_usd = (
-            float(max_budget_usd)
-            if max_budget_usd is not None
-            else config.get_apply_max_budget_usd()
+            float(max_budget_usd) if max_budget_usd is not None else config.get_apply_max_budget_usd()
         )
 
     # ------------------------------------------------------------------
@@ -249,6 +346,20 @@ class ClaudeCodeCliAdapter:
             )
 
         worker_id = browser.worker_id
+        reservation = _reserve_agent_launch(worker_id)
+        try:
+            return self._submit_application_reserved(
+                prompt=prompt, browser=browser, model=model, dry_run=dry_run, timeout_seconds=timeout_seconds,
+                reservation=reservation,
+            )
+        finally:
+            _release_agent_launch(worker_id, reservation)
+
+    def _submit_application_reserved(
+        self, *, prompt: ApplyPrompt, browser: BrowserSession, model: str, dry_run: bool,
+        timeout_seconds: int | None, reservation: object,
+    ) -> AgentResult:
+        worker_id = browser.worker_id
         worker_dir = browser.worker_dir or str(config.APPLY_WORKER_DIR / f"worker-{worker_id}")
         Path(worker_dir).mkdir(parents=True, exist_ok=True)
 
@@ -269,40 +380,63 @@ class ClaudeCodeCliAdapter:
         if _claude_supports_budget_flag(claude_bin, bare=bundled):
             cmd.extend(["--max-budget-usd", f"{self._max_budget_usd:.2f}"])
         allowed_tools = _allowed_tools_for_mcp_config(prompt.mcp_config)
-        cmd.extend([
-            "-p",
-            "--mcp-config", str(mcp_config_path),
-            "--no-session-persistence",
-            "--allowedTools", allowed_tools,
-            "--disallowedTools", _DISALLOWED_TOOLS,
-            "--output-format", "stream-json",
-            "--verbose", "-",
-        ])
+        cmd.extend(
+            [
+                "-p",
+                "--mcp-config",
+                str(mcp_config_path),
+                "--no-session-persistence",
+                "--allowedTools",
+                allowed_tools,
+                "--disallowedTools",
+                _DISALLOWED_TOOLS,
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "-",
+            ]
+        )
 
         env = _apply_subprocess_env()
 
         worker_log = self._log_dir / f"worker-{worker_id}.log"
-        deadline_seconds = (
-            int(timeout_seconds)
-            if timeout_seconds is not None
-            else self._default_timeout
-        )
+        deadline_seconds = int(timeout_seconds) if timeout_seconds is not None else self._default_timeout
 
         events: list[dict[str, Any]] = []
         text_parts: list[str] = []
         result_records: list[str] = []
         result_envelopes_valid: list[bool] = []
+        browser_observations: list[str] = []
+        browser_tool_use_ids: set[str] = set()
+        consumed_browser_results: set[str] = set()
         stats: dict[str, Any] = {}
+        usage_recorded = False
         proc: subprocess.Popen | None = None
         start = time.time()
 
         try:
             _write_private_json(mcp_config_path, prompt.mcp_config)
-            proc = subprocess.Popen(
-                cmd,
+            from jobctrl.llm import enforce_spend_budget
+
+            enforce_spend_budget("apply")
+            from jobctrl.apply.ownership import spawn_owned_apply_process
+
+            proc = spawn_owned_apply_process(
+                worker_id, "agent", cmd,
                 **_popen_kwargs(env=env, cwd=str(worker_dir)),
             )
-            _register_active_claude_process(worker_id, proc)
+            try:
+                _register_active_claude_process(worker_id, proc, reservation=reservation)
+            except BaseException:
+                unpublished = proc
+                proc = None
+                if getattr(unpublished, "_jobctrl_apply_birth", None) is None:
+                    _retain_unpublished_agent(worker_id, unpublished, unpublished.pid)
+                    failures = _cleanup_unpublished_agent(worker_id)
+                    if failures:
+                        raise failures[0]
+                # An active run retains (or has already joined) its birth.
+                raise
             events.append(
                 {
                     "event_type": "ClaudeLaunched",
@@ -334,15 +468,11 @@ class ClaudeCodeCliAdapter:
 
             with open(worker_log, "a", encoding="utf-8") as lf:
                 lf.write(
-                    f"\n{'=' * 60}\n"
-                    f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] worker {worker_id}\n"
-                    f"{'=' * 60}\n"
+                    f"\n{'=' * 60}\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] worker {worker_id}\n{'=' * 60}\n"
                 )
                 while True:
                     if proc.poll() is None and time.monotonic() > wall_deadline:
-                        raise TimeoutError(
-                            f"claude timed out after {deadline_seconds}s"
-                        )
+                        raise TimeoutError(f"claude timed out after {deadline_seconds}s")
                     try:
                         queued_line = stdout_queue.get(timeout=0.25)
                     except queue.Empty:
@@ -380,6 +510,8 @@ class ClaudeCodeCliAdapter:
                                     }
                                 )
                             elif bt == "tool_use":
+                                if block.get("name") in PLAYWRIGHT_APPLY_TOOLS and isinstance(block.get("id"), str):
+                                    browser_tool_use_ids.add(block["id"])
                                 name = (
                                     block.get("name", "")
                                     .replace("mcp__playwright__", "")
@@ -399,6 +531,26 @@ class ClaudeCodeCliAdapter:
                                     }
                                 )
                                 lf.write(f"  >> {name}\n")
+                    elif msg_type == "user":
+                        content = msg.get("message", {}).get("content", [])
+                        if isinstance(content, list):
+                            for block in content:
+                                if (
+                                    isinstance(block, dict)
+                                    and block.get("type") == "tool_result"
+                                    and block.get("tool_use_id") in browser_tool_use_ids
+                                    and block.get("tool_use_id") not in consumed_browser_results
+                                ):
+                                    consumed_browser_results.add(block["tool_use_id"])
+                                    payload = block.get("content", "")
+                                    if isinstance(payload, str):
+                                        browser_observations.append(payload)
+                                    elif isinstance(payload, list):
+                                        browser_observations.extend(
+                                            part["text"]
+                                            for part in payload
+                                            if isinstance(part, dict) and isinstance(part.get("text"), str)
+                                        )
                     elif msg_type == "result":
                         usage = msg.get("usage", {}) or {}
                         stats = {
@@ -409,6 +561,19 @@ class ClaudeCodeCliAdapter:
                             "cost_usd": float(msg.get("total_cost_usd", 0) or 0),
                             "turns": int(msg.get("num_turns", 0) or 0),
                         }
+                        if not usage_recorded and any(
+                            stats[key] > 0 for key in ("input", "output", "cache_read", "cache_create", "cost_usd")
+                        ):
+                            from jobctrl.llm import record_llm_spend
+
+                            record_llm_spend(
+                                input_tokens=stats["input"],
+                                output_tokens=stats["output"],
+                                estimated_usd=stats["cost_usd"],
+                                model=model_label,
+                                lane="apply",
+                            )
+                            usage_recorded = True
                         raw_result = msg.get("result", "")
                         result_text = (
                             raw_result
@@ -416,14 +581,12 @@ class ClaudeCodeCliAdapter:
                             else json.dumps(raw_result, sort_keys=True, default=str)
                         )
                         result_records.append(result_text)
-                        result_envelopes_valid.append(
-                            msg.get("subtype") == "success"
-                            and msg.get("is_error") is False
-                        )
+                        result_envelopes_valid.append(msg.get("subtype") == "success" and msg.get("is_error") is False)
                         text_parts.append(result_text)
 
             proc.wait(timeout=5)
             returncode = proc.returncode
+            _kill_process_tree_if_alive(proc)
             _unregister_active_claude_process(worker_id, proc)
             proc = None
 
@@ -440,24 +603,12 @@ class ClaudeCodeCliAdapter:
                 if stats
                 else None
             )
-            if token_usage is not None:
-                from jobctrl.llm import record_llm_spend
-
-                record_llm_spend(
-                    input_tokens=token_usage.input + token_usage.cache_read + token_usage.cache_create,
-                    output_tokens=token_usage.output,
-                    estimated_usd=token_usage.cost_usd,
-                    model=model_label,
-                )
-
             # Negative returncode means the process was killed by a
             # signal (Ctrl+C skip from the launcher) — treat as a
             # ``Failed("SKIPPED")`` rather than fabricating a result.
             if returncode is not None and returncode < 0:
                 return AgentResult(
-                    submission_result=Failed(
-                        error="SKIPPED: process killed by signal", retryable=True
-                    ),
+                    submission_result=Failed(error="SKIPPED: process killed by signal", retryable=True),
                     token_usage=token_usage,
                     duration_ms=duration_ms,
                     events=tuple(events),
@@ -480,10 +631,31 @@ class ClaudeCodeCliAdapter:
                     retryable=False,
                 )
             else:
-                submission = self._parse_result(
-                    result_records[0],
-                    dry_run=dry_run,
-                )
+                from jobctrl.domain.apply.terminal_report import parse_terminal_report, submission_from_report
+                from jobctrl.domain.determinations import DeterminationFailure
+
+                observations = "\n".join(browser_observations)
+                try:
+                    report = parse_terminal_report(result_records[0], observations)
+                    submission = submission_from_report(report, dry_run=dry_run)
+                    fingerprint = hashlib.sha256(
+                        json.dumps({"prompt": prompt.text, "observations": observations}, sort_keys=True).encode()
+                    ).hexdigest()
+                    events.append(
+                        {
+                            "event_type": "ApplyTerminalDetermination",
+                            "occurred_at": _utc_now(),
+                            "level": "info",
+                            "message": "Agent terminal determination recorded",
+                            "payload": {
+                                "result": report.model_dump(),
+                                "model": model_label,
+                                "input_fingerprint": fingerprint,
+                            },
+                        }
+                    )
+                except DeterminationFailure as failure:
+                    submission = Failed(error=failure.code, retryable=False)
             return AgentResult(
                 submission_result=submission,
                 token_usage=token_usage,
@@ -501,91 +673,17 @@ class ClaudeCodeCliAdapter:
             raise
         finally:
             if proc is not None:
+                _kill_process_tree_if_alive(proc)
                 _unregister_active_claude_process(worker_id, proc)
-                if proc.poll() is None:
-                    _kill_process_tree_if_alive(proc)
             try:
                 mcp_config_path.unlink(missing_ok=True)
             except Exception:  # noqa: BLE001
                 log.debug("failed to delete apply MCP config %s", mcp_config_path, exc_info=True)
 
-    # ------------------------------------------------------------------
-    # RESULT line parsing
-    # ------------------------------------------------------------------
-
-    def _parse_result(self, output: str, *, dry_run: bool) -> SubmissionResult:
-        """Translate one exact dedicated terminal result record.
-
-        Streamed assistant text and raw non-JSON output are audit material only.
-        Extra prose, newlines, multiple tokens, and conflicting records fail
-        closed instead of being searched for a privileged substring.
-        """
-        if (
-            not isinstance(output, str)
-            or not output
-            or output != output.strip()
-            or output.count("RESULT:") != 1
-        ):
-            return Failed(error="invalid_result_record", retryable=False)
-
-        email_only = _EMAIL_ONLY_RE.fullmatch(output)
-        if email_only:
-            return EmailOnlyApplication(recipient_email=email_only.group(1))
-
-        result_record = _RESULT_RECORD_RE.fullmatch(output)
-        if result_record:
-            code = result_record.group(1)
-            if code == "APPLIED":
-                if dry_run:
-                    return Failed(
-                        error="dry_run_violation: agent reported applied during dry-run",
-                        retryable=False,
-                    )
-                return Failed(
-                    error="untrusted_applied_result",
-                    retryable=False,
-                )
-            if code == "DRY_RUN":
-                if not dry_run:
-                    return Failed(
-                        error="unexpected_dry_run_result",
-                        retryable=False,
-                    )
-                return DryRunComplete(
-                    navigated_to="",
-                    coverage="partial",
-                    blocked_channels=("semantic_review_unverified",),
-                )
-            if code == "EXPIRED":
-                return Expired()
-            if code == "CAPTCHA":
-                return Captcha(details="agent reported CAPTCHA")
-            return LoginIssue(details="agent reported login issue")
-
-        failed = _FAILED_RE.fullmatch(output)
-        if failed:
-            raw_reason = failed.group(1)
-            reason = _clean_reason(raw_reason or "unknown")
-            if raw_reason is not None and not reason:
-                return Failed(error="invalid_result_record", retryable=False)
-            if reason in _PROMOTED_FAILED_REASONS:
-                if reason == "captcha":
-                    return Captcha(details="agent reported CAPTCHA")
-                if reason == "expired":
-                    return Expired()
-                return LoginIssue(details="agent reported login issue")
-            if reason == "manual" or reason.startswith("manual"):
-                return Manual(reason=reason)
-            if reason.startswith("missing_profile_data:"):
-                return Failed(error=reason, retryable=False)
-            return Failed(error=reason or "unknown", retryable=True)
-
-        return Failed(error="invalid_result_record", retryable=False)
-
 
 def _allowed_tools_for_mcp_config(mcp_config: Mapping[str, Any]) -> str:
     tools = set(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS)
-    apply_tools = ((mcp_config.get("mcpServers") or {}).get("apply_tools") or {})
+    apply_tools = (mcp_config.get("mcpServers") or {}).get("apply_tools") or {}
     env = apply_tools.get("env") if isinstance(apply_tools, Mapping) else {}
     if isinstance(env, Mapping):
         if str(env.get("CAPSOLVER_API_KEY") or "").strip():
@@ -667,25 +765,63 @@ def _popen_kwargs(*, env: dict[str, str], cwd: str) -> dict[str, Any]:
     return kwargs
 
 
-def _register_active_claude_process(worker_id: int, proc: subprocess.Popen) -> None:
-    with _ACTIVE_CLAUDE_LOCK:
-        _ACTIVE_CLAUDE_PROCS[int(worker_id)] = proc
+def _register_active_claude_process(worker_id: int, proc: subprocess.Popen, *, reservation: object | None = None) -> None:
+    from jobctrl.apply.ownership import publish_owned_apply_process
+    from jobctrl.infrastructure.process_ownership import ProcessOwnershipError
+
+    worker_id = int(worker_id)
+
+    def publish() -> None:
+        with _agent_worker_guard(worker_id):
+            with _ACTIVE_CLAUDE_LOCK:
+                current = _ACTIVE_CLAUDE_PROCS.get(worker_id)
+                pending = _ACTIVE_CLAUDE_RESERVATIONS.get(worker_id)
+                if (current is not None and current is not proc) or (pending is not None and pending is not reservation):
+                    raise ProcessOwnershipError("Cannot replace an owned Apply agent process")
+                _ACTIVE_CLAUDE_PROCS[worker_id] = proc
+                _ACTIVE_CLAUDE_IDENTITIES[worker_id] = (proc, proc.pid)
+                if _ACTIVE_CLAUDE_LAUNCHING.get(worker_id) is reservation:
+                    _ACTIVE_CLAUDE_LAUNCHING.pop(worker_id, None)
+
+    publish_owned_apply_process(worker_id, proc, publish)
 
 
 def _unregister_active_claude_process(worker_id: int, proc: subprocess.Popen) -> None:
-    with _ACTIVE_CLAUDE_LOCK:
-        active = _ACTIVE_CLAUDE_PROCS.get(int(worker_id))
-        if active is proc:
-            _ACTIVE_CLAUDE_PROCS.pop(int(worker_id), None)
+    from jobctrl.infrastructure.process_ownership import cleanup_lock
+
+    worker_id = int(worker_id)
+    with cleanup_lock(_agent_worker_guard(worker_id)):
+        with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+            active = _ACTIVE_CLAUDE_PROCS.get(worker_id)
+            if active is proc:
+                _ACTIVE_CLAUDE_PROCS.pop(worker_id, None)
+                _ACTIVE_CLAUDE_IDENTITIES.pop(worker_id, None)
 
 
 def _kill_process_tree_if_alive(proc: subprocess.Popen) -> None:
-    try:
-        from jobctrl.apply.chrome import _kill_process_tree
+    from jobctrl.infrastructure.process_ownership import ProcessOwnershipError, cleanup_lock, terminate_owned_process
 
-        _kill_process_tree(proc.pid)
-    except Exception:  # noqa: BLE001
-        log.exception("_kill_process_tree_if_alive: kill failed (best-effort)")
+    with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+        identities = [
+            (worker_id, launched_pid) for worker_id, (owned, launched_pid) in _ACTIVE_CLAUDE_IDENTITIES.items()
+            if owned is proc and _ACTIVE_CLAUDE_PROCS.get(worker_id) is proc
+        ]
+        if len(identities) != 1:
+            if not identities and getattr(proc, "_jobctrl_agent_cleanup_verified", False) is True:
+                return
+            raise ProcessOwnershipError("Cannot verify Apply agent process ownership")
+        worker_id, launched_pid = identities[0]
+        guard = _agent_worker_guard_locked(worker_id)
+    with cleanup_lock(guard):
+        with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+            identity = _ACTIVE_CLAUDE_IDENTITIES.get(worker_id)
+            if (_ACTIVE_CLAUDE_PROCS.get(worker_id) is not proc or identity is None
+                    or identity[0] is not proc or identity[1] != launched_pid or proc.pid != launched_pid):
+                if getattr(proc, "_jobctrl_agent_cleanup_verified", False) is True:
+                    return
+                raise ProcessOwnershipError("Cannot verify Apply agent process ownership")
+        terminate_owned_process(proc, launched_pid=launched_pid)
+        proc._jobctrl_agent_cleanup_verified = True
 
 
 __all__ = ["ClaudeCodeCliAdapter", "kill_active_claude_processes"]

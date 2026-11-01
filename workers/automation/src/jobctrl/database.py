@@ -10,16 +10,25 @@ persistent run and event telemetry.
 
 from __future__ import annotations
 
+from jobctrl.infrastructure.apply_controls import APPLY_ADMISSIBLE_SQL
+
 import json
+import os
 import sqlite3
+import stat
+import tempfile
 import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from jobctrl.config import DB_PATH, DEFAULTS
 from jobctrl.infrastructure.migrations.schema_manifest import (
-    EXACT_V9_MANIFEST,
+    EXACT_V11_MANIFEST,
+    EXACT_V12_MANIFEST,
+    EXACT_V14_MANIFEST,
+    EXACT_V15_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,
     schema_dump,
@@ -32,8 +41,8 @@ from jobctrl.scoring.eligibility_sql import (
 # Schema version stamped into the SQLite ``user_version`` header. Runtime opens
 # only this exact schema and refuses databases written by newer code. The only
 # supported upgrades are explicit stopped-runtime cutovers. Older v6/v7
-# databases retain their identity-to-v8 path before the additive v9 step; exact
-# v8 databases receive only the optional position-summary column.
+# databases retain their identity-to-v8 path before the additive v9 step; v10
+# preserves application URL aliases and removes the legacy jobs URL column.
 #
 # v2 (Contact & Outreach): generic ``entity_kind``/``entity_ref`` columns on
 # ``job_events`` so contact-only events carry honest identity without
@@ -52,7 +61,7 @@ from jobctrl.scoring.eligibility_sql import (
 # without changing any v7 table. v9 adds the optional per-position summary to
 # Candidate Profile experience rows. Posting URLs remain unique locators,
 # never aggregate identity.
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 15
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -63,15 +72,23 @@ class SchemaMigrationRequiredError(RuntimeError):
     """Raised when a stopped-runtime v6/v7 cutover has not been run."""
 
 
+class UnresolvedDatabaseInitializationError(RuntimeError):
+    """Raised when an interrupted initial publication needs inspection."""
+
+
 # Thread-local connection storage — each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
 _local = threading.local()
+_OPEN_SUPPORTS_DIR_FD = os.open in os.supports_dir_fd
+_LINK_SUPPORTS_DIR_FD = os.link in os.supports_dir_fd
 
 
 def get_connection(
     db_path: Path | str | None = None,
     *,
     enable_wal: bool = True,
+    require_existing: bool = False,
+    _owned_publication: bool = False,
 ) -> sqlite3.Connection:
     """Get a thread-local cached SQLite connection with WAL mode enabled.
 
@@ -86,6 +103,9 @@ def get_connection(
     """
     path = str(db_path or DB_PATH)
 
+    if not _owned_publication:
+        _refuse_unresolved_initialization(Path(path))
+
     if not hasattr(_local, "connections"):
         _local.connections = {}
 
@@ -98,15 +118,28 @@ def get_connection(
         except sqlite3.ProgrammingError:
             pass
 
-    conn = sqlite3.connect(path, timeout=30)
-    if enable_wal:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=10000")
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    register_score_eligibility_sql(conn)
-    _local.connections[path] = conn
-    return conn
+    from jobctrl.infrastructure.commit_notifications import NotificationConnection
+
+    # SQLite's default mode silently creates a missing file.  Admission of an
+    # already published database must not recreate it after a concurrent move.
+    if require_existing:
+        conn = sqlite3.connect(
+            f"{Path(path).absolute().as_uri()}?mode=rw", timeout=30, uri=True, factory=NotificationConnection,
+        )
+    else:
+        conn = sqlite3.connect(path, timeout=30, factory=NotificationConnection)
+    try:
+        if enable_wal:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=10000")
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        register_score_eligibility_sql(conn)
+        _local.connections[path] = conn
+        return conn
+    except BaseException:
+        conn.close()
+        raise
 
 
 def close_connection(db_path: Path | str | None = None) -> None:
@@ -116,6 +149,25 @@ def close_connection(db_path: Path | str | None = None) -> None:
         conn = _local.connections.pop(path, None)
         if conn is not None:
             conn.close()
+
+
+def close_thread_connections() -> bool:
+    """Release activity-owned connections; never commit unfinished work.
+
+    Pool threads are reused, so a failed activity cannot leave a cached writer
+    alive for the next activity. Return whether unfinished writes were present.
+    """
+    connections = getattr(_local, "connections", {})
+    unfinished = False
+    for path in tuple(connections):
+        conn = connections.pop(path)
+        try:
+            unfinished |= conn.in_transaction
+        except sqlite3.ProgrammingError:
+            pass  # A caller already closed this cached connection.
+        finally:
+            conn.close()  # SQLite rolls back, rather than commits, on close.
+    return unfinished
 
 
 def backup_database(
@@ -142,6 +194,7 @@ def backup_database(
     source = Path(db_path or DB_PATH)
     if not source.exists():
         raise FileNotFoundError(f"No database to back up at {source}")
+    _refuse_unresolved_initialization(source)
 
     destination = _resolve_backup_destination(source, output)
     if destination.exists():
@@ -187,24 +240,22 @@ def _assert_schema_version_supported(
     return current
 
 
-def create_exact_v9_database(
+def create_exact_v11_database(
     db_path: Path | str | None = None,
 ) -> sqlite3.Connection:
-    """Create a brand-new database directly from the exact v9 schema."""
+    """Create a brand-new database directly from the exact v11 schema."""
     path = Path(db_path or DB_PATH)
     if path.exists():
-        raise FileExistsError(
-            f"exact v9 creation requires a missing database path, found {path}"
-        )
+        raise FileExistsError(f"exact v11 creation requires a missing database path, found {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = get_connection(path)
     try:
         if schema_dump(conn):
-            raise SchemaManifestError("fresh v9 creation found pre-existing schema")
+            raise SchemaManifestError("fresh v11 creation found pre-existing schema")
 
-        from jobctrl.infrastructure.migrations.schema_v9 import create_exact_v9_schema
+        from jobctrl.infrastructure.migrations.schema_v11 import create_exact_v11_schema
 
-        create_exact_v9_schema(conn)
+        create_exact_v11_schema(conn)
         conn.commit()
         return conn
     except BaseException:
@@ -219,36 +270,343 @@ def create_exact_v9_database(
         raise
 
 
-def open_exact_v9_database(
+def open_exact_v11_database(
     db_path: Path | str | None = None,
 ) -> sqlite3.Connection:
-    """Open an existing exact-v9 database without performing any writes."""
+    """Open an existing exact-v11 database without performing any writes."""
     path = Path(db_path or DB_PATH)
     if not path.exists():
         raise FileNotFoundError(f"No database to open at {path}")
     conn = get_connection(path, enable_wal=False)
-    current_version = _assert_schema_version_supported(conn)
-    if current_version in (6, 7, 8):
+    current_version = _assert_schema_version_supported(conn, supported_version=11)
+    if current_version in (6, 7, 8, 9, 10):
         raise SchemaMigrationRequiredError(
             f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
             "the native lifecycle can stop JobCtrl, create the paired backup, "
-            "and activate schema v9 before starting the runtime."
+            "and activate schema v11 before starting the runtime."
         )
-    if current_version != SCHEMA_VERSION:
+    if current_version != 11:
         raise SchemaMigrationRequiredError(
-            "JobCtrl can only open the exact schema v9 at runtime; "
-            f"found schema version {current_version}."
+            f"JobCtrl can only open the exact schema v11 at runtime; found schema version {current_version}."
         )
-    assert_exact_manifest(conn, EXACT_V9_MANIFEST)
+    assert_exact_manifest(conn, EXACT_V11_MANIFEST)
+    return conn
+
+
+def create_exact_v12_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Create a brand-new database directly from the exact v12 schema."""
+    path = Path(db_path or DB_PATH)
+    if path.exists():
+        raise FileExistsError(f"exact v12 creation requires a missing database path, found {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # A deleted predecessor can still have a live connection cached by path.
+    close_connection(path)
+    conn = get_connection(path)
+    try:
+        if schema_dump(conn):
+            raise SchemaManifestError("fresh v12 creation found pre-existing schema")
+
+        from jobctrl.infrastructure.migrations.schema_v12 import create_exact_v12_schema
+
+        create_exact_v12_schema(conn)
+        conn.commit()
+        return conn
+    except BaseException:
+        close_connection(path)
+        for created_path in (
+            path,
+            Path(f"{path}-wal"),
+            Path(f"{path}-shm"),
+            Path(f"{path}-journal"),
+        ):
+            created_path.unlink(missing_ok=True)
+        raise
+
+
+def open_exact_v12_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Open an existing exact-v12 database without performing any writes."""
+    path = Path(db_path or DB_PATH)
+    if not path.exists():
+        raise FileNotFoundError(f"No database to open at {path}")
+    conn = get_connection(path, enable_wal=False)
+    current_version = _assert_schema_version_supported(conn, supported_version=12)
+    if current_version in (6, 7, 8, 9, 10, 11):
+        raise SchemaMigrationRequiredError(
+            f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
+            "the native lifecycle can stop JobCtrl, create the paired backup, "
+            "and activate schema v12 before starting the runtime."
+        )
+    if current_version != 12:
+        raise SchemaMigrationRequiredError(
+            f"JobCtrl can only open the exact schema v12 at runtime; found schema version {current_version}."
+        )
+    assert_exact_manifest(conn, EXACT_V12_MANIFEST)
+    return conn
+
+
+def create_exact_v14_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Create a brand-new database directly from the exact v14 schema."""
+    from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+
+    return _create_exact_database(db_path, 14, create_exact_v14_schema)
+
+
+def _create_exact_database(
+    db_path: Path | str | None,
+    schema_version: int,
+    create_schema: Callable[[sqlite3.Connection], None],
+) -> sqlite3.Connection:
+    """Build and publish one exact schema without replacing a competing owner."""
+    path = Path(db_path or DB_PATH)
+    if os.path.lexists(path):
+        raise FileExistsError(f"exact v{schema_version} creation requires a missing database path, found {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    parent_identity = path.parent.lstat()
+    if not stat.S_ISDIR(parent_identity.st_mode):
+        raise RuntimeError(f"database parent is not a regular directory: {path.parent}")
+    # A deleted predecessor can still have a live connection cached by path.
+    close_connection(path)
+    # A missing main database with surviving sidecars is an unknown authority,
+    # not a fresh workspace. Never adopt, replace, or delete those files.
+    sidecars = tuple(Path(f"{path}{suffix}") for suffix in ("-wal", "-shm", "-journal"))
+    if any(os.path.lexists(sidecar) for sidecar in sidecars):
+        raise FileExistsError(f"exact v{schema_version} creation found existing database sidecars for {path}")
+
+    # Build the schema in memory so SQLite cannot write a rollback journal to a
+    # substituted staging path. Serialize the closed candidate into the private
+    # staging directory before publishing it without replacing any target.
+    staging = Path(tempfile.mkdtemp(prefix=".jobctrl-init-", dir=path.parent))
+    staging_identity = staging.lstat()
+    candidate = staging / "candidate.db"
+    candidate_identity: os.stat_result | None = None
+    published = False
+    admitted = False
+
+    def same_identity(target: Path, expected: os.stat_result) -> bool:
+        try:
+            actual = target.lstat()
+        except FileNotFoundError:
+            return False
+        return (actual.st_dev, actual.st_ino, actual.st_mode) == (
+            expected.st_dev, expected.st_ino, expected.st_mode,
+        )
+
+    def assert_staging_identity() -> None:
+        if not same_identity(path.parent, parent_identity) or not same_identity(staging, staging_identity):
+            raise RuntimeError("database initialization directory changed before publication")
+
+    try:
+        conn = sqlite3.connect(":memory:", timeout=30)
+        try:
+            create_schema(conn)
+            conn.commit()
+            serialized = conn.serialize()
+        finally:
+            conn.close()
+
+        assert_staging_identity()
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        directory_fd: int | None = None
+        try:
+            if _OPEN_SUPPORTS_DIR_FD:
+                directory_fd = os.open(staging, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+                opened_dir = os.fstat(directory_fd)
+                if (opened_dir.st_dev, opened_dir.st_ino) != (staging_identity.st_dev, staging_identity.st_ino):
+                    raise RuntimeError("database initialization directory changed before staging")
+                candidate_fd = os.open("candidate.db", flags, 0o644, dir_fd=directory_fd)
+            else:
+                # Exclusive creation protects an unfamiliar file on platforms
+                # without dir_fd support; identity checks still fail closed on drift.
+                candidate_fd = os.open(candidate, flags, 0o644)
+            with os.fdopen(candidate_fd, "wb") as candidate_file:
+                candidate_identity = os.fstat(candidate_file.fileno())
+                candidate_file.write(serialized)
+                candidate_file.flush()
+                os.fsync(candidate_file.fileno())
+            if directory_fd is not None:
+                os.fsync(directory_fd)
+        finally:
+            if directory_fd is not None:
+                os.close(directory_fd)
+
+        assert_staging_identity()
+        if candidate_identity is None or not same_identity(candidate, candidate_identity):
+            raise RuntimeError("database initialization candidate changed before publication")
+        if any(os.path.lexists(sidecar) for sidecar in sidecars):
+            raise FileExistsError(f"exact v{schema_version} creation found existing database sidecars for {path}")
+        if _OPEN_SUPPORTS_DIR_FD and _LINK_SUPPORTS_DIR_FD:
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            parent_fd = os.open(path.parent, directory_flags)
+            try:
+                stage_fd = os.open(staging, directory_flags)
+                try:
+                    actual_parent = os.fstat(parent_fd)
+                    actual_stage = os.fstat(stage_fd)
+                    if (actual_parent.st_dev, actual_parent.st_ino) != (parent_identity.st_dev, parent_identity.st_ino):
+                        raise RuntimeError("database parent changed before publication")
+                    if (actual_stage.st_dev, actual_stage.st_ino) != (staging_identity.st_dev, staging_identity.st_ino):
+                        raise RuntimeError("database staging directory changed before publication")
+                    os.link("candidate.db", path.name, src_dir_fd=stage_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+                    published = True
+                    os.fsync(parent_fd)
+                finally:
+                    os.close(stage_fd)
+            finally:
+                os.close(parent_fd)
+        else:
+            os.link(candidate, path, follow_symlinks=False)
+            published = True
+        # Publication is the ownership boundary: never unlink the database or
+        # sidecars after this point, because another process may already use it.
+        assert_staging_identity()
+        if not same_identity(path, candidate_identity):
+            raise RuntimeError("published database changed before admission")
+        # Unknown sidecars created between the pre-publication check and the
+        # link must never be fed into SQLite or removed by this initializer.
+        if any(os.path.lexists(sidecar) for sidecar in sidecars):
+            raise RuntimeError(f"database sidecars appeared during publication for {path}")
+        # Do not request WAL until the post-open identity check. If a path was
+        # substituted before admission, enabling WAL could mutate its referent.
+        opened = get_connection(path, enable_wal=False, require_existing=True, _owned_publication=True)
+        if not same_identity(path, candidate_identity):
+            close_connection(path)
+            raise RuntimeError("published database changed during admission")
+        if any(os.path.lexists(sidecar) for sidecar in sidecars):
+            close_connection(path)
+            raise RuntimeError(f"database sidecars appeared during admission for {path}")
+        try:
+            opened.execute("PRAGMA journal_mode=WAL")
+            opened.execute("PRAGMA busy_timeout=10000")
+        except BaseException:
+            close_connection(path)
+            raise
+        admitted = True
+        return opened
+    finally:
+        # Only clean the file and directory created by this attempt. If their
+        # identity changed or unfamiliar entries appeared, preserve them.
+        if (not published or admitted) and same_identity(path.parent, parent_identity) and same_identity(staging, staging_identity):
+            if candidate_identity is not None and same_identity(candidate, candidate_identity):
+                candidate.unlink()
+            try:
+                staging.rmdir()
+            except OSError:
+                pass
+
+
+def _refuse_unresolved_initialization(path: Path) -> None:
+    """Do not adopt a database after a published creation failed admission.
+
+    A retained hard link identifies an interrupted publication without trusting
+    its name alone. The initial attempt leaves that link on every post-publish
+    failure. Unrelated staging directories and their contents remain untouched.
+    """
+    try:
+        target = path.lstat()
+        entries = list(path.parent.iterdir())
+    except FileNotFoundError:
+        return
+    for entry in entries:
+        if not entry.name.startswith(".jobctrl-init-"):
+            continue
+        try:
+            if not stat.S_ISDIR(entry.lstat().st_mode):
+                continue
+            candidate = (entry / "candidate.db").lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISREG(candidate.st_mode) and (candidate.st_dev, candidate.st_ino) == (target.st_dev, target.st_ino):
+            raise UnresolvedDatabaseInitializationError(
+                "database initialization has an unresolved publication; "
+                "preserve the database and companions and inspect the retained staging directory"
+            )
+
+
+def open_exact_v14_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Open an existing exact-v14 database without performing any writes."""
+    path = Path(db_path or DB_PATH)
+    if not path.exists():
+        raise FileNotFoundError(f"No database to open at {path}")
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise FileExistsError(f"database path is not a regular file: {path}")
+    _refuse_unresolved_initialization(path)
+    conn = get_connection(path, enable_wal=False, require_existing=True)
+    current_version = _assert_schema_version_supported(conn, supported_version=14)
+    if current_version in (6, 7, 8, 9, 10, 11, 12):
+        raise SchemaMigrationRequiredError(
+            f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
+            "the native lifecycle can stop JobCtrl, create the paired backup, "
+            "and activate schema v14 before starting the runtime."
+        )
+    if current_version != 14:
+        raise SchemaMigrationRequiredError(
+            f"JobCtrl can only open the exact schema v14 at runtime; found schema version {current_version}."
+        )
+    assert_exact_manifest(conn, EXACT_V14_MANIFEST)
+    return conn
+
+
+
+def create_exact_v15_database(db_path: Path | str | None = None) -> sqlite3.Connection:
+    """Create and admit new exact-v15 storage with ownership-safe publication."""
+    from jobctrl.infrastructure.migrations.schema_v15 import create_exact_v15_schema
+
+    return _create_exact_database(db_path, 15, create_exact_v15_schema)
+
+
+def open_exact_v15_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Open an existing exact-v15 database without performing any writes."""
+    path = Path(db_path or DB_PATH)
+    if not path.exists():
+        raise FileNotFoundError(f"No database to open at {path}")
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise FileExistsError(f"database path is not a regular file: {path}")
+    _refuse_unresolved_initialization(path)
+    conn = get_connection(path, enable_wal=False, require_existing=True)
+    current_version = _assert_schema_version_supported(conn, supported_version=15)
+    if current_version in (6, 7, 8, 9, 10, 11, 12, 13, 14):
+        raise SchemaMigrationRequiredError(
+            f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
+            "the native lifecycle can stop JobCtrl, create the paired backup, "
+            "and activate schema v15 before starting the runtime."
+        )
+    if current_version != 15:
+        raise SchemaMigrationRequiredError(
+            f"JobCtrl can only open the exact schema v15 at runtime; found schema version {current_version}."
+        )
+    assert_exact_manifest(conn, EXACT_V15_MANIFEST)
     return conn
 
 
 def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
-    """Create a missing v9 database or read-only validate an existing one."""
+    """Create missing exact-v15 storage or validate an existing sealed database."""
     path = Path(db_path or DB_PATH)
-    if not path.exists():
-        return create_exact_v9_database(path)
-    return open_exact_v9_database(path)
+    if os.path.lexists(path):
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise FileExistsError(f"database path is not a regular file: {path}")
+        return open_exact_v15_database(path)
+    try:
+        return create_exact_v15_database(path)
+    except FileExistsError as conflict:
+        # A concurrent publisher may have won after our initial check. Only a
+        # regular complete database may be adopted; never follow a new symlink.
+        try:
+            existing = path.lstat()
+        except FileNotFoundError:
+            raise conflict
+        if not stat.S_ISREG(existing.st_mode):
+            raise
+        return open_exact_v15_database(path)
 
 
 def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> list[str]:
@@ -256,7 +614,7 @@ def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> li
 
     Defers to ``infrastructure.projections.sqlite_projection_store`` so the
     compatibility schema helper stays next to its adapter. Runtime ``init_db``
-    creates or admits the exact v9 manifest instead; this helper is for explicit
+    creates or admits the exact v10 manifest instead; this helper is for explicit
     legacy-schema preparation. The import is local to keep
     ``database.py`` free of infrastructure imports at module-load time.
     """
@@ -414,12 +772,7 @@ def ensure_application_review_decision_columns(
     if conn is None:
         conn = get_connection()
 
-    existing = {
-        row[1]
-        for row in conn.execute(
-            "PRAGMA table_info(application_review_decisions)"
-        ).fetchall()
-    }
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(application_review_decisions)").fetchall()}
     additions = {
         "materials_generation": "INTEGER",
         "profile_version": "INTEGER",
@@ -431,9 +784,7 @@ def ensure_application_review_decision_columns(
     added: list[str] = []
     for column, definition in additions.items():
         if column not in existing:
-            conn.execute(
-                f"ALTER TABLE application_review_decisions ADD COLUMN {column} {definition}"
-            )
+            conn.execute(f"ALTER TABLE application_review_decisions ADD COLUMN {column} {definition}")
             added.append(column)
     conn.commit()
     return added
@@ -1664,14 +2015,9 @@ def ensure_employer_analysis_tables(conn: sqlite3.Connection | None = None) -> l
     )
     # Audit column for the EEO red-flag screen (AI-SPEC §6 Dimension 9). Added
     # idempotently so a DB created before this column gains it without a rebuild.
-    _analysis_cols = {
-        row[1] for row in conn.execute("PRAGMA table_info(job_employer_analysis)").fetchall()
-    }
+    _analysis_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_employer_analysis)").fetchall()}
     if "eeo_screen_json" not in _analysis_cols:
-        conn.execute(
-            "ALTER TABLE job_employer_analysis "
-            "ADD COLUMN eeo_screen_json TEXT NOT NULL DEFAULT '[]'"
-        )
+        conn.execute("ALTER TABLE job_employer_analysis ADD COLUMN eeo_screen_json TEXT NOT NULL DEFAULT '[]'")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS job_employer_analysis_sub_analyses (
@@ -1781,9 +2127,7 @@ def ensure_bullet_provenance_tables(conn: sqlite3.Connection | None = None) -> l
     # (like ``artifact_id`` / ``created_at``); the read path reads them off any
     # row of the set. Idempotent migration for tables created by Phase 2 before
     # these columns existed (single-user rip-and-replace, no compat shim).
-    existing_cols = {
-        row[1] for row in conn.execute("PRAGMA table_info(job_bullet_provenance)").fetchall()
-    }
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_bullet_provenance)").fetchall()}
     if "coverage_json" not in existing_cols:
         conn.execute("ALTER TABLE job_bullet_provenance ADD COLUMN coverage_json TEXT")
     if "voice_json" not in existing_cols:
@@ -1840,9 +2184,7 @@ def ensure_interview_prep_tables(conn: sqlite3.Connection | None = None) -> list
     )
     prep_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_interview_prep)").fetchall()}
     if "origin_run_id" not in prep_cols:
-        conn.execute(
-            "ALTER TABLE job_interview_prep ADD COLUMN origin_run_id TEXT NOT NULL DEFAULT ''"
-        )
+        conn.execute("ALTER TABLE job_interview_prep ADD COLUMN origin_run_id TEXT NOT NULL DEFAULT ''")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS job_interview_prep_items (
@@ -2001,17 +2343,13 @@ def ensure_posting_snapshot_tables(conn: sqlite3.Connection | None = None) -> li
     # The latest snapshot's confidence + quarantine reason are promoted onto
     # the row so the read model can gate the tailoring queue and surface the
     # enrichment quality signal without parsing snapshot_set_json per read.
-    existing_cols = {
-        row[1] for row in conn.execute("PRAGMA table_info(posting_snapshot_sets)").fetchall()
-    }
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(posting_snapshot_sets)").fetchall()}
     added_quality_columns = False
     if "latest_confidence" not in existing_cols:
         conn.execute("ALTER TABLE posting_snapshot_sets ADD COLUMN latest_confidence TEXT")
         added_quality_columns = True
     if "latest_quarantine_reason" not in existing_cols:
-        conn.execute(
-            "ALTER TABLE posting_snapshot_sets ADD COLUMN latest_quarantine_reason TEXT"
-        )
+        conn.execute("ALTER TABLE posting_snapshot_sets ADD COLUMN latest_quarantine_reason TEXT")
         added_quality_columns = True
     if added_quality_columns:
         _backfill_latest_snapshot_quality(conn)
@@ -2025,9 +2363,7 @@ def _backfill_latest_snapshot_quality(conn: sqlite3.Connection) -> None:
     Runs once when the columns are first added so pre-existing snapshot rows
     carry the same quality signal new writes persist directly.
     """
-    rows = conn.execute(
-        "SELECT tenant_id, job_url, snapshot_set_json FROM posting_snapshot_sets"
-    ).fetchall()
+    rows = conn.execute("SELECT tenant_id, job_url, snapshot_set_json FROM posting_snapshot_sets").fetchall()
     for row in rows:
         raw_json = row["snapshot_set_json"] if isinstance(row, sqlite3.Row) else row[2]
         try:
@@ -2395,10 +2731,7 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
     backfilled = conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
     if backfilled == 0:
         observation_columns = {
-            str(row[1])
-            for row in conn.execute(
-                "PRAGMA table_info(job_source_observations)"
-            ).fetchall()
+            str(row[1]) for row in conn.execute("PRAGMA table_info(job_source_observations)").fetchall()
         }
         identity_column = "job_id" if "job_id" in observation_columns else "job_url"
         if identity_column == "job_id":
@@ -2406,9 +2739,7 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
                 "SELECT tenant_id, job_id, url, site, strategy, discovered_at FROM jobs"
             ).fetchall()
         else:
-            legacy_jobs = conn.execute(
-                "SELECT url, site, strategy, discovered_at FROM jobs"
-            ).fetchall()
+            legacy_jobs = conn.execute("SELECT url, site, strategy, discovered_at FROM jobs").fetchall()
         if legacy_jobs:
             now = datetime.now(timezone.utc).isoformat()
             for row in legacy_jobs:
@@ -2541,12 +2872,7 @@ def ensure_discovery_search_unit_tables(
         )
         """
     )
-    search_unit_columns = {
-        str(row[1])
-        for row in conn.execute(
-            "PRAGMA table_info(discovery_search_units)"
-        ).fetchall()
-    }
+    search_unit_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(discovery_search_units)").fetchall()}
     if "reset_checkpoint_after_revision" not in search_unit_columns:
         conn.execute(
             """
@@ -2650,17 +2976,13 @@ def _backfill_one_observation_row(
         job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[1]
         url = row["url"] if isinstance(row, sqlite3.Row) else row[2]
         site = (row["site"] if isinstance(row, sqlite3.Row) else row[3]) or "unknown"
-        discovered_at = (
-            row["discovered_at"] if isinstance(row, sqlite3.Row) else row[5]
-        ) or now
+        discovered_at = (row["discovered_at"] if isinstance(row, sqlite3.Row) else row[5]) or now
     else:
         tenant_id = "local"
         job_id = None
         url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
         site = (row["site"] if isinstance(row, sqlite3.Row) else row[1]) or "unknown"
-        discovered_at = (
-            row["discovered_at"] if isinstance(row, sqlite3.Row) else row[3]
-        ) or now
+        discovered_at = (row["discovered_at"] if isinstance(row, sqlite3.Row) else row[3]) or now
     if not url:
         return
     source_native_id = url  # fall back to the URL when we have nothing better
@@ -2723,12 +3045,9 @@ _ENRICHMENT_JOIN: str = (
 
 _EFFECTIVE_FULL_DESCRIPTION: str = "je.full_description"
 _EFFECTIVE_APPLICATION_URL: str = "je.application_url"
-_EFFECTIVE_APPLY_TARGET_URL: str = (
-    f"COALESCE(NULLIF({_EFFECTIVE_APPLICATION_URL}, ''), jobs.url)"
-)
+_EFFECTIVE_APPLY_TARGET_URL: str = f"COALESCE(NULLIF({_EFFECTIVE_APPLICATION_URL}, ''), jobs.url)"
 _ENRICHMENT_PENDING: str = (
-    "(je.job_id IS NULL OR je.current_status = 'pending') "
-    "AND COALESCE(jss_enrich.state, 'pending') = 'pending'"
+    "(je.job_id IS NULL OR je.current_status = 'pending') AND COALESCE(jss_enrich.state, 'pending') = 'pending'"
 )
 _ENRICHMENT_SELECTED_PENDING: str = (
     "(je.job_id IS NULL OR je.current_status = 'pending') "
@@ -2740,20 +3059,15 @@ _ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED: str = (
     "AND jss_enrich.error_code = 'ENRICH_ROBOTS_DISALLOWED' "
     "AND COALESCE(jss_enrich.retryable, 1) = 1"
 )
-_ENRICHMENT_RUNNABLE: str = (
-    f"(({_ENRICHMENT_PENDING}) OR ({_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}))"
-)
-_ENRICHMENT_SELECTED_RUNNABLE: str = (
-    f"(({_ENRICHMENT_SELECTED_PENDING}) OR ({_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}))"
-)
+_ENRICHMENT_RUNNABLE: str = f"(({_ENRICHMENT_PENDING}) OR ({_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}))"
+_ENRICHMENT_SELECTED_RUNNABLE: str = f"(({_ENRICHMENT_SELECTED_PENDING}) OR ({_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}))"
 
 # Closed/removed posting states are Enrichment-owned facts, not user
 # tombstones. Work queues treat them as non-actionable while leaving the
 # rows available for the Jobs > closed tab and future rediscovery.
 _CLOSED_ACTIVE_STATES_SQL = "'closed', 'expired', 'removed', 'location_incompatible'"
 _ACTIVE_STATE_JOIN: str = (
-    "LEFT JOIN posting_snapshot_sets pss "
-    "ON pss.tenant_id = jobs.tenant_id AND pss.job_id = jobs.job_id"
+    "LEFT JOIN posting_snapshot_sets pss ON pss.tenant_id = jobs.tenant_id AND pss.job_id = jobs.job_id"
 )
 _NOT_CLOSED_ACTIVE_STATE: str = (
     f"(pss.latest_active_state IS NULL OR pss.latest_active_state NOT IN ({_CLOSED_ACTIVE_STATES_SQL}))"
@@ -3000,8 +3314,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchone()[0]
 
     stats["detail_errors"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_ENRICHMENT_JOIN} "
-        "WHERE je.current_status = 'failed'"
+        f"SELECT COUNT(*) FROM jobs {_ENRICHMENT_JOIN} WHERE je.current_status = 'failed'"
     ).fetchone()[0]
 
     # Scoring stage — use the same canonical score join as worker queues.
@@ -3070,20 +3383,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         f"AND {_NOT_CLOSED_ACTIVE_STATE}"
     ).fetchone()[0]
 
-    stats["ready_to_apply"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
-        f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
-        f"{_ACTIVE_STATE_JOIN} "
-        f"WHERE {_READY_TAILORED_RESUME_WITH_PDF} "
-        f"AND {_EFFECTIVE_FIT_SCORE} >= 7 "
-        f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
-        f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
-        f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
-        f"AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL "
-        f"AND {_EFFECTIVE_APPLY_TARGET_URL} != '' "
-        f"AND {_NOT_CLOSED_ACTIVE_STATE} "
-        f"AND {_ENRICHMENT_NOT_QUARANTINED}"
-    ).fetchone()[0]
+    stats["ready_to_apply"] = count_ready_to_apply(conn)
 
     return stats
 
@@ -3105,6 +3405,7 @@ def count_ready_to_apply(
     register_score_eligibility_sql(conn)
     where = [
         _READY_TAILORED_RESUME_WITH_PDF,
+        APPLY_ADMISSIBLE_SQL,
         f"{_EFFECTIVE_FIT_SCORE} >= ?",
         _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
         _SCORE_CURRENT_FOR_DOWNSTREAM,
@@ -3411,6 +3712,7 @@ def get_jobs_by_stage(
         # through ``apply_run_projections`` so the new write path
         # (which leaves jobs.applied_at NULL) is visible.
         "pending_apply": (
+            f"{APPLY_ADMISSIBLE_SQL} AND "
             f"{_READY_TAILORED_RESUME_WITH_PDF} "
             f"AND {_EFFECTIVE_FIT_SCORE} >= ? "
             f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "

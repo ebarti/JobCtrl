@@ -9,11 +9,11 @@ from typing import Iterator
 
 import pytest
 
-from jobctrl.domain.compensation import ReportedCompensationObservation, parse_posted_compensation
+from jobctrl.domain.compensation import ReportedCompensationObservation
 from jobctrl.domain.identifiers import JobId, generate_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.database import close_connection, init_db
-from jobctrl.infrastructure.compensation import SqliteMarketCompensationRepository, SqlitePostedCompensationRepository
+from jobctrl.infrastructure.compensation import SqliteMarketCompensationRepository
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
 from jobctrl.infrastructure.events.watermark import SqliteEventWatermarkRepository
 from jobctrl.infrastructure.projections.projection_builder import (
@@ -51,8 +51,8 @@ def _seed_job(
         """
         INSERT INTO jobs (
             tenant_id, job_id, url, title, company, site, strategy, location,
-            salary, discovered_at, application_url, description
-        ) VALUES (?, ?, ?, ?, ?, ?, 'jobspy', ?, ?, ?, ?, ?)
+            salary, discovered_at, description
+        ) VALUES (?, ?, ?, ?, ?, ?, 'jobspy', ?, ?, ?, ?)
         """,
         (
             str(LOCAL_TENANT),
@@ -64,9 +64,13 @@ def _seed_job(
             location,
             salary,
             utc_now(),
-            url,
             description,
         ),
+    )
+    conn.execute(
+        "INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,updated_at) "
+        "VALUES (?,?,'pending',?,?)",
+        (str(LOCAL_TENANT), str(job_id), url, utc_now()),
     )
     conn.commit()
     return job_id
@@ -75,6 +79,55 @@ def _seed_job(
 def test_initial_watermark_is_zero(conn: sqlite3.Connection) -> None:
     repo = SqliteEventWatermarkRepository(conn)
     assert repo.get(PYTHON_WATERMARK_NAME) == 0
+
+
+def test_projections_bind_requirement_report_to_selected_score(conn: sqlite3.Connection) -> None:
+    job_id = _seed_job(conn, "https://example.com/score-report-binding")
+    now = utc_now()
+    conn.execute(
+        "INSERT INTO job_scores (tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at) "
+        "VALUES ('local', ?, 1, 8, '{}', '[]', ?)",
+        (str(job_id), now),
+    )
+    conn.execute(
+        "INSERT INTO job_requirement_fit_reports (tenant_id, job_id, score_version, "
+        "employer_analysis_generation, profile_snapshot_version, scoring_policy_version, "
+        "formula_version, resolved_fit_score, fit_band, confidence, summary_json, created_at) "
+        "VALUES ('local', ?, 1, 1, 1, 1, 'v1', 8, 'strong', 'high', '{}', ?)",
+        (str(job_id), now),
+    )
+    conn.execute(
+        "INSERT INTO job_requirement_fit_items (tenant_id, job_id, score_version, requirement_id, "
+        "requirement_text, tier, weight, job_evidence_span, fit_json, contribution_json, tailoring_json, position) "
+        "VALUES ('local', ?, 1, 'r1', 'Old requirement', 'must_have', 1, 'Old requirement', "
+        "'{\"kind\":\"missing\",\"reason\":\"Missing\"}', '{}', '{}', 0)",
+        (str(job_id),),
+    )
+    record_job_event(conn, job_id, "score", "JobScored")
+    conn.commit()
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    builder.refresh()
+    row = conn.execute("SELECT score_version, fit_band FROM job_list_projections WHERE job_id = ?", (str(job_id),)).fetchone()
+    assert tuple(row) == (1, "strong")
+    assert conn.execute("SELECT COUNT(*) FROM evidence_usage_projections WHERE projection_kind = 'gap'").fetchone()[0] == 1
+
+    # A historical score can lack its corresponding report. The earlier
+    # report remains stored but must not be shown as the new score's evidence.
+    conn.execute(
+        "INSERT INTO job_scores (tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at) "
+        "VALUES ('local', ?, 2, 6, '{}', '[]', ?)",
+        (str(job_id), now),
+    )
+    record_job_event(conn, job_id, "score", "JobScored")
+    conn.commit()
+    builder.refresh()
+    row = conn.execute("SELECT score_version, fit_band FROM job_list_projections WHERE job_id = ?", (str(job_id),)).fetchone()
+    assert tuple(row) == (2, "unreported")
+    with builder._bind(conn):
+        assert builder._load_requirement_fit_report(str(job_id), score_version=2) is None
+        assert json.loads(builder._load_requirement_fit_report(str(job_id), score_version=1) or "{}")['scoreVersion'] == 1
+    assert conn.execute("SELECT COUNT(*) FROM evidence_usage_projections WHERE projection_kind = 'gap'").fetchone()[0] == 0
+    assert conn.execute("SELECT score_version FROM job_requirement_fit_reports WHERE job_id = ?", (str(job_id),)).fetchone()[0] == 1
 
 
 def test_refresh_advances_watermark(conn: sqlite3.Connection) -> None:
@@ -113,7 +166,8 @@ def test_refresh_resumes_from_watermark(conn: sqlite3.Connection) -> None:
 
 @pytest.mark.parametrize("commit", [False, True])
 def test_subscriber_preserves_caller_transaction(
-    conn: sqlite3.Connection, commit: bool,
+    conn: sqlite3.Connection,
+    commit: bool,
 ) -> None:
     job_id = _seed_job(conn, "https://example.com/caller-transaction")
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
@@ -151,8 +205,12 @@ def _projection_transaction_snapshot(conn: sqlite3.Connection) -> dict[str, list
     return {
         table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
         for table in (
-            "job_list_projections", "job_detail_projections", "dashboard_projections",
-            "evidence_usage_projections", "event_watermarks", "projection_backfills",
+            "job_list_projections",
+            "job_detail_projections",
+            "dashboard_projections",
+            "evidence_usage_projections",
+            "event_watermarks",
+            "projection_backfills",
         )
     }
 
@@ -160,7 +218,9 @@ def _projection_transaction_snapshot(conn: sqlite3.Connection) -> dict[str, list
 @pytest.mark.parametrize("caller_transaction", [False, True])
 @pytest.mark.parametrize("failure_table", ["evidence_usage_projections", "event_watermarks"])
 def test_refresh_failure_rolls_back_only_its_projection_pass(
-    conn: sqlite3.Connection, caller_transaction: bool, failure_table: str,
+    conn: sqlite3.Connection,
+    caller_transaction: bool,
+    failure_table: str,
 ) -> None:
     job_id = _seed_job(conn, "https://example.com/failed-projection")
     conn.execute(
@@ -264,9 +324,10 @@ def test_legacy_opaque_tenant_cursors_cannot_acknowledge_local_events(conn: sqli
     assert conn.execute("SELECT title FROM job_list_projections").fetchone()[0] == "Changed"
     assert SqliteEventWatermarkRepository(conn).get(f"python:{PROJECTION_NAME}:local") == event_id
     for legacy_row in legacy_rows:
-        assert tuple(conn.execute(
-            "SELECT * FROM event_watermarks WHERE projection_name = ?", (legacy_row[0],)
-        ).fetchone()) == legacy_row
+        assert (
+            tuple(conn.execute("SELECT * FROM event_watermarks WHERE projection_name = ?", (legacy_row[0],)).fetchone())
+            == legacy_row
+        )
 
 
 def test_backfill_from_empty(conn: sqlite3.Connection) -> None:
@@ -300,13 +361,13 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
         INSERT INTO candidate_profile_achievement_evidence (
             tenant_id, profile_id, entry_id, evidence_index, evidence_id,
             source_text, scope, action, tools_json, metrics_json, outcome,
-            seniority_signal, evidence_strength, claim_confidence,
+            evidence_strength, claim_confidence,
             user_confirmed, tags_json
         ) VALUES (
             'local', 'default', 'exp-platform', 0, 'ev_platform',
             'Led a platform migration that reduced latency by 40%.',
             'Platform migration', 'Led migration', '["Python", "Postgres"]',
-            '["40% latency reduction"]', 'Reduced latency', '',
+            '["40% latency reduction"]', 'Reduced latency',
             'verified', 0.95, 1, '["migration"]'
         )
         """
@@ -421,6 +482,9 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
         """,
         (str(job_id),),
     )
+    from tests.determination_fakes import record_artifact_authority
+
+    record_artifact_authority(conn)
     record_job_event(conn, job_id, "score", "JobScored", payload=_INERT_CONTEXT)
     conn.commit()
 
@@ -458,12 +522,7 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
         and gap["jobRefs"][0]["jobId"] == str(job_id)
         for gap in gaps
     )
-    assert any(
-        gap["kind"] == "missing_skill"
-        and gap["demandedSkill"] == "Kubernetes"
-        and gap["jobRefs"][0]["artifactId"] == "artifact-resume-1"
-        for gap in gaps
-    )
+    assert all(gap["kind"] != "missing_skill" for gap in gaps)
 
 
 def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
@@ -493,13 +552,13 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         INSERT INTO candidate_profile_achievement_evidence (
             tenant_id, profile_id, entry_id, evidence_index, evidence_id,
             source_text, scope, action, tools_json, metrics_json, outcome,
-            seniority_signal, evidence_strength, claim_confidence,
+            evidence_strength, claim_confidence,
             user_confirmed, tags_json
         ) VALUES (
             'local', 'default', 'exp-platform', 0, 'ev_platform',
             'Led a platform migration that reduced latency by 40%.',
             'Platform migration', 'Led migration', '["Python", "Postgres"]',
-            '["40% latency reduction"]', 'Reduced latency', '',
+            '["40% latency reduction"]', 'Reduced latency',
             'verified', 0.95, 1, '["migration"]'
         )
         """
@@ -668,6 +727,9 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         "VALUES ('local', ?, '2026-07-05T13:00:00Z', 'user hide', NULL)",
         (str(hidden_job_id),),
     )
+    from tests.determination_fakes import record_artifact_authority
+
+    record_artifact_authority(conn)
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
@@ -734,421 +796,15 @@ def test_job_projection_uses_explicit_company_before_source(conn: sqlite3.Connec
     assert row[0] == "Keyrock"
 
 
-def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) -> None:
-    job_url = "https://example.com/compensation"
-    job_id = _seed_job(conn, job_url)
-    conn.execute(
-        "UPDATE jobs SET salary = ? WHERE tenant_id = ? AND job_id = ?",
-        ("USD 70000-90000/year", str(LOCAL_TENANT), str(job_id)),
-    )
-    SqlitePostedCompensationRepository(conn).save_fact(
-        parse_posted_compensation(
-            "USD 70000-90000/year",
-            job_id=job_id,
-            parsed_at="2026-06-19T10:00:00Z",
-        )
-    )
-    SqliteMarketCompensationRepository(conn).estimate_and_save_job(
-        job_id=job_id,
-        title="Senior Software Developer",
-        company="ExampleCo",
-        location="Madrid, Spain",
-        observations=(
-            ReportedCompensationObservation(
-                source_id="levels_fyi",
-                source_provenance="licensed",
-                company_name="ExampleCo",
-                role_title="Senior Software Developer",
-                level_label="Senior",
-                company_tier="tier_2_ambitious",
-                location="Remote Europe",
-                minimum_amount=118_000,
-                maximum_amount=142_000,
-                release_year=2026,
-                sample_count=4,
-                attribution="Levels.fyi reported compensation data",
-            ),
-            ReportedCompensationObservation(
-                source_id="glassdoor",
-                source_provenance="licensed",
-                company_name="ExampleCo",
-                role_title="Senior Software Developer",
-                level_label="Senior",
-                company_tier="tier_2_ambitious",
-                location="Madrid, Spain",
-                minimum_amount=112_000,
-                maximum_amount=136_000,
-                release_year=2026,
-                sample_count=3,
-                attribution="Glassdoor reported compensation data",
-            ),
-        ),
-        estimated_at="2026-06-19T10:01:00Z",
-    )
-    conn.commit()
-
-    ProjectionBuilder(conn_factory=lambda: conn).refresh()
-
-    row = conn.execute(
-        """
-        SELECT salary, compensation_summary_json
-        FROM job_list_projections
-        WHERE job_id = ?
-        """,
-        (str(job_id),),
-    ).fetchone()
-    assert row is not None
-    assert row["salary"] == "USD 70000-90000/year"
-    summary = json.loads(row["compensation_summary_json"])
-    assert summary["posted"]["recordStatus"] == "recorded"
-    assert summary["posted"]["displayRange"] == "USD 70000-90000/year"
-    assert summary["posted"]["range"]["annualizedMinimumEur"] == 64_400
-    assert summary["posted"]["range"]["annualizedMaximumEur"] == 82_800
-    assert summary["market"]["recordStatus"] == "recorded"
-    assert summary["market"]["sourceKind"] == "reported_company_role_market"
-    assert summary["market"]["displayRange"] == "EUR 112000-142000/year"
-    assert summary["market"]["range"]["annualizedMinimumEur"] == 112_000
-    assert summary["market"]["range"]["annualizedMaximumEur"] == 142_000
-    assert summary["market"]["confidenceScore"] == 0.78
-    assert summary["market"]["sourceCount"] == 2
-    assert summary["market"]["sampleCount"] == 7
-
-    detail = conn.execute(
-        """
-        SELECT compensation_audit_json
-        FROM job_detail_projections
-        WHERE job_id = ?
-        """,
-        (str(job_id),),
-    ).fetchone()
-    assert detail is not None
-    audit = json.loads(detail["compensation_audit_json"])
-    assert audit["posted"]["fact"]["sourceText"] == "USD 70000-90000/year"
-    assert {source["sourceId"] for source in audit["market"]["estimate"]["sources"]} == {"levels_fyi", "glassdoor"}
-    assert audit["market"]["estimate"]["companyName"] == "ExampleCo"
-    assert audit["market"]["estimate"]["matchScope"] == "exact_company_role"
-    assert "Glassdoor" in json.dumps(audit)
-    assert "/Users/" not in json.dumps(audit)
-
-
-def test_posted_parser_reconciliation_rebuilds_settled_list_and_detail_projections(
-    conn: sqlite3.Connection,
-) -> None:
-    job_id = _seed_job(
-        conn,
-        "https://example.com/posted-parser-upgrade",
-        salary="Compensation: USD 243,800 annually and stock options.",
-    )
-    posted_repo = SqlitePostedCompensationRepository(conn)
-    posted_repo.parse_and_save_job_salary(
-        job_id,
-        "Compensation: USD 243,800 annually and stock options.",
-        parsed_at="2026-08-12T10:00:00Z",
-    )
-    conn.execute(
-        """
-        UPDATE job_posted_compensation_facts
-        SET parser_version = 'posted-compensation-v1',
-            component = 'equity',
-            confidence = 'medium'
-        WHERE tenant_id = ? AND job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(job_id)),
-    )
-    conn.commit()
-
-    builder = ProjectionBuilder(conn_factory=lambda: conn)
-    assert builder.refresh() == 1
-    settled_watermark = SqliteEventWatermarkRepository(conn).get(PYTHON_WATERMARK_NAME)
-    initial = conn.execute(
-        """
-        SELECT list.compensation_summary_json,
-               detail.compensation_summary_json AS detail_summary_json,
-               detail.compensation_audit_json
-        FROM job_list_projections AS list
-        JOIN job_detail_projections AS detail
-          ON detail.tenant_id = list.tenant_id
-         AND detail.job_id = list.job_id
-        WHERE list.tenant_id = ? AND list.job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(job_id)),
-    ).fetchone()
-    assert initial is not None
-    initial_list = json.loads(initial["compensation_summary_json"])
-    initial_detail = json.loads(initial["detail_summary_json"])
-    initial_audit = json.loads(initial["compensation_audit_json"])
-    assert initial_list["projectionVersion"] == 3
-    assert initial_detail["projectionVersion"] == 3
-    assert initial_list["posted"]["range"]["component"] == "equity"
-    assert initial_audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v1"
-
-    assert (
-        posted_repo.reparse_outdated_facts(
-            parsed_at="2026-08-12T11:00:00Z",
-        )
-        == 1
-    )
-    assert builder.refresh() == 1
-    assert SqliteEventWatermarkRepository(conn).get(PYTHON_WATERMARK_NAME) > settled_watermark
-
-    rebuilt = conn.execute(
-        """
-        SELECT list.compensation_summary_json,
-               detail.compensation_summary_json AS detail_summary_json,
-               detail.compensation_audit_json
-        FROM job_list_projections AS list
-        JOIN job_detail_projections AS detail
-          ON detail.tenant_id = list.tenant_id
-         AND detail.job_id = list.job_id
-        WHERE list.tenant_id = ? AND list.job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(job_id)),
-    ).fetchone()
-    assert rebuilt is not None
-    list_summary = json.loads(rebuilt["compensation_summary_json"])
-    detail_summary = json.loads(rebuilt["detail_summary_json"])
-    audit = json.loads(rebuilt["compensation_audit_json"])
-    assert list_summary["posted"]["range"]["component"] == "unknown"
-    assert detail_summary["posted"]["range"]["component"] == "unknown"
-    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v4"
-    assert audit["posted"]["fact"]["component"] == "unknown"
-
-
-def test_posted_parser_reconciliation_corrects_hr_prose_period_in_settled_projections(
-    conn: sqlite3.Connection,
-) -> None:
-    source_text = (
-        "anybody (even HR managers) is able to create new integrations. Base pay range: €94,300.00/yr - €106,950.00/yr"
-    )
-    job_id = _seed_job(
-        conn,
-        "https://example.com/posted-parser-hr-period-upgrade",
-        salary=source_text,
-    )
-    posted_repo = SqlitePostedCompensationRepository(conn)
-    posted_repo.parse_and_save_job_salary(
-        job_id,
-        source_text,
-        parsed_at="2026-08-12T10:00:00Z",
-    )
-    conn.execute(
-        """
-        UPDATE job_posted_compensation_facts
-        SET parser_version = 'posted-compensation-v2',
-            period = 'hour',
-            annualized_minimum_amount = 196144000,
-            annualized_maximum_amount = 222456000,
-            annualization_assumption = 'Hourly amounts annualized by multiplying by 2,080 work hours.',
-            confidence = 'low',
-            warnings_json = '["hourly_period"]'
-        WHERE tenant_id = ? AND job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(job_id)),
-    )
-    conn.commit()
-
-    builder = ProjectionBuilder(conn_factory=lambda: conn)
-    assert builder.refresh() == 1
-    settled_watermark = SqliteEventWatermarkRepository(conn).get(PYTHON_WATERMARK_NAME)
-    initial = conn.execute(
-        """
-        SELECT list.compensation_summary_json,
-               detail.compensation_summary_json AS detail_summary_json,
-               detail.compensation_audit_json
-        FROM job_list_projections AS list
-        JOIN job_detail_projections AS detail
-          ON detail.tenant_id = list.tenant_id
-         AND detail.job_id = list.job_id
-        WHERE list.tenant_id = ? AND list.job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(job_id)),
-    ).fetchone()
-    assert initial is not None
-    assert json.loads(initial["compensation_summary_json"])["posted"]["displayRange"] == ("EUR 94300-106950/hour")
-    assert json.loads(initial["detail_summary_json"])["posted"]["displayRange"] == ("EUR 94300-106950/hour")
-    assert json.loads(initial["compensation_audit_json"])["posted"]["fact"]["parserVersion"] == (
-        "posted-compensation-v2"
-    )
-
-    assert (
-        posted_repo.reparse_outdated_facts(
-            parsed_at="2026-08-12T11:00:00Z",
-        )
-        == 1
-    )
-    assert builder.refresh() == 1
-    assert SqliteEventWatermarkRepository(conn).get(PYTHON_WATERMARK_NAME) > settled_watermark
-
-    rebuilt = conn.execute(
-        """
-        SELECT list.compensation_summary_json,
-               detail.compensation_summary_json AS detail_summary_json,
-               detail.compensation_audit_json
-        FROM job_list_projections AS list
-        JOIN job_detail_projections AS detail
-          ON detail.tenant_id = list.tenant_id
-         AND detail.job_id = list.job_id
-        WHERE list.tenant_id = ? AND list.job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(job_id)),
-    ).fetchone()
-    assert rebuilt is not None
-    list_summary = json.loads(rebuilt["compensation_summary_json"])
-    detail_summary = json.loads(rebuilt["detail_summary_json"])
-    audit = json.loads(rebuilt["compensation_audit_json"])
-    assert list_summary["posted"]["displayRange"] == "EUR 94300-106950/year"
-    assert detail_summary["posted"]["displayRange"] == "EUR 94300-106950/year"
-    assert audit["posted"]["fact"]["period"] == "year"
-    assert audit["posted"]["fact"]["annualizedMinimumAmount"] == 94_300
-    assert audit["posted"]["fact"]["annualizedMaximumAmount"] == 106_950
-    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v4"
-    assert "hourly_period" not in {warning["code"] for warning in audit["posted"]["fact"]["warnings"]}
-
-
-def test_posted_parser_reconciliation_infers_wave_salary_as_annual_in_settled_projections(
-    conn: sqlite3.Connection,
-) -> None:
-    source_text = (
-        "Wave covers all costs. Compensation: Our salaries are competitive and "
-        "are calculated using a transparent formula. For this role, depending "
-        "on your level and location, we offer a salary of up to $356,500 USD, "
-        "plus a generous equity package."
-    )
-    job_id = _seed_job(
-        conn,
-        "https://www.wave.com/en/careers/job/6129464004/",
-        salary=source_text,
-    )
-    posted_repo = SqlitePostedCompensationRepository(conn)
-    posted_repo.parse_and_save_job_salary(
-        job_id,
-        source_text,
-        parsed_at="2026-08-14T08:40:15Z",
-    )
-    conn.execute(
-        """
-        UPDATE job_posted_compensation_facts
-        SET parser_version = 'posted-compensation-v3',
-            period = 'unknown',
-            annualized_minimum_amount = NULL,
-            annualized_maximum_amount = NULL,
-            annualization_assumption = NULL,
-            confidence = 'medium',
-            warnings_json = '["source_text_truncated", "missing_period", "one_sided_range"]'
-        WHERE tenant_id = ? AND job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(job_id)),
-    )
-    conn.commit()
-
-    builder = ProjectionBuilder(conn_factory=lambda: conn)
-    assert builder.refresh() == 1
-    initial = conn.execute(
-        """
-        SELECT list.compensation_summary_json,
-               detail.compensation_summary_json AS detail_summary_json
-        FROM job_list_projections AS list
-        JOIN job_detail_projections AS detail
-          ON detail.tenant_id = list.tenant_id
-         AND detail.job_id = list.job_id
-        WHERE list.tenant_id = ? AND list.job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(job_id)),
-    ).fetchone()
-    assert initial is not None
-    assert json.loads(initial["compensation_summary_json"])["posted"]["displayRange"] == ("USD up to 356500/unknown")
-    assert json.loads(initial["detail_summary_json"])["posted"]["displayRange"] == ("USD up to 356500/unknown")
-
-    assert posted_repo.reparse_outdated_facts(parsed_at="2026-08-14T10:00:00Z") == 1
-    assert builder.refresh() == 1
-
-    rebuilt = conn.execute(
-        """
-        SELECT list.compensation_summary_json,
-               detail.compensation_summary_json AS detail_summary_json,
-               detail.compensation_audit_json
-        FROM job_list_projections AS list
-        JOIN job_detail_projections AS detail
-          ON detail.tenant_id = list.tenant_id
-         AND detail.job_id = list.job_id
-        WHERE list.tenant_id = ? AND list.job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(job_id)),
-    ).fetchone()
-    assert rebuilt is not None
-    list_summary = json.loads(rebuilt["compensation_summary_json"])
-    detail_summary = json.loads(rebuilt["detail_summary_json"])
-    audit = json.loads(rebuilt["compensation_audit_json"])
-    assert list_summary["posted"]["displayRange"] == "USD up to 356500/year"
-    assert detail_summary["posted"]["displayRange"] == "USD up to 356500/year"
-    assert audit["posted"]["fact"]["period"] == "year"
-    assert audit["posted"]["fact"]["annualizedMaximumAmount"] == 356_500
-    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v4"
-    assert "annual_period_inferred" in {warning["code"] for warning in audit["posted"]["fact"]["warnings"]}
-    assert "missing_period" not in {warning["code"] for warning in audit["posted"]["fact"]["warnings"]}
-
-
-def test_posted_parser_reconciliation_preserves_biweekly_as_unannualized(
-    conn: sqlite3.Connection,
-) -> None:
-    source_text = "Salary up to $15,000 biweekly"
-    job_id = _seed_job(
-        conn,
-        "https://example.com/jobs/weekly-salary",
-        salary=source_text,
-    )
-    posted_repo = SqlitePostedCompensationRepository(conn)
-    posted_repo.parse_and_save_job_salary(
-        job_id,
-        source_text,
-        parsed_at="2026-08-14T08:40:15Z",
-    )
-    conn.execute(
-        """
-        UPDATE job_posted_compensation_facts
-        SET parser_version = 'posted-compensation-v3'
-        WHERE tenant_id = ? AND job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(job_id)),
-    )
-    conn.commit()
-
-    builder = ProjectionBuilder(conn_factory=lambda: conn)
-    assert builder.refresh() == 1
-    assert posted_repo.reparse_outdated_facts(parsed_at="2026-08-14T10:00:00Z") == 1
-    assert builder.refresh() == 1
-
-    rebuilt = conn.execute(
-        """
-        SELECT list.compensation_summary_json,
-               detail.compensation_summary_json AS detail_summary_json,
-               detail.compensation_audit_json
-        FROM job_list_projections AS list
-        JOIN job_detail_projections AS detail
-          ON detail.tenant_id = list.tenant_id
-         AND detail.job_id = list.job_id
-        WHERE list.tenant_id = ? AND list.job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(job_id)),
-    ).fetchone()
-    assert rebuilt is not None
-    list_summary = json.loads(rebuilt["compensation_summary_json"])
-    detail_summary = json.loads(rebuilt["detail_summary_json"])
-    audit = json.loads(rebuilt["compensation_audit_json"])
-    assert list_summary["posted"]["displayRange"] == "USD up to 15000/unknown"
-    assert detail_summary["posted"]["displayRange"] == "USD up to 15000/unknown"
-    assert audit["posted"]["fact"]["period"] == "unknown"
-    assert audit["posted"]["fact"]["annualizedMaximumAmount"] is None
-    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v4"
-    warning_codes = {warning["code"] for warning in audit["posted"]["fact"]["warnings"]}
-    assert "annual_period_inferred" not in warning_codes
-    assert "missing_period" in warning_codes
-
-
 def test_projection_suppresses_historical_posted_as_market_rows(
     conn: sqlite3.Connection,
+    monkeypatch,
 ) -> None:
     job_id = _seed_job(conn, "https://example.com/historical-posted-market")
+    from tests.compensation_fakes import record_job_interpretation, configure_classifier, ClassificationModel
+
+    record_job_interpretation(conn, job_id, country="ES")
+    configure_classifier(monkeypatch, ClassificationModel(scope="company", country="ES"))
     SqliteMarketCompensationRepository(conn).estimate_and_save_job(
         job_id=job_id,
         title="Senior Software Developer",
@@ -1177,14 +833,8 @@ def test_projection_suppresses_historical_posted_as_market_rows(
     assert first_builder.refresh() == 1
     initial = conn.execute(
         """
-        SELECT list.compensation_summary_json,
-               detail.compensation_summary_json AS detail_summary_json,
-               detail.compensation_audit_json
-        FROM job_list_projections AS list
-        JOIN job_detail_projections AS detail
-          ON detail.tenant_id = list.tenant_id
-         AND detail.job_id = list.job_id
-        WHERE list.tenant_id = ? AND list.job_id = ?
+        SELECT compensation_summary_json FROM job_list_projections
+        WHERE tenant_id = ? AND job_id = ?
         """,
         (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
@@ -1195,8 +845,6 @@ def test_projection_suppresses_historical_posted_as_market_rows(
     # existing list/detail compensation payloads still carry projection v1.
     for table, column in (
         ("job_list_projections", "compensation_summary_json"),
-        ("job_detail_projections", "compensation_summary_json"),
-        ("job_detail_projections", "compensation_audit_json"),
     ):
         payload = json.loads(
             conn.execute(
@@ -1239,30 +887,15 @@ def test_projection_suppresses_historical_posted_as_market_rows(
 
     row = conn.execute(
         """
-        SELECT list.compensation_summary_json,
-               detail.compensation_summary_json AS detail_summary_json,
-               detail.compensation_audit_json
-        FROM job_list_projections AS list
-        JOIN job_detail_projections AS detail
-          ON detail.tenant_id = list.tenant_id
-         AND detail.job_id = list.job_id
-        WHERE list.tenant_id = ? AND list.job_id = ?
+        SELECT compensation_summary_json FROM job_list_projections
+        WHERE tenant_id = ? AND job_id = ?
         """,
         (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
     assert row is not None
     summary = json.loads(row["compensation_summary_json"])
-    detail_summary = json.loads(row["detail_summary_json"])
-    audit = json.loads(row["compensation_audit_json"])
-    assert summary["projectionVersion"] == 3
-    assert detail_summary["projectionVersion"] == 3
-    assert audit["projectionVersion"] == 3
+    assert summary["projectionVersion"] == 4
     assert summary["market"]["recordStatus"] == "not_requested"
-    assert audit["market"] == {
-        "ok": True,
-        "recordStatus": "not_requested",
-        "jobId": str(job_id),
-    }
 
 
 def _insert_score(
@@ -1360,18 +993,6 @@ def test_projects_score_audit_columns_from_job_scores(conn: sqlite3.Connection) 
     assert json.loads(list_row["score_criteria_json"])["formula_version"] == "score-v3"
     assert json.loads(list_row["score_trace_json"])["scoring_policy_version"] == 3
 
-    detail_row = conn.execute(
-        """
-        SELECT score_criteria_json, score_trace_json, score_correction_json
-        FROM job_detail_projections WHERE job_id = ?
-        """,
-        (str(job_id),),
-    ).fetchone()
-    assert detail_row is not None
-    assert detail_row["score_criteria_json"] == criteria_json
-    assert detail_row["score_trace_json"] == trace_json
-    assert detail_row["score_correction_json"] is None
-
 
 def test_projects_score_correction_json_when_correction_exists(
     conn: sqlite3.Connection,
@@ -1411,14 +1032,6 @@ def test_projects_score_correction_json_when_correction_exists(
     ).fetchone()
     assert list_row is not None
     assert list_row["score_correction_json"] == correction_json
-
-    detail_row = conn.execute(
-        "SELECT score_correction_json FROM job_detail_projections WHERE job_id = ?",
-        (str(job_id),),
-    ).fetchone()
-    assert detail_row is not None
-    assert detail_row["score_correction_json"] == correction_json
-    assert json.loads(detail_row["score_correction_json"])["corrected_fit_score"] == 7
 
 
 def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Connection) -> None:
@@ -1485,18 +1098,9 @@ def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Conne
     assert list_row["score_criteria_json"] == criteria_json
     assert list_row["score_trace_json"] == trace_json
     assert list_row["score_correction_json"] == correction_json
-
-    detail_row = conn.execute(
-        """
-        SELECT score_criteria_json, score_trace_json, score_correction_json
-        FROM job_detail_projections WHERE job_id = ?
-        """,
-        (str(job_id),),
-    ).fetchone()
-    assert detail_row is not None
-    assert detail_row["score_criteria_json"] == criteria_json
-    assert detail_row["score_trace_json"] == trace_json
-    assert detail_row["score_correction_json"] == correction_json
+    assert conn.execute(
+        "SELECT score_criteria_json FROM job_detail_projections WHERE job_id = ?", (str(job_id),)
+    ).fetchone()[0] is None
 
 
 def test_score_audit_backfill_runs_at_most_once(conn: sqlite3.Connection) -> None:
@@ -1530,8 +1134,9 @@ def test_score_audit_backfill_runs_at_most_once(conn: sqlite3.Connection) -> Non
         correction_json=None,
     )
     conn.execute(
-        "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score) VALUES ('local', ?, 'Engineer', 6)",
-        (str(later_job_id),),
+        "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score, application_url) "
+        "VALUES ('local', ?, 'Engineer', 6, ?)",
+        (str(later_job_id), later),
     )
     record_job_event(conn, later_job_id, "score", "JobScored", payload=_INERT_CONTEXT)
     latest_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]

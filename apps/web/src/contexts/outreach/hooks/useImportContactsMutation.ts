@@ -13,14 +13,17 @@ export function useImportContactsMutation(): UseMutationResult<
   const tenantId = useTenantId();
   const { api } = usePorts();
   const queryClient = useQueryClient();
-  // Plain mutation, not createOptimisticMutation: a bulk CSV import has no
+  // Plain mutation, not createOptimisticMutation: a bulk contact import has no
   // meaningful client-side patch (imported count and contact ids are derived
   // server-side), so it only invalidates the contact lists once settled.
   return useMutation({
     mutationKey: outreachKeys.contacts(tenantId),
     mutationFn: (body: ContactImportRequest) => api.importContacts(body),
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: outreachKeys.contactLists(tenantId) });
+    onSettled: (_response, _error, variables) => {
+      const isCommit = "csvText" in variables || variables.mode === "commit";
+      if (isCommit) {
+        void queryClient.invalidateQueries({ queryKey: outreachKeys.contactLists(tenantId) });
+      }
     },
   });
 }

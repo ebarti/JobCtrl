@@ -9,6 +9,7 @@
  * that no route exposes a send transport (INV-1).
  */
 import fs from "node:fs";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -16,16 +17,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   ConfirmContactCandidateResponse,
+  ContactMutationResponse,
   ContactResearchDetailResponse,
   ContactResearchListResponse,
 } from "../src/contracts.js";
 import type { ContactResearchStarter } from "../src/local-actions.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const SECRET_NAME = "Dana Hiring-Manager";
 const SECRET_EMAIL = "dana@acme.example";
 const TEAM_URL = "https://acme.example/team";
+const RECEIPT_ID = "a".repeat(64);
 const JOB_ID_ONE = "00000000-0000-4000-8000-000000000021";
 const JOB_ID_TWO = "00000000-0000-4000-8000-000000000022";
 const JOB_URL_ONE = "https://jobs.example.test/research-one";
@@ -40,7 +43,7 @@ afterEach(() => {
 function withTempApp(starter?: ContactResearchStarter) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-research-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
   const insertJob = db.prepare(
@@ -79,6 +82,7 @@ function seedNeedsReviewTask(dbPath: string): { taskId: string; candidateId: str
         outcome: "allowed",
         attemptedAt: "2026-07-06T00:00:00Z",
         detail: "proposed:1",
+        determinationId: RECEIPT_ID,
       },
     ]),
     "2026-07-06T00:00:00Z",
@@ -108,6 +112,22 @@ function seedNeedsReviewTask(dbPath: string): { taskId: string; candidateId: str
     TEAM_URL,
     "2026-07-06T00:00:00Z",
   );
+  const receipt = {
+    determination_id: RECEIPT_ID, tenant_id: "local", entity_id: taskId,
+    kind: "contact_research_extraction", schema_version: "1",
+    prompt_version: "contact-research-extraction-v1", provider: "synthetic", model: "synthetic",
+    lane: "contact", input_fingerprint: RECEIPT_ID, created_at: "2026-07-06T00:00:00Z",
+    result: { source_id: `public_page:${crypto.createHash("sha256").update(TEAM_URL).digest("hex")}`,
+      candidates: [{ name: { source_id: `public_page:${crypto.createHash("sha256").update(TEAM_URL).digest("hex")}`,
+        start: 0, end: 4 }, role: "hiring_manager", confidence: 0.8 }] },
+  };
+  db.prepare(
+    `INSERT INTO semantic_determinations
+       (tenant_id, determination_id, entity_id, kind, schema_version, prompt_version,
+        provider, model, lane, input_fingerprint, created_at, envelope_json)
+     VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(RECEIPT_ID, taskId, receipt.kind, receipt.schema_version, receipt.prompt_version,
+    receipt.provider, receipt.model, receipt.lane, RECEIPT_ID, receipt.created_at, JSON.stringify(receipt));
   db.close();
   return { taskId, candidateId };
 }
@@ -281,6 +301,7 @@ describe("contact research API", () => {
     expect(detail.task.candidateCount).toBe(1);
     expect(detail.task.sourceAttempts).toHaveLength(1);
     expect(detail.task.sourceAttempts[0]!.outcome).toBe("allowed");
+    expect(detail.task.sourceAttempts[0]!.determinationId).toBe(RECEIPT_ID);
     const candidate = detail.task.candidates[0]!;
     expect(candidate.status).toBe("needs_review");
     expect(candidate.provenance.sourceKind).toBe("public_web_page");
@@ -288,6 +309,93 @@ describe("contact research API", () => {
     expect(nameAttr?.value).toBe(SECRET_NAME);
     expect(nameAttr?.provenance.captureMethod).toBe("llm_assisted");
     expect(nameAttr?.provenance.userConfirmed).toBe(false);
+  });
+
+  it("joins recorded authority and retains candidates when the receipt is missing or inconsistent", async () => {
+    const { app, dbPath } = withTempApp();
+    const { taskId, candidateId } = seedNeedsReviewTask(dbPath);
+    const db = new Database(dbPath);
+    db.prepare("DELETE FROM semantic_determinations WHERE tenant_id = 'local' AND determination_id = ?").run(RECEIPT_ID);
+    db.close();
+    const detail = (
+      await app.inject({ method: "GET", url: `/v1/contacts/research/${encodeURIComponent(taskId)}` })
+    ).json() as ContactResearchDetailResponse;
+    expect(detail.task.sourceAttempts[0]!.outcome).toBe("extraction_failed");
+    expect(detail.task.sourceAttempts[0]!.detail).toMatch(/recorded model decision is unavailable/i);
+    expect(detail.task.candidates.map((candidate) => candidate.candidateId)).toEqual([candidateId]);
+  });
+
+  it("does not present an unrecorded historical empty result as a model decision", async () => {
+    const { app, dbPath } = withTempApp();
+    const { taskId } = seedNeedsReviewTask(dbPath);
+    const db = new Database(dbPath);
+    db.prepare("UPDATE contact_research_tasks SET source_attempts_json = ? WHERE tenant_id = 'local' AND task_id = ?")
+      .run(JSON.stringify([{ sourceKind: "public_web_page", sourceRef: TEAM_URL,
+        outcome: "no_candidates", attemptedAt: "2026-07-06T00:00:00Z", detail: "proposed:0" }]), taskId);
+    db.close();
+    const detail = (
+      await app.inject({ method: "GET", url: `/v1/contacts/research/${encodeURIComponent(taskId)}` })
+    ).json() as ContactResearchDetailResponse;
+    expect(detail.task.sourceAttempts[0]!.outcome).toBe("extraction_failed");
+    expect(detail.task.candidates).toHaveLength(1);
+  });
+
+  it.each([
+    ["empty", "no_candidates"],
+    ["foreign_task", "extraction_failed"],
+    ["foreign_source", "extraction_failed"],
+    ["foreign_span", "extraction_failed"],
+    ["mismatched_decision", "extraction_failed"],
+  ])("checks the recorded source and decision for %s", async (scenario, expected) => {
+    const { app, dbPath } = withTempApp();
+    const { taskId } = seedNeedsReviewTask(dbPath);
+    const db = new Database(dbPath);
+    const row = db.prepare("SELECT envelope_json FROM semantic_determinations WHERE tenant_id = 'local' AND determination_id = ?")
+      .get(RECEIPT_ID) as { envelope_json: string };
+    const envelope = JSON.parse(row.envelope_json) as {
+      entity_id: string; result: { source_id: string; candidates: Array<{ name: { source_id: string } }> };
+    };
+    if (scenario === "empty" || scenario === "foreign_task" || scenario === "foreign_source") {
+      envelope.result.candidates = [];
+    }
+    if (scenario === "foreign_task") envelope.entity_id = "other-task";
+    if (scenario === "foreign_source") envelope.result.source_id = "other-source";
+    if (scenario === "foreign_span") envelope.result.candidates[0]!.name.source_id = "other-source";
+    db.prepare("UPDATE semantic_determinations SET envelope_json = ? WHERE tenant_id = 'local' AND determination_id = ?")
+      .run(JSON.stringify(envelope), RECEIPT_ID);
+    const outcome = scenario === "foreign_span" ? "allowed" : "no_candidates";
+    db.prepare("UPDATE contact_research_tasks SET source_attempts_json = ? WHERE tenant_id = 'local' AND task_id = ?")
+      .run(JSON.stringify([{ sourceKind: "public_web_page", sourceRef: TEAM_URL, outcome,
+        attemptedAt: "2026-07-06T00:00:00Z", detail: "", determinationId: RECEIPT_ID }]), taskId);
+    db.close();
+    const detail = (
+      await app.inject({ method: "GET", url: `/v1/contacts/research/${encodeURIComponent(taskId)}` })
+    ).json() as ContactResearchDetailResponse;
+    expect(detail.task.sourceAttempts[0]!.outcome).toBe(expected);
+    expect(detail.task.candidates).toHaveLength(1);
+  });
+
+  it("returns acquisition failures as source outcomes without hiding existing proposals", async () => {
+    const { app, dbPath } = withTempApp();
+    const { taskId, candidateId } = seedNeedsReviewTask(dbPath);
+    const attempts = ["response_too_large", "acquisition_timeout", "redirect_failed", "transport_failed", "http_error"]
+      .map((outcome) => ({
+        sourceKind: "public_web_page",
+        sourceRef: TEAM_URL,
+        outcome,
+        attemptedAt: "2026-07-06T00:00:00Z",
+        detail: `Recover from ${outcome}`,
+      }));
+    const db = new Database(dbPath);
+    db.prepare("UPDATE contact_research_tasks SET source_attempts_json = ? WHERE tenant_id = 'local' AND task_id = ?")
+      .run(JSON.stringify(attempts), taskId);
+    db.close();
+
+    const detail = (
+      await app.inject({ method: "GET", url: `/v1/contacts/research/${encodeURIComponent(taskId)}` })
+    ).json() as ContactResearchDetailResponse;
+    expect(detail.task.sourceAttempts).toEqual(attempts);
+    expect(detail.task.candidates.map((candidate) => candidate.candidateId)).toEqual([candidateId]);
   });
 
   it("confirms a candidate into a stored contact (INV-4) preserving provenance", async () => {
@@ -323,6 +431,64 @@ describe("contact research API", () => {
       payload: {},
     });
     expect(again.statusCode).toBe(400);
+  });
+
+  it("preserves research outcomes and sourced facts across contact edits and stale retries", async () => {
+    const { app, dbPath } = withTempApp();
+    const { taskId, candidateId } = seedNeedsReviewTask(dbPath);
+    const attempts = ["response_too_large", "acquisition_timeout", "redirect_failed", "transport_failed", "http_error"]
+      .map((outcome) => ({ sourceKind: "public_web_page", sourceRef: TEAM_URL, outcome,
+        attemptedAt: "2026-07-06T00:00:00Z", detail: `Recover from ${outcome}` }));
+    const setup = new Database(dbPath);
+    const candidate = setup.prepare("SELECT attributes_json FROM contact_candidates WHERE tenant_id='local' AND candidate_id=?")
+      .get(candidateId) as { attributes_json: string };
+    const attributes = JSON.parse(candidate.attributes_json) as Array<{ kind: string; value: string }>;
+    attributes.find((fact) => fact.kind === "email")!.value = "  research@example.test  ";
+    setup.prepare("UPDATE contact_candidates SET attributes_json=? WHERE tenant_id='local' AND candidate_id=?")
+      .run(JSON.stringify(attributes), candidateId);
+    setup.close();
+
+    const confirmed = await app.inject({ method: "POST",
+      url: `/v1/contacts/research/${taskId}/candidates/${candidateId}/confirm`, payload: {} });
+    expect(confirmed.statusCode).toBe(200);
+    const contact = (confirmed.json() as ConfirmContactCandidateResponse).contact;
+    expect(contact.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    const sourced = contact.attributes.find((fact) => fact.kind === "email")!;
+    expect(sourced).toMatchObject({ value: "  research@example.test  ",
+      provenance: { sourceKind: "public_web_page", sourceRef: TEAM_URL, userConfirmed: true } });
+
+    const db = new Database(dbPath);
+    db.prepare("UPDATE contact_research_tasks SET source_attempts_json=? WHERE tenant_id='local' AND task_id=?")
+      .run(JSON.stringify(attempts), taskId);
+    const originalFact = db.prepare("SELECT * FROM contact_attributes WHERE tenant_id='local' AND attribute_id=?")
+      .get(sourced.attributeId);
+    const originalTask = db.prepare("SELECT * FROM contact_research_tasks WHERE tenant_id='local' AND task_id=?").get(taskId);
+    const originalCandidate = db.prepare("SELECT * FROM contact_candidates WHERE tenant_id='local' AND candidate_id=?").get(candidateId);
+    db.close();
+    const detail = await app.inject({ method: "GET", url: `/v1/contacts/research/${taskId}` });
+    expect((detail.json() as ContactResearchDetailResponse).task.sourceAttempts).toEqual(attempts);
+
+    const saved = await app.inject({ method: "PATCH", url: `/v1/contacts/${contact.contactId}`,
+      payload: { expectedFingerprint: contact.fingerprint, role: "warm_intro", attributes: [
+        ...contact.attributes.map(({ attributeId, kind, value }) => ({ attributeId, kind, value })),
+        { kind: "note", value: "Synthetic added fact" },
+      ] } });
+    expect(saved.statusCode).toBe(200);
+    const latest = (saved.json() as ContactMutationResponse).contact;
+    expect(latest.attributes.find((fact) => fact.attributeId === sourced.attributeId)).toEqual(sourced);
+    const stale = await app.inject({ method: "PATCH", url: `/v1/contacts/${contact.contactId}`,
+      payload: { expectedFingerprint: contact.fingerprint, employer: "Stale employer" } });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ error: "contact_revision_conflict" });
+    const check = new Database(dbPath, { readonly: true });
+    try {
+      expect(check.prepare("SELECT * FROM contact_attributes WHERE tenant_id='local' AND attribute_id=?").get(sourced.attributeId)).toEqual(originalFact);
+      expect(check.prepare("SELECT * FROM contact_research_tasks WHERE tenant_id='local' AND task_id=?").get(taskId)).toEqual(originalTask);
+      expect(check.prepare("SELECT * FROM contact_candidates WHERE tenant_id='local' AND candidate_id=?").get(candidateId)).toEqual(originalCandidate);
+    } finally { check.close(); }
+    const readAfter = await app.inject({ method: "GET", url: `/v1/contacts/research/${taskId}` });
+    expect((readAfter.json() as ContactResearchDetailResponse).task.sourceAttempts).toEqual(attempts);
+    expect(eventPayloadBlob(dbPath)).not.toContain("research@example.test");
   });
 
   it("never leaks a candidate value into event payloads (sensitivity)", async () => {

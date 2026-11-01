@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import uuid
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ from temporalio import activity
 from temporalio.client import ScheduleOverlapPolicy, WorkflowFailureError
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 from .temporal_env import time_skipping_env
-from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.cli import _reconcile_discovery_schedule
 from jobctrl.config import DEFAULT_DISCOVERY_SEARCH_CONFIG, load_discovery_schedule_settings
@@ -41,6 +42,8 @@ from jobctrl.discovery.workflow import (
     DiscoverWorkflowInput,
     DiscoverWorkflowResult,
     _AUTOMATIC_COMPENSATION_REFRESH_PATCH,
+    _COMPENSATION_MODEL_BUDGET_PATCH,
+    _TERMINAL_ENRICHMENT_HANDOFF_PATCH,
     _activity_error_was_cancelled,
     _cancel_owned_enrichment,
     _run_automatic_compensation_refresh_activity,
@@ -99,9 +102,7 @@ async def test_automatic_compensation_refresh_is_patch_gated_for_old_histories(
     calls: list[str] = []
 
     async def unexpected_activity(*_args, **_kwargs):
-        raise AssertionError(
-            "unpatched replay must not schedule automatic_compensation_refresh"
-        )
+        raise AssertionError("unpatched replay must not schedule automatic_compensation_refresh")
 
     def unpatched(patch_id: str) -> bool:
         calls.append(patch_id)
@@ -173,7 +174,10 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
 @pytest.mark.asyncio
 async def test_old_discovery_cancellation_history_does_not_schedule_new_cleanup(monkeypatch):
     monkeypatch.setattr("jobctrl.discovery.workflow.workflow.patched", lambda _patch: False)
-    monkeypatch.setattr("jobctrl.discovery.workflow.workflow.execute_activity", lambda *_args, **_kwargs: pytest.fail("old replay must not add cleanup"))
+    monkeypatch.setattr(
+        "jobctrl.discovery.workflow.workflow.execute_activity",
+        lambda *_args, **_kwargs: pytest.fail("old replay must not add cleanup"),
+    )
     await _cancel_owned_enrichment(
         DiscoverWorkflowInput(tenant_id="local"),
         DiscoveryExecutionRef("local", "discover-local", "old-run"),
@@ -242,6 +246,12 @@ async def _check_spend_budget(_payload) -> SpendBudgetStatus:
         output_tokens=0,
         estimated_usd=0.0,
         daily_budget_usd=25.0,
+        lane="discovery",
+        lane_input_tokens=0,
+        lane_output_tokens=0,
+        lane_token_limit=0,
+        lane_exceeded=False,
+        global_exceeded=False,
         exceeded=False,
     )
 
@@ -270,6 +280,8 @@ async def _plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDis
         progress_total=5,
         start_count=7,
         max_parallel_families=_MAX_PARALLEL,
+        use_source_result_budget=payload.use_source_result_budget,
+        source_result_limits={"jobspy:indeed": payload.limit} if payload.use_source_result_budget else {},
     )
 
 
@@ -306,6 +318,7 @@ async def _discovery_enrichment(payload: DiscoveryEnrichmentActivityInput) -> Di
             payload.limit,
             payload.stream_while_discovering,
             payload.pipeline_step_item_key,
+            payload.per_job_handoff,
         )
     )
     return DiscoveryEnrichmentActivityOutput(status="ok", passes=1, pending=0)
@@ -400,29 +413,11 @@ async def test_discovery_preparation_fanout_activity_uses_root_workflow_fanout(
             validation_mode="strict",
             tailor_models=("draft",),
             tailor_judge_model="judge",
-            tailor_judge_min_score=8.5,
             llm_model="codex:model",
         )
     )
 
     assert captured["activity_name"] == "discover:preparation"
-    assert captured["fanout_kwargs"] == {
-        "min_score": 8,
-        "limit": 5,
-        "workers": 3,
-        "validation_mode": "strict",
-        "llm_model": "codex:model",
-        "tailor_models": ("draft",),
-        "tailor_judge_model": "judge",
-        "tailor_judge_min_score": 8.5,
-        "tenant_id": "local",
-        # R9 Phase 1: the fan-out activity forwards the score-only vs
-        # full-derive selector; default preserves the pre-streaming behavior.
-        "include_pending_tailor": True,
-        "discovery_execution": None,
-        "discovery_cohort_kind": "observed_this_run",
-        "finalize_observed_work_plans": False,
-    }
     assert result == DiscoveryPreparationFanoutOutput(started=2, queued=1, targets=3)
 
 
@@ -495,6 +490,7 @@ async def test_automatic_compensation_refresh_activity_materializes_safe_counts(
             insufficient_results=1,
             failed_results=0,
             warnings=("cost_of_living_only",),
+            diagnostics={"owner": kwargs["owner"], "tenantId": kwargs["tenant_id"], "levelsFyiTargets": []},
         )
 
     def fake_materialize(conn, **kwargs):
@@ -541,6 +537,7 @@ async def test_automatic_compensation_refresh_activity_materializes_safe_counts(
         estimates_written=2,
         estimates_unchanged=1,
         warnings=("cost_of_living_only",),
+        diagnostics={"owner": captured["refresh"]["owner"], "tenantId": "local", "levelsFyiTargets": []},
     )
     assert captured["activity_name"] == "discover:automatic-compensation"
     assert captured["refresh"]["tenant_id"] == "local"
@@ -549,10 +546,7 @@ async def test_automatic_compensation_refresh_activity_materializes_safe_counts(
     assert str(captured["refresh"]["owner"]).startswith("discover:local:")
     assert captured["materialize"][0] is connection
     assert captured["materialize"][1]["tenant_id"] == "local"
-    assert (
-        captured["materialize"][1]["materialized_at"]
-        == "2026-08-19T08:00:01+00:00"
-    )
+    assert captured["materialize"][1]["materialized_at"] == "2026-08-19T08:00:01+00:00"
 
 
 def test_build_per_job_handoff_disabled_returns_none() -> None:
@@ -579,7 +573,6 @@ def test_build_per_job_handoff_starts_scored_prep_with_params(
             llm_model="codex:model",
             tailor_models=("draft",),
             tailor_judge_model="judge",
-            tailor_judge_min_score=8.5,
         )
     )
     assert handoff is not None
@@ -592,13 +585,30 @@ def test_build_per_job_handoff_starts_scored_prep_with_params(
     assert kwargs["llm_model"] == "codex:model"
     assert kwargs["tailor_models"] == ("draft",)
     assert kwargs["tailor_judge_model"] == "judge"
-    assert kwargs["tailor_judge_min_score"] == 8.5
     assert str(kwargs["tenant_id"]) == "local"
 
 
 @pytest.mark.asyncio
-async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> None:
+@pytest.mark.parametrize("legacy_history", [False, True])
+@pytest.mark.parametrize("legacy_compensation_budget", [False, True])
+@pytest.mark.parametrize("legacy_source_budget", [False, True])
+async def test_discover_workflow_runs_sources_then_enrichment_and_fanout(
+    monkeypatch, legacy_history, legacy_compensation_budget, legacy_source_budget,
+) -> None:
+    from jobctrl.discovery import workflow as discovery_workflow
+
     _reset_state()
+    patched = discovery_workflow.workflow.patched
+    def historical_branch(patch_id):
+        if legacy_history and patch_id == _TERMINAL_ENRICHMENT_HANDOFF_PATCH:
+            return False
+        if legacy_compensation_budget and patch_id == _COMPENSATION_MODEL_BUDGET_PATCH:
+            return False
+        if legacy_source_budget and patch_id == discovery_workflow._SOURCE_RESULT_BUDGET_PATCH:
+            return False
+        return patched(patch_id)
+
+    monkeypatch.setattr(discovery_workflow.workflow, "patched", historical_branch)
     _TARGETS.append(
         _Target(
             job_url="https://example.com/job/1",
@@ -617,7 +627,7 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
             activities=_discovery_activities(),
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
-            result = await env.client.execute_workflow(
+            handle = await env.client.start_workflow(
                 DiscoverWorkflow.run,
                 DiscoverWorkflowInput(
                     tenant_id="local",
@@ -628,7 +638,26 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
                 id=f"discover-success-{uuid.uuid4()}",
                 task_queue=queue,
             )
+            result = await handle.result()
+            history = await handle.fetch_history()
 
+    # The current workflow must replay both its marker and the old no-marker branch.
+    monkeypatch.setattr(discovery_workflow.workflow, "patched", patched)
+    await Replayer(
+        workflows=[DiscoverWorkflow], workflow_runner=UnsandboxedWorkflowRunner(),
+    ).replay_workflow(history)
+    compensation = [event.activity_task_scheduled_event_attributes for event in history.events
+                    if event.HasField("activity_task_scheduled_event_attributes")
+                    and event.activity_task_scheduled_event_attributes.activity_type.name == "automatic_compensation_refresh"]
+    assert len(compensation) == 1
+    assert compensation[0].start_to_close_timeout.seconds == (1800 if legacy_compensation_budget else 21600)
+    source_inputs = [json.loads(event.activity_task_scheduled_event_attributes.input.payloads[0].data)
+                     for event in history.events if event.HasField("activity_task_scheduled_event_attributes")
+                     and event.activity_task_scheduled_event_attributes.activity_type.name == "discovery_source_family"]
+    assert len(source_inputs) == 3
+    assert all(item["use_source_result_budget"] is (not legacy_source_budget) for item in source_inputs)
+    assert all(item["source_result_limits"] == ({"jobspy:indeed": 10} if not legacy_source_budget else {})
+               for item in source_inputs)
     assert result.families_completed == ["jobspy", "workday", "smartextract"]
     assert result.families_failed == []
     assert result.preparation_started == 1
@@ -640,6 +669,7 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
     enrichment_events = [event for event in _EVENTS if event[0] == "enrichment"]
     assert [event[2] for event in enrichment_events] == [True, False]
     assert [event[3] for event in enrichment_events] == ["streaming:live", "terminal"]
+    assert [event[4] for event in enrichment_events] == [True, not legacy_history]
     live_enrichment = _EVENTS.index(enrichment_events[0])
     first_source = kinds.index("source")
     second_source = kinds.index("source", first_source + 1)
@@ -723,7 +753,7 @@ async def _live_enrichment_probe(
 
 
 @pytest.mark.asyncio
-async def test_discover_workflow_starts_enrichment_before_source_family_completes() -> None:
+async def test_discover_workflow_starts_enrichment_before_source_family_completes(tmp_path, caplog) -> None:
     """A committed job must not wait for a broad-board family crawl to finish."""
 
     _reset_state()
@@ -749,15 +779,15 @@ async def test_discover_workflow_starts_enrichment_before_source_family_complete
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
             try:
-                result = await asyncio.wait_for(
-                    env.client.execute_workflow(
-                        DiscoverWorkflow.run,
-                        DiscoverWorkflowInput(tenant_id="local"),
-                        id=f"{queue}-wf",
-                        task_queue=queue,
-                    ),
-                    timeout=15,
+                handle = await env.client.start_workflow(
+                    DiscoverWorkflow.run,
+                    DiscoverWorkflowInput(tenant_id="local"),
+                    id=f"{queue}-wf",
+                    task_queue=queue,
                 )
+                result = await asyncio.wait_for(handle.result(), timeout=15)
+                history = await handle.fetch_history()
+                (tmp_path / "handoff-history.json").write_text(history.to_json())
             except TimeoutError:
                 pytest.fail(f"workflow timed out with events: {_EVENTS!r}")
 
@@ -766,15 +796,22 @@ async def test_discover_workflow_starts_enrichment_before_source_family_complete
     assert kinds.index("live_enrichment_started") < kinds.index("source_completed")
     assert kinds.index("live_enrichment_canceled") < kinds.index("terminal_enrichment")
 
+    await Replayer(
+        workflows=[DiscoverWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ).replay_workflow(history)
+    assert not [record for record in caplog.records if record.levelno >= 40]
+
 
 @pytest.mark.asyncio
-async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(monkeypatch, tmp_path):
+@pytest.mark.parametrize("with_sibling", [False, True])
+async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(monkeypatch, tmp_path, with_sibling):
     """Real Temporal cancellation must drain the interrupted job, not cancel it."""
     from jobctrl import database
     from jobctrl.discovery import activities as discovery_activities
     from jobctrl.domain.errors import TransientNetworkError
     from jobctrl.enrichment import detail
-    from .politeness_helpers import offline_gateway, AllowAllRobots
+    from .politeness_helpers import offline_gateway
     from .test_discover_reliability import _seed_pending, _long_description
 
     _reset_state()
@@ -797,15 +834,18 @@ async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(m
         assert execution is not None
         job_id = _seed_pending(conn, "https://example.test/temporal-capture-race", "Example")
         job_ids.append(job_id)
-        conn.execute(
-            "INSERT INTO discovery_execution_jobs (tenant_id, discover_workflow_id, discover_run_id, "
-            "job_id, cohort_kind, source_family, work_plan_state, linked_at) "
-            "VALUES ('local', ?, ?, ?, 'observed_this_run', 'jobspy', 'pending', '2026-09-04T20:00:00Z')",
-            (execution.workflow_id, execution.temporal_run_id, str(job_id)),
-        )
+        if with_sibling:
+            job_ids.append(_seed_pending(conn, "https://example.test/temporal-capture-sibling", "Example"))
+        for job_id in job_ids:
+            conn.execute(
+                "INSERT INTO discovery_execution_jobs (tenant_id, discover_workflow_id, discover_run_id, "
+                "job_id, cohort_kind, source_family, work_plan_state, linked_at) "
+                "VALUES ('local', ?, ?, ?, 'observed_this_run', 'jobspy', 'pending', '2026-09-04T20:00:00Z')",
+                (execution.workflow_id, execution.temporal_run_id, str(job_id)),
+            )
         conn.commit()
         assert await asyncio.to_thread(capture_started.wait, 10)
-        return DiscoverySourceActivityOutput(family="jobspy", status="ok", result={"new": 1})
+        return DiscoverySourceActivityOutput(family="jobspy", status="ok", result={"new": len(job_ids)})
 
     def capture(browser, _url, **_kwargs):
         captures.append("capture")
@@ -813,42 +853,87 @@ async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(m
             capture_started.set()
             assert browser.cancel_event.wait(10)
             raise TransientNetworkError("rendered_page interrupted by producer stop")
+        if with_sibling and len(captures) == 3:
+            assert len(handed_off) == 1, "first committed job must start preparation before its sibling is captured"
         return {
-            "status": "ok", "tier_used": 1, "full_description": _long_description(),
-            "application_url": None, "error": None, "elapsed": 0.1,
-            "active_state": "active", "verification_method": "fixture", "http_status": 200,
+            "status": "ok",
+            "tier_used": 1,
+            "full_description": _long_description(),
+            "application_url": None,
+            "error": None,
+            "elapsed": 0.1,
+            "active_state": "active",
+            "verification_method": "fixture",
+            "http_status": 200,
         }
 
-    monkeypatch.setattr(discovery_activities, "_build_per_job_handoff", lambda _payload: handed_off.append)
-    monkeypatch.setattr(runner, "run_discovery_hygiene", lambda *_args, **_kwargs: 0)
+    def start_preparation(job_id, **kwargs):
+        conn = database.get_connection()
+        assert conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)
+        ).fetchone()[0] == "succeeded"
+        assert kwargs["discovery_execution"].temporal_run_id
+        assert kwargs["discovery_cohort_kind"] == "observed_this_run"
+        handed_off.append(job_id)
+
+    monkeypatch.setattr("jobctrl.pipeline.preparation.start_job_preparation_workflow", start_preparation)
     monkeypatch.setattr(runner, "_DISCOVERY_ENRICH_POLL_INTERVAL", 0.05)
     monkeypatch.setattr(detail, "PolitenessGateway", lambda: offline_gateway())
-    monkeypatch.setattr(detail, "LiveChromeRobotsCache", lambda _browser: AllowAllRobots())
-    monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", lambda *_args, **kwargs: SimpleNamespace(
-        ensure_available=lambda: None, cancel_event=kwargs["cancel_event"],
-    ))
+    monkeypatch.setattr(
+        detail,
+        "LiveChromeDiscoveryClient",
+        lambda *_args, **kwargs: SimpleNamespace(
+            ensure_available=lambda: None,
+            cancel_event=kwargs["cancel_event"],
+        ),
+    )
     monkeypatch.setattr(detail, "scrape_detail_page_via_live_chrome", capture)
     activities = [
-        _check_spend_budget, _record_workflow_started, _record_workflow_outcome,
-        one_source, source, discovery_activities.discovery_enrichment_activity,
-        _automatic_compensation_refresh, _discovery_preparation_fanout, _cancel_enrichment_cohort,
+        _check_spend_budget,
+        _record_workflow_started,
+        _record_workflow_outcome,
+        one_source,
+        source,
+        discovery_activities.discovery_enrichment_activity,
+        _automatic_compensation_refresh,
+        _discovery_preparation_fanout,
+        _cancel_enrichment_cohort,
     ]
     queue = f"discover-sqlite-capture-race-{uuid.uuid4()}"
     try:
         async with time_skipping_env() as env:
-            async with Worker(env.client, task_queue=queue, workflows=[DiscoverWorkflow], activities=activities, workflow_runner=UnsandboxedWorkflowRunner()):
-                result = await asyncio.wait_for(env.client.execute_workflow(
-                    DiscoverWorkflow.run, DiscoverWorkflowInput(tenant_id="local", limit=1),
-                    id=f"{queue}-wf", task_queue=queue,
-                ), timeout=30)
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[DiscoverWorkflow],
+                activities=activities,
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await asyncio.wait_for(
+                    env.client.execute_workflow(
+                        DiscoverWorkflow.run,
+                        DiscoverWorkflowInput(tenant_id="local", limit=2 if with_sibling else 1),
+                        id=f"{queue}-wf",
+                        task_queue=queue,
+                    ),
+                    timeout=30,
+                )
 
         assert result.enrichment_status == "ok"
-        assert len(captures) == 2
-        assert handed_off == job_ids
+        assert len(captures) == (3 if with_sibling else 2)
+        assert len(handed_off) == len(job_ids)
+        assert set(handed_off) == set(job_ids)
         conn = database.get_connection()
-        row = conn.execute("SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_ids[0]),)).fetchone()
+        row = conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_ids[0]),)
+        ).fetchone()
         assert row[0] == "succeeded"
-        assert conn.execute("SELECT COUNT(*) FROM job_events WHERE job_id = ? AND event_type = 'StageCanceled'", (str(job_ids[0]),)).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM job_events WHERE job_id = ? AND event_type = 'StageCanceled'", (str(job_ids[0]),)
+            ).fetchone()[0]
+            == 0
+        )
     finally:
         database.close_connection(db_path)
 
@@ -1576,3 +1661,10 @@ async def test_discovery_schedule_reconcile_failure_does_not_block_worker_boot(
     await _reconcile_discovery_schedule(client, "jobctrl-test")
 
     assert client.handle.updated == 0
+
+
+@pytest.fixture(autouse=True)
+def semantic_page_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

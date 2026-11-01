@@ -7,6 +7,7 @@ The digest is local-only and on demand. Passive reads never advance the
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -62,7 +63,8 @@ def read_digest_state(conn: sqlite3.Connection | None = None) -> dict[str, str |
     if conn is None:
         conn = get_connection()
     ensure_digest_state_table(conn)
-    row = conn.execute(
+    row = _query(
+        conn,
         "SELECT last_acknowledged_at, updated_at FROM digest_state WHERE tenant_id = ?",
         (TENANT_ID,),
     ).fetchone()
@@ -85,7 +87,9 @@ def build_digest(
     generated_at = _format_utc_timestamp(_utc_now(now))
     since = read_digest_state(conn)["lastAcknowledgedAt"]
     threshold = _normalize_threshold(min_fit_score)
-    budget_status = budget or read_spend_budget_status()
+    budget_status = budget or read_spend_budget_status(lane="discovery")
+    from jobctrl.infrastructure.materials.company_briefings import CompanyBriefingRepository
+    briefings = CompanyBriefingRepository(conn).summaries(now=_utc_now(now))
     return {
         "ok": True,
         "generatedAt": generated_at,
@@ -103,6 +107,7 @@ def build_digest(
             "dayBoundary": DAY_BOUNDARY,
         },
         "budget": _budget_payload(budget_status),
+        "companyBriefings": briefings,
         "deepLinks": _deep_links(since=since),
     }
 
@@ -116,33 +121,69 @@ def acknowledge_digest(
     if conn is None:
         conn = get_connection()
     ensure_digest_state_table(conn)
-    previous = read_digest_state(conn)["lastAcknowledgedAt"]
     reviewed_at = _format_utc_timestamp(_utc_now(now))
     requested_acknowledged_at = acknowledged_at or reviewed_at
     bounded_acknowledged_at = _bounded_acknowledge_timestamp(requested_acknowledged_at, reviewed_at)
-    next_acknowledged_at = (
-        previous
-        if previous and _timestamp_after(previous, bounded_acknowledged_at)
-        else bounded_acknowledged_at
-    )
 
-    conn.execute(
-        """
-        INSERT INTO digest_state (tenant_id, last_acknowledged_at, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(tenant_id) DO UPDATE SET
-            last_acknowledged_at = excluded.last_acknowledged_at,
-            updated_at = excluded.updated_at
-        """,
-        (TENANT_ID, next_acknowledged_at, reviewed_at),
-    )
-    _record_digest_reviewed_event(
-        conn,
-        acknowledged_at=next_acknowledged_at,
-        previous_acknowledged_at=previous,
-        reviewed_at=reviewed_at,
-    )
-    conn.commit()
+    # Keep the watermark and event in one transaction even when this function
+    # starts with no caller-owned transaction; a top-level savepoint release
+    # would otherwise commit before the explicit commit can fail.
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("SAVEPOINT digest_acknowledgement")
+    except BaseException:
+        if owns_transaction:
+            conn.rollback()
+        raise
+    try:
+        previous = read_digest_state(conn)["lastAcknowledgedAt"]
+        if previous and _parse_utc_timestamp(previous) is None:
+            raise ValueError("digest watermark is not a valid timestamp")
+        next_acknowledged_at = (
+            previous
+            if previous and _timestamp_after(previous, bounded_acknowledged_at)
+            else bounded_acknowledged_at
+        )
+        conn.execute(
+            """
+            INSERT INTO digest_state (tenant_id, last_acknowledged_at, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(tenant_id) DO UPDATE SET
+                last_acknowledged_at = excluded.last_acknowledged_at,
+                updated_at = excluded.updated_at
+            """,
+            (TENANT_ID, next_acknowledged_at, reviewed_at),
+        )
+        _record_digest_reviewed_event(
+            conn,
+            acknowledged_at=next_acknowledged_at,
+            previous_acknowledged_at=previous,
+            reviewed_at=reviewed_at,
+        )
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT digest_acknowledgement")
+        conn.execute("RELEASE SAVEPOINT digest_acknowledgement")
+        if owns_transaction:
+            conn.rollback()
+        raise
+    try:
+        conn.execute("RELEASE SAVEPOINT digest_acknowledgement")
+        if owns_transaction:
+            conn.commit()
+    except BaseException:
+        if owns_transaction:
+            conn.rollback()
+        else:
+            try:
+                conn.execute("ROLLBACK TO SAVEPOINT digest_acknowledgement")
+                conn.execute("RELEASE SAVEPOINT digest_acknowledgement")
+            except sqlite3.Error:
+                # Preserve the original error and leave the caller in control
+                # if SQLite has already invalidated the savepoint.
+                pass
+        raise
     return {"ok": True, "state": read_digest_state(conn)}
 
 
@@ -171,7 +212,7 @@ def _bounded_acknowledge_timestamp(candidate: str, now_iso: str) -> str:
     now_time = _parse_utc_timestamp(now_iso)
     if candidate_time is None or now_time is None:
         return now_iso
-    if candidate_time > now_time:
+    if _timestamp_after(candidate, now_iso):
         return now_iso
     return candidate
 
@@ -181,16 +222,41 @@ def _timestamp_after(left: str, right: str) -> bool:
     right_time = _parse_utc_timestamp(right)
     if left_time is None or right_time is None:
         return False
-    return left_time > right_time
+    if left_time != right_time:
+        return left_time > right_time
+    # fromisoformat keeps microseconds; preserve finer historical fractions
+    # when comparing a stored watermark with a requested acknowledgement.
+    def tail(value: str) -> str:
+        match = re.search(r"[T ]\d{2}:\d{2}:\d{2}[.,](\d+)(?:Z|[+-]\d{2}:?\d{2})?$", value.strip(), re.IGNORECASE)
+        return match.group(1)[6:] if match else ""
+
+    left_tail, right_tail = tail(left), tail(right)
+    width = max(len(left_tail), len(right_tail))
+    return left_tail.ljust(width, "0") > right_tail.ljust(width, "0")
 
 
 def _parse_utc_timestamp(value: str | None) -> datetime | None:
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
-    except ValueError:
+        raw = value.strip()
+        if raw.endswith(("Z", "z")):
+            raw = raw[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(raw)
+        # Date.parse treats a date-only ISO string as UTC.
+        if len(raw) == 10:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError, OSError):
         return None
+
+
+def _digest_instant(value: str | None) -> datetime | None:
+    parsed = _parse_utc_timestamp(value)
+    if parsed is None:
+        return None
+    # The Jobs API compares Date.parse instants at millisecond precision.
+    return parsed.replace(microsecond=(parsed.microsecond // 1000) * 1000)
 
 
 def _record_digest_reviewed_event(
@@ -200,34 +266,27 @@ def _record_digest_reviewed_event(
     previous_acknowledged_at: str | None,
     reviewed_at: str,
 ) -> None:
-    if not _table_exists(conn, "job_events"):
-        return
-    columns = _table_columns(conn, "job_events")
-    values: dict[str, Any] = {
-        "job_url": None,
-        "stage": None,
-        "event_type": "DigestReviewed",
-        "level": "info",
-        "message": "Digest reviewed.",
-        "occurred_at": reviewed_at,
-        "payload_json": json.dumps(
-            {
-                "tenantId": TENANT_ID,
-                "acknowledgedAt": acknowledged_at,
-                "previousAcknowledgedAt": previous_acknowledged_at,
-                "reviewedAt": reviewed_at,
-            },
-            separators=(",", ":"),
-        ),
-    }
-    entries = [(name, value) for name, value in values.items() if name in columns]
-    if not entries:
-        return
-    column_sql = ", ".join(name for name, _ in entries)
-    placeholders = ", ".join("?" for _ in entries)
     conn.execute(
-        f"INSERT INTO job_events ({column_sql}) VALUES ({placeholders})",
-        [value for _, value in entries],
+        """
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type, level,
+            message, occurred_at, payload_json, entity_kind, entity_ref, idempotency_key
+        ) VALUES (?, NULL, 1, NULL, 'DigestReviewed', 'info', ?, ?, ?, 'digest', 'daily', NULL)
+        """,
+        (
+            TENANT_ID,
+            "Digest reviewed.",
+            reviewed_at,
+            json.dumps(
+                {
+                    "tenantId": TENANT_ID,
+                    "acknowledgedAt": acknowledged_at,
+                    "previousAcknowledgedAt": previous_acknowledged_at,
+                    "reviewedAt": reviewed_at,
+                },
+                separators=(",", ":"),
+            ),
+        ),
     )
 
 
@@ -235,7 +294,7 @@ def _budget_payload(status: SpendBudgetStatus) -> dict[str, Any]:
     unlimited = status.daily_budget_usd <= 0
     remaining = None if unlimited else max(0.0, status.daily_budget_usd - status.estimated_usd)
     return {
-        "status": "over_budget" if status.exceeded else "ok",
+        "status": "over_budget" if status.global_exceeded else "ok",
         "estimatedUsd": float(status.estimated_usd),
         "dailyBudgetUsd": float(status.daily_budget_usd),
         "remainingUsd": remaining,
@@ -275,14 +334,29 @@ def _count_new_matches(
     since: str | None,
     high_fit_threshold: int,
 ) -> dict[str, int]:
-    if not _table_exists(conn, "job_list_projections"):
-        return {"count": 0, "highFitCount": 0}
-    active_clauses, active_params = _active_job_clauses(conn, "job_list_projections")
+    active_clauses, active_params = _active_job_clauses("job_list_projections")
     clauses = ["tenant_id = ?", "deleted_at IS NULL", *active_clauses]
     params: list[Any] = [TENANT_ID, *active_params]
     if since:
-        clauses.append("(discovered_at >= ? OR scored_at >= ?)")
-        params.extend([since, since])
+        watermark = _digest_instant(since)
+        if watermark is None:
+            raise ValueError("digest watermark is not a valid timestamp")
+        rows = _query(
+            conn,
+            "SELECT discovered_at, scored_at, fit_score FROM job_list_projections WHERE " + " AND ".join(clauses),
+            params,
+        )
+        count = high_fit = 0
+        for row in rows:
+            discovered = _digest_instant(_row_get(row, "discovered_at"))
+            scored = _digest_instant(_row_get(row, "scored_at"))
+            if not ((discovered is not None and discovered >= watermark) or (scored is not None and scored >= watermark)):
+                continue
+            count += 1
+            score = _row_get(row, "fit_score")
+            if score is not None and score >= high_fit_threshold:
+                high_fit += 1
+        return {"count": count, "highFitCount": high_fit}
     where = " WHERE " + " AND ".join(clauses)
     count = _count_rows(conn, f"SELECT COUNT(*) AS count FROM job_list_projections{where}", params)
     high_fit = _count_rows(
@@ -296,39 +370,38 @@ def _count_new_matches(
 def _blocked_sources(conn: sqlite3.Connection) -> dict[str, Any]:
     sources: list[dict[str, Any]] = []
     seen: set[str] = set()
-    if _table_exists(conn, "source_quality_stats"):
-        rows = conn.execute(
-            """
-            SELECT source_id, recommended_state, consecutive_failures, observed_jobs
-            FROM source_quality_stats
-            WHERE tenant_id = ?
-            ORDER BY recommended_state DESC, observed_jobs DESC, source_id ASC
-            """,
-            (TENANT_ID,),
-        ).fetchall()
-        for row in rows:
-            source_id = str(_row_get(row, "source_id") or "")
-            if source_id:
-                seen.add(source_id)
-            source = {
-                "sourceId": source_id,
-                "recommendedState": str(_row_get(row, "recommended_state") or "normal"),
-                "consecutiveFailures": int(_row_get(row, "consecutive_failures") or 0),
-            }
-            if _blocked_source_predicate(source):
-                sources.append(source)
+    rows = _query(
+        conn,
+        """
+        SELECT source_id, recommended_state, consecutive_failures, observed_jobs
+        FROM source_quality_stats
+        WHERE tenant_id = ?
+        ORDER BY recommended_state DESC, observed_jobs DESC, source_id ASC
+        """,
+        (TENANT_ID,),
+    ).fetchall()
+    for row in rows:
+        source_id = str(_row_get(row, "source_id") or "")
+        if source_id:
+            seen.add(source_id)
+        source = {
+            "sourceId": source_id,
+            "recommendedState": str(_row_get(row, "recommended_state") or "normal"),
+            "consecutiveFailures": int(_row_get(row, "consecutive_failures") or 0),
+        }
+        if _blocked_source_predicate(source):
+            sources.append(source)
     for source in _operational_only_source_health(conn, seen):
         if _blocked_source_predicate(source):
             sources.append(source)
-    names = {}
-    if _table_exists(conn, "source_registry_entries"):
-        names = {
-            str(_row_get(row, "source_id")): str(_row_get(row, "display_name") or "")
-            for row in conn.execute(
-                "SELECT source_id, display_name FROM source_registry_entries WHERE tenant_id = ?",
-                (TENANT_ID,),
-            ).fetchall()
-        }
+    names = {
+        str(_row_get(row, "source_id")): str(_row_get(row, "display_name") or "")
+        for row in _query(
+            conn,
+            "SELECT source_id, display_name FROM source_registry_entries WHERE tenant_id = ?",
+            (TENANT_ID,),
+        ).fetchall()
+    }
     for source in sources:
         source_id = source["sourceId"]
         display_name = names.get(source_id) or source_id
@@ -346,9 +419,8 @@ def _blocked_source_predicate(source: dict[str, Any]) -> bool:
 
 
 def _operational_only_source_health(conn: sqlite3.Connection, seen: set[str]) -> list[dict[str, Any]]:
-    if not _table_exists(conn, "operational_attempt_metrics"):
-        return []
-    rows = conn.execute(
+    rows = _query(
+        conn,
         """
         SELECT source_id, outcome
         FROM operational_attempt_metrics
@@ -399,28 +471,19 @@ def _count_pending_approvals(conn: sqlite3.Connection) -> int:
 
 
 def _apply_queue_rows(conn: sqlite3.Connection) -> list[Any]:
-    if not _table_exists(conn, "job_list_projections") or not _table_exists(conn, "job_stage_states"):
-        return []
-    latest_decision_sql, latest_decision_params = _latest_decision_cte(conn)
-    latest_apply_run_sql = _latest_apply_run_cte(conn)
-    active_clauses, active_params = _active_job_clauses(conn, "jlp")
+    latest_decision_sql, latest_decision_params = _latest_decision_cte()
+    latest_apply_run_sql = _latest_apply_run_cte()
+    active_clauses, active_params = _active_job_clauses("jlp")
     active_sql = "".join(f"\n          AND {clause}" for clause in active_clauses)
-    return conn.execute(
+    return _query(
+        conn,
         latest_decision_sql
         + latest_apply_run_sql
         + f"""
         , latest_digest_apply_stage AS (
-            SELECT job_url, state
-            FROM (
-                SELECT job_url, state,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY job_url
-                           ORDER BY COALESCE(updated_at, '') DESC, rowid DESC
-                       ) AS row_num
-                FROM job_stage_states
-                WHERE stage = 'apply'
-            )
-            WHERE row_num = 1
+            SELECT tenant_id, job_id, state
+            FROM job_stage_states
+            WHERE stage = 'apply'
         )
         SELECT jlp.job_id,
                jlp.application_url,
@@ -436,11 +499,14 @@ def _apply_queue_rows(conn: sqlite3.Connection) -> list[Any]:
                latest_apply_run.result AS apply_run_result
         FROM job_list_projections jlp
         INNER JOIN latest_digest_apply_stage apply_stage
-          ON apply_stage.job_url = jlp.job_id
+          ON apply_stage.tenant_id = jlp.tenant_id
+         AND apply_stage.job_id = jlp.job_id
         LEFT JOIN latest_digest_decision latest_decision
-          ON latest_decision.job_key = jlp.job_id
+          ON latest_decision.tenant_id = jlp.tenant_id
+         AND latest_decision.job_id = jlp.job_id
         LEFT JOIN latest_digest_apply_run latest_apply_run
-          ON latest_apply_run.job_id = jlp.job_id
+          ON latest_apply_run.tenant_id = jlp.tenant_id
+         AND latest_apply_run.job_id = jlp.job_id
         WHERE jlp.tenant_id = ?
           AND jlp.deleted_at IS NULL
           {active_sql}
@@ -460,33 +526,28 @@ def _apply_queue_rows(conn: sqlite3.Connection) -> list[Any]:
     ).fetchall()
 
 
-def _active_job_clauses(conn: sqlite3.Connection, alias: str) -> tuple[list[str], list[Any]]:
-    clauses: list[str] = []
-    params: list[Any] = []
-    if _table_exists(conn, "jobctrl_hidden_jobs"):
-        clauses.append(
-            f"NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.job_url = {alias}.job_id AND h.unhidden_at IS NULL)"
-        )
-    if _table_exists(conn, "posting_snapshot_sets"):
-        placeholders = ", ".join("?" for _ in _CLOSED_ACTIVE_STATES)
-        clauses.append(
-            "NOT EXISTS ("
-            "SELECT 1 FROM posting_snapshot_sets pss "
-            f"WHERE pss.tenant_id = {alias}.tenant_id "
-            f"AND pss.job_url = {alias}.job_id "
-            f"AND pss.latest_active_state IN ({placeholders})"
-            ")"
-        )
-        params.extend(_CLOSED_ACTIVE_STATES)
-    return clauses, params
+def _active_job_clauses(alias: str) -> tuple[list[str], list[Any]]:
+    placeholders = ", ".join("?" for _ in _CLOSED_ACTIVE_STATES)
+    return [
+        "EXISTS (SELECT 1 FROM jobs j "
+        f"WHERE j.tenant_id = {alias}.tenant_id AND j.job_id = {alias}.job_id)",
+        "NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h "
+        f"WHERE h.tenant_id = {alias}.tenant_id AND h.job_id = {alias}.job_id "
+        "AND h.unhidden_at IS NULL)",
+        "NOT EXISTS ("
+        "SELECT 1 FROM posting_snapshot_sets pss "
+        f"WHERE pss.tenant_id = {alias}.tenant_id "
+        f"AND pss.job_id = {alias}.job_id "
+        f"AND pss.latest_active_state IN ({placeholders})"
+        ")",
+    ], list(_CLOSED_ACTIVE_STATES)
 
 
-def _active_job_url_set(conn: sqlite3.Connection) -> set[str]:
-    if not _table_exists(conn, "job_list_projections"):
-        return set()
-    active_clauses, active_params = _active_job_clauses(conn, "jlp")
+def _active_job_id_set(conn: sqlite3.Connection) -> set[str]:
+    active_clauses, active_params = _active_job_clauses("jlp")
     clauses = ["jlp.tenant_id = ?", "jlp.deleted_at IS NULL", *active_clauses]
-    rows = conn.execute(
+    rows = _query(
+        conn,
         f"""
         SELECT jlp.job_id
         FROM job_list_projections jlp
@@ -565,26 +626,16 @@ def _parse_json_record(value: Any) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _latest_decision_cte(conn: sqlite3.Connection) -> tuple[str, list[Any]]:
-    if not _table_exists(conn, "application_review_decisions"):
-        return (
-            """
-            WITH latest_digest_decision AS (
-                SELECT NULL AS job_key, NULL AS decision
-                WHERE 0
-            )
-            """,
-            [],
-        )
+def _latest_decision_cte() -> tuple[str, list[Any]]:
     return (
         """
         WITH latest_digest_decision AS (
-            SELECT job_key, decision
+            SELECT tenant_id, job_id, decision
             FROM (
-                SELECT job_key, decision,
+                SELECT tenant_id, job_id, decision,
                        ROW_NUMBER() OVER (
-                           PARTITION BY tenant_id, job_key
-                           ORDER BY decided_at DESC, decision_id DESC
+                           PARTITION BY tenant_id, job_id
+                           ORDER BY decided_at DESC, CASE WHEN decision = 'approve_submit' THEN 0 ELSE 1 END DESC, decision_id DESC
                        ) AS row_num
                 FROM application_review_decisions
                 WHERE tenant_id = ?
@@ -596,22 +647,13 @@ def _latest_decision_cte(conn: sqlite3.Connection) -> tuple[str, list[Any]]:
     )
 
 
-def _latest_apply_run_cte(conn: sqlite3.Connection) -> str:
-    if not _table_exists(conn, "apply_run_projections"):
-        return (
-            """
-            , latest_digest_apply_run AS (
-                SELECT NULL AS job_id, NULL AS status, NULL AS result
-                WHERE 0
-            )
-            """
-        )
+def _latest_apply_run_cte() -> str:
     return (
         """
         , latest_digest_apply_run AS (
-            SELECT job_id, status, result
+            SELECT tenant_id, job_id, status, result
             FROM (
-                SELECT job_id, status, result,
+                SELECT tenant_id, job_id, status, result,
                        ROW_NUMBER() OVER (
                            PARTITION BY tenant_id, job_id
                            ORDER BY COALESCE(started_at, finished_at, '') DESC, run_id DESC
@@ -626,83 +668,63 @@ def _latest_apply_run_cte(conn: sqlite3.Connection) -> str:
 
 
 def _count_stale_scores(conn: sqlite3.Connection) -> int:
-    active_jobs = _active_job_url_set(conn)
-    if not active_jobs:
-        return 0
-    if _table_exists(conn, "job_score_staleness"):
-        if _table_exists(conn, "job_scores"):
-            rows = conn.execute(
-                """
-                SELECT DISTINCT stale.job_url
-                FROM job_score_staleness stale
-                JOIN (
-                    SELECT job_url, MAX(version) AS max_version
-                    FROM job_scores
-                    WHERE tenant_id = ?
-                    GROUP BY job_url
-                ) latest ON latest.job_url = stale.job_url
-                JOIN job_scores scores
-                  ON scores.tenant_id = stale.tenant_id
-                 AND scores.job_url = stale.job_url
-                 AND scores.version = latest.max_version
-                WHERE stale.tenant_id = ?
-                  AND stale.resolved = 0
-                  AND (scores.correction_json IS NULL OR TRIM(scores.correction_json) = '')
-                """,
-                [TENANT_ID, TENANT_ID],
-            ).fetchall()
-            return sum(1 for row in rows if _row_get(row, "job_url") in active_jobs)
-        rows = conn.execute(
-            """
-            SELECT DISTINCT job_url
-            FROM job_score_staleness
+    active_jobs = _active_job_id_set(conn)
+    rows = _query(
+        conn,
+        """
+        SELECT DISTINCT stale.job_id
+        FROM job_score_staleness stale
+        JOIN (
+            SELECT tenant_id, job_id, MAX(version) AS max_version
+            FROM job_scores
             WHERE tenant_id = ?
-              AND resolved = 0
-            """,
-            [TENANT_ID],
-        ).fetchall()
-        return sum(1 for row in rows if _row_get(row, "job_url") in active_jobs)
-    if _table_exists(conn, "job_list_projections"):
-        rows = conn.execute(
-            """
-            SELECT job_id
-            FROM job_list_projections
-            WHERE tenant_id = ?
-              AND current_stage = 'score'
-              AND current_state = 'stale'
-            """,
-            [TENANT_ID],
-        ).fetchall()
-        return sum(1 for row in rows if _row_get(row, "job_id") in active_jobs)
-    return 0
+            GROUP BY tenant_id, job_id
+        ) latest ON latest.tenant_id = stale.tenant_id AND latest.job_id = stale.job_id
+        JOIN job_scores scores
+          ON scores.tenant_id = stale.tenant_id
+         AND scores.job_id = stale.job_id
+         AND scores.version = latest.max_version
+        WHERE stale.tenant_id = ?
+          AND stale.resolved = 0
+        """,
+        [TENANT_ID, TENANT_ID],
+    ).fetchall()
+    return sum(1 for row in rows if _row_get(row, "job_id") in active_jobs)
 
 
 def _count_follow_ups_due(conn: sqlite3.Connection, *, now: datetime) -> int:
-    if not _table_exists(conn, "application_outcomes"):
-        return 0
-    cutoff = _format_utc_timestamp(now - timedelta(days=FOLLOW_UP_THRESHOLD_DAYS))
-    rows = conn.execute(
+    cutoff = _digest_instant(_format_utc_timestamp(now - timedelta(days=FOLLOW_UP_THRESHOLD_DAYS)))
+    assert cutoff is not None
+    rows = _query(
+        conn,
         """
-        SELECT job_key, kind, occurred_at, recorded_at
-        FROM application_outcomes
-        WHERE tenant_id = ?
-        ORDER BY job_key ASC, occurred_at ASC, recorded_at ASC
+        SELECT o.job_id, o.kind, o.occurred_at, o.recorded_at
+        FROM application_outcomes o
+        WHERE o.tenant_id = ?
+          AND EXISTS (
+              SELECT 1 FROM jobs j
+              WHERE j.tenant_id = o.tenant_id AND j.job_id = o.job_id
+          )
+        ORDER BY o.job_id ASC, o.occurred_at ASC, o.recorded_at ASC
         """,
         (TENANT_ID,),
     ).fetchall()
-    by_job: dict[str, dict[str, Any]] = {}
+    events: list[tuple[str, datetime, datetime, str]] = []
     for row in rows:
-        job_key = str(_row_get(row, "job_key") or "")
-        occurred_at = str(_row_get(row, "occurred_at") or _row_get(row, "recorded_at") or "")
-        if not job_key or not occurred_at:
+        job_id = str(_row_get(row, "job_id") or "")
+        occurred_at = _digest_instant(_row_get(row, "occurred_at") or _row_get(row, "recorded_at"))
+        if not job_id or occurred_at is None:
             continue
+        recorded_at = _digest_instant(_row_get(row, "recorded_at")) or occurred_at
+        events.append((job_id, occurred_at, recorded_at, str(_row_get(row, "kind") or "")))
+    by_job: dict[str, dict[str, Any]] = {}
+    for job_id, occurred_at, _recorded_at, kind in sorted(events):
         current = by_job.setdefault(
-            job_key,
+            job_id,
             {"appliedAt": None, "lastActivityAt": None, "stopped": False},
         )
         if current["lastActivityAt"] is None or occurred_at > current["lastActivityAt"]:
             current["lastActivityAt"] = occurred_at
-        kind = str(_row_get(row, "kind") or "")
         if kind == "applied_confirmation":
             if current["appliedAt"] is None or occurred_at > current["appliedAt"]:
                 current["appliedAt"] = occurred_at
@@ -724,20 +746,15 @@ def _count_follow_ups_due(conn: sqlite3.Connection, *, now: datetime) -> int:
 
 
 def _count_rows(conn: sqlite3.Connection, sql: str, params: list[Any]) -> int:
-    row = conn.execute(sql, params).fetchone()
+    row = _query(conn, sql, params).fetchone()
     return int(_row_get(row, "count") or 0) if row is not None else 0
 
 
-def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (table_name,),
-    ).fetchone()
-    return row is not None
-
-
-def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
-    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+def _query(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> sqlite3.Cursor:
+    # Use named rows for digest reads without changing the caller's connection.
+    cursor = conn.cursor()
+    cursor.row_factory = sqlite3.Row
+    return cursor.execute(sql, params)
 
 
 def _row_get(row: Any, key: str) -> Any:

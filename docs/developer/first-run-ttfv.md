@@ -10,6 +10,13 @@ The owner runs this protocol because it can spend LLM credits and may require
 interactive vendor auth. Agents may dry-check the probe logic against an
 already-running stack, but must not run the real baseline unattended.
 
+## Measurement scope
+
+This recorder measures the source-install path: its accepted commands are
+`scripts/install`, `uv` and `corepack pnpm dev`. Custom native installer/start
+commands are rejected, so these measurements do not establish curl/Homebrew
+installation timings.
+
 ## Stop Conditions
 
 T0 is the instant the wrapper starts the first install command,

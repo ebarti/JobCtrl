@@ -7,13 +7,12 @@
  * hand-copied twins of these functions, with agreement asserted only by
  * hand-re-encoded test expectations; a filter or sort fix now lands once.
  *
- * The demo emulates two SQL-side effects the API gets from SQLite itself:
- * the `deleted` facet (applied in SQL WHERE by the read model) stays in the
- * demo's wrapper, and `normalizeSqlText` reproduces the read model's
- * case-insensitive ORDER BY collation for text sort fields.
+ * The `deleted` facet (applied in SQL WHERE by the read model) stays in the
+ * demo's wrapper. Text ordering uses the browser merger's lowercase locale
+ * comparison on every path, including searched lists.
  */
 
-import type { JobCompensationSummary, JobListQuery, JobSummary, PaginatedResponse, StageState } from "./schemas.js";
+import type { JobCompensationSummary, JobListQuery, JobSummary, PaginatedResponse, Stage, StageState } from "./schemas.js";
 
 /** Terminal-first ranking used by the current_state sort arm. */
 export const STATE_RANK: Readonly<Record<StageState, number>> = {
@@ -58,8 +57,14 @@ export function timestampBefore(value: string | null | undefined, before: string
  * demo's wrapper applies it before delegating here.
  */
 export function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string): boolean {
-  if (query.stage && job.currentStage !== query.stage) return false;
-  if (query.state && job.currentState !== query.state) return false;
+  const stages = effectiveJobStages(query);
+  if (stages.length && !stages.includes(job.currentStage)) return false;
+  // API summaries present persisted exhaustion as a retryable failed state.
+  // Keep the legacy exhausted selector distinct, while failed includes both
+  // kinds of failure just as the SQL filter does.
+  const state = job.currentState === "failed" && job.failureReason === "attempt_budget_exhausted"
+    ? "exhausted" : job.currentState;
+  if (query.state && state !== query.state && !(query.state === "failed" && state === "exhausted")) return false;
   if (
     query.applyStatus === "applied"
     && !job.appliedAt
@@ -103,7 +108,12 @@ export function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery:
   ].some((value) => value.toLowerCase().includes(normalizedQuery));
 }
 
-export function jobSourceSortValue(job: JobSummary): string {
+/** An explicit empty array clears the scalar stage restriction. */
+export function effectiveJobStages(query: Pick<JobListQuery, "stage" | "stages">): Stage[] {
+  return query.stages !== undefined ? Array.from(new Set(query.stages)) : query.stage ? [query.stage] : [];
+}
+
+export function jobSourceSortValue(job: Pick<JobSummary, "postingSource" | "discoverySource" | "source">): string {
   return (job.postingSource || job.discoverySource || job.source || "").toLowerCase();
 }
 
@@ -177,12 +187,39 @@ export function compensationRangeAmountEur(
 
 export interface CompareJobsOptions {
   /**
-   * Reproduce the read model's SQL collation for text sort fields: lowercase
-   * title/company/location/current_stage, and rank current_state by the
-   * lowercased substage-or-stage. The read model itself sorts already-loaded
-   * rows and passes false; the demo's in-memory adapter passes true.
+   * @deprecated Text normalization now applies on every query path. Retained
+   * for callers compiled against the earlier adapter contract.
    */
   normalizeSqlText?: boolean;
+}
+
+/** Scalar summary contract used by the rebuildable SQLite query index. */
+export type JobQueryScalars = Pick<JobSummary,
+  "jobKey" | "title" | "company" | "url" | "location" | "source" |
+  "discoverySource" | "postingSource" | "postingSourceUrl" | "strategy" |
+  "currentStage" | "currentSubstage" | "currentState" | "failureReason" |
+  "salary" | "compensationSummary" | "fitScore" | "discoveredAt" | "scoredAt" |
+  "applyStatus" | "appliedAt">;
+
+export function jobSortValue(job: JobQueryScalars, field: string): unknown {
+  const text = (value: string): string => value.toLowerCase();
+  switch (field) {
+    case "title": return text(job.title);
+    case "company": return text(job.company);
+    case "source": return jobSourceSortValue(job);
+    case "location": return text(job.location);
+    case "fit_score": return job.fitScore ?? -1;
+    case "current_stage": return text(job.currentStage);
+    case "current_state": return `${STATE_RANK[job.currentState] ?? 999}:${text(job.currentSubstage || job.currentStage)}`;
+    case "apply_status": return job.applyStatus ?? "";
+    case "compensation_min_eur": return postedCompensationAmountEur(job.compensationSummary, "min");
+    case "compensation_max_eur": return postedCompensationAmountEur(job.compensationSummary, "max");
+    case "compensation_posted": return postedCompensationSortValue(job.compensationSummary, job.salary);
+    case "compensation_market": return marketCompensationSortValue(job.compensationSummary);
+    case "compensation_confidence": return marketConfidenceSortValue(job.compensationSummary);
+    case "compensation_warnings": return job.compensationSummary?.warningCount ?? 0;
+    default: return job.discoveredAt;
+  }
 }
 
 export function compareJobs(
@@ -190,54 +227,10 @@ export function compareJobs(
   right: JobSummary,
   field: string,
   direction: "asc" | "desc",
-  options: CompareJobsOptions = {},
+  _options: CompareJobsOptions = {},
 ): number {
-  const multiplier = direction === "asc" ? 1 : -1;
-  const normalizeSqlText = options.normalizeSqlText ?? false;
-  const text = (value: string): string => (normalizeSqlText ? value.toLowerCase() : value);
-  const stateSubstage = (job: JobSummary): string =>
-    normalizeSqlText ? text(job.currentSubstage || job.currentStage) : job.currentSubstage;
-  const values: Record<string, [unknown, unknown]> = {
-    discovered_at: [left.discoveredAt, right.discoveredAt],
-    title: [text(left.title), text(right.title)],
-    company: [text(left.company), text(right.company)],
-    source: [jobSourceSortValue(left), jobSourceSortValue(right)],
-    compensation_min_eur: [
-      postedCompensationAmountEur(left.compensationSummary, "min"),
-      postedCompensationAmountEur(right.compensationSummary, "min"),
-    ],
-    compensation_max_eur: [
-      postedCompensationAmountEur(left.compensationSummary, "max"),
-      postedCompensationAmountEur(right.compensationSummary, "max"),
-    ],
-    compensation_posted: [
-      postedCompensationSortValue(left.compensationSummary, left.salary),
-      postedCompensationSortValue(right.compensationSummary, right.salary),
-    ],
-    compensation_market: [
-      marketCompensationSortValue(left.compensationSummary),
-      marketCompensationSortValue(right.compensationSummary),
-    ],
-    compensation_confidence: [
-      marketConfidenceSortValue(left.compensationSummary),
-      marketConfidenceSortValue(right.compensationSummary),
-    ],
-    compensation_warnings: [
-      left.compensationSummary?.warningCount ?? 0,
-      right.compensationSummary?.warningCount ?? 0,
-    ],
-    location: [text(left.location), text(right.location)],
-    fit_score: [left.fitScore ?? -1, right.fitScore ?? -1],
-    current_stage: [text(left.currentStage), text(right.currentStage)],
-    current_state: [
-      `${STATE_RANK[left.currentState] ?? 999}:${stateSubstage(left)}`,
-      `${STATE_RANK[right.currentState] ?? 999}:${stateSubstage(right)}`,
-    ],
-    apply_status: [left.applyStatus ?? "", right.applyStatus ?? ""],
-  };
-  const [leftValue, rightValue] = values[field] ?? values.discovered_at!;
-  const compared = compareValues(leftValue, rightValue);
-  return compared ? compared * multiplier : left.jobKey.localeCompare(right.jobKey);
+  const compared = compareValues(jobSortValue(left, field), jobSortValue(right, field));
+  return compared ? compared * (direction === "asc" ? 1 : -1) : left.jobKey.localeCompare(right.jobKey);
 }
 
 export function paginate<T>(

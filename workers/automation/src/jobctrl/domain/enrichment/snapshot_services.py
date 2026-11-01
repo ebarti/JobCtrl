@@ -1,37 +1,21 @@
-"""PR3 Enrichment domain services.
+"""Content acquisition and exact duplicate identity.
 
-See ``docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md``
-§"Content Acquisition Pipeline", §"Deduplication Boundary", and
-§"Domain Events".
-
-Three services live here:
-
-  * ``ContentAcquisitionService`` — reusable wrapper around the
-    existing tier cascade that turns a fetched detail page into a
-    ``ContentAcquisitionResult`` (description, apply URL, active state,
-    confidence, quarantine reason, evidence). The service is pure
-    domain logic; the caller injects the detail-page fetcher and the
-    extractor cascade so tests can swap fakes without monkey-patching.
-  * ``ActiveStateVerifier`` — translates a fetched detail page into an
-    ``ActiveState`` value object. The default implementation looks at
-    the JSON-LD ``validThrough`` / ``employmentType`` fields, the
-    HTTP status returned by the fetcher, and a small set of
-    closed-page text markers. Source-specific verifiers can wrap or
-    replace it.
-  * ``ContentDedupeService`` — finds content-duplicate candidates by
-    joining on description hash, apply URL, or high-confidence content
-    similarity (currently described-hash near-equality at the value-
-    object boundary; the fuzzy text scoring is delegated to a callable
-    to keep the domain free of NLP dependencies).
+Page availability and description quality come from cited model determinations.
+URL identity, HTTP status, structured extraction and canonical hashes remain
+mechanical. Fuzzy duplicate candidates need an explicit duplicate determination.
 """
 
 from __future__ import annotations
 
 import logging
+import hashlib
+from datetime import datetime, timezone
+
+from bs4 import BeautifulSoup
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Sequence
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 from jobctrl.domain.enrichment.services import (
     ExtractionResult,
@@ -108,114 +92,142 @@ class TierExtractor:
 # ---------------------------------------------------------------------------
 
 
-_CLOSED_MARKERS = (
-    "this position is no longer accepting applications",
-    "no longer accepting applications",
-    "this job has been filled",
-    "this position has been filled",
-    "this job is no longer available",
-    "we are no longer accepting applications",
-    "applications are closed",
-    "job is closed",
-    "posting is closed",
-    "this requisition has been closed",
-)
-
-_REMOVED_MARKERS = (
-    "page not found",
-    "404",
-    "this page doesn't exist",
-)
-
-
 class ActiveStateVerifier:
-    """Decide a posting's ``ActiveState`` from a fetched detail page.
+    """Mechanical URL/status fencing around a cited page interpretation."""
 
-    The verifier never raises on a missing signal: ``UNKNOWN`` is the
-    safe default. Callers translate ``UNKNOWN`` into
-    ``QuarantineReason.UNKNOWN_ACTIVE_STATE`` upstream.
-    """
+    def __init__(self, *, page_interpreter):
+        self._interpreter = page_interpreter
 
-    def verify(self, page: DetailPage) -> tuple[ActiveState, str]:
-        """Return ``(active_state, verification_method)``.
-
-        ``verification_method`` is one of ``"http_status"``,
-        ``"json_ld_valid_through"``, ``"closed_marker"``,
-        ``"removed_marker"``, ``"default_body_present"``, or
-        ``"unknown"``. The caller writes the method onto the resulting
-        ``JobActiveStateChanged`` event so Operations can break down
-        which signal moved which job.
-        """
-        # 1. HTTP status is the cheapest signal.
-        if page.status is not None:
-            if page.status == 410:
-                return ActiveState.REMOVED, "http_status"
-            if page.status == 404:
-                return ActiveState.REMOVED, "http_status"
-        # 2. JSON-LD ``validThrough`` carries an ISO-8601 deadline.
-        for ld in page.json_ld:
-            posting = _find_job_posting(ld)
-            if not posting:
+    def verify(self, page, *, signals=None):
+        if not same_posting_url(page.url, page.final_url or page.url):
+            return ActiveState.UNKNOWN, "identity_lost"
+        if page.status in {404, 410}:
+            if signals is not None:
+                signals.append({"kind": "http_status", "value": str(page.status)})
+            return ActiveState.REMOVED, "http_status"
+        if page.status is not None and page.status not in {200, 201, 202, 203, 204, 404, 410}:
+            return ActiveState.UNKNOWN, "http_error"
+        if not page.status_evidence_complete:
+            if signals is not None:
+                signals.append(
+                    {
+                        "kind": "acquisition_failure",
+                        "value": page.status_evidence_reason or "incomplete_status_evidence",
+                    }
+                )
+            return ActiveState.UNKNOWN, page.status_evidence_reason or "incomplete_status_evidence"
+        soup = BeautifulSoup(page.status_html or page.html or "", "html.parser")
+        for element in list(soup.find_all(True)):
+            if element.parent is None:
                 continue
-            valid_through = posting.get("validThrough")
-            if isinstance(valid_through, str) and valid_through.strip():
-                if _is_past(valid_through):
-                    return ActiveState.EXPIRED, "json_ld_valid_through"
-                return ActiveState.ACTIVE, "json_ld_valid_through"
-        # 3. Body markers — closed, then removed.
-        body = page.html.lower() if page.html else ""
-        if body:
-            for marker in _CLOSED_MARKERS:
-                if marker in body:
-                    return ActiveState.CLOSED, "closed_marker"
-            for marker in _REMOVED_MARKERS:
-                if marker in body:
-                    return ActiveState.REMOVED, "removed_marker"
-            # 4. Plain success body without closed markers — assume active.
-            return ActiveState.ACTIVE, "default_body_present"
-        return ActiveState.UNKNOWN, "unknown"
+            style = str(element.get("style") or "")
+            if (
+                element.name in {"template", "noscript", "script", "style"}
+                or element.has_attr("hidden")
+                or element.has_attr("inert")
+                or str(element.get("aria-hidden") or "").lower() == "true"
+                or re.search(
+                    r"(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse)|content-visibility\s*:\s*hidden)",
+                    style,
+                    re.I,
+                )
+            ):
+                element.decompose()
+        result, envelope = self._interpreter.interpret(
+            entity_id=page.url,
+            text=soup.get_text(" ", strip=True),
+            metadata={
+                "url": page.url,
+                "final_url": page.final_url,
+                "http_status": page.status,
+                "title": page.page_title,
+                "visibility_verified": page.status_visibility_verified,
+                "structured_postings": page.json_ld,
+            },
+        )
+        if signals is not None:
+            signals.append({"kind": "page_determination", "determination_id": envelope.determination_id})
+        reason = (
+            "access_challenge"
+            if result.access_state.value in {"login_required", "challenge"}
+            else "model_determination"
+        )
+        return ActiveState(result.availability.value), reason
+
+    def description_quality(self, *, tier, description, apply_url_present):
+        result, envelope = self._interpreter.description_quality(
+            text=description.text, metadata={"extraction_tier": tier.value, "apply_url_present": apply_url_present}
+        )
+        return SnapshotConfidence(result.confidence), envelope
+
+
+_TRACKING_QUERY_KEYS = frozenset(
+    {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "source", "gh_src", "lever-source"}
+)
+
+
+def same_posting_url(expected: str, actual: str) -> bool:
+    """Preserve every identity query field; discard only known tracking keys."""
+    try:
+        first, second = urlsplit(expected), urlsplit(actual)
+
+        def path(value: str) -> str:
+            return value.rstrip("/").removesuffix("/apply")
+
+        def query(value: str) -> list[tuple[str, str]]:
+            return sorted(
+                (key, item)
+                for key, item in parse_qsl(value, keep_blank_values=True)
+                if key.lower() not in _TRACKING_QUERY_KEYS
+            )
+
+        host_match = first.hostname == second.hostname or {first.hostname, second.hostname} <= {
+            "boards.greenhouse.io",
+            "job-boards.greenhouse.io",
+        }
+        return bool(
+            first.hostname
+            and path(first.path)
+            and first.scheme in {"http", "https"}
+            and second.scheme in {"http", "https"}
+            and host_match
+            and first.port == second.port
+            and path(first.path) == path(second.path)
+            and query(first.query) == query(second.query)
+        )
+    except ValueError:
+        return False
+
+
+def _parse_deadline(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    # An unzoned date cannot prove an instant; do not silently assume UTC.
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _find_job_postings(data: object) -> list[dict]:
+    if isinstance(data, dict):
+        type_ = data.get("@type")
+        current = [data] if type_ == "JobPosting" or isinstance(type_, list) and "JobPosting" in type_ else []
+        return current + _find_job_postings(data.get("@graph"))
+    if isinstance(data, list):
+        return [posting for item in data for posting in _find_job_postings(item)]
+    return []
 
 
 def _find_job_posting(data: object) -> dict | None:
-    if isinstance(data, dict):
-        if data.get("@type") == "JobPosting":
-            return data
-        graph = data.get("@graph")
-        if isinstance(graph, list):
-            for item in graph:
-                result = _find_job_posting(item)
-                if result:
-                    return result
-    elif isinstance(data, list):
-        for item in data:
-            result = _find_job_posting(item)
-            if result:
-                return result
-    return None
+    postings = _find_job_postings(data)
+    return postings[0] if postings else None
 
 
 def _is_past(iso_text: str) -> bool:
-    """Return True when ``iso_text`` parses to a past instant.
-
-    Returns False on parse failure to keep the verifier conservative
-    (a broken date should not auto-expire a posting).
-    """
-    from datetime import datetime, timezone
-
-    text = iso_text.strip()
-    candidates = (
-        text,
-        text.replace("Z", "+00:00") if text.endswith("Z") else text,
-    )
-    for candidate in candidates:
-        try:
-            parsed = datetime.fromisoformat(candidate)
-        except ValueError:
-            continue
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed < datetime.now(tz=timezone.utc)
-    return False
+    parsed = _parse_deadline(iso_text)
+    return parsed is not None and parsed < datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -223,48 +235,6 @@ def _is_past(iso_text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-_HIGH_CONFIDENCE_MIN_LEN = 400
-_MEDIUM_CONFIDENCE_MIN_LEN = 200
-
-
-def judge_snapshot_confidence(
-    *,
-    tier: ExtractionTier,
-    description: FullDescription,
-    apply_url_present: bool,
-) -> SnapshotConfidence:
-    """Heuristic three-bucket judgement consistent with the RFC schema.
-
-    JSON-LD with apply URL and a long description is HIGH; CSS without
-    apply URL is MEDIUM; a sufficiently complete LLM-assisted description
-    is MEDIUM whether or not an application URL was recovered. Application
-    target readiness is a separate fact and must not downgrade readable
-    posting content.
-    """
-    length = len(description.text)
-    if tier is ExtractionTier.JSON_LD and apply_url_present and length >= _MEDIUM_CONFIDENCE_MIN_LEN:
-        return SnapshotConfidence.HIGH
-    if tier is ExtractionTier.CSS_SELECTORS:
-        if length >= _HIGH_CONFIDENCE_MIN_LEN and apply_url_present:
-            return SnapshotConfidence.HIGH
-        if length >= _MEDIUM_CONFIDENCE_MIN_LEN:
-            return SnapshotConfidence.MEDIUM
-        return SnapshotConfidence.LOW
-    if tier is ExtractionTier.LLM_ASSISTED:
-        if length >= _HIGH_CONFIDENCE_MIN_LEN:
-            return SnapshotConfidence.MEDIUM
-        return SnapshotConfidence.LOW
-    if length < _MEDIUM_CONFIDENCE_MIN_LEN:
-        return SnapshotConfidence.LOW
-    return SnapshotConfidence.MEDIUM
-
-
-# ---------------------------------------------------------------------------
-# ContentAcquisitionService
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
 class FetcherProtocol:
     """Minimal duck type — extracted so tests can hand in fakes."""
 
@@ -288,15 +258,13 @@ class ContentAcquisitionService:
         *,
         fetcher: object,  # ``.fetch(url) -> DetailPage``
         extractors: Sequence[TierExtractor],
-        active_verifier: ActiveStateVerifier | None = None,
+        active_verifier: ActiveStateVerifier,
     ) -> None:
         if not extractors:
-            raise ValueError(
-                "ContentAcquisitionService requires at least one TierExtractor"
-            )
+            raise ValueError("ContentAcquisitionService requires at least one TierExtractor")
         self._fetcher = fetcher
         self._extractors = tuple(extractors)
-        self._active_verifier = active_verifier or ActiveStateVerifier()
+        self._active_verifier = active_verifier
 
     # ------------------------------------------------------------------
 
@@ -354,7 +322,8 @@ class ContentAcquisitionService:
                 verification_method="pending",
                 http_status_code=page.status,
             ) as verify_span:
-                active_state, verification_method = self._active_verifier.verify(page)
+                determination_signals = []
+                active_state, verification_method = self._active_verifier.verify(page, signals=determination_signals)
                 verify_span.set_attribute("active.state", active_state.value)
                 verify_span.set_attribute("verification.method", verification_method)
 
@@ -381,7 +350,7 @@ class ContentAcquisitionService:
                     )
                     description = result.full_description
                     hash_ = SnapshotDescriptionHash.from_text(description.text)
-                    confidence = judge_snapshot_confidence(
+                    confidence, quality_envelope = self._active_verifier.description_quality(
                         tier=step.tier,
                         description=description,
                         apply_url_present=final_apply is not None,
@@ -392,10 +361,18 @@ class ContentAcquisitionService:
                         has_apply_url=final_apply is not None,
                         filter_override=filter_override,
                     )
-                    evidence = _capture_evidence(
-                        tier=step.tier,
-                        apply_url_present=final_apply is not None,
-                        description_length=len(description.text),
+                    evidence = (
+                        *_capture_evidence(
+                            tier=step.tier,
+                            apply_url_present=final_apply is not None,
+                            description_length=len(description.text),
+                        ),
+                        f"description_quality_determination:{quality_envelope.determination_id}",
+                        *(
+                            f"page_interpretation_determination:{signal['determination_id']}"
+                            for signal in determination_signals
+                            if signal["kind"] == "page_determination"
+                        ),
                     )
                     acquire_span.set_attribute("extraction.tier", step.tier.value)
                     acquire_span.set_attribute("snapshot.hash", hash_.value)
@@ -410,7 +387,8 @@ class ContentAcquisitionService:
                         description=description,
                         description_hash=hash_,
                         apply_url=final_apply,
-                        raw_text_hash="",  # Reserved for forensics; populated by future fetchers.
+                        raw_text_hash=page.raw_html_hash
+                        or hashlib.sha256((page.status_html or page.html).encode("utf-8")).hexdigest(),
                         evidence=evidence,
                     )
 
@@ -430,9 +408,7 @@ class ContentAcquisitionService:
                 verification_method=verification_method,
                 http_status_code=page.status,
                 error_class="EXTRACTION_EXHAUSTED",
-                error_message=(
-                    f"All extraction tiers failed (last: {last_tier_attempted.value})"
-                ),
+                error_message=(f"All extraction tiers failed (last: {last_tier_attempted.value})"),
                 retryable=True,
             )
 
@@ -448,7 +424,7 @@ def _quarantine_for_capture(
 
     The default rules match the RFC's "Quarantine" table:
 
-      * UNKNOWN active state → quarantine for review.
+      * Availability uncertainty alone does not change description trust.
       * LOW confidence WITHOUT a filter override → quarantine.
       * LOW confidence WITH an explicit filter override → admit; the
         override audit will be persisted on the snapshot, and the
@@ -457,8 +433,6 @@ def _quarantine_for_capture(
         application-target readiness is tracked separately.
       * Otherwise NONE.
     """
-    if active_state is ActiveState.UNKNOWN:
-        return QuarantineReason.UNKNOWN_ACTIVE_STATE
     if confidence is SnapshotConfidence.LOW and filter_override is None:
         return QuarantineReason.LOW_CONFIDENCE_EXTRACTION
     if not has_apply_url:
@@ -509,35 +483,6 @@ class DedupeFinding:
     confidence: float
 
 
-SimilarityScorer = Callable[[str, str], float]
-
-
-def _default_similarity(left: str, right: str) -> float:
-    """Conservative default similarity score in [0, 1].
-
-    Token Jaccard over case-folded alphanumeric word tuples — small
-    enough to live in the domain layer with no external dependency.
-    Empty inputs return 0.
-    """
-    left_tokens = _tokenize(left)
-    right_tokens = _tokenize(right)
-    if not left_tokens or not right_tokens:
-        return 0.0
-    inter = left_tokens & right_tokens
-    union = left_tokens | right_tokens
-    return len(inter) / len(union)
-
-
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
-
-
-def _tokenize(text: str) -> set[str]:
-    return set(_TOKEN_RE.findall(text.casefold()))
-
-
-_DEFAULT_SIMILARITY_THRESHOLD = 0.85
-
-
 class ContentDedupeService:
     """Find content-duplicate candidates for a freshly captured snapshot.
 
@@ -546,19 +491,6 @@ class ContentDedupeService:
     become ``ContentDuplicateCandidate`` records on the aggregate (and
     therefore which trigger ``ContentDuplicateCandidateDetected``).
     """
-
-    def __init__(
-        self,
-        *,
-        similarity: SimilarityScorer | None = None,
-        similarity_threshold: float = _DEFAULT_SIMILARITY_THRESHOLD,
-    ) -> None:
-        if not 0.0 < similarity_threshold <= 1.0:
-            raise ValueError(
-                "ContentDedupeService.similarity_threshold must be in (0, 1]"
-            )
-        self._similarity = similarity or _default_similarity
-        self._similarity_threshold = similarity_threshold
 
     def find_candidates(
         self,
@@ -592,8 +524,7 @@ class ContentDedupeService:
             if (
                 apply_url is not None
                 and entry.apply_url is not None
-                and _normalize_url(entry.apply_url.value)
-                == _normalize_url(apply_url.value)
+                and _normalize_url(entry.apply_url.value) == _normalize_url(apply_url.value)
             ):
                 evidence.append(
                     DuplicateEvidence(
@@ -602,16 +533,6 @@ class ContentDedupeService:
                         confidence=0.95,
                     )
                 )
-            if cleaned_text and entry.cleaned_text:
-                score = self._similarity(cleaned_text, entry.cleaned_text)
-                if score >= self._similarity_threshold:
-                    evidence.append(
-                        DuplicateEvidence(
-                            kind=DuplicateEvidenceKind.HIGH_CONFIDENCE_CONTENT_SIMILARITY,
-                            matched_value=f"similarity:{score:.4f}",
-                            confidence=score,
-                        )
-                    )
             if evidence:
                 findings.setdefault(entry.candidate_job_id, []).extend(evidence)
         result: list[DedupeFinding] = []
@@ -658,5 +579,4 @@ __all__ = [
     "DedupeFinding",
     "DedupeIndexEntry",
     "TierExtractor",
-    "judge_snapshot_confidence",
 ]

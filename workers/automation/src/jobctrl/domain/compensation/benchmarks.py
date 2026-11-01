@@ -6,7 +6,6 @@ remain different types all the way to persistence and presentation.
 """
 
 from __future__ import annotations
-
 import hashlib
 import ipaddress
 import json
@@ -21,24 +20,17 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from types import MappingProxyType
 from typing import Any, Literal
+from jobctrl.domain.taxonomy_codes import SeniorityCode as SeniorityLabel
+from jobctrl.domain.taxonomy import SEMANTIC_TAXONOMY
+from jobctrl.domain.job_content_identity import normalize_identity_text as canonical_company_key
 
 
-ROLE_FAMILY_TAXONOMY_VERSION = "jobctrl-role-family-v1"
+ROLE_FAMILY_TAXONOMY_VERSION = "1"
 GEOGRAPHIC_EXTRAPOLATION_FORMULA_VERSION = "geo-shrinkage-v1"
 LOWER_FACTOR_BOUND = 0.1
 UPPER_FACTOR_BOUND = 10.0
 
-SeniorityLabel = Literal[
-    "entry",
-    "mid",
-    "senior",
-    "staff",
-    "principal",
-    "manager",
-    "director",
-    "executive",
-    "unknown",
-]
+
 GeographyScope = Literal["country", "country_subdivision", "locality"]
 BenchmarkComponent = Literal["base_salary", "total_compensation"]
 BenchmarkMarketScope = Literal["market", "company"]
@@ -76,7 +68,6 @@ _FACT_NAMESPACE = uuid.UUID("c34587ca-8990-56a3-8765-645e44cb565d")
 _ISO_COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 _HASH_RE = re.compile(r"^[a-f0-9]{64}$")
-_TOKEN_RE = re.compile(r"[a-z0-9+#]+")
 _UNSAFE_PROVENANCE_MARKERS = (
     "/home/",
     "/private/",
@@ -103,17 +94,7 @@ _LOCAL_PATH_RE = re.compile(
 )
 _MAX_SUBDIVISION_CODE_LENGTH = 32
 _MAX_LOCALITY_LENGTH = 128
-_SENIORITY_LABELS = {
-    "entry",
-    "mid",
-    "senior",
-    "staff",
-    "principal",
-    "manager",
-    "director",
-    "executive",
-    "unknown",
-}
+_SENIORITY_LABELS = set(SEMANTIC_TAXONOMY["seniority"])
 _BENCHMARK_COMPONENTS = {"base_salary", "total_compensation"}
 _MARKET_SCOPES = {"market", "company"}
 _SOURCE_PROVENANCE = {"public", "licensed", "manual", "official"}
@@ -133,197 +114,6 @@ _PRICE_INPUT_ROLES = {
     "source_price_level",
     "target_price_level",
     "shrinkage_prior",
-}
-
-_ROLE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    (
-        "security_privacy",
-        (
-            "application security",
-            "cloud security",
-            "cybersecurity",
-            "information security",
-            "privacy engineer",
-            "privacy engineering",
-            "security",
-            "trust and safety",
-        ),
-    ),
-    (
-        "data_ai",
-        (
-            "artificial intelligence",
-            "data analyst",
-            "data engineer",
-            "data scientist",
-            "machine learning",
-            "ml engineer",
-            "analytics engineer",
-        ),
-    ),
-    (
-        "infrastructure_platform",
-        (
-            "cloud engineer",
-            "devops",
-            "infrastructure",
-            "platform engineer",
-            "reliability engineer",
-            "site reliability",
-            "sre",
-        ),
-    ),
-    (
-        "product_management",
-        ("product manager", "product management", "product owner"),
-    ),
-    (
-        "design_research",
-        (
-            "content designer",
-            "product design",
-            "product designer",
-            "researcher",
-            "service designer",
-            "ux",
-            "user research",
-        ),
-    ),
-    (
-        "sales_business_development",
-        (
-            "account executive",
-            "business development",
-            "partnerships",
-            "sales",
-            "solutions consultant",
-        ),
-    ),
-    (
-        "marketing_communications",
-        (
-            "communications",
-            "content marketing",
-            "demand generation",
-            "growth marketing",
-            "marketing",
-            "public relations",
-        ),
-    ),
-    (
-        "customer_success_support",
-        (
-            "customer experience",
-            "customer success",
-            "customer support",
-            "implementation consultant",
-            "support engineer",
-        ),
-    ),
-    (
-        "finance_accounting",
-        ("accountant", "accounting", "controller", "finance", "financial"),
-    ),
-    (
-        "people_talent",
-        (
-            "human resources",
-            "people operations",
-            "recruiter",
-            "recruiting",
-            "talent acquisition",
-        ),
-    ),
-    (
-        "legal_compliance",
-        ("compliance", "counsel", "legal", "lawyer", "regulatory"),
-    ),
-    (
-        "business_operations",
-        (
-            "business operations",
-            "chief of staff",
-            "operations manager",
-            "program manager",
-            "project manager",
-            "strategy and operations",
-        ),
-    ),
-    (
-        "software_engineering",
-        (
-            "backend",
-            "developer",
-            "engineer",
-            "engineering manager",
-            "frontend",
-            "full stack",
-            "mobile engineer",
-            "software",
-            "web engineer",
-        ),
-    ),
-    (
-        "general_management",
-        (
-            "chief executive",
-            "general manager",
-            "managing director",
-            "president",
-        ),
-    ),
-)
-
-_COUNTRY_ALIASES: dict[str, str] = {
-    "andorra": "AD",
-    "australia": "AU",
-    "austria": "AT",
-    "belgium": "BE",
-    "brazil": "BR",
-    "bulgaria": "BG",
-    "canada": "CA",
-    "croatia": "HR",
-    "cyprus": "CY",
-    "czech republic": "CZ",
-    "czechia": "CZ",
-    "denmark": "DK",
-    "estonia": "EE",
-    "finland": "FI",
-    "france": "FR",
-    "germany": "DE",
-    "greece": "GR",
-    "hong kong": "HK",
-    "hungary": "HU",
-    "iceland": "IS",
-    "india": "IN",
-    "ireland": "IE",
-    "italy": "IT",
-    "japan": "JP",
-    "latvia": "LV",
-    "lithuania": "LT",
-    "luxembourg": "LU",
-    "malta": "MT",
-    "mexico": "MX",
-    "netherlands": "NL",
-    "new zealand": "NZ",
-    "norway": "NO",
-    "poland": "PL",
-    "portugal": "PT",
-    "romania": "RO",
-    "singapore": "SG",
-    "slovakia": "SK",
-    "slovenia": "SI",
-    "south africa": "ZA",
-    "spain": "ES",
-    "sweden": "SE",
-    "switzerland": "CH",
-    "uae": "AE",
-    "united arab emirates": "AE",
-    "united kingdom": "GB",
-    "united states": "US",
-    "united states of america": "US",
-    "uk": "GB",
-    "usa": "US",
 }
 
 
@@ -712,124 +502,6 @@ class ExtrapolatedBenchmarkFact:
             raise ValueError("fact_id does not match extrapolated benchmark content")
 
 
-def classify_role(title: str) -> RoleClassification:
-    normalized = _normalized_phrase(title)
-    matched_code: str | None = None
-    matched_rule: str | None = None
-    for code, rules in _ROLE_RULES:
-        for rule in rules:
-            if _phrase_present(normalized, rule):
-                matched_code = code
-                matched_rule = rule
-                break
-        if matched_code is not None:
-            break
-    return RoleClassification(
-        taxonomy_version=ROLE_FAMILY_TAXONOMY_VERSION,
-        role_family_code=matched_code,
-        seniority_label=classify_seniority(title),
-        matched_rule=matched_rule,
-    )
-
-
-def classify_seniority(title_or_level: str | None) -> SeniorityLabel:
-    tokens = set(_TOKEN_RE.findall(str(title_or_level or "").casefold()))
-    normalized = _normalized_phrase(title_or_level or "")
-    if tokens & {"chief", "ceo", "cfo", "cio", "ciso", "coo", "cpo", "cto", "president", "vp"}:
-        return "executive"
-    if "vice president" in normalized:
-        return "executive"
-    if "director" in tokens or "head" in tokens:
-        return "director"
-    if "manager" in tokens or "management" in tokens:
-        return "manager"
-    if "principal" in tokens:
-        return "principal"
-    if "staff" in tokens:
-        return "staff"
-    if "senior" in tokens or "sr" in tokens:
-        return "senior"
-    if tokens & {"entry", "graduate", "intern", "internship", "junior", "jr"}:
-        return "entry"
-    if tokens & {"associate", "intermediate", "mid"} or "mid level" in normalized:
-        return "mid"
-    return "unknown"
-
-
-def resolve_country_code(location: str | None) -> str | None:
-    normalized = _normalized_phrase(location or "")
-    if not normalized:
-        return None
-    for alias in sorted(_COUNTRY_ALIASES, key=len, reverse=True):
-        if _phrase_present(normalized, alias):
-            return _COUNTRY_ALIASES[alias]
-    parts = [part.strip() for part in re.split(r"[,/|()]", str(location or ""))]
-    for part in reversed(parts):
-        if _ISO_COUNTRY_RE.fullmatch(part):
-            return part
-    return None
-
-
-def resolve_benchmark_geography(location: str | None) -> BenchmarkGeography | None:
-    """Resolve country authority without promoting a named locality to country scope."""
-
-    raw_location = str(location or "").strip()
-    if raw_location:
-        _canonical_geography_label(
-            raw_location,
-            "location",
-            max_length=_MAX_LOCALITY_LENGTH * 2,
-        )
-    country_code = resolve_country_code(location)
-    if country_code is None:
-        return None
-    parts = [part.strip() for part in re.split(r"[,/|()]", str(location or "")) if part.strip()]
-    for part in parts:
-        if resolve_country_code(part) is not None:
-            continue
-        locality = re.sub(
-            r"\b(?:hybrid|remote|remoto|teletrabajo|work from home|wfh)\b",
-            " ",
-            part,
-            flags=re.IGNORECASE,
-        )
-        locality = re.sub(r"\s+", " ", locality).strip(" -–—")
-        if locality and _normalized_phrase(locality) not in {"europe", "emea", "worldwide"}:
-            return BenchmarkGeography(
-                country_code,
-                scope="locality",
-                locality=locality,
-            )
-    return BenchmarkGeography(country_code)
-
-
-def normalize_company_name(value: str | None) -> str | None:
-    normalized = _normalized_phrase(value or "")
-    if not normalized:
-        return None
-    legal_suffixes = {
-        "ag",
-        "bv",
-        "corp",
-        "corporation",
-        "gmbh",
-        "inc",
-        "incorporated",
-        "limited",
-        "llc",
-        "ltd",
-        "nv",
-        "oy",
-        "plc",
-        "sa",
-        "sas",
-        "sarl",
-        "sl",
-    }
-    tokens = [token for token in normalized.split() if token not in legal_suffixes]
-    return " ".join(tokens) or None
-
-
 def build_direct_benchmark_fact(
     *,
     tenant_id: str,
@@ -866,7 +538,7 @@ def build_direct_benchmark_fact(
     fresh_until = canonical_benchmark_timestamp(fresh_until, "fresh_until")
     created = canonical_benchmark_timestamp(created_at or fetched_at, "created_at")
     original_currency = original_currency.strip().upper()
-    normalized_company = normalize_company_name(normalized_company)
+    normalized_company = canonical_company_key(normalized_company or "") or None
     fx_payload = _canonical_json_object(fx_reference, "fx_reference")
     payload = {
         "tenant_id": tenant_id,
@@ -1229,14 +901,6 @@ def canonical_benchmark_timestamp(value: str, field: str = "timestamp") -> str:
     return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def _normalized_phrase(value: str) -> str:
-    return " ".join(_TOKEN_RE.findall(value.casefold()))
-
-
-def _phrase_present(normalized: str, phrase: str) -> bool:
-    return f" {phrase} " in f" {normalized} "
-
-
 def _geography_payload(geography: BenchmarkGeography) -> dict[str, str]:
     return {
         "country_code": geography.country_code,
@@ -1561,11 +1225,6 @@ __all__ = [
     "build_direct_benchmark_fact",
     "build_price_level_fact",
     "canonical_benchmark_timestamp",
-    "classify_role",
-    "classify_seniority",
     "extrapolate_benchmark",
     "factor_bound_state",
-    "normalize_company_name",
-    "resolve_country_code",
-    "resolve_benchmark_geography",
 ]

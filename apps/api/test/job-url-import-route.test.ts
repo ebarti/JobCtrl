@@ -6,14 +6,15 @@ import path from "node:path";
 import {
   JobUrlImportError,
   type JobUrlImporter,
+  createWorkerJobUrlImporter,
 } from "../src/job-url-import-worker.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 function fixture(): { dbPath: string; dir: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-job-url-import-"));
   const dbPath = path.join(dir, "jobctrl.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   return {
     dbPath,
     dir,
@@ -305,5 +306,54 @@ describe("POST /v1/jobs/import-url", () => {
       await app.close();
       cleanup();
     }
+  });
+  it.each(["provider_unavailable","budget_denied","malformed_json","schema_violation","foreign_source_id","non_verbatim_quote","mismatched_value"])("exposes the distinct safe %s interpretation failure", async (code) => {
+    const {dbPath,dir,cleanup}=fixture();
+    const importer=createWorkerJobUrlImporter({dispatcherFactory:()=>({call:async()=>({jsonrpc:"2.0",id:1,result:{runId:"synthetic-import-workflow",workflowId:"synthetic-import-workflow",firstExecutionRunId:"synthetic-import-execution",result:{status:"failed",outcome:null,job_id:null,item_id:null,reason:null,imported_at:null,already_existed:false,error:null,error_code:`semantic_determination_${code}`}}}),close:async()=>{}})});
+    const app=buildApp({dbPath,configPath:path.join(dir,"config.json"),jobUrlImporter:importer,jobUrlValidator:async()=>({allowed:true}),requireHealthyWorkerForActions:false});
+    try {
+      const response=await app.inject({method:"POST",url:"/v1/jobs/import-url",payload:{url:"https://example.com/jobs/42"}});
+      expect(response.statusCode,response.body).toBe(503);
+      expect(response.json()).toMatchObject({ok:false,error:"job_url_import_failed",failureCode:code});
+    } finally {await app.close();cleanup();}
+  });
+
+});
+
+
+describe("asynchronous URL import progress", () => {
+  it("acknowledges once and reads pending/completed status without another import", async () => {
+    const { dbPath, dir, cleanup } = fixture();
+    const execution = { workflowId: "job-url-import-execution", executionId: "11111111-1111-4111-8111-111111111111" };
+    const jobUrlImporter = vi.fn<JobUrlImporter>(async () => ({ ok: true, status: "started", ...execution }));
+    let complete = false;
+    const statusReader = vi.fn(async () => complete
+      ? { ok: true as const, status: "imported" as const, jobKey: "22222222-2222-4222-8222-222222222222", importedAt: "2026-10-24T12:00:00Z", alreadyExisted: false }
+      : { ok: true as const, status: "pending" as const, ...execution });
+    const app = buildApp({ dbPath, configPath: path.join(dir, "config.json"),
+      jobUrlImporter, jobUrlImportStatusReader: statusReader,
+      jobUrlValidator: async () => ({ allowed: true }), requireHealthyWorkerForActions: false });
+    try {
+      const started = await app.inject({ method: "POST", url: "/v1/jobs/import-url",
+        payload: { url: "https://example.com/jobs/42", awaitResult: false } });
+      expect(started.statusCode).toBe(202);
+      expect(started.json()).toMatchObject({ status: "started", ...execution });
+      const url = `/v1/jobs/import-url/${execution.workflowId}/${execution.executionId}`;
+      expect((await app.inject({ method: "GET", url })).json()).toMatchObject({ status: "pending" });
+      complete = true;
+      expect((await app.inject({ method: "GET", url })).json()).toMatchObject({ status: "imported" });
+      expect(jobUrlImporter).toHaveBeenCalledTimes(1);
+      expect(statusReader).toHaveBeenCalledWith(execution, { appDir: dir, dbPath });
+    } finally { await app.close(); cleanup(); }
+  });
+
+  it("rejects malformed execution IDs before status lookup", async () => {
+    const { dbPath, dir, cleanup } = fixture();
+    const statusReader = vi.fn();
+    const app = buildApp({ dbPath, configPath: path.join(dir, "config.json"), jobUrlImportStatusReader: statusReader });
+    try {
+      expect((await app.inject({ method: "GET", url: "/v1/jobs/import-url/workflow/not-an-execution" })).statusCode).toBe(400);
+      expect(statusReader).not.toHaveBeenCalled();
+    } finally { await app.close(); cleanup(); }
   });
 });

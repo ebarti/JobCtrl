@@ -1,4 +1,6 @@
 export { materialsKeys } from "./queryKeys.js";
+export { MaterialLocaleVariants } from "./components/MaterialLocaleVariants.js";
+export { AcceptedMaterialExports } from "./components/AcceptedMaterialExports.js";
 
 export { useGenerateMaterialsMutation } from "./hooks/useGenerateMaterialsMutation.js";
 export { useGenerateInterviewPrepMutation } from "./hooks/useGenerateInterviewPrepMutation.js";
@@ -85,3 +87,5 @@ export {
   resumeApprovedHandler,
   resumeFailedHandler,
 } from "./handlers.js";
+
+export { ScreeningAnswerLibrary } from "./components/ScreeningAnswerLibrary.js";

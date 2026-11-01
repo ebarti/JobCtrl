@@ -19,14 +19,15 @@ export function MarkAppliedButton({
   const isDemo = featureFlags.get("demoMode", false);
   const markApplied = useMarkAppliedMutation();
   const isPending = markApplied.isPending;
-  const actionLabel = label ?? (isDemo ? "Record simulated application" : "Mark as applied");
+  const actionLabel =
+    label ?? (isDemo ? "Record simulated application" : "Mark as applied");
   return (
     <Button
       type="button"
       {...(className ? { className } : {})}
       disabled={isPending}
       size="sm"
-      variant="success"
+      variant="outline"
       onClick={() => markApplied.mutate({ jobId })}
     >
       {isPending ? "Marking as applied" : actionLabel}

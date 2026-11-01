@@ -119,6 +119,7 @@ function renderArtifactRoute(
                 (candidate) => candidate.artifactId === artifactId,
               ) ?? artifact,
             layoutBoxes: [],
+            determinations: [],
             tailoringExplanation,
           })),
           evidenceMap: vi.fn(
@@ -420,7 +421,6 @@ describe("<ArtifactDetailPanel>", () => {
         },
         evidence: {
           requiredIds: ["ev_latency"],
-          seniorityIds: ["ev_scope"],
           representedIds: ["ev_latency"],
           missingIds: [],
           verifiedMetricCount: 2,
@@ -437,7 +437,7 @@ describe("<ArtifactDetailPanel>", () => {
           passed: true,
           verdict: "PASS",
           score: 0.91,
-          minScore: 0.82,
+
           issues: [],
           unsupportedClaims: [],
           fabrications: [],
@@ -616,7 +616,7 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.queryByText("Missing evidence")).not.toBeInTheDocument();
     expect(screen.queryByText("Metric claims")).not.toBeInTheDocument();
     expect(screen.queryByText("none recorded")).not.toBeInTheDocument();
-    expect(screen.getByText("91% / minimum 82%")).toBeInTheDocument();
+    expect(screen.getByText("91%")).toBeInTheDocument();
     expect(screen.getByText("Review outcome")).toBeInTheDocument();
     expect(
       screen.getByText("Residual warnings after automated review"),
@@ -721,7 +721,6 @@ describe("<ArtifactDetailPanel>", () => {
         },
         evidence: {
           requiredIds: [],
-          seniorityIds: [],
           representedIds: [],
           missingIds: [],
           verifiedMetricCount: null,
@@ -738,7 +737,7 @@ describe("<ArtifactDetailPanel>", () => {
           passed: null,
           verdict: null,
           score: null,
-          minScore: null,
+
           issues: [],
           unsupportedClaims: [],
           fabrications: [],

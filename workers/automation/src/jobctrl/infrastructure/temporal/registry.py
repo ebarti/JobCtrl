@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from jobctrl.apply.activities import apply_activity
+from jobctrl.apply.activities import apply_activity, capture_apply_dispatch_frontier_activity
 from jobctrl.apply.workflow import ApplyWorkflow
 from jobctrl.contact.activities import run_contact_research_activity
 from jobctrl.contact.workflow import ContactResearchWorkflow
@@ -30,6 +30,9 @@ from jobctrl.discovery.job_url_import_workflow import (
     job_url_import_activity,
 )
 from jobctrl.discovery.workflow import DiscoverWorkflow
+from jobctrl.enrichment.availability_workflow import (
+    SavedPostingAvailabilityWorkflow, check_saved_posting_availability_activity,
+)
 from jobctrl.enrichment.activities import (
     cancel_enrichment_cohort_activity,
     enrich_activity,
@@ -66,6 +69,7 @@ from jobctrl.scoring.activities import score_activity, score_job_activity
 
 WORKFLOWS: list[type] = [
     DiscoverWorkflow,
+    SavedPostingAvailabilityWorkflow,
     JobPipelineWorkflow,
     JobPreparationWorkflow,
     ApplyWorkflow,
@@ -85,6 +89,7 @@ ACTIVITIES: list[Callable[..., Any]] = [
     automatic_compensation_refresh_activity,
     discovery_preparation_fanout_activity,
     enrich_activity,
+    check_saved_posting_availability_activity,
     cancel_enrichment_cohort_activity,
     score_activity,
     score_job_activity,
@@ -97,6 +102,7 @@ ACTIVITIES: list[Callable[..., Any]] = [
     render_pdf_activity,
     derive_preparation_targets,
     apply_activity,
+    capture_apply_dispatch_frontier_activity,
     job_url_import_activity,
     manual_capture_import_activity,
     profile_import_activity,

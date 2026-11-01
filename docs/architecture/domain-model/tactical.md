@@ -166,7 +166,7 @@ Identity: (TenantId, ProfileId)
 
 **Value Objects:**
 - `ExecutiveProfile(baselineText: string)`
-- `AchievementEvidence { sourceText, scope, action, tools[], metrics[], outcome, senioritySignal, evidenceStrength, claimConfidence, userConfirmed }`
+- `AchievementEvidence { sourceText, scope, action, tools[], metrics[], outcome, evidenceStrength, claimConfidence, userConfirmed }`
 - `TailoringPolicy { mode, claimMode, autoApprovableClaimModes[], allowSummaryRewrite, allowTitleReframing, allowAchievementRewriting, allowSkillReordering, allowMinorInference, allowAdjacentAchievementDrafts }`
 - `WritingStyle { tone, bulletStyle, verbosity, keywordDensity, avoidFirstPerson }`
 - `ApplicationDefaults { ... }` — default form field values.
@@ -246,13 +246,11 @@ application.
 
 **Invariants:**
 - A `TailoredResume` must pass structural validation before being `approved`.
-- A `TailoredResume` must pass deterministic tailoring quality checks before
-  being eligible for `approved`.
-- High-fit resumes (`fitScore >= 8`) must not be `approved` while adversarial
-  review reports blocker findings.
+- A `TailoredResume` requires accepted claim verification and independent model
+  quality review, bound to its final lines, before being eligible for `approved`.
 - A `CoverLetter` can only be generated after a `TailoredResume` is `approved`.
 - PDFs can only be rendered after their source documents exist.
-- Banned words must not appear in any generated text.
+- Models determine prohibited claims and voice through cited findings.
 - Generated content must not fabricate experience entries, companies, or credentials.
 - Unsupported metrics and adjacent or draft achievements cannot be auto-approved
   unless profile evidence or the tailoring policy explicitly supports them.
@@ -528,7 +526,7 @@ Phase 1 realises the `Contact` aggregate; Phase 2 adds the supervised
 - `ContactId` is immutable once assigned.
 
 **Lifecycle:**
-1. Created from user input or a CSV import row.
+1. Created from user input or a confirmed CSV/vCard import record.
 2. Updated by user edits (link, role, or attributes; `ContactId` and `createdAt` are immutable).
 3. Soft-deleted when the user deletes it.
 
@@ -548,7 +546,7 @@ Phase 1 realises the `Contact` aggregate; Phase 2 adds the supervised
 
 **Domain Services:** None in Phase 1. (The pure `WarmIntroMatcher` lands with warm-intro identification in a later phase.)
 
-**CSV import:** the import use case tags every imported fact with
+**CSV/vCard import:** the import use case tags every imported fact with
 `sourceKind = user_imported_list`, `sourceRef = <filename>`,
 `captureMethod = manual`; a row that links to neither an employer nor an
 application is skipped.
@@ -581,7 +579,7 @@ distinct from the durable `Contact` (mirrors how `ApplyRun` is separate from
 
 **Source-access policy (`ContactResearchSourcePolicy`, INV-3):** exactly three
 allowed source categories — `user_entered`, `public_web_page` (unauthenticated
-GET, robots/rate-limited through the merged politeness gateway),
+GET, rate-limited through the merged politeness gateway),
 `user_imported_list`. It reuses the discovery `SourcePolicy` guardrails
 (`third_party_control_bypass` hard-locked `false`, `authentication = none`) and a
 `LocatorPolicy` with `allow_autonomous_broad_discovery = false`. No public source
@@ -591,7 +589,7 @@ auto-fetched.
 
 **Domain Services:** `ContactResearchService` (pure) — authorises each source,
 fetches allowed public pages through the injected gateway-routed fetcher, and
-extracts candidates via a schema-driven `LlmPort.chat_json`.
+extracts candidates via a source-bound determination and records its receipt.
 
 **Domain Events** (payloads carry only ids, kinds, provenance metadata,
 outcomes, and timestamps — never candidate values):
@@ -600,6 +598,7 @@ outcomes, and timestamps — never candidate values):
 - `ContactResearchTaskNeedsReview { tenantId, taskId, candidateCount, needsReviewAt }`
 - `ContactResearchTaskCompleted { tenantId, taskId, confirmedCount, completedAt }`
 - `ContactResearchTaskFailed { tenantId, taskId, errorClass, retryable, failedAt }`
+- `ContactResearchSourceAttemptFailed { tenantId, taskId, outcome, attemptedAt }`
   — All consumed by: Operations (the `contact_research_task_projections` read model).
 
 ### Aggregate: OutreachThread
@@ -655,11 +654,11 @@ draft.
 
 **Value Objects:**
 - `OutreachDraftKind` — enum: `intro_request | follow_up`. Phase 3 generates intro requests; `follow_up` is a valid drafting target, but follow-up *scheduling* is a later phase.
-- `DraftGateResults { passed, fabrications[], validation, judge, computedAgainst }` — the aggregated outcome of the reused truthfulness gate stack; `passed` is true only when the deterministic detector found no fabrications, the content validator passed, and the judge approved. `computedAgainst` records that the gates ran against the rendered draft text.
+- `DraftGateResults { passed, fabrications[], validation, judge, computedAgainst }` — the aggregated outcome of the reused truthfulness gate stack; `passed` is true only when final-text claim verification, mechanical binding and independent quality judgment passed. `computedAgainst` records that the gates ran against the rendered draft text.
 - `OutreachClaimProvenance { claimId, section, generatedText, contactFactIds[], profileGrounded, rationale }` — one claim (paragraph) bound to the confirmed contact attribute ids and the profile evidence it rests on, computed against the rendered draft text.
 - `FollowUpSchedule { state, dueAt?, basis }` (Phase 4) — the thread's follow-up plan. `state ∈ { none | scheduled | completed | dismissed }`; `dueAt` is the suggested/scheduled date (required when `scheduled`); `basis ∈ { application_submitted | no_reply_nudge | manual }` records why it was suggested. A plan, never an action — nothing is ever sent on its behalf (INV-1).
 
-**Truthfulness gates (INV-5):** draft generation and every user edit run the reused Materials gate stack (deterministic never-fabricate detector → content validator → LLM-as-judge → claim → fact provenance) against the actual draft text; the [tailoring contract](../tailoring.md) documents the stack in order and the cover-letter reuse precedent.
+**Truthfulness gates (INV-5):** generated and edited drafts receive a claim-verification determination and separate quality determination. The model cites facts and rendered line IDs; code validates those references. Failed refreshes retain the last accepted draft.
 
 **Domain Events** (all carry `tenantId`; payloads carry only ids, kinds, generation, and timestamps — never the draft body, gate text, or contact PII):
 - `OutreachDraftGenerated { tenantId, threadId, contactId, jobId, draftId, generation, kind, generatedAt }`
@@ -680,3 +679,10 @@ also key on the job's `job_url`) carry only ids, kinds, generation, and
 timestamps.
 
 ---
+
+
+## Semantic Determination Authority
+
+A generated artifact becomes approvable only after structural/source binding, claim verification and independent model quality review. Typed findings reference exact line IDs. A failed refresh preserves the last accepted aggregate and its anchors. Models decide support, seniority, voice and scope; code owns membership, quotes, values and version fencing.
+
+See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 
 import { databaseExists, openReadOnlyDatabase } from "./db.js";
 import { readJobCtrlSettings } from "./settings-config.js";
+import type { LlmLane } from "./contracts.js";
 import { WORKER_RUNTIME_STALE_AFTER_MS } from "./worker-runtime-telemetry.js";
 
 const WORKER_HEARTBEAT_TABLE = "worker_runtime_heartbeats";
@@ -44,7 +45,18 @@ export interface LlmSpendHealthSnapshot {
   dailyBudgetUsd: number;
   remainingUsd: number | null;
   unlimited: boolean;
+  lanes: Record<LlmLane, LlmLaneSpendHealthSnapshot>;
   message: string;
+}
+
+export interface LlmLaneSpendHealthSnapshot {
+  status: "ok" | "over_budget";
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  tokenLimit: number;
+  remainingTokens: number | null;
+  unlimited: boolean;
 }
 
 interface HeartbeatRow {
@@ -62,6 +74,7 @@ interface HeartbeatRow {
 }
 
 interface LlmSpendRow {
+  lane?: string;
   input_tokens: number | null;
   output_tokens: number | null;
   estimated_usd: number | null;
@@ -153,12 +166,29 @@ export function readLlmSpendHealth(
   now = new Date(),
 ): LlmSpendHealthSnapshot {
   const day = now.toISOString().slice(0, 10);
-  const dailyBudgetUsd = readJobCtrlSettings(configPath).settings.dailyBudgetUsd;
+  const settings = readJobCtrlSettings(configPath).settings;
+  const dailyBudgetUsd = settings.dailyBudgetUsd;
   const unlimited = dailyBudgetUsd <= 0;
   const usage = readTodayLlmSpend(dbPath, day);
   const overBudget = !unlimited && usage.estimatedUsd >= dailyBudgetUsd;
   const remainingUsd = unlimited ? null : Math.max(0, dailyBudgetUsd - usage.estimatedUsd);
   const budgetLabel = unlimited ? "unlimited" : `$${dailyBudgetUsd.toFixed(2)}`;
+  const lanes = Object.fromEntries(
+    Object.entries(settings.laneTokenLimits).map(([lane, tokenLimit]) => {
+      const laneUsage = usage.lanes[lane as LlmLane] ?? { inputTokens: 0, outputTokens: 0 };
+      const totalTokens = laneUsage.inputTokens + laneUsage.outputTokens;
+      const laneUnlimited = tokenLimit <= 0;
+      return [lane, {
+        status: !laneUnlimited && totalTokens >= tokenLimit ? "over_budget" : "ok",
+        inputTokens: laneUsage.inputTokens,
+        outputTokens: laneUsage.outputTokens,
+        totalTokens,
+        tokenLimit,
+        remainingTokens: laneUnlimited ? null : Math.max(0, tokenLimit - totalTokens),
+        unlimited: laneUnlimited,
+      }];
+    }),
+  ) as Record<LlmLane, LlmLaneSpendHealthSnapshot>;
   return {
     status: overBudget ? "over_budget" : "ok",
     day,
@@ -168,6 +198,7 @@ export function readLlmSpendHealth(
     dailyBudgetUsd,
     remainingUsd,
     unlimited,
+    lanes,
     message: `LLM spend is $${usage.estimatedUsd.toFixed(2)} / ${budgetLabel} today.`,
   };
 }
@@ -191,30 +222,51 @@ function tableExists(db: Database.Database, tableName: string): boolean {
 function readTodayLlmSpend(
   dbPath: string,
   day: string,
-): { inputTokens: number; outputTokens: number; estimatedUsd: number } {
+): {
+  inputTokens: number;
+  outputTokens: number;
+  estimatedUsd: number;
+  lanes: Partial<Record<LlmLane, { inputTokens: number; outputTokens: number }>>;
+} {
+  const empty = { inputTokens: 0, outputTokens: 0, estimatedUsd: 0, lanes: {} };
   if (!databaseExists(dbPath)) {
-    return { inputTokens: 0, outputTokens: 0, estimatedUsd: 0 };
+    return empty;
   }
   let db: Database.Database | null = null;
   try {
     db = openReadOnlyDatabase(dbPath);
     if (!tableExists(db, LLM_SPEND_TABLE)) {
-      return { inputTokens: 0, outputTokens: 0, estimatedUsd: 0 };
+      return empty;
     }
-    const row = db
+    const rows = db
       .prepare(
-        `SELECT input_tokens, output_tokens, estimated_usd
+        `SELECT lane, input_tokens, output_tokens, estimated_usd
          FROM ${LLM_SPEND_TABLE}
          WHERE day = ?`,
       )
-      .get(day) as LlmSpendRow | undefined;
+      .all(day) as LlmSpendRow[];
+    const lanes: Partial<Record<LlmLane, { inputTokens: number; outputTokens: number }>> = {};
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let estimatedUsd = 0;
+    for (const row of rows) {
+      const input = Number(row.input_tokens ?? 0);
+      const output = Number(row.output_tokens ?? 0);
+      inputTokens += input;
+      outputTokens += output;
+      estimatedUsd += Number(row.estimated_usd ?? 0);
+      if (row.lane && row.lane !== "legacy") {
+        lanes[row.lane as LlmLane] = { inputTokens: input, outputTokens: output };
+      }
+    }
     return {
-      inputTokens: Number(row?.input_tokens ?? 0),
-      outputTokens: Number(row?.output_tokens ?? 0),
-      estimatedUsd: Number(row?.estimated_usd ?? 0),
+      inputTokens,
+      outputTokens,
+      estimatedUsd,
+      lanes,
     };
   } catch {
-    return { inputTokens: 0, outputTokens: 0, estimatedUsd: 0 };
+    return empty;
   } finally {
     db?.close();
   }

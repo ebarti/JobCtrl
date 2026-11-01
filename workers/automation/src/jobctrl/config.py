@@ -17,8 +17,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from jobctrl.domain.profile.search_targets import (
+    split_target_text as _split_target_text,
+    split_target_rows as _split_target_rows,
+)
+
 from jobctrl.runtime import is_bundled_runtime, owned_env_path
+from jobctrl.native_credentials import (
+    NativeCredentialDiagnostic,
+    load_native_credential_fallbacks as _load_native_credential_fallbacks,
+)
 from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.errors import InvalidSavedSearchError, SavedSearchReadError
 from jobctrl.domain.discovery.source_registry import (
     ATS_API_POLICY,
     BROAD_BOARD_LEAD_POLICY,
@@ -30,7 +40,6 @@ from jobctrl.domain.discovery.source_registry import (
     SourceRegistryEntry,
     SourceState,
 )
-from jobctrl.discovery.target_queries import build_target_role_queries
 from jobctrl.infrastructure.observability import source_validation_span
 
 log = logging.getLogger(__name__)
@@ -72,6 +81,37 @@ PROVIDER_CONFIGURATION_KEYS = (
 KEYCHAIN_ACCOUNT_MAPPING = "key"
 KEYCHAIN_REQUIRES_WORKER_RESTART = True
 KEYCHAIN_LOOKUP_TIMEOUT_SECONDS = 2.0
+LIVE_WORKER_SMOKE_BOOTSTRAP_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_BOOTSTRAP"
+LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED"
+LIVE_WORKER_SMOKE_CREDENTIAL_KEYS = tuple(
+    dict.fromkeys(
+        (
+            *KEYCHAIN_PROVIDER_KEYS,
+            *PROVIDER_CONFIGURATION_KEYS,
+            "ANTHROPIC_AUTH_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_CONFIG_FILE",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_SHARED_CREDENTIALS_FILE",
+            "AWS_WEB_IDENTITY_TOKEN_FILE",
+            "AZURE_CLIENT_ID",
+            "AZURE_CLIENT_SECRET",
+            "AZURE_CONFIG_DIR",
+            "AZURE_TENANT_ID",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CONFIG_DIR",
+            "CLOUDSDK_CONFIG",
+            "CODEX_API_KEY",
+            "CODEX_HOME",
+            "GOOGLE_API_KEY",
+            "LANGFUSE_BASE_URL",
+            "LANGFUSE_PUBLIC_KEY",
+            "LANGFUSE_SECRET_KEY",
+            "OPENAI_BASE_URL",
+        )
+    )
+)
 
 KeychainFallbackStatus = Literal["explicit", "loaded", "missing", "unavailable", "unsupported"]
 KeychainFallbackReason = Literal[
@@ -261,12 +301,8 @@ def _assert_no_lifecycle_migration_conflicts(
     for source in sources:
         columns = _table_columns(conn, source)
         if "job_url" not in columns:
-            raise WorkspaceMigrationError(
-                f"cannot migrate lifecycle table {source}: missing job_url column"
-            )
-        for row in conn.execute(
-            f"SELECT job_url FROM {_quote_identifier(source)} WHERE job_url IS NOT NULL"
-        ):
+            raise WorkspaceMigrationError(f"cannot migrate lifecycle table {source}: missing job_url column")
+        for row in conn.execute(f"SELECT job_url FROM {_quote_identifier(source)} WHERE job_url IS NOT NULL"):
             job_url = str(row[0])
             previous_source = seen.get(job_url)
             if previous_source is not None:
@@ -315,7 +351,6 @@ PACKAGE_DIR = Path(__file__).parent
 CONFIG_DIR = PACKAGE_DIR / "config"
 
 DEFAULT_JOBSPY_BOARDS = ("indeed", "linkedin", "zip_recruiter")
-TARGET_SEARCH_MIN_HOURS_OLD = 24 * 30
 DISCOVERY_SETTINGS_TABLE = "discovery_settings"
 
 DEFAULT_DISCOVERY_SEARCH_CONFIG: dict = {
@@ -333,6 +368,7 @@ DEFAULT_DISCOVERY_SEARCH_CONFIG: dict = {
     "role_filter": {"mode": "auto", "model": None},
     "max_parallel_families": 1,
     "crawl_user_agent": {
+        "use_browser_headers": False,
         "product": "JobCtrl",
         "contact": "https://github.com/ebarti/JobCtrl",
     },
@@ -346,21 +382,6 @@ DEFAULT_OUTREACH_FOLLOW_UP_CONFIG: dict = {
     "reminders_enabled": False,
 }
 
-_EUROPE_TARGET_MARKERS = (
-    "spain",
-    "españa",
-    "europe",
-    "european union",
-    " eu",
-    "eu ",
-)
-
-_REMOTE_EUROPE_LOCATION_ACCEPTS = (
-    "Europe",
-    "European Union",
-    "EU",
-    "EMEA",
-)
 
 _WORKDAY_HOST_ALIAS_SOURCE_RE = re.compile(r"^workday:(?P<employer>.+)-wd\d+-myworkdayjobs-com$")
 
@@ -368,92 +389,6 @@ _SPAIN_LOCATION_ACCEPTS = (
     "Spain",
     "España",
     "ES",
-)
-
-_AMERICA_LOCATION_REJECTS = (
-    "United States",
-    "USA",
-    "US only",
-    "U.S.",
-    "Canada",
-    "Canada only",
-    "Mexico",
-    "North America",
-    "South America",
-    "Latin America",
-    "LATAM",
-    "Americas",
-)
-
-_EUROPEAN_COUNTRY_ALIASES = {
-    "albania": ("albania",),
-    "andorra": ("andorra",),
-    "austria": ("austria",),
-    "belarus": ("belarus",),
-    "belgium": ("belgium",),
-    "bosnia and herzegovina": ("bosnia and herzegovina", "bosnia"),
-    "bulgaria": ("bulgaria",),
-    "croatia": ("croatia",),
-    "cyprus": ("cyprus",),
-    "czech republic": ("czech republic", "czechia"),
-    "denmark": ("denmark",),
-    "estonia": ("estonia",),
-    "finland": ("finland",),
-    "france": ("france",),
-    "germany": ("germany",),
-    "greece": ("greece",),
-    "hungary": ("hungary",),
-    "iceland": ("iceland",),
-    "ireland": ("ireland",),
-    "italy": ("italy",),
-    "kosovo": ("kosovo",),
-    "latvia": ("latvia",),
-    "liechtenstein": ("liechtenstein",),
-    "lithuania": ("lithuania",),
-    "luxembourg": ("luxembourg",),
-    "malta": ("malta",),
-    "moldova": ("moldova",),
-    "monaco": ("monaco",),
-    "montenegro": ("montenegro",),
-    "netherlands": ("netherlands", "the netherlands"),
-    "north macedonia": ("north macedonia", "macedonia"),
-    "norway": ("norway",),
-    "poland": ("poland",),
-    "portugal": ("portugal",),
-    "romania": ("romania",),
-    "san marino": ("san marino",),
-    "serbia": ("serbia",),
-    "slovakia": ("slovakia",),
-    "slovenia": ("slovenia",),
-    "spain": ("spain", "españa", "es"),
-    "sweden": ("sweden",),
-    "switzerland": ("switzerland",),
-    "ukraine": ("ukraine",),
-    "united kingdom": ("united kingdom", "uk", "great britain", "england", "scotland", "wales"),
-    "vatican city": ("vatican city", "vatican"),
-}
-
-_INDEED_COUNTRY_BY_TARGET_COUNTRY = {
-    "spain": "spain",
-}
-
-_AMERICA_ONLY_SOURCE_MARKERS = (
-    "canada",
-    "canadian",
-    "job bank",
-    "job-bank",
-    "careerjet canada",
-    "careerjet-canada",
-    "randstad canada",
-    "randstad-canada",
-    "eluta",
-    "jobbank.gc.ca",
-    "careerjet.ca",
-    "randstad.ca",
-    "eluta.ca",
-    "smart_extract:dice",
-    "dice.com",
-    "wellfound.com/role/l/software-engineer/canada",
 )
 
 
@@ -518,11 +453,41 @@ def ensure_dirs():
 
 
 def load_search_config() -> dict:
-    """Load discovery search configuration from SQLite, then overlay target search."""
+    """Materialize literal saved controls into executable board parameters."""
+    settings = load_saved_search_settings()
+    return _apply_profile_target_search(settings, settings["confirmed_targets"])
+
+
+def load_saved_search_settings() -> dict:
+    """Read canonical settings and sources without decoding board controls."""
+    return {**load_discovery_control_settings(), "confirmed_targets": _load_profile_target_search()}
+
+
+def load_discovery_control_settings() -> dict:
+    """Read Discovery controls without requiring unrelated profile targets."""
     search_cfg = _load_discovery_search_config_from_db()
     if search_cfg is None:
         search_cfg = _default_discovery_search_config()
-    return effective_discovery_search_config(_apply_profile_target_search(search_cfg))
+    effective = effective_discovery_search_config(search_cfg)
+    # Legacy JSON may contain numeric tier strings. Comparisons in provider
+    # planning use integers; normalize the execution copy, not the saved row.
+    for query in effective.get("queries", []):
+        if "tier" in query:
+            query["tier"] = int(query["tier"])
+    return effective
+
+
+def load_discovery_crawler_settings() -> dict:
+    """Read only the crawler identity used by unrelated acquisition paths."""
+    return _load_discovery_search_config_from_db(validate=_valid_crawler_identity_structure) or {}
+
+
+def load_scoring_exact_title_exclusions() -> tuple[str, ...]:
+    """Read the literal saved exclusions used as scoring sources."""
+    search_cfg = _load_discovery_search_config_from_db(validate=_valid_exact_title_exclusions_structure)
+    if search_cfg is None:
+        search_cfg = _default_discovery_search_config()
+    return tuple(search_cfg.get("exact_title_exclusions", ()))
 
 
 def effective_discovery_search_config(
@@ -531,30 +496,17 @@ def effective_discovery_search_config(
     """Normalize the SQLite-owned discovery settings for execution."""
     effective = json.loads(json.dumps(dict(search_cfg or _default_discovery_search_config())))
 
-    role_filter = dict(effective.get("role_filter") or {})
-    role_filter["mode"] = _role_filter_mode(role_filter.get("mode"))
-    role_filter["model"] = str(role_filter.get("model") or "").strip() or None
-    effective["role_filter"] = role_filter
-
     effective["max_parallel_families"] = min(
         4,
         max(1, _positive_int(effective.get("max_parallel_families")) or 1),
     )
 
     crawl_user_agent = dict(effective.get("crawl_user_agent") or {})
+    crawl_user_agent["use_browser_headers"] = crawl_user_agent.get("use_browser_headers") is True
     crawl_user_agent["product"] = str(crawl_user_agent.get("product") or "").strip() or "JobCtrl"
     crawl_user_agent["contact"] = str(crawl_user_agent.get("contact") or "").strip()
     effective["crawl_user_agent"] = crawl_user_agent
     return effective
-
-
-def _role_filter_mode(value: object) -> str:
-    normalized = str(value or "auto").strip().lower()
-    if normalized in {"deterministic", "0", "false", "no", "off", "disabled"}:
-        return "deterministic"
-    if normalized in {"llm", "1", "true", "yes", "on", "enabled"}:
-        return "llm"
-    return "auto"
 
 
 def load_discovery_schedule_settings() -> tuple[bool, str]:
@@ -593,17 +545,19 @@ def save_discovery_automation_settings(
     apply_approval_required: bool,
 ) -> None:
     """Persist Apply automation choices with the SQLite-owned Discovery settings."""
-    search_cfg = _load_discovery_search_config_from_db() or _default_discovery_search_config()
-    raw_automation = search_cfg.get("automation")
-    automation = dict(raw_automation) if isinstance(raw_automation, dict) else {}
-    automation.update(
-        {
-            "auto_apply": bool(auto_apply),
-            "apply_approval_required": bool(apply_approval_required),
-        }
-    )
-    search_cfg["automation"] = automation
-    _save_discovery_search_config_to_db(search_cfg)
+    def update(search_cfg: dict) -> dict:
+        raw_automation = search_cfg.get("automation")
+        automation = dict(raw_automation) if isinstance(raw_automation, dict) else {}
+        automation.update(
+            {
+                "auto_apply": bool(auto_apply),
+                "apply_approval_required": bool(apply_approval_required),
+            }
+        )
+        search_cfg["automation"] = automation
+        return search_cfg
+
+    _update_discovery_search_config(update)
 
 
 def outreach_follow_up_reminders_enabled(config: dict | None = None) -> bool:
@@ -643,67 +597,230 @@ def _ensure_discovery_settings_table(conn: sqlite3.Connection) -> None:
     )
 
 
-def _load_discovery_search_config_from_db() -> dict | None:
-    if not DB_PATH.exists():
+def _reject_nonfinite_json(_value: str) -> None:
+    raise ValueError("non-finite JSON number")
+
+
+def _load_discovery_search_config_from_db(*, validate: Callable[[object], bool] | None = None) -> dict | None:
+    try:
+        DB_PATH.lstat()
+    except FileNotFoundError:
         return None
+    except OSError:
+        raise SavedSearchReadError("Saved Discovery settings") from None
+    from jobctrl.database import _refuse_unresolved_initialization
+
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(DB_PATH)
+        _refuse_unresolved_initialization(DB_PATH)
+        conn = sqlite3.connect(f"{DB_PATH.resolve().as_uri()}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
-        _ensure_discovery_settings_table(conn)
-        row = conn.execute(
-            f"""
-            SELECT search_config_json
-            FROM {DISCOVERY_SETTINGS_TABLE}
-            WHERE tenant_id = ?
-            """,
-            (str(LOCAL_TENANT),),
-        ).fetchone()
-        if row is None:
-            conn.commit()
-            return None
-        loaded = json.loads(str(row["search_config_json"] or "{}"))
-        if isinstance(loaded, dict):
-            conn.commit()
-            return loaded
-    except Exception:
-        log.debug("Failed to load discovery settings from SQLite", exc_info=True)
+        return _read_discovery_search_config(conn, validate=validate)
+    except (OSError, sqlite3.Error):
+        raise SavedSearchReadError("Saved Discovery settings") from None
     finally:
         if conn is not None:
             conn.close()
-    return None
 
 
-def _save_discovery_search_config_to_db(search_cfg: dict) -> None:
-    if not DB_PATH.exists():
+def _read_discovery_search_config(
+    conn: sqlite3.Connection, *, validate: Callable[[object], bool] | None = None,
+) -> dict | None:
+    table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (DISCOVERY_SETTINGS_TABLE,),
+    ).fetchone()
+    if table is None:
+        # A genuinely empty SQLite file is also a first-use workspace. A
+        # partially populated schema cannot prove saved settings are absent.
+        existing = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1"
+        ).fetchone()
+        if existing is None:
+            return None
+        raise InvalidSavedSearchError("Saved Discovery settings")
+    row = conn.execute(
+        f"SELECT search_config_json FROM {DISCOVERY_SETTINGS_TABLE} WHERE tenant_id = ?",
+        (str(LOCAL_TENANT),),
+    ).fetchone()
+    if row is None:
+        return None
+    raw = row["search_config_json"]
+    if not isinstance(raw, str):
+        raise InvalidSavedSearchError("Saved Discovery settings")
+    try:
+        loaded = json.loads(raw, parse_constant=_reject_nonfinite_json)
+    except (ValueError, RecursionError):
+        raise InvalidSavedSearchError("Saved Discovery settings") from None
+    if not (validate or _valid_saved_discovery_structure)(loaded):
+        raise InvalidSavedSearchError("Saved Discovery settings")
+    return loaded
+
+
+def _update_discovery_search_config(update: Callable[[dict], dict]) -> None:
+    """Validate and update under the same write lock, preserving invalid rows."""
+    try:
+        DB_PATH.lstat()
+    except FileNotFoundError:
         return
+    except OSError:
+        raise SavedSearchReadError("Saved Discovery settings") from None
+    from jobctrl.database import _refuse_unresolved_initialization
+
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(DB_PATH)
+        _refuse_unresolved_initialization(DB_PATH)
+        conn = sqlite3.connect(f"{DB_PATH.resolve().as_uri()}?mode=rw", uri=True)
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        current = _read_discovery_search_config(conn)
+        next_config = update(current or _default_discovery_search_config())
         _ensure_discovery_settings_table(conn)
         now = datetime_utc_now()
         conn.execute(
             f"""
-            INSERT INTO {DISCOVERY_SETTINGS_TABLE} (
-                tenant_id, search_config_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?)
+            INSERT INTO {DISCOVERY_SETTINGS_TABLE} (tenant_id, search_config_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(tenant_id) DO UPDATE SET
-                search_config_json = excluded.search_config_json,
-                updated_at = excluded.updated_at
+                search_config_json = excluded.search_config_json, updated_at = excluded.updated_at
             """,
-            (
-                str(LOCAL_TENANT),
-                json.dumps(search_cfg, sort_keys=True),
-                now,
-                now,
-            ),
+            (str(LOCAL_TENANT), json.dumps(next_config, sort_keys=True), now, now),
         )
         conn.commit()
-    except Exception:
-        log.debug("Failed to save discovery settings to SQLite", exc_info=True)
+    except (OSError, sqlite3.Error):
+        raise SavedSearchReadError("Saved Discovery settings") from None
     finally:
         if conn is not None:
             conn.close()
+
+
+def _valid_stored_integer(value: object, minimum: int, maximum: int = 2**53 - 1) -> bool:
+    if type(value) is int:
+        number = value
+    elif type(value) is float and value.is_integer():
+        number = int(value)
+    elif isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]+", value.strip()):
+        try:
+            number = int(value)
+        except ValueError:
+            return False
+    else:
+        return False
+    return minimum <= number <= maximum
+
+
+def _valid_crawler_identity_structure(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if "crawl_user_agent" not in value:
+        return True
+    identity = value["crawl_user_agent"]
+    if not isinstance(identity, dict):
+        return False
+    if "use_browser_headers" in identity and not isinstance(identity["use_browser_headers"], bool):
+        return False
+    if "product" in identity and (not isinstance(identity["product"], str) or not identity["product"].strip()):
+        return False
+    return "contact" not in identity or isinstance(identity["contact"], str)
+
+
+def _valid_exact_title_exclusions_structure(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if "exact_title_exclusions" not in value:
+        return True
+    exclusions = value["exact_title_exclusions"]
+    return isinstance(exclusions, list) and all(isinstance(item, str) for item in exclusions)
+
+
+def _valid_saved_discovery_structure(value: object) -> bool:
+    """Check persisted container shapes without imposing new semantic policy."""
+    if not _valid_crawler_identity_structure(value) or not _valid_exact_title_exclusions_structure(value):
+        return False
+    assert isinstance(value, dict)
+    for key in ("defaults", "automation", "crawl_user_agent", "location", "role_filter"):
+        if key in value and not isinstance(value[key], dict):
+            return False
+    for key in ("boards", "sites", "location_accept", "location_labels"):
+        if key in value and (
+            not isinstance(value[key], list) or any(not isinstance(item, str) for item in value[key])
+        ):
+            return False
+    supported_boards = {"indeed", "linkedin", "zip_recruiter", "glassdoor"}
+    for key in ("boards", "sites"):
+        if key in value and any(item not in supported_boards for item in value[key]):
+            return False
+    if ("boards" in value or "sites" in value) and not (value.get("boards") or value.get("sites")):
+        return False
+    for key in ("queries", "locations"):
+        if key in value and (
+            not isinstance(value[key], list) or any(not isinstance(item, dict) for item in value[key])
+        ):
+            return False
+    if any(
+        not isinstance(query.get("query"), str)
+        or ("tier" in query and not _valid_stored_integer(query["tier"], 1))
+        or ("source_scope" in query and query["source_scope"] is not None and (
+            not isinstance(query["source_scope"], list)
+            or any(not isinstance(item, str) for item in query["source_scope"])
+        ))
+        for query in value.get("queries", [])
+    ):
+        return False
+    if any(
+        not isinstance(location.get("location"), str)
+        or ("label" in location and not isinstance(location["label"], str))
+        or ("remote" in location and not isinstance(location["remote"], bool))
+        for location in value.get("locations", [])
+    ):
+        return False
+    defaults = value.get("defaults", {})
+    for key, minimum, maximum in (("results_per_site", 1, 1000), ("hours_old", 1, 8760), ("distance", 0, 2**53 - 1)):
+        if key in defaults and not _valid_stored_integer(defaults[key], minimum, maximum):
+            return False
+    for key in ("country_indeed", "location"):
+        if key in defaults and not isinstance(defaults[key], str):
+            return False
+    if "max_parallel_families" in value and not _valid_stored_integer(value["max_parallel_families"], 1, 4):
+        return False
+    for key in ("workday_max_pages_per_employer", "workday_limited_max_pages_per_employer"):
+        if key in value and not _valid_stored_integer(value[key], 1):
+            return False
+    automation = value.get("automation", {})
+    if "min_fit_score" in automation and not _valid_stored_integer(automation["min_fit_score"], 0, 10):
+        return False
+    boolean_strings = {"", "0", "1", "false", "true", "no", "yes", "off", "on"}
+    for container, keys in ((value, ("scheduling_enabled",)),
+                            (automation, ("auto_apply", "apply_approval_required"))):
+        for key in keys:
+            if key in container and not (
+                isinstance(container[key], bool)
+                or (isinstance(container[key], str) and container[key].strip().lower() in boolean_strings)
+            ):
+                return False
+    if "disable_jobspy" in value and not isinstance(value["disable_jobspy"], bool):
+        return False
+    if "schedule_cron" in value and (not isinstance(value["schedule_cron"], str) or not value["schedule_cron"].strip()):
+        return False
+    for key in ("country", "proxy"):
+        if key in value and value[key] is not None and not isinstance(value[key], str):
+            return False
+    locations = value.get("location", {})
+    for key in ("accept_patterns", "reject_patterns"):
+        if key in locations and (
+            not isinstance(locations[key], list) or any(not isinstance(item, str) for item in locations[key])
+        ):
+            return False
+    if "glassdoor_location_map" in value and (
+        not isinstance(value["glassdoor_location_map"], dict)
+        or any(not isinstance(item, str) for item in value["glassdoor_location_map"].values())
+    ):
+        return False
+    return True
+
+
+def _save_discovery_search_config_to_db(search_cfg: dict) -> None:
+    _update_discovery_search_config(lambda _current: search_cfg)
 
 
 def datetime_utc_now() -> str:
@@ -713,162 +830,42 @@ def datetime_utc_now() -> str:
 
 
 def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -> dict:
-    """Overlay profile target roles and locations onto the discovery search config."""
-    target_search = target if target is not None else _load_profile_target_search()
-    roles = target_search.get("roles", [])
-    tracks = target_search.get("tracks", [])
-    seniority = target_search.get("seniority", [])
-    functions = target_search.get("functions", [])
-    specializations = target_search.get("specializations", [])
-    locations = target_search.get("locations", [])
-    work_models = target_search.get("work_models", [])
+    """Execute saved roles and location controls literally, without inference."""
+    target = target if target is not None else _load_profile_target_search()
+    effective = {**search_cfg, "confirmed_targets": target}
+    roles = [str(value) for value in target.get("roles", []) if str(value).strip()]
+    if roles:
+        effective["queries"] = [{"query": role, "tier": 1} for role in dict.fromkeys(roles)]
+    places = target.get("locations") or []
+    work_models = target.get("work_models") or []
+    if places or work_models:
+        from jobctrl.domain.errors import SavedSearchSettingsError
+        from jobctrl.domain.taxonomy import SEMANTIC_TAXONOMY
 
-    if not roles and not tracks and not seniority and not functions and not locations:
-        return search_cfg
-
-    next_cfg = dict(search_cfg)
-    if roles or tracks or seniority or functions:
-        target_queries = build_target_role_queries(
-            roles,
-            tracks=tracks,
-            seniority=seniority,
-            functions=functions,
-            specializations=specializations,
-        )
-        if target_queries:
-            next_cfg["queries"] = target_queries
-            next_cfg["workday_max_tier"] = 1
-            next_cfg["ats_max_tier"] = 1
-
-    if locations:
-        target_locations = _build_target_location_config(locations, work_models)
-        next_cfg["locations"] = target_locations["locations"]
-        next_cfg["location_labels"] = [item["label"] for item in target_locations["locations"]]
-        next_cfg["location_accept"] = target_locations["accept"]
-        next_cfg["location_accept_local"] = target_locations["local_accept"]
-        location_cfg = dict(next_cfg.get("location") or {})
-        location_cfg["accept_patterns"] = target_locations["accept"]
-        location_cfg["local_accept_patterns"] = target_locations["local_accept"]
-        next_cfg["location"] = location_cfg
-
-        if target_locations["europe"]:
-            defaults = dict(next_cfg.get("defaults") or {})
-            defaults["hours_old"] = max(_positive_int(defaults.get("hours_old")), TARGET_SEARCH_MIN_HOURS_OLD)
-            if target_locations["country_indeed"]:
-                defaults.setdefault("country_indeed", target_locations["country_indeed"])
-            next_cfg["defaults"] = defaults
-            if target_locations["country"]:
-                next_cfg["country"] = target_locations["country"]
-            next_cfg["target_region"] = "europe"
-            next_cfg["location_reject_non_remote"] = _dedupe_strings(
-                [*_string_list(next_cfg.get("location_reject_non_remote")), *_AMERICA_LOCATION_REJECTS]
-            )
-
-    return next_cfg
-
-
-def _build_target_location_config(locations: list[str], work_models: list[str]) -> dict:
-    search_locations: list[dict] = []
-    accept: list[str] = []
-    local_accept: list[str] = []
-    first_country = ""
-    first_indeed_country = ""
-    europe = False
-
-    for index, raw_location in enumerate(locations):
-        location = str(raw_location or "").strip()
-        if not location:
-            continue
-        work_model = work_models[index] if index < len(work_models) else ""
-        wants_remote, wants_local = _target_work_model_flags(work_model)
-        country = _target_location_country(location)
-        country_key = _country_key(country)
-        is_european_country = _is_european_country(country_key)
-
-        if wants_local:
-            _append_search_location(search_locations, location=location, remote=False)
-            accept.append(location)
-            local_accept.append(location)
-
-        if wants_remote:
-            remote_country = _display_country(country) or location
-            _append_search_location(search_locations, location=remote_country, remote=True)
-            accept.extend(_country_location_accepts(country_key, remote_country))
-            if is_european_country:
-                _append_search_location(
-                    search_locations,
-                    location="European Union",
-                    remote=True,
-                    label="europe-remote",
-                )
-                accept.extend(_REMOTE_EUROPE_LOCATION_ACCEPTS)
-
-        if is_european_country:
-            europe = True
-            first_country = first_country or (_display_country(country) or location)
-            first_indeed_country = first_indeed_country or _INDEED_COUNTRY_BY_TARGET_COUNTRY.get(country_key, "")
-
-    return {
-        "locations": search_locations,
-        "accept": _dedupe_strings(accept),
-        "local_accept": _dedupe_strings(local_accept),
-        "country": first_country,
-        "country_indeed": first_indeed_country,
-        "europe": europe,
-    }
-
-
-def _append_search_location(
-    search_locations: list[dict],
-    *,
-    location: str,
-    remote: bool,
-    label: str | None = None,
-) -> None:
-    entry = {
-        "label": label or _source_slug(location),
-        "location": location,
-        "remote": remote,
-    }
-    key = (entry["label"], entry["location"], entry["remote"])
-    if key not in {(item["label"], item["location"], item["remote"]) for item in search_locations}:
-        search_locations.append(entry)
-
-
-def _target_work_model_flags(work_model: str) -> tuple[bool, bool]:
-    target = str(work_model or "").lower()
-    wants_remote = any(marker in target for marker in ("remote", "anywhere", "distributed"))
-    wants_local = any(marker in target for marker in ("hybrid", "on-site", "onsite", "on site", "office"))
-    if not wants_remote and not wants_local:
-        wants_local = True
-    return wants_remote, wants_local
-
-
-def _target_location_country(location: str) -> str:
-    parts = [part.strip() for part in str(location or "").split(",") if part.strip()]
-    if not parts:
-        return ""
-    if len(parts) == 1:
-        return parts[0]
-    return parts[-1]
-
-
-def _display_country(country: str) -> str:
-    country_key = _country_key(country)
-    if country_key == "spain":
-        return "Spain"
-    for canonical, aliases in _EUROPEAN_COUNTRY_ALIASES.items():
-        if country_key == canonical or country_key in aliases:
-            return canonical.title()
-    return country.strip()
-
-
-def _country_key(country: str) -> str:
-    normalized = str(country or "").strip().lower()
-    for canonical, aliases in _EUROPEAN_COUNTRY_ALIASES.items():
-        if normalized == canonical or normalized in aliases:
-            return canonical
-    return normalized
+        # Exact codes and their product display labels are serialized choices,
+        # not synonyms inferred from location prose. Keep row counterparts.
+        labels = {label: code for code, label in SEMANTIC_TAXONOMY["workModel"].items() if code != "unknown"}
+        choices = {code: code for code in labels.values()} | labels
+        locations = []
+        seen = set()
+        for index in range(max(len(places), len(work_models))):
+            place = places[index] if index < len(places) else ""
+            saved = work_models[index] if index < len(work_models) else ""
+            if not isinstance(saved, str):
+                raise SavedSearchSettingsError()
+            selected = [value.strip() for value in saved.split(",")] if saved.strip() else []
+            if any(value not in choices for value in selected):
+                raise SavedSearchSettingsError()
+            flags = list(dict.fromkeys(choices[value] == "remote" for value in selected)) or [False]
+            for remote in flags:
+                key = (place, remote)
+                if key not in seen:
+                    seen.add(key)
+                    locations.append(
+                        {"label": place or ("Remote" if remote else ""), "location": place, "remote": remote}
+                    )
+        effective["locations"] = locations
+    return effective
 
 
 def _positive_int(value: object) -> int:
@@ -879,42 +876,44 @@ def _positive_int(value: object) -> int:
     return result if result > 0 else 0
 
 
-def _is_european_country(country_key: str) -> bool:
-    return country_key in _EUROPEAN_COUNTRY_ALIASES
-
-
-def _country_location_accepts(country_key: str, fallback: str) -> list[str]:
-    if country_key == "spain":
-        return list(_SPAIN_LOCATION_ACCEPTS)
-    aliases = _EUROPEAN_COUNTRY_ALIASES.get(country_key)
-    if aliases:
-        return [alias.title() if len(alias) > 3 else alias.upper() for alias in aliases]
-    return [fallback]
-
-
 def _load_profile_target_search() -> dict[str, list[str]]:
-    if not DB_PATH.exists():
+    try:
+        DB_PATH.lstat()
+    except FileNotFoundError:
         return _empty_target_search()
+    except OSError:
+        raise SavedSearchReadError("Saved Candidate Profile targets") from None
+    from jobctrl.database import _refuse_unresolved_initialization
+
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(DB_PATH)
+        _refuse_unresolved_initialization(DB_PATH)
+        conn = sqlite3.connect(f"{DB_PATH.resolve().as_uri()}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'candidate_profiles'"
         ).fetchone()
         if table is None:
-            return _empty_target_search()
+            existing = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1"
+            ).fetchone()
+            if existing is None:
+                return _empty_target_search()
+            raise InvalidSavedSearchError("Saved Candidate Profile targets")
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()}
+        target_columns = (
+            "experience_target_role", "experience_target_track", "experience_target_seniority_floor",
+            "experience_target_functions", "experience_target_specializations", "experience_target_locations",
+            "experience_target_work_models",
+        )
+        if not {"tenant_id", "profile_id", "version", *target_columns}.issubset(columns):
+            raise InvalidSavedSearchError("Saved Candidate Profile targets")
         row = conn.execute(
-            f"""
-            SELECT {_profile_target_column(columns, "experience_target_role")},
-                   {_profile_target_column(columns, "experience_target_track")},
-                   {_profile_target_column(columns, "experience_target_seniority_floor")},
-                   {_profile_target_column(columns, "experience_target_functions")},
-                   {_profile_target_column(columns, "experience_target_specializations")},
-                   {_profile_target_column(columns, "experience_target_locations")},
-                   {_profile_target_column(columns, "experience_target_work_models")},
-                   personal_city, personal_country
+            """
+            SELECT experience_target_role, experience_target_track, experience_target_seniority_floor,
+                   experience_target_functions, experience_target_specializations,
+                   experience_target_locations, experience_target_work_models,
+                   version
             FROM candidate_profiles
             WHERE tenant_id = ? AND profile_id = ?
             """,
@@ -922,20 +921,46 @@ def _load_profile_target_search() -> dict[str, list[str]]:
         ).fetchone()
         if row is None:
             return _empty_target_search()
+        if any(not isinstance(row[column], str) for column in target_columns):
+            raise InvalidSavedSearchError("Saved Candidate Profile targets")
+        if type(row["version"]) is not int:
+            raise InvalidSavedSearchError("Saved Candidate Profile targets")
+        try:
+            criteria = load_config_file(path=get_config_path(), strict=True)
+        except ConfigFileError as exc:
+            if isinstance(exc.__cause__, OSError):
+                raise SavedSearchReadError("Saved search criteria") from None
+            raise InvalidSavedSearchError("Saved search criteria") from None
+        except UnicodeError:
+            raise InvalidSavedSearchError("Saved search criteria") from None
         roles = _split_target_text(row["experience_target_role"])
-        locations = _split_target_text(row["experience_target_locations"])
+        raw_locations = _split_target_rows(row["experience_target_locations"])
+        raw_work_models = _split_target_rows(row["experience_target_work_models"])
+        rows: list[tuple[str, str]] = []
+        for index in range(max(len(raw_locations), len(raw_work_models))):
+            location = raw_locations[index] if index < len(raw_locations) else ""
+            work_model = raw_work_models[index] if index < len(raw_work_models) else ""
+            if location or work_model:
+                rows.append((location, work_model))
+        locations = [location for location, _ in rows]
+        work_models = [work_model for _, work_model in rows]
         return {
             "roles": roles,
             "tracks": _split_target_text(row["experience_target_track"]),
             "seniority": _split_target_text(row["experience_target_seniority_floor"]),
             "functions": _split_target_text(row["experience_target_functions"]),
             "specializations": _split_target_text(row["experience_target_specializations"]),
-            "locations": locations or _profile_home_location(row),
-            "work_models": _split_target_text(row["experience_target_work_models"]),
+            "locations": locations,
+            "work_models": work_models,
+            "profile_version": row["version"],
+            "criteria": [
+                str(value)
+                for key in ("score_criteria", "target_criteria")
+                if (value := criteria.get(key))
+            ],
         }
-    except Exception:
-        log.debug("Failed to load profile target-search preferences", exc_info=True)
-        return _empty_target_search()
+    except (OSError, sqlite3.Error):
+        raise SavedSearchReadError("Saved Candidate Profile targets") from None
     finally:
         if conn is not None:
             conn.close()
@@ -951,58 +976,6 @@ def _empty_target_search() -> dict[str, list[str]]:
         "locations": [],
         "work_models": [],
     }
-
-
-def _profile_target_column(columns: set[str], column: str) -> str:
-    if column in columns:
-        return column
-    return f"'' AS {column}"
-
-
-def _split_target_text(value: object) -> list[str]:
-    if value is None:
-        return []
-    cleaned = re.sub(r"^\s*Target (?:roles?|locations?):\s*", "", str(value), flags=re.IGNORECASE)
-    return [item.strip() for item in re.split(r"[;\n]+", cleaned) if item.strip()]
-
-
-def _profile_home_location(row: sqlite3.Row) -> list[str]:
-    city = str(row["personal_city"] or "").strip()
-    country = str(row["personal_country"] or "").strip()
-    if city and country:
-        return [f"{city}, {country}"]
-    if country:
-        return [country]
-    if city:
-        return [city]
-    return []
-
-
-def _target_location_is_remote(location: str, work_model: str) -> bool:
-    target = f"{location} {work_model}".lower()
-    return any(marker in target for marker in ("remote", "anywhere", "distributed"))
-
-
-def _target_prefers_europe_from_values(locations: list[str]) -> bool:
-    target = f" {' '.join(locations)} ".lower()
-    return any(marker in target for marker in _EUROPE_TARGET_MARKERS)
-
-
-def _target_prefers_europe(search_cfg: dict | None) -> bool:
-    if not isinstance(search_cfg, dict):
-        return False
-    if str(search_cfg.get("target_region") or "").strip().lower() == "europe":
-        return True
-    defaults = search_cfg.get("defaults") if isinstance(search_cfg.get("defaults"), dict) else {}
-    country = f"{search_cfg.get('country') or ''} {defaults.get('country_indeed') or ''}".lower()
-    if any(marker.strip() in country for marker in ("spain", "españa", "europe")):
-        return True
-    locations = [
-        str(item.get("location") or item.get("label") or "")
-        for item in search_cfg.get("locations", [])
-        if isinstance(item, dict)
-    ]
-    return _target_prefers_europe_from_values(locations)
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:
@@ -1051,7 +1024,7 @@ def resolve_jobspy_boards(search_cfg: dict | None = None, *, warn: bool = True) 
     ``sites`` remains accepted as a compatibility alias and logs a warning
     instead of failing existing local configs.
     """
-    cfg = search_cfg if search_cfg is not None else load_search_config()
+    cfg = search_cfg if search_cfg is not None else load_discovery_control_settings()
     boards = _string_list(cfg.get("boards")) if isinstance(cfg, dict) else []
     legacy_sites = _string_list(cfg.get("sites")) if isinstance(cfg, dict) else []
     if boards:
@@ -1184,7 +1157,7 @@ def _jobspy_sources(search_cfg: dict | None) -> list[SourceRegistryEntry]:
                     display_name=_jobstreaming_source_display_name(board),
                     owner="system",
                     priority=SourcePriority.LEAD_GENERATOR,
-                    state=SourceState.EXPERIMENTAL,
+                    state=SourceState.ACTIVE,
                     policy=BROAD_BOARD_LEAD_POLICY,
                     adapter_config={"board": board},
                 )
@@ -1266,6 +1239,9 @@ def _policy_for_local_source(kind: SourceKind, source_id: str):
 def _local_source_registry_rows() -> list[sqlite3.Row]:
     if not DB_PATH.exists():
         return []
+    from jobctrl.database import _refuse_unresolved_initialization
+
+    _refuse_unresolved_initialization(DB_PATH)
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -1296,17 +1272,26 @@ def _local_source_registry_rows() -> list[sqlite3.Row]:
 
 
 def _adapter_config_from_row(row: sqlite3.Row) -> dict:
+    adapter_config: dict[str, str] = {}
+    # Retained boards remain selectable independently of the saved default list.
+    # Recover literal provider identity from the canonical ID, never its label.
+    if row["kind"] == SourceKind.BROAD_BOARD.value:
+        source_id = str(row["source_id"] or "").strip()
+        for board in _JOBSTREAMING_BOARD_DISPLAY_NAMES:
+            if source_id == f"jobspy:{_source_slug(board)}":
+                adapter_config["board"] = board
+                break
     seed_url = str(row["seed_url"] or "").strip()
-    if not seed_url:
-        return {}
-    display_name = str(row["display_name"] or row["source_id"]).strip()
-    source_type = "search" if _url_has_search_placeholder(seed_url) else "static"
-    return {
-        "name": display_name,
-        "url": seed_url,
-        "type": source_type,
-        "base_url": seed_url,
-    }
+    if seed_url:
+        display_name = str(row["display_name"] or row["source_id"]).strip()
+        source_type = "search" if _url_has_search_placeholder(seed_url) else "static"
+        adapter_config.update({
+            "name": display_name,
+            "url": seed_url,
+            "type": source_type,
+            "base_url": seed_url,
+        })
+    return adapter_config
 
 
 def _url_has_search_placeholder(url: str) -> bool:
@@ -1350,6 +1335,11 @@ def _merge_local_source_registry(
         adapter_config = dict(existing.adapter_config) if existing else {}
         if _row_overrides_adapter_config(row, existing):
             adapter_config.update(_adapter_config_from_row(row))
+        # Built-in JobStreaming adapters are supported sources. Retained rows
+        # from older defaults must not keep an artificial experimental probe.
+        if (kind == SourceKind.BROAD_BOARD and state == SourceState.EXPERIMENTAL
+                and any(source_id == f"jobspy:{_source_slug(board)}" for board in _JOBSTREAMING_BOARD_DISPLAY_NAMES)):
+            state = SourceState.ACTIVE
         owner = str(row["owner"] or (existing.owner if existing else "user"))
         display_name = (
             existing.display_name
@@ -1382,30 +1372,6 @@ def _canonical_workday_source_id_for_alias(source_id: str) -> str | None:
     return f"workday:{match.group('employer')}"
 
 
-def _filter_sources_for_target_region(
-    registry: list[SourceRegistryEntry],
-    search_cfg: dict | None,
-) -> list[SourceRegistryEntry]:
-    if not _target_prefers_europe(search_cfg):
-        return registry
-    return [entry for entry in registry if not _is_america_only_source(entry)]
-
-
-def _is_america_only_source(entry: SourceRegistryEntry) -> bool:
-    source_text = " ".join(
-        str(value)
-        for value in (
-            entry.source_id,
-            entry.display_name,
-            entry.adapter_config.get("url"),
-            entry.adapter_config.get("seed_url"),
-            entry.adapter_config.get("base_url"),
-        )
-        if value
-    ).lower()
-    return any(marker in source_text for marker in _AMERICA_ONLY_SOURCE_MARKERS)
-
-
 def load_source_registry(
     *,
     search_cfg: dict | None = None,
@@ -1413,7 +1379,7 @@ def load_source_registry(
     employers_cfg: dict | None = None,
 ) -> list[SourceRegistryEntry]:
     """Generate registry entries from packaged YAML and broad-board config."""
-    active_search_cfg = search_cfg if search_cfg is not None else load_search_config()
+    active_search_cfg = search_cfg if search_cfg is not None else load_discovery_control_settings()
     active_sites_cfg = sites_cfg if sites_cfg is not None else load_sites_config()
     active_employers_cfg = employers_cfg if employers_cfg is not None else load_employers_config()
     registry = [
@@ -1422,10 +1388,7 @@ def load_source_registry(
         *_workday_sources(active_employers_cfg),
         *_jobspy_sources(active_search_cfg),
     ]
-    return _filter_sources_for_target_region(
-        _merge_local_source_registry(registry),
-        active_search_cfg,
-    )
+    return _merge_local_source_registry(registry)
 
 
 def is_manual_ats(url: str | None) -> bool:
@@ -1603,17 +1566,19 @@ def get_tailoring_generator_models() -> tuple[str, ...]:
     return tuple(str(item).strip() for item in saved if str(item).strip()) if isinstance(saved, list) else ()
 
 
+def get_cover_letter_generation_enabled() -> bool:
+    """Cover-letter creation requires an explicit saved opt-in."""
+    return _config_setting("cover_letter_generation") is True
+
+
+def get_resume_voice_polish_enabled() -> bool:
+    """Extra post-approval rewriting is opt-in; required reviews always run."""
+    return _config_setting("resume_voice_polish") is True
+
+
 def get_tailoring_judge_model() -> str | None:
     saved = _config_setting("tailoring_judge_model")
     return str(saved).strip() or None if saved is not None else None
-
-
-def get_tailoring_judge_min_score() -> float:
-    value = _config_setting("tailoring_judge_min_score")
-    try:
-        return min(1.0, max(0.0, float(value)))
-    except (TypeError, ValueError):
-        return 0.82
 
 
 def get_config_path(*, app_dir: Path | None = None) -> Path:
@@ -1686,9 +1651,7 @@ def config_file_lock(
                 else:
                     continue
             if time.monotonic() >= deadline:
-                raise ConfigFileError(
-                    f"{resolved_path.name} is busy; retry after the current settings update finishes"
-                )
+                raise ConfigFileError(f"{resolved_path.name} is busy; retry after the current settings update finishes")
             time.sleep(CONFIG_LOCK_RETRY_SECONDS)
 
     try:
@@ -1928,6 +1891,16 @@ def load_macos_keychain_fallbacks(
     return tuple(diagnostics[key] for key in KEYCHAIN_PROVIDER_KEYS)
 
 
+def load_native_credential_fallbacks(
+    *,
+    env: MutableMapping[str, str] = os.environ,
+    system_name: str | None = None,
+) -> tuple[NativeCredentialDiagnostic, ...]:
+    """Fill missing provider secrets from the current OS native store."""
+
+    return _load_native_credential_fallbacks(env=env, system_name=system_name)
+
+
 def get_env_path() -> Path:
     """Return the state-owned environment file for the active runtime mode."""
 
@@ -1936,16 +1909,78 @@ def get_env_path() -> Path:
     return ENV_PATH
 
 
-def load_env() -> tuple[KeychainFallbackDiagnostic, ...]:
+def validate_live_worker_smoke_bootstrap(
+    *,
+    env: MutableMapping[str, str] = os.environ,
+    app_dir: Path | None = None,
+) -> None:
+    """Authorize the credential-free provider fixture without loading host state."""
+
+    env.pop(LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED_ENV, None)
+    if env.get("JOBCTRL_LIVE_WORKER_SMOKE") != "1":
+        raise RuntimeError("Live-worker smoke bootstrap mode is missing")
+    if env.get(LIVE_WORKER_SMOKE_BOOTSTRAP_ENV) != "1":
+        raise RuntimeError("Live-worker smoke bootstrap capability is missing")
+    runtime_app_dir = (app_dir or APP_DIR).resolve(strict=True)
+    configured_app_dir = Path(env.get("JOBCTRL_LIVE_WORKER_SMOKE_APP_DIR", "")).resolve(strict=True)
+    if configured_app_dir != runtime_app_dir:
+        raise RuntimeError("Live-worker smoke bootstrap does not own JOBCTRL_DIR")
+    token = env.get("JOBCTRL_LIVE_WORKER_SMOKE_TOKEN", "")
+    try:
+        marker = json.loads((runtime_app_dir / ".jobctrl-e2e-owned.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Live-worker smoke bootstrap marker is unavailable") from exc
+    metadata = runtime_app_dir.stat()
+    if (
+        not isinstance(marker, dict)
+        or marker.get("appDir") != str(runtime_app_dir)
+        or marker.get("token") != token
+        or marker.get("device") != str(metadata.st_dev)
+        or marker.get("inode") != str(metadata.st_ino)
+        or re.fullmatch(r"[a-f0-9]{64}", token) is None
+    ):
+        raise RuntimeError("Live-worker smoke bootstrap capability is invalid")
+
+    service_home = runtime_app_dir / "service-home"
+    expected_paths = {
+        "HOME": service_home,
+        "USERPROFILE": service_home,
+        "XDG_CONFIG_HOME": service_home / ".config",
+        "JOBCTRL_DIR": runtime_app_dir,
+        "JOBCTRL_CONFIG_PATH": runtime_app_dir / CONFIG_FILENAME,
+    }
+    for key, expected in expected_paths.items():
+        if Path(env.get(key, "")).resolve() != expected:
+            raise RuntimeError(f"Live-worker smoke bootstrap requires owned {key}")
+
+    present = [key for key in LIVE_WORKER_SMOKE_CREDENTIAL_KEYS if env.get(key, "").strip()]
+    if present:
+        raise RuntimeError(
+            "Live-worker smoke bootstrap found provider credentials or credential homes: " + ", ".join(present)
+        )
+    provider_config = provider_configuration_environment(load_config_file(strict=True))
+    if provider_config:
+        raise RuntimeError("Live-worker smoke bootstrap refuses persisted provider configuration")
+    env[LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED_ENV] = "1"
+
+
+def load_env() -> tuple[KeychainFallbackDiagnostic | NativeCredentialDiagnostic, ...]:
     """Load approved env files, then fill missing provider settings from Keychain.
 
     A source checkout retains its historical CWD ``.env`` fallback.  The
     installed payload reads exactly one JobCtrl-owned env file and never asks
     python-dotenv to search the current directory or its parents.
     """
-    from dotenv import load_dotenv
-
     global _KEYCHAIN_FALLBACK_DIAGNOSTICS
+
+    if os.environ.get(LIVE_WORKER_SMOKE_BOOTSTRAP_ENV) == "1":
+        validate_live_worker_smoke_bootstrap()
+        # This capability mode deliberately does not import or invoke dotenv,
+        # provider config translation, or Keychain fallback. The fixture route
+        # is the only model boundary permitted after this assertion succeeds.
+        return ()
+
+    from dotenv import load_dotenv
 
     env_path = get_env_path()
     if env_path.exists():
@@ -1956,7 +1991,7 @@ def load_env() -> tuple[KeychainFallbackDiagnostic, ...]:
         load_dotenv()
     load_provider_configuration()
     if _KEYCHAIN_FALLBACK_DIAGNOSTICS is None or not KEYCHAIN_REQUIRES_WORKER_RESTART:
-        _KEYCHAIN_FALLBACK_DIAGNOSTICS = load_macos_keychain_fallbacks()
+        _KEYCHAIN_FALLBACK_DIAGNOSTICS = load_native_credential_fallbacks()  # type: ignore[assignment]
     return _KEYCHAIN_FALLBACK_DIAGNOSTICS
 
 

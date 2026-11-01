@@ -1,15 +1,55 @@
-import { screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { sampleApplyReviewQueue } from "../../../test/fixtures/projections.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { ApplyReviewDecisionControls } from "./ApplyReviewDecisionControls.js";
+import { buildTestPorts } from "../../../test/testPorts.js";
 
 describe("<ApplyReviewDecisionControls>", () => {
+  it("scopes pending presentation and settlement to the initiating session", async () => {
+    const item = sampleApplyReviewQueue.items[0]!;
+    const finishes: Array<() => void> = [];
+    const onDecision = vi.fn(() => new Promise<void>((resolve) => { finishes.push(resolve); }));
+    const hook = renderWithProviders(<ApplyReviewDecisionControls item={item} onDecision={onDecision} />);
+    const button = () => screen.getByRole("button", { name: `Defer for ${item.title}` });
+    fireEvent.click(button());
+    hook.rerender(<ApplyReviewDecisionControls item={{ ...item, jobKey: "next-job" }} onDecision={onDecision} />);
+    expect(button()).toBeEnabled();
+    fireEvent.click(button());
+    expect(onDecision).toHaveBeenCalledTimes(2);
+    await act(async () => { finishes[0]!(); });
+    expect(button()).toBeDisabled();
+    await act(async () => { finishes[1]!(); });
+    expect(button()).toBeEnabled();
+  });
+
+  it.each(["Authorize live submit", "Defer"])("delegates %s to the session and protects against repeated clicks during preparation", async (label) => {
+    const item = sampleApplyReviewQueue.items[0]!;
+    let finish!: () => void;
+    const onDecision = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const decideApplyReview = vi.fn();
+    renderWithProviders(<ApplyReviewDecisionControls item={item} onDecision={onDecision} />, { ports: buildTestPorts({ api: { decideApplyReview } }) });
+    const button = screen.getByRole("button", { name: `${label} for ${item.title}` });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(onDecision).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("Saving");
+    await act(async () => { finish(); });
+    expect(decideApplyReview).not.toHaveBeenCalled();
+  });
+
+  it("presents a recoverable decision failure supplied by the session", () => {
+    renderWithProviders(<ApplyReviewDecisionControls item={sampleApplyReviewQueue.items[0]!}
+      onDecision={vi.fn(async () => {})} decisionError="Review conflict. Refresh and authorize again." />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Review conflict. Refresh and authorize again.");
+  });
+
   it("makes live-submit authorization the sole primary action when it is available", () => {
     const item = sampleApplyReviewQueue.items[0]!;
 
-    renderWithProviders(<ApplyReviewDecisionControls item={item} />);
+    renderWithProviders(<ApplyReviewDecisionControls item={item} onDecision={vi.fn(async () => {})} />);
 
     const getDecisionButton = (name: string) =>
       screen.getByRole("button", {
@@ -58,18 +98,38 @@ describe("<ApplyReviewDecisionControls>", () => {
       }),
     ).toBeInTheDocument();
 
-    const submitGateAlert = screen
-      .getByText("Submit gate: approval not recorded.")
-      .closest('[role="alert"]');
-    expect(submitGateAlert).toHaveTextContent("Authorization unavailable");
+    const submitGates = screen.getByRole("table", { name: "Submit gates" });
+    expect(submitGates).toHaveTextContent("GateStateDetail");
     expect(
-      submitGateAlert?.querySelector(".tabler-icon-lock"),
-    ).toHaveAttribute("aria-hidden", "true");
+      screen.getByRole("cell", { name: "Approval recorded" }),
+    ).toHaveAttribute("data-label", "Gate");
+    expect(screen.getByRole("cell", { name: "not recorded" })).toHaveAttribute(
+      "data-label",
+      "State",
+    );
+    expect(submitGates).toHaveTextContent(
+      "Approval recordednot recordedLive submit stays locked until an approval is bound",
+    );
+    expect(submitGates).toHaveTextContent(
+      "Dry-run evidencefullRun apply-run-2 completed with full coverage.",
+    );
+    const approvalRow = screen
+      .getByRole("cell", { name: "Approval recorded" })
+      .closest("tr");
+    expect(approvalRow?.querySelector(".tabler-icon-clock")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(
+      approvalRow?.querySelector(".tabler-icon-check"),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByText(/Authorization only:/i).closest("p"),
     ).toHaveTextContent(/does not start or submit an application immediately/i);
 
-    const technicalDetails = screen.getByText("Technical details").closest("details");
+    const technicalDetails = screen
+      .getByText("Technical details")
+      .closest("details");
     expect(technicalDetails).not.toHaveAttribute("open");
     expect(technicalDetails).toHaveTextContent("Profile version");
     expect(technicalDetails).toHaveTextContent("Application URL");
@@ -91,11 +151,13 @@ describe("<ApplyReviewDecisionControls>", () => {
       },
     };
 
-    renderWithProviders(<ApplyReviewDecisionControls item={item} />);
+    renderWithProviders(<ApplyReviewDecisionControls item={item} onDecision={vi.fn(async () => {})} />);
 
     const alert = screen
       .getAllByRole("alert")
-      .find((candidate) => candidate.textContent?.includes("Partial dry-run evidence only"));
+      .find((candidate) =>
+        candidate.textContent?.includes("Partial dry-run evidence only"),
+      );
     expect(alert).toBeDefined();
     if (!alert) {
       throw new Error("Expected partial dry-run evidence alert.");
@@ -132,24 +194,73 @@ describe("<ApplyReviewDecisionControls>", () => {
     expect(overrideButton).not.toHaveClass("bg-success");
   });
 
-  it("distinguishes approval preparation guidance from a blocked gate", () => {
+  it("keeps each draft notice and live-submit blocker visible in its owning gate row", () => {
     const item = sampleApplyReviewQueue.items[0]!;
 
     renderWithProviders(
       <ApplyReviewDecisionControls
+        approvalDisabledReason="Save the draft before approval."
         approvalNotice="The saved draft will be rendered before approval."
+        liveSubmitDisabledReason="Confirm the related prior application."
         item={item}
+        onDecision={vi.fn(async () => {})}
       />,
     );
 
-    const status = screen
-      .getByText("The saved draft will be rendered before approval.")
-      .closest('[role="status"]');
-    expect(status).toHaveAttribute("aria-live", "polite");
-    expect(status?.querySelector(".tabler-icon-info-circle")).toHaveAttribute(
+    const materialsRow = screen
+      .getByRole("cell", { name: "Materials" })
+      .closest("tr");
+    expect(materialsRow).toHaveTextContent(
+      "blockedSave the draft before approval. The saved draft will be rendered before approval.",
+    );
+    const repeatRow = screen
+      .getByRole("cell", { name: "Repeat application protection" })
+      .closest("tr");
+    expect(repeatRow).toHaveTextContent(
+      "Confirm the related prior application.",
+    );
+    expect(repeatRow?.querySelector(".tabler-icon-lock")).toHaveAttribute(
       "aria-hidden",
       "true",
     );
-    expect(status?.querySelector(".tabler-icon-lock")).not.toBeInTheDocument();
+  });
+
+  it("places stale canonical bindings in the corresponding blocked rows", () => {
+    const item = {
+      ...sampleApplyReviewQueue.items[0]!,
+      approvalGate: {
+        ...sampleApplyReviewQueue.items[0]!.approvalGate,
+        reasons: ["approval_stale_materials" as const],
+      },
+      review: {
+        ...sampleApplyReviewQueue.items[0]!.review,
+        state: "approved_submit" as const,
+        materialsGeneration:
+          sampleApplyReviewQueue.items[0]!.approvalGate.materialsGeneration! -
+          1,
+        profileVersion:
+          sampleApplyReviewQueue.items[0]!.approvalGate.profileVersion! - 1,
+        applicationUrl: `${sampleApplyReviewQueue.items[0]!.approvalGate.applicationUrl}?previous=1`,
+      },
+    };
+
+    renderWithProviders(<ApplyReviewDecisionControls item={item} onDecision={vi.fn(async () => {})} />);
+
+    const approvalRow = screen
+      .getByRole("cell", { name: "Approval recorded" })
+      .closest("tr");
+    expect(approvalRow).toHaveTextContent("stale");
+    expect(approvalRow).toHaveTextContent(
+      "materials changed since approval, profile changed since approval, application URL changed since approval",
+    );
+    expect(
+      screen.getByRole("cell", { name: "Materials" }).closest("tr"),
+    ).toHaveTextContent("changed");
+    expect(
+      screen.getByRole("cell", { name: "Profile version" }).closest("tr"),
+    ).toHaveTextContent("changed");
+    expect(
+      screen.getByRole("cell", { name: "Application URL" }).closest("tr"),
+    ).toHaveTextContent("changed");
   });
 });

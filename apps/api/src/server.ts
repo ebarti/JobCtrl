@@ -1,19 +1,40 @@
+import { PermanentDeleteSelectionConflict, PermanentDeleteSelectionRegistry } from "./permanent-delete-selection.js";
+import { readJobCtrlSettings } from "./settings-config.js";
+import { ActionReceiptConflictError } from "./action-receipts.js";
+import { OutreachGenerationError, OutreachPublicationConflictError } from "./outreach-generation-errors.js";
+import { registerOfferRoutes } from "./offer-routes.js";
+import { readCompanyBriefing } from "./company-briefings.js";
+
+import { createProviderHandlers, dispatchProviderModelCatalog, providerOperationError } from "./provider-handlers.js";
+import { acceptCoverLetterPreview, coverLetterArtifactPdfBytes, coverLetterJobId, coverLetterPreviewBytes, CoverLetterReviewError, renderCoverLetterPreview, type CoverLetterPdfRenderer } from "./cover-letter-review.js";
+import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
+import { readTargetRoleProposal } from "./candidate-interpretations.js";
+import { resetJobStageWithEnrichmentOwner, retryFailedJobsWithEnrichmentOwner } from "./enrichment-retry.js";
+import { ResumeEditIntentReviewSchema } from "@jobctrl/contracts";
+import { readDetermination } from "./semantic-determinations.js";
+import { isDeepStrictEqual } from "node:util";
+import { FormSnapshotSchema, FormMappingResponseSchema } from "@jobctrl/contracts";
+import { ResumeEditReviewSchema } from "@jobctrl/contracts";
 import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { type ZodType } from "zod";
+import { z, type ZodType } from "zod";
 
 import {
   type ActionCommandPayload,
   type ActionRunResponse,
   ActivityListQuerySchema,
+  CheckPostingAvailabilityParamsSchema,
+  AvailabilityWorkflowStartSchema,
   ApplyReviewDecisionRequestSchema,
   ApplyJobRequestSchema,
   RepeatApplicationOverrideRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
+  BulkPermanentDeleteRequestSchema,
+  PreparePermanentDeleteSelectionRequestSchema,
   type BulkRunPendingPreparationRequest,
   BulkRunPendingPreparationRequestSchema,
   type BulkRunPendingPreparationResponse,
@@ -34,7 +55,6 @@ import {
   CredentialKeys,
   CredentialBatchUpdateRequestSchema,
   CredentialUpdateRequestSchema,
-  CodexVerifyResultSchema,
   DeleteJobRequestSchema,
   DigestAcknowledgeRequestSchema,
   DiscoverySettingsUpdateRequestSchema,
@@ -48,6 +68,7 @@ import {
   JobResumeTemplateAssignmentRequestSchema,
   JobListQuerySchema,
   JobUrlImportRequestSchema,
+  JobUrlImportStatusParamsSchema,
   LearningRecommendationEvidenceListQuerySchema,
   LearningRecommendationIdSchema,
   TailoringPolicyRevisionListQuerySchema,
@@ -60,11 +81,18 @@ import {
   OutcomeSuggestionDecisionRequestSchema,
   ExtensionCaptureIngestSchema,
   ProfileImportRequestSchema,
+  ProfileSchema,
   type ProfileConfigResponse,
+  RequiredBulletSuggestionRequestSchema,
+  RequiredBulletModelResultSchema,
+  ProfileRequiredBulletSuggestionsParamsSchema,
+  RpcMethods,
+  type RpcParams,
+  type BrowserCapabilityId,
+  TargetRoleSuggestionRequestSchema,
+  TargetRoleSuggestionResultSchema,
   ProfileUpdateRequestSchema,
   type ProviderModelCatalogItem,
-  ProviderModelCatalogResultSchema,
-  ProviderStatusResultSchema,
   QuarantineDecisionSchema,
   RescoreJobRequestSchema,
   RefreshCompensationRequestSchema,
@@ -124,6 +152,7 @@ import {
   importContacts,
   listContacts,
   updateContact,
+  ContactRevisionConflictError,
 } from "./contacts.js";
 import {
   validatePublicHttpUrl,
@@ -170,7 +199,16 @@ import {
   DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE,
   commandForResolvedBlockCondition,
 } from "./blocked-condition-recovery.js";
-import { databaseExists, openDatabase } from "./db.js";
+import {
+  createRetainedDatabase,
+  databaseExists,
+  getRow,
+  IncompatibleSchemaManifestError,
+  IncompatibleSchemaVersionError,
+  openDatabase,
+  openReadOnlyDatabase,
+  SUPPORTED_SCHEMA_VERSION,
+} from "./db.js";
 import { ConfigFileInputError } from "./config-file.js";
 import { isTrustedLiveBrowserUrl } from "./discovery-browser-destination.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
@@ -183,6 +221,7 @@ import {
   listQuarantine,
   listRoleMatchFeedbackSuggestions,
   readDiscoverySettings,
+  InvalidSavedDiscoverySettingsError,
   listSourceLocatorCandidates,
   listSourceRegistry,
   patchSourceState,
@@ -191,14 +230,32 @@ import {
   recordDiscoveryFeedback,
   rejectSourceLocatorCandidate,
   RoleMatchFeedbackDecisionConflictError,
+  SourceLocatorReviewError,
   seedExtensionManualCapture,
   upsertSourceRegistryEntry,
   writeDiscoverySettings,
 } from "./discovery-controls.js";
 import { registerEventStreamRoute } from "./event-stream.js";
 import { registerEndpointRoutes } from "./endpoint-routes.js";
+import { InterviewCatalogAssetError, loadInterviewCatalogAsset, type InterviewCatalogAsset } from "./interview-catalog-asset.js";
+import {
+  createInterviewCatalogReader,
+  getInterviewQuestion,
+  InterviewSelectionInputError,
+  listInterviewCatalog,
+  validateInterviewGenerationSelection,
+} from "./interview-catalog.js";
+import {
+  InterviewNoteBindingsError,
+  InterviewNoteRevisionConflictError,
+  InterviewNoteSourceError,
+  listInterviewNotes,
+  readInterviewNote,
+  saveInterviewNote,
+} from "./interview-notes.js";
 import {
   assertLiveApplicationMayDispatch,
+  evaluateRepeatApplication,
   recordRepeatApplicationOverride,
 } from "./repeat-application.js";
 import {
@@ -213,6 +270,7 @@ import {
 } from "./extension-auth.js";
 import {
   CredentialStoreUnavailableError,
+  CredentialValueUnsupportedError,
   CredentialManagedByEnvironmentError,
   KeychainCredentialStore,
   type CredentialStore,
@@ -236,6 +294,8 @@ import {
   type ProfileImporter,
 } from "./local-actions.js";
 import type { JsonRpcDispatcher } from "./json-rpc-adapter.js";
+import { materialLocaleVariants, LocaleVariantError } from "./locale-variants.js";
+import { acceptedMaterialExports, readAcceptedDocx, MaterialExportError, DOCX_CONTENT_TYPE } from "./accepted-material-exports.js";
 import {
   createWorkerManualCaptureImporter,
   ManualCaptureImportError,
@@ -243,6 +303,8 @@ import {
 } from "./manual-capture-worker.js";
 import {
   createWorkerJobUrlImporter,
+  createWorkerJobUrlImportStatusReader,
+  type JobUrlImportStatusReader,
   JobUrlImportError,
   type JobUrlImporter,
 } from "./job-url-import-worker.js";
@@ -276,7 +338,9 @@ import {
   listLearningRecommendations,
 } from "./learning-recommendations.js";
 import { listTailoringPolicyRevisions } from "./tailoring-policy-revisions.js";
-import { refreshProjections } from "./projections.js";
+import { loadInterviewPrepReadModel, refreshProjections, repairJobDetailProjections } from "./projections.js";
+import { InterviewEvidenceSelectionError, validateInterviewEvidenceSelection } from "./interview-evidence-selection.js";
+import { interviewPrepStaleReasons, listInterviewPrepHistory, loadLatestAcceptedInterviewPrep } from "./interview-prep-history.js";
 import { createResumeHtmlPdfRenderer, ResumeRenderError, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import {
   defaultSourcePythonRuntime,
@@ -291,6 +355,7 @@ import {
   replyToResumeReviewComment,
   renderResumeReviewDraft,
   saveResumeReviewDraftRevision,
+  persistResumeEditIntent,
   seedResumeReviewCommentThreads,
   TailoringFeedbackReviewInputError,
 } from "./resume-review-drafts.js";
@@ -300,6 +365,7 @@ import {
   getResumeTemplateDetail,
   listResumeTemplates,
   ResumeTemplateInputError,
+  ResumeTemplateVersionConflictError,
   resolveCurrentResumeArtifactIdForOpen,
   resolveEffectiveResumeTemplate,
   setDefaultResumeTemplate,
@@ -315,16 +381,24 @@ import {
   resolveExtensionCorsOrigin,
 } from "./local-origin.js";
 import {
+  InvalidSavedProfileError,
   ProfileInputError,
+  ProfileVersionConflictError,
+  exceedsProfileCoachingReadBudget,
   parseProfileUpdateProfile,
   readExtensionAutofillProfile,
   readProfileConfig,
+  readProfileConfigReadOnly,
+  readProfileVersion,
 } from "./profile-store.js";
+import {
+  prepareRequiredBulletCoaching,
+  bindRequiredBulletJudgments,
+  MAX_REQUIRED_COACHING_ENTRIES,
+  MAX_REQUIRED_COACHING_SOURCE_ROWS,
+} from "@jobctrl/domain-types";
 import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
 import {
-  claimNextProfileContinuationEvent,
-  handleProfileUpdatedEvent,
-  markProfileContinuationEventsHandled,
   persistProfileUpdate,
 } from "./profile-events.js";
 import { dbFileIdentity, readLlmSpendHealth, readWorkerHealth } from "./worker-health.js";
@@ -334,14 +408,12 @@ import {
   hideJob,
   hideJobs,
   InputError,
+  ApplyResetRefusedError,
   markJobApplied,
   markJobSkipped,
   permanentlyDeleteJob,
   permanentlyDeleteJobs,
   queueRetriedJobsForWorkflow,
-  resetJobStage,
-  retryFailedJobTargets,
-  retryFailedJobs,
   type RetryFailedJobTarget,
   restoreJob,
   restoreJobs,
@@ -391,6 +463,7 @@ const DISCOVERY_EXTENSION_VERSION_HEADER = "x-jobctrl-extension-version";
 const SEC_FETCH_HEADER_NAMES = ["sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user"] as const;
 
 export interface BuildAppOptions {
+  coverLetterPdfRenderer?: CoverLetterPdfRenderer;
   appDir?: string;
   dbPath: string;
   configPath: string;
@@ -410,6 +483,7 @@ export interface BuildAppOptions {
   manualCaptureImporter?: ManualCaptureImporter;
   discoveryBrowserBroker?: DiscoveryBrowserBroker;
   jobUrlImporter?: JobUrlImporter;
+  jobUrlImportStatusReader?: JobUrlImportStatusReader;
   /** Test seam for the pre-dispatch public-destination guard. */
   jobUrlValidator?: PublicUrlValidator;
   gmailFeedbackScanner?: GmailFeedbackScanner;
@@ -419,13 +493,32 @@ export interface BuildAppOptions {
   resumePdfRenderer?: ResumeHtmlPdfRenderer;
   requireHealthyWorkerForActions?: boolean;
   logger?: boolean;
+  /** Injectable packaged asset boundary; catalog reads never need a database or worker. */
+  interviewCatalogAssetLoader?: () => InterviewCatalogAsset;
 }
 
 export function buildApp(options: BuildAppOptions): FastifyInstance {
-  normalizeExistingDatabase(options.dbPath);
+  try {
+    normalizeExistingDatabase(options.dbPath);
+  } catch (error) {
+    if (error instanceof IncompatibleSchemaVersionError || error instanceof IncompatibleSchemaManifestError) {
+      return buildIncompatibleDatabaseApp(options, error);
+    }
+    throw error;
+  }
   const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
+  const jobListDatabase = createRetainedDatabase(options.dbPath);
+  const permanentDeleteSelections = new PermanentDeleteSelectionRegistry(options.dbPath);
+  app.addHook("onClose", async () => { jobListDatabase.close(); permanentDeleteSelections.close(); });
   installVitestInjectMutationDefaults(app);
   const appDir = options.appDir ?? path.dirname(options.dbPath);
+  const readInterviewCatalog = createInterviewCatalogReader(options.interviewCatalogAssetLoader
+    ?? (() => loadInterviewCatalogAsset({ environment: options.runtimeEnvironment ?? process.env })));
+  function currentCatalogOrNull() {
+    try { return readInterviewCatalog(); }
+    catch (error) { if (error instanceof InterviewCatalogAssetError) return null; throw error; }
+  }
+
   const pythonRuntime = options.pythonRuntime ?? defaultSourcePythonRuntime;
   const actionContext = { appDir, dbPath: options.dbPath, configPath: options.configPath };
   const actionDispatcher =
@@ -442,7 +535,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     options.providerDispatcher ??
     createRuntimeJsonRpcDispatcherFactory(pythonRuntime)(actionContext);
   let discoveryBrowserContinuation: Promise<void> | null = null;
-  let profileContinuation: Promise<void> | null = null;
+  app.addHook("onClose", async () => {
+    // The reconnect route can start this work without awaiting it. It may use
+    // the RPC child after the HTTP response, so retain it during shutdown.
+    if (discoveryBrowserContinuation) await discoveryBrowserContinuation;
+  });
   const continueDiscoveryBrowserPreparation = (): Promise<void> => {
     if (discoveryBrowserContinuation) return discoveryBrowserContinuation;
     const continuation = dispatchDiscoveryBrowserContinuation(actionDispatcher, actionContext)
@@ -454,24 +551,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     discoveryBrowserContinuation = continuation;
     return continuation;
   };
-  const continueProfilePreparation = (): Promise<void> => {
-    if (profileContinuation) return profileContinuation;
-    const continuation = dispatchPendingProfileContinuations(
-      options.dbPath,
-      actionDispatcher,
-      actionContext,
-    ).finally(() => {
-      if (profileContinuation === continuation) {
-        profileContinuation = null;
-      }
-    });
-    profileContinuation = continuation;
-    return continuation;
-  };
   const manualCaptureImporter =
     options.manualCaptureImporter ?? createWorkerManualCaptureImporter({ pythonRuntime });
   const discoveryBrowserBroker = options.discoveryBrowserBroker ?? new DiscoveryBrowserBroker();
   const jobUrlImporter = options.jobUrlImporter ?? createWorkerJobUrlImporter({ pythonRuntime });
+  const jobUrlImportStatusReader = options.jobUrlImportStatusReader ?? createWorkerJobUrlImportStatusReader({ pythonRuntime });
   const jobUrlValidator = options.jobUrlValidator ?? validatePublicHttpUrl;
   const gmailFeedbackScanner =
     options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner(providerDispatcher);
@@ -481,16 +565,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const requireHealthyWorkerForActions =
     options.requireHealthyWorkerForActions ?? !options.actionDispatcher;
   ensureLocalCapabilityToken(appDir);
-
-  app.addHook("onListen", async () => {
-    // Health-only startup is allowed before initialization creates the exact
-    // database. Do not launch the Python RPC bootstrap or any continuation
-    // reader against a path that the initializer still owns.
-    if (!databaseExists(options.dbPath)) return;
-    void continueProfilePreparation().catch((error: unknown) => {
-      app.log.error({ err: error }, "Failed to reconcile profile-triggered preparation during startup");
-    });
-  });
 
   void app.register(cors, {
     delegator: (request, callback) => {
@@ -850,6 +924,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       withDb(reply, options.dbPath, (db) => readExtensionAutofillProfile(db)),
   );
 
+  app.post("/v1/extension/autofill/mapping", async(request,reply)=>{
+    const snapshot=parseBody(reply,FormSnapshotSchema,request.body);
+    if(!snapshot)return {ok:false,error:"invalid_form_snapshot"};
+    const profile=withDb(reply,options.dbPath,(db)=>readExtensionAutofillProfile(db));
+    if(!profile?.ok || !profile.profileVersion){void reply.code(409);return {ok:false,error:"profile_unavailable"};}
+    try{
+      const response=await callRpc(providerDispatcher, RpcMethods.MapExtensionForm,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,expectedProfileVersion:profile.profileVersion,...snapshot});
+      if(response.error){void reply.code(503);return {ok:false,error:"form_mapping_unavailable",message:response.error.message};}
+      return FormMappingResponseSchema.parse(response.result);
+    }catch{void reply.code(503);return {ok:false,error:"form_mapping_unavailable"};}
+  });
+
   app.post("/v1/extension/captures", async (request, reply) => {
     const body = parseBody(reply, ExtensionCaptureIngestSchema, request.body ?? {});
     if (!body) {
@@ -912,10 +998,127 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       dbPath: options.dbPath,
     },
     handlers: {
+      acceptedMaterialExports: async ({ request, pathParam: jobId }, reply) => {
+        const exists = withReadOnlyDb(reply, options.dbPath, (db) => resolveExistingJobId(reply, db, jobId));
+        if (typeof exists !== "string") return exists ?? { ok: false, error: "job_not_found" };
+        try {
+          return await acceptedMaterialExports(providerDispatcher, { tenantId: "local", expectedAppDir: appDir, expectedDbPath: options.dbPath, jobId }, request);
+        } catch (error) {
+          if (error instanceof MaterialExportError) { void reply.code(error.status); return { ok: false, error: error.code }; }
+          throw error;
+        }
+      },
+      ...createProviderHandlers(providerDispatcher),
+      materialLocaleVariants: async ({ request, pathParam: jobId }, reply) => {
+        const exists = withReadOnlyDb(reply, options.dbPath, (db) => resolveExistingJobId(reply, db, jobId));
+        if (typeof exists !== "string") return exists ?? { ok: false, error: "job_not_found" };
+        try {
+          return await materialLocaleVariants(providerDispatcher, { tenantId: "local", expectedAppDir: appDir, expectedDbPath: options.dbPath, jobId }, request);
+        } catch (error) {
+          if (error instanceof LocaleVariantError) { void reply.code(error.status); return { ok: false, error: error.code }; }
+          throw error;
+        }
+      },
+      checkPostingAvailability: async ({ pathParam: jobId }, reply) => {
+        const exists = withReadOnlyDb(reply, options.dbPath, (db) => resolveExistingJobId(reply, db, jobId));
+        if (!exists) return { ok: false, error: "job_not_found" };
+        try {
+          const params = CheckPostingAvailabilityParamsSchema.parse({ tenantId: "local", jobId,
+            expectedAppDir: appDir, expectedDbPath: options.dbPath });
+          const result = await callRpc(providerDispatcher, RpcMethods.CheckPostingAvailability, params);
+          if (result.error) {
+            void reply.code(result.error.code === JsonRpcErrorCodes.InvalidParams ? 400 : 503);
+            return { ok: false, error: "availability_check_failed", message: result.error.message };
+          }
+          const start = AvailabilityWorkflowStartSchema.safeParse(result.result);
+          if (!start.success) {
+            void reply.code(502);
+            return { ok: false, error: "invalid_availability_dispatch_result" };
+          }
+          void reply.code(202);
+          return { ok: true, status: "queued", runId: start.data.runId, workflowId: start.data.workflowId };
+        } catch (error) {
+          if (error instanceof RpcContractError && error.phase === "result") {
+            void reply.code(502);
+            return { ok: false, error: "invalid_availability_dispatch_result" };
+          }
+          void reply.code(503);
+          return { ok: false, error: "availability_worker_unavailable" };
+        }
+      },
+      interviewCatalog: ({ request }, reply) => {
+        try {
+          return listInterviewCatalog(readInterviewCatalog(), request);
+        } catch (error) {
+          return interviewCatalogError(reply, error);
+        }
+      },
+      interviewQuestion: ({ pathParam: questionId }, reply) => {
+        try {
+          return getInterviewQuestion(readInterviewCatalog(), questionId);
+        } catch (error) {
+          return interviewCatalogError(reply, error);
+        }
+      },
+      interviewPrepHistory: ({ request, pathParam: jobKey }, reply) =>
+        withReadOnlyDb(reply, options.dbPath, (db) => {
+          const jobId = resolveExistingJobId(reply, db, jobKey);
+          if (!jobId) return { ok: false, error: "job_not_found" };
+          return listInterviewPrepHistory(db, "local", jobId, request, currentCatalogOrNull(), appDir, loadInterviewPrepReadModel);
+        }),
+      interviewNotes: ({ request, pathParam: jobKey }, reply) =>
+        withReadOnlyDb(reply, options.dbPath, (db) => {
+          const jobId = resolveExistingJobId(reply, db, jobKey);
+          return jobId ? listInterviewNotes(db, "local", jobId, request) : { ok: false, error: "job_not_found" };
+        }),
+      saveInterviewNote: ({ request, pathParam: jobKey }, reply) =>
+        withWritableDb(reply, options.dbPath, (db) => {
+          const jobId = resolveExistingJobId(reply, db, jobKey);
+          if (!jobId) return { ok: false, error: "job_not_found" };
+          try {
+            const existing = readInterviewNote(db, "local", jobId, request.questionId);
+            if ((existing?.revision ?? 0) !== request.expectedRevision) throw new InterviewNoteRevisionConflictError(existing);
+            const sourceGeneration = request.sourceGeneration === undefined ? (existing?.sourceGeneration ?? null) : request.sourceGeneration;
+            const catalog = currentCatalogOrNull();
+            // Historical origins use retained cards; independent new notes require a current active card.
+            if (!existing && sourceGeneration === null) getInterviewQuestion(catalog ?? readInterviewCatalog(), request.questionId);
+            return { ok: true, note: saveInterviewNote(db, "local", jobId, request, catalog) };
+          } catch (error) {
+            if (error instanceof InterviewNoteRevisionConflictError) {
+              void reply.code(409);
+              return { ok: false, error: "interview_note_revision_conflict", message: error.message, currentNote: error.currentNote };
+            }
+            if (error instanceof InterviewNoteBindingsError) {
+              void reply.code(400);
+              return { ok: false, error: "invalid_interview_note_bindings", message: error.message };
+            }
+            if (error instanceof InterviewNoteSourceError) {
+              void reply.code(400);
+              return { ok: false, error: "invalid_interview_note_source", message: error.message };
+            }
+            return interviewCatalogError(reply, error);
+          }
+        }),
       learningRecommendations: ({ request }, reply) =>
         withDb(reply, options.dbPath, (db) =>
           listLearningRecommendations(db, request!),
         ),
+      renderCoverLetterPreview: ({ request, pathParam: locator }, reply) =>
+        withWritableDb(reply, options.dbPath, async (db) => {
+          const jobId = coverLetterJobId(db, locator);
+          return renderCoverLetterPreview(db, appDir, jobId, request, options.coverLetterPdfRenderer ?? (async (input) => {
+            try {
+              const response = await callRpc(providerDispatcher, RpcMethods.RenderCoverLetterPdf, input);
+              if (response.error || response.result?.pdfPath !== input.pdfPath) throw new Error();
+            } catch { throw new CoverLetterReviewError("cover_letter_render_failed", 502); }
+          }));
+        }),
+      acceptCoverLetterPreview: ({ request, pathParam: locator }, reply) =>
+        withWritableDb(reply, options.dbPath, (db) => {
+          const result = acceptCoverLetterPreview(db, appDir, coverLetterJobId(db, locator), request);
+          refreshProjections(db);
+          return result;
+        }),
       renderResumeReviewDraft: ({ request, pathParam: draftId }, reply) =>
         withWritableDb(reply, options.dbPath, async (db) => {
           const result = await renderResumeReviewDraft(
@@ -923,6 +1126,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             draftId,
             request,
             resumePdfRenderer,
+            async (reviewDraftId,revisionId)=>{
+              const response=await callRpc(providerDispatcher, RpcMethods.ReviewResumeEdit,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,draftId:reviewDraftId,revisionId}).catch((error: unknown) => {
+                if (error instanceof RpcContractError && error.phase === "result") throw new SemanticStageError("schema_violation");
+                throw error;
+              });
+              if(response.error)throw new SemanticStageError(safeDeterminationFailureCode(response.error.message));
+              const parsed=ResumeEditReviewSchema.safeParse(response.result);
+              if(!parsed.success)throw new SemanticStageError("schema_violation");
+              return parsed.data;
+            },
           );
           if (result.ok) {
             refreshProjections(db);
@@ -954,6 +1167,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
                   ? "invalid_gmail_feedback_scan"
                   : "gmail_feedback_scan_failed",
               message: error.message,
+              ...(error.failureCode ? { failureCode: error.failureCode } : {}),
             };
           }
           throw error;
@@ -1001,7 +1215,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => {
       const discoverySettings = readDiscoverySettings(db).settings;
       return buildDigest(db, {
-        applyReviewQueue: listApplyReviewQueue(db),
+        applyReviewQueue: listApplyReviewQueue(db, appDir),
         budget: readLlmSpendHealth(options.dbPath, options.configPath),
         minFitScore: discoverySettings.minFitScore,
       });
@@ -1039,9 +1253,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => readDiscoverySettings(db)),
   );
 
-  app.get("/v1/compensation/sources", async () =>
-    listCompensationSources(readCompensationSourcePreferences(options.configPath)),
-  );
+  app.get("/v1/compensation/sources", async (_request,reply) => {
+    const response=listCompensationSources(readCompensationSourcePreferences(options.configPath));
+    if (!fs.existsSync(options.dbPath)) return response;
+    return withDb(reply,options.dbPath,db => {
+    const rows=db.prepare("SELECT source_id,count(*) AS input_count FROM compensation_unclassified_source_inputs WHERE tenant_id='local' GROUP BY source_id").all() as Array<{source_id:string;input_count:number}>;
+    for (const row of rows) {
+      const source=response.sources.find(item=>item.sourceId===row.source_id);
+      if(source) source.notes.push(`${row.input_count} historical observations retain their original amounts and source locators. Their withdrawn classifications require the original source to be refreshed or reimported before use.`);
+    }
+    return response;
+    });
+  });
 
   app.patch("/v1/compensation/sources", async (request, reply) => {
     const body = parseBody(
@@ -1114,7 +1337,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   );
 
   app.get("/v1/discovery/locator-candidates", async (_request, reply) =>
-    withDb(reply, options.dbPath, (db) => listSourceLocatorCandidates(db)),
+    withReadOnlyDb(reply, options.dbPath, (db) => listSourceLocatorCandidates(db)),
   );
 
   app.post<{ Params: { candidateId: string } }>(
@@ -1124,8 +1347,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
+      const candidateId = decodeRouteParam(request.params.candidateId);
+      const selected = withReadOnlyDb(reply, options.dbPath, (db) => getRow<{ candidate_url: string } & Record<string, unknown>>(
+        db, "SELECT candidate_url FROM source_locator_candidates WHERE tenant_id = 'local' AND candidate_id = ?", [candidateId],
+      ) ?? null);
+      if (selected && "error" in selected) return selected;
+      if (!selected) return reply.code(404).send({ ok: false, error: "not_found", message: "Source locator candidate was not found." });
+      {
+        const decision = await jobUrlValidator(selected.candidate_url);
+        if (!decision.allowed) {
+          return reply.code(400).send({ ok: false, error: "invalid_source_candidate", message: decision.reason ?? "Source URL must resolve to a public HTTP(S) destination." });
+        }
+      }
       return withWritableDb(reply, options.dbPath, (db) =>
-        promoteSourceLocatorCandidate(db, decodeRouteParam(request.params.candidateId)),
+        promoteSourceLocatorCandidate(db, candidateId, body.reason, selected.candidate_url),
       );
     },
   );
@@ -1138,7 +1373,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       return withWritableDb(reply, options.dbPath, (db) =>
-        rejectSourceLocatorCandidate(db, decodeRouteParam(request.params.candidateId)),
+        rejectSourceLocatorCandidate(db, decodeRouteParam(request.params.candidateId), body.reason),
       );
     },
   );
@@ -1247,15 +1482,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(400);
       return undefined;
     }
-    if (body.stages.includes("discover") && !discoveryBrowserBroker.status().connected) {
-      void reply.code(503);
-      return {
-        ok: false,
-        error: "discovery_extension_unavailable",
-        message:
-          "Open Chrome with the paired JobCtrl extension before starting browser-backed Discovery or Enrich. JobCtrl uses the user's current Chrome profile and does not use a copied profile.",
-      };
-    }
     const command: ActionCommandPayload = {
       action: "run_stage" as const,
       jobKey: PIPELINE_ACTION_JOB_KEY,
@@ -1279,9 +1505,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     if (body.tailorJudgeModel) {
       command.tailorJudgeModel = body.tailorJudgeModel;
-    }
-    if (body.tailorJudgeMinScore !== undefined) {
-      command.tailorJudgeMinScore = body.tailorJudgeMinScore;
     }
     const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
     if (!workerReady) {
@@ -1311,8 +1534,19 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
 
   app.get("/v1/jobs", async (request, reply) =>
-    withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query))),
+    withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query)), jobListDatabase),
   );
+
+  app.get("/v1/jobs/reviewable-list", async (request, reply) => {
+    const query = JobListQuerySchema.parse(request.query);
+    const activeOnly = query.jobStates
+      ? !query.jobStates.some((state) => state !== "active")
+      : query.deleted === "active";
+    if (activeOnly) {
+      return withDb(reply, options.dbPath, (db) => ({ ...listJobs(db, query), observationId: null }), jobListDatabase);
+    }
+    return withDb(reply, options.dbPath, (db) => permanentDeleteSelections.observe(db, query, jobListDatabase.identity()), jobListDatabase);
+  });
 
   app.post("/v1/jobs/import-url", async (request, reply) => {
     const body = parseBody(reply, JobUrlImportRequestSchema, request.body ?? {});
@@ -1345,19 +1579,36 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return undefined;
     }
     try {
-      return await jobUrlImporter(body, { appDir, dbPath: options.dbPath });
+      const result = await jobUrlImporter(body, { appDir, dbPath: options.dbPath });
+      if (result.status === "started") void reply.code(202);
+      return result;
     } catch (error) {
       if (error instanceof JobUrlImportError) {
         void reply.code(error.statusCode);
         return {
           ok: false,
           error: error.statusCode === 400 ? "invalid_job_url" : "job_url_import_failed",
+          ...(error.failureCode ? {failureCode:error.failureCode} : {}),
           message: error.message,
         };
       }
       throw error;
     }
   });
+
+  app.get<{ Params: { workflowId: string; executionId: string } }>(
+    "/v1/jobs/import-url/:workflowId/:executionId", async (request, reply) => {
+      const execution = parseBody(reply, JobUrlImportStatusParamsSchema.pick({ workflowId: true, executionId: true }), request.params);
+      if (!execution) return undefined;
+      try {
+        return await jobUrlImportStatusReader(execution, { appDir, dbPath: options.dbPath });
+      } catch (error) {
+        if (!(error instanceof JobUrlImportError)) throw error;
+        void reply.code(error.statusCode);
+        return { ok: false, error: "job_url_import_status_unavailable", message: error.message };
+      }
+    },
+  );
 
   app.get("/v1/evidence-map", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listEvidenceMap(db)),
@@ -1449,7 +1700,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
 
   app.get("/v1/apply/review-queue", async (_request, reply) =>
-    withDb(reply, options.dbPath, (db) => listApplyReviewQueue(db)),
+    withDb(reply, options.dbPath, (db) => listApplyReviewQueue(db, appDir)),
   );
 
   app.get("/v1/resume-templates", async (_request, reply) =>
@@ -1594,9 +1845,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
-      return withWritableDb(reply, options.dbPath, (db) =>
-        saveResumeReviewDraftRevision(db, decodeRouteParam(request.params.draftId), body),
-      );
+      const draftId=decodeRouteParam(request.params.draftId);
+      const saved=await withWritableDb(reply,options.dbPath,db=>saveResumeReviewDraftRevision(db,draftId,body));
+      if(!saved || !("revision" in saved))return saved;
+      try {
+        const response=await callRpc(providerDispatcher, RpcMethods.ReviewResumeEdit,{tenantId:"local",expectedAppDir:actionContext.appDir,expectedDbPath:options.dbPath,draftId,revisionId:saved.revision.revisionId,operation:"intent"});
+        if(response.error)return {...saved,editIntent:{status:"unavailable",failureCode:safeDeterminationFailureCode(response.error.message)}};
+        const review=ResumeEditIntentReviewSchema.parse(response.result);
+        const intentDb=openDatabase(options.dbPath);
+        try{intentDb.transaction(()=>persistResumeEditIntent(intentDb,draftId,saved.revision.revisionId,review))();}finally{intentDb.close();}
+        const refreshed=withDb(reply,options.dbPath,db=>getResumeReviewDraftForJob(db,saved.draft.jobKey));
+        return {...saved,...refreshed,editIntent:{status:"accepted",determinationId:review.editIntentId}};
+      }catch(error){
+        return {...saved,editIntent:{status:"unavailable",failureCode:(error instanceof z.ZodError || error instanceof RpcContractError && error.phase === "result") ? "schema_violation" : "provider_error"}};
+      }
     },
   );
 
@@ -1626,6 +1888,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     },
   );
 
+  registerOfferRoutes(app, options.dbPath);
+
   app.get("/v1/outcomes", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listApplicationOutcomes(db)),
   );
@@ -1638,12 +1902,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     return withWritableDb(reply, options.dbPath, (db) => softDeleteJobs(db, body));
   });
 
+  app.post("/v1/jobs/permanent-delete-selection", async (request, reply) => {
+    const body = parseBody(reply, PreparePermanentDeleteSelectionRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    return withWritableDb(reply, options.dbPath, () => permanentDeleteSelections.prepare(body));
+  });
+
   app.post("/v1/jobs/bulk-delete-permanent", async (request, reply) => {
-    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
-    if (!body) {
-      return undefined;
-    }
-    return withWritableDb(reply, options.dbPath, (db) => permanentlyDeleteJobs(db, body));
+    const body = parseBody(reply, BulkPermanentDeleteRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    return withWritableDb(reply, options.dbPath, (db) => body.selectionId
+      ? permanentDeleteSelections.delete(body)
+      : permanentlyDeleteJobs(db, body));
   });
 
   app.post("/v1/jobs/bulk-restore", async (request, reply) => {
@@ -1677,19 +1947,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     return withWritableDb(reply, options.dbPath, async (db) => {
       if (body.runAfter) {
-        const includesEnrich = retryFailedJobTargets(db, body).some(
-          (target) => target.stage === "enrich",
-        );
-        if (includesEnrich && !discoveryBrowserBroker.status().connected) {
-          void reply.code(503);
-          return discoveryExtensionUnavailableResponse();
-        }
         const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
         if (!workerReady) {
           return undefined;
         }
       }
-      const reset = retryFailedJobs(db, body);
+      const reset = await retryFailedJobsWithEnrichmentOwner(db, providerDispatcher, actionContext, body);
       const actions: ActionRunResponse[] = [];
       const runnableGroups = body.runAfter
         ? groupRunnableBulkRetryTargets(reset.targets)
@@ -1752,14 +2015,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const actions: ActionRunResponse[] = [];
       const runnableGroups = groupRunnableBulkRetryTargets(targets);
 
-      if (
-        targets.some((target) => target.stage === "enrich") &&
-        !discoveryBrowserBroker.status().connected
-      ) {
-        void reply.code(503);
-        return discoveryExtensionUnavailableResponse();
-      }
-
       if (targets.length > 0) {
         const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
         if (!workerReady) {
@@ -1821,7 +2076,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         void reply.code(404);
         return { ok: false, error: "job_not_found" };
       }
-      return detail;
+      const response = structuredClone(detail);
+      response.companyBriefing = readCompanyBriefing(db, "local", response.job.jobKey);
+      response.interviewPrep = loadLatestAcceptedInterviewPrep(db, "local", response.job.jobKey, loadInterviewPrepReadModel);
+      if (response.interviewPrep) response.interviewPrep.staleReasons = interviewPrepStaleReasons(
+        db, "local", response.job.jobKey, response.interviewPrep.generationContext ?? null, currentCatalogOrNull(), appDir,
+      );
+      return response;
     }),
   );
 
@@ -1833,10 +2094,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       return withWritableDb(reply, options.dbPath, (db) =>
-        recordApplyReviewDecision(db, decodeRouteParam(request.params.jobKey), body),
+        recordApplyReviewDecision(db, decodeRouteParam(request.params.jobKey), body, appDir),
       );
     },
   );
+
+  app.post<{Params:{jobKey:string}}>("/v1/jobs/:jobKey/repeat-application/check",async(request,reply)=>{
+    const jobId=withDb(reply,options.dbPath,db=>resolveJobId(db,"local",decodeRouteParam(request.params.jobKey)));
+    if(typeof jobId!=="string"){void reply.code(404);return {ok:false,error:"job_not_found"};}
+    const response=await callRpc(providerDispatcher, RpcMethods.PrepareRepeatApplicationDeterminations,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,jobId});
+    if(response.error){void reply.code(503);return {ok:false,error:"repeat_determination_unavailable",message:response.error.message};}
+    return withDb(reply,options.dbPath,db=>({ok:true,assessment:evaluateRepeatApplication(db,jobId)}));
+  });
 
   app.post<{ Params: { jobKey: string } }>(
     "/v1/jobs/:jobKey/repeat-application/override",
@@ -2019,18 +2288,49 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
+    if (body.refreshApplyUrl) {
+      if (body.stage !== "enrich" || !body.runAfter || body.resetAttempts) {
+        void reply.code(400);
+        return { ok: false, error: "invalid_apply_url_refresh" };
+      }
+      return withWritableDb(reply, options.dbPath, async (db) => {
+        const jobId = resolveExistingJobId(reply, db, decodeRouteParam(request.params.jobKey));
+        if (!jobId) return { ok: false, error: "job_not_found" };
+        const accepted = db.prepare(
+          `SELECT j.url FROM job_enrichments e
+             JOIN jobs j ON j.tenant_id = e.tenant_id AND j.job_id = e.job_id
+            WHERE e.tenant_id = 'local' AND e.job_id = ? AND e.current_status = 'enriched'
+              AND TRIM(COALESCE(e.full_description, '')) != ''
+              AND TRIM(COALESCE(e.application_url, '')) = ''`,
+        ).get(jobId) as { url: string } | undefined;
+        let linkedinPosting = false;
+        try {
+          const url = new URL(accepted?.url ?? "");
+          linkedinPosting = url.protocol === "https:"
+            && (url.hostname === "linkedin.com" || url.hostname === "www.linkedin.com")
+            && /^\/jobs\/view\/[^/]+\/?$/.test(url.pathname);
+        } catch {
+          // An invalid posting URL cannot be sent to the browser acquisition path.
+        }
+        if (!accepted || !linkedinPosting) {
+          void reply.code(409);
+          return { ok: false, error: "apply_url_refresh_not_eligible" };
+        }
+        const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+        if (!workerReady) return undefined;
+        const command: ActionCommandPayload = {
+          action: "retry_stage", jobKey: jobId, jobId, stage: "enrich", stages: ["enrich"],
+          runAfter: true, refreshApplyUrl: true, dryRun: body.dryRun, limit: 1,
+        };
+        const dispatch = await actionDispatcher(command, actionContext);
+        void reply.code(dispatch.status === "queued" ? 202 : 200);
+        return buildActionResponse(command, dispatch);
+      });
+    }
     const continuationStages = body.runAfter ? retryContinuationStages(body.stage) : [];
     if (body.runAfter && continuationStages.length === 0) {
       void reply.code(400);
       return { ok: false, error: "unsupported_retry_run_after_stage", stage: body.stage };
-    }
-    if (
-      body.runAfter &&
-      body.stage === "enrich" &&
-      !discoveryBrowserBroker.status().connected
-    ) {
-      void reply.code(503);
-      return discoveryExtensionUnavailableResponse();
     }
     return withWritableDb(reply, options.dbPath, async (db) => {
       if (body.runAfter) {
@@ -2039,7 +2339,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           return undefined;
         }
       }
-      const reset = resetJobStage(db, decodeRouteParam(request.params.jobKey), body.stage, {
+      const reset = await resetJobStageWithEnrichmentOwner(db, providerDispatcher, actionContext, decodeRouteParam(request.params.jobKey), body.stage, {
         resetAttempts: body.resetAttempts,
       });
       const jobId = requireJobId(db, reset.jobUrl);
@@ -2070,10 +2370,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!PREPARATION_PICKUP_STAGES.has(body.stage)) {
       void reply.code(400);
       return { ok: false, error: "unsupported_job_stage_run", stage: body.stage };
-    }
-    if (body.stage === "enrich" && !discoveryBrowserBroker.status().connected) {
-      void reply.code(503);
-      return discoveryExtensionUnavailableResponse();
     }
     const stages = retryContinuationStages(body.stage);
     return withWritableDb(reply, options.dbPath, async (db) => {
@@ -2143,7 +2439,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       // is an explicit user re-generation, so it is not gated on the stage being
       // pending — a user may regenerate materials for a job whose tailor stage
       // already succeeded.
-      const primaryStage = body.stages[0] as Stage | undefined;
+      const { settings } = readJobCtrlSettings(options.configPath);
+      const requestedStages = body.stages ?? (settings.coverLetterGeneration ? ["tailor", "cover"] : ["tailor"]);
+      const stages = settings.coverLetterGeneration ? requestedStages : requestedStages.filter((stage) => stage !== "cover");
+      if (stages.length === 0) {
+        void reply.code(409);
+        return { ok: false, error: "cover_letter_generation_disabled", message: "Enable Generate cover letters in Settings before creating a cover letter." };
+      }
+      const primaryStage = stages[0] as Stage | undefined;
       if (!primaryStage) {
         void reply.code(400);
         return { ok: false, error: "no_material_stage_requested" };
@@ -2154,7 +2457,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         jobKey: jobId,
         jobId,
         stage: primaryStage,
-        stages: body.stages,
+        stages,
         dryRun: body.dryRun,
         limit: body.limit,
       };
@@ -2181,10 +2484,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
+    try {
+      validateInterviewGenerationSelection(readInterviewCatalog(), body);
+    } catch (error) {
+      return interviewCatalogError(reply, error);
+    }
     return withWritableDb(reply, options.dbPath, async (db) => {
       const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
       if (!jobUrl) {
         return { ok: false, error: "job_not_found" };
+      }
+      try { validateInterviewEvidenceSelection(db, "local", "default", body); }
+      catch (error) {
+        if (!(error instanceof InterviewEvidenceSelectionError)) throw error;
+        void reply.code(error.code === "evidence_profile_changed" ? 409 : 400);
+        return { ok: false, error: error.code, message: error.message };
       }
       refreshProjections(db);
       const jobId = requireJobId(db, jobUrl);
@@ -2193,9 +2507,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         jobKey: jobId,
         jobId,
       };
-      if (body.llmModel) {
-        command.llmModel = body.llmModel;
-      }
+      Object.assign(command, body);
       insertJobEvent(db, {
         jobUrl,
         stage: "tailor",
@@ -2237,9 +2549,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       };
       if (body.reason) command.reason = body.reason;
       if (body.tailorJudgeModel) command.tailorJudgeModel = body.tailorJudgeModel;
-      if (body.tailorJudgeMinScore !== undefined) {
-        command.tailorJudgeMinScore = body.tailorJudgeMinScore;
-      }
       insertJobEvent(db, {
         jobUrl,
         stage: "tailor",
@@ -2287,9 +2596,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         };
         if (body.reason) command.reason = body.reason;
         if (body.tailorJudgeModel) command.tailorJudgeModel = body.tailorJudgeModel;
-        if (body.tailorJudgeMinScore !== undefined) {
-          command.tailorJudgeMinScore = body.tailorJudgeMinScore;
-        }
         insertJobEvent(db, {
           jobUrl: jobId,
           stage: "tailor",
@@ -2333,9 +2639,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       };
       if (body.reason) command.reason = body.reason;
       if (body.tailorJudgeModel) command.tailorJudgeModel = body.tailorJudgeModel;
-      if (body.tailorJudgeMinScore !== undefined) {
-        command.tailorJudgeMinScore = body.tailorJudgeMinScore;
-      }
       const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
       if (!workerReady) {
         return undefined;
@@ -2358,6 +2661,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return { ok: false, error: "job_not_found" };
       }
       if (!body.dryRun) {
+        if(evaluateRepeatApplication(db,jobId,{recordAudit:false}).status==="unavailable") {
+          const prepared=await callRpc(providerDispatcher, RpcMethods.PrepareRepeatApplicationDeterminations,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,jobId});
+          if(prepared.error)throw new InputError("repeat_determination_unavailable");
+        }
         assertLiveApplicationMayDispatch(db, jobId);
       }
       const command: ActionCommandPayload = {
@@ -2465,7 +2772,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (body.reason) {
         command.reason = body.reason;
       }
-      return buildActionResponse(command, { status: "skipped" }, { stage: marked.stage });
+      return buildActionResponse(command, { status: "skipped", message: "Skipped locally. Future Apply is stopped; an in-flight submission may still complete. Verify any uncertain external outcome." }, { stage: marked.stage });
     });
   });
 
@@ -2518,7 +2825,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get<{ Params: { runId: string } }>("/v1/workflow-runs/:runId", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => {
-      const detail = getWorkflowRunDetail(db, decodeRouteParam(request.params.runId));
+      const { jobId } = z.object({ jobId: z.string().uuid().optional() }).parse(request.query);
+      const detail = getWorkflowRunDetail(db, decodeRouteParam(request.params.runId), jobId);
       if (!detail) {
         void reply.code(404);
         return { ok: false, error: "workflow_run_not_found" };
@@ -2575,6 +2883,40 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }),
   );
 
+  app.get<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/download.docx", async (request, reply) => {
+    try {
+      const file = withReadOnlyDb(reply, options.dbPath, (db) => {
+        try { return readAcceptedDocx(db, appDir, request.params.artifactId); }
+        catch (error) {
+          if (error instanceof MaterialExportError) {
+            void reply.code(error.status);
+            return { ok: false as const, error: error.code };
+          }
+          throw error;
+        }
+      });
+      if (!file || "ok" in file) return file;
+      return reply.type(DOCX_CONTENT_TYPE).header("cache-control", "no-store")
+        .header("x-content-type-options", "nosniff")
+        .header("content-disposition", `attachment; filename="${file.filename}"`).send(file.data);
+    } catch (error) {
+      if (error instanceof MaterialExportError) { void reply.code(error.status); return { ok: false, error: error.code }; }
+      throw error;
+    }
+  });
+
+  app.get<{ Params: { jobKey: string; previewId: string } }>("/v1/jobs/:jobKey/cover-letter/previews/:previewId.pdf", (request, reply) =>
+    withReadOnlyDb(reply, options.dbPath, (db) => {
+      try {
+        const bytes = coverLetterPreviewBytes(appDir, coverLetterJobId(db, request.params.jobKey), request.params.previewId);
+        return reply.type("application/pdf").header("cache-control", "no-store")
+          .header("content-disposition", 'inline; filename="cover-letter.pdf"').send(bytes);
+      } catch (error) {
+        if (error instanceof CoverLetterReviewError) return reply.code(error.status).send({ ok: false, error: error.code });
+        throw error;
+      }
+    }));
+
   app.get<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/preview.pdf", async (request, reply) => {
     const detail = withDb(reply, options.dbPath, (db) => getArtifactDetail(db, decodeRouteParam(request.params.artifactId)));
     if (!detail) {
@@ -2587,6 +2929,19 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!isPdfArtifact(detail.artifact.type, detail.artifact.localPath)) {
       void reply.code(415);
       return { ok: false, error: "artifact_preview_unsupported" };
+    }
+    if (detail.artifact.type === "cover_letter_pdf") {
+      return withReadOnlyDb(reply, options.dbPath, db => {
+        try {
+          const bytes = coverLetterArtifactPdfBytes(db, appDir, detail.artifact.artifactId);
+          return reply.type("application/pdf").header("cache-control", "no-store")
+            .header("content-disposition", 'inline; filename="cover-letter.pdf"')
+            .send(bytes);
+        } catch (error) {
+          if (error instanceof CoverLetterReviewError) return reply.code(error.status).send({ok:false,error:error.code});
+          throw error;
+        }
+      });
     }
     if (!fs.existsSync(detail.artifact.localPath) || !fs.statSync(detail.artifact.localPath).isFile()) {
       void reply.code(404);
@@ -2774,14 +3129,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     const db = openDatabase(options.dbPath);
     let profileResponse: ProfileConfigResponse | undefined;
-    let profileUpdatedEvent: ReturnType<typeof persistProfileUpdate>["recorded"] = null;
-    let queuePreparationContinuation = false;
     try {
       const update = persistProfileUpdate(db, body);
       profileResponse = update.profile;
-      profileUpdatedEvent = update.recorded;
-      queuePreparationContinuation = update.continuePreparation;
     } catch (error) {
+      if (error instanceof ProfileVersionConflictError) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "stale_profile_version",
+          expectedProfileVersion: error.expectedVersion,
+          actualProfileVersion: error.actualVersion,
+          message: error.message,
+        };
+      }
       if (error instanceof InputError || error instanceof ProfileInputError) {
         void reply.code(400);
         return { ok: false, error: "invalid_profile", message: error.message };
@@ -2790,12 +3151,229 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     } finally {
       db.close();
     }
-    if (profileUpdatedEvent && queuePreparationContinuation) {
-      void continueProfilePreparation().catch((error: unknown) => {
-        request.log.error({ err: error }, "Failed to dispatch profile-update preparation continuation");
-      });
+    // Authored saves must not start semantic work. Suggestions are requested
+    // explicitly through POST /v1/profile/target-role-suggestions.
+    if(profileResponse){
+      const current=openReadOnlyDatabase(options.dbPath);
+      try {
+        const reread=readProfileConfigReadOnly(current);
+        if(reread.profileVersion===profileResponse.profileVersion) profileResponse=reread;
+      } finally {current.close();}
     }
     return profileResponse;
+  });
+
+  app.post("/v1/profile/required-bullet-suggestions", async (request, reply) => {
+    const body = parseBody(reply, RequiredBulletSuggestionRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    if (!databaseExists(options.dbPath)) {
+      void reply.code(503);
+      return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${options.dbPath}` };
+    }
+    const db = openReadOnlyDatabase(options.dbPath);
+    try {
+      // Keep the version and all normalized source rows in one SQLite read
+      // snapshot while a concurrent profile save may replace those rows.
+      const snapshot = db.transaction(() => {
+        const profileVersion = readProfileVersion(db);
+        if (profileVersion !== body.expectedProfileVersion) {
+          return { kind: "stale" as const, profileVersion };
+        }
+        if (exceedsProfileCoachingReadBudget(
+          db,
+          MAX_REQUIRED_COACHING_ENTRIES,
+          MAX_REQUIRED_COACHING_SOURCE_ROWS,
+        )) return { kind: "truncated" as const };
+        try {
+          return { kind: "ready" as const, profile: readProfileConfigReadOnly(db).profile };
+        } catch (error) {
+          if (error instanceof InvalidSavedProfileError) return { kind: "invalid" as const };
+          throw error;
+        }
+      })();
+      if (snapshot.kind === "stale") {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "stale_profile_version",
+          expectedProfileVersion: body.expectedProfileVersion,
+          actualProfileVersion: snapshot.profileVersion,
+        };
+      }
+      if (snapshot.kind === "truncated") {
+        return {
+          ok: true,
+          profileVersion: body.expectedProfileVersion,
+          suggestions: [],
+          strategy: "model_v1",
+          modelUsed: false,
+          truncated: true,
+        };
+      }
+      if (snapshot.kind === "invalid") {
+        void reply.code(422);
+        return {
+          ok: false,
+          error: "invalid_saved_profile",
+          message: "The saved profile cannot be inspected until its validation errors are corrected.",
+        };
+      }
+      const parsedProfile = ProfileSchema.safeParse(snapshot.profile);
+      if (!parsedProfile.success) {
+        void reply.code(422);
+        return {
+          ok: false,
+          error: "invalid_saved_profile",
+          message: "The saved profile cannot be inspected until its validation errors are corrected.",
+        };
+      }
+      const preparation = prepareRequiredBulletCoaching(parsedProfile.data, body.expectedProfileVersion);
+      if (preparation.sources.length === 0) return bindRequiredBulletJudgments(preparation, [], body.maximumSuggestions, false);
+      // The SQLite snapshot transaction has ended before the provider call.
+      const sources = preparation.sources.map(({ reference, originalText, source, evidence }) => ({
+        reference, originalText, experienceTitle: source.experienceTitle,
+        experienceCompany: source.experienceCompany, evidence,
+      }));
+      let response;
+      try {
+        response = await callRpc(providerDispatcher, RpcMethods.ProfileRequiredBulletSuggestions, ProfileRequiredBulletSuggestionsParamsSchema.parse({
+          tenantId: "local", expectedAppDir: actionContext.appDir, expectedDbPath: actionContext.dbPath,
+          expectedProfileVersion: body.expectedProfileVersion,
+          maximumSuggestions: body.maximumSuggestions, sources,
+        }));
+      } catch (error) {
+        if (error instanceof RpcContractError && error.phase === "result") {
+          void reply.code(502);
+          return { ok: false, error: "required_bullet_suggestions_failed", message: "The coaching model returned an invalid response." };
+        }
+        void reply.code(503);
+        return { ok: false, error: "required_bullet_suggestions_unavailable",
+          message: "The coaching model is unavailable. Try again when your provider is ready." };
+      }
+      if (response.error) {
+        const stale = response.error.code === JsonRpcErrorCodes.InvalidParams
+          && response.error.message.includes("stale_profile_version");
+        void reply.code(stale ? 409 : 502);
+        return { ok: false, error: stale ? "stale_profile_version" : "required_bullet_suggestions_failed",
+          message: "Required bullet coaching could not complete." };
+      }
+      const model = RequiredBulletModelResultSchema.safeParse(response.result);
+      if (!model.success) {
+        void reply.code(502);
+        return { ok: false, error: "required_bullet_suggestions_failed", message: "The coaching model returned an invalid response." };
+      }
+      const actualProfileVersion = readProfileVersion(db);
+      if (model.data.profileVersion !== body.expectedProfileVersion || actualProfileVersion !== body.expectedProfileVersion) {
+        void reply.code(409);
+        return { ok: false, error: "stale_profile_version", expectedProfileVersion: body.expectedProfileVersion, actualProfileVersion };
+      }
+      if ("failure" in model.data) {
+        const code=model.data.failure.code;
+        void reply.code(code === "budget_denied" ? 429 : code === "provider_unavailable" ? 503 : 502);
+        return {ok:false,error:code,message:"Required bullet coaching could not complete. Retry the inspection after resolving the reported status."};
+      }
+      const recorded=readDetermination(db,"local",model.data.determination.determination_id);
+      const binding = db.prepare("SELECT determination_id FROM semantic_entity_bindings WHERE tenant_id='local' AND entity_kind='profile_coaching' AND entity_id='profile:required_bullets' AND entity_version=? AND determination_kind='required_bullet_coaching'").get(String(body.expectedProfileVersion)) as {determination_id:string}|undefined;
+      if (!recorded || binding?.determination_id !== recorded.determination_id || recorded.kind!=="required_bullet_coaching" || recorded.entity_id!=="profile:required_bullets" || !isDeepStrictEqual(recorded.result,{suggestions:model.data.suggestions,citations:model.data.citations,rationale:model.data.rationale})) {
+        void reply.code(502);
+        return {ok:false,error:"determination_binding_invalid",message:"The coaching result has no matching saved determination."};
+      }
+      try {
+        return {...bindRequiredBulletJudgments(preparation, model.data.suggestions, body.maximumSuggestions, true),determination:recorded};
+      } catch {
+        void reply.code(502);
+        return { ok: false, error: "required_bullet_suggestions_failed", message: "The coaching model returned an invalid source reference." };
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  app.post("/v1/profile/target-role-suggestions", async (request, reply) => {
+    const body = parseBody(reply, TargetRoleSuggestionRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    if (!databaseExists(options.dbPath)) {
+      void reply.code(503);
+      return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${options.dbPath}` };
+    }
+    const before = withDb(reply, options.dbPath, (db) => ({ profileVersion: readProfileVersion(db) }));
+    if (!("profileVersion" in before) || before.profileVersion !== body.expectedProfileVersion) {
+      void reply.code(409);
+      return {
+        ok: false,
+        error: "stale_profile_version",
+        expectedProfileVersion: body.expectedProfileVersion,
+        actualProfileVersion: "profileVersion" in before ? before.profileVersion : null,
+      };
+    }
+    try {
+      const response = await callRpc(providerDispatcher, RpcMethods.ProfileTargetRoleSuggestions, {
+        tenantId: "local",
+        expectedAppDir: actionContext.appDir,
+        expectedDbPath: actionContext.dbPath,
+        expectedProfileVersion: body.expectedProfileVersion,
+        maximumSuggestions: body.maximumSuggestions,
+      });
+      if (response.error) {
+        if (
+          response.error.code === JsonRpcErrorCodes.InvalidParams
+          && response.error.message.includes("stale_profile_version")
+        ) {
+          void reply.code(409);
+          return {
+            ok: false,
+            error: "stale_profile_version",
+            expectedProfileVersion: body.expectedProfileVersion,
+          };
+        }
+        void reply.code(502);
+        return {
+          ok: false,
+          error: "target_role_suggestions_failed",
+          message: "Target role suggestions returned an error.",
+        };
+      }
+      const parsed = TargetRoleSuggestionResultSchema.safeParse(response.result);
+      if (!parsed.success) {
+        void reply.code(502);
+        return {
+          ok: false,
+          error: "target_role_suggestions_failed",
+          message: "Target role suggestions returned an invalid response.",
+        };
+      }
+      if (parsed.data.profileVersion !== body.expectedProfileVersion) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "stale_profile_version",
+          expectedProfileVersion: body.expectedProfileVersion,
+          actualProfileVersion: parsed.data.profileVersion,
+        };
+      }
+      const after = withDb(reply, options.dbPath, (db) => ({ profileVersion: readProfileVersion(db) }));
+      if (!("profileVersion" in after) || after.profileVersion !== body.expectedProfileVersion) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "stale_profile_version",
+          expectedProfileVersion: body.expectedProfileVersion,
+          actualProfileVersion: "profileVersion" in after ? after.profileVersion : null,
+        };
+      }
+      return { ok: true as const, ...parsed.data };
+    } catch (error) {
+      if (error instanceof RpcContractError && error.phase === "result") {
+        void reply.code(502);
+        return { ok: false, error: "target_role_suggestions_failed", message: "Target role suggestions returned an invalid response." };
+      }
+      void reply.code(503);
+      return {
+        ok: false,
+        error: "target_role_suggestions_unavailable",
+        message: "Target role suggestions are temporarily unavailable.",
+      };
+    }
   });
 
   app.post("/v1/profile/import-resume", async (request, reply) => {
@@ -2836,7 +3414,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     const selectedModels = Object.entries(body.preferredModels ?? {}).filter(
       (entry): entry is ["codex" | "claude" | "google", string] => entry[1] !== null,
     );
-    if (selectedModels.length > 0) {
+    const materialModels = [
+      ...(body.defaultLlmModel ? [body.defaultLlmModel] : []),
+      ...(body.tailoringGeneratorModels ?? []),
+      ...(body.tailoringJudgeModel ? [body.tailoringJudgeModel] : []),
+    ].filter((model) => model.toLowerCase() !== "default");
+    const materialModelBindings = new Map<string, string>();
+    const selectedEfforts = Object.entries(body.codexReasoningEfforts ?? {}).filter((entry): entry is [string, string] => entry[1] !== null);
+    if (selectedModels.length > 0 || materialModels.length > 0 || selectedEfforts.length > 0) {
       let catalog: { providers: ProviderModelCatalogItem[] };
       try {
         catalog = await dispatchProviderModelCatalog(providerDispatcher);
@@ -2846,6 +3431,23 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           "provider_models_failed",
           "Provider models are temporarily unavailable.",
         );
+      }
+      if (selectedEfforts.length > 0) {
+        const codex = catalog.providers.find((provider) => provider.provider === "codex");
+        if (!codex?.ready) {
+          void reply.code(409);
+          return { ok: false, error: "provider_not_ready", message: "Codex must be ready before selecting reasoning effort." };
+        }
+        if (codex.models.length === 0 && codex.message) {
+          void reply.code(503);
+          return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+        }
+        for (const [model, effort] of selectedEfforts) {
+          if (!codex.models.find((candidate) => candidate.id === model)?.supportedReasoningEfforts?.some((option) => option.reasoningEffort === effort)) {
+            void reply.code(400);
+            return { ok: false, error: "invalid_reasoning_effort", message: "Select a reasoning effort offered by the current Codex model." };
+          }
+        }
       }
       for (const [provider, model] of selectedModels) {
         const item = catalog.providers.find((candidate) => candidate.provider === provider);
@@ -2873,6 +3475,57 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           };
         }
       }
+      for (const spec of materialModels) {
+        const separator = spec.indexOf(":");
+        const rawProvider = separator >= 0 ? spec.slice(0, separator).trim().toLowerCase() : null;
+        const provider = rawProvider === "gemini" ? "google" : rawProvider;
+        const model = separator >= 0 ? spec.slice(separator + 1).trim() : spec;
+        const invalidChoice = () => {
+          void reply.code(400);
+          return {
+            ok: false as const,
+            error: spec === body.defaultLlmModel ? "invalid_default_model" : "invalid_tailoring_model",
+            message: "Select a model offered by a ready provider.",
+          };
+        };
+        if (provider === null) {
+          // Bind a legacy bare ID to its unique offered route so the runtime
+          // cannot send a valid model name to a different default provider.
+          const offeredBy = catalog.providers.filter((item) => item.ready && item.models.some((candidate) => candidate.id === model));
+          if (offeredBy.length === 0 && catalog.providers.some((item) => item.ready && item.source === "live" && item.models.length === 0 && item.message)) {
+            void reply.code(503);
+            return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+          }
+          if (offeredBy.length !== 1) return invalidChoice();
+          materialModelBindings.set(spec, `${offeredBy[0]!.provider}:${model}`);
+          continue;
+        }
+        if (!["claude", "codex", "google"].includes(provider)) return invalidChoice();
+        const item = catalog.providers.find((candidate) => candidate.provider === provider);
+        if (!item?.ready) {
+          void reply.code(409);
+          return {
+            ok: false as const,
+            error: "provider_not_ready",
+            message: `${provider} must be ready before selecting a material model.`,
+          };
+        }
+        if (model === "" || model.toLowerCase() === "default") continue;
+        if (item.source === "live" && item.models.length === 0 && item.message) {
+          void reply.code(503);
+          return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+        }
+        if (!item.models.some((candidate) => candidate.id === model)) return invalidChoice();
+      }
+    }
+    if (body.tailoringGeneratorModels) {
+      body.tailoringGeneratorModels = body.tailoringGeneratorModels.map((model) => materialModelBindings.get(model) ?? model);
+    }
+    if (body.tailoringJudgeModel) {
+      body.tailoringJudgeModel = materialModelBindings.get(body.tailoringJudgeModel) ?? body.tailoringJudgeModel;
+    }
+    if (body.defaultLlmModel) {
+      body.defaultLlmModel = materialModelBindings.get(body.defaultLlmModel) ?? body.defaultLlmModel;
     }
     try {
       return writeSettingsConfig(
@@ -2905,7 +3558,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const body = parseBody(reply, BrowserCapabilityEnableRequestSchema, request.body ?? {});
       if (!body) return undefined;
       const result = await dispatchBrowserCapabilities(reply, providerDispatcher, "browser_capability_enable", {
-        capabilityId,
+        capabilityId: capabilityId as BrowserCapabilityId,
         ...body,
       });
       return result;
@@ -2920,7 +3573,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         void reply.code(400);
         return { ok: false, error: "browser_capability_failed", message: "This browser capability cannot be disabled." };
       }
-      return dispatchBrowserCapabilities(reply, providerDispatcher, "browser_capability_disable", { capabilityId });
+      return dispatchBrowserCapabilities(reply, providerDispatcher, "browser_capability_disable", { capabilityId: capabilityId as BrowserCapabilityId });
     },
   );
 
@@ -2948,6 +3601,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           error: "credential_managed_by_environment",
           key: error.key,
           source: "environment",
+          message: error.message,
+        };
+      }
+      if (error instanceof CredentialValueUnsupportedError) {
+        void reply.code(400);
+        return {
+          ok: false,
+          error: "credential_value_unsupported",
+          key: error.key,
+          maxBytes: error.maxBytes,
           message: error.message,
         };
       }
@@ -2983,6 +3646,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           error: "credential_managed_by_environment",
           key: error.key,
           source: "environment",
+          message: error.message,
+        };
+      }
+      if (error instanceof CredentialValueUnsupportedError) {
+        void reply.code(400);
+        return {
+          ok: false,
+          error: "credential_value_unsupported",
+          key: error.key,
+          maxBytes: error.maxBytes,
           message: error.message,
         };
       }
@@ -3028,77 +3701,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         };
       }
       throw error;
-    }
-  });
-
-  app.get("/v1/providers/status", async (_request, reply) => {
-    try {
-      const response = await providerDispatcher.call("provider_status", {});
-      if (response.error) {
-        void reply.code(502);
-        return providerOperationError(
-          "provider_status_failed",
-          "Provider status is temporarily unavailable.",
-        );
-      }
-      const parsed = ProviderStatusResultSchema.safeParse(response.result);
-      if (!parsed.success) {
-        void reply.code(502);
-        return providerOperationError(
-          "provider_status_failed",
-          "Provider status returned an invalid response.",
-        );
-      }
-      return { ok: true as const, providers: parsed.data.providers };
-    } catch {
-      void reply.code(503);
-      return providerOperationError(
-        "provider_status_failed",
-        "Provider status is temporarily unavailable.",
-      );
-    }
-  });
-
-  app.get("/v1/providers/models", async (_request, reply) => {
-    try {
-      const catalog = await dispatchProviderModelCatalog(providerDispatcher);
-      return { ok: true as const, providers: catalog.providers };
-    } catch {
-      void reply.code(503);
-      return providerOperationError(
-        "provider_models_failed",
-        "Provider models are temporarily unavailable.",
-      );
-    }
-  });
-
-  app.post("/v1/providers/codex/verify", async (_request, reply) => {
-    try {
-      const response = await providerDispatcher.call("provider_verify", {
-        provider: "codex",
-      });
-      if (response.error) {
-        void reply.code(502);
-        return providerOperationError(
-          "provider_verification_failed",
-          "Codex verification could not be completed.",
-        );
-      }
-      const parsed = CodexVerifyResultSchema.safeParse(response.result);
-      if (!parsed.success) {
-        void reply.code(502);
-        return providerOperationError(
-          "provider_verification_failed",
-          "Codex verification returned an invalid response.",
-        );
-      }
-      return { ok: true as const, verification: parsed.data };
-    } catch {
-      void reply.code(503);
-      return providerOperationError(
-        "provider_verification_failed",
-        "Codex verification is temporarily unavailable.",
-      );
     }
   });
 
@@ -3150,7 +3752,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return { ok: false, error: "invalid_contact_import" };
     }
-    return withWritableDb(reply, options.dbPath, (db) => {
+    const execute = (db: ReturnType<typeof openDatabase>) => {
       try {
         return importContacts(db, body);
       } catch (error) {
@@ -3160,7 +3762,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         }
         throw error;
       }
-    });
+    };
+    return "mode" in body && body.mode === "preview"
+      ? withReadOnlyDb(reply, options.dbPath, execute)
+      : withWritableDb(reply, options.dbPath, execute);
   });
 
   app.patch<{ Params: { contactId: string } }>("/v1/contacts/:contactId", async (request, reply) => {
@@ -3172,6 +3777,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       try {
         return { ok: true, contact: updateContact(db, decodeRouteParam(request.params.contactId), body) };
       } catch (error) {
+        if (error instanceof ContactRevisionConflictError) {
+          void reply.code(409);
+          return { ok: false, error: "contact_revision_conflict", message: error.message };
+        }
         if (error instanceof ContactNotFoundError) {
           void reply.code(404);
           return { ok: false, error: "contact_not_found", message: error.message };
@@ -3357,6 +3966,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             contactId,
             jobId,
             ...(body.kind ? { kind: body.kind } : {}),
+            ...(body.offerRevisionId ? { offerRevisionId: body.offerRevisionId } : {}),
             ...(body.applicationRole ? { applicationRole: body.applicationRole } : {}),
             ...(body.llmModel ? { llmModel: body.llmModel } : {}),
           },
@@ -3380,17 +3990,26 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       const threadId = decodeRouteParam(request.params.threadId);
       return withWritableDb(reply, options.dbPath, async (db) => {
-        await outreachDraftGenerator(
+        const publication = await outreachDraftGenerator(
           {
             threadId,
             editedBodyText: body.editedBodyText,
             ...(body.kind ? { kind: body.kind } : {}),
+            ...(body.offerRevisionId ? { offerRevisionId: body.offerRevisionId } : {}),
             ...(body.applicationRole ? { applicationRole: body.applicationRole } : {}),
             ...(body.llmModel ? { llmModel: body.llmModel } : {}),
           },
           actionContext,
         );
-        return { ok: true, thread: getOutreachThreadDetail(db, threadId) };
+        return {
+          ok: true,
+          thread: getOutreachThreadDetail(db, threadId),
+          publication: {
+            threadId: publication.threadId,
+            draftId: publication.draftId,
+            generation: publication.generation,
+          },
+        };
       });
     },
   );
@@ -3474,12 +4093,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         try {
           return {
             ok: true,
-            thread: logOutreachSend(
+            sendLog: logOutreachSend(
               db,
               decodeRouteParam(request.params.threadId),
-              body.draftId,
-              body.channel,
-              body.sentAt,
+              body,
             ),
           };
         } catch (error) {
@@ -3553,6 +4170,43 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     installWebAssetsNotFoundHandler(app, options.webAssetsDir);
   }
 
+  return app;
+}
+
+/** A database schema refusal must remain visible without opening product routes. */
+function buildIncompatibleDatabaseApp(
+  options: BuildAppOptions,
+  error: IncompatibleSchemaVersionError | IncompatibleSchemaManifestError,
+): FastifyInstance {
+  const app = Fastify({ logger: options.logger ?? false });
+  const currentVersion = error instanceof IncompatibleSchemaVersionError ? error.current : null;
+  const migrationRequired = currentVersion !== null && currentVersion >= 6 && currentVersion < SUPPORTED_SCHEMA_VERSION;
+  const newerDatabase = currentVersion !== null && currentVersion > SUPPORTED_SCHEMA_VERSION;
+  const problem = {
+    ok: false as const,
+    error: migrationRequired ? "database_migration_required" : "database_schema_incompatible",
+    currentVersion,
+    expectedVersion: SUPPORTED_SCHEMA_VERSION,
+    message: migrationRequired
+      ? "The workspace database needs an upgrade before this JobCtrl build can start. Use a compatible build or see the update guidance."
+      : newerDatabase
+        ? "This workspace was created by a newer JobCtrl version. Use a compatible newer build."
+        : "The workspace database schema is not compatible with this build. Stop JobCtrl and inspect the workspace before retrying.",
+  };
+
+  void app.register(cors, { origin: LOCAL_ORIGIN_PATTERNS, methods: LOCAL_CORS_METHODS });
+  app.addHook("onRequest", async (request, reply) => {
+    if (!isLoopbackHostHeader(request.headers.host)) {
+      return reply.code(403).send({ ok: false, error: "forbidden_host" });
+    }
+    if (!isLoopbackPeerAddress(request.ip || request.raw.socket.remoteAddress)) {
+      return reply.code(403).send({ ok: false, error: "forbidden_remote_client" });
+    }
+    return;
+  });
+  app.get("/v1/health", async (_request, reply) => reply.code(503).send(problem));
+  app.all("/v1/*", async (_request, reply) => reply.code(503).send(problem));
+  if (options.webAssetsDir) installWebAssetsNotFoundHandler(app, options.webAssetsDir);
   return app;
 }
 
@@ -3700,7 +4354,11 @@ function normalizeExistingDatabase(dbPath: string): void {
   if (!databaseExists(dbPath)) return;
   try {
     const db = openDatabase(dbPath);
-    db.close();
+    try {
+      repairJobDetailProjections(db);
+    } finally {
+      db.close();
+    }
   } catch (error) {
     if (error instanceof Error && /file is not a database|database disk image is malformed/i.test(error.message)) {
       return;
@@ -3709,7 +4367,24 @@ function normalizeExistingDatabase(dbPath: string): void {
   }
 }
 
+function interviewCatalogError(reply: FastifyReply, error: unknown) {
+  if (error instanceof InterviewSelectionInputError) {
+    void reply.code(error.code === "retired_question" ? 410 : error.code === "unknown_question" ? 404 : 409);
+    return { ok: false as const, error: error.code, message: error.message,
+      ...(error.questionId ? { questionId: error.questionId } : {}) };
+  }
+  if (error instanceof InterviewCatalogAssetError) {
+    void reply.code(503);
+    return { ok: false as const, error: "interview_catalog_unavailable", message: error.message };
+  }
+  throw error;
+}
+
 function outreachTransitionError(reply: FastifyReply, error: unknown): { ok: false; error: string; message: string } {
+  if (error instanceof OutreachDraftGatesNotPassedError) {
+    void reply.code(409);
+    return { ok: false, error: "draft_gates_not_passed", message: error.message };
+  }
   if (error instanceof OutreachNotFoundError) {
     void reply.code(404);
     return { ok: false, error: "outreach_thread_not_found", message: error.message };
@@ -3719,27 +4394,6 @@ function outreachTransitionError(reply: FastifyReply, error: unknown): { ok: fal
     return { ok: false, error: "invalid_outreach_transition", message: error.message };
   }
   throw error;
-}
-
-function providerOperationError(
-  error: "provider_status_failed" | "provider_verification_failed" | "provider_models_failed",
-  message: string,
-) {
-  return { ok: false as const, error, message };
-}
-
-async function dispatchProviderModelCatalog(
-  dispatcher: JsonRpcDispatcher,
-): Promise<{ providers: ProviderModelCatalogItem[] }> {
-  const response = await dispatcher.call("provider_models", {});
-  if (response.error) {
-    throw new Error("provider model catalog RPC failed");
-  }
-  const parsed = ProviderModelCatalogResultSchema.safeParse(response.result);
-  if (!parsed.success) {
-    throw new Error("provider model catalog RPC returned an invalid response");
-  }
-  return parsed.data;
 }
 
 async function dispatchDiscoveryBrowserContinuation(
@@ -3754,45 +4408,22 @@ async function dispatchDiscoveryBrowserContinuation(
   await actionDispatcher(command, actionContext);
 }
 
-async function dispatchPendingProfileContinuations(
-  dbPath: string,
-  actionDispatcher: ActionDispatcher,
-  actionContext: ActionDispatchContext,
-): Promise<void> {
-  // Yield once so profile writes committed in the same event-loop turn can be
-  // coalesced before any spendful continuation starts.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  while (true) {
-    const db = openDatabase(dbPath);
-    let eventId: number | null;
-    try {
-      eventId = claimNextProfileContinuationEvent(db);
-    } finally {
-      db.close();
-    }
-    if (eventId === null) return;
+type BrowserRpcMethod = "browser_capabilities_list" | "browser_capability_enable" | "browser_capability_disable" | "browser_profile_copy";
 
-    // The JSON-RPC adapter waits for this deterministic workflow to finish.
-    // That serializes genuine profile revisions; a restart attaches to the
-    // same Temporal execution before writing the handled marker.
-    await handleProfileUpdatedEvent(eventId, actionDispatcher, actionContext);
-
-    const handledDb = openDatabase(dbPath);
-    try {
-      markProfileContinuationEventsHandled(handledDb, [eventId], eventId);
-    } finally {
-      handledDb.close();
-    }
-  }
-}
-
-async function dispatchBrowserCapabilities(
+async function dispatchBrowserCapabilities<M extends BrowserRpcMethod>(
   reply: FastifyReply,
   dispatcher: JsonRpcDispatcher,
-  method: Parameters<JsonRpcDispatcher["call"]>[0],
-  params: Record<string, unknown>,
+  method: M,
+  params: RpcParams<NoInfer<M>>,
 ) {
-  const response = await dispatcher.call(method, params);
+  let response;
+  try {
+    response = await callRpc(dispatcher, method, params);
+  } catch (error) {
+    if (!(error instanceof RpcContractError) || error.phase !== "result") throw error;
+    void reply.code(502);
+    return { ok: false as const, error: "browser_capability_failed" as const, message: "Browser capability status is temporarily unavailable." };
+  }
   if (response.error) {
     void reply.code(response.error.code === JsonRpcErrorCodes.InvalidParams ? 400 : 502);
     return {
@@ -4556,8 +5187,10 @@ function withDb<T>(
   reply: { code: (statusCode: number) => unknown },
   dbPath: string,
   read: (db: ReturnType<typeof openDatabase>) => T,
+  retained?: ReturnType<typeof createRetainedDatabase>,
 ): T | { ok: false; error: string; message: string } {
   if (!databaseExists(dbPath)) {
+    retained?.close();
     void reply.code(503);
     return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${dbPath}` };
   }
@@ -4570,9 +5203,17 @@ function withDb<T>(
   // stay current with new ``job_events`` rows from the worker.
   let db: ReturnType<typeof openDatabase> | null = null;
   try {
-    db = openDatabase(dbPath);
+    db = retained ? retained.open() : openDatabase(dbPath);
     return read(db);
   } catch (error) {
+    if (error instanceof InvalidSavedDiscoverySettingsError) {
+      void reply.code(409);
+      return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
+    if (error instanceof PermanentDeleteSelectionConflict) {
+      void reply.code(409);
+      return { ok: false, error: "permanent_delete_selection_conflict", message: error.message };
+    }
     if (error instanceof ProfileInputError) {
       void reply.code(400);
       return {
@@ -4580,6 +5221,18 @@ function withDb<T>(
         error: "invalid_profile",
         message: error.message,
       };
+    }
+    if (error instanceof OutreachPublicationConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "outreach_publication_conflict", message: error.message, ...error.conflict };
+    }
+    if (error instanceof OutreachGenerationError) {
+      void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
+      return { ok: false, error: error.code, message: error.message };
+    }
+    if (error instanceof SemanticStageError) {
+      void reply.code(error.code === "provider_unavailable" ? 503 : error.code === "budget_denied" ? 429 : 502);
+      return {ok:false,error:error.code,message:"Resume verification could not complete. Retry after resolving the reported status."};
     }
     if (error instanceof ResumeTemplateInputError) {
       void reply.code(400);
@@ -4589,6 +5242,32 @@ function withDb<T>(
         message: error.message,
       };
     }
+    const opened = db !== null;
+    void reply.code(opened ? 500 : 503);
+    return {
+      ok: false,
+      error: opened ? "db_read_failed" : "db_open_failed",
+      message: error instanceof Error ? error.message : "Unable to read the JobCtrl database.",
+    };
+  } finally {
+    if (!retained) db?.close();
+  }
+}
+
+function withReadOnlyDb<T>(
+  reply: { code: (statusCode: number) => unknown },
+  dbPath: string,
+  read: (db: ReturnType<typeof openReadOnlyDatabase>) => T,
+): T | { ok: false; error: string; message: string } {
+  if (!databaseExists(dbPath)) {
+    void reply.code(503);
+    return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${dbPath}` };
+  }
+  let db: ReturnType<typeof openReadOnlyDatabase> | null = null;
+  try {
+    db = openReadOnlyDatabase(dbPath);
+    return read(db);
+  } catch (error) {
     const opened = db !== null;
     void reply.code(opened ? 500 : 503);
     return {
@@ -4622,9 +5301,42 @@ async function withWritableDb<T>(
     db = openDatabase(dbPath);
     return await write(db);
   } catch (error) {
+    if (error instanceof InvalidSavedDiscoverySettingsError) {
+      void reply.code(409);
+      return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
+    if (error instanceof PermanentDeleteSelectionConflict) {
+      void reply.code(409);
+      return { ok: false, error: "permanent_delete_selection_conflict", message: error.message,
+        ...(error.conflictingJobKeys ? {
+          deletedJobKeys: [], conflictingJobKeys: error.conflictingJobKeys,
+          unprocessedJobKeys: error.unprocessedJobKeys ?? [],
+        } : {}),
+      };
+    }
+    if (error instanceof OutreachPublicationConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "outreach_publication_conflict", message: error.message, ...error.conflict };
+    }
+    if (error instanceof OutreachGenerationError) {
+      void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
+      return { ok: false, error: error.code, message: error.message };
+    }
+    if (error instanceof SemanticStageError) {
+      void reply.code(error.code === "provider_unavailable" ? 503 : error.code === "budget_denied" ? 429 : 502);
+      return {ok:false,error:error.code,message:"Resume verification could not complete. Retry after resolving the reported status."};
+    }
     if (error instanceof ResumeTemplateInputError) {
       void reply.code(400);
       return { ok: false, error: "invalid_resume_template", message: error.message };
+    }
+    if (error instanceof ResumeTemplateVersionConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "resume_template_version_conflict", message: error.message };
+    }
+    if (error instanceof SourceLocatorReviewError) {
+      void reply.code(error.status);
+      return { ok: false, error: error.status === 409 ? "source_review_conflict" : "invalid_source_candidate", message: error.message };
     }
     if (error instanceof RoleMatchFeedbackDecisionConflictError) {
       void reply.code(409);
@@ -4642,6 +5354,10 @@ async function withWritableDb<T>(
         message: error.message,
       };
     }
+    if (error instanceof CoverLetterReviewError) {
+      void reply.code(error.status);
+      return { ok: false, error: error.code, message: error.code };
+    }
     if (error instanceof DraftRenderConflictError) {
       void reply.code(409);
       return { ok: false, error: "resume_render_conflict", message: error.message };
@@ -4649,6 +5365,14 @@ async function withWritableDb<T>(
     if (error instanceof ResumeRenderError) {
       void reply.code(502);
       return { ok: false, error: "resume_render_failed", message: error.message };
+    }
+    if (error instanceof ApplyResetRefusedError) {
+      void reply.code(409);
+      return { ok: false, error: "apply_reset_refused", message: error.message };
+    }
+    if (error instanceof ActionReceiptConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "action_identity_conflict", message: error.message };
     }
     if (error instanceof InputError) {
       if (APPLY_REVIEW_PRECONDITION_ERRORS.has(error.message)) {
@@ -4893,19 +5617,6 @@ function stageRunStatus(actions: ActionRunResponse[]): string {
   return "accepted";
 }
 
-function discoveryExtensionUnavailableResponse(): {
-  ok: false;
-  error: "discovery_extension_unavailable";
-  message: string;
-} {
-  return {
-    ok: false,
-    error: "discovery_extension_unavailable",
-    message:
-      "Open Chrome with the paired JobCtrl extension. Browser-backed Discovery and Enrich use the user's current Chrome profile and never a copied profile.",
-  };
-}
-
 function resolveExistingJob(
   reply: { code: (statusCode: number) => unknown },
   db: ReturnType<typeof openDatabase>,
@@ -4946,3 +5657,10 @@ function decodeBase64Pdf(value: string): Buffer {
   }
   return bytes;
 }
+
+function safeDeterminationFailureCode(message: string): string {
+  const codes = new Set(["provider_unavailable","provider_error","budget_denied","malformed_json","schema_violation","foreign_source_id","non_verbatim_quote","mismatched_value","stale_draft_revision","stale_profile_version","job_interpretation_unavailable","missing_evidence_citation","inconsistent_verdict"]);
+  return codes.has(message) ? message : "provider_error";
+}
+
+class SemanticStageError extends Error {constructor(readonly code:string){super(code);}}

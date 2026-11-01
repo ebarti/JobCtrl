@@ -32,6 +32,7 @@ from jobctrl.domain.enrichment.value_objects import (
 )
 from jobctrl.domain.extraction import extract_json
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.llm_lanes import lane_bound
 
 log = logging.getLogger(__name__)
 
@@ -128,6 +129,7 @@ def _find_job_posting(data: Any) -> dict | None:
 
 _DESCRIPTION_SELECTORS = (
     '[id^="JobDetails_AboutTheJob_"]',
+    ".description__text .show-more-less-html__markup",
     "#job-description",
     "#job_description",
     "#jobDescriptionText",
@@ -266,6 +268,7 @@ class LlmExtractor:
         self._llm = llm
         self._prompt = prompt
 
+    @lane_bound("enrichment")
     def extract(self, page: DetailPage) -> ExtractionResult:
         if not page.html:
             return ExtractionResult(ok=False)

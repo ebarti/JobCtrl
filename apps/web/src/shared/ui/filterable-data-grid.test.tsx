@@ -95,7 +95,7 @@ describe("FilterableDataGrid", () => {
     const user = userEvent.setup();
     const acmeRow = screen.getByRole("row", { name: /Acme Workday ATS 3/i });
     expect(acmeRow).not.toHaveAttribute("tabindex");
-    const openAcme = within(acmeRow).getByRole("button", { name: "Open Acme" });
+    const openAcme = within(acmeRow).getByRole("button", { name: "Open Acme: View details" });
     expect(openAcme).toHaveClass("row-activation-focus-only");
     expect(openAcme).not.toHaveClass("sr-only", "focus:not-sr-only");
     expect(openAcme).toHaveTextContent("View details");
@@ -134,7 +134,7 @@ describe("FilterableDataGrid", () => {
       />,
     );
 
-    const openAcme = screen.getByRole("button", { name: "Open Acme" });
+    const openAcme = screen.getByRole("button", { name: "Open Acme: View details" });
     expect(openAcme).not.toHaveClass("row-activation-focus-only");
     expect(openAcme).toHaveTextContent("View details");
     expect(openAcme).toHaveAttribute("type", "button");
@@ -327,7 +327,7 @@ describe("FilterableDataGrid", () => {
     expect(onRowActivate).toHaveBeenLastCalledWith(rows[0]);
 
     await user.click(
-      within(acmeRecord).getByRole("button", { name: "Open Acme" }),
+      within(acmeRecord).getByRole("button", { name: "Open Acme: View details" }),
     );
     expect(onRowActivate).toHaveBeenCalledTimes(2);
   });

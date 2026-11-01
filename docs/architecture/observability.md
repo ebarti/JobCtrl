@@ -44,12 +44,35 @@ Langfuse instance for LLM tracing. The wiring lives under
   sets the GenAI semantic-conventions attributes (`gen_ai.request.model`,
   `gen_ai.response.model`, `gen_ai.usage.input_tokens`,
   `gen_ai.usage.output_tokens`) so OTel-native dashboards work too. Exported
-  LLM attributes are metadata-only: provider/model, operation/scope, outcome,
-  token counts, and safe request/response sizes. Typed provider failures add
+  LLM attributes default to metadata-only: provider/model, operation/scope, outcome,
+  token counts, safe request/response sizes, and known reasoning-effort protocol
+  values in `gen_ai.request.reasoning_effort`. Arbitrary parameter values remain
+  excluded. Codex spans also retain the versioned instruction-profile hash,
+  validated determination kind and exact determination ID for recorded joins.
+  Known nonnegative cached-input and reasoning-output counters use
+  jobctrl.llm.usage.*; they are subsets of the existing input/output totals,
+  never additional billed token categories. Unknown counters stay absent.
+  Only the known process-reuse boolean and start/reuse counts are copied from
+  kit metadata; private runtime paths and arbitrary SDK metadata stay excluded.
+  Usage observed before terminal provider failure or cancellation is retained.
+  Typed provider failures add
   bounded `jobctrl.llm.failure.*` dimensions for provider, model, operation,
   category, type, code, retryability, and an allowlisted provider code or HTTP
   status; structured calls also carry a schema fingerprint. Raw messages,
-  parameters, completions, SDK objects, and exception messages are omitted.
+  parameters, completions, SDK objects, and exception messages are omitted by default.
+  `JOBCTRL_TRACE_CONTENT=1` explicitly adds JSON-encoded messages and any supplied
+  response schema/runtime instructions/exact runtime prompt as observation input,
+  plus returned text as observation output. The flag is captured once per span;
+  only recording spans serialize input. Request serialization failures remain
+  diagnostic and do not fail model work. Usage-only empty callbacks cannot erase
+  a captured response. Arbitrary parameters, credentials, SDK/config objects,
+  runtime paths and exception messages remain excluded. This opt-in sends private
+  request/output text to the configured tracing destination and does not alter
+  model, effort, spend admission, review requirements or determination authority.
+  Gmail feedback's message-link and message-outcome determinations never capture
+  mail input or output, even when content tracing is enabled. Gmail feedback
+  search and message reads emit content-free operation spans; their HTTP query
+  and message URL are excluded from automatic HTTP spans and transport logs.
 
 ## Span Sources
 
@@ -130,7 +153,7 @@ synthesizer, and the optional post-selection resume voice pass wrap
 their SDK model call in the same `llm_generation_span` the `LLMClient` uses, so
 every frontier-model call reports its provider/model, stage, outcome, safe
 content sizes, latency, and — when the SDK surfaces usage — input/output token
-counts to Langfuse. Prompts and completions are not exported. Distinct
+counts to Langfuse. Prompts and completions require the separate capture opt-in above. Distinct
 instrumentation scopes keep the drafts, synthesizer, and voice pass separable
 even though they share the `llm.<model>` span name. Because the legs run inside
 the enclosing pipeline-stage / JSON-RPC span (OTel context propagates through the
@@ -148,14 +171,30 @@ The `TracingInterceptor` is registered both client-side
 (`infrastructure/temporal/worker.py`) so trace context propagates from the
 JSON-RPC handler that starts a workflow into the worker that runs it.
 
+Blocking executor and nested stage fan-out use
+`infrastructure/workflow_run_context.py` to transfer the resolved canonical
+workflow ID and the submitting OpenTelemetry context together. Each invocation
+attaches and restores its tracing context independently, including on failure;
+concurrent jobs and reused pool threads cannot inherit a previous job's parent.
+Other Python context variables, including the Temporal activity context, are
+not copied. This preserves the existing metadata-only span attributes and
+keeps generation/scoring spans joined to their actual workflow trace rather
+than associating calls by timestamps. Cancellation and executor retirement
+retain the original parent for calls still settling while replacement work
+uses its own submitting parent.
+
 `init_otel()` is called from `jobctrl.cli._bootstrap()`, so every CLI
 command (notably `jobctrl worker` and `jobctrl rpc`) configures
 exporting on startup. The `worker` command calls `shutdown_otel()` on
 exit so the `BatchSpanProcessor` flushes any in-flight spans.
 
-`jobctrl doctor` includes a `Langfuse` row that probes the OTLP endpoint
-with a `HEAD` request — `OK reachable`, `MISSING (set
-LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)`, or `unreachable`.
+`jobctrl doctor` includes a `Langfuse` row that probes the OTLP trace path with
+an unauthenticated `HEAD` request. It reports `OK reachable` for 2xx, 401, or
+405; a missing trace route (404), redirect, other error, or transport failure
+reports `unreachable`. Missing settings report `MISSING`, and
+`LANGFUSE_DISABLE=1` reports `disabled` without a request. The HEAD response
+does not verify credentials or span ingestion; see
+[Doctor Diagnostic Coverage](../developer/qa/doctor-diagnostics.md).
 
 ## Public Demo Edge Logs
 
@@ -167,10 +206,19 @@ Both Worker configs disable automatic invocation logs and traces. The Workers
 emit only closed lifecycle fields and never log request bodies, cookies, IPs,
 URLs, user agents, or referrers. Optional product measurement uses the typed,
 consent-gated D1 event contract; non-linkable operational counters and
-consented reports remain separate populations. After the versioned consent
+consented reports remain separate populations. The consented core funnel groups
+unexpired events by release: session starts and install clicks use their event
+types, while the route stages count only the corresponding route-view events.
+After the versioned consent
 service confirms acceptance, the demo also loads GA4 tag `G-6MJGD17JN0` with
 Google Signals, advertising, and personalization disabled. The Google tag is a
 separate third-party measurement boundary and is never loaded before consent.
+
+The [demo access, consent withdrawal, and visitor erasure proposal](../plans/2026-09-22-demo-access-consent-withdrawal-proposal.md)
+describes a possible future separation of demo access, first-party telemetry,
+and Google Analytics, plus withdrawal and deletion boundaries. It remains
+**PROPOSED**, awaits owner decisions, and changes none of the current
+observability behavior above.
 
 ## Out of Scope
 

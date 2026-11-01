@@ -1,10 +1,7 @@
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
-import type {
-  JobSummary,
-  PaginatedResponse,
-} from "../../contexts/operations/types.js";
+import type { JobSummary, PaginatedResponse } from "@jobctrl/contracts";
 import { useIsMobile } from "../../shared/hooks/use-mobile.js";
 import {
   FilterableDataGrid,

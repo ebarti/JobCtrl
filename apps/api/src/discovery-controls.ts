@@ -1,3 +1,5 @@
+import { postingSourceCoordinate, recordSourceProposalReview, sourceProposalReviews, sourceCoordinateOverlaps } from "./posting-source-proposals.js";
+import { readDetermination } from "./semantic-determinations.js";
 import crypto from "node:crypto";
 
 import type {
@@ -55,6 +57,14 @@ import { refreshProjections } from "./projections.js";
 import { InputError, resolveJobId } from "./write-model.js";
 
 export class RoleMatchFeedbackDecisionConflictError extends Error {}
+export class InvalidSavedDiscoverySettingsError extends Error {
+  constructor() {
+    super("Saved Discovery settings are invalid. Preserve the workspace and restore a verified backup, then retry Discovery.");
+  }
+}
+export class SourceLocatorReviewError extends Error {
+  constructor(message: string, readonly status: 400 | 409) { super(message); }
+}
 
 const DEFAULT_TENANT = "local";
 export const EXTENSION_MANUAL_CAPTURE_SOURCE_ID = "manual_capture:extension";
@@ -68,9 +78,8 @@ const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
   hoursOld: 72,
   schedulingEnabled: false,
   scheduleCron: "0 7 * * *",
-  roleFilterMode: "auto",
-  roleFilterModel: null,
   maxParallelFamilies: 1,
+  useBrowserHeaders: false,
   crawlUserAgentProduct: "JobCtrl",
   crawlUserAgentContact: "https://github.com/ebarti/JobCtrl",
   source: "database",
@@ -201,6 +210,7 @@ interface LowScoreJobRow extends Record<string, unknown> {
   strategy: string | null;
   fit_score: number;
   breakdown_json: string | null;
+  trace_json: string | null;
   scored_at: string | null;
 }
 
@@ -239,36 +249,39 @@ export function writeDiscoverySettings(
   db: SqliteDatabase,
   request: DiscoverySettingsUpdateRequest,
 ): DiscoverySettingsResponse {
-  const stored = readDiscoverySearchConfig(db);
-  const currentConfig = stored.config;
-  const current = discoverySettingsFromConfig(currentConfig);
-  const next: DiscoverySettings = {
-    ...current,
-    minFitScore: request.minFitScore ?? current.minFitScore,
-    autoApply: request.autoApply ?? current.autoApply,
-    applyApprovalRequired: request.applyApprovalRequired ?? current.applyApprovalRequired,
-    boards: request.boards ?? current.boards,
-    resultsPerSite: request.resultsPerSite ?? current.resultsPerSite,
-    hoursOld: request.hoursOld ?? current.hoursOld,
-    schedulingEnabled: request.schedulingEnabled ?? current.schedulingEnabled,
-    scheduleCron: request.scheduleCron ?? current.scheduleCron,
-    roleFilterMode: request.roleFilterMode ?? current.roleFilterMode,
-    roleFilterModel: request.roleFilterModel === undefined ? current.roleFilterModel : request.roleFilterModel,
-    maxParallelFamilies: request.maxParallelFamilies ?? current.maxParallelFamilies,
-    crawlUserAgentProduct: request.crawlUserAgentProduct ?? current.crawlUserAgentProduct,
-    crawlUserAgentContact: request.crawlUserAgentContact ?? current.crawlUserAgentContact,
-  };
-  const now = new Date().toISOString();
-  const config = configFromDiscoverySettings(next, currentConfig);
-  db.prepare(`
-    INSERT INTO discovery_settings (
-      tenant_id, search_config_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?)
-    ON CONFLICT(tenant_id) DO UPDATE SET
-      search_config_json = excluded.search_config_json,
-      updated_at = excluded.updated_at
-  `).run(DEFAULT_TENANT, JSON.stringify(config), now, now);
-  return resolvedDiscoverySettings(config, true);
+  // Lock the read and write together so a concurrent edit cannot replace the
+  // saved row after validation and before this update.
+  return db.transaction(() => {
+    const stored = readDiscoverySearchConfig(db);
+    const currentConfig = stored.config;
+    const current = discoverySettingsFromConfig(currentConfig);
+    const next: DiscoverySettings = {
+      ...current,
+      minFitScore: request.minFitScore ?? current.minFitScore,
+      autoApply: request.autoApply ?? current.autoApply,
+      applyApprovalRequired: request.applyApprovalRequired ?? current.applyApprovalRequired,
+      boards: request.boards ?? current.boards,
+      resultsPerSite: request.resultsPerSite ?? current.resultsPerSite,
+      hoursOld: request.hoursOld ?? current.hoursOld,
+      schedulingEnabled: request.schedulingEnabled ?? current.schedulingEnabled,
+      scheduleCron: request.scheduleCron ?? current.scheduleCron,
+      maxParallelFamilies: request.maxParallelFamilies ?? current.maxParallelFamilies,
+      useBrowserHeaders: request.useBrowserHeaders ?? current.useBrowserHeaders,
+      crawlUserAgentProduct: request.crawlUserAgentProduct ?? current.crawlUserAgentProduct,
+      crawlUserAgentContact: request.crawlUserAgentContact ?? current.crawlUserAgentContact,
+    };
+    const now = new Date().toISOString();
+    const config = configFromDiscoverySettings(next, currentConfig);
+    db.prepare(`
+      INSERT INTO discovery_settings (
+        tenant_id, search_config_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(tenant_id) DO UPDATE SET
+        search_config_json = excluded.search_config_json,
+        updated_at = excluded.updated_at
+    `).run(DEFAULT_TENANT, JSON.stringify(config), now, now);
+    return resolvedDiscoverySettings(config, true);
+  }).immediate();
 }
 
 function readDiscoverySearchConfig(db: SqliteDatabase): {
@@ -280,17 +293,98 @@ function readDiscoverySearchConfig(db: SqliteDatabase): {
     "SELECT search_config_json FROM discovery_settings WHERE tenant_id = ?",
     [DEFAULT_TENANT],
   );
-  if (!row?.search_config_json) {
+  if (!row) {
     return { config: configFromDiscoverySettings(DEFAULT_DISCOVERY_SETTINGS), persisted: false };
   }
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(row.search_config_json) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? { config: parsed as Record<string, unknown>, persisted: true }
-      : { config: configFromDiscoverySettings(DEFAULT_DISCOVERY_SETTINGS), persisted: false };
+    if (typeof row.search_config_json !== "string") throw new Error();
+    parsed = JSON.parse(row.search_config_json) as unknown;
   } catch {
-    return { config: configFromDiscoverySettings(DEFAULT_DISCOVERY_SETTINGS), persisted: false };
+    throw new InvalidSavedDiscoverySettingsError();
   }
+  if (!validSavedDiscoveryStructure(parsed)) throw new InvalidSavedDiscoverySettingsError();
+  return { config: parsed, persisted: true };
+}
+
+function validSavedDiscoveryStructure(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const isRecord = (item: unknown) => item !== null && typeof item === "object" && !Array.isArray(item);
+  const validInteger = (item: unknown, minimum: number, maximum = Number.MAX_SAFE_INTEGER) => {
+    if (typeof item !== "number" && !(typeof item === "string" && /^[+-]?[0-9]+$/.test(item.trim()))) return false;
+    const number = Number(item);
+    return Number.isSafeInteger(number) && number >= minimum && number <= maximum;
+  };
+  const validBoolean = (item: unknown) => typeof item === "boolean" || (
+    typeof item === "string" && ["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(item.trim().toLowerCase())
+  );
+  const stringList = (item: unknown) => Array.isArray(item) && item.every((part) => typeof part === "string");
+  for (const key of ["defaults", "automation", "crawl_user_agent", "location", "role_filter"]) {
+    if (Object.hasOwn(record, key) && !isRecord(record[key])) return false;
+  }
+  for (const key of ["boards", "sites", "location_accept", "exact_title_exclusions", "location_labels"]) {
+    if (Object.hasOwn(record, key) && !stringList(record[key])) return false;
+  }
+  const supportedBoards = new Set(["indeed", "linkedin", "zip_recruiter", "glassdoor"]);
+  for (const key of ["boards", "sites"]) {
+    if (Array.isArray(record[key]) && record[key].some((item) => !supportedBoards.has(item))) return false;
+  }
+  if ((Object.hasOwn(record, "boards") || Object.hasOwn(record, "sites"))
+    && !(Array.isArray(record.boards) && record.boards.length > 0)
+    && !(Array.isArray(record.sites) && record.sites.length > 0)) return false;
+  for (const key of ["queries", "locations"]) {
+    if (Object.hasOwn(record, key) && (!Array.isArray(record[key]) || !record[key].every(isRecord))) return false;
+  }
+  if (Array.isArray(record.queries) && record.queries.some((query) =>
+    typeof query.query !== "string"
+    || (Object.hasOwn(query, "tier") && !validInteger(query.tier, 1))
+    || (Object.hasOwn(query, "source_scope") && query.source_scope !== null && !stringList(query.source_scope))
+  )) return false;
+  if (Array.isArray(record.locations) && record.locations.some((location) =>
+    typeof location.location !== "string"
+    || (Object.hasOwn(location, "label") && typeof location.label !== "string")
+    || (Object.hasOwn(location, "remote") && typeof location.remote !== "boolean")
+  )) return false;
+  const defaults = recordValue(record.defaults);
+  for (const [key, minimum, maximum] of [
+    ["results_per_site", 1, 1000], ["hours_old", 1, 8760], ["distance", 0, Number.MAX_SAFE_INTEGER],
+  ] as const) {
+    if (Object.hasOwn(defaults, key) && !validInteger(defaults[key], minimum, maximum)) return false;
+  }
+  for (const key of ["country_indeed", "location"]) {
+    if (Object.hasOwn(defaults, key) && typeof defaults[key] !== "string") return false;
+  }
+  if (Object.hasOwn(record, "max_parallel_families") && !validInteger(record.max_parallel_families, 1, 4)) return false;
+  for (const key of ["workday_max_pages_per_employer", "workday_limited_max_pages_per_employer"]) {
+    if (Object.hasOwn(record, key) && !validInteger(record[key], 1)) return false;
+  }
+  const automation = recordValue(record.automation);
+  if (Object.hasOwn(automation, "min_fit_score") && !validInteger(automation.min_fit_score, 0, 10)) return false;
+  for (const [container, keys] of [
+    [record, ["scheduling_enabled"]],
+    [automation, ["auto_apply", "apply_approval_required"]],
+  ] as const) {
+    for (const key of keys) if (Object.hasOwn(container, key) && !validBoolean(container[key])) return false;
+  }
+  if (Object.hasOwn(record, "disable_jobspy") && typeof record.disable_jobspy !== "boolean") return false;
+  if (Object.hasOwn(record, "schedule_cron") && (typeof record.schedule_cron !== "string" || !record.schedule_cron.trim())) return false;
+  for (const key of ["country", "proxy"]) {
+    if (record[key] != null && typeof record[key] !== "string") return false;
+  }
+  const identity = recordValue(record.crawl_user_agent);
+  if (Object.hasOwn(identity, "use_browser_headers") && typeof identity.use_browser_headers !== "boolean") return false;
+  if (Object.hasOwn(identity, "product") && (typeof identity.product !== "string" || !identity.product.trim())) return false;
+  if (Object.hasOwn(identity, "contact") && typeof identity.contact !== "string") return false;
+  const location = recordValue(record.location);
+  for (const key of ["accept_patterns", "reject_patterns"]) {
+    if (Object.hasOwn(location, key) && !stringList(location[key])) return false;
+  }
+  if (Object.hasOwn(record, "glassdoor_location_map") && (
+    !isRecord(record.glassdoor_location_map)
+    || Object.values(record.glassdoor_location_map as Record<string, unknown>).some((item) => typeof item !== "string")
+  )) return false;
+  return true;
 }
 
 function discoverySettingsFromConfig(config: Record<string, unknown>): DiscoverySettings {
@@ -308,14 +402,13 @@ function discoverySettingsFromConfig(config: Record<string, unknown>): Discovery
       automation.apply_approval_required,
       DEFAULT_DISCOVERY_SETTINGS.applyApprovalRequired,
     ),
-    boards: boardList(config.boards),
+    boards: boardList(Array.isArray(config.boards) && config.boards.length ? config.boards : config.sites),
     resultsPerSite: positiveInt(defaults.results_per_site, DEFAULT_DISCOVERY_SETTINGS.resultsPerSite),
     hoursOld: positiveInt(defaults.hours_old, DEFAULT_DISCOVERY_SETTINGS.hoursOld),
     schedulingEnabled: boolValue(config.scheduling_enabled, DEFAULT_DISCOVERY_SETTINGS.schedulingEnabled),
     scheduleCron: nonEmptyString(config.schedule_cron, DEFAULT_DISCOVERY_SETTINGS.scheduleCron),
-    roleFilterMode: roleFilterMode(recordValue(config.role_filter).mode),
-    roleFilterModel: nullableString(recordValue(config.role_filter).model),
     maxParallelFamilies: boundedInt(config.max_parallel_families, DEFAULT_DISCOVERY_SETTINGS.maxParallelFamilies, 1, 4),
+    useBrowserHeaders: recordValue(config.crawl_user_agent).use_browser_headers === true,
     crawlUserAgentProduct: nonEmptyString(
       recordValue(config.crawl_user_agent).product,
       DEFAULT_DISCOVERY_SETTINGS.crawlUserAgentProduct,
@@ -344,14 +437,10 @@ function configFromDiscoverySettings(
     boards: settings.boards,
     scheduling_enabled: settings.schedulingEnabled,
     schedule_cron: settings.scheduleCron,
-    role_filter: {
-      ...recordValue(base.role_filter),
-      mode: settings.roleFilterMode,
-      model: settings.roleFilterModel,
-    },
     max_parallel_families: settings.maxParallelFamilies,
     crawl_user_agent: {
       ...recordValue(base.crawl_user_agent),
+      use_browser_headers: settings.useBrowserHeaders,
       product: settings.crawlUserAgentProduct,
       contact: settings.crawlUserAgentContact,
     },
@@ -394,7 +483,7 @@ function resolvedDiscoverySettings(
       "next_apply_job",
       persisted && Object.hasOwn(automation, "apply_approval_required"),
     ),
-    boards: setting(stored.boards, "next_run", persisted && Object.hasOwn(config, "boards")),
+    boards: setting(stored.boards, "next_run", persisted && (Object.hasOwn(config, "boards") || Object.hasOwn(config, "sites"))),
     resultsPerSite: setting(
       stored.resultsPerSite,
       "next_run",
@@ -415,20 +504,15 @@ function resolvedDiscoverySettings(
       "restart",
       persisted && Object.hasOwn(config, "schedule_cron"),
     ),
-    roleFilterMode: setting(
-      stored.roleFilterMode,
-      "next_source_family",
-      persisted && Object.hasOwn(recordValue(config.role_filter), "mode"),
-    ),
-    roleFilterModel: setting(
-      stored.roleFilterModel,
-      "next_source_family",
-      persisted && Object.hasOwn(recordValue(config.role_filter), "model"),
-    ),
     maxParallelFamilies: setting(
       stored.maxParallelFamilies,
       "next_run",
       persisted && Object.hasOwn(config, "max_parallel_families"),
+    ),
+    useBrowserHeaders: setting(
+      stored.useBrowserHeaders,
+      "next_source_family",
+      persisted && Object.hasOwn(recordValue(config.crawl_user_agent), "use_browser_headers"),
     ),
     crawlUserAgentProduct: setting(
       stored.crawlUserAgentProduct,
@@ -490,17 +574,6 @@ function stringValue(value: unknown, fallback: string): string {
 function nullableString(value: unknown): string | null {
   const text = stringValue(value, "");
   return text || null;
-}
-
-function roleFilterMode(value: unknown): DiscoverySettings["roleFilterMode"] {
-  const normalized = stringValue(value, "auto").toLowerCase();
-  if (["deterministic", "0", "false", "no", "off", "disabled"].includes(normalized)) {
-    return "deterministic";
-  }
-  if (["llm", "1", "true", "yes", "on", "enabled"].includes(normalized)) {
-    return "llm";
-  }
-  return "auto";
 }
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
@@ -737,17 +810,10 @@ export function listSourceLocatorCandidates(db: SqliteDatabase): SourceLocatorLi
      ORDER BY confidence DESC, discovered_at DESC`,
     [DEFAULT_TENANT],
   );
-  const pendingRows: SourceLocatorCandidateRow[] = [];
-  for (const row of rows) {
-    if (shouldAutoPromoteParseableLocatorCandidate(row)) {
-      promoteSourceLocatorCandidate(db, row.candidate_id);
-      continue;
-    }
-    pendingRows.push(row);
-  }
+  const proposals = sourceProposalReviews(db);
   return {
     ok: true,
-    candidates: pendingRows.map((row) => ({
+    candidates: rows.map((row) => ({
       candidateId: row.candidate_id,
       candidateUrl: row.candidate_url,
       sourceKind: sourceKind(row.source_kind),
@@ -756,55 +822,80 @@ export function listSourceLocatorCandidates(db: SqliteDatabase): SourceLocatorLi
       employerDomainMatched: Boolean(row.employer_domain_matched),
       manualActionReason: manualActionReason(row.manual_action_reason),
       discoveredAt: row.discovered_at,
+      ...(proposals.has(row.candidate_id) ? { proposal: proposals.get(row.candidate_id)! } : {}),
     })),
   };
-}
-
-function shouldAutoPromoteParseableLocatorCandidate(row: SourceLocatorCandidateRow): boolean {
-  return Number(row.confidence ?? 0) >= 0.4 && manualActionReason(row.manual_action_reason) === null;
 }
 
 export function promoteSourceLocatorCandidate(
   db: SqliteDatabase,
   candidateId: string,
+  reason = "",
+  expectedUrl?: string,
 ): SourceLocatorDecisionResponse {
-  const candidate = getSourceLocatorCandidateRow(db, candidateId);
-  if (!candidate) {
-    throw new InputError(`Source locator candidate ${candidateId} was not found.`);
-  }
+  return db.transaction((): SourceLocatorDecisionResponse => {
+    const candidate = getSourceLocatorCandidateRow(db, candidateId);
+    if (!candidate) {
+      throw new InputError(`Source locator candidate ${candidateId} was not found.`);
+    }
 
-  const now = new Date().toISOString();
-  const kind = sourceKind(candidate.source_kind);
-  const sourceId = sourceIdFromLocatorCandidate(candidate);
-  const source = upsertSourceRegistryEntry(db, {
-    sourceId,
-    kind,
-    displayName: sourceDisplayNameFromUrl(candidate.candidate_url),
-    priority: defaultPriority(kind),
-    state: "active",
-    seedUrl: candidate.candidate_url,
-  });
-  deleteSourceLocatorCandidate(db, candidateId);
-  recordEvent(db, {
-    eventType: "SourceLocationCandidatePromoted",
-    message: "Source locator candidate promoted.",
-    payload: { candidateId, sourceId, promotedAt: now },
-  });
+    if (expectedUrl !== undefined && candidate.candidate_url !== expectedUrl) {
+      throw new SourceLocatorReviewError("The source candidate changed during public URL validation. Review it again.", 409);
+    }
+    const coordinate = postingSourceCoordinate(candidate.candidate_url);
+    if (!coordinate) throw new SourceLocatorReviewError("Source candidate URL is malformed or private.", 400);
+    const proposal = sourceProposalReviews(db).get(candidateId);
+    if (proposal?.promotionBlockedReason) {
+      throw new SourceLocatorReviewError(proposal.promotionBlockedReason, 409);
+    }
+    const now = new Date().toISOString();
+    const kind = sourceKind(candidate.source_kind);
+    const sourceId = proposal?.sourceId ?? sourceIdFromLocatorCandidate(candidate);
+    const overlaps = proposal?.overlaps ?? sourceCoordinateOverlaps(db, coordinate.coordinateKey, coordinate.sourceId);
+    if (overlaps.some((entry) => entry.state === "disabled" || entry.state === "quarantined" || (proposal && entry.state !== "active"))) {
+      throw new SourceLocatorReviewError("This source is disabled or held for review. Change its registry state explicitly first.", 409);
+    }
+    const overlap = proposal?.overlaps[0];
+    const existing = overlap ? getSourceRegistryRow(db, overlap.sourceId) : undefined;
+    const source = existing
+      ? rowToSourceSummary(existing, sourceQualityById(db).get(existing.source_id), politenessOutcomesBySource(db).get(existing.source_id))
+      : upsertSourceRegistryEntry(db, {
+          sourceId, kind, displayName: sourceDisplayNameFromUrl(candidate.candidate_url),
+          priority: defaultPriority(kind), state: "active", seedUrl: candidate.candidate_url,
+        });
+    recordSourceProposalReview(db, candidate, "promote", reason);
+    deleteSourceLocatorCandidate(db, candidateId);
+    recordEvent(db, {
+      eventType: "SourceLocationCandidatePromoted",
+      message: "Source locator candidate promoted.",
+      payload: { candidateId, sourceId: source.sourceId, promotedAt: now },
+    });
 
-  return { ok: true, candidateId, decision: "promote", source, decidedAt: now };
+    return { ok: true, candidateId, decision: "promote", source, decidedAt: now };
+  }).immediate();
 }
 
 export function rejectSourceLocatorCandidate(
   db: SqliteDatabase,
   candidateId: string,
+  reason = "",
 ): SourceLocatorDecisionResponse {
-  const candidate = getSourceLocatorCandidateRow(db, candidateId);
-  if (!candidate) {
-    throw new InputError(`Source locator candidate ${candidateId} was not found.`);
-  }
-  const now = new Date().toISOString();
-  deleteSourceLocatorCandidate(db, candidateId);
-  return { ok: true, candidateId, decision: "reject", source: null, decidedAt: now };
+  return db.transaction((): SourceLocatorDecisionResponse => {
+    const candidate = getSourceLocatorCandidateRow(db, candidateId);
+    if (!candidate) {
+      throw new InputError(`Source locator candidate ${candidateId} was not found.`);
+    }
+    const now = new Date().toISOString();
+    recordSourceProposalReview(db, candidate, "reject", reason);
+    // Suppress all pending posting aliases for the reviewed source coordinate.
+    const coordinate = postingSourceCoordinate(candidate.candidate_url);
+    for (const row of listSourceLocatorCandidates(db).candidates) {
+      if (row.candidateId === candidateId || (coordinate && postingSourceCoordinate(row.candidateUrl)?.coordinateKey === coordinate.coordinateKey)) {
+        deleteSourceLocatorCandidate(db, row.candidateId);
+      }
+    }
+    return { ok: true, candidateId, decision: "reject", source: null, decidedAt: now };
+  }).immediate();
 }
 
 export function listQuarantine(db: SqliteDatabase): QuarantineListResponse {
@@ -1299,7 +1390,7 @@ function lowScoreRoleMatchGroups(db: SqliteDatabase): Map<string, RoleMatchFeedb
   const rows = lowScoreJobRows(db);
   const sourceByJobId = latestSourceIdsByJobId(db);
   for (const row of rows) {
-    const evidence = roleMatchFeedbackEvidence(row, sourceByJobId.get(row.job_id) ?? null);
+    const evidence = roleMatchFeedbackEvidence(db, row, sourceByJobId.get(row.job_id) ?? null);
     if (!evidence) {
       continue;
     }
@@ -1325,7 +1416,7 @@ function lowScoreRoleMatchGroups(db: SqliteDatabase): Map<string, RoleMatchFeedb
       ruleKind: "exact_title_exclusion",
       titlePattern,
       titleDisplay: evidence.title,
-      reasonCode: roleMatchReasonCode(row),
+      reasonCode: "role_mismatch_evidence",
       reason: evidence.reason,
       sampleCount: 1,
       sourceIds,
@@ -1360,6 +1451,7 @@ function lowScoreJobRows(db: SqliteDatabase): LowScoreJobRow[] {
             COALESCE(j.strategy, '') AS strategy,
             s.fit_score,
             s.breakdown_json,
+            s.trace_json,
             s.scored_at
      FROM latest_scores latest
      JOIN job_scores s
@@ -1368,7 +1460,6 @@ function lowScoreJobRows(db: SqliteDatabase): LowScoreJobRow[] {
       AND s.version = latest.version
      JOIN jobs j ON j.tenant_id = s.tenant_id AND j.job_id = s.job_id
      WHERE s.tenant_id = ?
-       AND s.fit_score <= 2
      ORDER BY s.scored_at DESC
      LIMIT 250`,
     [DEFAULT_TENANT, DEFAULT_TENANT],
@@ -1394,68 +1485,19 @@ function latestSourceIdsByJobId(db: SqliteDatabase): Map<string, string> {
   return result;
 }
 
-function roleMatchFeedbackEvidence(
-  row: LowScoreJobRow,
-  observedSourceId: string | null,
-): RoleMatchFeedbackEvidence | null {
-  const title = String(row.title ?? "").trim();
-  if (!title || normalizeTitlePattern(title).split(" ").length < 2) {
-    return null;
-  }
-  const breakdown = parseObject(row.breakdown_json);
-  const roleFit = nullableNumber(breakdown.roleFit ?? breakdown.role_fit);
-  const reasonText = scoreEvidenceText(breakdown);
-  const hasRoleEvidence =
-    (roleFit !== null && roleFit <= 2) ||
-    /\b(role|title|seniority|domain|function|track|manager|management|engineering|technical|technology)\b/i.test(
-      reasonText,
-    );
-  const hasOnlyNonRoleBlocker =
-    !hasRoleEvidence &&
-    /\b(location|remote|visa|sponsor|sponsorship|country|salary|compensation|language)\b/i.test(
-      reasonText,
-    );
-  if (hasOnlyNonRoleBlocker || (!hasRoleEvidence && Number(row.fit_score) > 1)) {
-    return null;
-  }
-  return {
-    jobKey: row.job_id,
-    title,
-    company: String(row.company ?? "").trim(),
-    sourceId: observedSourceId ?? inferredSourceId(row),
-    fitScore: Number(row.fit_score),
-    roleFit,
-    reason:
-      roleFit !== null && roleFit <= 2
-        ? `Role fit is ${roleFit}/10 on a job scored ${row.fit_score}/10.`
-        : `Job scored ${row.fit_score}/10 with role-matching evidence.`,
-    scoredAt: row.scored_at ?? null,
-  };
-}
-
-function roleMatchReasonCode(row: LowScoreJobRow): RoleMatchFeedbackReasonCode {
-  const breakdown = parseObject(row.breakdown_json);
-  const roleFit = nullableNumber(breakdown.roleFit ?? breakdown.role_fit);
-  if (roleFit !== null && roleFit <= 2) {
-    return "low_role_fit";
-  }
-  if (Number(row.fit_score) <= 1) {
-    return "very_low_score";
-  }
-  return "role_mismatch_evidence";
-}
-
-function scoreEvidenceText(breakdown: Record<string, unknown>): string {
-  const eligibility = parseObject(breakdown.eligibility);
-  return [
-    breakdown.reasoning,
-    ...stringArray(breakdown.missingSignals ?? breakdown.missing_signals),
-    ...stringArray(breakdown.matchedSignals ?? breakdown.matched_signals),
-    ...stringArray(eligibility.hardBlockers ?? eligibility.hard_blockers),
-    ...stringArray(eligibility.warnings),
-  ]
-    .map((value) => String(value ?? ""))
-    .join(" ");
+function roleMatchFeedbackEvidence(db:SqliteDatabase,row:LowScoreJobRow,observedSourceId:string|null):RoleMatchFeedbackEvidence|null{
+  const title=String(row.title??"").trim();
+  if(!title)return null;
+  const trace=parseObject(row.trace_json);
+  const id=typeof trace.determination_id==="string"?trace.determination_id:null;
+  const envelope=id?readDetermination(db,DEFAULT_TENANT,id,{currentOnly:true}):null;
+  if(envelope?.kind!=="scoring" || envelope.entity_id!==row.job_id || envelope.lane!=="scoring")return null;
+  const feedback=envelope.result["discovery_feedback"];
+  if(!feedback || typeof feedback!=="object")return null;
+  const recorded=feedback as Record<string,unknown>;
+  if(recorded["verdict"]!=="propose_exact_title_exclusion" || typeof recorded["reason"]!=="string")return null;
+  const breakdown=parseObject(row.breakdown_json);
+  return {jobKey:row.job_id,title,company:String(row.company??""),sourceId:observedSourceId??inferredSourceId(row),fitScore:Number(row.fit_score),roleFit:nullableNumber(breakdown.role_fit),reason:recorded["reason"],scoredAt:row.scored_at??null};
 }
 
 function inferredSourceId(row: LowScoreJobRow): string | null {

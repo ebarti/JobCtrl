@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from "vitest";
 
 import { materializeDemoSeed } from "./clock.js";
@@ -411,7 +413,6 @@ function createSnapshot(): DemoWorkspaceSnapshot {
       routeData: materialized.routeData,
       receipts: materialized.receipts,
     },
-    pendingScenarios: [],
   }) as DemoWorkspaceSnapshot;
 }
 
@@ -441,6 +442,7 @@ function addOutcomeSuggestions(snapshot: DemoWorkspaceSnapshot): void {
   type Suggestion = (typeof analytics.outcomes.suggestions)[number];
   const base = {
     evidenceId: null,
+    determination: null, citations: [],
     suggestedKind: "interview",
     confidence: 0.8,
     rationale: "Structured purge fixture",

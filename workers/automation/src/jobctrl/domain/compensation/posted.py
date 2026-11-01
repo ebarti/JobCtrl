@@ -1,19 +1,18 @@
-"""Deterministic parser for employer-posted compensation text."""
+"""Model extraction of pay meaning with mechanical exact-number checks."""
 
-from __future__ import annotations
-
-import hashlib
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal
+import hashlib
+import re
 from typing import Literal
-
+from pydantic import Field, StrictInt
+from jobctrl.domain.determinations import Citation, DeterminationModel, DeterminationFailure, Source, determine
+from jobctrl.domain.exact_values import numeric_literals
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
-PARSER_VERSION = "posted-compensation-v4"
+PARSER_VERSION = "posted-compensation-v5-determination"
 SOURCE_TEXT_LIMIT = 280
-
 ParseState = Literal["missing", "unparseable", "ambiguous", "parsed_range"]
 CompensationComponent = Literal["base_salary", "ote", "bonus", "commission", "equity", "unknown"]
 CompensationPeriod = Literal["hour", "month", "year", "unknown"]
@@ -34,19 +33,11 @@ WarningCode = Literal[
     "ote_component",
     "source_text_truncated",
 ]
-
-PARSE_STATES: tuple[ParseState, ...] = ("missing", "unparseable", "ambiguous", "parsed_range")
-COMPONENTS: tuple[CompensationComponent, ...] = (
-    "base_salary",
-    "ote",
-    "bonus",
-    "commission",
-    "equity",
-    "unknown",
-)
-PERIODS: tuple[CompensationPeriod, ...] = ("hour", "month", "year", "unknown")
-CONFIDENCE_LEVELS: tuple[ConfidenceLevel, ...] = ("none", "low", "medium", "high")
-WARNING_CODES: tuple[WarningCode, ...] = (
+PARSE_STATES = ("missing", "unparseable", "ambiguous", "parsed_range")
+COMPONENTS = ("base_salary", "ote", "bonus", "commission", "equity", "unknown")
+PERIODS = ("hour", "month", "year", "unknown")
+CONFIDENCE_LEVELS = ("none", "low", "medium", "high")
+WARNING_CODES = (
     "annual_period_inferred",
     "ambiguous_multiple_amounts",
     "bonus_component",
@@ -62,84 +53,8 @@ WARNING_CODES: tuple[WarningCode, ...] = (
     "ote_component",
     "source_text_truncated",
 )
-
-_AMOUNT_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9])(?:(?:[€$£]|[A-Z]{3})\s*)?(\d{1,3}(?:[,.]\d{3})+(?:\.\d+)?|\d+(?:[,.]\d+)?)(?:\s*[kK])?(?![A-Za-z0-9])",
-    re.IGNORECASE,
-)
-_NON_SALARY_AMOUNT_SCALE_RE = re.compile(
-    r"^(?:million|millions|billion|billions|trillion|trillions|mm|bn|b)\b",
-    re.IGNORECASE,
-)
-_CURRENCY_CODES = ("EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK")
-_CURRENCY_SYMBOLS = {"€": "EUR", "$": "USD", "£": "GBP"}
-_DIRECT_PERIOD_SUFFIX_RE = re.compile(
-    r"^\s*(?:(?:/|\bper\s+)(?:hour|hourly|hr|hrs|h|month|monthly|mo|mos|year|yearly|annum|yr|yrs)\b)",
-    re.IGNORECASE,
-)
-_PERIOD_CUE_PATTERNS: tuple[
-    tuple[CompensationPeriod, int, re.Pattern[str]],
-    ...,
-] = (
-    (
-        "hour",
-        0,
-        re.compile(r"/(?:h|hr|hrs|hour)\b|\bper\s+(?:h|hr|hrs|hour|hourly)\b"),
-    ),
-    (
-        "month",
-        0,
-        re.compile(r"/(?:mo|mos|month)\b|\bper\s+(?:mo|mos|month|monthly)\b"),
-    ),
-    (
-        "year",
-        0,
-        re.compile(
-            r"/(?:yr|yrs|year)\b|\bper\s+(?:yr|yrs|year|yearly|annum)\b",
-        ),
-    ),
-    ("hour", 1, re.compile(r"\b(?:hour|hourly)\b")),
-    ("month", 1, re.compile(r"\b(?:month|monthly)\b")),
-    (
-        "year",
-        1,
-        re.compile(r"\b(?:year|yearly|annual|annually|annum)\b"),
-    ),
-)
-_BARE_PERIOD_SUFFIX_PATTERNS: tuple[tuple[CompensationPeriod, re.Pattern[str]], ...] = (
-    (
-        "hour",
-        re.compile(
-            r"^(?P<gap>[ \t]{1,3})(?:hr|hrs)\b"
-            r"(?=[ \t]*(?:$|[-–—/,.;:!?()]|[\[\]{}]|\b(?:to|through|plus|and)\b))"
-        ),
-    ),
-    (
-        "year",
-        re.compile(
-            r"^(?P<gap>[ \t]{1,3})(?:yr|yrs)\b"
-            r"(?=[ \t]*(?:$|[-–—/,.;:!?()]|[\[\]{}]|\b(?:to|through|plus|and)\b))"
-        ),
-    ),
-)
-_MAX_PERIOD_CUE_DISTANCE = 64
-_ANNUAL_SALARY_FLOOR = 12_000
-_MAX_INFERRED_ANNUAL_CUE_DISTANCE = 32
-_BASE_SALARY_CUE_RE = re.compile(
-    r"\b(?:base salary|base pay|pay range|salary|wage|remuneration)\b",
-)
-_NON_SALARY_AMOUNT_CUE_RE = re.compile(
-    r"\b(?:bonus|commission|equity|stock|stipend|allowance|learning budget|"
-    r"training budget|wellness|home office|equipment|relocation)\b",
-)
-_UNSUPPORTED_SUBANNUAL_PERIOD_RE = re.compile(
-    r"/(?:d|day|wk|wks|week)\b|"
-    r"\b(?:hour|hours|hourly|day|days|daily|diem|week|weeks|weekly|workweek|workweeks|"
-    r"fortnight|fortnights|fortnightly|biweekly|semiweekly|"
-    r"month|months|monthly|semimonthly|bimonthly|"
-    r"quarter|quarters|quarterly|semiannual|semiannually|biannual|biannually|"
-    r"pay period|pay periods|pay cycle|pay cycles|paycheck|paychecks)\b",
-)
+# Format parsing remains available for numeric/source binding.
+_AMOUNT_PATTERN = re.compile(r"(?<![\w.])\d+(?:,\d{3})*(?:\.\d+)?(?:[kK](?!\w))?(?![\w.])")
 
 
 @dataclass(frozen=True)
@@ -175,549 +90,83 @@ class PostedCompensationFact:
     parsed_at: str
 
 
-def parse_posted_compensation(
-    source_text: str | None,
-    *,
-    tenant_id: str = "local",
-    job_id: JobId | None = None,
-    source_field: str = "jobs.salary",
-    parsed_at: str | None = None,
-) -> PostedCompensationFact:
-    """Parse a bounded salary/source string into a durable compensation fact."""
+class PostedPayExtraction(DeterminationModel):
+    parse_state: ParseState
+    currency: str | None = Field(pattern=r"^[A-Z]{3}$")
+    period: CompensationPeriod
+    component: CompensationComponent
+    minimum_amount: StrictInt | None = Field(ge=0)
+    maximum_amount: StrictInt | None = Field(ge=0)
+    confidence: ConfidenceLevel
+    warnings: list[WarningCode] = Field(max_length=16)
+    citations: list[Citation] = Field(max_length=12)
+    rationale: str = Field(min_length=1, max_length=1000)
 
-    if job_id is not None:
-        job_id = canonical_job_id(str(job_id))
-    now = parsed_at or datetime.now(timezone.utc).isoformat()
-    bounded, truncated = _bounded_source_text(source_text)
-    raw_fallback = bounded
-    source_hash = _source_hash(bounded)
-    warnings: list[WarningCode] = []
-    if truncated:
-        warnings.append("source_text_truncated")
 
-    if bounded is None:
-        return PostedCompensationFact(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            source_field=source_field,
-            source_text=None,
-            legacy_raw_salary=None,
-            parse_state="missing",
-            currency=None,
-            period="unknown",
-            component="unknown",
-            minimum_amount=None,
-            maximum_amount=None,
-            annualized_minimum_amount=None,
-            annualized_maximum_amount=None,
-            annualization_assumption=None,
-            confidence="none",
-            warnings=tuple(warnings),
-            parser_version=PARSER_VERSION,
-            source_hash=source_hash,
-            parsed_at=now,
+class ModelPostedPayExtractor:
+    def __init__(self, **dependencies):
+        self._dependencies = dependencies
+
+    def extract(self, text, *, entity_id):
+        source = Source(source_id="posted_compensation_source", text=text or "")
+
+        def validate(result):
+            numbers = {number for cite in result.citations for _, number in numeric_literals(cite.quote)}
+            amounts = (result.minimum_amount, result.maximum_amount)
+            if any(Decimal(value) not in numbers for value in amounts if value is not None):
+                raise DeterminationFailure("mismatched_value")
+            if all(value is not None for value in amounts) and amounts[0] > amounts[1]:
+                raise DeterminationFailure("invalid_numeric_range")
+            if result.parse_state == "parsed_range":
+                if not result.citations or not any(value is not None for value in amounts) or result.currency is None:
+                    raise DeterminationFailure("missing_compensation_citation")
+            elif any(value is not None for value in amounts):
+                raise DeterminationFailure("inconsistent_verdict")
+
+        return determine(
+            kind="posted_compensation",
+            schema=PostedPayExtraction,
+            schema_version="1",
+            prompt_version="posted-compensation-v1",
+            entity_id=entity_id,
+            sources=[source],
+            context={},
+            instruction="Extract the employer's stated compensation. Understand which amounts are pay rather than revenue, funding or benefits, what component and currency they describe, and whether they are a range, a floor or a ceiling. An uncertain or mixed pay statement remains ambiguous; absence remains missing. Cite the precise pay statements with verbatim spans and explain the decision. Preserve every stated amount, expanding only explicit numeric multipliers. Never infer an annual period from magnitude or silently promote bonus/equity/OTE into base salary.",
+            validate=validate,
+            **self._dependencies,
         )
 
-    lower = bounded.casefold()
-    warnings.extend(_component_warnings(lower))
-    currency = _detect_currency(bounded)
-    if currency is None:
-        warnings.append("missing_currency")
-    amounts = _extract_amounts(bounded)
-    period = _detect_period(bounded, amounts)
-    warnings.extend(_period_warnings(period))
-    if not amounts:
-        return _non_range_fact(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            source_field=source_field,
-            source_text=bounded,
-            raw_fallback=raw_fallback,
-            parse_state="unparseable",
-            confidence="low",
-            warnings=_dedupe_warnings([*warnings, "no_amount_found"]),
-            parsed_at=now,
-            source_hash=source_hash,
-        )
 
-    if len(amounts) > 2:
-        return _non_range_fact(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            source_field=source_field,
-            source_text=bounded,
-            raw_fallback=raw_fallback,
-            parse_state="ambiguous",
-            confidence="low",
-            warnings=_dedupe_warnings([*warnings, "ambiguous_multiple_amounts"]),
-            parsed_at=now,
-            source_hash=source_hash,
-        )
-    if len(amounts) > 1 and (_has_mixed_compensation_components(lower) or _has_additive_component_phrase(lower)):
-        return _non_range_fact(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            source_field=source_field,
-            source_text=bounded,
-            raw_fallback=raw_fallback,
-            parse_state="ambiguous",
-            confidence="low",
-            warnings=_dedupe_warnings([*warnings, "ambiguous_multiple_amounts"]),
-            parsed_at=now,
-            source_hash=source_hash,
-        )
-
-    component = _detect_component(lower, amounts)
-    annual_period_inferred = period == "unknown" and _should_infer_annual_salary(
-        lower,
-        amounts,
-        currency=currency,
-        component=component,
+def posted_fact_from_extraction(result, envelope, *, source_text, tenant_id, job_id, source_field, parsed_at=None):
+    lower, upper = result.minimum_amount, result.maximum_amount
+    multiplier = (
+        12 if result.period == "month" else 2080 if result.period == "hour" else 1 if result.period == "year" else None
     )
-    if annual_period_inferred:
-        period = "year"
-        warnings = [warning for warning in warnings if warning != "missing_period"]
-        warnings.append("annual_period_inferred")
-    minimum, maximum, one_sided = _range_bounds(amounts, lower)
-    if one_sided:
-        warnings.append("one_sided_range")
-    if _is_broad_range(minimum, maximum):
-        warnings.append("broad_range")
-
-    annual_min, annual_max, assumption = _annualize(
-        minimum,
-        maximum,
-        period,
-        inferred_annual=annual_period_inferred,
-    )
-    confidence = _confidence(period, currency, warnings)
+    cited = "\n".join(cite.quote for cite in result.citations) or (source_text or "")
     return PostedCompensationFact(
         tenant_id=tenant_id,
-        job_id=job_id,
+        job_id=canonical_job_id(str(job_id)) if job_id is not None else None,
         source_field=source_field,
-        source_text=bounded,
-        legacy_raw_salary=raw_fallback,
-        parse_state="parsed_range",
-        currency=currency,
-        period=period,
-        component=component,
-        minimum_amount=minimum,
-        maximum_amount=maximum,
-        annualized_minimum_amount=annual_min,
-        annualized_maximum_amount=annual_max,
-        annualization_assumption=assumption,
-        confidence=confidence,
-        warnings=_dedupe_warnings(warnings),
-        parser_version=PARSER_VERSION,
-        source_hash=source_hash,
-        parsed_at=now,
-    )
-
-
-def _non_range_fact(
-    *,
-    tenant_id: str,
-    job_id: JobId | None,
-    source_field: str,
-    source_text: str,
-    raw_fallback: str | None,
-    parse_state: Literal["unparseable", "ambiguous"],
-    confidence: ConfidenceLevel,
-    warnings: tuple[WarningCode, ...],
-    parsed_at: str,
-    source_hash: str,
-) -> PostedCompensationFact:
-    return PostedCompensationFact(
-        tenant_id=tenant_id,
-        job_id=job_id,
-        source_field=source_field,
-        source_text=source_text,
-        legacy_raw_salary=raw_fallback,
-        parse_state=parse_state,
-        currency=None,
-        period="unknown",
-        component="unknown",
-        minimum_amount=None,
-        maximum_amount=None,
-        annualized_minimum_amount=None,
-        annualized_maximum_amount=None,
-        annualization_assumption=None,
-        confidence=confidence,
-        warnings=warnings,
-        parser_version=PARSER_VERSION,
-        source_hash=source_hash,
-        parsed_at=parsed_at,
-    )
-
-
-def _bounded_source_text(value: str | None) -> tuple[str | None, bool]:
-    if value is None:
-        return None, False
-    normalized = re.sub(r"\s+", " ", str(value).strip())
-    if not normalized:
-        return None, False
-    if len(normalized) <= SOURCE_TEXT_LIMIT:
-        return normalized, False
-    return normalized[:SOURCE_TEXT_LIMIT].rstrip(), True
-
-
-def _source_hash(value: str | None) -> str:
-    payload = f"{PARSER_VERSION}\n{value or ''}".encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _detect_currency(text: str) -> str | None:
-    for symbol, code in _CURRENCY_SYMBOLS.items():
-        if symbol in text:
-            return code
-    upper = text.upper()
-    for code in _CURRENCY_CODES:
-        if re.search(rf"(?<![A-Z]){code}(?=\s*\d|\b)", upper):
-            return code
-    return None
-
-
-def _detect_period(text: str, amounts: list[_Amount]) -> CompensationPeriod:
-    """Resolve the pay period from cues governing the parsed amount.
-
-    Compensation excerpts can contain unrelated abbreviations such as "HR".
-    A period cue therefore has authority only when it is close to one of the
-    parsed amounts. Bare abbreviations additionally remain case-sensitive so
-    human-resources prose cannot become an hourly unit after whitespace
-    normalization. Explicit slash/per forms win a same-distance tie, and
-    conflicting equally-near cues fail closed to ``unknown``.
-    """
-
-    if not amounts:
-        return "unknown"
-    lower = text.casefold()
-    candidates: list[tuple[int, int, CompensationPeriod]] = []
-    for period, priority, pattern in _PERIOD_CUE_PATTERNS:
-        for match in pattern.finditer(lower):
-            distance = min(_distance_between(match.start(), match.end(), amount) for amount in amounts)
-            if distance <= _MAX_PERIOD_CUE_DISTANCE:
-                candidates.append((distance, priority, period))
-    for amount in amounts:
-        suffix = text[amount.end :]
-        for period, pattern in _BARE_PERIOD_SUFFIX_PATTERNS:
-            if match := pattern.match(suffix):
-                candidates.append((len(match.group("gap")), 1, period))
-    if not candidates:
-        return "unknown"
-    winning_distance, winning_priority, _period = min(candidates)
-    winning_periods = {
-        period
-        for distance, priority, period in candidates
-        if distance == winning_distance and priority == winning_priority
-    }
-    if len(winning_periods) != 1:
-        return "unknown"
-    return winning_periods.pop()
-
-
-def _distance_between(start: int, end: int, amount: _Amount) -> int:
-    if end <= amount.start:
-        return amount.start - end
-    if start >= amount.end:
-        return start - amount.end
-    return 0
-
-
-def _period_warnings(period: CompensationPeriod) -> list[WarningCode]:
-    if period == "hour":
-        return ["hourly_period"]
-    if period == "month":
-        return ["monthly_period"]
-    if period == "unknown":
-        return ["missing_period"]
-    return []
-
-
-def _should_infer_annual_salary(
-    lower: str,
-    amounts: list[_Amount],
-    *,
-    currency: str | None,
-    component: CompensationComponent,
-) -> bool:
-    """Infer an annual period only for an amount-local high-value salary.
-
-    Some employers state an ordinary professional salary without spelling out
-    "per year". The inference is intentionally narrower than component
-    detection: it requires currency, a salary/base-pay cue governing the
-    amount, and no nearby daily or weekly rate marker. Generic compensation,
-    bonuses, equity, low values, and unsupported subannual rates fail closed.
-    """
-
-    if currency is None or component != "base_salary" or not amounts:
-        return False
-    if any(amount.value < _ANNUAL_SALARY_FLOOR for amount in amounts):
-        return False
-    cue_distance = _nearest_pattern_distance(_BASE_SALARY_CUE_RE, lower, amounts)
-    if cue_distance is None or cue_distance > _MAX_INFERRED_ANNUAL_CUE_DISTANCE:
-        return False
-    non_salary_distance = _nearest_pattern_distance(
-        _NON_SALARY_AMOUNT_CUE_RE,
-        lower,
-        amounts,
-    )
-    if non_salary_distance is not None and non_salary_distance <= cue_distance:
-        return False
-    subannual_distance = _nearest_pattern_distance(
-        _UNSUPPORTED_SUBANNUAL_PERIOD_RE,
-        lower,
-        amounts,
-    )
-    return subannual_distance is None or subannual_distance > _MAX_INFERRED_ANNUAL_CUE_DISTANCE
-
-
-def _nearest_pattern_distance(
-    pattern: re.Pattern[str],
-    text: str,
-    amounts: list[_Amount],
-) -> int | None:
-    distances = [
-        _distance_between(match.start(), match.end(), amount) for match in pattern.finditer(text) for amount in amounts
-    ]
-    return min(distances) if distances else None
-
-
-def _detect_component(lower: str, amounts: list[_Amount]) -> CompensationComponent:
-    """Bind the amount to its nearest governing compensation cue.
-
-    Description excerpts can mention multiple compensation concepts. Component
-    authority belongs to the cue governing the parsed amount, not to an
-    unrelated word elsewhere in the bounded excerpt.
-    """
-
-    anchor_start = min(amount.start for amount in amounts)
-    anchor_end = max(amount.end for amount in amounts)
-    suffix = lower[anchor_end : anchor_end + 64]
-    additive_equity = re.match(
-        r"^.{0,40}(?:\+|\bplus\b|\band\b).{0,24}\b(?:equity|rsus?|stock options?)\b",
-        suffix,
-    )
-    if additive_equity is None and re.match(
-        r"^.{0,24}\b(?:in|as)\s+(?:equity|rsus?|stock options?)\b",
-        suffix,
-    ):
-        return "equity"
-    candidates: list[tuple[int, int, CompensationComponent]] = []
-    cue_patterns: tuple[tuple[CompensationComponent, re.Pattern[str]], ...] = (
-        ("equity", re.compile(r"\b(?:equity|stock) compensation\b")),
-        ("equity", re.compile(r"\b(?:equity|rsus?|stock options?)\b")),
-        ("ote", re.compile(r"\bote\b|on[- ]target earnings")),
-        ("commission", re.compile(r"\bcommission(?:\s+compensation)?\b")),
-        ("bonus", re.compile(r"\bbonus(?:\s+compensation)?\b")),
-        (
-            "base_salary",
-            re.compile(r"\b(?:base salary|base pay|base|pay range|salary|wage|remuneration)\b"),
+        source_text=cited[:SOURCE_TEXT_LIMIT] or None,
+        legacy_raw_salary=(source_text or "")[:SOURCE_TEXT_LIMIT] or None,
+        parse_state=result.parse_state,
+        currency=result.currency,
+        period=result.period,
+        component=result.component,
+        minimum_amount=lower,
+        maximum_amount=upper,
+        annualized_minimum_amount=lower * multiplier if lower is not None and multiplier else None,
+        annualized_maximum_amount=upper * multiplier if upper is not None and multiplier else None,
+        annualization_assumption="2080 hours/year"
+        if result.period == "hour"
+        else "12 months/year"
+        if result.period == "month"
+        else None,
+        confidence=result.confidence,
+        warnings=tuple(
+            dict.fromkeys([*result.warnings, *(["source_text_truncated"] if len(cited) > SOURCE_TEXT_LIMIT else [])])
         ),
-        ("unknown", re.compile(r"\b(?:total\s+)?compensation(?:\s+range)?\b")),
+        parser_version=PARSER_VERSION,
+        source_hash=hashlib.sha256((source_text or "").encode()).hexdigest(),
+        parsed_at=parsed_at or datetime.now(timezone.utc).isoformat(),
     )
-    for priority, (component, pattern) in enumerate(cue_patterns):
-        for match in pattern.finditer(lower):
-            if match.end() <= anchor_start:
-                distance = anchor_start - match.end()
-            elif match.start() >= anchor_end:
-                distance = match.start() - anchor_end
-            else:
-                distance = 0
-            candidates.append((distance, priority, component))
-    if not candidates:
-        return "unknown"
-    return min(candidates)[2]
-
-
-def _component_warnings(lower: str) -> list[WarningCode]:
-    warnings: list[WarningCode] = []
-    if re.search(r"\bote\b|on[- ]target earnings", lower):
-        warnings.append("ote_component")
-    if "bonus" in lower:
-        warnings.append("bonus_component")
-    if "commission" in lower:
-        warnings.append("commission_component")
-    if re.search(r"\bequity\b|\brsu\b|\bstock options?\b", lower):
-        warnings.append("equity_component")
-    return warnings
-
-
-def _has_mixed_compensation_components(lower: str) -> bool:
-    component_hits = 0
-    for pattern in (
-        r"\bbase\b|\bsalary\b|\bwage\b",
-        r"\bote\b|on[- ]target earnings",
-        r"\bbonus\b",
-        r"\bcommission\b",
-        r"\bequity\b|\brsu\b|\bstock options?\b",
-    ):
-        if re.search(pattern, lower):
-            component_hits += 1
-    return component_hits > 1
-
-
-def _has_additive_component_phrase(lower: str) -> bool:
-    return bool(
-        re.search(
-            r"(?:\+|\bplus\b|\band\b).{0,24}\b(?:bonus|commission|equity|rsu|stock options?|ote|on[- ]target earnings)\b",
-            lower,
-        )
-    )
-
-
-def _extract_amounts(text: str) -> list[_Amount]:
-    amounts: list[_Amount] = []
-    for match in _AMOUNT_PATTERN.finditer(text):
-        if text[match.end() :].lstrip().startswith("%"):
-            continue
-        if _has_non_salary_amount_scale(text, match.end()):
-            continue
-        token = match.group(0)
-        parsed = _parse_amount_token(token)
-        if parsed is None:
-            continue
-        if _is_small_prose_number(parsed, token, text, match.end()):
-            continue
-        amounts.append(_Amount(value=parsed, start=match.start(), end=match.end(), explicit_k="k" in token.casefold()))
-    if len(amounts) >= 2 and any(amount.explicit_k for amount in amounts):
-        amounts = [
-            _Amount(amount.value * 1000, amount.start, amount.end, amount.explicit_k)
-            if not amount.explicit_k and amount.value < 1000
-            else amount
-            for amount in amounts
-        ]
-    return amounts
-
-
-def _has_non_salary_amount_scale(text: str, amount_end: int) -> bool:
-    """Reject company metric amounts such as "$250 billion" or "6 million"."""
-
-    suffix = text[amount_end:].lstrip()
-    return bool(_NON_SALARY_AMOUNT_SCALE_RE.match(suffix))
-
-
-def _is_small_prose_number(value: int, token: str, text: str, amount_end: int) -> bool:
-    """Reject local prose counts such as "30 days per year" or "5 teams"."""
-
-    if value >= 10_000:
-        return False
-    if "k" in token.casefold() or _token_has_currency(token):
-        return False
-    if _DIRECT_PERIOD_SUFFIX_RE.match(text[amount_end:]):
-        return False
-    return True
-
-
-def _token_has_currency(token: str) -> bool:
-    if any(symbol in token for symbol in _CURRENCY_SYMBOLS):
-        return True
-    upper = token.upper()
-    return any(re.search(rf"(?<![A-Z]){code}\b", upper) for code in _CURRENCY_CODES)
-
-
-def _parse_amount_token(token: str) -> int | None:
-    cleaned = re.sub(r"[€$£A-Za-z\s]", "", token)
-    if not cleaned:
-        return None
-    multiplier = Decimal("1000") if "k" in token.casefold() else Decimal("1")
-    cleaned = _normalize_numeric_text(cleaned)
-    try:
-        amount = Decimal(cleaned) * multiplier
-    except InvalidOperation:
-        return None
-    if amount <= 0:
-        return None
-    rounded = int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    return rounded if rounded > 0 else None
-
-
-def _normalize_numeric_text(value: str) -> str:
-    if "," in value and "." in value:
-        if value.rfind(",") > value.rfind("."):
-            return value.replace(".", "").replace(",", ".")
-        return value.replace(",", "")
-    if "," in value:
-        before, after = value.rsplit(",", 1)
-        if len(after) == 3:
-            return value.replace(",", "")
-        return value.replace(",", ".")
-    if "." in value:
-        before, after = value.rsplit(".", 1)
-        if len(after) == 3 and len(before) <= 3:
-            return value.replace(".", "")
-    return value
-
-
-def _range_bounds(amounts: list[_Amount], lower: str) -> tuple[int | None, int | None, bool]:
-    if len(amounts) == 1:
-        value = amounts[0].value
-        if re.search(r"\b(up to|under|below|less than|max(?:imum)?)\b", lower):
-            return None, value, True
-        if re.search(r"\b(from|starting at|at least|min(?:imum)?)\b", lower) or "+" in lower:
-            return value, None, True
-        return value, value, False
-    first, second = amounts
-    low = min(first.value, second.value)
-    high = max(first.value, second.value)
-    return low, high, False
-
-
-def _is_broad_range(minimum: int | None, maximum: int | None) -> bool:
-    if minimum is None or maximum is None or minimum <= 0 or maximum <= minimum:
-        return False
-    return (maximum / minimum) >= 1.5 or (maximum - minimum) >= 75_000
-
-
-def _annualize(
-    minimum: int | None,
-    maximum: int | None,
-    period: CompensationPeriod,
-    *,
-    inferred_annual: bool = False,
-) -> tuple[int | None, int | None, str | None]:
-    if period == "year":
-        if inferred_annual:
-            return (
-                minimum,
-                maximum,
-                "High-value employer-stated salary is treated as annual because no shorter pay period was stated.",
-            )
-        return minimum, maximum, "Source text states annual compensation."
-    if period == "month":
-        return _multiply(minimum, 12), _multiply(maximum, 12), "Monthly amounts annualized by multiplying by 12."
-    if period == "hour":
-        return (
-            _multiply(minimum, 2080),
-            _multiply(maximum, 2080),
-            "Hourly amounts annualized by multiplying by 2,080 work hours.",
-        )
-    return None, None, None
-
-
-def _multiply(value: int | None, multiplier: int) -> int | None:
-    return None if value is None else value * multiplier
-
-
-def _confidence(
-    period: CompensationPeriod,
-    currency: str | None,
-    warnings: list[WarningCode],
-) -> ConfidenceLevel:
-    warning_set = set(warnings)
-    if period == "unknown" and currency is None:
-        return "low"
-    if {"hourly_period", "broad_range", "ambiguous_multiple_amounts"} & warning_set:
-        return "low"
-    if {
-        "annual_period_inferred",
-        "missing_currency",
-        "missing_period",
-        "monthly_period",
-        "one_sided_range",
-    } & warning_set:
-        return "medium"
-    return "high"
-
-
-def _dedupe_warnings(warnings: list[WarningCode]) -> tuple[WarningCode, ...]:
-    return tuple(dict.fromkeys(warnings))

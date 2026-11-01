@@ -338,15 +338,20 @@ commands are dispatched to the Python worker via JSON-RPC.
 | `softDeleteJob` | `DeleteJobUseCase` (Discovery) | **TypeScript API** | Tombstone write. No Python needed. |
 | `restoreJob` | `RestoreJobUseCase` (Discovery) | **TypeScript API** | Tombstone removal. |
 | `updateProfile` | `UpdateProfileUseCase` (Profile) | **TypeScript API** | Shared schema validation and normalized SQLite write. |
-| contact create / update / CSV import / soft-delete | `CreateContactUseCase` / `UpdateContactUseCase` / `ImportContactsUseCase` / `DeleteContactUseCase` (Contact & Outreach) | **TypeScript API** | Simple provenance-tagged SQLite writes; no LLM or browser. The Python worker's `SqliteContactRepository` writes the same tables and event types. |
+| contact create / update / CSV/vCard import / soft-delete | `CreateContactUseCase` / `UpdateContactUseCase` / `ImportContactsUseCase` / `DeleteContactUseCase` (Contact & Outreach) | **TypeScript API** | Simple provenance-tagged SQLite writes; no LLM or browser. The Python worker's `SqliteContactRepository` writes the same tables and event types. |
 | confirm research candidate | `ConfirmContactCandidateUseCase` (Contact & Outreach) | **TypeScript API** | Simple state transition — promotes a `needs_review` candidate into a stored `Contact` fact (INV-4), preserving provenance; no LLM or browser. |
 | run contact research | `RunContactResearchUseCase` → `ContactResearchWorkflow` (Contact & Outreach) | **Python worker** (via the `run_contact_research` JSON-RPC method / Temporal) | Requires the gateway-routed fetch + LLM extraction; reuses the shared spend preflight. |
-| generate / revise outreach draft | `GenerateOutreachDraftUseCase` / `ReviseOutreachDraftUseCase` (Contact & Outreach) | **Python worker** (via the synchronous `generate_outreach_draft` JSON-RPC method) | Requires the LLM synthesis + the reused materials truthfulness gate stack (deterministic detector, validator, judge, provenance); `editedBodyText` selects the revise path. No send (INV-1). |
+| generate / revise outreach draft | `GenerateOutreachDraftUseCase` / `ReviseOutreachDraftUseCase` (Contact & Outreach) | **Python worker** (via the synchronous `generate_outreach_draft` JSON-RPC method) | Requires structured synthesis, source-bound claim verification and independent quality review; `editedBodyText` selects the revise path. Exact canonical-state comparison fences publication; stale proposals return a conflict with unpublished results. No send (INV-1). |
 | approve / reject outreach draft | `ApproveOutreachDraftUseCase` / `RejectOutreachDraftUseCase` (Contact & Outreach) | **TypeScript API** | Simple lifecycle transition; approval is HARD-gated on the persisted `gate_results_json.passed` (INV-5). No LLM or browser; no send. |
 | log outreach send | `LogOutreachSendUseCase` (Contact & Outreach) | **TypeScript API** | Records a user-attested send of an *approved* draft (`OutreachSendLog`) — the only path to a "sent" thread; refuses a non-approved draft; distinct from approval; no transport (INV-1). |
 | schedule / complete / dismiss follow-up | `ScheduleFollowUpUseCase` / `CompleteFollowUpUseCase` / `DismissFollowUpUseCase` (Contact & Outreach) | **TypeScript API** | Simple state transition on a surfaced-only follow-up schedule (derived suggested date, user-editable); never auto-acted, never sent (INV-1, §9). |
 | pipeline run / discover / enrich / score / tailor / cover / apply | Stage commands that start Temporal workflows | **Python worker** (via JSON-RPC) | Requires LLM, browser, scraping infrastructure. |
 | profile import from PDF | `ImportProfileUseCase` (Profile) | **Python worker** (via JSON-RPC) | Requires `pypdf` + LLM extraction. |
+
+Outreach readers and both writer runtimes share the
+[publication boundary](../tailoring.md#outreach-publication-boundary): canonical
+comparison, append-preserving history and durable lifecycle events are atomic;
+slow model work holds no database writer.
 
 **Trade-off:** The TypeScript API hosting simple commands means the `StageStateMachine`
 logic exists in both TypeScript (via `packages/domain-types`) and Python. This

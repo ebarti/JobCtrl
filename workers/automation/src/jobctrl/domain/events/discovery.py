@@ -75,6 +75,21 @@ def create_source_location_candidate_discovered(
 
 
 @dataclass(frozen=True)
+class SourceLocationCandidateReviewedPayload:
+    candidate_id: str
+    coordinate_key: str
+    decision: str
+    reason: str
+    decided_at: str
+
+
+def create_source_location_candidate_reviewed(
+    tenant_id: TenantId, payload: SourceLocationCandidateReviewedPayload,
+) -> DomainEvent:
+    return create_domain_event("SourceLocationCandidateReviewed", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
 class SourceLocationCandidatePromotedPayload:
     candidate_id: str
     source_id: str

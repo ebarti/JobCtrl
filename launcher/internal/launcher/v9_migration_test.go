@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -82,7 +83,7 @@ exit 43
 		SourceDataDigest:    strings.Repeat("a", 64),
 		Status:              "ready",
 		TableCount:          117,
-		UserVersion:         currentJobCtrlSchemaVersion,
+		UserVersion:         v9JobCtrlSchemaVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +175,7 @@ func v9CandidateArtifactPaths(stateDir, journalID string) []string {
 	return paths
 }
 
-func TestInterruptedV9MigrationRecoveryRemovesCandidatesIntermediatesAndSidecars(t *testing.T) {
+func TestInterruptedV9MigrationRecoveryPreservesLivePairAndArtifacts(t *testing.T) {
 	for _, stage := range []release.State{release.PolicyPending, release.MigrationCandidateReady} {
 		t.Run(string(stage), func(t *testing.T) {
 			preserveMigrationSeams(t)
@@ -182,6 +183,9 @@ func TestInterruptedV9MigrationRecoveryRemovesCandidatesIntermediatesAndSidecars
 			pair, err := snapshotPair(fixture.ctx, fixture.old)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if got := lifecycleDatabaseValues(t, fixture.python, filepath.Join(fixture.state, "backups", pair.ID)); got["jobctrl.db"] != "oldjobctrl.db" || got["temporal.db"] != "oldtemporal.db" {
+				t.Fatalf("paired backup did not retain original values: %v", got)
 			}
 			journal, err := fixture.store.Begin("update", &fixture.old, &fixture.candidate, fixture.candidate.DescriptorSHA256)
 			if err != nil {
@@ -197,6 +201,12 @@ func TestInterruptedV9MigrationRecoveryRemovesCandidatesIntermediatesAndSidecars
 					t.Fatal(err)
 				}
 			}
+			// These commits occur after the paired backup and must not be
+			// overwritten by automatic recovery of an interrupted transition.
+			setLifecycleSQLitePair(t, fixture.python, fixture.state, "later")
+			if got := lifecycleDatabaseValues(t, fixture.python, fixture.state); got["jobctrl.db"] != "laterjobctrl.db" || got["temporal.db"] != "latertemporal.db" {
+				t.Fatalf("independent commits not visible before recovery: %v", got)
+			}
 			oldStarts := 0
 			startReleaseCommand = func(_ launchContext, receipt release.Receipt, journalID string) error {
 				if receipt != fixture.old || journalID != journal.ID {
@@ -206,21 +216,19 @@ func TestInterruptedV9MigrationRecoveryRemovesCandidatesIntermediatesAndSidecars
 				return nil
 			}
 
-			recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
-			if !recovered || err != nil {
-				t.Fatalf("recover interrupted %s = recovered:%v err:%v", stage, recovered, err)
-			}
-			if oldStarts != 1 {
-				t.Fatalf("interrupted %s old starts = %d", stage, oldStarts)
-			}
-			for _, path := range artifactPaths {
-				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-					t.Errorf("interrupted %s left migration artifact %q behind: %v", stage, path, err)
+			before := snapshotPreservedTransition(t, fixture)
+			for attempt := 0; attempt < 2; attempt++ {
+				recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
+				if recovered || err == nil || !strings.Contains(err.Error(), "retain the live databases") {
+					t.Fatalf("recovery %s attempt %d = recovered:%v err:%v", stage, attempt, recovered, err)
 				}
-			}
-			loaded, err := fixture.store.ReadJournal()
-			if err != nil || loaded.State != release.RolledBack || loaded.Resumable() {
-				t.Fatalf("interrupted %s journal = %#v, %v", stage, loaded, err)
+				if oldStarts != 0 || !reflect.DeepEqual(before, snapshotPreservedTransition(t, fixture)) {
+					t.Fatalf("recovery %s attempt %d changed live data, backup, artifacts, journal or release selection; old starts=%d", stage, attempt, oldStarts)
+				}
+				loaded, err := fixture.store.ReadJournal()
+				if err != nil || loaded.ID != journal.ID || loaded.State != stage || !loaded.Resumable() {
+					t.Fatalf("interrupted %s journal = %#v, %v", stage, loaded, err)
+				}
 			}
 		})
 	}
@@ -274,7 +282,7 @@ func TestLifecycleMigratesV6V7AndV8ToV9AndRestoresExactSourceOnRollback(t *testi
 				case fixture.candidate.BuildID:
 					candidateStarts++
 					version, err := sqliteUserVersion(fixture.python, filepath.Join(fixture.state, "jobctrl.db"))
-					if err != nil || version != currentJobCtrlSchemaVersion {
+					if err != nil || version != v9JobCtrlSchemaVersion {
 						t.Fatalf("candidate opened schema v%d, err=%v", version, err)
 					}
 				case fixture.old.BuildID:

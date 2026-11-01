@@ -7,6 +7,7 @@ import json
 
 from jobctrl.domain.materials.analysis import JobAnalysis, JobAnalysisDraft
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.infrastructure.analysis.prompts import build_synthesizer_user_prompt
 
 
@@ -22,6 +23,7 @@ class LlmAnalysisSynthesizer:
     def model_id(self) -> str:
         return f"{self._provider_id}:{self._model}"
 
+    @lane_bound("discovery")
     async def reconcile(
         self,
         system_prompt: str,

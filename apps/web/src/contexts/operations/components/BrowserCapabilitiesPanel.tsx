@@ -326,8 +326,8 @@ export function BrowserCapabilitiesPanel() {
         </CardTitle>
         <CardDescription>
           Review the managed browser and optional Apply browser. Discovery and
-          LinkedIn enrichment use the paired extension in your live Chrome
-          profile, configured separately below.
+          Enrich prefer the connected extension in your live Chrome profile;
+          without it, they use anonymous access. Pair the extension below.
         </CardDescription>
         <CardAction>
           <StatusBadge icon={false} tone="muted">
@@ -369,9 +369,7 @@ export function BrowserCapabilitiesPanel() {
                     <CardTitle>
                       <h3>{LABELS[capability.id]}</h3>
                     </CardTitle>
-                    <CardDescription>
-                      <p>{capability.detail}</p>
-                    </CardDescription>
+                    <CardDescription>{capability.detail}</CardDescription>
                   </div>
                   <StatusBadge
                     icon={false}

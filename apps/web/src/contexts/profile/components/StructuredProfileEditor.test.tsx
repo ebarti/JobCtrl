@@ -53,7 +53,7 @@ function StatefulEditor({
   onLatestProfile = () => undefined,
 }: {
   initialProfile?: JsonRecord;
-  mode?: "profile" | "preferences";
+  mode?: "profile" | "preferences" | "target-search";
   onLatestProfile?: (value: string) => void;
 }) {
   const [profile, setProfile] = useState(initialProfile);
@@ -84,6 +84,58 @@ function storedValueAt(profileText: string, path: string) {
 }
 
 describe("<StructuredProfileEditor>", () => {
+  it.each([
+    ["codes", "onsite, hybrid, remote"],
+    ["labels", "On-site, Hybrid, Remote"],
+    ["mixed formats", "onsite, On-site, hybrid, Hybrid, remote, Remote"],
+  ])("unchecks saved work models through one control per choice (%s)", async (_, saved) => {
+    const user = userEvent.setup();
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.experience = { target_locations: "Berlin; Amsterdam", target_work_models: `${saved}; remote` };
+    let latestProfile = JSON.stringify(initialProfile);
+    render(<StatefulEditor mode="target-search" initialProfile={initialProfile} onLatestProfile={(value) => { latestProfile = value; }} />);
+
+    const first = within(screen.getByRole("group", { name: "Target work model 1" }));
+    const second = within(screen.getByRole("group", { name: "Target work model 2" }));
+    const onsite = first.getByRole("checkbox", { name: "On-site" });
+    expect(first.getAllByRole("checkbox")).toHaveLength(3);
+    for (const label of ["On-site", "Hybrid", "Remote"]) {
+      expect(first.getByRole("checkbox", { name: label })).toHaveAttribute("aria-checked", "true");
+    }
+    expect(first.queryByRole("button", { name: /Remove saved work model/ })).not.toBeInTheDocument();
+
+    await user.click(onsite);
+    expect(onsite).toHaveAttribute("aria-checked", "false");
+    const rows = String(storedValueAt(latestProfile, "experience.target_work_models")).split("; ");
+    expect(rows[0]!.split(", ")).not.toContain("onsite");
+    expect(rows[0]!.split(", ")).not.toContain("On-site");
+    expect(rows[1]).toBe("remote");
+    expect(storedValueAt(latestProfile, "experience.target_locations")).toBe("Berlin; Amsterdam");
+    expect(first.getByRole("checkbox", { name: "Hybrid" })).toHaveAttribute("aria-checked", "true");
+    expect(first.getByRole("checkbox", { name: "Remote" })).toHaveAttribute("aria-checked", "true");
+    expect(second.getByRole("checkbox", { name: "Remote" })).toHaveAttribute("aria-checked", "true");
+
+    onsite.focus();
+    await user.keyboard(" ");
+    expect(onsite).toHaveAttribute("aria-checked", "true");
+    expect(String(storedValueAt(latestProfile, "experience.target_work_models")).split("; ")[0]!.split(", ")).toContain("onsite");
+  });
+
+  it("keeps an unrecognized saved work model visible until its checkbox is unchecked", async () => {
+    const user = userEvent.setup();
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.experience = { target_locations: "Berlin", target_work_models: "Remote, Custom schedule" };
+    let latestProfile = JSON.stringify(initialProfile);
+    render(<StatefulEditor mode="target-search" initialProfile={initialProfile} onLatestProfile={(value) => { latestProfile = value; }} />);
+    const group = within(screen.getByRole("group", { name: "Target work model 1" }));
+    const custom = group.getByRole("checkbox", { name: "Custom schedule" });
+    expect(custom).toHaveAttribute("aria-checked", "true");
+    expect(group.getByRole("checkbox", { name: "Remote" })).toHaveAttribute("aria-checked", "true");
+    await user.click(custom);
+    expect(storedValueAt(latestProfile, "experience.target_work_models")).toBe("Remote");
+    expect(group.getByRole("checkbox", { name: "Remote" })).toHaveAttribute("aria-checked", "true");
+  });
+
   it("marks profile and preferences disclosure subjects as equal card stacks", () => {
     const { container, rerender } = render(<StatefulEditor mode="profile" />);
 
@@ -510,9 +562,56 @@ describe("<StructuredProfileEditor>", () => {
     await user.keyboard("{Enter}");
     expect(within(first).getByRole("textbox", { name: "Bullet 1" })).toHaveFocus();
     const entries = JSON.parse(latestProfile).resume.experience_entries;
-    expect(entries.slice(-2).map((entry: { id: string }) => entry.id)).toEqual(["", ""]);
+    const addedIds = entries.slice(-2).map((entry: { id: string }) => entry.id);
+    expect(addedIds.every((id: string) => id.length > 0)).toBe(true);
+    expect(new Set(addedIds).size).toBe(2);
     expect(entries.at(-2).bullets).toEqual(["A3", "A1", "A2"]);
     expect(entries.at(-1).bullets).toEqual(["B1", "B2", "B3"]);
+  });
+
+  it("never reuses a removed draft identity or another entry kind's imported identity", async () => {
+    const user = userEvent.setup();
+    const initialProfile = structuredClone(sampleProfileResponse.profile) as JsonRecord;
+    const resume = initialProfile["resume"] as JsonRecord;
+    resume["skill_categories"] = [{ id: "skill-1", label: "Original skills", items: ["Python"] }];
+    (resume["experience_entries"] as JsonRecord[])[0]!["id"] = "skill-2";
+    (resume["tailoring_rules"] as JsonRecord)["required_experience_entry_ids"] = ["skill-2"];
+    (resume["tailoring_rules"] as JsonRecord)["required_skill_category_ids"] = ["skill-1"];
+    let latestProfile = JSON.stringify(initialProfile);
+    render(<StatefulEditor initialProfile={initialProfile} onLatestProfile={(value) => { latestProfile = value; }} />);
+    await user.click(screen.getByRole("button", { name: /^Skill categories\b/ }));
+    await user.click(screen.getByRole("button", { name: "Add skill category" }));
+    const firstId = JSON.parse(latestProfile).resume.skill_categories[1].id;
+    expect(["skill-1", "skill-2", ""]).not.toContain(firstId);
+    await user.click(screen.getAllByRole("button", { name: "Remove skill category" })[1]!);
+    await user.click(screen.getByRole("button", { name: "Add skill category" }));
+    const replacementId = JSON.parse(latestProfile).resume.skill_categories[1].id;
+    expect(["skill-1", "skill-2", firstId, ""]).not.toContain(replacementId);
+    const expected = structuredClone(initialProfile);
+    (expected["resume"] as JsonRecord)["skill_categories"] = [
+      { id: "skill-1", label: "Original skills", items: ["Python"] },
+      { id: replacementId, label: "", items: [""] },
+    ];
+    expect(JSON.parse(latestProfile)).toEqual(expected);
+  });
+
+  it.each([
+    ["Experience entries", "Add experience", "experience_entries", "required_bullets_by_experience_id", "experience-1"],
+    ["Skill categories", "Add skill category", "skill_categories", "required_skills_by_category_id", "skill-2"],
+  ])("does not inherit required content from a removed identity when adding %s", async (section, addLabel, collection, requiredMap, danglingId) => {
+    const user = userEvent.setup();
+    const initialProfile = structuredClone(sampleProfileResponse.profile) as JsonRecord;
+    const resume = initialProfile["resume"] as JsonRecord;
+    const entries = resume[collection] as JsonRecord[];
+    expect(entries.map((entry) => entry["id"])).not.toContain(danglingId);
+    (resume["tailoring_rules"] as JsonRecord)[requiredMap] = { [danglingId]: ["Preserved required content"] };
+    let latestProfile = JSON.stringify(initialProfile);
+    render(<StatefulEditor initialProfile={initialProfile} onLatestProfile={(value) => { latestProfile = value; }} />);
+    await user.click(screen.getByRole("button", { name: new RegExp(`^${section}\\b`) }));
+    await user.click(screen.getByRole("button", { name: addLabel }));
+    const saved = JSON.parse(latestProfile);
+    expect(saved.resume[collection].at(-1).id).not.toBe(danglingId);
+    expect(saved.resume.tailoring_rules[requiredMap]).toEqual({ [danglingId]: ["Preserved required content"] });
   });
 
   it("renders bullet standards as a combined fixed set", () => {

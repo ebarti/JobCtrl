@@ -160,23 +160,46 @@ function recoveryCoverage(
 }
 
 function recoveryStateLabel(snapshot: PipelineOperationsSnapshot): string {
+  const checkingLabel = snapshot.execution
+    ? snapshot.execution.workflowStatus === "in_progress"
+      ? "Checking current run"
+      : "Checking previous run"
+    : "Checking pipeline activity";
   return snapshot.projectionCoverage?.status === "incomplete"
     ? "Previous run incomplete"
     : snapshot.projectionCoverage?.status === "retrying"
     ? "Check will retry"
     : snapshot.projectionCoverage?.status === "recovering" || snapshot.execution
-      ? "Checking previous run"
+      ? checkingLabel
       : "No selected execution";
 }
 
-function canSafelyPrepareNewDiscoverRun(
+function canPrepareNewDiscoverRun(
   snapshot: PipelineOperationsSnapshot,
 ): boolean {
-  return (
-    snapshot.activeItemsTotal === 0 &&
-    snapshot.capacity.status === "available" &&
-    snapshot.capacity.activeSlots === 0
-  );
+  if (activeRuntimeOccupancy(snapshot) === 0) return true;
+  const capacity = snapshot.capacity;
+  // Old heartbeat rows are not proof of either a live or stopped worker. Keep
+  // the user-initiated path available when every reporting worker is idle;
+  // Temporal still prevents concurrent Discover executions for this tenant.
+  return capacity.status === "available" && capacity.staleWorkerCount > 0 &&
+    capacity.freshWorkerCount > 0 && capacity.invalidWorkerCount === 0 &&
+    capacity.activeSlots === 0 && snapshot.activeItemsTotal === 0 &&
+    snapshot.activeItemsTruncated === false;
+}
+
+/** The detail total is only an allowlisted subset of the occupied slots. */
+function activeRuntimeOccupancy(snapshot: PipelineOperationsSnapshot): number | null {
+  if (snapshot.capacity.status !== "available" ||
+      snapshot.capacity.freshWorkerCount === 0 || snapshot.capacity.invalidWorkerCount > 0 ||
+      snapshot.activeItemsTotal === null || snapshot.activeItemsTruncated === null) return null;
+  if (snapshot.capacity.activeSlots > 0) return snapshot.capacity.activeSlots;
+  if (snapshot.capacity.staleWorkerCount > 0) return null;
+  return snapshot.activeItemsTotal === 0 && snapshot.activeItemsTruncated === false ? 0 : null;
+}
+
+function hasStaleWorkers(snapshot: PipelineOperationsSnapshot): boolean {
+  return snapshot.capacity.status === "available" && snapshot.capacity.staleWorkerCount > 0;
 }
 
 function executionNeedsReplacement(
@@ -192,17 +215,33 @@ function executionNeedsReplacement(
 
 function discoverRunBlockReason(
   snapshot: PipelineOperationsSnapshot,
-): string | null {
+  refreshFailed = false,
+): ReactNode {
+  if (refreshFailed) {
+    return "Pipeline operations must refresh before starting a new Discover run.";
+  }
   const execution = snapshot.execution;
   const needsReplacementGuard =
     (execution ? executionNeedsReplacement(execution) : false) ||
     snapshot.projectionCoverage?.status === "incomplete";
   if (!needsReplacementGuard) return null;
-  if (canSafelyPrepareNewDiscoverRun(snapshot)) return null;
+  if (canPrepareNewDiscoverRun(snapshot)) return null;
   if (snapshot.capacity.status !== "available") {
     return "Shared runtime capacity must be available before starting a new Discover run.";
   }
-  return "Wait for active pipeline work to finish before starting a new Discover run.";
+  const activeCount = snapshot.capacity.activeSlots;
+  const stages = snapshot.activeStageCounts?.length
+    ? `Active stages: ${activeStageSummary(snapshot)}. `
+    : "";
+  return (
+    <>
+      {activeCount > 0
+        ? `Discover is waiting for ${hasStaleWorkers(snapshot) ? "at least " : ""}${activeCount} running worker ${activeCount === 1 ? "task" : "tasks"} to finish.`
+        : "JobCtrl cannot confirm that all active work has finished."}{" "}
+      {stages}Status updates automatically.{" "}
+      <a className="underline underline-offset-4" href="/runs">Review active runs</a> to inspect progress or cancel work.
+    </>
+  );
 }
 
 function PipelineStatus({
@@ -505,8 +544,27 @@ function CapacityLedger({
               />
               <InspectorLedgerItem label="Active slots" value={capacity.activeSlots} />
               <InspectorLedgerItem
-                label="Available slots"
+                label="Free Temporal slots"
                 value={capacity.availableSlots}
+              />
+              <InspectorLedgerItem
+                label="Stage work admission"
+                value={blockingAdmissionSummary(capacity)}
+              />
+              <InspectorLedgerItem
+                label="Short control admission"
+                value={controlAdmissionSummary(capacity)}
+              />
+              <InspectorLedgerItem
+                label="Unfinished control calls"
+                value={capacity.blockingExecutor?.controlUnfinishedCalls === undefined
+                  ? "Unknown" : `${capacity.blockingExecutor.controlUnfinishedCalls} reported`}
+              />
+              <InspectorLedgerItem
+                label="Unfinished retired calls"
+                value={capacity.blockingExecutor
+                  ? `${capacity.blockingExecutor.unfinishedRetiredCalls} reported`
+                  : "Unknown"}
               />
               <InspectorLedgerItem
                 label="Executor threads"
@@ -531,6 +589,12 @@ function CapacityLedger({
             <InspectorLedgerItem label="Reason" value={capacity.reason} />
           )}
         </InspectorLedger>
+        {capacity.status === "available" && capacity.staleWorkerCount > 0 ? (
+          <p>Slot, executor, admission, and unfinished-call figures describe reporting workers only. Other workers' activity and admission are unconfirmed.</p>
+        ) : null}
+        {capacity.status === "available" && capacity.blockingExecutor?.unfinishedRetiredCalls ? (
+          <p>These calls may still be running. Cancellation does not confirm that they or their child processes stopped.</p>
+        ) : null}
       </section>
       <TaskQueueLedger queue={capacity.approximateTaskQueue} />
     </div>
@@ -704,7 +768,7 @@ function StageRows({
                     title={
                       trackingReady
                         ? "No tracked work is available for an ETA."
-                        : "The estimate will appear after JobCtrl finishes checking the previous run."
+                        : "The estimate will appear after JobCtrl finishes checking the run records."
                     }
                   />
                 )}
@@ -811,7 +875,7 @@ function PipelineStageRow({
         ) : (
           <p className="pipeline-stage-row__recovery-copy" data-typography="body">
             Completion counts and estimates will appear automatically after JobCtrl
-            finishes checking the previous run.
+            finishes checking the run records.
           </p>
         )}
       </div>
@@ -819,7 +883,7 @@ function PipelineStageRow({
   );
 }
 
-interface ExecutionFailureCopy {
+interface ExecutionNoticeCopy {
   readonly description: string;
   readonly title: string;
 }
@@ -827,13 +891,13 @@ interface ExecutionFailureCopy {
 function executionFailureCopy(
   phase: "completed_with_issues" | "failed",
   errorCode: string | null,
-): ExecutionFailureCopy {
+): ExecutionNoticeCopy {
   if (phase === "completed_with_issues") {
     if (errorCode === "source_retry_exhausted") {
       return {
         title: "Discovery completed with source issues",
         description:
-          "One or more source tasks exhausted their automatic retries. Review the exact stage outcomes below to see what completed and what needs another pass. Once active-work status confirms nothing is running, use Set up a new Discover run to retry unfinished source work.",
+          "One or more source tasks exhausted their automatic retries. Review the exact stage outcomes below to see what completed and what needs another pass. Review active-work status before using Set up a new Discover run to retry unfinished source work.",
       };
     }
 
@@ -842,7 +906,7 @@ function executionFailureCopy(
       : "";
     return {
       title: "Discovery completed with issues",
-      description: `${reportedReason}Review the exact stage outcomes below. Once active-work status confirms nothing is running, use Set up a new Discover run to retry unfinished work.`,
+      description: `${reportedReason}Review the exact stage outcomes and active-work status before using Set up a new Discover run to retry unfinished work.`,
     };
   }
 
@@ -850,7 +914,7 @@ function executionFailureCopy(
     return {
       title: "Previous discovery history is unavailable",
       description:
-        "The previous Temporal workflow history can no longer be found, so that run cannot resume. Start Discover again below to create a new run when no active work remains. New runs use persistent local history and survive normal app restarts.",
+        "The previous Temporal workflow history can no longer be found, so that run cannot resume. Start Discover again below after reviewing active work. New runs use persistent local history and survive normal app restarts.",
     };
   }
 
@@ -863,12 +927,22 @@ function executionFailureCopy(
   };
 }
 
-function failedExecutionActivityCopy(activeItemsTotal: number | null): string {
-  if (activeItemsTotal === 0) return "No work is running.";
-  if (activeItemsTotal === null) {
+function failedExecutionActivityCopy(snapshot: PipelineOperationsSnapshot): string {
+  const occupied = activeRuntimeOccupancy(snapshot);
+  if (occupied === 0) return "No remote worker activity is reported.";
+  if (occupied === null) {
+    if (hasStaleWorkers(snapshot) && canPrepareNewDiscoverRun(snapshot)) {
+      return "Some worker reports are out of date, so JobCtrl cannot confirm whether background work remains active. You can review a new Discover setup; if a Discover run is already active, JobCtrl will reuse it.";
+    }
     return "The runtime inventory is unavailable, so JobCtrl cannot confirm whether work remains active.";
   }
-  return `${activeItemsTotal} active work ${activeItemsTotal === 1 ? "item remains" : "items remain"}. Review active work before restarting discovery.`;
+  const prefix = hasStaleWorkers(snapshot) ? "At least " : "";
+  const stale = hasStaleWorkers(snapshot) ? " Other worker activity is unconfirmed." : "";
+  if (snapshot.activeItemsTotal === 0) {
+    return `${prefix}${occupied} background worker ${occupied === 1 ? "activity is" : "activities are"} running. Activity details are unavailable.${stale} Review active work before restarting discovery.`;
+  }
+  const detail = snapshot.activeItemsTruncated !== false ? " Some activity details are unavailable." : "";
+  return `${prefix}${occupied} active work ${occupied === 1 ? "item remains" : "items remain"}.${detail}${stale} Review active work before restarting discovery.`;
 }
 
 function PipelineExecutionNotice({
@@ -887,24 +961,40 @@ function PipelineExecutionNotice({
   const isClosedDraining =
     execution.phase === "draining" &&
     execution.workflowStatus !== "in_progress";
-  let copy: ExecutionFailureCopy;
+  const canStartNewRun = canPrepareNewDiscoverRun(snapshot);
+  const showPreparationProgress =
+    isClosedDraining &&
+    execution.workflowStatus === "succeeded" &&
+    execution.errorCode === null &&
+    !canStartNewRun;
+  let copy: ExecutionNoticeCopy;
   if (
     execution.phase === "failed" ||
     execution.phase === "completed_with_issues"
   ) {
     copy = executionFailureCopy(execution.phase, execution.errorCode);
+  } else if (showPreparationProgress) {
+    const remaining =
+      execution.currentExecution.remaining + execution.sweptExistingBacklog.remaining;
+    copy = {
+      title: "Source collection complete",
+      description:
+        `${remaining} ${remaining === 1 ? "job remains" : "jobs remain"} in scoring or material preparation. Follow the live stages below for running and waiting work; progress updates automatically.`,
+    };
   } else if (isClosedDraining) {
     copy = {
       title: "This Discover run has ended",
       description:
-        "The selected workflow is closed, so there is no paused workflow to resume. Use Set up a new Discover run to continue the remaining work once shared runtime capacity is idle.",
+        `${execution.finishedAt ? `This run ended on ${formatDateTime(execution.finishedAt)}. ` : ""}The selected workflow is closed, so there is no paused workflow to resume. Use Set up a new Discover run to review the remaining work.`,
     };
   } else {
     return null;
   }
 
-  const activityCopy = failedExecutionActivityCopy(snapshot.activeItemsTotal);
-  const canStartNewRun = canSafelyPrepareNewDiscoverRun(snapshot);
+  const activityCopy =
+    showPreparationProgress && snapshot.activeItemsTotal !== null
+      ? null
+      : failedExecutionActivityCopy(snapshot);
   return (
     <div className="pipeline-recovery-notice">
       <Alert
@@ -963,6 +1053,38 @@ function PipelineOverviewFact({
   );
 }
 
+function blockingAdmissionSummary(capacity: Extract<PipelineCapacity, { status: "available" }>): string {
+  const blocking = capacity.blockingExecutor;
+  if (!blocking) return "Stage work admission unknown";
+  const parts = [];
+  if (blocking.refusingWorkers > 0) {
+    parts.push(`${blocking.refusingWorkers} worker${blocking.refusingWorkers === 1 ? "" : "s"} refusing stage work`);
+  }
+  if (blocking.unknownWorkers > 0) {
+    parts.push(`${blocking.unknownWorkers} worker${blocking.unknownWorkers === 1 ? "" : "s"} with unknown admission`);
+  }
+  if (parts.length === 0) {
+    if (blocking.acceptingWorkers === 0) return "Stage work admission unknown";
+    parts.push("Workers accepting stage work");
+  } else if (blocking.acceptingWorkers > 0) {
+    parts.push(`${blocking.acceptingWorkers} worker${blocking.acceptingWorkers === 1 ? "" : "s"} accepting`);
+  }
+  const summary = parts.join(" · ");
+  return capacity.staleWorkerCount > 0 ? `${summary} (reporting workers only)` : summary;
+}
+
+function controlAdmissionSummary(capacity: Extract<PipelineCapacity, { status: "available" }>): string {
+  const blocking = capacity.blockingExecutor;
+  if (!blocking || blocking.controlUnknownWorkers === undefined) return "Unknown";
+  const parts = [];
+  if (blocking.controlRefusingWorkers) parts.push(`${blocking.controlRefusingWorkers} refusing`);
+  if (blocking.controlUnknownWorkers) parts.push(`${blocking.controlUnknownWorkers} unknown`);
+  if (blocking.controlAcceptingWorkers) parts.push(`${blocking.controlAcceptingWorkers} accepting`);
+  if (!parts.length) return "Unknown";
+  const summary = parts.join(" · ");
+  return capacity.staleWorkerCount > 0 ? `${summary} (reporting workers only)` : summary;
+}
+
 function humanStageLabel(
   snapshot: PipelineOperationsSnapshot,
   stageId: string,
@@ -976,17 +1098,20 @@ function humanStageLabel(
 function activeStageSummary(snapshot: PipelineOperationsSnapshot): string {
   if (snapshot.activeStageCounts === null) return "Stage breakdown unavailable";
   if (snapshot.activeStageCounts.length === 0) {
-    return snapshot.activeItemsTotal && snapshot.activeItemsTotal > 0
-      ? `${snapshot.activeItemsTotal} unclassified runtime ${
-          snapshot.activeItemsTotal === 1 ? "activity" : "activities"
+    const occupied = activeRuntimeOccupancy(snapshot);
+    if (occupied === null) return "Stage breakdown unavailable";
+    return occupied > 0
+      ? `${hasStaleWorkers(snapshot) ? "At least " : ""}${occupied} unclassified runtime ${
+          occupied === 1 ? "activity" : "activities"
         }`
       : "No active stages";
   }
-  return snapshot.activeStageCounts
+  const summary = snapshot.activeStageCounts
     .map(
       ({ count, stage }) => `${humanStageLabel(snapshot, stage)} ${count}`,
     )
     .join(" · ");
+  return hasStaleWorkers(snapshot) ? `${summary} (reporting workers only)` : summary;
 }
 
 function queueBacklogSummary(capacity: PipelineCapacity): {
@@ -1023,17 +1148,49 @@ function ProjectionCoverageNotice({
 }) {
   const coverage = recoveryCoverage(snapshot);
   if (!coverage) return null;
+  if (snapshot.execution === null) {
+    const canRequest = hasStaleWorkers(snapshot) && canPrepareNewDiscoverRun(snapshot);
+    return (
+      <Alert className="pipeline-coverage-alert">
+        <IconAlertTriangle aria-hidden="true" />
+        <AlertTitle>Discover run not identified</AlertTitle>
+        <AlertDescription>
+          JobCtrl has not identified a Discover run for this activity. Standalone
+          job preparation may still be running. Selected-run completion counts and
+          estimates are unavailable until a run is identified and its records are
+          verified. This page checks for updates every 15 seconds while visible.
+          Current worker, queue, and activity counts remain visible below.
+          {canRequest
+            ? " Some worker reports are out of date, so background activity is unconfirmed. If a Discover run is already active, JobCtrl will reuse it."
+            : ""}
+        </AlertDescription>
+        {canRequest ? (
+          <AlertAction>
+            <a className={buttonVariants({ size: "sm" })} href="#pipeline-actions" onClick={onPrepareNewDiscoverRun}>
+              Set up a new Discover run
+            </a>
+          </AlertAction>
+        ) : null}
+      </Alert>
+    );
+  }
   const isRetrying = coverage.status === "retrying";
   const isIncomplete = coverage.status === "incomplete";
-  const canStartNewRun = isIncomplete && canSafelyPrepareNewDiscoverRun(snapshot);
+  const currentRun = snapshot.execution?.workflowStatus === "in_progress";
+  const runReference = snapshot.execution
+    ? currentRun
+      ? "this Discover run"
+      : "the previous Discover run"
+    : "the Discover run";
+  const canStartNewRun = isIncomplete && canPrepareNewDiscoverRun(snapshot);
   const membershipProgress =
     coverage.expectedMembershipCount === null
-      ? `${coverage.persistedMembershipCount} linked jobs checked so far`
-      : `${coverage.persistedMembershipCount} of ${coverage.expectedMembershipCount} linked jobs checked`;
+      ? `${coverage.persistedMembershipCount} linked jobs recorded so far`
+      : `${coverage.persistedMembershipCount} of ${coverage.expectedMembershipCount} linked jobs recorded`;
   const stepProgress =
     coverage.expectedStepCount === null
-      ? `${coverage.persistedStepCount} stage records checked so far`
-      : `${coverage.persistedStepCount} of ${coverage.expectedStepCount} stage records checked`;
+      ? `${coverage.persistedStepCount} stage records stored so far`
+      : `${coverage.persistedStepCount} of ${coverage.expectedStepCount} stage records stored`;
   const errorCopy =
     isRetrying && coverage.errorCode
       ? ` Last check result: ${sentenceCase(coverage.errorCode)}.`
@@ -1052,8 +1209,8 @@ function ProjectionCoverageNotice({
         {isIncomplete
           ? "Previous run record is incomplete"
           : isRetrying
-          ? "Previous run check will retry automatically"
-          : "Checking previous run records"}
+          ? "Run record check will retry automatically"
+          : `${recoveryStateLabel(snapshot)} records`}
       </AlertTitle>
       <AlertDescription>
         {isIncomplete ? (
@@ -1064,13 +1221,26 @@ function ProjectionCoverageNotice({
             the missing historical targets cannot be reconstructed safely. This closed
             run will not be retried automatically. Global worker, queue, and activity
             facts remain live below.
+            {hasStaleWorkers(snapshot) && canStartNewRun
+              ? " Some worker reports are out of date, so background activity is unconfirmed. If a Discover run is already active, JobCtrl will reuse it."
+              : ""}
           </>
         ) : (
           <>
-            JobCtrl is verifying the previous Discover run before showing its completion
-            counts and estimates: {membershipProgress}; {stepProgress}.{errorCopy} This
-            check finishes automatically and needs no restart. Live worker, queue, and
-            activity facts remain visible below.
+            JobCtrl is verifying {runReference} before showing its completion
+            counts and estimates: {membershipProgress}; {stepProgress}.{errorCopy}{" "}
+            {coverage.expectedMembershipCount === null || coverage.expectedStepCount === null
+              ? "The total record count is not available yet. "
+              : ""}
+            {coverage.updatedAt ? (
+              <>
+                Last record update:{" "}
+                <time dateTime={coverage.updatedAt}>{formatDateTime(coverage.updatedAt)}</time>.{" "}
+              </>
+            ) : "No record update has been reported yet. "}
+            These counts show tracking coverage. This page checks for
+            updates every 15 seconds while visible. Live worker, queue, and activity
+            facts remain visible below.
           </>
         )}
       </AlertDescription>
@@ -1105,7 +1275,7 @@ function PipelineLiveFlow({
     snapshot.execution?.workflowStatus === "in_progress" &&
     (snapshot.execution.phase === "discovering" ||
       snapshot.execution.phase === "draining");
-  const activeInventory = snapshot.activeItemsTotal;
+  const activeInventory = activeRuntimeOccupancy(snapshot);
   const queueBacklog = queueBacklogSummary(capacity);
 
   return (
@@ -1118,7 +1288,7 @@ function PipelineLiveFlow({
           <p data-typography="body">
             {trackingReady
               ? "Current discovery stages, shared workers, and work that needs attention."
-              : "Shared workers, queue pressure, and active runtime work remain visible while the previous run is checked."}
+              : "Shared workers, queue pressure, and active runtime work remain visible while run records are checked."}
           </p>
         </div>
         {isActive && snapshot.execution?.discoverWorkflowId ? (
@@ -1153,7 +1323,7 @@ function PipelineLiveFlow({
         <PipelineOverviewFact
           description={
             capacity.status === "available"
-              ? `${capacity.availableSlots} available in the shared activity pool`
+              ? `${capacity.availableSlots} free Temporal slots${capacity.staleWorkerCount > 0 ? " among reporting workers · Other workers unconfirmed" : ""} · ${blockingAdmissionSummary(capacity)} · Short controls: ${controlAdmissionSummary(capacity)}`
               : "Runtime capacity has not been reported"
           }
           label="Worker slots in use"
@@ -1166,9 +1336,9 @@ function PipelineLiveFlow({
         <PipelineOverviewFact
           description={`${activeStageSummary(snapshot)}${
             snapshot.activeItemsTruncated ? " · Partial inventory" : ""
-          }`}
+          }${hasStaleWorkers(snapshot) ? " · Some worker reports are stale" : ""}`}
           label="Active work"
-          value={activeInventory === 0 ? "No active work" : activeInventory ?? "Unknown"}
+          value={activeInventory === 0 ? "No remote activity" : activeInventory === null ? "Unknown" : `${hasStaleWorkers(snapshot) ? "At least " : ""}${activeInventory}`}
         />
         <PipelineOverviewFact
           description={queueBacklog.description}
@@ -1189,7 +1359,7 @@ function PipelineLiveFlow({
                         snapshot.sourceFamilies.providerProgress,
                     }
                   : {})}
-                recoveryLabel="Checking previous run"
+                recoveryLabel={recoveryStateLabel(snapshot)}
                 stage={stage}
                 trackingReady
               />
@@ -1436,6 +1606,8 @@ function ActiveItemTitle({
     case "orchestration":
       return item.operation;
     case "unresolved_runtime_activity":
+      if (item.activityType === "job_url_import") return "Import job URL";
+      if (item.activityType === "check_saved_posting_availability") return "Saved posting checks";
       return item.stage
         ? humanStageLabel(snapshot, item.stage)
         : safeOperationalIdentifier(item.opaqueId);
@@ -1624,15 +1796,19 @@ function PipelineInspector({
         <CapacityLedger capacity={snapshot.capacity} />
       </DisclosureSection>
       <DisclosureSection
-        collapsedSummary={`${snapshot.activeItemsTotal ?? "Unknown"} total${snapshot.activeItemsTruncated ? " · truncated" : ""}`}
-        description="Runtime inventory and the provenance available for every active activity."
+        collapsedSummary={`${activeRuntimeOccupancy(snapshot) === null ? "Unknown" : `${hasStaleWorkers(snapshot) ? "At least " : ""}${activeRuntimeOccupancy(snapshot)}`} active · ${snapshot.activeItemsTotal === null ? "unknown" : snapshot.activeItems.length} details shown${snapshot.activeItemsTruncated ? " · partial details" : ""}`}
+        description="Shared worker activity and the available privacy-safe details."
         headingLevel={3}
         title="Active work"
       >
         <InspectorLedger>
           <InspectorLedgerItem
-            label="Inventory total"
+            label="Activities eligible for details"
             value={snapshot.activeItemsTotal ?? "Unknown"}
+          />
+          <InspectorLedgerItem
+            label="Details shown"
+            value={snapshot.activeItemsTotal === null ? "Unknown" : snapshot.activeItems.length}
           />
           <InspectorLedgerItem
             label="Inventory truncated"
@@ -1656,7 +1832,13 @@ function PipelineInspector({
             ))}
           </ol>
         ) : (
-          <Empty title="No active work is visible in the current runtime inventory." />
+          <Empty
+            title={snapshot.activeItemsTotal === null || activeRuntimeOccupancy(snapshot) === null
+              ? "Active work details are unavailable."
+              : activeRuntimeOccupancy(snapshot)! > 0
+                ? "No details were returned for the active work."
+                : "No remote worker activity is visible in the current inventory."}
+          />
         )}
       </DisclosureSection>
     </div>
@@ -1750,7 +1932,9 @@ function PipelineHeader({
         <div data-summary-priority="primary">
           <dt>Telemetry</dt>
           <dd data-typography="strong-body">
-            <PipelineStatus status={snapshot.freshness.status} />
+            {hasStaleWorkers(snapshot)
+              ? <PipelineStatus status="stale">Partial</PipelineStatus>
+              : <PipelineStatus status={snapshot.freshness.status} />}
           </dd>
         </div>
       </dl>
@@ -1788,8 +1972,10 @@ type PipelineWorkspaceSurface = "pipeline" | "inspector";
 
 function PipelineWorkspace({
   snapshot,
+  refreshFailed = false,
 }: {
   readonly snapshot: PipelineOperationsSnapshot;
+  readonly refreshFailed?: boolean;
 }) {
   const [mobileSurface, setMobileSurface] =
     useState<PipelineWorkspaceSurface>("pipeline");
@@ -1797,8 +1983,11 @@ function PipelineWorkspace({
   const trackingReady = projectionReady(snapshot);
   const canStartFromIncompleteHistory =
     snapshot.projectionCoverage?.status === "incomplete" &&
-    canSafelyPrepareNewDiscoverRun(snapshot);
-  const discoverBlockReason = discoverRunBlockReason(snapshot);
+    canPrepareNewDiscoverRun(snapshot);
+  const canStartFromUnidentifiedStaleWorkers =
+    snapshot.execution === null && snapshot.projectionCoverage?.status === "recovering" &&
+    hasStaleWorkers(snapshot) && canPrepareNewDiscoverRun(snapshot);
+  const discoverBlockReason = discoverRunBlockReason(snapshot, refreshFailed);
 
   return (
     <RouteWorkspace
@@ -1841,7 +2030,14 @@ function PipelineWorkspace({
             title="Overall completion estimate"
           >
             <div className="pipeline-estimate-summary">
-              <PipelineStatus status={snapshot.overallEta.status}>
+              <PipelineStatus
+                status={
+                  snapshot.overallEta.status === "unavailable" &&
+                  snapshot.overallEta.reason === "no_work"
+                    ? "completed"
+                    : snapshot.overallEta.status
+                }
+              >
                 {etaLabel(snapshot.overallEta)}
               </PipelineStatus>
               <span data-typography="metadata">
@@ -1851,7 +2047,7 @@ function PipelineWorkspace({
             <EtaLedger eta={snapshot.overallEta} label="Overall ETA facts" />
           </DisclosureSection>
         ) : null}
-        {trackingReady || canStartFromIncompleteHistory ? (
+        {trackingReady || canStartFromIncompleteHistory || canStartFromUnidentifiedStaleWorkers ? (
           <ToolRow
             aria-label="Pipeline action tools"
             className="pipelines-workspace__controls"
@@ -1902,12 +2098,47 @@ function EmptyPipelineWorkspace({
         <ToolRow
           aria-label="Pipeline action tools"
           className="pipelines-workspace__controls"
-          primary={<StageTriggerPanel />}
+          primary={<StageTriggerPanel stageRunBlockReasons={{ discover: "Pipeline operations must be available before starting a new Discover run." }} />}
           role="group"
         />
       </div>
     </RouteWorkspace>
   );
+}
+
+function withoutCurrentRuntime(snapshot: PipelineOperationsSnapshot): PipelineOperationsSnapshot {
+  const reason = "Pipeline operations could not be refreshed.";
+  const capacity: PipelineCapacity = {
+    status: "unavailable",
+    asOf: snapshot.capacity.asOf,
+    staleAfterSeconds: snapshot.capacity.staleAfterSeconds,
+    taskQueue: snapshot.capacity.taskQueue,
+    reason,
+    approximateTaskQueue: {
+      status: "unavailable",
+      observedAt: snapshot.capacity.approximateTaskQueue.observedAt,
+      reasonCode: "operations_refresh_failed",
+    },
+  };
+  return {
+    ...snapshot,
+    freshness: { status: "unavailable", asOf: snapshot.freshness.asOf, staleAfterSeconds: snapshot.freshness.staleAfterSeconds, reason },
+    capacity,
+    overallEta: { status: "stale", reason: "telemetry_stale", asOf: snapshot.overallEta.asOf },
+    sourceFamilies: snapshot.sourceFamilies === null ? null : {
+      ...snapshot.sourceFamilies,
+      eta: { status: "stale", reason: "telemetry_stale", asOf: snapshot.sourceFamilies.eta.asOf },
+    },
+    stages: snapshot.stages.map((stage) => ({
+      ...stage,
+      capacity,
+      eta: { status: "stale", reason: "telemetry_stale", asOf: stage.eta.asOf },
+    })),
+    activeStageCounts: null,
+    activeItems: [],
+    activeItemsTotal: null,
+    activeItemsTruncated: null,
+  };
 }
 
 function AvailablePipelineWorkspace() {
@@ -1924,7 +2155,10 @@ function AvailablePipelineWorkspace() {
         </Alert>
       ) : null}
       {operations.data ? (
-        <PipelineWorkspace snapshot={operations.data} />
+        <PipelineWorkspace
+          refreshFailed={operations.isError}
+          snapshot={operations.isError ? withoutCurrentRuntime(operations.data) : operations.data}
+        />
       ) : (
         <EmptyPipelineWorkspace isLoading={operations.isLoading} />
       )}

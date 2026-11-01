@@ -53,11 +53,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         if source is None:
             source = item_path.read_text(encoding="utf-8")
             source_by_path[item_path] = source
-        if (
-            "WorkflowEnvironment." in source
-            or "time_skipping_env(" in source
-            or "local_env(" in source
-        ):
+        if "WorkflowEnvironment." in source or "time_skipping_env(" in source or "local_env(" in source:
             item.add_marker(pytest.mark.temporal)
         else:
             item.add_marker(pytest.mark.core)
@@ -84,6 +80,21 @@ def source_runtime_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "source")
     for key in ("JOBCTRL_ENV_FILE", "JOBCTRL_PAYLOAD_DIR", "JOBCTRL_PROVIDER_PACKS_DIR"):
         monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def close_test_agent_runtimes(monkeypatch):
+    """Release loop-bound SDK resources before each test's sandbox is removed."""
+    from jobctrl.infrastructure.llm.agent_runtime_pool import close_agent_runtimes
+    from jobctrl.infrastructure.materials import letter_reviews
+
+    # A new test is an explicit new process-owner scope, after the prior drain.
+    monkeypatch.setattr(letter_reviews, "_pool", None)
+    yield
+    from jobctrl.infrastructure.materials.letter_reviews import close_letter_reviews
+
+    close_letter_reviews()
+    close_agent_runtimes()
 
 
 @pytest.fixture(autouse=True)
@@ -119,3 +130,31 @@ def in_memory_exporter(monkeypatch):
     set_tracer_provider(provider)
     yield exporter
     exporter.clear()
+
+
+@pytest.fixture(autouse=True)
+def require_explicit_model_ports(monkeypatch, request):
+    """A workflow test must inject its model; never use a developer's provider.
+
+    Adapter contract tests mock their own backend and exercise the adapter itself.
+    All other tests fail distinctly when wiring accidentally reaches that boundary.
+    """
+    if Path(str(request.fspath)).name == "test_llm_port.py":
+        return
+    from jobctrl.infrastructure.llm.llm_client import LlmAdapter
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    def unavailable(*args, **kwargs):
+        raise DeterminationFailure("provider_unavailable")
+
+    monkeypatch.setattr(LlmAdapter, "chat_json", unavailable)
+
+
+@pytest.fixture(autouse=True)
+def isolate_observed_provider_availability():
+    """Availability evidence belongs to one process scenario, not the test suite."""
+    from jobctrl.infrastructure.llm.provider_availability import reset_provider_availability
+
+    reset_provider_availability()
+    yield
+    reset_provider_availability()

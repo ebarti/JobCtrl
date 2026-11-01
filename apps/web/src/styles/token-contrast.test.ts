@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -137,7 +139,7 @@ describe("muted-foreground WCAG AA contrast", () => {
   });
 });
 
-describe("JobCtrl violet interaction contrast", () => {
+describe("JobCtrl monochrome interaction contrast", () => {
   it("clears 4.5:1 for primary action text in both themes", () => {
     const light = contrastRatio(readToken(lightBlock, "primary-foreground"), readToken(lightBlock, "primary"));
     const dark = contrastRatio(readToken(darkBlock, "primary-foreground"), readToken(darkBlock, "primary"));
@@ -146,7 +148,7 @@ describe("JobCtrl violet interaction contrast", () => {
     expect(dark, `dark primary text was ${dark.toFixed(3)}:1`).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 
-  it("clears 4.5:1 for violet selection text in both themes", () => {
+  it("clears 4.5:1 for selection text in both themes", () => {
     const light = contrastRatio(readToken(lightBlock, "accent-foreground"), readToken(lightBlock, "accent"));
     const dark = contrastRatio(readToken(darkBlock, "accent-foreground"), readToken(darkBlock, "accent"));
 
@@ -162,7 +164,7 @@ describe("JobCtrl violet interaction contrast", () => {
     expect(dark, `dark focus ring was ${dark.toFixed(3)}:1`).toBeGreaterThanOrEqual(NON_TEXT_UI);
   });
 
-  it("keeps active navigation text readable on the tinted rail", () => {
+  it("keeps active navigation text readable on the neutral rail", () => {
     const light = contrastRatio(
       readToken(lightBlock, "sidebar-accent-foreground"),
       readToken(lightBlock, "sidebar"),
@@ -180,7 +182,7 @@ describe("JobCtrl violet interaction contrast", () => {
     );
   });
 
-  it("keeps the navigation selection rule visible on the tinted rail", () => {
+  it("keeps the navigation selection rule visible on the neutral rail", () => {
     const light = contrastRatio(readToken(lightBlock, "sidebar-primary"), readToken(lightBlock, "sidebar"));
     const dark = contrastRatio(readToken(darkBlock, "sidebar-primary"), readToken(darkBlock, "sidebar"));
 
@@ -194,6 +196,18 @@ describe("JobCtrl violet interaction contrast", () => {
 });
 
 describe("semantic text token WCAG AA contrast", () => {
+  it("distinguishes success and failure with semantic hues in both themes", () => {
+    for (const block of [lightBlock, darkBlock]) {
+      const success = readToken(block, "success-text");
+      const failure = readToken(block, "destructive-text");
+      expect(success.C).toBeGreaterThan(0.08);
+      expect(success.H).toBeGreaterThan(130);
+      expect(success.H).toBeLessThan(170);
+      expect(failure.C).toBeGreaterThan(0.08);
+      expect(failure.H).toBeLessThan(40);
+    }
+  });
+
   const textTokens = [
     "success-text",
     "warning-text",

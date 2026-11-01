@@ -1,14 +1,10 @@
-"""R10 P3b — every enrichment browser navigation is politeness-gated.
+"""Enrichment acquisition preserves pacing, budgets and historical recovery.
 
-The mandated fixture proves a robots-disallowed detail page never gets a
-``page.goto`` and folds cleanly into the JobEnrichment stage lifecycle as a
-first-class ``blocked`` outcome (never a scrape failure). Also covers the
-per-run budget stop, the ``scrape_detail_page`` guard, the owner-authenticated
-LinkedIn robots carve-out (D1/D3), and two-host parallel per-host pacing (the
-browser-side complement to P1's HTTP-side rate fixture).
-
-All network is loopback (127.0.0.1) or stubbed; Playwright is faked so the
-suite needs no browser binary and performs no live board traffic.
+Fixtures prove neither connected nor anonymous acquisition consults robots.txt,
+including on retry of historical blocks. They also cover per-run budget stops,
+URL safety, session separation, parallel host pacing and persisted stage results.
+Network is owned loopback or stubbed; Playwright and the extension boundary are
+faked, with no browser binary or live board traffic.
 """
 
 from __future__ import annotations
@@ -76,9 +72,7 @@ def test_linkedin_robots_block_records_the_typed_recovery_condition(tmp_path: Pa
             (str(LOCAL_TENANT), str(_job_id(conn, url))),
         ).fetchone()
         assert row is not None
-        assert json.loads(row[0])["blockedConditions"] == [
-            "discovery_browser_extension_unavailable"
-        ]
+        assert json.loads(row[0])["blockedConditions"] == ["discovery_browser_extension_unavailable"]
     finally:
         close_connection(db_path)
 
@@ -145,9 +139,7 @@ def _blocked_metric(conn: sqlite3.Connection, url: str) -> sqlite3.Row | None:
 
 
 def _enrichment_status(conn: sqlite3.Connection, url: str) -> str | None:
-    row = conn.execute(
-        "SELECT current_status FROM job_enrichments WHERE job_id = ?", (_job_id(conn, url),)
-    ).fetchone()
+    row = conn.execute("SELECT current_status FROM job_enrichments WHERE job_id = ?", (_job_id(conn, url),)).fetchone()
     return None if row is None else row[0]
 
 
@@ -169,6 +161,7 @@ class _SpyPage:
         self.url = "https://example.test/final"
 
     def goto(self, url: str, **_kwargs: object) -> _Resp:
+        self.url = url
         with self._lock:
             self._sink.append(url)
         return _Resp()
@@ -178,6 +171,9 @@ class _SpyPage:
 
     def title(self) -> str:
         return "Role"
+
+    def content(self) -> str:
+        return ""
 
     def on(self, *_args: object, **_kwargs: object) -> None:
         return None
@@ -281,9 +277,7 @@ def tier1_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(detail, "_collect_main_content", lambda _page: "<main>role</main>")
 
 
-def test_wttj_bootstrap_uses_the_guard_decision_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_wttj_bootstrap_uses_the_guard_decision_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
@@ -292,6 +286,7 @@ def test_wttj_bootstrap_uses_the_guard_decision_identity(
             allowed=True,
             outcome=PolitenessOutcome.ALLOWED,
             user_agent="OwnerCrawler/9 (+https://example.test/crawler)",
+        request_headers={"sec-ch-ua": '"Synthetic Browser";v="1"'},
         )
         session = _DecisionSession(decision)
         playwright = _SpyPlaywright()
@@ -302,7 +297,7 @@ def test_wttj_bootstrap_uses_the_guard_decision_identity(
 
         assert session.guarded_urls == playwright.goto_calls
         assert len(session.guarded_urls) == 1
-        assert playwright.page_options == [{"user_agent": decision.user_agent}]
+        assert playwright.page_options == [{"user_agent": decision.user_agent, "extra_http_headers": dict(decision.request_headers)}]
     finally:
         close_connection(db_path)
 
@@ -319,6 +314,7 @@ def test_wttj_bootstrap_does_not_navigate_when_the_guard_denies(
                 allowed=False,
                 outcome=PolitenessOutcome.ROBOTS_DISALLOWED,
                 user_agent="OwnerCrawler/9 (+https://example.test/crawler)",
+        request_headers={"sec-ch-ua": '"Synthetic Browser";v="1"'},
                 reason="robots.txt disallows this path",
             )
         )
@@ -385,8 +381,8 @@ def _disallow_all_robots() -> Iterator[_RobotsServer]:
 # ---------------------------------------------------------------------------
 
 
-def test_robots_disallowed_job_never_navigates_and_folds_blocked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_detail_fetch_ignores_robots_without_requesting_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
 ) -> None:
     with _disallow_all_robots() as server:
         db_path = tmp_path / "jobs.db"
@@ -397,42 +393,18 @@ def test_robots_disallowed_job_never_navigates_and_folds_blocked(
             spy = _SpyPlaywright()
             monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "0")
             monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
-            _allow_test_url_safety(monkeypatch)
-
-            # Real RobotsCache fetches the loopback robots.txt; no-sleep limiter.
             gateway = PolitenessGateway(
                 robots=RobotsCache(opener=public_loopback_opener()),
                 rate_limiter=no_sleep_limiter(),
             )
             stats = scrape_site_batch(conn, "RemoteOK", [(_job_id(conn, url), "Role")], gateway=gateway)
-
-            # The invariant: a disallowed page is NEVER navigated.
-            assert spy.goto_calls == []
-            assert stats["blocked"] == 1
-            assert stats["processed"] == 0
-            assert "/robots.txt" in server.requested_paths
-
-            stage = _enrich_stage(conn, url)
-            assert stage["state"] == "blocked"
-            assert stage["error_code"] == "ENRICH_ROBOTS_DISALLOWED"
-            assert "manually" in (stage["next_action"] or "").lower()
-
-            metric = _blocked_metric(conn, url)
-            assert metric is not None
-            assert metric["failure_category"] == "robots_disallowed"
-            assert metric["is_scrape_failure"] == 0
-            assert metric["is_operational_failure"] == 0
-            assert metric["stage"] == "enrich"
-
-            event = conn.execute(
-                "SELECT event_type, level FROM job_events WHERE job_id = ? AND event_type = 'StageBlocked'",
-                (_job_id(conn, url),),
-            ).fetchone()
-            assert event is not None
-
-            # The job stays enrichment-pending (no aggregate attempt recorded), so
-            # a later run re-evaluates robots or the owner imports it manually.
-            assert _enrichment_status(conn, url) is None
+            assert spy.goto_calls == [url]
+            assert stats["ok"] == 1
+            assert stats["blocked"] == 0
+            assert server.requested_paths == []
+            assert _enrich_stage(conn, url)["state"] == "succeeded"
+            assert _blocked_metric(conn, url) is None
+            assert _enrichment_status(conn, url) == "enriched"
         finally:
             close_connection(db_path)
 
@@ -442,9 +414,7 @@ def test_robots_disallowed_job_never_navigates_and_folds_blocked(
 # ---------------------------------------------------------------------------
 
 
-def test_budget_exhausted_defers_job_without_navigation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_budget_exhausted_defers_job_without_navigation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     url = "https://example.test/jobs/1"
@@ -509,18 +479,18 @@ def test_run_budget_decrements_per_navigation_and_stops_batch(
 # ---------------------------------------------------------------------------
 
 
-def test_scrape_detail_page_blocked_skips_goto(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scrape_detail_page_does_not_evaluate_robots(monkeypatch: pytest.MonkeyPatch, tier1_extraction: None) -> None:
     _allow_test_url_safety(monkeypatch)
     calls: list[str] = []
     page = _SpyPage(calls)
-    session = offline_session(robots=DenyAllRobots())
+    robots = DenyAllRobots()
+    session = offline_session(robots=robots)
 
     result = scrape_detail_page(page, "https://example.test/jobs/1", session=session)
 
-    assert result["status"] == "blocked"
-    assert result["politeness_outcome"] == "robots_disallowed"
-    assert result["error"]
-    assert calls == []
+    assert result["status"] == "ok"
+    assert calls == ["https://example.test/jobs/1"]
+    assert robots.checked == []
 
 
 # ---------------------------------------------------------------------------
@@ -568,7 +538,7 @@ class _FakeLiveChrome:
         self.available_checks += 1
 
     def request(self, _url: str, **_kwargs: object) -> LiveBrowserResult:
-        raise AssertionError("authenticated LinkedIn enrichment must not fetch anonymous robots.txt")
+        raise AssertionError("enrichment must not request robots.txt")
 
     def rendered_page(self, url: str, **_kwargs: object) -> LiveBrowserResult:
         self.rendered_urls.append(url)
@@ -596,19 +566,35 @@ class _FakeLiveChrome:
         )
 
 
-def test_live_profile_linkedin_enrichment_skips_anonymous_robots_without_copying_profile(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
+@pytest.mark.parametrize(
+    "site,url",
+    [
+        ("linkedin", "https://www.linkedin.com/jobs/view/live-profile"),
+        ("RemoteOK", "https://careers.example.test/jobs/live-profile"),
+    ],
+)
+@pytest.mark.parametrize("legacy_blocked", [False, True])
+def test_live_profile_enrichment_never_consults_robots_and_recovers_legacy_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None, site: str, url: str, legacy_blocked: bool
 ) -> None:
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
-    url = "https://www.linkedin.com/jobs/view/live-profile"
     execution = DiscoveryExecutionRef(
         tenant_id="local",
         workflow_id="discover-live-profile",
         temporal_run_id="run-live-profile",
     )
     try:
-        _seed_pending(conn, url, "linkedin")
+        _seed_pending(conn, url, site)
+        if legacy_blocked:
+            detail._record_enrich_robots_blocked(
+                conn,
+                _job_id(conn, url),
+                url,
+                PolitenessDecision(False, PolitenessOutcome.ROBOTS_DISALLOWED, "JobCtrl/1"),
+                site=site,
+            )
+            conn.commit()
         _FakeLiveChrome.instances = []
         monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", _FakeLiveChrome)
         monkeypatch.setattr(
@@ -624,7 +610,7 @@ def test_live_profile_linkedin_enrichment_skips_anonymous_robots_without_copying
 
         stats = scrape_site_batch(
             conn,
-            "linkedin",
+            site,
             [(_job_id(conn, url), "Role")],
             gateway=offline_gateway(robots=DenyAllRobots()),
             discovery_execution=execution,
@@ -637,6 +623,49 @@ def test_live_profile_linkedin_enrichment_skips_anonymous_robots_without_copying
         assert browser.execution == execution
         assert browser.available_checks == 1
         assert browser.rendered_urls == [url]
+        assert _enrich_stage(conn, url)["state"] == "succeeded"
+    finally:
+        close_connection(db_path)
+
+
+@pytest.mark.parametrize("allow_robots", [True, False])
+def test_temporal_enrich_offline_keeps_anonymous_policy_and_never_opens_opted_in_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None, allow_robots: bool
+) -> None:
+    from .live_browser_helpers import FixtureBrowserBroker
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://www.linkedin.com/jobs/view/optional-extension"
+    broker = FixtureBrowserBroker(
+        tmp_path, lambda _url: pytest.fail("offline broker must not acquire pages"), connected=False
+    )
+    spy = _SpyPlaywright()
+    monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", broker.client)
+    monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
+    monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
+    monkeypatch.setattr(
+        detail, "LinkedInApplyUrlResolver", lambda **_kw: pytest.fail("integrated fallback opened a copied profile")
+    )
+    monkeypatch.setattr(
+        detail,
+        "PolitenessGateway",
+        lambda: offline_gateway(robots=AllowAllRobots() if allow_robots else DenyAllRobots()),
+    )
+    try:
+        _seed_pending(conn, url, "linkedin")
+        stats = detail._run_detail_scraper(
+            conn,
+            workers=1,
+            job_ids=(_job_id(conn, url),),
+            workflow_id="optional-enrich",
+            workflow_run_id="optional-enrich-run",
+        )
+        assert stats["ok"] == 1
+        assert stats["site_errors"] == {}
+        assert spy.goto_calls == [url]
+        assert broker.status_checks == 1
+        assert broker.visited == []
         assert _enrich_stage(conn, url)["state"] == "succeeded"
     finally:
         close_connection(db_path)
@@ -698,9 +727,7 @@ def test_run_enrichment_binds_temporal_extension_before_legacy_wttj_repair(
         monkeypatch.setattr(
             detail,
             "sync_playwright",
-            lambda: (_ for _ in ()).throw(
-                AssertionError("Temporal Enrich must not launch Playwright")
-            ),
+            lambda: (_ for _ in ()).throw(AssertionError("Temporal Enrich must not launch Playwright")),
         )
 
         def _capture_scraper(_conn: object, **kwargs: object) -> dict[str, object]:
@@ -727,9 +754,9 @@ def test_run_enrichment_binds_temporal_extension_before_legacy_wttj_repair(
             workflow_id="global-enrich-live-profile",
             temporal_run_id="global-enrich-run",
         )
-        assert conn.execute(
-            "SELECT url FROM jobs WHERE site = 'WelcomeToTheJungle'"
-        ).fetchone()[0] == "wttj-relative-slug"
+        assert (
+            conn.execute("SELECT url FROM jobs WHERE site = 'WelcomeToTheJungle'").fetchone()[0] == "wttj-relative-slug"
+        )
     finally:
         close_connection(db_path)
 
@@ -847,7 +874,7 @@ def test_mixed_linkedin_batch_does_not_reuse_authenticated_page_for_other_hosts(
 
 
 def test_owner_authenticated_robots_allows_but_budget_still_applies() -> None:
-    session = offline_session(robots=detail._OwnerAuthenticatedRobots(), budget=1)
+    session = offline_session(robots=DenyAllRobots(), budget=1)
     url = "https://www.linkedin.com/jobs/view/1"
 
     assert session.check(url).allowed is True  # robots skipped
@@ -877,9 +904,7 @@ class _GrantRecordingLimiter(HostRateLimiter):
         self.granted: list[tuple[str, float]] = []
 
     @contextmanager
-    def slot(
-        self, host: str, *, min_interval_seconds: float, max_concurrency: int
-    ) -> Iterator[None]:
+    def slot(self, host: str, *, min_interval_seconds: float, max_concurrency: int) -> Iterator[None]:
         with super().slot(
             host,
             min_interval_seconds=min_interval_seconds,
@@ -915,9 +940,7 @@ def test_parallel_two_host_run_paces_each_host_via_shared_limiter(
         sink_lock = threading.Lock()
         monkeypatch.setattr(detail, "sync_playwright", lambda: _SpyPlaywright(sink, sink_lock))
 
-        stats = detail._run_detail_scraper(
-            conn, workers=2, reset_linkedin_candidates=False
-        )
+        stats = detail._run_detail_scraper(conn, workers=2, reset_linkedin_candidates=False)
 
         # Parallel enrichment across two hosts still processes every job.
         assert stats["processed"] == 4
@@ -944,19 +967,10 @@ def test_parallel_two_host_run_paces_each_host_via_shared_limiter(
 # ---------------------------------------------------------------------------
 
 
-def test_robots_blocked_job_re_enriches_after_robots_allows(
+def test_legacy_robots_blocked_job_re_enriches_without_robots_evaluation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
 ) -> None:
-    """A robots-blocked enrich stage re-enriches once robots allows (#314 High).
-
-    The stage folds into ``blocked`` while its aggregate stays
-    enrichment-pending, so a later run re-selects it. The state machine has no
-    ``Blocked -> Running`` edge, so without the Unblock the running transition
-    raised ``ValueError`` -> ``ENRICH_INTERNAL_ERROR`` and the job was excluded
-    from the pending queue forever. Unblocking (``Blocked -> Pending``) before
-    the running transition restores the "a later run re-evaluates robots"
-    promise the ``_record_enrich_robots_blocked`` docstring makes.
-    """
+    """Historical blocks reset once, preserving the audit trail and pending work."""
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     url = "https://example.test/jobs/reeval"
@@ -966,14 +980,14 @@ def test_robots_blocked_job_re_enriches_after_robots_allows(
         monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "0")
         monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
 
-        # Run 1 — robots disallows: folded blocked, zero navigation, je pending.
-        blocked = scrape_site_batch(
-            conn, "RemoteOK", [(_job_id(conn, url), "Role")], gateway=offline_gateway(robots=DenyAllRobots())
+        # Seed the historical canonical outcome without re-enabling enforcement.
+        detail._record_enrich_robots_blocked(
+            conn,
+            _job_id(conn, url),
+            url,
+            decision=PolitenessDecision(False, PolitenessOutcome.ROBOTS_DISALLOWED, "JobCtrl/1"),
         )
-        assert blocked["blocked"] == 1
-        assert spy.goto_calls == []
-        assert _enrichment_status(conn, url) is None
-
+        conn.commit()
         # Run 2 — robots now allows: the job re-enriches instead of stranding.
         # ``error == 0`` is the direct proof the Blocked->Running ValueError path
         # (which would have recorded ENRICH_INTERNAL_ERROR) never fired.
@@ -992,49 +1006,10 @@ def test_robots_blocked_job_re_enriches_after_robots_allows(
         # The unblock is auditable — exactly one StageReset event marks the
         # robots re-evaluation of the previously blocked job.
         reset_events = conn.execute(
-            "SELECT COUNT(*) FROM job_events WHERE job_id = ? AND stage = 'enrich' "
-            "AND event_type = 'StageReset'",
+            "SELECT COUNT(*) FROM job_events WHERE job_id = ? AND stage = 'enrich' AND event_type = 'StageReset'",
             (_job_id(conn, url),),
         ).fetchone()[0]
         assert reset_events == 1
-    finally:
-        close_connection(db_path)
-
-
-def test_repeatedly_robots_blocked_job_stays_blocked_never_failed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Re-evaluating a still-disallowed job keeps it blocked, never failed (#314).
-
-    Repeated robots blocks must not accumulate into a spurious failure: each run
-    re-folds ``blocked`` (an idempotent no-op transition), the aggregate stays
-    enrichment-pending, and ``error`` stays 0 so the job keeps being
-    re-evaluated on later runs rather than being stranded.
-    """
-    db_path = tmp_path / "jobs.db"
-    conn = init_db(db_path)
-    url = "https://example.test/jobs/still-blocked"
-    try:
-        _seed_pending(conn, url, "RemoteOK")
-        spy = _SpyPlaywright()
-        monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "0")
-        monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
-
-        for _ in range(3):
-            stats = scrape_site_batch(
-                conn,
-                "RemoteOK",
-                [(_job_id(conn, url), "Role")],
-                gateway=offline_gateway(robots=DenyAllRobots()),
-            )
-            assert stats["blocked"] == 1
-            assert stats["error"] == 0
-
-        assert spy.goto_calls == []
-        stage = _enrich_stage(conn, url)
-        assert stage["state"] == "blocked"
-        assert stage["error_code"] == "ENRICH_ROBOTS_DISALLOWED"
-        assert _enrichment_status(conn, url) is None
     finally:
         close_connection(db_path)
 
@@ -1054,12 +1029,22 @@ def test_live_browser_task_failure_isolated_from_remaining_enrich_jobs(
         if url == urls[0]:
             return {**retryable_page_failure(), "retryable": retryable}
         return {
-            "status": "succeeded", "finalUrl": url, "statusCode": 200,
-            "contentType": "text/html", "title": "Role", "bodyText": LONG_DESC,
-            "bodyHtml": '<html><body><script type="application/ld+json">' + json.dumps({
-                "@type": "JobPosting", "description": LONG_DESC,
-                "url": "https://example.test/apply", "directApply": True,
-            }) + f'</script><main><article class="job-description">{LONG_DESC}</article></main></body></html>',
+            "status": "succeeded",
+            "finalUrl": url,
+            "statusCode": 200,
+            "contentType": "text/html",
+            "title": "Role",
+            "bodyText": LONG_DESC,
+            "bodyHtml": '<html><body><script type="application/ld+json">'
+            + json.dumps(
+                {
+                    "@type": "JobPosting",
+                    "description": LONG_DESC,
+                    "url": "https://example.test/apply",
+                    "directApply": True,
+                }
+            )
+            + f'</script><main><article class="job-description">{LONG_DESC}</article></main></body></html>',
         }
 
     broker = FixtureBrowserBroker(tmp_path, result_for)
@@ -1068,8 +1053,11 @@ def test_live_browser_task_failure_isolated_from_remaining_enrich_jobs(
         for url in urls:
             _seed_pending(conn, url, "linkedin")
         stats = scrape_site_batch(
-            conn, "linkedin", [(_job_id(conn, url), "Role") for url in urls],
-            gateway=offline_gateway(robots=DenyAllRobots()), discovery_execution=execution,
+            conn,
+            "linkedin",
+            [(_job_id(conn, url), "Role") for url in urls],
+            gateway=offline_gateway(robots=DenyAllRobots()),
+            discovery_execution=execution,
         )
         assert stats["error"] == 1
         assert stats["ok"] == 2
@@ -1114,7 +1102,9 @@ def test_extension_disconnect_still_aborts_enrich_before_the_next_job(
             _seed_pending(conn, url, "linkedin")
         with pytest.raises(ConfigurationError, match="fixture disconnected"):
             scrape_site_batch(
-                conn, "linkedin", [(_job_id(conn, url), "Role") for url in urls],
+                conn,
+                "linkedin",
+                [(_job_id(conn, url), "Role") for url in urls],
                 gateway=offline_gateway(robots=DenyAllRobots()),
                 discovery_execution=DiscoveryExecutionRef(
                     tenant_id="local", workflow_id="fixture-disconnect", temporal_run_id="fixture-run"
@@ -1125,3 +1115,10 @@ def test_extension_disconnect_still_aborts_enrich_before_the_next_job(
         assert _enrich_stage(conn, urls[1]) is None
     finally:
         close_connection(db_path)
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

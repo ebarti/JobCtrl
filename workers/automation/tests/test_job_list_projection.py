@@ -44,8 +44,8 @@ def _seed_job(
         """
         INSERT INTO jobs (
             tenant_id, job_id, url, title, site, strategy, location, salary,
-            discovered_at, application_url, description
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            discovered_at, description
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             str(LOCAL_TENANT),
@@ -57,9 +57,13 @@ def _seed_job(
             "Remote",
             "$$$",
             "2026-05-04T12:00:00+00:00",
-            url,
             "Short job description",
         ),
+    )
+    conn.execute(
+        "INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,updated_at) "
+        "VALUES (?,?,'pending',?,?)",
+        (str(LOCAL_TENANT), str(job_id), url, "2026-05-04T12:00:00+00:00"),
     )
     conn.commit()
     return job_id
@@ -176,14 +180,6 @@ def test_pipeline_progress_keeps_internal_preparation_inside_discover_list_stage
     assert _row_value(row, "current_substage") == "score"
     assert _row_value(row, "current_state") == "pending"
 
-    detail = conn.execute(
-        "SELECT stages_json FROM job_detail_projections WHERE job_id = ?",
-        (str(job_id),),
-    ).fetchone()
-    stages = json.loads(_row_value(detail, "stages_json", "[]"))
-    score_stage = next(stage for stage in stages if stage["stage"] == "score")
-    assert score_stage["state"] == "pending"
-
 
 def test_workflow_scoped_stage_event_refreshes_stale_stage_projection(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/workflow-scoped-stage"
@@ -233,15 +229,6 @@ def test_workflow_scoped_stage_event_refreshes_stale_stage_projection(conn: sqli
     assert _row_value(row, "current_substage") == "score"
     assert _row_value(row, "current_state") == "pending"
 
-    detail = conn.execute(
-        "SELECT stages_json FROM job_detail_projections WHERE job_id = ?",
-        (str(job_id),),
-    ).fetchone()
-    stages = json.loads(_row_value(detail, "stages_json", "[]"))
-    assert next(stage for stage in stages if stage["stage"] == "discover")["state"] == "succeeded"
-    assert next(stage for stage in stages if stage["stage"] == "enrich")["state"] == "succeeded"
-    assert next(stage for stage in stages if stage["stage"] == "score")["state"] == "pending"
-
 
 def test_cover_progress_moves_product_stage_to_apply_when_resume_exists(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/cover-pending"
@@ -284,36 +271,6 @@ def test_cover_progress_moves_product_stage_to_apply_when_resume_exists(conn: sq
     assert _row_value(row, "current_stage") == "apply"
     assert _row_value(row, "current_substage") == "cover"
     assert _row_value(row, "current_state") == "pending"
-
-
-def test_stage_projection_preserves_non_retryable_failures(conn: sqlite3.Connection) -> None:
-    url = "https://example.com/jobs/non-retryable"
-    job_id = _seed_job(conn, url, title="Closed Posting")
-
-    set_stage_state(conn, job_id, "discover", "succeeded", finished_at=utc_now())
-    set_stage_state(
-        conn,
-        job_id,
-        "enrich",
-        "failed",
-        attempt_count=1,
-        error_code="POSTING_INACTIVE",
-        error_message="posting removed",
-        retryable=False,
-        validate_transition=False,
-    )
-    conn.commit()
-
-    ProjectionBuilder(conn_factory=lambda: conn).refresh()
-
-    detail = conn.execute(
-        "SELECT stages_json FROM job_detail_projections WHERE job_id = ?",
-        (str(job_id),),
-    ).fetchone()
-    stages = json.loads(_row_value(detail, "stages_json", "[]"))
-    enrich_stage = next(stage for stage in stages if stage["stage"] == "enrich")
-    assert enrich_stage["state"] == "failed"
-    assert enrich_stage["retryable"] is False
 
 
 def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
@@ -372,18 +329,6 @@ def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
     assert json.loads(_row_value(row, "score_keywords_json")) == ["python", "fastapi"]
     assert _row_value(row, "score_version") == 1
     assert _row_value(row, "scored_at")
-
-    detail = conn.execute(
-        """
-        SELECT score_breakdown_json, score_keywords_json, score_version, scored_at
-        FROM job_detail_projections WHERE job_id = ?
-        """,
-        (str(job_id),),
-    ).fetchone()
-    assert json.loads(_row_value(detail, "score_breakdown_json"))["technicalFit"] == 9
-    assert json.loads(_row_value(detail, "score_keywords_json")) == ["python", "fastapi"]
-    assert _row_value(detail, "score_version") == 1
-    assert _row_value(detail, "scored_at")
 
 
 def test_score_evidence_schema_migration_backfills_existing_projection(

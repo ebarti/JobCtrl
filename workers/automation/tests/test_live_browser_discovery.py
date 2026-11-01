@@ -8,11 +8,9 @@ import pytest
 
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.errors import ConfigurationError
-from jobctrl.domain.ports.politeness import RobotsVerdict
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveBrowserResult,
     LiveChromeDiscoveryClient,
-    LiveChromeRobotsCache,
     LiveChromeSession,
     PoliteLiveChromeHttpClient,
     live_jobstreaming_registry,
@@ -103,23 +101,34 @@ def test_rendered_navigation_status_marks_removed_posting_nonretryable(tmp_path:
         if method == "GET" and "/v1/extension/discovery/tasks/" in url:
             payload = json.loads(raw)
             payload["result"].update(
-                statusCode=http_status, contentType="text/html", bodyText="Job not found",
+                statusCode=http_status,
+                contentType="text/html",
+                bodyText="Job not found",
                 bodyHtml="<main>Job not found</main>",
             )
             raw = json.dumps(payload).encode()
         return status, raw
 
     client = LiveChromeDiscoveryClient(
-        _execution(), source_family="enrichment", app_dir=tmp_path, transport=removed_transport,
+        _execution(),
+        source_family="enrichment",
+        app_dir=tmp_path,
+        transport=removed_transport,
     )
     result = client.rendered_page("https://example.com/jobs?q=platform")
     page = _live_result_to_detail_page(result, result.final_url)
-    active_state, method = ActiveStateVerifier().verify(page)
+    active_state, method = ActiveStateVerifier(
+        page_interpreter=__import__("tests.page_fakes", fromlist=["interpreter"]).interpreter()
+    ).verify(page)
     assert page.status == http_status
     assert (active_state.value, method) == ("removed", "http_status")
-    assert not _detail_failure_retryable({
-        "http_status": result.status_code, "active_state": active_state.value, "verification_method": method,
-    })
+    assert not _detail_failure_retryable(
+        {
+            "http_status": result.status_code,
+            "active_state": active_state.value,
+            "verification_method": method,
+        }
+    )
 
 
 def test_live_sdui_description_survives_snapshot_cleaning_and_extracts_without_llm() -> None:
@@ -131,14 +140,18 @@ def test_live_sdui_description_survives_snapshot_cleaning_and_extracts_without_l
     html = (
         '<div aria-label="Primary content">'
         '<div id="JobDetails_AboutTheJob_123" componentkey="JobDetails_AboutTheJob_123">'
-        '<h2>About the job</h2><div>' + description + '</div></div>'
+        "<h2>About the job</h2><div>" + description + "</div></div>"
         '<div id="JobDetails_AboutTheCompany_123">Unrelated company marketing</div>'
         '<a aria-label="Apply on company website" href="https://careers.example.com/job/123">Apply</a>'
-        '</div>'
+        "</div>"
     )
     captured = LiveBrowserResult(
-        final_url=url, status_code=200, content_type="text/html", title="Software Engineer",
-        body_text="About the job " + description, body_html=html,
+        final_url=url,
+        status_code=200,
+        content_type="text/html",
+        title="Software Engineer",
+        body_text="About the job " + description,
+        body_html=html,
     )
     extracted = CssSelectorExtractor().extract(_live_result_to_detail_page(captured, url))
     assert extracted.ok
@@ -150,7 +163,7 @@ def test_live_sdui_description_survives_snapshot_cleaning_and_extracts_without_l
 
 
 def test_integrated_ats_discovery_rejects_a_direct_transport_override() -> None:
-    with pytest.raises(ConfigurationError, match="live Chrome extension transport"):
+    with pytest.raises(ConfigurationError, match="transport selection and source policy"):
         run_scheduled_ats_sources(
             None,  # type: ignore[arg-type] - the invariant fails before storage access
             (),
@@ -247,6 +260,7 @@ def test_workday_client_uses_live_extension_transport_for_integrated_execution(
 ) -> None:
     from jobctrl.discovery import workday
 
+    monkeypatch.setattr(LiveChromeDiscoveryClient, "ensure_available", lambda _self: None)
     execution = _execution()
     monkeypatch.setattr(workday, "_politeness", None)
     monkeypatch.setattr(workday, "get_connection", lambda: None)
@@ -272,6 +286,7 @@ def test_smartextract_run_passes_live_extension_client_to_every_target(
 ) -> None:
     from jobctrl.discovery import smartextract
 
+    monkeypatch.setattr(LiveChromeDiscoveryClient, "ensure_available", lambda _self: None)
     execution = _execution()
     captured: list[PoliteLiveChromeHttpClient | None] = []
     monkeypatch.setattr(smartextract, "init_db", lambda: object())
@@ -299,11 +314,8 @@ def test_smartextract_run_passes_live_extension_client_to_every_target(
 
     monkeypatch.setattr(smartextract, "_run_one_site", fake_run_one_site)
 
-    result = smartextract._run_all(  # noqa: SLF001 - pins the production routing seam
-        [{"name": "Acme Careers", "url": "https://careers.example.com/jobs"}],
-        [],
-        [],
-        discovery_execution=execution,
+    result = smartextract._run_all(
+        [{"name": "Acme Careers", "url": "https://careers.example.com/jobs"}], {}, discovery_execution=execution
     )
 
     assert result == {
@@ -348,35 +360,6 @@ def test_live_session_preserves_query_and_json_body_for_browser_task(tmp_path: P
     assert request["headers"] == {"Accept": "application/json", "Content-Type": "application/json"}
 
 
-def test_robots_policy_is_fetched_and_cached_through_the_live_profile() -> None:
-    class _RobotsClient:
-        def __init__(self) -> None:
-            self.calls: list[str] = []
-
-        def request(self, url: str, **_kwargs: object) -> LiveBrowserResult:
-            self.calls.append(url)
-            return LiveBrowserResult(
-                final_url=url,
-                status_code=200,
-                content_type="text/plain",
-                title="",
-                body_text=(
-                    "User-agent: ChromeProbe\n"
-                    "Disallow: /private\n"
-                    "User-agent: JobCtrl\n"
-                    "Allow: /\n"
-                ),
-                browser_user_agent="ChromeProbe",
-            )
-
-    client = _RobotsClient()
-    robots = LiveChromeRobotsCache(client)  # type: ignore[arg-type]
-
-    assert robots.evaluate("https://example.com/public", "JobCtrl/1") is RobotsVerdict.ALLOW
-    assert robots.evaluate("https://example.com/private/role", "JobCtrl/1") is RobotsVerdict.DISALLOW
-    assert client.calls == ["https://example.com/robots.txt"]
-
-
 @pytest.mark.parametrize("workers", [1, 2])
 def test_live_browser_smartextract_failure_preserves_remaining_targets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workers: int
@@ -400,8 +383,10 @@ def test_live_browser_smartextract_failure_preserves_remaining_targets(
     monkeypatch.setattr(smartextract, "LiveChromeDiscoveryClient", broker.client)
     monkeypatch.setattr(smartextract, "_run_one_site", run_one)
     result = smartextract._run_all(
-        [{"name": "Slow", "url": "https://slow.example/jobs"}, {"name": "Ready", "url": "https://ready.example/jobs"}],
-        [], [], workers=workers, discovery_execution=_execution(),
+        [{"name": "Slow", "url": "https://slow.example.test/jobs"}, {"name": "Ready", "url": "https://ready.example.test/jobs"}],
+        {},
+        workers=workers,
+        discovery_execution=_execution(),
     )
     assert result["errors"] == 1
     assert result["passed"] == 1
@@ -441,3 +426,17 @@ def test_lost_broker_task_retains_transient_bridge_failure(tmp_path: Path) -> No
     with pytest.raises(TransientNetworkError, match="broker restarted"):
         client.fetch_json("https://example.com/jobs")
     assert scripted.calls[-1][0] == "DELETE"
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def explicit_semantic_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

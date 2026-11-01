@@ -312,7 +312,7 @@ def test_pending_apply_reads_through_application_url_join(conn: sqlite3.Connecti
 # ---------------------------------------------------------------------------
 
 
-def test_reset_job_stage_enrich_clears_job_enrichments_aggregate(
+def test_reset_job_stage_enrich_preserves_last_accepted_description(
     conn: sqlite3.Connection,
 ) -> None:
     """After ``reset_job_stage(stage='enrich')`` the queue selector
@@ -337,10 +337,10 @@ def test_reset_job_stage_enrich_clears_job_enrichments_aggregate(
     after_reset = repo.load(LOCAL_TENANT, job_id)
     assert after_reset is not None
     assert after_reset.is_pending
-    assert after_reset.full_description is None
-    assert after_reset.application_url is None
-    assert after_reset.enriched_at is None
-    assert after_reset.extraction_tier is None
+    assert after_reset.full_description == loaded.full_description
+    assert after_reset.application_url == loaded.application_url
+    assert after_reset.enriched_at == loaded.enriched_at
+    assert after_reset.extraction_tier == loaded.extraction_tier
 
     # And the queue selector re-picks the row.
     pending = get_jobs_by_stage(conn, "pending_detail")
@@ -371,6 +371,7 @@ def test_run_detail_scraper_retries_robots_blocked_only_on_first_workflow_pass(
     """The production queue must reach the existing blocked-to-pending path."""
 
     from jobctrl.enrichment import detail
+
     url = "https://www.linkedin.com/jobs/view/robots-blocked"
     job_id = _seed_discovered(conn, url)
     _mark_robots_blocked(conn, job_id)
@@ -503,9 +504,7 @@ def test_run_detail_scraper_excludes_closed_robots_blocked_rows(
 # ---------------------------------------------------------------------------
 
 
-def test_pending_sql_enrich_excludes_new_path_enriched_jobs(
-    conn: sqlite3.Connection, monkeypatch
-) -> None:
+def test_pending_sql_enrich_excludes_new_path_enriched_jobs(conn: sqlite3.Connection, monkeypatch) -> None:
     """``pipeline._PENDING_SQL['enrich']`` must read through
     ``_ENRICHMENT_JOIN`` so jobs enriched via the repository drop out
     of the count."""

@@ -1,9 +1,16 @@
 # Documentation Index
 
+JobCtrl is publicly released. [GitHub Releases](https://github.com/ebarti/JobCtrl/releases/latest)
+identifies the latest published version; source versions and pending release
+work do not establish what installed users receive. For installation and
+upgrade instructions, see [Getting Started](user/getting-started.md).
+Historical launch plans and incomplete verification gates do not mean the
+product is unpublished.
+
 ## Public Project Docs
 
-- [`../README.md`](../README.md): product overview, quick start, safety notes,
-  command summary, and top-level documentation map.
+- [`../README.md`](../README.md): short product overview, install quick start,
+  safety summary, and top-level documentation map.
 - [`../ROADMAP.md`](../ROADMAP.md): public roadmap and open-source readiness
   direction.
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md): contributor workflow, validation,
@@ -64,8 +71,13 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`user/scoring-and-employer-analysis.md`](user/scoring-and-employer-analysis.md):
   fit evidence, requirement assessment, policy, corrections, and ranking; it
   consumes the employer analysis owned by Discovery.
+- [`user/company-briefings.md`](user/company-briefings.md): optional public-source company context, explicit identity links, bounded CLI refresh and shared job/interview/digest reads.
 - [`user/materials-and-tailoring.md`](user/materials-and-tailoring.md): generated
   materials, provenance, validation, review, and accepted-artifact history.
+- [`user/locale-variants.md`](user/locale-variants.md): source-linked translations,
+  independent reviews and accepted locale exports.
+
+- [`user/screening-answers.md`](user/screening-answers.md): reviewed reusable answers and application-bound history.
 - [`user/apply.md`](user/apply.md): application fields, approval and automation
   modes, browser capabilities, Gmail, and follow-up controls.
 - [`user/outcomes-and-feedback.md`](user/outcomes-and-feedback.md): application
@@ -97,8 +109,13 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`developer/documentation-standards.md`](developer/documentation-standards.md):
   concept ownership, page structure, terminology, diagrams, and stable surfaces.
 - [`local-reliability-qa.md`](local-reliability-qa.md): validation-path chooser.
+- [`developer/releasing.md`](developer/releasing.md): version preparation, curated release notes, protected publication, and public-channel verification.
+- [`developer/local-scale-benchmark.md`](developer/local-scale-benchmark.md):
+  reproducible synthetic production-path benchmark and measured local baseline.
 - [`developer/qa/regression-catalog.md`](developer/qa/regression-catalog.md):
   risk families, invariants, and regression proof.
+- [`developer/qa/doctor-diagnostics.md`](developer/qa/doctor-diagnostics.md):
+  CLI diagnostic coverage, status meaning, platform modes, and verification limits.
 - [`developer/qa/browser-smoke.md`](developer/qa/browser-smoke.md): browser smoke
   assertions.
 - [`developer/qa/frontend.md`](developer/qa/frontend.md): frontend test layers
@@ -114,6 +131,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
   bounded-context composition.
 - [`architecture/runtime.md`](architecture/runtime.md): process ownership,
   lifetimes, readiness, and TypeScript-to-Python boundaries.
+- [`architecture/agent-runtime.md`](architecture/agent-runtime.md): kit-owned
+  provider execution, reusable Codex clients, request isolation and cleanup.
 - [`architecture/pipeline/`](architecture/pipeline/index.md): Temporal workflow
   catalog, stage execution, activities and retries, concurrency, scheduling,
   operations, and recovery.
@@ -121,12 +140,23 @@ has one defining page; other pages summarize it briefly and link to that owner.
   the distinction between domain state, events, projections, and telemetry.
 - [`architecture/storage.md`](architecture/storage.md): physical SQLite and file
   authorities.
+- [`architecture/portable-workspace.md`](architecture/portable-workspace.md): future
+  proposal (not implemented) for owned workspace bundles and safe import.
+- [`architecture/application-url-authority.md`](architecture/application-url-authority.md):
+  application URL readers and writers after the exact-v10 migration, and the
+  unique-match job lookup rule.
 - [`architecture/read-model.md`](architecture/read-model.md): apply feedback and
   projection details.
 - [`architecture/scoring.md`](architecture/scoring.md): scoring algorithm,
   evidence, policy, and calibration.
+- [`architecture/reviewed-screening-answers.md`](architecture/reviewed-screening-answers.md): private answer revisions, application contexts and model/review fences.
 - [`architecture/materials.md`](architecture/materials.md): employer analysis
   and cross-artifact auditability.
+- [`architecture/material-locale-variants.md`](architecture/material-locale-variants.md):
+  source-bound translation authority, registry persistence and export fences.
+- [Leadership Practice — future architecture (not implemented)](architecture/leadership-practice.md):
+  bounded management reflection and experiments.
+- [Material Variant Comparison](architecture/material-variant-comparison.md): future proposal (not implemented).
 - [`architecture/tailoring.md`](architecture/tailoring.md): resume-tailoring
   prompt and validation contract.
 - [`architecture/contracts-types-and-api-boundaries.md`](architecture/contracts-types-and-api-boundaries.md):
@@ -159,7 +189,21 @@ These documents remain in the repository but are not separate site sections:
 
 - [`requirements.md`](requirements.md): product and technical invariants.
 - [`decisions.md`](decisions.md): accepted architecture decision records.
-- [`backlog.md`](backlog.md): detailed engineering backlog and deferred work.
-- [`claims-ledger.md`](claims-ledger.md): launch-claim evidence and status.
+- [GitHub Issues](https://github.com/ebarti/JobCtrl/issues): actionable work; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) accounts for the historical backlog.
+- [`claims-ledger.md`](claims-ledger.md): public product claims and supporting references.
 - [`plans/`](plans/): active proposals and immutable implemented-plan history.
+  The active [sensitive-artifact retention and cleanup
+  proposal](plans/sensitive-artifact-retention.md) defines the unshipped local
+  inventory, preservation, preview, containment, and recovery contract tracked
+  by issue #887.
+- [Profile multi-source intake design (#1013)](plans/2026-09-21-profile-evidence-selective-tailoring.md#2-current-foundations-and-acceptance-map):
+  current import/editor limitation and proposed
+  source reconciliation with explicit human acceptance; not implemented.
+- [`plans/local-custom-provider-contract.md`](plans/local-custom-provider-contract.md):
+  design-only, fail-closed contract and proof gates for a future local/custom
+  LLM provider; the capability is currently unavailable.
 - [`incidents/`](incidents/): incident records and corrective actions.
+- [`research/interview-preparation/README.md`](research/interview-preparation/README.md):
+  canonical interview research draft, source-reading ledger, question guidance,
+  synthetic examples, and catalog authoring contract; rehearsal and validated
+  grading remain future work.

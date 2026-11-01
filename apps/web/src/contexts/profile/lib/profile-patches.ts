@@ -6,7 +6,7 @@ import type {
 import type {
   CredentialsResponse,
   ProfileConfigResponse,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 
 function isProfileResponse(value: unknown): value is ProfileConfigResponse {
   return (
@@ -84,7 +84,7 @@ export function patchCredentialConfigured(
         ? {
             ...entry,
             configured,
-            effectiveSource: configured ? "keychain" as const : "absent" as const,
+            effectiveSource: configured ? "native_store" as const : "absent" as const,
           }
         : entry,
     ),

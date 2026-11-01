@@ -1,3 +1,5 @@
+import { recordEditedReview } from "./semantic-fixtures.js";
+import { writeProfileConfig } from "../src/profile-store.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,7 +11,8 @@ import type { ResumeHtmlPdfRenderInput, ResumeHtmlPdfRenderer } from "../src/res
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 import type { ActionDispatcher, ActionDispatchResult } from "../src/local-actions.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "../src/contracts.js";
 
 const JOB_KEY = "https://example.com/jobs/live-editor";
 const JOB_ID = "00000000-0000-4000-8000-000000000201";
@@ -34,6 +37,7 @@ beforeEach(() => {
     dbPath: path.join(tempDir, "jobctrl.db"),
     configPath: path.join(tempDir, "config.json"),
     resumePdfRenderer,
+    providerDispatcher: {call: async (_method,params) => {const db=new Database(options.dbPath);try{return {jsonrpc:"2.0",id:1,result:recordEditedReview(db,params)};}finally{db.close();}},close:async()=>{}},
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({
       status: "succeeded",
       result: {
@@ -51,6 +55,40 @@ afterEach(() => {
 });
 
 describe("resume review draft API", () => {
+  it("requires a version precondition for template updates and rejects a stale update without writing", async () => {
+    const app = buildApp(options);
+    const request = { displayName: "Synthetic template", theme: BUILT_IN_RESUME_TEMPLATE_THEME, layout: {} };
+    const firstResponse = await app.inject({ method: "POST", url: "/v1/resume-templates", payload: request });
+    expect(firstResponse.statusCode, firstResponse.body).toBe(200);
+    const first = firstResponse.json().template;
+    const legacy = await app.inject({ method: "POST", url: "/v1/resume-templates", payload: { ...request, templateId: first.templateId } });
+    expect(legacy.statusCode, legacy.body).toBe(400);
+    const winning = await app.inject({ method: "POST", url: "/v1/resume-templates", payload: {
+      ...request, templateId: first.templateId, expectedVersionId: first.activeVersion.versionId, displayName: "Concurrent winner",
+    } });
+    expect(winning.statusCode, winning.body).toBe(200);
+    const stale = await app.inject({ method: "POST", url: "/v1/resume-templates", payload: {
+      ...request, templateId: first.templateId, expectedVersionId: first.activeVersion.versionId, displayName: "Stale draft",
+    } });
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json()).toMatchObject({ error: "resume_template_version_conflict" });
+    const defaultBefore = await app.inject({ method: "GET", url: "/v1/resume-templates" });
+    const defaultConflict = await app.inject({ method: "PATCH", url: "/v1/resume-templates/default", payload: {
+      templateId: first.templateId, versionId: first.activeVersion.versionId, expectedActiveVersionId: first.activeVersion.versionId,
+    } });
+    expect(defaultConflict.statusCode, defaultConflict.body).toBe(409);
+    const defaultAfter = await app.inject({ method: "GET", url: "/v1/resume-templates" });
+    expect(defaultAfter.json().defaultTemplate).toEqual(defaultBefore.json().defaultTemplate);
+    const current = await app.inject({ method: "GET", url: `/v1/resume-templates/${encodeURIComponent(first.templateId)}` });
+    expect(current.statusCode, current.body).toBe(200);
+    expect(current.json().template).toMatchObject({ displayName: "Concurrent winner", activeVersion: { versionId: winning.json().template.activeVersion.versionId } });
+    const inspect = new Database(options.dbPath, { readonly: true });
+    try {
+      const count = inspect.prepare("SELECT COUNT(*) AS total FROM resume_template_versions WHERE tenant_id = ? AND template_id = ?").get("local", first.templateId) as { total: number };
+      expect(count.total).toBe(2);
+    } finally { inspect.close(); }
+    await app.close();
+  });
   it("creates a draft from approved resume materials without mutating artifacts in place", async () => {
     const app = buildApp(options);
 
@@ -1464,11 +1502,12 @@ function seedDatabase(dbPath: string): void {
   fs.writeFileSync(pdfV1Path, "%PDF v1");
   fs.writeFileSync(pdfV2Path, "%PDF v2");
 
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
   try {
     seedBuiltInTemplate(db);
+    writeProfileConfig(db,{profile:{personal:{full_name:"Owned candidate"},resume:{experience_entries:[{id:"owned",title:"Owned role",company:"Owned employer",bullets:["Owned source"]}],education_entries:[],skill_categories:[]}}});
     db.prepare(
       `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
        VALUES ('local', ?, ?, 'Platform Reliability Engineer', 'Example', 'example', ?)`,
@@ -1485,6 +1524,7 @@ function seedDatabase(dbPath: string): void {
          last_validation_json, last_verdict_json, metadata_json
        ) VALUES ('local', ?, ?, 'resume_approved', ?, ?, '{}', '{}', '{}')`,
     ).run(JOB_ID, 2, NOW, NOW);
+    db.prepare("INSERT INTO job_employer_analysis (tenant_id,job_id,generation,snapshot_hash,prompt_version,sdk_set_version,cache_key,legs_attempted,legs_succeeded,created_at) VALUES ('local',?,1,'synthetic',?,'synthetic','synthetic',1,1,?)").run(JOB_ID,EMPLOYER_ANALYSIS_PROMPT_VERSION,NOW);
     const insert = db.prepare(
       `INSERT INTO job_materials_artifacts (
          tenant_id, job_id, generation, artifact_id, artifact_type, status, path,

@@ -163,31 +163,29 @@ const flowSteps = [
   --apply-muted: var(--vp-c-text-2);
   --apply-human: var(--vp-c-brand-1);
   --apply-human-soft: var(--vp-c-brand-soft);
-  --apply-enforced: #047857;
-  --apply-enforced-soft: #ecfdf5;
-  --apply-warning: #b45309;
-  --apply-warning-soft: #fffbeb;
+  --apply-enforced: var(--vp-c-text-1);
+  --apply-enforced-soft: var(--vp-c-bg-soft);
+  --apply-warning: var(--warning-text);
+  --apply-warning-soft: var(--vp-c-bg-soft);
   display: grid;
   gap: 0.9rem;
   margin-block: 1.5rem 2rem;
   padding: clamp(0.85rem, 2.5vw, 1.35rem);
   overflow: hidden;
   border: 1px solid var(--apply-border);
-  border-radius: 1.25rem;
-  background:
-    radial-gradient(circle at 96% 0%, color-mix(in oklab, var(--apply-human-soft), transparent 18%), transparent 31%),
-    radial-gradient(circle at 3% 100%, color-mix(in oklab, var(--apply-enforced-soft), transparent 24%), transparent 32%),
-    var(--apply-panel);
-  box-shadow: 0 16px 42px color-mix(in srgb, #0f172a 11%, transparent);
+  border-top: 3px solid var(--vp-c-text-1);
+  border-radius: var(--jh-doc-radius);
+  background: var(--vp-c-bg);
+  box-shadow: none;
   color: var(--apply-text);
 }
 
 :global(.dark) .apply-safety-flow {
-  --apply-enforced: #34d399;
-  --apply-enforced-soft: color-mix(in oklab, #064e3b, var(--vp-c-bg) 48%);
-  --apply-warning: #fbbf24;
-  --apply-warning-soft: color-mix(in oklab, #78350f, var(--vp-c-bg) 58%);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 0.3);
+  --apply-enforced: var(--vp-c-text-1);
+  --apply-enforced-soft: var(--vp-c-bg-soft);
+  --apply-warning: var(--warning-text);
+  --apply-warning-soft: var(--vp-c-bg-soft);
+  box-shadow: none;
 }
 
 .apply-safety-flow__caption {
@@ -246,7 +244,7 @@ const flowSteps = [
   min-block-size: 1.8rem;
   padding-inline: 0.58rem;
   border: 1px solid currentColor;
-  border-radius: 999px;
+  border-radius: var(--jh-doc-radius);
   font-size: 0.7rem;
   font-weight: 750;
 }
@@ -284,7 +282,7 @@ const flowSteps = [
   padding: 0.8rem;
   border: 1px solid var(--apply-border);
   border-block-start: 3px solid var(--apply-enforced);
-  border-radius: 0.85rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--apply-card);
 }
 
@@ -322,7 +320,7 @@ const flowSteps = [
   block-size: 2.45rem;
   place-items: center;
   border: 1px solid currentColor;
-  border-radius: 0.75rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--apply-enforced-soft);
   color: var(--apply-enforced);
 }
@@ -388,7 +386,7 @@ const flowSteps = [
   inline-size: 1rem;
   block-size: 1rem;
   place-items: center;
-  border-radius: 50%;
+  border-radius: var(--jh-doc-radius);
   background: var(--apply-panel);
   color: var(--apply-muted);
   transform: translateY(-50%);
@@ -422,7 +420,7 @@ const flowSteps = [
   gap: 0.75rem;
   padding: 0.85rem;
   border: 1px solid var(--apply-border);
-  border-radius: 0.9rem;
+  border-radius: var(--jh-doc-radius);
   background: color-mix(in oklab, var(--apply-card), transparent 2%);
 }
 
@@ -457,7 +455,7 @@ const flowSteps = [
   padding: 0.7rem;
   border: 1px solid var(--apply-border);
   border-inline-start: 3px solid var(--apply-enforced);
-  border-radius: 0.72rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--apply-card);
 }
 
@@ -470,7 +468,7 @@ const flowSteps = [
   inline-size: 2.2rem;
   block-size: 2.2rem;
   place-items: center;
-  border-radius: 0.68rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--apply-enforced-soft);
   color: var(--apply-enforced);
 }
@@ -535,7 +533,7 @@ const flowSteps = [
 @media (max-width: 34rem) {
   .apply-safety-flow {
     padding: 0.7rem;
-    border-radius: 1rem;
+    border-radius: var(--jh-doc-radius);
   }
 
   .apply-safety-flow__outcomes > ul {

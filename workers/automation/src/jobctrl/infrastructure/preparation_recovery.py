@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from contextlib import contextmanager
 import json
-from typing import Any
+from typing import Any, Callable
 
 from temporalio import activity
 
@@ -13,7 +13,162 @@ from jobctrl.domain.identifiers import canonical_job_id
 
 
 class PreparationReservationLost(RuntimeError):
-    """One job's reservation was revoked before its attempt began."""
+    """One job's material ownership or reservation was superseded."""
+
+
+class MaterialAttemptSuperseded(PreparationReservationLost):
+    """A material attempt no longer owns its stage's start token."""
+
+    material_url: str = ""
+
+
+@dataclass(frozen=True)
+class MaterialActivityAttempt:
+    """Temporal identity for one attempt of a material activity."""
+
+    activity_id: str
+    number: int
+    run_id: str | None = None
+
+
+@contextmanager
+def material_admission_write(conn: Any):
+    """Acquire the material writer lock without committing a caller's transaction."""
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    else:
+        conn.execute("UPDATE job_materials SET generation=generation WHERE 0")
+    try:
+        yield
+        if owns_transaction:
+            conn.commit()
+    except BaseException:
+        if owns_transaction:
+            conn.rollback()
+        raise
+
+
+def material_start_event_id(conn: Any, *, tenant_id: str, job_id: str, stage: str) -> int:
+    row = conn.execute(
+        "SELECT event_id FROM job_events WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = ? AND event_type = 'StageStarted' ORDER BY event_id DESC LIMIT 1",
+        (tenant_id, job_id, stage),
+    ).fetchone()
+    return int(row["event_id"]) if row is not None else 0
+
+
+def assert_direct_material_attempt_not_superseded(
+    conn: Any, *, tenant_id: str, job_id: str, stage: str, observed_start: int | None,
+) -> None:
+    if observed_start is None:
+        return
+    if material_start_event_id(conn, tenant_id=tenant_id, job_id=job_id, stage=stage) != observed_start:
+        exc = MaterialAttemptSuperseded(f"{stage} activity no longer owns artifact persistence")
+        row = conn.execute("SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?", (tenant_id, job_id)).fetchone()
+        exc.material_url = str(row["url"] or "") if row is not None else ""
+        raise exc
+
+
+def assert_material_activity_attempt_not_superseded(
+    conn: Any,
+    *,
+    tenant_id: str,
+    job_id: str,
+    stage: str,
+    workflow_id: str | None,
+    attempt: MaterialActivityAttempt | None,
+) -> None:
+    """Do not let a late retry claim or recover a newer attempt's stage."""
+    if attempt is None or not (attempt.run_id or workflow_id):
+        return
+    run_id = attempt.run_id or workflow_id
+    rows = conn.execute(
+        "SELECT payload_json FROM job_events WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = ? AND event_type = 'StageStarted' ORDER BY event_id DESC",
+        (tenant_id, job_id, stage),
+    )
+    for row in rows:
+        payload = _metadata(row["payload_json"])
+        if (
+            payload.get("temporalRunId") == run_id
+            and payload.get("temporalActivityId") == attempt.activity_id
+            and isinstance(payload.get("temporalAttempt"), int)
+            and payload["temporalAttempt"] > attempt.number
+        ):
+            raise PreparationReservationLost(f"{stage} activity no longer owns artifact persistence")
+
+
+def material_activity_may_recover(
+    conn: Any,
+    *,
+    tenant_id: str,
+    job_id: str,
+    stage: str,
+    workflow_id: str | None,
+    attempt: MaterialActivityAttempt | None,
+) -> bool:
+    """Reuse approved material without settling another running execution.
+
+    Callers hold the material writer boundary through the recovery transition.
+    An approved artifact is not authority over a different stage owner.
+    """
+    row = conn.execute(
+        "SELECT state, metadata_json FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = ?",
+        (tenant_id, job_id, stage),
+    ).fetchone()
+    running = row is not None and row["state"] == "running"
+    owner = None
+    if running:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(metadata, dict):
+            return False
+        owner = metadata.get("activityOwner")
+        if owner and owner != workflow_id:
+            return False
+    latest = conn.execute(
+        "SELECT payload_json FROM job_events WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = ? AND event_type = 'StageStarted' ORDER BY event_id DESC LIMIT 1",
+        (tenant_id, job_id, stage),
+    ).fetchone()
+    payload = _metadata(latest["payload_json"]) if latest is not None else {}
+    if attempt is None:
+        # An unrelated direct read observes the active start token; it does
+        # not acquire that token's authority to settle the running stage.
+        return not (running and not owner and payload.get("materialAttemptId"))
+    event_run = payload.get("temporalRunId")
+    event_activity = payload.get("temporalActivityId")
+    if running and payload.get("materialAttemptId") and not (event_run and event_activity):
+        # A current direct attempt has a start token but no Temporal identity.
+        return False
+    if event_run and event_activity and (event_run != (attempt.run_id or workflow_id) or event_activity != attempt.activity_id):
+        return False
+    try:
+        assert_material_activity_attempt_not_superseded(
+            conn, tenant_id=tenant_id, job_id=job_id, stage=stage,
+            workflow_id=workflow_id, attempt=attempt,
+        )
+    except PreparationReservationLost:
+        return False
+    return True
+
+
+
+# Canonical shape written by mark-skipped. Metadata may retain an old policy
+# reason, so only the current state/code/retryability identify this manual stop.
+# Callers bind their job-stage row to the fixed SQL alias `s`.
+MANUAL_APPLY_DECLINE_SQL = """
+EXISTS (
+    SELECT 1 FROM job_stage_states declined
+    WHERE declined.tenant_id = s.tenant_id AND declined.job_id = s.job_id
+      AND declined.stage = 'apply' AND declined.state = 'skipped'
+      AND declined.error_code IS NULL AND declined.retryable = 0
+)
+"""
 
 
 def owns_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id) -> bool:
@@ -25,6 +180,7 @@ def owns_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id)
             "SELECT 1 FROM job_stage_states s WHERE tenant_id = ? AND job_id = ? AND stage = ? "
             "AND state = 'queued' AND retryable = 1 AND attempt_count < MIN(5, max_attempts) "
             "AND json_extract(metadata_json, '$.automaticPreparation.workflowId') = ? "
+            f"AND NOT (s.stage IN ('tailor', 'cover') AND ({MANUAL_APPLY_DECLINE_SQL})) "
             "AND NOT EXISTS (SELECT 1 FROM jobctrl_deleted_jobs d "
             "WHERE d.tenant_id = s.tenant_id AND d.job_id = s.job_id "
             "AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at)))",
@@ -35,16 +191,24 @@ def owns_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id)
 
 
 @contextmanager
-def claim_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id, cancel_event):
+def claim_preparation_reservation(
+    conn, *, tenant_id, job_id, stage, workflow_id, cancel_event, expected_posting_url=None
+):
     """Fence the queued-to-running transition, releasing the lock before I/O."""
-    if not workflow_id:
+    if not workflow_id and expected_posting_url is None:
         yield
         return
     conn.execute("BEGIN IMMEDIATE")
     try:
+        if expected_posting_url is not None:
+            from jobctrl.enrichment.availability import assert_fresh_candidate
+
+            assert_fresh_candidate(
+                conn, str(job_id), expected_posting_url, tenant_id=str(tenant_id), allow_unknown=True
+            )
         if cancel_event is not None and cancel_event.is_set():
-            raise RuntimeError(f"{stage} activity canceled before dispatch")
-        if not owns_preparation_reservation(
+            raise PreparationReservationLost(f"{stage} activity canceled before dispatch")
+        if workflow_id and not owns_preparation_reservation(
             conn, tenant_id=tenant_id, job_id=job_id, stage=stage, workflow_id=workflow_id
         ):
             raise PreparationReservationLost(f"{stage} activity no longer owns its queued reservation")
@@ -62,6 +226,7 @@ class RecoverPreparationStateInput:
     stage: str
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
+    job_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -104,6 +269,16 @@ async def recover_preparation_state_activity(
 async def cancel_preparation_state_activity(
     payload: CancelPreparationStateInput,
 ) -> CancelPreparationStateOutput:
+    from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+
+    return await run_blocking_with_heartbeat(
+        lambda: _cancel_preparation_state(payload),
+        starting_message="canceling owned preparation state",
+        control=True,
+    )
+
+
+def _cancel_preparation_state(payload: CancelPreparationStateInput) -> CancelPreparationStateOutput:
     from jobctrl.database import get_connection
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
 
@@ -223,6 +398,9 @@ def cancel_preparation_state_rows(
 def recover_preparation_state_rows(
     conn: Any,
     payload: RecoverPreparationStateInput,
+    *,
+    commit: bool = True,
+    recovery_guard: Callable[[str], bool] | None = None,
 ) -> RecoverPreparationStateOutput:
     """Accept committed work or fail only rows owned by the stopped workflow."""
     if payload.stage not in {"score", "tailor", "cover"}:
@@ -230,23 +408,28 @@ def recover_preparation_state_rows(
     from jobctrl.domain.tenant import TenantId
     from jobctrl.state import utc_now
 
-    rows = conn.execute(
-        """
+    query = """
         SELECT job_id, attempt_count, max_attempts, started_at, metadata_json
           FROM job_stage_states
          WHERE tenant_id = ?
            AND stage = ?
            AND state = 'running'
            AND json_extract(metadata_json, '$.activityOwner') = ?
-        """,
-        (payload.tenant_id, payload.stage, payload.workflow_id),
-    ).fetchall()
+        """
+    parameters = [payload.tenant_id, payload.stage, payload.workflow_id]
+    job_ids = tuple(dict.fromkeys(str(canonical_job_id(value)) for value in payload.job_ids))
+    if job_ids:
+        query += " AND job_id IN (" + ",".join("?" for _ in job_ids) + ")"
+        parameters.extend(job_ids)
+    rows = conn.execute(query, parameters).fetchall()
     tenant_id = TenantId(payload.tenant_id)
     finished_at = utc_now()
     restored = 0
     failed = 0
     for row in rows:
         job_id = canonical_job_id(str(row["job_id"]))
+        if recovery_guard is not None and not recovery_guard(str(job_id)):
+            continue
         metadata = _metadata(row["metadata_json"])
         committed = _preparation_commit_exists(
             conn,
@@ -275,7 +458,8 @@ def recover_preparation_state_rows(
                 finished_at=finished_at,
             )
             failed += 1
-    conn.commit()
+    if commit:
+        conn.commit()
     return RecoverPreparationStateOutput(restored=restored, failed=failed)
 
 
@@ -304,22 +488,35 @@ def assert_material_activity_commit_allowed(
     stage: str,
     workflow_id: str | None,
     cancel_event: Any | None = None,
+    attempt_id: str | None = None,
 ) -> None:
     """Fence a material write against cancellation or a successor owner."""
 
     if cancel_event is not None and cancel_event.is_set():
         raise RuntimeError(f"{stage} activity canceled before persistence")
-    if not workflow_id:
+    if not workflow_id and attempt_id is None:
         return
     row = conn.execute(
         "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = ?",
         (tenant_id, job_id, stage),
     ).fetchone()
+    if attempt_id is not None:
+        latest = conn.execute(
+            "SELECT payload_json FROM job_events WHERE tenant_id = ? AND job_id = ? "
+            "AND stage = ? AND event_type = 'StageStarted' ORDER BY event_id DESC LIMIT 1",
+            (tenant_id, job_id, stage),
+        ).fetchone()
+        if latest is not None and _metadata(latest["payload_json"]).get("materialAttemptId") != attempt_id:
+            raise MaterialAttemptSuperseded(f"{stage} activity no longer owns artifact persistence")
+        if latest is None:
+            raise RuntimeError(f"{stage} activity no longer owns artifact persistence")
     if (
         row is None
         or str(row["state"]) != "running"
-        or _metadata(row["metadata_json"]).get("activityOwner") != workflow_id
+        or (workflow_id and _metadata(row["metadata_json"]).get("activityOwner") != workflow_id)
     ):
+        if not workflow_id and attempt_id is not None:
+            raise MaterialAttemptSuperseded(f"{stage} activity no longer owns artifact persistence")
         raise RuntimeError(f"{stage} activity no longer owns artifact persistence")
 
 
@@ -356,7 +553,7 @@ def _material_commit_exists(
     job_id,
     metadata: dict[str, Any],
 ) -> bool:
-    from jobctrl.domain.materials.value_objects import ArtifactStatus
+    from jobctrl.domain.ports.artifact_review import ArtifactStatus
     from jobctrl.infrastructure.materials import SqliteMaterialsRepository
 
     repository = SqliteMaterialsRepository(conn)

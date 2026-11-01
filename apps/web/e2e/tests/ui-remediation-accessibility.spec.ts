@@ -24,12 +24,32 @@ async function expectNoCriticalOrSeriousAxeViolations(
   await expect(
     page.locator('[data-typography="page-title"]').first(),
   ).toBeVisible({ timeout: 30_000 });
+  if (route === "/apply-review") {
+    const authorizeDryRun = page.getByRole("button", {
+      name: /^Authorize dry run for /,
+    });
+    await expect(authorizeDryRun).toBeEnabled({ timeout: 30_000 });
+    // Draft hydration enables this action after the route title is visible.
+    // Audit its settled paint after the disabled-to-enabled color transition.
+    await authorizeDryRun.evaluate(async (element) => {
+      await Promise.all(
+        element.getAnimations().map((animation) => animation.finished),
+      );
+    });
+  }
   if (route === "/preferences") {
     await expect(
       page
         .getByRole("group", { name: "Template settings" })
         .getByRole("combobox", { name: "Font" }),
     ).toBeEnabled({ timeout: 30_000 });
+    const saveVersion = page.getByRole("button", { name: "save version", exact: true });
+    await expect(saveVersion).toBeEnabled();
+    // Template hydration enables this action with a color transition. Audit
+    // its settled paint rather than an intermediate disabled-to-enabled frame.
+    await saveVersion.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished));
+    });
   }
   await injectAxe(page);
   const violations = (await getViolations(page)).filter((violation) =>
@@ -39,6 +59,7 @@ async function expectNoCriticalOrSeriousAxeViolations(
     id: violation.id,
     impact: violation.impact,
     targets: violation.nodes.map((node) => node.target),
+    details: violation.nodes.map((node) => node.failureSummary),
   }));
   expect(summary, `${route} critical/serious axe violations`).toEqual([]);
 }
@@ -106,6 +127,16 @@ test("representative remediated routes have no critical or serious axe violation
   test.setTimeout(180_000);
   for (const route of REPRESENTATIVE_ROUTES) {
     await expectNoCriticalOrSeriousAxeViolations(page, route);
+  }
+});
+
+test("dark remediated routes have no critical or serious axe violations", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.goto("/dashboard");
+  await page.getByRole("button", { name: "Light theme: Switch to dark theme" }).click();
+  for (const route of REPRESENTATIVE_ROUTES) {
+    await expectNoCriticalOrSeriousAxeViolations(page, route);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   }
 });
 
@@ -181,8 +212,8 @@ test("200 percent text-scale approximation preserves representative task access"
     await expect(page.locator(".app-shell")).toBeVisible({ timeout: 30_000 });
     await page.evaluate(() => {
       const doubledRoleTokens: Record<string, string> = {
-        "--jh-type-page-title-size": "48px",
-        "--jh-type-page-title-line-height": "60px",
+        "--jh-type-page-title-size": "56px",
+        "--jh-type-page-title-line-height": "68px",
         "--jh-type-section-title-size": "36px",
         "--jh-type-section-title-line-height": "48px",
         "--jh-type-component-title-size": "32px",

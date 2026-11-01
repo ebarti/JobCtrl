@@ -1,7 +1,7 @@
 # Local TypeScript API
 
 The local Fastify API is the browser-facing boundary for JobCtrl. It serves
-projection-backed reads, accepts explicit commands, starts Temporal workflows,
+projection-backed and canonical detail reads, accepts explicit commands, starts Temporal workflows,
 and streams domain-event invalidations to the web app.
 
 **Read this first** for the shape of the API. Follow a route-family link for the
@@ -10,8 +10,8 @@ when implementing or debugging a specific endpoint.
 
 ## In 30 Seconds
 
-- Reads come from SQLite-backed projections; clients do not reconstruct domain
-  state from raw events.
+- Personal reads come from SQLite-backed projections and authorized canonical
+  detail state; clients do not reconstruct domain state from raw events.
 - Workflow-starting commands normally return `202 Accepted`. That means queued,
   not completed.
 - Synchronous reads and commands return `200 OK`; invalid input, unavailable
@@ -36,7 +36,9 @@ when implementing or debugging a specific endpoint.
 | Boundary | Representative routes | Response model |
 | --- | --- | --- |
 | Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings`, `/v1/browser-capabilities`, `/v1/extension/pairing-token`, `/v1/discovery/browser-extension/status` | Synchronous reads, validated patches, and live extension readiness |
+| Career learning | `/v1/evidence-map/learning` | Local recorded reads, no-model cohort preview and explicitly requested comparison/milestone commands |
 | Jobs and evidence | `/v1/jobs`, `/v1/jobs/:jobKey`, `/v1/evidence-map`, `/v1/artifacts` | Projection-backed reads |
+| Interviews | `/v1/interviews/catalog`, `/v1/interviews/questions/:questionId`, per-job prep history and interview notes | Asset-backed public reads; tenant/job-scoped prep and revisioned private notes |
 | Scoring keywords and feedback learning | `/v1/scoring/keywords`, `/v1/learning/recommendations`, `/v1/learning/policies/materials` | Current score-version aggregation plus explicit review and versioned policy history |
 | Review and outcomes | `/v1/apply/review-queue`, `/v1/jobs/:jobKey/apply-review/decision`, `/v1/jobs/:jobKey/repeat-application/override`, `/v1/outcomes` | Explicit review commands plus read models |
 | Workflow operations | `/v1/pipeline/actions/run-stage`, `/v1/pipeline/operations`, `/v1/workflow-runs`, `/v1/health` | `202` for accepted asynchronous work; `200` for projection-backed and runtime-backed reads/sync commands |
@@ -46,14 +48,54 @@ Dashboard source-health and digest blocked-source entries retain stable
 `sourceId` values and may include `displayName` from the source registry.
 Clients prefer that name, including current JobStreaming board labels for
 historical source keys. Names do not change source-health or quarantine facts.
+Digest job counts require the local tenant's canonical JobId, and date filters
+compare instants at millisecond precision. The explicit acknowledgement route
+serializes with Python writers and commits the watermark and review event
+together; passive digest reads do not acknowledge.
 
 ## Profile And Preferences
+
+Profile reads expose a bounded legacy-confirmation review notice and computed
+evidence authority flags. The private original/review history stays out of SSE;
+review decisions use the stopped-runtime local command. See the
+[Profile & Settings contract](api/profile-and-settings.md#candidate-profile).
 
 Profile data, preferences, discovery controls, settings, and credentials have
 different owners even though the UI presents them together. See
 [Profile & Settings](api/profile-and-settings.md) for that ownership map and the
-routes used by autosave, resume preview, source administration, and Keychain-backed
+routes used by autosave, resume preview, source administration, and native-store-backed
 credentials.
+
+Existing resume-template updates carry an expected active version and fail
+closed on a stale or missing precondition; see [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates).
+
+Discovery settings reads and updates report invalid persisted search settings
+instead of replacing them with defaults; see the
+[Discovery controls contract](api/complete-contract.md#discovery-controls).
+
+Target Search can request role suggestions through
+`POST /v1/profile/target-role-suggestions`. The web sends only the last saved
+`profileVersion`; it never sends the current browser form draft. The TypeScript
+API checks that version before and after one synchronous Python RPC call, and
+the worker builds a bounded payload from saved experience titles, achievement
+evidence, and skills. Contact details, voluntary EEO values, compensation,
+attestations, raw PDF data, and raw profile content logs are excluded. Results
+remain transient until the user edits/selects them and accepts an append through
+the normal `PATCH /v1/profile` path with `expectedProfileVersion`.
+
+The RPC also carries app-directory and database identity derived from the API's
+trusted runtime context. The worker rejects a mismatch before it reads a
+snapshot. Current managed provider SDKs do not enforce the required output-token
+and maximum-call-cost bounds, so this production route makes no provider call.
+It returns deterministic direct titles from compatible saved experience and a
+small set of adjacent titles only when linked achievement evidence supports
+their full substantive wording; an empty result is valid. Historical location
+and work-model proposals come only from explicit experience location text.
+Every role and historical preference proposal starts unselected. The
+`provider_token_or_cost_bound_unsupported` warning records the provider gate.
+Synthetic adapter tests cover the model response validator without claiming a
+production model run; broader inference still requires bounded provider
+support and semantic validation.
 
 ## Artifacts And Tailoring Audit
 
@@ -64,9 +106,48 @@ field.
 
 ## Jobs Read Model And Lifecycle
 
+The jobs list supports globally paginated `stages` membership alongside legacy
+scalar `stage`. The shared API client serializes arrays as comma-separated query
+values, including an empty array as `stages=`. Membership, precedence, metadata,
+and bulk-selection semantics are owned by [Jobs & Materials](api/jobs-and-materials.md)
+and the [complete contract](api/complete-contract.md).
+The Jobs removed-selection action uses `GET /v1/jobs/reviewable-list` and
+`POST /v1/jobs/permanent-delete-selection` to bind the confirmed cohort to its
+observed lifecycle state before permanent deletion.
+The Operations browser adapter validates the raw stage array with the shared
+schema before merging stage-local pages. It preserves explicit empty arrays,
+scalar fallback for invalid or oversized arrays, and the requested scalar in
+response metadata. Its input contract accepts readonly stage arrays.
+Text sorts use lowercase locale comparison consistent with the browser merger.
+Discovery sorts preserve the browser's locale comparison of raw timestamp
+strings, including mixed fractional/offset notation, rather than instant order.
+Source/company filters match literal Unicode-lowercased substrings on
+summary-equivalent scalar values. All searches and sorts use SQLite selection
+over the app-owned, rebuildable
+[query index](architecture/read-model.md#job-list-sqlite-selection).
+Timestamp cutoffs compare precomputed instants inclusively at JavaScript
+millisecond precision, including the OR of two cutoffs. Lists and all-matching
+bulk selection share those predicates. Index refresh, totals, page selection
+and selected-summary joins stay within one SQLite transaction; only the
+returned page receives DTO hydration, availability and template reads.
+
+Jobs list/detail include Enrichment's persisted `availability` observation:
+latest attempt/verdict, last successful verification, next due, acquisition
+evidence and computed overdue/in-progress state. These GETs never fetch an
+employer posting. `POST /v1/jobs/:jobId/actions/check-availability` accepts an
+empty strict body and a canonical JobId, dispatches runtime-bound JSON-RPC
+`check_posting_availability`, and returns `202` with workflow/run IDs.
+`JobAvailabilityObserved` invalidates the selected detail and tenant job lists.
+Job-scoped `AvailabilityLeaseChanged` command-deferral records invalidate the
+same reads. Only explicit requests own coalesced deferral feedback; automatic
+and preflight refusals do not create user requests or employer observations.
+See [Jobs & Materials](api/jobs-and-materials.md#saved-posting-availability)
+and the [field contract](api/complete-contract.md#saved-posting-availability).
+
 The jobs list and detail routes read stable projections. Lifecycle changes—hide,
 restore, delete, score correction, stage retry, and per-job actions—are explicit
-commands. See [Jobs & Materials](api/jobs-and-materials.md).
+commands. A stale-score reset leaves the accepted score visibly stale while
+replacement work is pending. See [Jobs & Materials](api/jobs-and-materials.md).
 
 On job detail, Enrich stage summaries can carry a separate, allow-listed
 `applyUrlOutcome` (`code`, `message`, `retryable`, and `method`). It reports
@@ -84,6 +165,22 @@ Source remain independent facts. `GET /v1/scoring/keywords` aggregates indexed,
 normalized keywords from the current score version, and `GET /v1/jobs` accepts
 an exact `normalizedScoreKeyword` filter using those returned keys.
 
+## Interview Catalog, Preparation, And Notes
+
+The global catalog/detail routes serve the same versioned public JSON packaged
+for Python and TypeScript. They remain available without a database, selected
+job, live worker, or provider call. The job action extends the existing explicit
+`generate_interview_prep` workflow with a bounded selected-question/context
+request. Prep history and independent revisioned notes use authorized
+job-scoped reads/saves. A failed refresh preserves accepted prep; a stale note
+revision returns an explicit conflict instead of overwriting the newer edit.
+
+These contracts keep public guidance, accepted personal evidence, generated
+outlines, and unverified user edits separate. Read the
+[Jobs & Materials route guide](api/jobs-and-materials.md#interviews-catalog-preparation-and-notes)
+and [complete interview contract](api/complete-contract.md#interview-catalog-preparation-and-notes)
+for route fields, limits, errors, legacy cases, and stale-input semantics.
+
 ## Feedback Learning And Policy History
 
 `GET /v1/learning/recommendations` and its evidence route expose only bounded,
@@ -91,7 +188,8 @@ privacy-safe derived evidence. The review route requires an explicit accepted
 or rejected decision. Acceptance creates a versioned Materials policy revision;
 rejection changes no policy. `GET /v1/learning/policies/materials` exposes the
 allowlisted current/superseded history, while the rollback route appends a new
-user-requested revision that restores an earlier version. These routes never
+user-requested revision only against the reviewed current version and returns
+the recorded receipt on a matching retry, even after later changes. These routes never
 start scoring, tailoring, Apply, or artifact work. See
 [Jobs & Materials](api/jobs-and-materials.md#feedback-learning-and-materials-policy).
 
@@ -106,7 +204,8 @@ It selects the active or draining Discover execution, falling back to the
 latest terminal execution, and combines immutable execution membership,
 pipeline-step and per-job stage projections, fresh worker capacity, approximate
 Temporal task-queue statistics, bounded active-work detail, and a conservative
-typed ETA. It is a current snapshot, not a historical reconstruction endpoint.
+typed ETA. A stale same-queue worker leaves ETA contention unbounded. It is a
+current snapshot, not a historical reconstruction endpoint.
 See [Operations & Events](api/operations-and-events.md#pipeline-operations-snapshot).
 
 ## Discovery Controls
@@ -114,6 +213,10 @@ See [Operations & Events](api/operations-and-events.md#pipeline-operations-snaps
 Source registry, quarantine, locator candidates, manual capture, schedules, and
 role-match feedback are covered in
 [Profile & Settings](api/profile-and-settings.md#discovery-controls).
+Source-locator GET uses a read-only database connection and never promotes.
+History proposals join saved source-control receipts and registry overlaps;
+review writes and durable coordinate decisions commit atomically. The history
+scan and explicit suppression reset are CLI-owned.
 
 `POST /v1/jobs/import-url` accepts `{ "url": "https://…" }` and awaits the
 worker-owned `JobUrlImportWorkflow`. It returns either the canonical imported
@@ -176,12 +279,16 @@ promptly via a task-scoped navigation-error listener. Response streaming stops
 at its byte limit rather than buffering an unbounded body. Rotating the pairing
 token clears the selected
 installation and immediately marks the old extension disconnected. `POST
-/v1/pipeline/actions/run-stage` returns `503
-discovery_extension_unavailable` before workflow dispatch when Discover is one
-of the requested stages and the heartbeat is offline. Top-level `enrich`,
+/v1/pipeline/actions/run-stage` and the job-level and bulk Enrich run/retry
+routes do not require an extension heartbeat: worker-ready, eligible requests
+dispatch with the extension offline and return the normal `202`
+queued/accepted response, while worker readiness
+(`503 worker_runtime_unavailable`), stage eligibility, and authorization gates
+still apply. Each acquisition setup then prefers the connected extension after
+a bounded status probe and otherwise selects guarded public HTTP or anonymous
+Playwright; a fetch failure never switches transport. Top-level `enrich`,
 including mixed-stage requests containing it, is rejected with `400` by the
-request schema; Discovery owns the pipeline enrichment drain. Job-level and
-bulk Enrich run/retry routes perform the same extension heartbeat preflight.
+request schema; Discovery owns the pipeline enrichment drain.
 
 ## Compensation
 
@@ -226,7 +333,14 @@ routes described in [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-r
 Apply review is a user decision boundary, not a background side effect. The
 review queue, editable resume-review drafts, approval decisions, outcomes, and
 bounded Gmail suggestion flow are summarized in
-[Jobs & Materials](api/jobs-and-materials.md#apply-review-and-outcomes).
+[Jobs & Materials](api/jobs-and-materials.md#apply-review-and-outcomes). Gmail scan summaries
+and feedback events carry canonical `jobId` values; the wire fields are defined
+in the [complete contract](api/complete-contract.md). Gmail scan worker failures
+carry a safe `failureCode` through the HTTP route without returning mail text.
+
+Manual outcomes, interview reflections and user-attested send logs use a
+client-provided request identity to return the original result after a retry.
+See the [manual action retry contract](api/complete-contract.md#manual-action-retry-contract).
 
 The queue and job-detail read models include `repeatApplication`: its current
 status, summary, evaluation time, evidence fingerprint, related confirmed prior
@@ -241,9 +355,16 @@ dispatch does not require this confirmation because it cannot submit.
 
 ## Contacts
 
-Contact facts, supervised research, candidate confirmation, outreach drafts,
-send logs, and follow-ups share one route family. See
+Contact facts, reviewed CSV/vCard import, supervised research, candidate
+confirmation, outreach drafts, send logs, and follow-ups share one route family. See
 [Jobs & Materials](api/jobs-and-materials.md#contacts-and-outreach).
+Contact edits require the fingerprint from the detail read; a stale base returns
+409 without replacing newer facts. See the [contact contract](api/complete-contract.md#contacts).
+Research source attempts distinguish acquisition failures from a successful page
+with no candidates; their detailed outcomes and recovery text are returned on
+the research task detail read. Model, spend and structural failures are distinct
+from an accepted empty decision. An overlapping failed attempt refreshes the
+open review without replacing its accepted proposals.
 
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>
@@ -253,6 +374,30 @@ send logs, and follow-ups share one route family. See
 Global and per-job stage runs, rescore/re-tailor, retry, mark-applied, and
 mark-skipped commands are summarized in
 [Operations & Events](api/operations-and-events.md#starting-work).
+Stale-score reset advice is returned and recorded as an executable explicit
+rescore command; the reset itself does not dispatch scoring.
+
+Apply resets refuse recorded intent, Applied and unresolved verification evidence,
+retained policy skips, and unsettled admitted or skipped-queued work independently
+of the current local stage label. A successful explicit reset records its validated
+Skip-history release frontier; automatic `StageReset` events carry no such authority.
+Verified native retirement may restore the stopped stage from a stale running
+label only for the same claim and run with no conflicting outcome or intent.
+That recovery preserves Skip; a separate safe reset releases it.
+Apply dispatch binds a writer-serialized event frontier, and the claim writer
+rejects a job with a later manual Skip or its later authorized reset. A targeted
+request after reset has a distinct workflow generation; an older workflow cannot
+reuse its request authority. Legacy workflows without a frontier remain eligible
+only for jobs without retained manual Skip history. Standing workflows renew the
+frontier between completed polls. Historical local API skips are identified only
+by their exact machine-authored message on an Apply `StageSkipped` event; the
+user-provided reason in the event payload is not interpreted as a marker.
+Historical score-policy skips are recognized from the producer's structured
+score fields and exact generated event message, not a user-provided reason.
+
+Enrichment resets use the synchronous Python application service through
+`reset_enrichment`; its transaction and preservation rules are defined in
+[Enrichment Retry Ownership](architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
 
 ## Discovery Target Search
 
@@ -270,11 +415,25 @@ for the readiness boundary.
 
 Ordinary settings and secrets deliberately use separate routes and storage.
 See [Profile & Settings](api/profile-and-settings.md#settings-and-credentials).
+Credential mutation ownership is shared across local API processes and can
+return a bounded `busy` response while another update is active. Unverified
+process identity fails closed as `ownership_unverified`.
 `GET /v1/providers/models` returns sanitized ready-provider catalogs through
 the Python JSON-RPC boundary. `PATCH /v1/settings` accepts `preferredModels`,
 validates every non-null choice against that current catalog, and persists only
 the canonical `preferred_models` provider/model mapping; `null` clears one
 provider without requiring it to be ready.
+The saved `defaultLlmModel` route and explicit material generator and judge choices use the same catalog boundary
+before any settings bytes change. Clearing them or selecting provider-neutral
+`default` does not require provider availability.
+`defaultLlmModel` persists as `default_llm_model`; it binds newly acquired core
+adapters and the optional writing pass without changing explicit workflow pins.
+Codex catalog models also expose optional `supportedReasoningEfforts` and
+`defaultReasoningEffort` capabilities. Settings accepts model-specific
+`codexReasoningEfforts` patches validated against those live options; null
+entries clear offline. The optional `reasoning_effort` in determination envelopes
+records an explicit saved choice and participates in the determination identity.
+Legacy envelopes without the field remain readable.
 
 `GET/PATCH /v1/settings` also carries effective-source and activation metadata
 for launch controls. Environment-owned fields are read-only. Discovery runtime
@@ -303,10 +462,21 @@ verification sequence is in [Local Development](local-development.md).
 ## Server-Sent Events — `GET /v1/events/stream`
 
 The endpoint tails tenant-scoped `job_events`, emits typed SSE frames, and uses
-event IDs for replay. The browser invalidation router maps each event type to the
-smallest safe query-key set. See
+event IDs for replay. If the event database cannot be opened or read, the stream
+signals that it is unavailable and retains each subscriber's cursor. It retries
+without terminating the API; a detected database change sends a cursor-reset
+signal and stays degraded until stopped-runtime recovery and a fresh UI
+subscription. The browser shows the recovery steps. Path checks cannot identify
+an A → B → A replacement during initial SQLite open; stop JobCtrl before any
+database restore or replacement. The invalidation router
+maps each event type to the smallest safe query-key set. See
 [Operations & Events](api/operations-and-events.md#server-sent-events) and the
 [frontend realtime architecture](architecture/frontend/realtime.md).
+
+Internal `ArchivedSmartPostingPrepared` receipts retain private captured posting
+bytes for recovery and are excluded entirely from SSE. Capture completion and
+source-owner notifications contain references only; they do not expose that
+private journal body.
 
 ### Request
 
@@ -316,6 +486,9 @@ The browser opens one long-lived `GET` request. A reconnect may include
 ### Response Framing
 
 Frames include an `id`, typed `event`, JSON `data`, and a reconnect cadence.
+`DryRunCompleted` is a distinct typed apply event: it refreshes dry-run status
+without implying submission. Its [payload contract](api/complete-contract.md#dry-run-completion)
+retains the launcher's snake_case lifecycle fields.
 Clients validate the payload before dispatching it to the invalidation router.
 
 ### Tenant Filtering (COALESCE On The Row, Not The Request)
@@ -338,3 +511,54 @@ bounded cadences so quiet connections remain observable.
 Native `EventSource` reconnect plus durable event IDs is the normal recovery
 path. Projection refetches remain the correctness backstop if a client misses an
 invalidation.
+
+Workflow-run detail also returns the selected Apply run's durable event
+summaries separately from workflow lifecycle events. Their identities and
+privacy boundary are documented in [Operations & Events](api/operations-and-events.md#workflow-runs).
+
+### Required-Bullet Coaching
+
+The opt-in `POST /v1/profile/required-bullet-suggestions` route calls the configured
+LLM through the synchronous `profile_required_bullet_suggestions` worker RPC.
+Findings bind to canonical saved sources and the expected profile version;
+provider failures have no heuristic fallback. Typed budget denials return 429
+with daily/profile-lane scope; provider setup/authentication failures return 503;
+invalid output or other provider failures return 502 with safe actionable messages.
+This route uses observed daily/profile-lane admission, not a hard per-call token or
+cost ceiling; input/response bounds do not cap an in-flight provider charge.
+Only an exact model-proposed whitespace cleanup can be accepted through the ordinary fenced profile save.
+See [Profile & Settings](api/profile-and-settings.md) and the
+[complete contract](api/complete-contract.md#candidate-profile) for bounds and errors.
+
+
+## Semantic Determination Authority
+
+Semantic read envelopes and citations are shared in Contracts. Discovery executes saved provider searches and ingests structurally valid fetched listings without a separate intake gate; `/v1/extension/autofill/mapping` uses paired sync RPC; saved resume rendering requires model review of that exact revision. Target-role suggestions are model-backed pending determinations. Version-fenced profile saves may carry `acceptedCandidateInterpretationId` to record confirmation. Repeat checks persist equivalence before live Apply eligibility is read.
+
+See [the decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+Private screening-answer reads and commands use the generated endpoint clients and registered `screening_answers` Python RPC. See [Jobs and Materials](api/jobs-and-materials.md#screening-answers).
+
+The existing Job Detail and daily digest reads also expose optional saved [company briefings](user/company-briefings.md). They perform no fetch/model work; configuration and refresh are explicit local CLI commands. See [the wire contract](api/complete-contract.md#company-briefings).
+
+## Provider Endpoint Registration
+
+`GET /v1/providers/status`, `GET /v1/providers/models`, and
+`POST /v1/providers/codex/verify` share the existing endpoint specification,
+registered feature handlers and generated checked clients. Legacy query/body
+values remain ignored. The [provider contract](api/profile-and-settings.md#provider-endpoint-compatibility)
+defines status/error compatibility; the [migration recipe](architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration)
+shows how to adopt later families without changing the #954 envelope boundary.
+
+## Accepted DOCX Export
+
+Job Detail exports original accepted resume and cover-letter text through the
+strict `material-exports` endpoint and runtime-bound Python RPC. Registered DOCX
+downloads verify owned paths and output hashes. See [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates)
+and the [complete contract](api/complete-contract.md#accepted-material-docx-exports)
+for request fields, source fences and errors.
+
+Actual offer terms and accepted/declined decisions use the private per-job
+`/v1/jobs/:jobId/offer` route family; [Jobs & Materials API → Actual Offers](api/jobs-and-materials.md#actual-offers)
+owns its source, expected-revision and correction semantics. Offer communication
+uses the existing reviewed outreach routes and manual-send boundary.

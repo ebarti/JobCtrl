@@ -1,4 +1,6 @@
 version: 2
+# Refresh a dependency PR when it is selected for merge. Automatic rebases of
+# parked PRs repeatedly enqueue CI after unrelated changes to main.
 updates:
   - package-ecosystem: "npm"
     directories:
@@ -11,6 +13,7 @@ updates:
       time: "04:00"
       timezone: "Europe/Madrid"
     open-pull-requests-limit: 3
+    rebase-strategy: "disabled"
     cooldown:
       semver-major-days: 30
       semver-minor-days: 7
@@ -49,10 +52,29 @@ updates:
       time: "04:00"
       timezone: "Europe/Madrid"
     open-pull-requests-limit: 3
+    rebase-strategy: "disabled"
     cooldown:
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
+    # Match the manifest's reviewed cutoffs. Type-only ignores preserve
+    # security update attempts; cutoff and lock maintenance stays explicit.
+    ignore:
+      - dependency-name: "claude-agent-sdk"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      - dependency-name: "google-antigravity"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      - dependency-name: "jobstreaming"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
     groups:
       opentelemetry:
         patterns:
@@ -75,6 +97,7 @@ updates:
       time: "04:00"
       timezone: "Europe/Madrid"
     open-pull-requests-limit: 3
+    rebase-strategy: "disabled"
     cooldown:
       semver-major-days: 30
       semver-minor-days: 7
@@ -95,6 +118,7 @@ updates:
       time: "04:00"
       timezone: "Europe/Madrid"
     open-pull-requests-limit: 3
+    rebase-strategy: "disabled"
     # Dependabot rejects semver-granular cooldowns for github-actions
     # (actions resolve as refs, not semver packages); only a general
     # cooldown is supported here.

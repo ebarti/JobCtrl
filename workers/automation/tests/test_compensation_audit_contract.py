@@ -43,8 +43,10 @@ def test_compensation_audit_uses_explicit_job_id_without_legacy_job_key(tmp_path
         }
 
         recorded_audit = json.loads(recorded_audit_json)
-        assert recorded_audit["posted"]["fact"]["jobId"] == job_id
-        assert recorded_audit["market"]["estimate"]["jobId"] == job_id
+        assert recorded_audit["posted"]["jobId"] == job_id
+        assert recorded_audit["posted"]["recordStatus"] == "unavailable"
+        assert recorded_audit["market"]["jobId"] == job_id
+        assert recorded_audit["market"]["recordStatus"] == "unavailable"
         assert '"jobKey"' not in absent_audit_json
         assert '"jobKey"' not in recorded_audit_json
     finally:

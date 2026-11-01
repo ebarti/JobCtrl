@@ -56,12 +56,8 @@ function formatToken(value: string | null | undefined): string {
     .join(" ");
 }
 
-function scoreText(score: number | null, minScore?: number | null): string {
-  if (score === null) return "-";
-  const formatted = `${Math.round(score * 100)}%`;
-  return minScore === null || minScore === undefined
-    ? formatted
-    : `${formatted} / minimum ${Math.round(minScore * 100)}%`;
+function scoreText(score: number | null): string {
+  return score === null ? "-" : `${Math.round(score * 100)}%`;
 }
 
 function yesNo(value: boolean | null): string {
@@ -435,7 +431,6 @@ function VoicePassBlock({
       </div>
     );
   }
-  const proxyEntries = Object.entries(voicePass.proxyDelta ?? {});
   return (
     <div className="evidence-block">
       <h4>Voice pass</h4>
@@ -466,20 +461,7 @@ function VoicePassBlock({
             <dd>{voicePass.reason}</dd>
           </div>
         ) : null}
-        {proxyEntries.length ? (
-          <div>
-            <dt>Proxy delta</dt>
-            <dd>
-              <ul className="compact-list">
-                {proxyEntries.map(([key, value]) => (
-                  <li key={key}>
-                    {formatToken(key)}: {String(value)}
-                  </li>
-                ))}
-              </ul>
-            </dd>
-          </div>
-        ) : null}
+
       </dl>
     </div>
   );
@@ -523,7 +505,6 @@ export function TailoringExplanationSection({
     explanation.evidence.representedIds,
     explanation.evidence.requiredIds,
     explanation.evidence.missingIds,
-    explanation.evidence.seniorityIds,
   ].some(hasItems);
   const hasKeywordCounts =
     explanation.keywords.counts.planned > 0 ||
@@ -536,8 +517,7 @@ export function TailoringExplanationSection({
     Boolean(explanation.claimMode) ||
     explanation.quality.passed !== null ||
     explanation.safety.qualityPassed !== null ||
-    explanation.judge.score !== null ||
-    explanation.judge.minScore !== null;
+    explanation.judge.score !== null;
   const hasSafetyData =
     Boolean(explanation.validationMode) ||
     explanation.safety.autoApprovableClaimModes.length > 0 ||
@@ -555,7 +535,6 @@ export function TailoringExplanationSection({
     ...explanation.evidence.representedIds,
     ...explanation.evidence.requiredIds,
     ...explanation.evidence.missingIds,
-    ...explanation.evidence.seniorityIds,
     ...explanation.annotatedChanges.flatMap((change) => change.evidenceIds),
   ]);
   const additionalBulletEvidenceIds = resolveEvidenceReference
@@ -592,7 +571,7 @@ export function TailoringExplanationSection({
             <div>
               <dt>Judge score</dt>
               <dd>
-                {scoreText(explanation.judge.score, explanation.judge.minScore)}
+                {scoreText(explanation.judge.score)}
               </dd>
             </div>
           </dl>
@@ -725,12 +704,6 @@ export function TailoringExplanationSection({
                 renderEvidenceReference={renderEvidenceReference}
                 resolveEvidenceReference={resolveEvidenceReference}
               />
-              <EvidenceReferenceRow
-                label="Seniority evidence"
-                items={explanation.evidence.seniorityIds}
-                renderEvidenceReference={renderEvidenceReference}
-                resolveEvidenceReference={resolveEvidenceReference}
-              />
             </dl>
           </div>
         ) : null}
@@ -855,7 +828,6 @@ export function TailoringExplanationSection({
                     <dd>
                       {scoreText(
                         explanation.adversarialReview.score,
-                        explanation.adversarialReview.threshold,
                       )}
                     </dd>
                   </div>

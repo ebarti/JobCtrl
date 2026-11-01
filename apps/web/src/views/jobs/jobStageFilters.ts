@@ -1,9 +1,13 @@
 import type { BulkJobMutationRequest } from "@jobctrl/contracts";
 
+import { JOB_STATES, type JobState, type Stage } from "@jobctrl/contracts";
 import type { JobsListInput } from "../../contexts/operations/types.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 
-export function jobsListInput(search: JobsSearch): JobsListInput {
+export function jobsListInput(
+  search: JobsSearch,
+  stages?: readonly Stage[],
+): JobsListInput {
   const input: JobsListInput = {
     page: search.page,
     pageSize: search.pageSize,
@@ -11,6 +15,7 @@ export function jobsListInput(search: JobsSearch): JobsListInput {
     sort: search.sort,
     dir: search.dir,
     deleted: search.deleted,
+    ...(search.jobStates ? { jobStates: search.jobStates } : {}),
     applyStatus: search.applyStatus,
     minFitScore: search.minFitScore,
     maxFitScore: search.maxFitScore,
@@ -18,36 +23,43 @@ export function jobsListInput(search: JobsSearch): JobsListInput {
     scoredSince: search.scoredSince,
     ...(search.state !== "all" ? { state: search.state } : {}),
   };
-  return applyStageFilter(input, search.stage);
+  return { ...input, ...stageFilter(search, stages) };
 }
 
 export function bulkJobFilters(
   search: JobsSearch,
   overrides: Partial<NonNullable<BulkJobMutationRequest["filter"]>> = {},
+  stages?: readonly Stage[],
 ): NonNullable<BulkJobMutationRequest["filter"]>[] {
   const filter: NonNullable<BulkJobMutationRequest["filter"]> = {
     q: search.q,
     deleted: search.deleted,
+    ...(search.jobStates ? { jobStates: search.jobStates } : {}),
     applyStatus: search.applyStatus,
     source: "",
     company: "",
     minFitScore: search.minFitScore,
     maxFitScore: search.maxFitScore,
+    discoveredSince: search.discoveredSince,
+    scoredSince: search.scoredSince,
     ...(search.state !== "all" ? { state: search.state } : {}),
     ...overrides,
   };
-  if (search.stage === "all") {
-    return [filter];
-  }
-  return [{ ...filter, stage: search.stage }];
+  return [{ ...filter, ...stageFilter(search, stages) }];
 }
 
-function applyStageFilter(
-  input: JobsListInput,
-  stage: JobsSearch["stage"],
-): JobsListInput {
-  if (stage === "all") {
-    return input;
-  }
-  return { ...input, stage };
+export function effectiveJobStates(search: JobsSearch): JobState[] {
+  if (search.jobStates) return [...search.jobStates];
+  if (search.deleted === "deleted") return ["deleted"];
+  if (search.deleted === "hidden") return ["hidden"];
+  return ["active"];
+}
+
+export function allJobStates(): JobState[] {
+  return [...JOB_STATES];
+}
+
+function stageFilter(search: JobsSearch, stages?: readonly Stage[]) {
+  if (search.stage !== "all") return { stage: search.stage };
+  return stages !== undefined ? { stages: [...new Set(stages)] } : {};
 }

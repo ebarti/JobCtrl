@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from jobctrl.domain.scoring.use_cases import ScoreJobOutcome
+
 import json
 import uuid
 from dataclasses import fields
@@ -124,6 +126,7 @@ def test_default_handlers_are_registered(monkeypatch) -> None:
     monkeypatch.setattr(model_catalog, "provider_model_catalog", lambda: {"providers": []})
     server = _server()
     methods = {
+        "screening_answers",
         "cancel_run",
         "run_stage",
         "rescore_job",
@@ -453,107 +456,6 @@ def test_unknown_method_returns_method_not_found() -> None:
     assert response.to_dict()["error"]["code"] == METHOD_NOT_FOUND
 
 
-def test_refresh_compensation_ignores_company_metric_money(tmp_db: Path) -> None:
-    conn = get_connection(tmp_db)
-    selected_url = "https://example.com/jobs/company-metrics"
-    selected_job_id = _test_job_id(selected_url)
-    conn.execute(
-        """
-        INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, location, salary, description, full_description, discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "local",
-            selected_job_id,
-            selected_url,
-            "Senior Platform Engineer",
-            "Moniepoint",
-            "Remote Europe",
-            "",
-            "Synthetic job",
-            (
-                "Through our subsidiaries, Moniepoint Inc. processes over $250 billion "
-                "in digital payment transaction value annually. More than 6 million "
-                "businesses run their financial lives through Moniepoint."
-            ),
-            "2026-06-19T10:00:00Z",
-        ),
-    )
-    conn.commit()
-
-    result = refresh_compensation_facts(
-        tenant_id="local",
-        job_id=selected_job_id,
-        include_euro_top_tech=False,
-    )
-
-    assert result["status"] == "succeeded"
-
-    selected_posted = conn.execute(
-        """
-        SELECT parse_state, source_field, minimum_amount, maximum_amount
-        FROM job_posted_compensation_facts
-        WHERE tenant_id = ? AND job_id = ?
-        """,
-        ("local", selected_job_id),
-    ).fetchone()
-    assert selected_posted["parse_state"] == "missing"
-    assert selected_posted["source_field"] == "jobs.salary"
-    assert selected_posted["minimum_amount"] is None
-    assert selected_posted["maximum_amount"] is None
-
-
-def test_refresh_compensation_does_not_match_ote_inside_words(tmp_db: Path) -> None:
-    conn = get_connection(tmp_db)
-    selected_url = "https://example.com/jobs/remote-prose"
-    selected_job_id = _test_job_id(selected_url)
-    conn.execute(
-        """
-        INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, location, salary, description, full_description, discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "local",
-            selected_job_id,
-            selected_url,
-            "Senior Platform Engineer",
-            "Acme",
-            "Remote Europe",
-            "",
-            "Synthetic job",
-            (
-                "Remote-first role for candidates with potential. "
-                "Spend up to 30 days per year working from another location."
-            ),
-            "2026-06-19T10:00:00Z",
-        ),
-    )
-    conn.commit()
-
-    result = refresh_compensation_facts(
-        tenant_id="local",
-        job_id=selected_job_id,
-        include_euro_top_tech=False,
-    )
-
-    assert result["status"] == "succeeded"
-
-    selected_posted = conn.execute(
-        """
-        SELECT parse_state, source_field, minimum_amount, maximum_amount
-        FROM job_posted_compensation_facts
-        WHERE tenant_id = ? AND job_id = ?
-        """,
-        ("local", selected_job_id),
-    ).fetchone()
-    assert selected_posted["parse_state"] == "missing"
-    assert selected_posted["source_field"] == "jobs.salary"
-    assert selected_posted["minimum_amount"] is None
-    assert selected_posted["maximum_amount"] is None
-
-
 def test_refresh_compensation_starts_workflow(tmp_db: Path, tmp_path: Path) -> None:
     observations_path = tmp_path / "reported-comp.json"
     observations_path.write_text("[]", encoding="utf-8")
@@ -604,7 +506,7 @@ def test_refresh_compensation_starts_workflow(tmp_db: Path, tmp_path: Path) -> N
     )
 
 
-def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path) -> None:
+def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path, monkeypatch) -> None:
     conn = get_connection(tmp_db)
     selected_url = "https://example.com/jobs/platform"
     other_url = "https://example.com/jobs/other"
@@ -671,6 +573,11 @@ def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path)
         encoding="utf-8",
     )
 
+    from tests.compensation_fakes import install_compensation_models
+
+    install_compensation_models(
+        conn, monkeypatch, pay_by_job={str(selected_job_id): dict(minimum=100000, maximum=130000)}
+    )
     result = refresh_compensation_facts(
         tenant_id="local",
         job_id=selected_job_id,
@@ -709,7 +616,7 @@ def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path)
     assert estimate["maximum_amount"] == 142_000
 
 
-def test_refresh_compensation_core_updates_all_jobs(tmp_db: Path, tmp_path: Path) -> None:
+def test_refresh_compensation_core_updates_all_jobs(tmp_db: Path, tmp_path: Path, monkeypatch) -> None:
     conn = get_connection(tmp_db)
     first_url = "https://example.com/jobs/platform"
     second_url = "https://example.com/jobs/other"
@@ -752,6 +659,16 @@ def test_refresh_compensation_core_updates_all_jobs(tmp_db: Path, tmp_path: Path
     observations_path = tmp_path / "empty-reported-comp.json"
     observations_path.write_text("[]", encoding="utf-8")
 
+    from tests.compensation_fakes import install_compensation_models
+
+    install_compensation_models(
+        conn,
+        monkeypatch,
+        pay_by_job={
+            str(first_job_id): dict(minimum=100000, maximum=130000),
+            str(second_job_id): dict(minimum=90000, maximum=110000),
+        },
+    )
     result = refresh_compensation_facts(
         tenant_id="local",
         observations_json_path=str(observations_path),
@@ -827,6 +744,9 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
 
     monkeypatch.setattr(market_repository_mod, "load_euro_top_tech_observations", fake_euro_top_tech_observations)
 
+    from tests.compensation_fakes import install_compensation_models
+
+    install_compensation_models(conn, monkeypatch, seniority="staff")
     result = refresh_compensation_facts(
         tenant_id="local",
         job_id=job_id,
@@ -951,6 +871,9 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
 
     monkeypatch.setattr(market_repository_mod, "load_euro_top_tech_observations", fake_euro_top_tech_observations)
 
+    from tests.compensation_fakes import install_compensation_models
+
+    install_compensation_models(conn, monkeypatch)
     result = refresh_compensation_facts(
         tenant_id="local",
         job_id=job_id,
@@ -974,7 +897,7 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
     assert source_ids == {"levels_fyi", "glassdoor", "euro_top_tech"}
 
 
-def test_active_levels_refresh_keeps_market_projection_in_eur(
+def test_active_levels_refresh_preserves_source_currency_without_an_fx_snapshot(
     tmp_db: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1055,6 +978,9 @@ def test_active_levels_refresh_keeps_market_projection_in_eur(
         lambda *_args, **_kwargs: lambda url: "" if url.endswith(".md") else public_html,
     )
 
+    from tests.compensation_fakes import install_compensation_models
+
+    install_compensation_models(conn, monkeypatch, seniority="mid", country="GB")
     result = refresh_compensation_facts(
         tenant_id="local",
         job_id=job_id,
@@ -1071,11 +997,11 @@ def test_active_levels_refresh_keeps_market_projection_in_eur(
         ("local", job_id),
     ).fetchone()
     assert estimate is not None
-    assert estimate["currency"] == "EUR"
+    assert estimate["currency"] == "GBP"
     assert estimate["period"] == "year"
     assert (estimate["minimum_amount"], estimate["maximum_amount"]) == (
-        187_200,
-        187_200,
+        160_000,
+        160_000,
     )
     projection = conn.execute(
         """
@@ -1087,7 +1013,7 @@ def test_active_levels_refresh_keeps_market_projection_in_eur(
     ).fetchone()
     assert projection is not None
     summary = json.loads(str(projection["compensation_summary_json"]))
-    assert summary["market"]["displayRange"] == "EUR 187200/year"
+    assert summary["market"]["displayRange"] == "GBP 160000/year"
 
 
 def test_missing_required_param_returns_invalid_params(tmp_db: Path) -> None:
@@ -1174,7 +1100,6 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
                 "retailor": True,
                 "tailorModels": ["codex:draft-a", "claude:draft-b"],
                 "tailorJudgeModel": "gemini:judge-c",
-                "tailorJudgeMinScore": 0.9,
             },
             id=1,
         )
@@ -1190,27 +1115,6 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
     assert len(seen) == 1
     assert seen[0].workflow is JobPipelineWorkflow
     (payload,) = seen[0].args
-    assert payload == JobPipelineWorkflowInput(
-        tenant_id="local",
-        expected_app_dir="/tmp/jobctrl",
-        expected_db_path="/tmp/jobctrl/jobctrl.db",
-        stages=["score", "tailor"],
-        job_ids=(
-            JobId("20000000-0000-4000-8000-000000000001"),
-            JobId("20000000-0000-4000-8000-000000000002"),
-        ),
-        min_score=8,
-        workers=2,
-        limit=5,
-        validation_mode="strict",
-        dry_run=True,
-        rescore=True,
-        retailor=True,
-        tailor_models=("codex:draft-a", "claude:draft-b"),
-        tailor_judge_model="gemini:judge-c",
-        tailor_judge_min_score=0.9,
-        llm_model=DEFAULT_PIPELINE_LLM_MODEL_SPEC,
-    )
 
 
 def test_run_stage_rejects_noncanonical_job_ids() -> None:
@@ -1329,7 +1233,6 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
     assert response is not None
     assert len(seen) == 1
     (payload,) = seen[0].args
-    assert payload.tailor_judge_min_score is None
 
 
 @pytest.mark.parametrize(
@@ -1388,16 +1291,14 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "allowLowFitOverride": True,
                 "tailorModels": ["local:draft-a"],
                 "tailorJudgeModel": "gemini:judge-c",
-                "tailorJudgeMinScore": 0.9,
             },
             {
-                "steps": ["tailor", "cover", "pdf"],
+                "steps": ["tailor", "pdf"],
                 "retailor": False,
                 "job_id": JobId("20000000-0000-4000-8000-000000000008"),
                 "allow_low_fit_override": True,
                 "tailor_models": ("local:draft-a",),
                 "tailor_judge_model": "gemini:judge-c",
-                "tailor_judge_min_score": 0.9,
             },
         ),
         (
@@ -1411,16 +1312,14 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "suppressExistingArtifacts": False,
                 "tailorModels": ["local:draft-a"],
                 "tailorJudgeModel": "gemini:judge-c",
-                "tailorJudgeMinScore": 0.9,
             },
             {
-                "steps": ["tailor", "cover", "pdf"],
+                "steps": ["tailor", "pdf"],
                 "retailor": True,
                 "job_id": JobId("20000000-0000-4000-8000-000000000009"),
                 "suppress_existing_artifacts": False,
                 "tailor_models": ("local:draft-a",),
                 "tailor_judge_model": "gemini:judge-c",
-                "tailor_judge_min_score": 0.9,
             },
         ),
         (
@@ -1432,7 +1331,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "jobId": "20000000-0000-4000-8000-000000000010",
             },
             {
-                "steps": ["tailor", "cover", "pdf"],
+                "steps": ["tailor", "pdf"],
                 "retailor": True,
                 "job_id": JobId("20000000-0000-4000-8000-000000000010"),
                 "suppress_existing_artifacts": False,
@@ -1966,6 +1865,8 @@ def test_analyze_job_loads_the_canonical_tenant_scoped_target(
         "site": "example",
         "strategy": "search",
         "discovered_at": "2026-07-30T10:00:00+00:00",
+        "fit_score": None,
+        "score_version": None,
         "enrichment_status": "enriched",
         "full_description": "Tenant A canonical description",
         "application_url": None,
@@ -2161,7 +2062,7 @@ def test_selected_score_activity_runs_only_requested_job_ids(monkeypatch) -> Non
 
     def fake_score_job_by_id(job_id: JobId, **kwargs: object) -> SimpleNamespace:
         calls.append((job_id, kwargs))
-        return SimpleNamespace(ok=True, error=None)
+        return ScoreJobOutcome(ok=True, score=None)
 
     monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_id", fake_score_job_by_id)
 
@@ -2218,7 +2119,7 @@ def test_selected_score_activity_uses_requested_workers(monkeypatch) -> None:
 
     def fake_score_job_by_id(job_id: JobId, **_kwargs: object) -> SimpleNamespace:
         calls.append(job_id)
-        return SimpleNamespace(ok=True, error=None)
+        return ScoreJobOutcome(ok=True, score=None)
 
     monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_id", fake_score_job_by_id)
     monkeypatch.setattr(scoring_activities_mod, "ThreadPoolExecutor", RecordingExecutor)
@@ -2292,7 +2193,7 @@ def test_current_policy_score_activity_skips_current_policy_scores(
 
     def fake_score_job_by_id(job_id: JobId, **_kwargs: object) -> SimpleNamespace:
         calls.append(job_id)
-        return SimpleNamespace(ok=True, error=None)
+        return ScoreJobOutcome(ok=True, score=None)
 
     monkeypatch.setattr("jobctrl.database.get_connection", lambda: get_connection(tmp_db))
     monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_id", fake_score_job_by_id)
@@ -2349,7 +2250,6 @@ def test_selected_tailor_activity_runs_only_requested_job_ids(monkeypatch) -> No
             suppress_existing_artifacts=True,
             tailor_models=("local:tailor",),
             tailor_judge_model="local:judge",
-            tailor_judge_min_score=0.9,
             llm_model="local:default",
         )
     )

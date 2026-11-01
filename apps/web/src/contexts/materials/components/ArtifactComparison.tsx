@@ -226,9 +226,7 @@ function judgeMetadata(side: ArtifactComparisonSide): string {
   const score =
     side.judge.score === null
       ? "score not recorded"
-      : side.judge.minScore === null
-        ? `score ${formatPercent(side.judge.score)}`
-        : `score ${formatPercent(side.judge.score)} / minimum ${formatPercent(side.judge.minScore)}`;
+      : `diagnostic score ${formatPercent(side.judge.score)}`;
   return `; ${score}; ${side.judge.issueCount} issues`;
 }
 

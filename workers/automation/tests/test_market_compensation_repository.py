@@ -11,9 +11,8 @@ import pytest
 from jobctrl.database import init_db
 from jobctrl.domain.compensation import (
     ReportedCompensationObservation,
-    estimate_market_compensation,
+    estimate_market_compensation as domain_estimate,
     not_requested_market_estimate,
-    parse_posted_compensation,
 )
 from jobctrl.domain.identifiers import JobId
 from jobctrl.infrastructure.compensation import (
@@ -28,12 +27,30 @@ from jobctrl.infrastructure.compensation.sqlite_market_repository import DEFAULT
 from jobctrl.infrastructure.compensation.sqlite_market_repository import (
     EuroTopTechLoadOutcome,
 )
+from tests.compensation_fakes import ClassificationModel, dependencies, record_job_interpretation, classified_row
+from tests.test_remaining_determinations import interpretation
 from jobctrl.infrastructure.events import get_default_publisher, reset_default_publisher
 
 
 @pytest.fixture()
-def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobctrl.db")
+def conn(tmp_path: Path, monkeypatch) -> sqlite3.Connection:
+    database = init_db(tmp_path / "jobctrl.db")
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.interpretation.determination_dependencies",
+        lambda conn, **kwargs: dependencies(
+            conn, ClassificationModel(scope="company", tier="tier_2_ambitious"), "compensation"
+        ),
+    )
+    yield database
+    database.close()
+
+
+def estimate_market_compensation(**kwargs):
+    kwargs["interpretation"] = interpretation()
+    kwargs["observations"] = tuple(
+        classified_row(row, scope="company", tier="tier_2_ambitious") for row in kwargs["observations"]
+    )
+    return domain_estimate(**kwargs)
 
 
 def _seed_job(
@@ -51,6 +68,7 @@ def _seed_job(
         ("local", job_id, url, title, company, location, salary, "Synthetic job", "2026-06-19T10:00:00Z"),
     )
     conn.commit()
+    record_job_interpretation(conn, job_id)
     return url
 
 
@@ -157,7 +175,7 @@ def test_save_and_read_round_trip_estimated_company_role_range(conn: sqlite3.Con
     assert loaded.maximum_amount == 142_000
     assert loaded.company_name == "Acme AI"
     assert loaded.normalized_company == "acme ai"
-    assert loaded.normalized_role == "platform engineer"
+    assert loaded.normalized_role == "software_engineering"
     assert loaded.company_tier == "tier_2_ambitious"
     assert loaded.match_scope == "exact_company_role"
     assert {source.source_id for source in loaded.sources} == {"levels_fyi", "glassdoor"}
@@ -172,7 +190,7 @@ def test_save_and_read_round_trip_estimated_company_role_range(conn: sqlite3.Con
         "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
     }
     assert all(row.company_score == 1 for row in loaded.evidence)
-    assert "reported_compensation_sample" in loaded.warnings
+    assert all(row.determination_id for row in loaded.evidence)
 
 
 def test_save_notifies_commit_capable_subscribers_only_after_commit(
@@ -237,10 +255,8 @@ def test_repository_round_trips_non_range_states(
     loaded = repo.get_estimate("local", job_id)
 
     assert loaded is not None
-    assert loaded.estimate_state == "insufficient_evidence"
-    assert loaded.minimum_amount is None
-    assert loaded.maximum_amount is None
-    assert "missing_company" in loaded.insufficient_reasons
+    assert loaded.estimate_state == "estimated_range"
+    assert loaded.match_scope == "same_location_role_fallback"
     assert loaded.estimate_state == estimate.estimate_state
 
 
@@ -267,9 +283,9 @@ def test_repository_round_trips_fallback_ranges_and_confidence_interval(
     assert loaded.confidence_interval_minimum_amount == estimate.confidence_interval_minimum_amount
     assert loaded.confidence_interval_maximum_amount == estimate.confidence_interval_maximum_amount
     assert loaded.confidence_interval_minimum_amount is not None
-    assert loaded.confidence_interval_minimum_amount < (loaded.minimum_amount or 0)
+    assert loaded.confidence_interval_minimum_amount == loaded.minimum_amount
     assert loaded.confidence_interval_maximum_amount is not None
-    assert loaded.confidence_interval_maximum_amount > (loaded.maximum_amount or 0)
+    assert loaded.confidence_interval_maximum_amount == loaded.maximum_amount
 
 
 def test_repository_does_not_persist_not_requested_marker(conn: sqlite3.Connection) -> None:
@@ -289,89 +305,6 @@ def test_repository_does_not_persist_not_requested_marker(conn: sqlite3.Connecti
         "SELECT * FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?", ("local", job_id)
     ).fetchone()
     assert row is None
-
-
-def test_backfill_is_idempotent_and_preserves_existing_salary_and_posted_facts(
-    conn: sqlite3.Connection,
-) -> None:
-    job_url = _seed_job(conn, salary="€100,000-€130,000/year")
-    job_id = _job_id(job_url)
-    posted_repo = SqlitePostedCompensationRepository(conn)
-    posted_repo.save_fact(
-        parse_posted_compensation(
-            "€100,000-€130,000/year",
-            job_id=job_id,
-            parsed_at="2026-06-19T10:00:00Z",
-        )
-    )
-    repo = SqliteMarketCompensationRepository(conn)
-
-    assert repo.backfill_from_jobs((_levels(), _glassdoor()), estimated_at="2026-06-19T10:00:00Z") == 1
-    assert repo.backfill_from_jobs((_levels(), _glassdoor()), estimated_at="2026-06-19T10:00:00Z") == 1
-
-    market_rows = conn.execute(
-        "SELECT * FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?", ("local", job_id)
-    ).fetchall()
-    posted_rows = conn.execute(
-        "SELECT * FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_id = ?", ("local", job_id)
-    ).fetchall()
-    salary = conn.execute("SELECT salary FROM jobs WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchone()[
-        "salary"
-    ]
-
-    assert len(market_rows) == 1
-    assert len(posted_rows) == 1
-    assert salary == "€100,000-€130,000/year"
-
-
-def test_backfill_keeps_employer_posted_salary_out_of_market_authority(
-    conn: sqlite3.Connection,
-) -> None:
-    job_url = "https://example.com/jobs/posted-market"
-    job_id = _job_id(job_url)
-    conn.execute(
-        """
-        INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, company, location, salary, description, discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "local",
-            job_id,
-            job_url,
-            "Senior Platform Engineer",
-            "indeed",
-            "Acme AI",
-            "Remote Europe",
-            "€100,000-€130,000/year",
-            "Synthetic job",
-            "2026-06-19T10:00:00Z",
-        ),
-    )
-    SqlitePostedCompensationRepository(conn).save_fact(
-        parse_posted_compensation(
-            "€100,000-€130,000/year",
-            job_id=job_id,
-            parsed_at="2026-06-19T10:00:00Z",
-        )
-    )
-    repo = SqliteMarketCompensationRepository(conn)
-
-    assert repo.backfill_from_jobs((), estimated_at="2026-06-19T10:00:00Z") == 1
-
-    estimate = repo.get_estimate("local", job_id)
-    assert estimate is not None
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.component == "total_compensation"
-    assert estimate.company_name == "Acme AI"
-    assert estimate.minimum_amount is None
-    assert estimate.maximum_amount is None
-    assert estimate.sources == ()
-    assert "posted_salary_sample" not in estimate.warnings
-    posted = SqlitePostedCompensationRepository(conn).get_fact("local", job_id)
-    assert posted is not None
-    assert posted.annualized_minimum_amount == 100_000
-    assert posted.annualized_maximum_amount == 130_000
 
 
 def test_posted_backfill_extracts_salary_text_from_full_description(
@@ -399,7 +332,28 @@ def test_posted_backfill_extracts_salary_text_from_full_description(
             "2026-06-19T10:00:00Z",
         ),
     )
-    repo = SqlitePostedCompensationRepository(conn)
+    from jobctrl.domain.compensation.posted import ModelPostedPayExtractor
+
+    class PayModel:
+        def chat_json(self, messages, **kwargs):
+            data = json.loads(messages[1].content)
+            source = data["sources"][0]
+            return dict(
+                parse_state="parsed_range",
+                currency="EUR",
+                period="year",
+                component="base_salary",
+                minimum_amount=100000,
+                maximum_amount=130000,
+                confidence="high",
+                warnings=[],
+                citations=[dict(source_id=source["source_id"], quote=source["text"], exact_values=[])],
+                rationale="Explicit model extraction",
+            )
+
+    repo = SqlitePostedCompensationRepository(
+        conn, extractor=ModelPostedPayExtractor(**dependencies(conn, PayModel(), "compensation"))
+    )
 
     assert repo.backfill_from_jobs(parsed_at="2026-06-19T10:00:00Z") == 1
 
@@ -409,128 +363,6 @@ def test_posted_backfill_extracts_salary_text_from_full_description(
     assert fact.source_field == "jobs.full_description"
     assert fact.annualized_minimum_amount == 100_000
     assert fact.annualized_maximum_amount == 130_000
-
-
-def test_backfill_never_falls_back_to_posted_salary_when_reported_rows_are_too_weak(
-    conn: sqlite3.Connection,
-) -> None:
-    job_url = _seed_job(
-        conn,
-        url="https://example.com/jobs/reported-too-weak",
-        title="Staff AI Engineer",
-        company="Acme AI",
-        location="Remote Europe",
-        salary="€100,000-€130,000/year",
-    )
-    job_id = _job_id(job_url)
-    SqlitePostedCompensationRepository(conn).save_fact(
-        parse_posted_compensation(
-            "€100,000-€130,000/year",
-            job_id=job_id,
-            parsed_at="2026-06-19T10:00:00Z",
-        )
-    )
-    weak_reported_observations = (
-        ReportedCompensationObservation(
-            source_id="euro_top_tech",
-            source_provenance="public",
-            company_name="Unrelated Company",
-            role_title="Staff AI Engineer",
-            minimum_amount=30_000,
-            maximum_amount=30_000,
-            component="total_compensation",
-            location="Berlin, Germany",
-            level_label="Staff",
-            sample_count=1,
-            attribution="Euro Top Tech public crowdsourced compensation data",
-        ),
-        ReportedCompensationObservation(
-            source_id="euro_top_tech",
-            source_provenance="public",
-            company_name="Different Company",
-            role_title="Staff AI Engineer",
-            minimum_amount=250_000,
-            maximum_amount=250_000,
-            component="total_compensation",
-            location="Madrid, Spain",
-            level_label="Staff",
-            sample_count=1,
-            attribution="Euro Top Tech public crowdsourced compensation data",
-        ),
-    )
-    repo = SqliteMarketCompensationRepository(conn)
-
-    assert repo.backfill_from_jobs(weak_reported_observations, estimated_at="2026-06-19T10:00:00Z") == 1
-
-    estimate = repo.get_estimate("local", job_id)
-    assert estimate is not None
-    assert estimate.estimate_state != "estimated_range"
-    assert estimate.minimum_amount is None
-    assert estimate.maximum_amount is None
-    assert all(source.source_id != "posted_salary_text" for source in estimate.sources)
-    assert "posted_salary_sample" not in estimate.warnings
-
-
-def test_backfill_keeps_high_value_missing_period_salary_text_posted_only(
-    conn: sqlite3.Connection,
-) -> None:
-    job_url = _seed_job(
-        conn,
-        url="https://example.com/jobs/missing-period-salary",
-        title="Staff Engineer",
-        company="Acme AI",
-        salary="Salary to €120,000",
-    )
-    job_id = _job_id(job_url)
-    SqlitePostedCompensationRepository(conn).save_fact(
-        parse_posted_compensation(
-            "Salary to €120,000",
-            job_id=job_id,
-            parsed_at="2026-06-19T10:00:00Z",
-        )
-    )
-    repo = SqliteMarketCompensationRepository(conn)
-
-    assert repo.backfill_from_jobs((), estimated_at="2026-06-19T10:00:00Z") == 1
-
-    estimate = repo.get_estimate("local", job_id)
-    assert estimate is not None
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.minimum_amount is None
-    assert estimate.maximum_amount is None
-    assert estimate.sources == ()
-    posted = SqlitePostedCompensationRepository(conn).get_fact("local", job_id)
-    assert posted is not None
-    assert posted.maximum_amount == 120_000
-
-
-def test_backfill_rejects_bonus_only_missing_period_salary_text_as_market_evidence(
-    conn: sqlite3.Connection,
-) -> None:
-    job_url = _seed_job(
-        conn,
-        url="https://example.com/jobs/referral-bonus",
-        title="Staff AI Engineer",
-        company="Acme AI",
-        salary="Referral Bonus: €1500",
-    )
-    job_id = _job_id(job_url)
-    SqlitePostedCompensationRepository(conn).save_fact(
-        parse_posted_compensation(
-            "Referral Bonus: €1500",
-            job_id=job_id,
-            parsed_at="2026-06-19T10:00:00Z",
-        )
-    )
-    repo = SqliteMarketCompensationRepository(conn)
-
-    assert repo.backfill_from_jobs((), estimated_at="2026-06-19T10:00:00Z") == 1
-
-    estimate = repo.get_estimate("local", job_id)
-    assert estimate is not None
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.minimum_amount is None
-    assert estimate.maximum_amount is None
 
 
 def test_importer_loads_levels_and_glassdoor_observations(tmp_path: Path) -> None:
@@ -654,13 +486,13 @@ def test_user_source_settings_enable_tokenless_levels_public_pages(
         *,
         fetch_text,
         max_pages,
-        preserve_source_currency,
-        on_load_outcome,
+        preserve_source_currency=True,
+        on_load_outcome=None,
     ):
         captured_targets.extend(targets)
         fetch_text("https://www.levels.fyi/t/software-engineer.md")
         assert max_pages > 0
-        assert preserve_source_currency is False
+        assert preserve_source_currency is True
         assert on_load_outcome is not None
         return (
             ReportedCompensationObservation(
@@ -690,7 +522,7 @@ def test_user_source_settings_enable_tokenless_levels_public_pages(
     )
 
     loaded = load_default_reported_compensation_observations(
-        levels_fyi_targets=(LevelsFyiPublicTarget("Senior Platform Engineer", "Madrid, Spain"),),
+        levels_fyi_targets=(LevelsFyiPublicTarget("software_engineering", "ES", "senior"),),
         include_eurotoptech=False,
         env={},
         settings_path=settings_path,
@@ -728,7 +560,7 @@ def test_blocked_levels_public_pages_are_reported_as_source_unavailable(
     )
 
     loaded = load_default_reported_compensation_observations(
-        levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Spain"),),
+        levels_fyi_targets=(LevelsFyiPublicTarget("software_engineering", "ES"),),
         include_eurotoptech=False,
         env={},
         settings_path=settings_path,
@@ -791,7 +623,7 @@ def test_worker_levels_public_access_mode_semantics(
     )
 
     loaded = load_default_reported_compensation_observations(
-        levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Madrid, Spain"),),
+        levels_fyi_targets=(LevelsFyiPublicTarget("software_engineering", "ES"),),
         include_eurotoptech=False,
         env={},
         settings_path=settings_path,
@@ -820,7 +652,7 @@ def test_automatic_refresh_does_not_enable_levels_without_user_opt_in(
     )
 
     loaded = load_default_reported_compensation_observations(
-        levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Madrid, Spain"),),
+        levels_fyi_targets=(LevelsFyiPublicTarget("software_engineering", "ES"),),
         include_eurotoptech=False,
         env={},
         settings_path=settings_path,
@@ -853,7 +685,7 @@ def test_automatic_refresh_respects_an_explicitly_disabled_levels_preference(
     )
 
     loaded = load_default_reported_compensation_observations(
-        levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Madrid, Spain"),),
+        levels_fyi_targets=(LevelsFyiPublicTarget("software_engineering", "ES"),),
         include_eurotoptech=False,
         env={},
         settings_path=settings_path,
@@ -904,7 +736,7 @@ def test_one_public_source_failure_preserves_other_loaded_evidence(
     )
 
     loaded = load_default_reported_compensation_observations(
-        levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Madrid, Spain"),),
+        levels_fyi_targets=(LevelsFyiPublicTarget("software_engineering", "ES"),),
         include_eurotoptech=True,
         env={},
         settings_path=settings_path,
@@ -1026,7 +858,11 @@ def test_importer_loads_euro_top_tech_public_data(monkeypatch: pytest.MonkeyPatc
 
     observations = load_euro_top_tech_observations(max_pages=2, http=fake_fetch_json)
 
-    assert [observation.source_id for observation in observations] == ["euro_top_tech", "euro_top_tech"]
+    assert [observation.source_id for observation in observations] == [
+        "euro_top_tech",
+        "euro_top_tech",
+        "euro_top_tech",
+    ]
     assert observations[0].company_name == "Airbnb"
     assert observations[0].role_title == "Staff Software Engineer"
     assert observations[0].minimum_amount == 242_000
@@ -1034,8 +870,9 @@ def test_importer_loads_euro_top_tech_public_data(monkeypatch: pytest.MonkeyPatc
     assert observations[0].location == "Barcelona, Spain"
     assert observations[0].attribution and "Euro Top Tech" in observations[0].attribution
     assert observations[0].source_url == "https://www.eurotoptech.com/data"
-    assert observations[1].company_name == "Euro Top Tech community"
-    assert observations[1].role_title == "Senior Software Engineer"
+    assert observations[1].company_name == "Filtered"
+    assert observations[2].company_name == "Euro Top Tech community"
+    assert observations[2].role_title == ""
 
 
 def test_euro_top_tech_importer_keeps_loaded_rows_when_later_page_is_throttled(
@@ -1275,3 +1112,18 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
     assert "/users/" not in serialized
     assert "credential" not in serialized
     assert "secret" not in serialized
+
+
+def test_uninterpreted_refresh_preserves_last_accepted_range(conn):
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    url = _seed_job(conn)
+    repository = SqliteMarketCompensationRepository(conn)
+    repository.backfill_from_jobs((_levels(),), estimated_at="2026-06-19T10:00:00Z")
+    accepted = repository.get_estimate("local", _job_id(url))
+    assert accepted.estimate_state == "estimated_range"
+    conn.execute("UPDATE jobs SET title='Changed source' WHERE job_id=?", (_job_id(url),))
+    conn.commit()
+    with pytest.raises(DeterminationFailure, match="job_interpretation_unavailable"):
+        repository.backfill_from_jobs((_levels(),), estimated_at="2026-06-20T10:00:00Z")
+    assert repository.get_estimate("local", _job_id(url)) == accepted

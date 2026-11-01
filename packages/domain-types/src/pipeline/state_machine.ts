@@ -69,6 +69,7 @@ export const VALID_KIND_TRANSITIONS: ReadonlyArray<readonly [StageStateKind, Sta
   ["Queued", "Canceled"],
   ["Running", "Succeeded"],
   ["Running", "Failed"],
+  ["Running", "Blocked"],
   ["Running", "Canceled"],
   ["Failed", "Pending"],
   ["Failed", "Exhausted"],
@@ -223,6 +224,14 @@ register("Failed", "Exhaust", (current, inputs): Exhausted => {
     nextAction: inputs.nextAction,
   };
 });
+
+// A semantic failure discovered by an activity blocks its running stage.
+register("Running", "Block", (_current, inputs): Blocked => ({
+  kind: "Blocked",
+  blockedBy: (inputs.blockedBy ?? []) as Blocked["blockedBy"],
+  errorCode: inputs.errorCode ?? "SEMANTIC_BLOCKED",
+  errorMessage: inputs.errorMessage ?? "",
+}));
 
 // Row 12: Blocked -> Pending
 register("Blocked", "Unblock", (_current, inputs): Pending => ({

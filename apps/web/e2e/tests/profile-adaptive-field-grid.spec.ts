@@ -304,7 +304,7 @@ test("resume template settings and persistence actions share the Plate editor wo
     page.getByRole("heading", { name: "Preferences", level: 1 }),
   ).toBeVisible({ timeout: 30_000 });
 
-  const editor = page.getByLabel("Resume template preview");
+  const editor = page.getByRole("region", { name: "Resume template preview", exact: true });
   const controls = editor.getByLabel("Template settings");
   const actions = controls.locator(".resume-template-actions");
   const toolbar = editor.locator(".resume-plate-toolbar");
@@ -356,6 +356,23 @@ test("resume template settings and persistence actions share the Plate editor wo
     const toolbarBox = toolbarElement.getBoundingClientRect();
     const editorStyle = getComputedStyle(element);
     const inputStyle = getComputedStyle(nameInput);
+    const colorProbe = document.createElement("span");
+    colorProbe.style.position = "absolute";
+    colorProbe.style.visibility = "hidden";
+    element.append(colorProbe);
+    const resolveTokenColor = (token: string) => {
+      const value = editorStyle.getPropertyValue(token).trim();
+      if (!value || !CSS.supports("color", value)) {
+        throw new Error(`Resume template workspace has no valid ${token} color`);
+      }
+      colorProbe.style.color = value;
+      return getComputedStyle(colorProbe).color;
+    };
+    // CSS minification can change token spelling. Compare the browser's
+    // resolved colors while retaining exact foreground/background checks.
+    const workspacePopover = resolveTokenColor("--popover");
+    const workspaceForeground = resolveTokenColor("--foreground");
+    colorProbe.remove();
     return {
       actionsInsideEditor: element.contains(actionsElement),
       controlsInsideEditor: element.contains(controlsElement),
@@ -368,8 +385,8 @@ test("resume template settings and persistence actions share the Plate editor wo
       controlsMeetToolbar: Math.abs(controlsBox.bottom - toolbarBox.top) <= 1,
       inputBackground: inputStyle.backgroundColor,
       inputForeground: inputStyle.color,
-      workspacePopover: editorStyle.getPropertyValue("--popover").trim(),
-      workspaceForeground: editorStyle.getPropertyValue("--foreground").trim(),
+      workspacePopover,
+      workspaceForeground,
     };
   });
 

@@ -1,5 +1,5 @@
 import { RunStatusBadge } from "../../contexts/apply/components/RunStatusBadge.js";
-import type { WorkflowRunSummary } from "../../contexts/operations/types.js";
+import type { WorkflowRunSummary } from "@jobctrl/contracts";
 import { CancelWorkflowRunButton } from "../../contexts/pipeline/components/CancelWorkflowRunButton.js";
 import type { DataGridColumn } from "../../shared/ui/filterable-data-grid.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
@@ -41,7 +41,7 @@ function TemporalRunLink({ row }: { readonly row: WorkflowRunSummary }) {
       href={temporalWebUiWorkflowUrl(row.workflowId)}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`Open workflow ${row.workflowId} in Temporal Web UI`}
+      aria-label={`Open in Temporal: workflow ${row.workflowId}`}
       onClick={(event) => event.stopPropagation()}
     >
       Open in Temporal
@@ -56,7 +56,6 @@ function RunActions({ row }: { readonly row: WorkflowRunSummary }) {
       {ACTIVE_WORKFLOW_RUN_STATUSES.has(row.status) ? (
         <CancelWorkflowRunButton
           runId={row.runId}
-          className="btn ghost danger-action"
           label="Stop"
           ariaLabel={`Stop workflow run for ${row.title}`}
         />

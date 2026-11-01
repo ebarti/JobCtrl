@@ -1,11 +1,21 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { useState } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { DemoFeatureFlagAdapter } from "../../../demo/ports.js";
-import { DiscoveryProductControls } from "./DiscoveryProductControls.js";
+import {
+  DISCOVERY_SOURCE_COLUMN_IDS,
+  DISCOVERY_SOURCES_TABLE_ID,
+  useSavedTableViewsStore,
+  type SavedTablePresentation,
+} from "../../../shared/stores/saved-table-views.js";
+import {
+  DiscoveryProductControls,
+  type DiscoverySourceTableControls,
+} from "./DiscoveryProductControls.js";
 
 const NO_POLITENESS = {
   robotsDisallowedCount: 0,
@@ -15,7 +25,148 @@ const NO_POLITENESS = {
   lastBlockedAt: null,
 } as const;
 
+beforeEach(() => {
+  window.localStorage.removeItem("jh:saved-table-views");
+  useSavedTableViewsStore.getState().reset();
+});
+
 describe("DiscoveryProductControls", () => {
+  it.each([
+    { state: "disabled", reason: null },
+    { state: "active", reason: "Adapter configuration is required for this source." },
+  ])("shows saved origins and preserves the $state source review fence", async ({ state, reason }) => {
+    const promoteSourceLocatorCandidate = vi.fn();
+    renderWithProviders(<DiscoveryProductControls />, {
+      ports: buildTestPorts({ api: {
+        promoteSourceLocatorCandidate,
+        discoveryLocatorCandidates: async () => ({ ok: true, candidates: [{
+          candidateId: "history-1", candidateUrl: "https://jobs.lever.co/synthetic-acme",
+          sourceKind: "ats_api", confidence: 0, detectedAtsKind: "lever",
+          employerDomainMatched: false, manualActionReason: "ambiguous_career_system",
+          discoveredAt: "2026-10-18T09:00:00Z",
+          proposal: {
+            coordinateKey: "https://jobs.lever.co/synthetic-acme", sourceId: "lever:synthetic-acme",
+            atsKind: "lever", boardToken: "synthetic-acme", completeness: "unknown", promotionBlockedReason: reason,
+            overlaps: [{ sourceId: "lever:synthetic-acme", state, seedUrl: "https://jobs.lever.co/synthetic-acme" }],
+            evidence: [{
+              originJobId: "b0410000-0000-4000-8000-000000000001",
+              originPostingUrl: "https://jobs.lever.co/synthetic-acme/posting-1",
+              inputUrl: "https://jobs.lever.co/synthetic-acme/posting-1/apply", urlKind: "application_url",
+              observations: [{ observationId: "obs-1", sourceId: "manual_capture:extension", runId: "saved-capture-run", observedUrl: "https://jobs.lever.co/synthetic-acme/posting-1", observedAt: "2026-10-18T09:00:00Z" }],
+              extraction: { tier: "json_ld", enrichedAt: "2026-10-18T09:00:00Z", snapshotVersion: 3, descriptionSha256: "saved-description", snapshotSha256: "saved-snapshot" },
+              sample: { title: "Platform Engineer", company: "Synthetic Acme", descriptionExcerpt: "Build reliable synthetic systems." },
+            }],
+          },
+        }] }),
+      } }),
+    });
+    expect(await screen.findByText(/Board: lever:synthetic-acme.*Completeness unknown/)).toBeInTheDocument();
+    expect(screen.getByText(`Existing sources: lever:synthetic-acme (${state})`)).toBeInTheDocument();
+    if (reason) expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.getByText(/Platform Engineer.*Synthetic Acme.*Build reliable synthetic systems/)).toBeInTheDocument();
+    expect(screen.getByText(/Runs: saved-capture-run/)).toHaveTextContent("Extraction: json_ld · Snapshot: 3");
+    expect(screen.getByRole("button", { name: "Promote https://jobs.lever.co/synthetic-acme" })).toBeDisabled();
+    expect(promoteSourceLocatorCandidate).not.toHaveBeenCalled();
+  });
+
+  it("saves URL-owned source filters with local source-table presentation", async () => {
+    function SourceTableHarness() {
+      const [filters, setFilters] = useState<
+        DiscoverySourceTableControls["filters"]
+      >({
+        state: {
+          operator: "contains" as const,
+          text: "",
+          selectedValues: ["active"],
+        },
+      });
+      const [sort, setSort] = useState<DiscoverySourceTableControls["sort"]>({
+        columnId: "displayName",
+        direction: "asc",
+      });
+      const [presentation, setPresentation] = useState<SavedTablePresentation>({
+        columns: {
+          order: [...DISCOVERY_SOURCE_COLUMN_IDS],
+          hidden: [],
+          widths: {},
+        },
+        density: null,
+        grouping: null,
+        colorRules: [],
+      });
+
+      return (
+        <DiscoveryProductControls
+          layout="tabs"
+          sourceTable={{
+            filters,
+            sort,
+            presentation,
+            onFiltersChange: setFilters,
+            onSortChange: setSort,
+            onPresentationChange: setPresentation,
+            onApplyView: (view) => {
+              setFilters(view.urlFilters.sourceFilters ?? {});
+              setSort(view.sort);
+              setPresentation({
+                columns: view.columns,
+                density: view.density,
+                grouping: view.grouping,
+                colorRules: view.colorRules,
+              });
+            },
+          }}
+        />
+      );
+    }
+
+    renderWithProviders(<SourceTableHarness />);
+    const user = userEvent.setup();
+
+    expect(
+      await screen.findByRole("combobox", { name: "Saved table view" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /filter company column/i }),
+    );
+    await user.type(screen.getByLabelText("Company filter text"), "linkedin");
+    await user.click(screen.getByRole("button", { name: /close/i }));
+    await user.click(
+      screen.getByRole("button", { name: "Configure table columns" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Compact" }));
+    await user.click(screen.getByRole("button", { name: /close/i }));
+    await user.click(screen.getByRole("button", { name: "Save as view" }));
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "LinkedIn");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const saved = useSavedTableViewsStore
+      .getState()
+      .views.find(
+        (view) =>
+          view.tableId === DISCOVERY_SOURCES_TABLE_ID &&
+          view.name === "LinkedIn",
+      );
+    expect(saved).toMatchObject({
+      density: "compact",
+      sort: { columnId: "displayName", direction: "asc" },
+      urlFilters: {
+        sourceFilters: {
+          displayName: {
+            operator: "contains",
+            text: "linkedin",
+            selectedValues: [],
+          },
+          state: {
+            operator: "contains",
+            text: "",
+            selectedValues: ["active"],
+          },
+        },
+      },
+    });
+  });
+
   it("labels the demo source preview as bundled and network-free", async () => {
     const ports = buildTestPorts();
     ports.featureFlags = new DemoFeatureFlagAdapter();
@@ -151,7 +302,9 @@ describe("DiscoveryProductControls", () => {
       screen.getByText(/saved this posting from the browser extension/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/Blocked by robots.txt/i)).toBeInTheDocument();
-    expect(screen.getByText(/does not permit JobCtrl to fetch/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/does not permit JobCtrl to fetch/i),
+    ).toBeInTheDocument();
   });
 
   it("filters active sources by default on the discovery page table and sorts the registry", async () => {

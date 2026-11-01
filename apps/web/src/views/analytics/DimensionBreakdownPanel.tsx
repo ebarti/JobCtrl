@@ -1,4 +1,4 @@
-import type { OutcomeAnalyticsSummary } from "../../contexts/operations/types.js";
+import type { OutcomeAnalyticsSummary } from "@jobctrl/contracts";
 import type { AnalyticsDimension } from "../../routes/-analytics.search.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { OutcomeRateTable, type OutcomeRateRow } from "./OutcomeRateTable.js";

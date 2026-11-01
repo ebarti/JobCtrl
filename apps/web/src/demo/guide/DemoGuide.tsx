@@ -130,7 +130,8 @@ export function DemoGuide() {
           <p className="eyebrow">Demo mode</p>
           <h2
             id="demo-guide-title"
-            className="mt-1 text-base font-bold tracking-tight"
+            className="mt-1"
+            data-typography="section-title"
           >
             Try the synthetic workflow
           </h2>
@@ -148,7 +149,7 @@ export function DemoGuide() {
         </Button>
       </div>
 
-      <p className="text-xs leading-5 text-muted-foreground">
+      <p data-typography="body">
         Every record and action in this demo is simulated and synthetic. Nothing
         is sent to an employer, mailbox, or external service.
       </p>
@@ -279,7 +280,7 @@ export function DemoGuide() {
           </a>
         </div>
         {resetStatus ? (
-          <p className="text-xs leading-5 text-muted-foreground" role="status">
+          <p data-typography="body" role="status">
             {resetStatus}
           </p>
         ) : null}
@@ -291,7 +292,7 @@ export function DemoGuide() {
           if (!isResetting) setConfirmResetOpen(next);
         }}
       >
-        <DialogContent>
+        <DialogContent className="demo-reset-dialog">
           <DialogHeader>
             <DialogTitle>Reset synthetic demo data?</DialogTitle>
             <DialogDescription>

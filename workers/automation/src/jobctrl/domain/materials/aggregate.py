@@ -32,12 +32,8 @@ from typing import Any, Mapping
 
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.materials.entities import Artifact
-from jobctrl.domain.materials.value_objects import (
-    ArtifactStatus,
-    ArtifactType,
-    JudgeVerdict,
-    ValidationResult,
-)
+from jobctrl.domain.ports.artifact_review import ArtifactStatus, JudgeVerdict, ValidationResult
+from jobctrl.domain.materials.value_objects import ArtifactType
 from jobctrl.domain.tenant import TenantId
 
 
@@ -114,14 +110,9 @@ class MaterialsSet:
         if not isinstance(self.generation, int) or isinstance(self.generation, bool):
             raise TypeError("MaterialsSet.generation must be an int")
         if self.generation < 1:
-            raise ValueError(
-                f"MaterialsSet.generation must be >= 1, got {self.generation}"
-            )
+            raise ValueError(f"MaterialsSet.generation must be >= 1, got {self.generation}")
         if self.status not in _VALID_STATUSES:
-            raise ValueError(
-                f"MaterialsSet.status must be one of {sorted(_VALID_STATUSES)}, "
-                f"got {self.status!r}"
-            )
+            raise ValueError(f"MaterialsSet.status must be one of {sorted(_VALID_STATUSES)}, got {self.status!r}")
         if not isinstance(self.created_at, str):
             raise TypeError("MaterialsSet.created_at must be a str")
         if not isinstance(self.updated_at, str):
@@ -146,28 +137,17 @@ class MaterialsSet:
             if artifact is None:
                 continue
             if not isinstance(artifact, Artifact):
-                raise TypeError(
-                    f"MaterialsSet.{slot} must be an Artifact, got {type(artifact).__name__}"
-                )
+                raise TypeError(f"MaterialsSet.{slot} must be an Artifact, got {type(artifact).__name__}")
             if artifact.type is not expected:
-                raise ValueError(
-                    f"MaterialsSet.{slot} expects ArtifactType.{expected.name}, "
-                    f"got {artifact.type.name}"
-                )
+                raise ValueError(f"MaterialsSet.{slot} expects ArtifactType.{expected.name}, got {artifact.type.name}")
 
         # §4.5: cover requires resume; PDF requires its corresponding text.
         if self.cover_letter is not None and self.tailored_resume is None:
-            raise ValueError(
-                "MaterialsSet invariant violated: cover letter present without tailored resume"
-            )
+            raise ValueError("MaterialsSet invariant violated: cover letter present without tailored resume")
         if self.resume_pdf is not None and self.tailored_resume is None:
-            raise ValueError(
-                "MaterialsSet invariant violated: resume PDF present without tailored resume"
-            )
+            raise ValueError("MaterialsSet invariant violated: resume PDF present without tailored resume")
         if self.cover_letter_pdf is not None and self.cover_letter is None:
-            raise ValueError(
-                "MaterialsSet invariant violated: cover-letter PDF present without cover-letter text"
-            )
+            raise ValueError("MaterialsSet invariant violated: cover-letter PDF present without cover-letter text")
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -245,16 +225,10 @@ class MaterialsSet:
         only when the tailored resume is approved; same for PDFs).
         """
         if artifact.type is not ArtifactType.TAILORED_RESUME:
-            raise ValueError(
-                "with_resume_attempt requires an ArtifactType.TAILORED_RESUME artifact"
-            )
+            raise ValueError("with_resume_attempt requires an ArtifactType.TAILORED_RESUME artifact")
         passed = validation.passed and (verdict is None or verdict.approved)
         approved = passed and not review_required
-        next_status = (
-            MaterialsLifecycle.RESUME_APPROVED
-            if approved
-            else MaterialsLifecycle.RESUME_IN_PROGRESS
-        )
+        next_status = MaterialsLifecycle.RESUME_APPROVED if approved else MaterialsLifecycle.RESUME_IN_PROGRESS
         artifact_status = (
             ArtifactStatus.APPROVED
             if approved
@@ -297,29 +271,17 @@ class MaterialsSet:
         updated_at: str,
     ) -> "MaterialsSet":
         if artifact.type is not ArtifactType.COVER_LETTER:
-            raise ValueError(
-                "with_cover_letter requires an ArtifactType.COVER_LETTER artifact"
-            )
+            raise ValueError("with_cover_letter requires an ArtifactType.COVER_LETTER artifact")
         if not self.is_resume_approved:
-            raise ValueError(
-                "Cannot attach cover letter before tailored resume is approved (§4.5)"
-            )
+            raise ValueError("Cannot attach cover letter before tailored resume is approved (§4.5)")
         approved_artifact = (
             artifact.with_status(ArtifactStatus.APPROVED)
             if validation.passed
             else artifact.with_status(ArtifactStatus.REJECTED)
         )
-        next_status = (
-            MaterialsLifecycle.COVER_LETTER_READY
-            if validation.passed
-            else self.status
-        )
+        next_status = MaterialsLifecycle.COVER_LETTER_READY if validation.passed else self.status
         cover_letter_pdf = self.cover_letter_pdf
-        if (
-            validation.passed
-            and cover_letter_pdf is not None
-            and cover_letter_pdf.status is ArtifactStatus.APPROVED
-        ):
+        if validation.passed and cover_letter_pdf is not None and cover_letter_pdf.status is ArtifactStatus.APPROVED:
             cover_letter_pdf = cover_letter_pdf.supersede(at=updated_at)
         return replace(
             self,
@@ -332,13 +294,9 @@ class MaterialsSet:
 
     def with_resume_pdf(self, artifact: Artifact, *, updated_at: str) -> "MaterialsSet":
         if artifact.type is not ArtifactType.RESUME_PDF:
-            raise ValueError(
-                "with_resume_pdf requires an ArtifactType.RESUME_PDF artifact"
-            )
+            raise ValueError("with_resume_pdf requires an ArtifactType.RESUME_PDF artifact")
         if self.tailored_resume is None:
-            raise ValueError(
-                "Cannot attach resume PDF before tailored resume is present (§4.5)"
-            )
+            raise ValueError("Cannot attach resume PDF before tailored resume is present (§4.5)")
         approved = artifact.with_status(ArtifactStatus.APPROVED)
         next_status = self.status
         if (
@@ -354,17 +312,11 @@ class MaterialsSet:
             updated_at=updated_at,
         )
 
-    def with_cover_letter_pdf(
-        self, artifact: Artifact, *, updated_at: str
-    ) -> "MaterialsSet":
+    def with_cover_letter_pdf(self, artifact: Artifact, *, updated_at: str) -> "MaterialsSet":
         if artifact.type is not ArtifactType.COVER_LETTER_PDF:
-            raise ValueError(
-                "with_cover_letter_pdf requires an ArtifactType.COVER_LETTER_PDF artifact"
-            )
+            raise ValueError("with_cover_letter_pdf requires an ArtifactType.COVER_LETTER_PDF artifact")
         if self.cover_letter is None:
-            raise ValueError(
-                "Cannot attach cover-letter PDF before cover-letter text is present (§4.5)"
-            )
+            raise ValueError("Cannot attach cover-letter PDF before cover-letter text is present (§4.5)")
         approved = artifact.with_status(ArtifactStatus.APPROVED)
         next_status = self.status
         if (
@@ -392,24 +344,10 @@ class MaterialsSet:
         """
         return replace(
             self,
-            tailored_resume=(
-                self.tailored_resume.supersede(at=at)
-                if self.tailored_resume is not None
-                else None
-            ),
-            cover_letter=(
-                self.cover_letter.supersede(at=at)
-                if self.cover_letter is not None
-                else None
-            ),
-            resume_pdf=(
-                self.resume_pdf.supersede(at=at) if self.resume_pdf is not None else None
-            ),
-            cover_letter_pdf=(
-                self.cover_letter_pdf.supersede(at=at)
-                if self.cover_letter_pdf is not None
-                else None
-            ),
+            tailored_resume=(self.tailored_resume.supersede(at=at) if self.tailored_resume is not None else None),
+            cover_letter=(self.cover_letter.supersede(at=at) if self.cover_letter is not None else None),
+            resume_pdf=(self.resume_pdf.supersede(at=at) if self.resume_pdf is not None else None),
+            cover_letter_pdf=(self.cover_letter_pdf.supersede(at=at) if self.cover_letter_pdf is not None else None),
             updated_at=at,
         )
 
@@ -456,22 +394,12 @@ class MaterialsSet:
             "status": self.status,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
-            "tailored_resume": (
-                self.tailored_resume.to_dict() if self.tailored_resume else None
-            ),
-            "cover_letter": (
-                self.cover_letter.to_dict() if self.cover_letter else None
-            ),
+            "tailored_resume": (self.tailored_resume.to_dict() if self.tailored_resume else None),
+            "cover_letter": (self.cover_letter.to_dict() if self.cover_letter else None),
             "resume_pdf": self.resume_pdf.to_dict() if self.resume_pdf else None,
-            "cover_letter_pdf": (
-                self.cover_letter_pdf.to_dict() if self.cover_letter_pdf else None
-            ),
-            "last_validation": (
-                self.last_validation.to_dict() if self.last_validation else None
-            ),
-            "last_verdict": (
-                self.last_verdict.to_dict() if self.last_verdict else None
-            ),
+            "cover_letter_pdf": (self.cover_letter_pdf.to_dict() if self.cover_letter_pdf else None),
+            "last_validation": (self.last_validation.to_dict() if self.last_validation else None),
+            "last_verdict": (self.last_verdict.to_dict() if self.last_verdict else None),
             "metadata": dict(self.metadata),
         }
 
@@ -524,9 +452,7 @@ class MaterialsSetFactory:
         aggregate so the queue selectors pick it up.
         """
         if not isinstance(previous, MaterialsSet):
-            raise TypeError(
-                "next_generation requires a MaterialsSet as the previous aggregate"
-            )
+            raise TypeError("next_generation requires a MaterialsSet as the previous aggregate")
         superseded = previous.supersede_all(at=created_at)
         fresh = MaterialsSet(
             tenant_id=previous.tenant_id,

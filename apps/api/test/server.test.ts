@@ -1,3 +1,10 @@
+import { providerStatusResult, providerModelsResult, providerVerifyResult } from "./provider-fixture.js";
+import { workflowRpcFixture } from "./rpc-workflow-fixture.js";
+import { createActionDispatcher } from "../src/local-actions.js";
+import { recordArtifactAuthority, recordCompensationAuthority, recordRoleFeedback } from "./semantic-fixtures.js";
+import { recordCoachingDecision, recordCandidateProposal } from "./semantic-fixtures.js";
+import { seedApplicationUrl } from "./seed-enrichment.js";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -17,6 +24,7 @@ import {
   PipelineOperationsSnapshotSchema,
   ProviderConfigurationKeys,
   RpcMethods,
+  RequiredBulletSuggestionResponseSchema,
   ScoringKeywordAggregationResponseSchema,
   SecretCredentialKeys,
   type ActionCommandPayload,
@@ -30,9 +38,12 @@ import { DiscoveryBrowserBroker } from "../src/discovery-browser-broker.js";
 import { claimDiscoveryInstallationId } from "../src/extension-auth.js";
 import {
   CredentialStoreUnavailableError,
+  CredentialValueUnsupportedError,
   KeychainCredentialStore,
+  type SecurityCommandRunner,
 } from "../src/credentials.js";
-import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
+import type { NativeCredentialCommandRunner } from "../src/native-credential-store.js";
+import { callRpc, SubprocessJsonRpcAdapter, type JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 import {
   PROFILE_PREVIEW_SCRIPT,
   defaultActionDispatcher,
@@ -40,12 +51,25 @@ import {
   type ActionDispatchResult,
 } from "../src/local-actions.js";
 import { persistProfileUpdate } from "../src/profile-events.js";
+import {
+  AUTOMATION_PROJECT_DIR,
+  createSourcePythonRuntime,
+  type PythonRuntimeCommandResolver,
+} from "../src/python-runtime.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
+
+const syntheticIdentity = process.platform === "linux"
+  ? "linux:00000000-0000-0000-0000-000000000000:1"
+  : process.platform === "win32" ? "windows:1:1" : "darwin:1:1";
+const syntheticCredentialProcessIdentity = async () => ({
+  state: "alive" as const, identity: syntheticIdentity,
+});
 
 let tempDir = "";
 let options: BuildAppOptions;
+let enrichmentRetryRpc: SubprocessJsonRpcAdapter;
 let strayProfileExportPath = "";
 let strayStyleExportPath = "";
 let strayTemplateExportPath = "";
@@ -54,6 +78,22 @@ const COMPENSATION_JOB_ID = "11111111-1111-4111-8111-111111111111";
 const INERT_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
 const REJECTED_CREDENTIAL_VALUE_MARKER =
   "rejected-credential-must-not-appear";
+const SOURCE_PYTHON_RPC_AVAILABLE = spawnSync(
+  "uv",
+  [
+    "--project",
+    AUTOMATION_PROJECT_DIR,
+    "run",
+    "--no-sync",
+    "python",
+    "-c",
+    "from jobctrl.infrastructure.rpc.handlers import register_default_handlers",
+  ],
+  {
+    env: { ...process.env, UV_FROZEN: "1" },
+    stdio: "ignore",
+  },
+).status === 0;
 
 function validProfileFixture(fullName: string): Record<string, unknown> {
   return {
@@ -117,11 +157,16 @@ async function waitForExpectation(assertion: () => void, timeoutMs = 500): Promi
 
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-"));
+  enrichmentRetryRpc = new SubprocessJsonRpcAdapter({
+    appDir: tempDir,
+    pythonRuntime: createSourcePythonRuntime({ environment: { ...process.env, LANGFUSE_DISABLE: "1" } }),
+  });
   options = {
     dbPath: path.join(tempDir, "jobctrl.db"),
     configPath: path.join(tempDir, "config.json"),
     providerDispatcher: {
-      call: vi.fn(async (method) => {
+      call: vi.fn(async (method, params) => {
+        if (method === RpcMethods.ResetEnrichment) return enrichmentRetryRpc.call(method, params);
         if (method !== "browser_capabilities_list") throw new Error(`Unexpected provider RPC in API fixture: ${method}`);
         return { jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } };
       }),
@@ -153,6 +198,7 @@ beforeEach(() => {
       apply_concurrency: 3,
       pipeline_internal_concurrency: 5,
       daily_budget_usd: 12.5,
+      lane_token_limits: { scoring: 1801 },
       score_criteria: "Security leadership and platform reliability.",
       target_criteria: "Director-plus infrastructure and security roles.",
       preferred_models: { claude: "opus" },
@@ -160,7 +206,8 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await enrichmentRetryRpc.close();
   vi.unstubAllEnvs();
   fs.rmSync(tempDir, { force: true, recursive: true });
 });
@@ -313,6 +360,7 @@ describe("local TypeScript API", () => {
       "tailoringGeneratorModels",
       "tailoringJudgeModel",
       "tailoringJudgeMinScore",
+      "resumeVoicePolish",
       "applyMaxBudgetUsd",
       "applyTimeoutSeconds",
     ]) {
@@ -322,7 +370,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("rejects legacy lifecycle tables before health-only startup completes", async () => {
+  it("reports incompatible legacy tables without opening product routes", async () => {
     const legacyDbPath = path.join(tempDir, "legacy-health.sqlite3");
     const token = "job" + "ctl";
     const db = new Database(legacyDbPath);
@@ -338,24 +386,25 @@ describe("local TypeScript API", () => {
     `);
     db.close();
 
-    expect(() => buildApp({ ...options, dbPath: legacyDbPath })).toThrow("schema version 0");
+    const app = buildApp({ ...options, dbPath: legacyDbPath });
+    const health = await app.inject({ method: "GET", url: "/v1/health" });
+    expect(health.statusCode).toBe(503);
+    expect(health.json()).toMatchObject({ error: "database_schema_incompatible", currentVersion: 0 });
+    expect((await app.inject({ method: "GET", url: "/v1/dashboard/summary" })).statusCode).toBe(503);
+    await app.close();
   });
 
   it("reports today's LLM spend against the configured budget", async () => {
     const day = new Date().toISOString().slice(0, 10);
     const db = new Database(options.dbPath);
-    db.exec(
-      `CREATE TABLE IF NOT EXISTS llm_spend (
-        day TEXT PRIMARY KEY,
-        input_tokens INTEGER NOT NULL DEFAULT 0,
-        output_tokens INTEGER NOT NULL DEFAULT 0,
-        estimated_usd REAL NOT NULL DEFAULT 0
-      )`,
-    );
     db.prepare(
-      `INSERT INTO llm_spend (day, input_tokens, output_tokens, estimated_usd)
-       VALUES (?, ?, ?, ?)`,
-    ).run(day, 1234, 567, 13);
+      `INSERT INTO llm_spend (day, lane, input_tokens, output_tokens, estimated_usd)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(day, "scoring", 1234, 567, 13);
+    db.prepare(
+      `INSERT INTO llm_spend (day, lane, input_tokens, output_tokens, estimated_usd)
+       VALUES (?, 'legacy', 5, 2, 1)`,
+    ).run(day);
     db.close();
 
     const app = buildApp(options);
@@ -366,15 +415,56 @@ describe("local TypeScript API", () => {
       llmSpend: {
         status: "over_budget",
         day,
-        inputTokens: 1234,
-        outputTokens: 567,
-        estimatedUsd: 13,
+        inputTokens: 1239,
+        outputTokens: 569,
+        estimatedUsd: 14,
         dailyBudgetUsd: 12.5,
         remainingUsd: 0,
         unlimited: false,
+        lanes: {
+          scoring: {
+            status: "over_budget",
+            inputTokens: 1234,
+            outputTokens: 567,
+            totalTokens: 1801,
+            tokenLimit: 1801,
+            remainingTokens: 0,
+            unlimited: false,
+          },
+          tailoring: {
+            status: "ok",
+            totalTokens: 0,
+            tokenLimit: 0,
+            unlimited: true,
+          },
+        },
       },
     });
 
+    await app.close();
+  });
+
+  it("keeps global health available when only one lane is exhausted", async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `INSERT INTO llm_spend (day, lane, input_tokens, output_tokens, estimated_usd)
+       VALUES (?, 'scoring', 1500, 301, 1)`,
+    ).run(day);
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/health" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().llmSpend).toMatchObject({
+      status: "ok",
+      estimatedUsd: 1,
+      lanes: {
+        scoring: { status: "over_budget", totalTokens: 1801 },
+        tailoring: { status: "ok", totalTokens: 0 },
+      },
+    });
     await app.close();
   });
 
@@ -522,6 +612,39 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("omits obsolete scoring feedback while preserving current feedback and history", async () => {
+    const db = new Database(options.dbPath);
+    const oldJob = "https://example.com/jobs/obsolete-feedback";
+    const currentJob = "https://example.com/jobs/current-feedback";
+    for (const url of [oldJob, currentJob]) {
+      insertJob(db, { url, title: url === oldJob ? "Old role" : "Current role", site: "Synthetic", fitScore: 2 });
+      insertScore(db, url, 1, 2);
+      recordRoleFeedback(db, jobIdFor(url), 1);
+    }
+    const oldId = jobIdFor(oldJob);
+    const row = db.prepare("SELECT determination_id, envelope_json FROM semantic_determinations WHERE entity_id=?").get(oldId) as { determination_id: string; envelope_json: string };
+    const envelope = JSON.parse(row.envelope_json);
+    envelope.prompt_version = "score-fit-assessment-v8-saved-search-targets";
+    const historical = JSON.stringify(envelope);
+    db.prepare("UPDATE semantic_determinations SET prompt_version=?,envelope_json=? WHERE determination_id=?").run(envelope.prompt_version, historical, row.determination_id);
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/discovery/role-match-feedback" });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().suggestions).toHaveLength(1);
+    expect(response.json().suggestions[0].titleDisplay).toBe("Current role");
+    expect(db.prepare("SELECT envelope_json FROM semantic_determinations WHERE determination_id=?").get(row.determination_id)).toEqual({ envelope_json: historical });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM job_scores WHERE job_id=?").get(oldId)).toEqual({ count: 1 });
+    const current = db.prepare("SELECT determination_id,envelope_json FROM semantic_determinations WHERE entity_id=?").get(jobIdFor(currentJob)) as { determination_id: string; envelope_json: string };
+    const invalid = JSON.parse(current.envelope_json);
+    invalid.result.fit_band = "unknown-band";
+    db.prepare("UPDATE semantic_determinations SET envelope_json=? WHERE determination_id=?").run(JSON.stringify(invalid), current.determination_id);
+    const rejected = await app.inject({ method: "GET", url: "/v1/discovery/role-match-feedback" });
+    expect(rejected.statusCode).toBe(500);
+    expect(rejected.json().message).toBe("determination_schema_violation");
+    await app.close();
+    db.close();
+  });
+
   it("surfaces low-score role-match suggestions and records approval decisions", async () => {
     const db = new Database(options.dbPath);
     const jobKey = "https://example.com/jobs/test-engineering";
@@ -532,6 +655,7 @@ describe("local TypeScript API", () => {
       fitScore: 2,
     });
     insertScore(db, jobKey, 1, 2);
+    recordRoleFeedback(db,jobIdFor(jobKey),1);
     db.close();
 
     const app = buildApp(options);
@@ -548,7 +672,7 @@ describe("local TypeScript API", () => {
       ruleKind: "exact_title_exclusion",
       titlePattern: "manager test engineering",
       titleDisplay: "Manager, Test Engineering",
-      reasonCode: "low_role_fit",
+      reasonCode: "role_mismatch_evidence",
       sampleCount: 1,
     });
 
@@ -747,6 +871,24 @@ describe("local TypeScript API", () => {
         postingUrl: "https://example.com/jobs/legacy-timestamp",
       }),
     );
+    insertEvent.run(
+      "local",
+      null,
+      null,
+      "CompanyBriefingRecorded",
+      occurredAt,
+      JSON.stringify({
+        tenantId: "local",
+        companyId: "company-synthetic",
+        sources: [{ text: "company-briefing-source-canary" }],
+      }),
+    );
+    insertEvent.run("local", null, null, "CareerLearningRecorded", occurredAt,
+      JSON.stringify({ tenantId: "local", completionEvidence: "career-learning-private-source-canary" }));
+    insertEvent.run("local", null, null, "ArchivedSmartPostingPrepared", occurredAt,
+      JSON.stringify({ tenantId: "local", qualified: { description: "archived-posting-private-source-canary" } }));
+    insertEvent.run("local", null, null, "LegacyEvidenceReviewRecorded", occurredAt,
+      JSON.stringify({ original: { value: "legacy-evidence-private-source-canary" } }));
     const outcomeOccurredAt = "2026-04-01T09:00:00+00:00";
     insertEvent.run(
       "local",
@@ -764,6 +906,61 @@ describe("local TypeScript API", () => {
         notePresent: false,
       }),
     );
+    // The production scanner regression in test_gmail_feedback.py pins this
+    // exact stored row shape. This side verifies that SSE preserves it.
+    const gmailFeedback = insertEvent.run(
+      "local",
+      jobId,
+      "apply",
+      "ApplicationEmailFeedbackIngested",
+      occurredAt,
+      JSON.stringify({
+        evidenceId: "evidence-gmail-1",
+        suggestionId: "suggestion-gmail-1",
+        provider: "gmail",
+        suggestedKind: "interview",
+        classificationConfidence: 0.9,
+        linkConfidence: 0.84,
+        linkSignals: ["recipient", "time_window", "company"],
+        stage: "apply",
+        level: "info",
+        message: "Application email feedback ingested.",
+        jobId,
+      }),
+    );
+    let privateRunEventId = 0;
+    for (const eventType of ["EmailApplicationCandidateRecorded", "EmailApplicationSendFailed", "EmailApplicationSent", "AgentResult", "AssistantText", "ToolUse", "ApplyTerminalDetermination", "ApplicationFailed"]) {
+      const privateRow = insertEvent.run("local", jobId, "apply", eventType, occurredAt, JSON.stringify({
+        jobId, run_id: "private-email-run", event_id: ++privateRunEventId, subject: "private-email-canary", body: "private-email-canary",
+        recipient: "private-email-canary", message: "private-email-canary", provider_error: "private-email-canary",
+        reason: "email_send_outcome_ambiguous:private-email-canary",
+      }));
+      db.prepare("UPDATE job_events SET message=? WHERE event_id=?")
+        .run("private-email-canary", privateRow.lastInsertRowid);
+    }
+    insertEvent.run("local", jobId, "apply", "ApplyRunEventRecorded", occurredAt, JSON.stringify({
+      run_id: "private-email-run", event: { event_type: "EmailApplicationSendFailed", message: "private-email-canary",
+        payload: { provider_error: "private-email-canary" } },
+    }));
+    for (const eventKey of ["event_type", "eventType"]) {
+      for (const eventType of ["AgentResult", "AssistantText", "ToolUse", "ApplyTerminalDetermination"]) {
+        insertEvent.run("local", jobId, "apply", "ApplyRunEventRecorded", occurredAt, JSON.stringify({
+          run_id: "private-email-run", message: "private-agent-canary",
+          event: { [eventKey]: eventType, message: "private-agent-canary",
+            payload: { raw_output: "private-agent-canary", input_preview: "private-agent-canary" } },
+        }));
+      }
+      for (const legacy of [
+        { reason: "email_send_outcome_ambiguous:private-legacy-exception-canary", result: "needs_verification" },
+        { result: { kind: "failed", error: "email_send_outcome_ambiguous:private-legacy-exception-canary" } },
+      ]) {
+        insertEvent.run("local", jobId, "apply", "ApplicationFailed", occurredAt,
+          JSON.stringify({ jobId, run_id: "private-email-run", message: "private-legacy-exception-canary", ...legacy }));
+        insertEvent.run("local", jobId, "apply", "ApplyRunEventRecorded", occurredAt,
+          JSON.stringify({ run_id: "private-email-run", event: { [eventKey]: "ApplicationFailed",
+            message: "private-legacy-exception-canary", payload: legacy } }));
+      }
+    }
     const canonical = insertEvent.run(
       "local",
       jobId,
@@ -791,6 +988,13 @@ describe("local TypeScript API", () => {
 
     expect(streamed).toContain(expectedId);
     expect(streamed).toContain("event: StageReset");
+    expect(streamed).toContain("event: EmailApplicationCandidateRecorded");
+    expect(streamed).toContain("private-email-run");
+    expect(streamed).not.toContain("private-email-canary");
+    expect(streamed).not.toContain("private-agent-canary");
+    expect(streamed).not.toContain("private-legacy-exception-canary");
+    expect(streamed).toContain("email_send_outcome_ambiguous");
+    expect(streamed).toContain("event: AgentResult");
     expect(streamed).toContain(`\"tenantId\":\"local\"`);
     expect(streamed).toContain(`\"jobId\":\"${jobId}\"`);
     expect(streamed).toContain(`\"postingUrl\":\"${jobUrl}\"`);
@@ -798,9 +1002,20 @@ describe("local TypeScript API", () => {
     expect(streamed).toContain("event: ApplicationOutcomeRecorded");
     expect(streamed).toContain("outcome-historical");
     expect(streamed).toContain(`\"occurredAt\":\"${outcomeOccurredAt}\"`);
+    expect(streamed).toContain(`id: ${String(gmailFeedback.lastInsertRowid)}`);
+    expect(streamed).toContain("event: ApplicationEmailFeedbackIngested");
+    expect(streamed).toContain("evidence-gmail-1");
     expect(streamed).not.toContain("event: ProfileUpdated");
     expect(streamed).not.toContain("\"jobKey\"");
     expect(streamed).not.toContain("legacy-timestamp");
+    expect(streamed).not.toContain("CompanyBriefingRecorded");
+    expect(streamed).not.toContain("company-briefing-source-canary");
+    expect(streamed).not.toContain("CareerLearningRecorded");
+    expect(streamed).not.toContain("career-learning-private-source-canary");
+    expect(streamed).not.toContain("ArchivedSmartPostingPrepared");
+    expect(streamed).not.toContain("archived-posting-private-source-canary");
+    expect(streamed).not.toContain("LegacyEvidenceReviewRecorded");
+    expect(streamed).not.toContain("legacy-evidence-private-source-canary");
     await reader.cancel();
     db.close();
     await app.close();
@@ -1448,6 +1663,65 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("keeps historical private email content out of broad activity and Apply timelines", async () => {
+    const db = new Database(options.dbPath);
+    const privateEvent = { event_type: "EmailApplicationCandidateRecorded", level: "info",
+      occurred_at: "2026-04-29T10:15:00+00:00", message: "private-historical-email-canary",
+      payload: { run_id: "run-1", body: "private-historical-email-canary" } };
+    db.prepare("UPDATE apply_run_projections SET events_json=? WHERE run_id='run-1'")
+      .run(JSON.stringify([privateEvent, { ...privateEvent, event_type: "AgentResult" },
+        { ...privateEvent, event_type: "ApplyRunEventRecorded" }]));
+    db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+      VALUES ('local',?,1,'apply','EmailApplicationCandidateRecorded','info',?,?,?)`)
+      .run(jobIdFor("https://example.com/jobs/ready"), privateEvent.message, privateEvent.occurred_at,
+        JSON.stringify(privateEvent.payload));
+    db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+      VALUES ('local',?,1,'apply','AgentResult','info',?,?,?)`)
+      .run(jobIdFor("https://example.com/jobs/ready"), privateEvent.message, privateEvent.occurred_at,
+        JSON.stringify({ raw_output: "private-historical-email-canary" }));
+    db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+      VALUES ('local',?,1,'apply','ApplyRunEventRecorded','info',?,?,?)`)
+      .run(jobIdFor("https://example.com/jobs/ready"), privateEvent.message, privateEvent.occurred_at,
+        JSON.stringify({ event: { event_type: "AgentResult", payload: { raw_output: privateEvent.message } } }));
+    for (const eventType of ["AssistantText", "ToolUse", "ApplyTerminalDetermination", "ApplicationFailed"]) {
+      db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+        VALUES ('local',?,1,'apply',?,'info',?,?,?)`)
+        .run(jobIdFor("https://example.com/jobs/ready"), eventType, privateEvent.message, privateEvent.occurred_at,
+          JSON.stringify({ run_id: "run-1", input_preview: privateEvent.message,
+            reason: `email_send_outcome_ambiguous:${privateEvent.message}` }));
+    }
+    db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+      VALUES ('local',?,1,'apply','EmailApplicationSent','info',NULL,?,?)`)
+      .run(jobIdFor("https://example.com/jobs/ready"), privateEvent.occurred_at,
+        JSON.stringify({ run_id: "run-1", body: "private-payload-only-canary" }));
+    db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+      VALUES ('local',?,1,'apply','SagaStarted','info',?,?,?)`)
+      .run(jobIdFor("https://example.com/jobs/ready"), "public-synthetic-progress", privateEvent.occurred_at,
+        JSON.stringify({ run_id: "run-1" }));
+    db.prepare("UPDATE apply_run_projections SET events_json=? WHERE run_id='run-1'")
+      .run(JSON.stringify(["AssistantText", "ToolUse", "ApplyTerminalDetermination", "ApplicationFailed"].map((event_type) =>
+        ({ ...privateEvent, event_type, payload: { reason: `email_send_outcome_ambiguous:${privateEvent.message}` } }))));
+    db.close();
+    const app = buildApp(options);
+    const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+    expect(summary.statusCode, summary.body).toBe(200);
+    expect(summary.body).not.toContain("private-historical-email-canary");
+    expect(summary.body).toContain("AssistantText");
+    const activity = await app.inject({ method: "GET", url: "/v1/debug/activity?pageSize=100" });
+    expect(activity.statusCode, activity.body).toBe(200);
+    expect(activity.body).not.toContain("private-historical-email-canary");
+    const search = await app.inject({ method: "GET", url: "/v1/debug/activity?q=private-historical-email-canary" });
+    expect(search.statusCode, search.body).toBe(200);
+    expect(search.json().items).toEqual([]);
+    const payloadSearch = await app.inject({ method: "GET", url: "/v1/debug/activity?q=private-payload-only-canary" });
+    expect(payloadSearch.statusCode, payloadSearch.body).toBe(200);
+    expect(payloadSearch.json().items).toEqual([]);
+    const publicSearch = await app.inject({ method: "GET", url: "/v1/debug/activity?q=public-synthetic-progress" });
+    expect(publicSearch.statusCode, publicSearch.body).toBe(200);
+    expect(publicSearch.json().items).toMatchObject([{ eventType: "SagaStarted", message: "public-synthetic-progress" }]);
+    await app.close();
+  });
+
   it("returns dashboard summary from the existing SQLite schema", async () => {
     const app = buildApp(options);
     const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
@@ -1504,6 +1778,58 @@ describe("local TypeScript API", () => {
     } finally {
       await app.close();
     }
+  });
+
+  it("serves standalone preparation job labels through HTTP and withholds a stale execution", async () => {
+    const app = buildApp(options);
+    const workflowId = `prep-preparation:${"a".repeat(64)}`;
+    const runId = "00000000-0000-4000-8000-000000000071";
+    const opaqueId = `op_${"b".repeat(24)}`;
+    const jobUrl = "https://example.test/standalone-runtime";
+    const now = new Date().toISOString();
+    try {
+      await app.ready();
+      const db = new Database(options.dbPath);
+      try {
+        insertJob(db, { url: jobUrl, title: "Standalone runtime role", company: "Synthetic runtime employer", site: "test" });
+        db.prepare(`INSERT INTO workflow_run_projections (
+          tenant_id, workflow_id, workflow_type, status, temporal_run_id, input_summary_json, started_at
+        ) VALUES ('local', ?, 'JobPreparationWorkflow', 'in_progress', ?, ?, ?)`)
+          .run(workflowId, runId, JSON.stringify({ jobId: jobIdFor(jobUrl), privateNote: "private-standalone-http-sentinel" }), now);
+      } finally { db.close(); }
+      insertWorkerHeartbeat(options.dbPath, {
+        workerId: "standalone-http", appDir: path.dirname(options.dbPath), dbPath: options.dbPath, lastSeenAt: now,
+      });
+      const heartbeatDb = new Database(options.dbPath);
+      try {
+        heartbeatDb.prepare(`UPDATE worker_runtime_heartbeats SET heartbeat_schema_version = 2,
+          active_activity_count = 1, active_activity_counts_json = ?, active_activity_details_json = ?,
+          active_activity_details_total = 1, active_activity_details_truncated = 0
+          WHERE worker_id = 'standalone-http'`).run(JSON.stringify({ tailor_job: 1 }), JSON.stringify([{
+            activityType: "tailor_job", operationalRef: { kind: "job-tailoring", opaqueId },
+            workflowRef: workflowId, executionRef: runId, attempt: 1, startedAt: now,
+          }]));
+      } finally { heartbeatDb.close(); }
+      const response = await app.inject({ method: "GET", url: "/v1/pipeline/operations" });
+      expect(response.statusCode, response.body).toBe(200);
+      const result = PipelineOperationsSnapshotSchema.parse(response.json());
+      expect(result.execution).toBeNull();
+      expect(result.activeItems).toEqual([expect.objectContaining({
+        kind: "resolved_job", workflowId, executionId: runId, jobKey: opaqueId,
+        title: "Standalone runtime role", company: "Synthetic runtime employer", stage: "tailor",
+      })]);
+      expect(response.body).not.toContain("private-standalone-http-sentinel");
+      expect(response.body).not.toContain(jobUrl);
+      const staleDb = new Database(options.dbPath);
+      try {
+        staleDb.prepare("UPDATE workflow_run_projections SET temporal_run_id = ? WHERE workflow_id = ?")
+          .run("00000000-0000-4000-8000-000000000072", workflowId);
+      } finally { staleDb.close(); }
+      const stale = await app.inject({ method: "GET", url: "/v1/pipeline/operations" });
+      expect(stale.statusCode, stale.body).toBe(200);
+      expect(PipelineOperationsSnapshotSchema.parse(stale.json()).activeItems)
+        .toEqual([expect.objectContaining({ kind: "unresolved_runtime_activity" })]);
+    } finally { await app.close(); }
   });
 
   it("classifies current running work as active or stuck from canonical stage timestamps", async () => {
@@ -2291,6 +2617,224 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("combines comma and repeated stages before global pagination while preserving scalar requests", async () => {
+    const app = buildApp(options);
+    try {
+      const request = async (query: string) => {
+        const response = await app.inject({ method: "GET", url: `/v1/jobs?${query}&sort=fit_score&dir=desc&pageSize=1` });
+        expect(response.statusCode, response.body).toBe(200);
+        return response.json();
+      };
+      const ids: string[] = [];
+      for (const page of [1, 2, 3]) {
+        const comma = await request(`stages=discover,apply&stage=score&page=${page}`);
+        const repeated = await request(`stages=discover&stages=apply&stages=discover&page=${page}`);
+        expect(repeated).toEqual({ ...comma, filter: { ...comma.filter, stage: "" } });
+        expect(comma.pagination).toEqual({ page, pageSize: 1, total: 3, pages: 3 });
+        expect(comma.filter.stages).toEqual(["discover", "apply"]);
+        ids.push(comma.items[0].jobKey);
+      }
+      expect(new Set(ids).size).toBe(3);
+      expect((await request("stages=discover,apply&page=999")).pagination).toEqual({ page: 3, pageSize: 1, total: 3, pages: 3 });
+      expect((await request("stages=apply&stage=discover")).pagination.total).toBe(1);
+      expect((await request("stage=apply")).pagination.total).toBe(1);
+      expect((await request("stage=apply&stages=")).pagination.total).toBe(3);
+      expect((await request("stage=apply&stages=invalid")).pagination.total).toBe(1);
+      const empty = await request("stages=score,enrich&page=999");
+      expect(empty.pagination).toEqual({ page: 1, pageSize: 1, total: 0, pages: 1 });
+      expect(empty.items).toEqual([]);
+      const searched = await request("stages=discover,apply&q=Engineer&page=999");
+      expect(searched.pagination).toMatchObject({ total: 3, page: 3 });
+    } finally { await app.close(); }
+  });
+
+  it.each(["discoveredSince", "scoredSince"] as const)(
+    "preserves %s instant boundaries through HTTP pages and all-matching hide/unhide",
+    async (field) => {
+      const timestamps = ["2027-01-01T00:00:00Z", "2027-01-01T00:00:00.000Z",
+        "2027-01-01T00:00:00.600000+00:00", "2027-01-01T00:00:00.600Z",
+        "2027-01-01T01:00:00.600+01:00", "2026-12-31T23:00:00.600-01:00"];
+      const ids = timestamps.map((_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+      const db = new Database(options.dbPath);
+      try {
+        for (const [index, id] of ids.entries()) {
+          db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+            VALUES ('local', ?, ?, 'Needle', ?)`)
+            .run(id, `https://synthetic.invalid/${id}`, timestamps[index]);
+          db.prepare(`INSERT INTO job_scores (tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at)
+            VALUES ('local', ?, 1, 7, '{}', '[]', ?)`).run(id, timestamps[index]);
+          const stages = ["discover", "enrich", "score", "tailor", "cover", "apply"];
+          for (const stage of stages) {
+            db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+              VALUES ('local', ?, ?, ?, '2027-01-01', 1)`)
+              .run(id, stage, index % 2 && stage !== "apply" ? "succeeded" : "pending");
+          }
+        }
+      } finally { db.close(); }
+      const app = buildApp(options);
+      try {
+        for (const cutoff of [".500Z", ".600Z", ".601Z"]) {
+          const expected = cutoff === ".601Z" ? [] : ids.slice(2);
+          for (const q of ["", "Needle"]) {
+            const filter = { stages: ["discover", "apply"], [field]: `2027-01-01T00:00:00${cutoff}`, q };
+            for (const sort of ["discovered_at", "title", "fit_score"]) {
+              const collected: string[] = [];
+              for (const page of [...expected.map((_, index) => index + 1), 999]) {
+                const params = new URLSearchParams({ ...filter, stages: filter.stages.join(","),
+                  sort, dir: "asc", pageSize: "1", page: String(page) });
+                const response = await app.inject({ method: "GET", url: `/v1/jobs?${params}` });
+                expect(response.statusCode, response.body).toBe(200);
+                const pages = Math.max(1, expected.length), safePage = Math.min(page, pages);
+                expect(response.json().pagination).toEqual({ page: safePage, pageSize: 1, total: expected.length, pages });
+                const keys = response.json().items.map((job: { jobKey: string }) => job.jobKey);
+                if (page !== 999) collected.push(...keys);
+                else expect(keys).toEqual(collected.slice(-1));
+              }
+              expect(collected.sort()).toEqual(expected);
+            }
+            const hide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-hide", payload: { allMatching: true, filter } });
+            expect(hide.statusCode, hide.body).toBe(200);
+            expect(hide.json().jobKeys.sort()).toEqual(expected);
+            const unhide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-unhide",
+              payload: { allMatching: true, filter: { ...filter, deleted: "hidden" } } });
+            expect(unhide.statusCode, unhide.body).toBe(200);
+            expect(unhide.json().jobKeys.sort()).toEqual(expected);
+          }
+        }
+      } finally { await app.close(); }
+    },
+  );
+
+  it("keeps HTTP page order and literal bulk membership stable when an all-matching search is added", async () => {
+    const labels = ["Needle A", "Needle a", "Needle Z", "Needle é", "Needle E", "Needle É"];
+    const sources = ["Board-a", "Board%a", "Board_a", "Board\\a", "Équipe", "éQUIPE"];
+    const states = ["exhausted", "failed", "failed", "pending", "exhausted", "pending"];
+    const ids = labels.map((_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+    const db = new Database(options.dbPath);
+    try {
+      for (const [index, id] of ids.entries()) {
+        db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+          VALUES ('local', ?, ?, ?, ?, ?, '2026-10-15')`)
+          .run(id, `https://synthetic.invalid/${id}`, labels[index], sources[index], sources[index]);
+        const stages = ["discover", "enrich", "score", "tailor", "cover", "apply"];
+        const current = index % 2 ? "apply" : "discover";
+        for (const stage of stages) {
+          const value = stage === current ? states[index] : stages.indexOf(stage) < stages.indexOf(current) ? "succeeded" : "pending";
+          db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+            VALUES ('local', ?, ?, ?, '2026-10-15', 1)`).run(id, stage, value);
+        }
+      }
+    } finally { db.close(); }
+    const app = buildApp(options);
+    const base = { stages: ["discover", "apply"], discoveredSince: "2026-10-01T00:00:00Z" };
+    try {
+      for (const sort of ["title", "current_state"] as const) {
+        for (const dir of ["asc", "desc"] as const) {
+          const order = sort === "title" ? dir === "asc" ? [0, 1, 4, 3, 5, 2] : [2, 3, 5, 4, 0, 1]
+            : dir === "asc" ? [1, 0, 2, 4, 3, 5] : [3, 5, 0, 2, 4, 1];
+          for (const state of sort === "current_state" ? ["", "failed"] : [""]) {
+            const expectedOrder = state ? order.filter((index) => states[index] !== "pending") : order;
+            for (const q of ["", "Needle"]) {
+              for (const page of [...expectedOrder.map((_, index) => index + 1), 999]) {
+                const params = new URLSearchParams({ stages: base.stages.join(","), discoveredSince: base.discoveredSince,
+                  sort, dir, state, q, page: String(page), pageSize: "1" });
+                const response = await app.inject({ method: "GET", url: `/v1/jobs?${params}` });
+                expect(response.statusCode, response.body).toBe(200);
+                const safePage = Math.min(page, expectedOrder.length);
+                expect(response.json().pagination).toEqual({ page: safePage, pageSize: 1, total: expectedOrder.length, pages: expectedOrder.length });
+                expect(response.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([ids[expectedOrder[safePage - 1]!]]);
+              }
+            }
+          }
+        }
+      }
+      const cases: Array<[string, number[]]> = [["Board%", [1]], ["Board_", [2]], ["Board\\", [3]], ["équipe", [4, 5]], ["Absent%", []]];
+      for (const field of ["source", "company"]) {
+        for (const [value, selected] of cases) {
+          for (const q of ["", "Needle"]) {
+            const filter = { ...base, [field]: value, q };
+            const params = new URLSearchParams({ stages: base.stages.join(","), discoveredSince: base.discoveredSince,
+              [field]: value, q, sort: "title", dir: "asc", pageSize: "1", page: "999" });
+            const list = await app.inject({ method: "GET", url: `/v1/jobs?${params}` });
+            expect(list.statusCode, list.body).toBe(200);
+            expect(list.json().pagination).toEqual({ page: Math.max(1, selected.length), pageSize: 1, total: selected.length, pages: Math.max(1, selected.length) });
+            expect(list.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual(selected.slice(-1).map((index) => ids[index]));
+            const hide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-hide", payload: { allMatching: true, filter } });
+            expect(hide.statusCode, hide.body).toBe(200);
+            expect(hide.json().jobKeys.sort()).toEqual(selected.map((index) => ids[index]));
+            const unhide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-unhide",
+              payload: { allMatching: true, filter: { ...filter, deleted: "hidden" } } });
+            expect(unhide.statusCode, unhide.body).toBe(200);
+            expect(unhide.json().jobKeys.sort()).toEqual(selected.map((index) => ids[index]));
+          }
+        }
+      }
+      const restored = await app.inject({ method: "GET", url: `/v1/jobs?discoveredSince=${base.discoveredSince}&q=Needle` });
+      expect(restored.statusCode, restored.body).toBe(200);
+      expect(restored.json().items.map((job: { jobKey: string }) => job.jobKey).sort()).toEqual(ids);
+    } finally { await app.close(); }
+  });
+
+  it.each(["exhausted", "failed"] as const)("preserves %s selection through HTTP search and all-matching hide/unhide", async (state) => {
+    const db = new Database(options.dbPath);
+    const inputs = (["exhausted", "failed", "pending"] as const).flatMap((storedState) =>
+      (["discover", "apply"] as const).map((stage) => ({
+        jobKey: jobIdFor(`https://synthetic.invalid/${stage}-${storedState}`), stage, storedState,
+      })),
+    );
+    try {
+      for (const input of inputs) {
+        db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+          VALUES ('local', ?, ?, 'Needle', 'Synthetic', 'board-a', '2026-01-01')`)
+          .run(input.jobKey, `https://synthetic.invalid/${input.jobKey}`);
+        const stages = ["discover", "enrich", "score", "tailor", "cover", "apply"];
+        for (const stage of stages) {
+          const value = stage === input.stage ? input.storedState
+            : stages.indexOf(stage) < stages.indexOf(input.stage) ? "succeeded" : "pending";
+          db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+            VALUES ('local', ?, ?, ?, '2026-01-01', 1)`).run(input.jobKey, stage, value);
+        }
+      }
+    } finally { db.close(); }
+    const selectedIds = inputs.filter((input) => input.storedState === "exhausted" || state === "failed" && input.storedState === "failed")
+      .map((input) => input.jobKey).sort();
+    const app = buildApp(options);
+    try {
+      for (const stages of ["stages=discover,apply", "stages=discover&stages=apply&stages=discover"]) {
+        const response = await app.inject({ method: "GET",
+          url: `/v1/jobs?${stages}&state=${state}&q=Needle&sort=title&dir=asc&pageSize=1&page=999` });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json().pagination).toEqual({ page: selectedIds.length, pageSize: 1, total: selectedIds.length, pages: selectedIds.length });
+        expect(response.json().items[0].jobKey).toBe(selectedIds.at(-1));
+        expect(response.json().items[0].currentState).toBe("failed");
+      }
+      const scalar = await app.inject({ method: "GET", url: `/v1/jobs?stage=discover&state=${state}&q=Needle` });
+      expect(scalar.statusCode, scalar.body).toBe(200);
+      expect(scalar.json().pagination.total).toBe(selectedIds.length / 2);
+      const filter = { stages: ["discover", "apply"], state, q: "Needle" };
+      const hide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-hide",
+        payload: { allMatching: true, filter } });
+      expect(hide.statusCode, hide.body).toBe(200);
+      expect(hide.json().count).toBe(selectedIds.length);
+      expect(hide.json().jobKeys.sort()).toEqual(selectedIds);
+      const hidden = await app.inject({ method: "GET", url: "/v1/jobs?deleted=hidden&q=Needle" });
+      expect(hidden.statusCode, hidden.body).toBe(200);
+      expect(hidden.json().items.map((job: { jobKey: string }) => job.jobKey).sort()).toEqual(selectedIds);
+      const remaining = await app.inject({ method: "GET", url: "/v1/jobs?q=Needle" });
+      expect(remaining.statusCode, remaining.body).toBe(200);
+      expect(remaining.json().items.map((job: { jobKey: string }) => job.jobKey).sort())
+        .toEqual(inputs.filter((input) => !selectedIds.includes(input.jobKey)).map((input) => input.jobKey).sort());
+      const unhide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-unhide",
+        payload: { allMatching: true, filter: { ...filter, deleted: "hidden" } } });
+      expect(unhide.statusCode, unhide.body).toBe(200);
+      expect(unhide.json().count).toBe(selectedIds.length);
+      const restored = await app.inject({ method: "GET",
+        url: `/v1/jobs?stages=discover,apply&state=${state}&q=Needle` });
+      expect(restored.statusCode, restored.body).toBe(200);
+      expect(restored.json().items.map((job: { jobKey: string }) => job.jobKey).sort()).toEqual(selectedIds);
+    } finally { await app.close(); }
+  });
+
   it("filters, sorts, and paginates jobs globally", async () => {
     const app = buildApp(options);
     const response = await app.inject({
@@ -2882,6 +3426,7 @@ describe("local TypeScript API", () => {
         context: "materials",
         policyKind: "tailoring_rule",
         policyVersion: 3,
+        currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111",
         rollbackOfVersion: 1,
         rollbackReasonCode: "user_requested",
         learnedRules: [],
@@ -2896,7 +3441,7 @@ describe("local TypeScript API", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/learning/policies/materials/rollbacks",
-      payload: { targetVersion: 1 },
+      payload: { targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" },
     });
 
     expect(response.statusCode, response.body).toBe(200);
@@ -2907,6 +3452,7 @@ describe("local TypeScript API", () => {
       policyKind: "tailoring_rule",
       version: 3,
       status: "current",
+      currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111",
       learnedRules: [],
       sourceReviewId: null,
       sourceRecommendationId: null,
@@ -2917,6 +3463,7 @@ describe("local TypeScript API", () => {
     expect(call).toHaveBeenCalledWith(RpcMethods.RollbackTailoringPolicy, {
       tenantId: "local",
       targetVersion: 1,
+      expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested",
       expectedAppDir: tempDir,
       expectedDbPath: options.dbPath,
     });
@@ -2934,13 +3481,13 @@ describe("local TypeScript API", () => {
       new Response(response.body, { status: 200, statusText: "OK" }),
     );
     await expect(
-      createJobCtrlApiClient().rollbackTailoringPolicy({ targetVersion: 1 }),
+      createJobCtrlApiClient().rollbackTailoringPolicy({ targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" }),
     ).resolves.toEqual(parsed);
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:8766/v1/learning/policies/materials/rollbacks",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ targetVersion: 1 }),
+        body: JSON.stringify({ targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" }),
       }),
     );
     fetchMock.mockRestore();
@@ -2953,6 +3500,7 @@ describe("local TypeScript API", () => {
         context: "materials",
         policyKind: "tailoring_rule",
         policyVersion: 3,
+        currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111",
         rollbackOfVersion: 1,
         rollbackReasonCode: "private rollback narrative",
         learnedRules: [],
@@ -2966,7 +3514,7 @@ describe("local TypeScript API", () => {
     const badResponse = await badApp.inject({
       method: "POST",
       url: "/v1/learning/policies/materials/rollbacks",
-      payload: { targetVersion: 1 },
+      payload: { targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" },
     });
     expect(badResponse.statusCode, badResponse.body).toBe(502);
     expect(badResponse.json()).toEqual({
@@ -2976,6 +3524,26 @@ describe("local TypeScript API", () => {
     });
     expect(badResponse.body).not.toContain("private rollback narrative");
     await badApp.close();
+  });
+
+  it("returns a typed stale-review conflict and marks a delayed receipt superseded", async () => {
+    const command = { targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" };
+    const call = vi.fn<JsonRpcDispatcher["call"]>()
+      .mockResolvedValueOnce({ jsonrpc: "2.0", id: 1, error: { code: -32602, message: "tailoring_policy_stale_review" } })
+      .mockResolvedValueOnce({ jsonrpc: "2.0", id: 2, result: {
+        status: "succeeded", context: "materials", policyKind: "tailoring_rule",
+        policyVersion: 3, currentVersion: 4, replayed: true, expectedCurrentVersion: 2,
+        commandId: command.commandId, rollbackOfVersion: 1, rollbackReasonCode: "user_requested",
+        learnedRules: [], rolledBackAt: "2026-08-01T12:34:56Z",
+      } });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const stale = await app.inject({ method: "POST", url: "/v1/learning/policies/materials/rollbacks", payload: command });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ error: "tailoring_policy_stale_review" });
+    const replay = await app.inject({ method: "POST", url: "/v1/learning/policies/materials/rollbacks", payload: command });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({ version: 3, currentVersion: 4, status: "superseded", replayed: true });
+    await app.close();
   });
 
   it("serves paginated recommendation evidence links without source content", async () => {
@@ -3142,7 +3710,7 @@ describe("local TypeScript API", () => {
     const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
     const acceptedReviewId = `learning-recommendation-review:${"b".repeat(64)}`;
     const rejectedReviewId = `learning-recommendation-review:${"c".repeat(64)}`;
-    const call = vi.fn<JsonRpcDispatcher["call"]>(async (_method, params) => ({
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async (_method, params: Record<string, unknown>) => ({
       jsonrpc: "2.0" as const,
       id: 1,
       result:
@@ -3897,6 +4465,18 @@ describe("local TypeScript API", () => {
       jobIdFor("https://example.com/jobs/failed-score"),
     );
 
+    const activeByJobState = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?deleted=closed&jobStates=active",
+    });
+    expect(activeByJobState.statusCode, activeByJobState.body).toBe(200);
+    expect(activeByJobState.json().pagination.total).toBe(2);
+    expect(
+      activeByJobState
+        .json()
+        .items.map((job: { jobKey: string }) => job.jobKey),
+    ).not.toContain(jobIdFor("https://example.com/jobs/failed-score"));
+
     const closed = await app.inject({ method: "GET", url: "/v1/jobs?deleted=closed" });
     expect(closed.statusCode, closed.body).toBe(200);
     expect(closed.json().pagination.total).toBe(1);
@@ -3906,6 +4486,28 @@ describe("local TypeScript API", () => {
       deletedAt: null,
       hiddenAt: null,
     });
+
+    const retryUnavailable = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-retry-failed",
+      payload: {
+        allMatching: true,
+        filter: { state: "failed", jobStates: ["active"] },
+        jobKeys: [],
+      },
+    });
+    expect(retryUnavailable.statusCode, retryUnavailable.body).toBe(200);
+    expect(retryUnavailable.json()).toMatchObject({ ok: true, count: 0 });
+    const verificationDb = new Database(options.dbPath, { readonly: true });
+    const closedStage = verificationDb
+      .prepare(
+        "SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'",
+      )
+      .get(jobIdFor("https://example.com/jobs/failed-score")) as {
+      state: string;
+    };
+    verificationDb.close();
+    expect(closedStage.state).toBe("failed");
 
     const deleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted" });
     expect(deleted.statusCode, deleted.body).toBe(200);
@@ -3922,6 +4524,93 @@ describe("local TypeScript API", () => {
 
     await app.close();
   });
+
+  it.each(["discoveredSince", "scoredSince"] as const)(
+    "keeps older deleted jobs outside an all-matching permanent delete scoped by %s",
+    async (filterField) => {
+      const olderUrl = "https://example.com/jobs/ready";
+      const recentUrl = "https://example.com/jobs/failed-score";
+      const cutoff = "2026-04-15T00:00:00.000Z";
+      const seedDb = new Database(options.dbPath);
+      if (filterField === "discoveredSince") {
+        seedDb
+          .prepare("UPDATE jobs SET discovered_at = ? WHERE url = ?")
+          .run("2026-04-01T00:00:00.000Z", olderUrl);
+        seedDb
+          .prepare("UPDATE jobs SET discovered_at = ? WHERE url = ?")
+          .run("2026-05-01T00:00:00.000Z", recentUrl);
+      } else {
+        seedDb
+          .prepare(
+            "UPDATE job_scores SET scored_at = ? WHERE tenant_id = 'local' AND job_id = ?",
+          )
+          .run("2026-04-01T00:00:00.000Z", jobIdFor(olderUrl));
+        seedDb
+          .prepare(
+            "UPDATE job_scores SET scored_at = ? WHERE tenant_id = 'local' AND job_id = ?",
+          )
+          .run("2026-05-01T00:00:00.000Z", jobIdFor(recentUrl));
+      }
+      seedDb.close();
+
+      const app = buildApp(options);
+      const softDelete = await app.inject({
+        method: "POST",
+        url: "/v1/jobs/bulk-delete",
+        payload: {
+          allMatching: false,
+          jobKeys: [olderUrl, recentUrl],
+        },
+      });
+      expect(softDelete.statusCode, softDelete.body).toBe(200);
+
+      const matching = await app.inject({
+        method: "GET",
+        url: `/v1/jobs?jobStates=deleted&${filterField}=${encodeURIComponent(cutoff)}`,
+      });
+      expect(matching.statusCode, matching.body).toBe(200);
+      expect(matching.json().pagination.total).toBe(1);
+      expect(
+        matching.json().items.map((job: { jobKey: string }) => job.jobKey),
+      ).toEqual([jobIdFor(recentUrl)]);
+
+      const permanentDelete = await app.inject({
+        method: "POST",
+        url: "/v1/jobs/bulk-delete-permanent",
+        payload: {
+          allMatching: true,
+          filter: {
+            jobStates: ["deleted"],
+            [filterField]: cutoff,
+          },
+          jobKeys: [],
+        },
+      });
+      expect(permanentDelete.statusCode, permanentDelete.body).toBe(200);
+      expect(permanentDelete.json()).toMatchObject({
+        ok: true,
+        count: 1,
+        jobKeys: [jobIdFor(recentUrl)],
+      });
+
+      const remainingDeleted = await app.inject({
+        method: "GET",
+        url: "/v1/jobs?jobStates=deleted",
+      });
+      expect(remainingDeleted.json().pagination.total).toBe(1);
+      expect(
+        remainingDeleted
+          .json()
+          .items.map((job: { jobKey: string }) => job.jobKey),
+      ).toEqual([jobIdFor(olderUrl)]);
+      const verificationDb = new Database(options.dbPath, { readonly: true });
+      expect(countRows(verificationDb, "jobs", "url", olderUrl)).toBe(1);
+      expect(countRows(verificationDb, "jobs", "url", recentUrl)).toBe(0);
+      verificationDb.close();
+
+      await app.close();
+    },
+  );
 
   it("permanently deletes job rows and clears delete/hide tombstones so rediscovery can add them again", async () => {
     const app = buildApp(options);
@@ -4847,7 +5536,7 @@ describe("local TypeScript API", () => {
     }
   });
 
-  it("resets stale score markers for explicit rescore through the API", async () => {
+  it("retains the stale accepted score when resetting for explicit rescore through the API", async () => {
     const staleUrl = "https://example.com/jobs/stale-score";
     const seedDb = new Database(options.dbPath);
     insertJob(seedDb, {
@@ -4882,7 +5571,7 @@ describe("local TypeScript API", () => {
       ok: true,
       count: 1,
       jobKeys: [jobIdFor(staleUrl)],
-      nextAction: "jobctrl run score --rescore",
+      nextAction: "jobctrl score --rescore",
     });
 
     const db = new Database(options.dbPath);
@@ -4890,8 +5579,8 @@ describe("local TypeScript API", () => {
       const marker = db
         .prepare("SELECT resolved, resolved_at FROM job_score_staleness WHERE tenant_id = 'local' AND job_id = ?")
         .get(jobIdFor(staleUrl)) as { resolved: number; resolved_at: string | null };
-      expect(marker.resolved).toBe(1);
-      expect(marker.resolved_at).toBeTruthy();
+      expect(marker.resolved).toBe(0);
+      expect(marker.resolved_at).toBeNull();
       const stage = db
         .prepare("SELECT state, attempt_count FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'")
         .get(jobIdFor(staleUrl)) as { state: string; attempt_count: number };
@@ -4901,9 +5590,68 @@ describe("local TypeScript API", () => {
         .get(jobIdFor(staleUrl)) as { event_type: string; payload_json: string };
       expect(event.event_type).toBe("ScoreRescoreRequested");
       expect(JSON.parse(event.payload_json)).toMatchObject({
-        nextAction: "jobctrl run score --rescore",
+        nextAction: "jobctrl score --rescore",
         newPolicyVersion: 2,
       });
+      const list = await app.inject({ method: "GET", url: "/v1/jobs?pageSize=200" });
+      const detail = await app.inject({ method: "GET", url: `/v1/jobs/${encodeURIComponent(staleUrl)}` });
+      const listJob = list.json().items.find((job: { jobKey: string }) => job.jobKey === jobIdFor(staleUrl));
+      expect(listJob).toMatchObject({
+        fitScore: 7,
+        scoreVersion: 1,
+        scoreStaleness: { isStale: true, staleReason: "scoring_policy_changed", targetPolicyVersion: 2 },
+      });
+      expect(detail.json().job).toMatchObject({
+        fitScore: 7,
+        scoreVersion: 1,
+        scoreStaleness: listJob.scoreStaleness,
+      });
+    } finally {
+      db.close();
+      await app.close();
+    }
+  });
+
+  it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)("routes returned and persisted stale-score advice through the registered CLI without spending", async () => {
+    const staleUrl = "https://example.com/jobs/stale-cli-advice";
+    const seedDb = new Database(options.dbPath);
+    insertJob(seedDb, { url: staleUrl, title: "Synthetic role", site: "ExampleCo", fitScore: 7 });
+    insertScore(seedDb, staleUrl, 1, 7, { policyVersion: 1 });
+    insertStage(seedDb, staleUrl, "score", "stale");
+    createScoreStalenessTable(seedDb);
+    seedDb.prepare(
+      `INSERT INTO job_score_staleness (
+         tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
+         new_policy_id, new_policy_version, marked_at, resolved
+       ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
+         'local:scoring-policy-v2', 2, '2026-04-29T10:07:00+00:00', 0)`,
+    ).run(jobIdFor(staleUrl));
+    seedDb.close();
+
+    const app = buildApp(options);
+    const db = new Database(options.dbPath);
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/scoring/stale-scores/actions/reset-for-rescore",
+        payload: { jobKeys: [staleUrl] },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      const event = db.prepare(
+        "SELECT payload_json FROM job_events WHERE tenant_id = 'local' AND job_id = ? AND event_type = 'ScoreRescoreRequested' ORDER BY event_id DESC LIMIT 1",
+      ).get(jobIdFor(staleUrl)) as { payload_json: string };
+      const probe = spawnSync("uv", [
+        "--project", AUTOMATION_PROJECT_DIR, "run", "--no-sync", "python",
+        path.join(AUTOMATION_PROJECT_DIR, "tests/fixtures/rescore_advice_probe.py"),
+      ], {
+        cwd: tempDir,
+        env: { PATH: process.env.PATH, HOME: tempDir, JOBCTRL_DIR: tempDir, UV_FROZEN: "1" },
+        input: JSON.stringify([response.json().nextAction, JSON.parse(event.payload_json).nextAction]),
+        encoding: "utf8",
+        timeout: 30_000,
+      });
+      expect(probe.status, probe.stderr).toBe(0);
+      expect(probe.stdout).toContain("rescore advice reached the no-spend workflow seam");
     } finally {
       db.close();
       await app.close();
@@ -5355,12 +6103,11 @@ describe("local TypeScript API", () => {
           // metadata; the read model no longer synthesises coverage messages.
           warnings: ["Low keyword coverage"],
           notes: ["Keyword coverage: 1/2"],
-          metricClaims: ["35%"],
+          metricClaims: ["35%","5teams","2service","15engineers"],
         },
         judge: {
           passed: true,
           score: 0.91,
-          minScore: 0.82,
         },
         adversarialReview: {
           ran: true,
@@ -5423,7 +6170,7 @@ describe("local TypeScript API", () => {
             sourceText: ["Senior backend engineer."],
             tailoredText: ["Senior platform engineer focused on Kubernetes reliability."],
             rationale: "Summary was framed toward senior platform reliability.",
-            jobSignals: ["platform reliability", "kubernetes"],
+            jobSignals: ["platform reliability", "kubernetes", "join"],
             controls: ["target seniority: senior", "claim mode: evidence_reframing"],
             evidenceIds: ["ev_scope"],
             evidenceNotes: ["ev_scope: technical ownership"],
@@ -5444,9 +6191,6 @@ describe("local TypeScript API", () => {
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("join");
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("innovator");
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("smile");
-    expect(JSON.stringify(response.json())).not.toContain("5teams");
-    expect(JSON.stringify(response.json())).not.toContain("2service");
-    expect(JSON.stringify(response.json())).not.toContain("15engineers");
 
     await app.close();
   });
@@ -5503,6 +6247,7 @@ describe("local TypeScript API", () => {
         counts: { planned: 2, covered: 1, missing: 1 },
       },
     });
+    recordArtifactAuthority(seedDb,{backend_skills:"Backend: Python, Postgres, AWS"});
     seedDb.close();
 
     const app = buildApp(options);
@@ -5608,103 +6353,6 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("backfills profile evidence mapping for legacy resume bullets", async () => {
-    const resumePath = path.join(tempDir, "tailoring-legacy-profile-evidence-resume.txt");
-    fs.writeFileSync(resumePath, "Resume with platform reliability and 35% latency improvement.");
-    const seedDb = new Database(options.dbPath);
-    createMaterialsTables(seedDb);
-    seedDb.prepare(`
-      INSERT INTO candidate_profile_experience_entries (
-        tenant_id, profile_id, entry_id, position_index, title, company
-      ) VALUES ('local', 'default', 'acme_swe', 0, 'Senior SWE', 'Acme Corp')
-    `).run();
-    seedDb.prepare(`
-      INSERT INTO candidate_profile_experience_bullets (
-        tenant_id, profile_id, entry_id, bullet_index, bullet_text
-      ) VALUES ('local', 'default', 'acme_swe', 0, ?)
-    `).run("Owned API latency 35% by replacing synchronous calls.");
-    insertJob(seedDb, {
-      url: "https://example.com/jobs/tailoring-legacy-profile-evidence",
-      title: "Platform Engineering Lead",
-      site: "EvidenceCo",
-      fitScore: 9,
-      tailoredPath: resumePath,
-      fullDescription: "Platform reliability, API latency, and senior ownership.",
-    });
-    insertScore(seedDb, "https://example.com/jobs/tailoring-legacy-profile-evidence", 1, 9, {
-      keywords: ["platform reliability", "api latency"],
-    });
-    const metadata = completeTailoringAuditMetadata();
-    const qualityPlan = metadata.quality_plan as Record<string, unknown>;
-    qualityPlan.required_evidence_ids = [];
-    qualityPlan.seniority_evidence_ids = [];
-    metadata.change_annotations = [
-      {
-        section: "experience",
-        label: "Senior SWE at Acme Corp",
-        change_type: "achievement_reframed",
-        source_id: "acme_swe",
-        source_text: ["Senior SWE", "Owned API latency 35% by replacing synchronous calls."],
-        tailored_text: ["Owned platform reliability and reduced API latency 35%."],
-        rationale: "Reframed toward platform reliability.",
-        job_signals: ["platform reliability", "api latency"],
-        controls: ["target seniority: executive", "claim mode: evidence_reframing"],
-        evidence_ids: [],
-        evidence_notes: [],
-      },
-    ];
-    insertMaterialsGeneration(seedDb, {
-      jobUrl: "https://example.com/jobs/tailoring-legacy-profile-evidence",
-      artifactId: "artifact-tailoring-legacy-profile-evidence",
-      artifactType: "tailored_resume",
-      status: "approved",
-      path: resumePath,
-      metadata,
-    });
-    insertBulletProvenanceRow(seedDb, {
-      jobUrl: "https://example.com/jobs/tailoring-legacy-profile-evidence",
-      artifactId: "artifact-tailoring-legacy-profile-evidence",
-      bulletId: "experience:acme_swe#0",
-      section: "experience",
-      sourceId: "acme_swe",
-      evidenceIds: [],
-      requirementIds: ["req_platform"],
-      matchedKeywords: ["platform reliability", "api latency"],
-      transformType: "reframe",
-      control: "rephrase_allowed",
-      rationale: "Reframed legacy resume bullet toward the job.",
-      generatedText: "Owned platform reliability and reduced API latency 35%.",
-      coverage: {
-        computed_against: "rendered_text",
-        planned: ["platform reliability", "api latency"],
-        covered: ["platform reliability", "api latency"],
-        missing: [],
-        covered_by: { "platform reliability": "experience:acme_swe#0", "api latency": "experience:acme_swe#0" },
-        counts: { planned: 2, covered: 2, missing: 0 },
-      },
-    });
-    seedDb.close();
-
-    const app = buildApp(options);
-    const response = await app.inject({
-      method: "GET",
-      url: "/v1/artifacts/artifact-tailoring-legacy-profile-evidence",
-    });
-
-    expect(response.statusCode, response.body).toBe(200);
-    const explanation = response.json().tailoringExplanation;
-    expect(explanation.evidence.requiredIds).toContain("acme_swe_bullet_1");
-    expect(explanation.evidence.seniorityIds).toContain("acme_swe_bullet_1");
-    expect(explanation.evidence.representedIds).toContain("acme_swe_bullet_1");
-    expect(explanation.annotatedChanges[0].evidenceIds).toContain("acme_swe_bullet_1");
-    expect(explanation.bulletProvenance[0].evidenceIds).toContain("acme_swe_bullet_1");
-    expect(explanation.bulletProvenance[0].sourceText).toEqual([
-      "Owned API latency 35% by replacing synchronous calls.",
-    ]);
-    expect(explanation.quality.errors.join("\n")).not.toContain("profile evidence mapping");
-
-    await app.close();
-  });
 
   it("resolves skill-category source text for bullet provenance", async () => {
     const resumePath = path.join(tempDir, "tailoring-skill-source-resume.txt");
@@ -5766,6 +6414,7 @@ describe("local TypeScript API", () => {
       rationale: "Skill ordering highlights job-matching signals while preserving profile skills.",
       generatedText: "Leadership: Team Building & Mentoring, Global Teams (30+ engineers)",
     });
+    recordArtifactAuthority(seedDb,{backend_skills:"Backend: Python, Postgres, AWS"});
     seedDb.close();
 
     const app = buildApp(options);
@@ -6200,7 +6849,10 @@ describe("local TypeScript API", () => {
     }
   });
 
-  it("does not count corrected latest scores as outdated when stale markers remain unresolved", async () => {
+  it("counts and exposes corrected scores while their stale markers remain unresolved", async () => {
+    const staleUrl = "https://example.com/jobs/stale-but-corrected";
+    const jobId = jobIdFor(staleUrl);
+    const correctedAt = "2026-05-26T10:07:00+00:00";
     const seedDb = new Database(options.dbPath);
     createScoreStalenessTable(seedDb);
     seedDb
@@ -6209,14 +6861,15 @@ describe("local TypeScript API", () => {
       )
       .run("local", 3, "{}", "[]", "2026-05-26T10:00:00+00:00");
     insertJob(seedDb, {
-      url: "https://example.com/jobs/stale-but-corrected",
+      url: staleUrl,
       title: "Corrected Stale Score",
       site: "ExampleCo",
       fitScore: 9,
     });
-    insertScore(seedDb, "https://example.com/jobs/stale-but-corrected", 1, 7, { policyVersion: 1 });
-    insertScore(seedDb, "https://example.com/jobs/stale-but-corrected", 2, 9, {
-      correction: { fit_score: 9, reason: "user corrected score" },
+    insertScore(seedDb, staleUrl, 1, 7, { policyVersion: 1 });
+    insertScore(seedDb, staleUrl, 2, 9, {
+      correction: { corrected_fit_score: 9, rationale: "user corrected score", corrected_by: "local", corrected_at: correctedAt },
+      correctionHistory: [{ original_score: 7, corrected_score: 9, rationale: "user corrected score", corrected_by: "local", corrected_at: correctedAt }],
       policyVersion: 1,
     });
     seedDb
@@ -6227,14 +6880,43 @@ describe("local TypeScript API", () => {
          ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
            'local:scoring-policy-v3', 3, '2026-05-26T10:06:00+00:00', 0)`,
       )
-      .run(jobIdFor("https://example.com/jobs/stale-but-corrected"));
+      .run(jobId);
     seedDb.close();
 
     const app = buildApp(options);
     try {
       const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
       expect(response.statusCode, response.body).toBe(200);
-      expect(response.json().preparation.outdatedScoreCount).toBe(0);
+      expect(response.json().preparation.outdatedScoreCount).toBe(1);
+      const detail = await app.inject({ method: "GET", url: `/v1/jobs/${jobId}` });
+      expect(detail.statusCode, detail.body).toBe(200);
+      const expected = {
+        jobKey: jobId,
+        fitScore: 9,
+        scoreVersion: 2,
+        scoreCorrection: { correctedScore: 9, rationale: "user corrected score", correctedBy: "local", correctedAt },
+        scoreTrace: { correctionHistory: [{ originalScore: 7, correctedScore: 9,
+          rationale: "user corrected score", correctedBy: "local", correctedAt }] },
+        scoreStaleness: { isStale: true, staleReason: "scoring_policy_changed", currentPolicyVersion: 1, targetPolicyVersion: 3 },
+      };
+      expect(detail.json().job).toMatchObject(expected);
+      expect(detail.json().job.scoreCorrection).not.toHaveProperty("originalScore");
+      const list = await app.inject({ method: "GET", url: "/v1/jobs?pageSize=200" });
+      expect(list.statusCode, list.body).toBe(200);
+      expect(list.json().items.find((job: { jobKey: string }) => job.jobKey === jobId)).toMatchObject(expected);
+      const db = new Database(options.dbPath);
+      try {
+        const persisted = db.prepare("SELECT correction_json, trace_json FROM job_scores WHERE tenant_id='local' AND job_id=? AND version=2")
+          .get(jobId) as { correction_json: string; trace_json: string };
+        expect(JSON.parse(persisted.correction_json)).toEqual({ corrected_fit_score: 9,
+          rationale: "user corrected score", corrected_by: "local", corrected_at: correctedAt });
+        expect(JSON.parse(persisted.trace_json).correction_history).toEqual([{ original_score: 7, corrected_score: 9,
+          rationale: "user corrected score", corrected_by: "local", corrected_at: correctedAt }]);
+        expect(db.prepare("SELECT resolved, resolved_by_score_version FROM job_score_staleness WHERE tenant_id='local' AND job_id=?").get(jobId))
+          .toEqual({ resolved: 0, resolved_by_score_version: null });
+      } finally {
+        db.close();
+      }
     } finally {
       await app.close();
     }
@@ -7478,6 +8160,77 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("resets Discover to pending without dispatching or replacing an accepted score", async () => {
+    const jobUrl = "https://example.com/jobs/discover-reset-only";
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Synthetic role", site: "ExampleCo", fitScore: 7 });
+    insertScore(db, jobUrl, 1, 7, { policyVersion: 1 });
+    insertStage(db, jobUrl, "discover", "failed", "SYNTHETIC_FAILURE");
+    const accepted = db.prepare("SELECT * FROM job_scores WHERE tenant_id = 'local' AND job_id = ?")
+      .all(jobIdFor(jobUrl));
+    const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${encodeURIComponent(jobUrl)}/actions/retry-stage`,
+        payload: { stage: "discover", runAfter: false },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({ status: "reset", stage: { stage: "discover", state: "pending" } });
+      expect(dispatch).not.toHaveBeenCalled();
+      const readback = await app.inject({ method: "GET", url: `/v1/jobs/${encodeURIComponent(jobUrl)}` });
+      expect(readback.statusCode, readback.body).toBe(200);
+      expect(readback.json().stages).toContainEqual(expect.objectContaining({ stage: "discover", state: "pending" }));
+      expect(readback.json().job).toMatchObject({ currentSubstage: "discover", currentState: "pending" });
+      expect(db.prepare("SELECT * FROM job_scores WHERE tenant_id = 'local' AND job_id = ?")
+        .all(jobIdFor(jobUrl))).toEqual(accepted);
+    } finally {
+      db.close();
+      await app.close();
+    }
+  });
+
+  it("returns the committed reset when the retry dispatch RPC fails", async () => {
+    const jobUrl = "https://example.com/jobs/retry-dispatch-failure";
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Synthetic role", site: "ExampleCo", fitScore: 7 });
+    insertScore(db, jobUrl, 1, 7, { policyVersion: 1 });
+    insertStage(db, jobUrl, "score", "failed", "SYNTHETIC_FAILURE");
+    const accepted = db.prepare("SELECT * FROM job_scores WHERE tenant_id = 'local' AND job_id = ?")
+      .all(jobIdFor(jobUrl));
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0",
+      id: 1,
+      error: { code: JsonRpcErrorCodes.InternalError, message: "Synthetic dispatch failure." },
+    }));
+    const actionDispatcher = createActionDispatcher({ call, close: async () => {} });
+    const app = buildApp({ ...options, actionDispatcher });
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${encodeURIComponent(jobUrl)}/actions/retry-stage`,
+        payload: { stage: "score", runAfter: true },
+      });
+      expect(response.statusCode, response.body).toBe(202);
+      expect(response.json()).toMatchObject({
+        ok: true,
+        status: "failed",
+        message: "Synthetic dispatch failure.",
+        stage: { stage: "score", state: "pending" },
+      });
+      expect(call).toHaveBeenCalledOnce();
+      expect(call.mock.calls[0]?.[0]).toBe("run_stage");
+      expect(db.prepare("SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'")
+        .get(jobIdFor(jobUrl))).toEqual({ state: "pending" });
+      expect(db.prepare("SELECT * FROM job_scores WHERE tenant_id = 'local' AND job_id = ?")
+        .all(jobIdFor(jobUrl))).toEqual(accepted);
+    } finally {
+      db.close();
+      await app.close();
+    }
+  });
+
   it("does not reset a retry stage when run-after requires an unavailable worker", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-ignored" }));
     const jobUrl = "https://example.com/jobs/blocked-tailor";
@@ -7692,7 +8445,7 @@ describe("local TypeScript API", () => {
       `INSERT INTO job_enrichments (
          tenant_id, job_id, current_status, full_description, application_url,
          enriched_at, extraction_tier, attempts_json, updated_at
-       ) VALUES ('local', ?, 'pending', NULL, NULL, NULL, NULL, '[]', ?)`,
+       ) VALUES ('local', ?, 'pending', NULL, NULL, NULL, NULL, '[]', ?) ON CONFLICT (tenant_id, job_id) DO UPDATE SET application_url = NULL`,
     ).run(jobIdFor(pendingEnrichUrl), "2026-08-05T23:15:00.000Z");
     insertJob(seedDb, {
       url: pendingScoreUrl,
@@ -8018,13 +8771,8 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  // Phase 7 (S-26 round-1 review B2 + round-2 L4): API-driven retry-enrich
-  // MUST clear the ``job_enrichments`` aggregate's terminal-state fields,
-  // otherwise the worker's ``_ENRICHMENT_PENDING`` queue predicate
-  // permanently excludes the row and the retry is a silent no-op. Mirror
-  // of the Python ``test_reset_job_stage_enrich_clears_job_enrichments_aggregate``
-  // — exercises ``resetEnrichmentAggregate`` in
-  // ``apps/api/src/write-model.ts`` end-to-end through the HTTP route.
+  // HTTP reaches the same Python owner as CLI: reopen the lifecycle for
+  // worker pickup while retaining accepted content during a refresh.
   it("retry-enrich resets the job_enrichments aggregate to pending", async () => {
     // Seed an enriched aggregate row directly — independent of the rest
     // of the fixture so the test is self-contained.
@@ -8034,7 +8782,11 @@ describe("local TypeScript API", () => {
          job_id, tenant_id, current_status, full_description,
          application_url, enriched_at, extraction_tier,
          attempts_json, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (tenant_id, job_id) DO UPDATE SET current_status = excluded.current_status,
+         full_description = excluded.full_description, application_url = excluded.application_url,
+         enriched_at = excluded.enriched_at, extraction_tier = excluded.extraction_tier,
+         attempts_json = excluded.attempts_json, updated_at = excluded.updated_at`,
     ).run(
       jobIdFor("https://example.com/jobs/failed-score"),
       "local",
@@ -8105,10 +8857,10 @@ describe("local TypeScript API", () => {
     db.close();
 
     expect(enrichment.current_status).toBe("pending");
-    expect(enrichment.full_description).toBeNull();
-    expect(enrichment.application_url).toBeNull();
-    expect(enrichment.enriched_at).toBeNull();
-    expect(enrichment.extraction_tier).toBeNull();
+    expect(enrichment.full_description).toBe("The full job description.");
+    expect(enrichment.application_url).toBe("https://example.com/apply");
+    expect(enrichment.enriched_at).toBe("2026-04-29T10:01:00+00:00");
+    expect(enrichment.extraction_tier).toBe("json_ld");
     expect(stage).toEqual({ state: "pending", metadata_json: null });
     expect(legacyJob.detail_scraped_at).toBe("2026-04-29T10:01:00+00:00");
     expect(legacyJob.detail_error).toBeNull();
@@ -8117,7 +8869,11 @@ describe("local TypeScript API", () => {
   });
 
   it("retry-enrich is a no-op when no job_enrichments row exists", async () => {
-    // Confirm ``resetEnrichmentAggregate`` doesn't crash when the
+    const seedDb = new Database(options.dbPath);
+    seedDb.prepare("DELETE FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?")
+      .run(jobIdFor("https://example.com/jobs/blocked-tailor"));
+    seedDb.close();
+    // Confirm the canonical reset service does not crash when the
     // aggregate row was never written. Exact-v7 reset is a 0-row aggregate
     // update and never falls back to retired wide job columns.
     const app = buildApp(options);
@@ -8199,8 +8955,112 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("does not reset Enrich when the live-profile extension is offline", async () => {
-    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
+  it("refreshes one accepted LinkedIn application target without resetting enrichment", async () => {
+    const jobUrl = "https://www.linkedin.com/jobs/view/synthetic-apply-target";
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Synthetic role", site: "linkedin" });
+    insertEnrichment(db, jobUrl, "Accepted description");
+    db.prepare("UPDATE job_enrichments SET application_url = NULL WHERE tenant_id = 'local' AND job_id = ?")
+      .run(jobIdFor(jobUrl));
+    insertStage(db, jobUrl, "enrich", "succeeded");
+    const before = db.prepare("SELECT * FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?")
+      .get(jobIdFor(jobUrl));
+    db.close();
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "target-refresh" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobIdFor(jobUrl)}/actions/retry-stage`,
+      payload: { stage: "enrich", runAfter: true, refreshApplyUrl: true },
+    });
+    expect(response.statusCode, response.body).toBe(202);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: jobIdFor(jobUrl), stages: ["enrich"], limit: 1, refreshApplyUrl: true }),
+      expect.anything(),
+    );
+    const afterDb = new Database(options.dbPath, { readonly: true });
+    expect(afterDb.prepare("SELECT * FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?")
+      .get(jobIdFor(jobUrl))).toEqual(before);
+    expect(afterDb.prepare("SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'")
+      .get(jobIdFor(jobUrl))).toEqual({ state: "succeeded" });
+    afterDb.close();
+    await app.close();
+  });
+
+  it("rejects application-target refresh when accepted enrichment is absent", async () => {
+    const jobUrl = "https://www.linkedin.com/jobs/view/synthetic-unenriched";
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Synthetic role", site: "linkedin" });
+    db.close();
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "unexpected" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobIdFor(jobUrl)}/actions/retry-stage`,
+      payload: { stage: "enrich", runAfter: true, refreshApplyUrl: true },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(dispatch).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([
+    "https://m.linkedin.com/jobs/view/synthetic-mobile",
+    "https://www.linkedin.com/jobs/search/?currentJobId=123",
+  ])("does not dispatch unsupported LinkedIn refresh locator %s", async (jobUrl) => {
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Synthetic role", site: "linkedin" });
+    insertEnrichment(db, jobUrl, "Accepted description");
+    db.prepare("UPDATE job_enrichments SET application_url = NULL WHERE tenant_id = 'local' AND job_id = ?")
+      .run(jobIdFor(jobUrl));
+    db.close();
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "unexpected" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobIdFor(jobUrl)}/actions/retry-stage`,
+      payload: { stage: "enrich", runAfter: true, refreshApplyUrl: true },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(dispatch).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each(["discover", "enrich"] as const)("dispatches %s with the optional extension offline", async (stage) => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "optional-dispatch" }));
+    const jobUrl = "https://example.com/jobs/optional-enrich";
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Optional Extension Engineer", site: "Example" });
+    insertStage(db, jobUrl, "discover", "succeeded");
+    insertStage(db, jobUrl, "enrich", "pending");
+    db.close();
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const bridge = await app.inject({ method: "GET", url: "/v1/discovery/browser-extension/status" });
+    expect(bridge.json()).toMatchObject({ connected: false });
+    const response = await app.inject({
+      method: "POST",
+      url: stage === "discover" ? "/v1/pipeline/actions/run-stage" : `/v1/jobs/${jobIdFor(jobUrl)}/actions/run-stage`,
+      payload: stage === "discover" ? { stages: ["discover"], dryRun: true } : { stage: "enrich" },
+    });
+    expect(response.statusCode, response.body).toBe(202);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ stage }), expect.anything());
+    await app.close();
+  });
+
+  it("still blocks offline Discovery when its worker is unavailable", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch, requireHealthyWorkerForActions: true });
+    const response = await app.inject({
+      method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], dryRun: true },
+    });
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toMatchObject({ error: "worker_runtime_unavailable" });
+    expect(dispatch).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("resets and dispatches Enrich when the optional extension is offline", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "offline-enrich" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
     const jobUrl = "https://example.com/jobs/failed-score";
     const beforeDb = new Database(options.dbPath, { readonly: true });
@@ -8215,25 +9075,24 @@ describe("local TypeScript API", () => {
       payload: { stage: "enrich", runAfter: true },
     });
 
-    expect(response.statusCode, response.body).toBe(503);
-    expect(response.json()).toMatchObject({
-      ok: false,
-      error: "discovery_extension_unavailable",
-    });
-    expect(response.json().message).toContain("never a copied profile");
-    expect(dispatch).not.toHaveBeenCalled();
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({ ok: true, status: "queued" });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "enrich" }), expect.anything(),
+    );
     const afterDb = new Database(options.dbPath, { readonly: true });
     const after = afterDb.prepare(
       "SELECT state, error_code, version FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'",
     ).get(jobIdFor(jobUrl));
     afterDb.close();
-    expect(after).toEqual(before);
+    expect(after).not.toEqual(before);
+    expect(after).toMatchObject({ state: "pending", error_code: null });
 
     await app.close();
   });
 
-  it("does not bulk-reset failed Enrich rows when the live-profile extension is offline", async () => {
-    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
+  it("resets and dispatches failed bulk Enrich while the optional extension is offline", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "offline-enrich" }));
     const jobUrl = "https://example.com/jobs/bulk-failed-enrich";
     const seedDb = new Database(options.dbPath);
     insertJob(seedDb, {
@@ -8293,13 +9152,13 @@ describe("local TypeScript API", () => {
       },
     });
 
-    expect(response.statusCode, response.body).toBe(503);
-    expect(response.json()).toMatchObject({
-      ok: false,
-      error: "discovery_extension_unavailable",
-    });
-    expect(readPersistedState()).toEqual(before);
-    expect(dispatch).not.toHaveBeenCalled();
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({ ok: true, status: "queued" });
+    expect(readPersistedState().stage).toMatchObject({ state: "pending", attempt_count: 2 });
+    expect(readPersistedState().eventCount).toBeGreaterThan(before.eventCount);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "enrich", jobIds: [jobIdFor(jobUrl)] }), expect.anything(),
+    );
 
     await app.close();
   });
@@ -8319,8 +9178,8 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("does not dispatch pending bulk Enrich while the live-profile extension is offline", async () => {
-    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
+  it("dispatches pending bulk Enrich while the optional extension is offline", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "offline-enrich" }));
     const jobUrl = "https://example.com/jobs/bulk-pending-enrich";
     const seedDb = new Database(options.dbPath);
     insertJob(seedDb, {
@@ -8342,12 +9201,11 @@ describe("local TypeScript API", () => {
       },
     });
 
-    expect(response.statusCode, response.body).toBe(503);
-    expect(response.json()).toMatchObject({
-      ok: false,
-      error: "discovery_extension_unavailable",
-    });
-    expect(dispatch).not.toHaveBeenCalled();
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({ ok: true, status: "queued" });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "enrich" }), expect.anything(),
+    );
     const afterDb = new Database(options.dbPath, { readonly: true });
     const after = afterDb.prepare(
       `SELECT state, attempt_count, error_code, metadata_json
@@ -8483,6 +9341,7 @@ describe("local TypeScript API", () => {
   });
 
   it("dispatches per-job material generation over the material stages (INSPECT-01)", async () => {
+    fs.writeFileSync(options.configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(options.configPath, "utf8")), cover_letter_generation: true }));
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test", runId: "run-materials" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
     const jobKey = encodeURIComponent("https://example.com/jobs/ready");
@@ -8516,7 +9375,8 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("defaults per-job material generation to the tailor+cover stages", async () => {
+  it.each([false, true])("defaults per-job material generation to saved cover-letter policy %s", async (enabled) => {
+    fs.writeFileSync(options.configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(options.configPath, "utf8")), cover_letter_generation: enabled }));
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test", runId: "run-materials" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
     const jobKey = encodeURIComponent("https://example.com/jobs/ready");
@@ -8532,11 +9392,21 @@ describe("local TypeScript API", () => {
       expect.objectContaining({
         action: "run_stage",
         stage: "tailor",
-        stages: ["tailor", "cover"],
+        stages: enabled ? ["tailor", "cover"] : ["tailor"],
       }),
       expect.anything(),
     );
 
+    await app.close();
+  });
+
+  it("refuses explicit cover-only generation while the opt-in is off", async () => {
+    const dispatch = vi.fn();
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const response = await app.inject({ method: "POST", url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/ready")}/actions/generate-materials`, payload: { stages: ["cover"] } });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: "cover_letter_generation_disabled" });
+    expect(dispatch).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -8731,7 +9601,6 @@ describe("local TypeScript API", () => {
         suppressExistingArtifacts: false,
         tailorModels: ["gemini:test"],
         tailorJudgeModel: "judge:test",
-        tailorJudgeMinScore: 0.82,
         reason: "policy refresh",
       },
     });
@@ -8794,7 +9663,6 @@ describe("local TypeScript API", () => {
         suppressExistingArtifacts: false,
         tailorModels: ["gemini:test"],
         tailorJudgeModel: "judge:test",
-        tailorJudgeMinScore: 0.82,
       }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
@@ -9574,6 +10442,546 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  function requiredModelProfile(text = "  Worked   on the payments API, cutting p99 latency 40%  ") {
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entries = resume.experience_entries as Array<Record<string, unknown>>;
+    entries[0]!.bullets = [text, "Optional synthetic fact."];
+    resume.tailoring_rules = { required_bullets_by_experience_id: { role_1: [text] } };
+    return profile;
+  }
+
+  it("calls the model for saved Required claims and binds only its findings without writing", async () => {
+    let emptyVerdict = false;
+    const call = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+      if (_method !== RpcMethods.ProfileRequiredBulletSuggestions) return {jsonrpc:"2.0" as const,id:1,result:{failure:{code:"provider_unavailable"}}};
+      const db = new Database(options.dbPath);
+      try { return {jsonrpc:"2.0" as const,id:1,result:recordCoachingDecision(db,params,emptyVerdict?[]:[{
+        reference:(params.sources as Array<{reference:string}>)[0]!.reference,kind:"grammar",
+        guidance:"Review the repeated spacing in the payments API claim.",proposedText:"Worked on the payments API, cutting p99 latency 40%",
+      }])}; } finally {db.close();}
+    });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const saved = (await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: requiredModelProfile() } })).json();
+    const response = await app.inject({ method: "POST", url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: saved.profileVersion } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({ strategy: "model_v1", modelUsed: true,
+      suggestions: [{ kind: "grammar", canApply: true,
+        originalText: "  Worked   on the payments API, cutting p99 latency 40%  ",
+        proposedText: "Worked on the payments API, cutting p99 latency 40%" }] });
+    expect(call).toHaveBeenCalledWith(RpcMethods.ProfileRequiredBulletSuggestions, expect.objectContaining({
+      expectedProfileVersion: saved.profileVersion,
+      sources: [expect.objectContaining({ originalText: "  Worked   on the payments API, cutting p99 latency 40%  " })],
+    }));
+    const payload = call.mock.calls.find(([method]) => method === RpcMethods.ProfileRequiredBulletSuggestions)![1];
+    expect(JSON.stringify(payload)).not.toContain("Synthetic Candidate");
+    expect(JSON.stringify(payload)).not.toContain("Optional synthetic fact");
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toEqual(saved);
+    // The same claim can receive different model decisions; code adds no framing/evidence finding.
+    emptyVerdict = true;
+    const empty = await app.inject({ method: "POST", url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: saved.profileVersion } });
+    expect(empty.json()).toMatchObject({ suggestions: [], modelUsed: true });
+    await app.close();
+  });
+
+  it.each(["unknown source", "duplicate finding", "extra field", "provider error", "provider unavailable"])(
+    "fails closed for %s without heuristic findings or profile writes", async (failure) => {
+      const call = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+        if (failure === "provider unavailable") throw new Error("Unavailable provider");
+        if (failure === "provider error") return { jsonrpc: "2.0" as const, id: 1, error: { code: -32603, message: "Provider failed" } };
+        const finding = { reference: failure === "unknown source" ? "invented" : (params.sources as Array<{ reference: string }>)[0]!.reference,
+          kind: "relevance", guidance: "Model guidance.", proposedText: null };
+        return { jsonrpc: "2.0" as const, id: 1, result: { profileVersion: params.expectedProfileVersion,
+          suggestions: failure === "duplicate finding" ? [finding, finding] : failure === "extra field" ? [{ ...finding, sourceId: "Invented source" }] : [finding] } };
+      });
+      const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+      const saved = (await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: requiredModelProfile() } })).json();
+      const response = await app.inject({ method: "POST", url: "/v1/profile/required-bullet-suggestions",
+        payload: { expectedProfileVersion: saved.profileVersion } });
+      expect(response.statusCode, response.body).toBe(failure === "provider unavailable" ? 503 : 502);
+      expect(response.json()).not.toHaveProperty("suggestions");
+      expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toEqual(saved);
+      await app.close();
+    });
+
+  it.each([
+    { failure: { code: "budget_denied" }, status: 429, error: "budget_denied", message: /reported status/ },
+    { failure: { code: "budget_denied" }, status: 429, error: "budget_denied", message: /reported status/ },
+    { failure: { code: "budget_denied" }, status: 429, error: "budget_denied", message: /reported status/ },
+    { failure: { code: "provider_unavailable" }, status: 503, error: "provider_unavailable", message: /reported status/ },
+    { failure: { code: "invalid_model_response" }, status: 502, error: "required_bullet_suggestions_failed", message: /invalid response/ },
+    { failure: { code: "provider_error" }, status: 502, error: "provider_error", message: /reported status/ },
+    { failure: { code: "budget_exceeded", scope: "invented", detail: "Private provider prose" }, status: 502, error: "required_bullet_suggestions_failed", message: /invalid response/ },
+  ])("surfaces actionable safe coaching failures: $failure", async ({ failure, status, error, message }) => {
+    const call = vi.fn(async (_method: string, params: Record<string, unknown>) => ({
+      jsonrpc: "2.0" as const, id: 1, result: { profileVersion: params.expectedProfileVersion, failure },
+    }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const saved = (await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: requiredModelProfile() } })).json();
+    const response = await app.inject({ method: "POST", url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: saved.profileVersion } });
+    expect(response.statusCode, response.body).toBe(status);
+    expect(response.json()).toMatchObject({ ok: false, error, message: expect.stringMatching(message) });
+    expect(response.body).not.toContain("Private provider prose");
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toEqual(saved);
+    await app.close();
+  });
+
+  it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)("matches real TS-prepared Unicode sources in the registered Python handler", async () => {
+    fs.writeFileSync(path.join(tempDir, ".required-coaching-test"), "owned synthetic API fixture");
+    // ECMAScript whitespace plus Python-only NEL/information separators.
+    const characters = [..."\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u0085\u001c\u001d\u001e\u001f"];
+    const profile = requiredModelProfile();
+    const resume = profile.resume as Record<string, unknown>;
+    const entry = (resume.experience_entries as Array<Record<string, unknown>>)[0]!;
+    const bullets = characters.map((space, index) => `${space}Synthetic ${index}${space}claim${space}`);
+    entry.bullets = bullets;
+    entry.achievement_evidence = characters.map((_, index) => ({
+      id: `qa-unicode-${index}`, source_text: `Synthetic ${index} claim`, action: "Synthetic action",
+      metrics: [], outcome: "Synthetic outcome", evidence_strength: "supported", user_confirmed: true,
+    }));
+    resume.tailoring_rules = { required_bullets_by_experience_id: { role_1: bullets } };
+    let observed: Array<Array<{ originalText: string; evidence: unknown[] }>> = [];
+    let rpcError: unknown = null;
+    let probeDiagnostics = "";
+    const call: JsonRpcDispatcher["call"] = async (method, params: Record<string, unknown>) => {
+      const probe = spawnSync("uv", ["--project", AUTOMATION_PROJECT_DIR, "run", "--no-sync", "python",
+        path.join(AUTOMATION_PROJECT_DIR, "tests/fixtures/required_bullet_rpc_probe.py")], {
+        cwd: tempDir, env: { ...process.env, JOBCTRL_DIR: tempDir, JOBCTRL_DB_PATH: options.dbPath,
+          JOBCTRL_CONFIG_PATH: options.configPath, UV_FROZEN: "1" },
+        input: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), encoding: "utf8",
+      });
+      expect(probe.status, probe.stderr).toBe(0);
+      const observation = JSON.parse(probe.stdout);
+      observed = observation.modelSources;
+      rpcError = observation.response.error;
+      probeDiagnostics = probe.stderr;
+      // Probe returns dataclass fields; reproduce the production to_dict envelope.
+      const { error, result, ...envelope } = observation.response;
+      return error ? { ...envelope, error } : { ...envelope, result };
+    };
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const seed = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(seed.statusCode, seed.body).toBe(200);
+    const saved = seed.json();
+    const inspected = await app.inject({ method: "POST", url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: saved.profileVersion } });
+    expect(rpcError, probeDiagnostics).toBeNull();
+    expect(inspected.statusCode, inspected.body).toBe(200);
+    expect(inspected.json()).toMatchObject({ modelUsed: true, suggestions: [], truncated: false });
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toHaveLength(characters.length);
+    observed[0]!.forEach((source, index) => {
+      expect(source.originalText).toBe(bullets[index]);
+      expect(source.evidence).toHaveLength(index < 25 ? 1 : 0);
+    });
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toEqual(saved);
+    await app.close();
+  });
+
+  it("discards model output if a concurrent save replaces the inspected version", async () => {
+    let app: ReturnType<typeof buildApp>;
+    const call = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+      const db = new Database(options.dbPath);
+      let result;
+      try { result = recordCoachingDecision(db, params); } finally { db.close(); }
+      const save = await app.inject({ method: "PATCH", url: "/v1/profile",
+        payload: { profile: requiredModelProfile("Replacement synthetic bullet."), expectedProfileVersion: params.expectedProfileVersion } });
+      expect(save.statusCode, save.body).toBe(200);
+      return { jsonrpc: "2.0" as const, id: 1, result };
+    });
+    app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const saved = (await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: requiredModelProfile() } })).json();
+    const response = await app.inject({ method: "POST", url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: saved.profileVersion } });
+    expect(response.statusCode, response.body).toBe(409);
+    expect(response.json().error).toBe("stale_profile_version");
+    await app.close();
+  });
+
+
+  it("rejects Required bullet inspection for a stale profile version", async () => {
+    const app = buildApp(options);
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: validProfileFixture("Synthetic Candidate") },
+    });
+    const version = initial.json().profileVersion as number;
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version + 1 },
+    });
+
+    expect(response.statusCode, response.body).toBe(409);
+    expect(response.json()).toMatchObject({
+      error: "stale_profile_version",
+      expectedProfileVersion: version + 1,
+      actualProfileVersion: version,
+    });
+    await app.close();
+  });
+
+  it("rejects malformed saved evidence JSON without rewriting or dropping its source", async () => {
+    const app = buildApp(options);
+    const saved = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: validProfileFixture("Synthetic Candidate") },
+    });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+    const db = new Database(options.dbPath);
+    db.prepare("INSERT INTO candidate_profile_achievement_evidence (tenant_id,profile_id,entry_id,evidence_index,evidence_id,source_text,scope,action,tools_json,metrics_json,outcome,evidence_strength,claim_confidence,user_confirmed,tags_json) VALUES ('local','default','role_1',0,'authored-fact','Synthetic authored fact','','','[]','[]','','verified',1,1,'[]')").run();
+    const changed = db.prepare(
+      "UPDATE candidate_profile_achievement_evidence SET metrics_json = '[not json' WHERE entry_id = 'role_1'",
+    ).run();
+    expect(changed.changes).toBeGreaterThan(0);
+    const eventCount = (db.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number }).count;
+    db.close();
+
+    const inspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(422);
+    expect(inspection.json()).toMatchObject({ error: "invalid_saved_profile" });
+    const after = new Database(options.dbPath, { readonly: true });
+    expect(after.prepare("SELECT metrics_json FROM candidate_profile_achievement_evidence WHERE entry_id = 'role_1'").get())
+      .toMatchObject({ metrics_json: "[not json" });
+    expect(after.prepare("SELECT version FROM candidate_profiles").get()).toMatchObject({ version });
+    expect((after.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number }).count).toBe(eventCount);
+    after.close();
+    await app.close();
+  });
+
+  it("reports a Required pin under a deleted experience identity as incomplete without a profile write", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const longPin = `Orphan Required claim ${"x".repeat(2_000)}`;
+    resume.tailoring_rules = {
+      required_bullets_by_experience_id: { deleted_role: [longPin] },
+    };
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+    const before = new Database(options.dbPath, { readonly: true });
+    const events = (before.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number }).count;
+    before.close();
+
+    const inspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(200);
+    expect(inspection.json()).toMatchObject({
+      profileVersion: version, suggestions: [], truncated: true, modelUsed: false,
+    });
+    const after = new Database(options.dbPath, { readonly: true });
+    expect(after.prepare("SELECT version FROM candidate_profiles").get()).toMatchObject({ version });
+    expect((after.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number }).count).toBe(events);
+    after.close();
+    await app.close();
+  });
+
+  it("rejects malformed Required coaching requests before any profile write", async () => {
+    const app = buildApp(options);
+    const initial = await app.inject({ method: "GET", url: "/v1/profile" });
+    const version = initial.json().profileVersion as number;
+    for (const payload of [
+      { expectedProfileVersion: version, maximumSuggestions: 25 },
+      { expectedProfileVersion: version, maximumSuggestions: 0 },
+      { expectedProfileVersion: version, prompt: "invent a metric" },
+    ]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/profile/required-bullet-suggestions",
+        payload,
+      });
+      expect(response.statusCode, response.body).toBe(400);
+    }
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profileVersion)
+      .toBe(version);
+    await app.close();
+  });
+
+  it("saves authored profile edits without requesting model suggestions", async () => {
+    const providerCall = vi.fn(async () => {
+      throw new Error("Synthetic provider unavailable");
+    });
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
+    });
+    try {
+      const first = await app.inject({
+        method: "PATCH", url: "/v1/profile",
+        payload: { profile: validProfileFixture("Authored Candidate") },
+      });
+      expect(first.statusCode, first.body).toBe(200);
+      const firstVersion = first.json().profileVersion as number;
+      expect(providerCall).not.toHaveBeenCalled();
+      const second = await app.inject({
+        method: "PATCH", url: "/v1/profile",
+        payload: {
+          expectedProfileVersion: firstVersion,
+          profile: validProfileFixture("Updated Authored Candidate"),
+        },
+      });
+      expect(second.statusCode, second.body).toBe(200);
+      expect(second.json()).toMatchObject({
+        profileVersion: firstVersion + 1,
+        profile: { personal: { full_name: "Updated Authored Candidate" } },
+      });
+      expect(providerCall).not.toHaveBeenCalled();
+      expect((await app.inject({ method: "GET", url: "/v1/profile" })).json())
+        .toMatchObject({ profileVersion: firstVersion + 1 });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("generates version-bound target role suggestions without mutating the profile", async () => {
+    const providerCall = vi.fn(async (_method: string, params: Record<string,unknown>) => {const db=new Database(options.dbPath);try{return {jsonrpc:"2.0" as const,id:1,result:recordCandidateProposal(db,params)};}finally{db.close();}});
+    const app = buildApp({
+      ...options,
+      placeValidator: async (place) => place === "Barcelona",
+      providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
+    });
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: profileWithTargetSearch("Synthetic Candidate", "Barcelona", "Remote") },
+    });
+    expect(initial.statusCode, initial.body).toBe(200);
+    const version = initial.json().profileVersion as number;
+    const beforeDb = new Database(options.dbPath, { readonly: true });
+    const beforeEvents = beforeDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number };
+    beforeDb.close();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/profile/target-role-suggestions",
+      payload: { expectedProfileVersion: version, maximumSuggestions: 2 },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      profileVersion: version,
+      strategy: "model",
+      suggestions: [{ title: "Senior Platform Engineer", evidenceIds: ["experience:role_1:title"] }],
+    });
+    expect(providerCall).toHaveBeenCalledWith(RpcMethods.ProfileTargetRoleSuggestions, {
+      tenantId: "local",
+      expectedAppDir: tempDir,
+      expectedDbPath: options.dbPath,
+      expectedProfileVersion: version,
+      maximumSuggestions: 2,
+    });
+    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(stored.json()).toMatchObject({
+      profileVersion: version,
+      profile: { personal: { full_name: "Synthetic Candidate" } },
+    });
+    const afterDb = new Database(options.dbPath, { readonly: true });
+    expect(afterDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get()).toEqual(beforeEvents);
+    afterDb.close();
+    await app.close();
+  });
+
+  it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)(
+    "rejects a real suggestion worker connected to a different same-version database",
+    async () => {
+      const placeValidator = vi.fn(async (place: string) => place === "Barcelona");
+      const seedApp = buildApp({ ...options, placeValidator });
+      const seeded = await seedApp.inject({
+        method: "PATCH",
+        url: "/v1/profile",
+        payload: { profile: profileWithTargetSearch("API Database", "Barcelona", "Remote") },
+      });
+      expect(seeded.statusCode, seeded.body).toBe(200);
+      expect(placeValidator).toHaveBeenCalledWith("Barcelona");
+      const version = seeded.json().profileVersion as number;
+      await seedApp.close();
+
+      const workerAppDir = path.join(tempDir, "worker-database-b");
+      const workerDbPath = path.join(workerAppDir, "jobctrl.db");
+      fs.mkdirSync(workerAppDir, { recursive: true });
+      fs.copyFileSync(options.dbPath, workerDbPath);
+      const workerCopy = new Database(workerDbPath, { readonly: true });
+      expect(workerCopy.prepare("SELECT version FROM candidate_profiles WHERE tenant_id = 'local'").get())
+        .toMatchObject({ version });
+      workerCopy.close();
+
+      const sourceRuntime = createSourcePythonRuntime({
+        environment: { ...process.env, UV_FROZEN: "1" },
+      });
+      const mismatchedRuntime: PythonRuntimeCommandResolver = {
+        id: "real-source-worker-on-database-b",
+        resolve(invocation, context) {
+          const command = sourceRuntime.resolve(invocation, context);
+          return {
+            ...command,
+            cwd: workerAppDir,
+            env: {
+              ...command.env,
+              JOBCTRL_DIR: workerAppDir,
+              UV_FROZEN: "1",
+            },
+          };
+        },
+      };
+      const {
+        providerDispatcher: _fixtureProviderDispatcher,
+        pythonRuntime: _fixturePythonRuntime,
+        ...realWorkerOptions
+      } = options;
+      const app = buildApp({ ...realWorkerOptions, pythonRuntime: mismatchedRuntime });
+      const before = new Database(options.dbPath, { readonly: true });
+      const beforeEvents = before.prepare(
+        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+      ).get() as { count: number };
+      before.close();
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/profile/target-role-suggestions",
+        payload: { expectedProfileVersion: version },
+      });
+
+      expect(response.statusCode, response.body).toBe(502);
+      expect(response.json()).toMatchObject({ error: "target_role_suggestions_failed" });
+      const after = new Database(options.dbPath, { readonly: true });
+      expect(after.prepare(
+        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+      ).get()).toEqual(beforeEvents);
+      expect(after.prepare(
+        "SELECT personal_full_name, version FROM candidate_profiles WHERE tenant_id = 'local'",
+      ).get()).toMatchObject({ personal_full_name: "API Database", version });
+      after.close();
+      await app.close();
+    },
+  );
+
+  it("atomically rejects stale suggestion saves without a profile event", async () => {
+    const app = buildApp(options);
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
+    });
+    const version = initial.json().profileVersion as number;
+    const beforeDb = new Database(options.dbPath, { readonly: true });
+    const beforeEvents = beforeDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number };
+    beforeDb.close();
+
+    const stale = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: profileWithTargetSearch("Stale Candidate", "Barcelona", "Remote"),
+        expectedProfileVersion: version + 1,
+      },
+    });
+
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json()).toMatchObject({
+      error: "stale_profile_version",
+      expectedProfileVersion: version + 1,
+      actualProfileVersion: version,
+    });
+    const staleGeneration = await app.inject({
+      method: "POST",
+      url: "/v1/profile/target-role-suggestions",
+      payload: { expectedProfileVersion: version + 1 },
+    });
+    expect(staleGeneration.statusCode, staleGeneration.body).toBe(409);
+    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(stored.json()).toMatchObject({
+      profileVersion: version,
+      profile: { personal: { full_name: "Initial Candidate" } },
+    });
+    const afterDb = new Database(options.dbPath, { readonly: true });
+    expect(afterDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get()).toEqual(beforeEvents);
+    afterDb.close();
+    await app.close();
+  });
+
+  it("rejects a delayed suggestion response after an intervening profile edit", async () => {
+    const pending = deferred<Awaited<ReturnType<JsonRpcDispatcher["call"]>>>();
+    const providerCall = vi.fn(() => pending.promise);
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
+    });
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
+    });
+    const version = initial.json().profileVersion as number;
+    expect(providerCall).not.toHaveBeenCalled();
+    const suggestionResponse = app.inject({
+      method: "POST",
+      url: "/v1/profile/target-role-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    await vi.waitFor(() => expect(providerCall).toHaveBeenCalledTimes(1));
+    const intervening = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: profileWithTargetSearch("Later Candidate", "Barcelona", "Remote"),
+        expectedProfileVersion: version,
+      },
+    });
+    expect(intervening.statusCode, intervening.body).toBe(200);
+    expect(providerCall).toHaveBeenCalledTimes(1);
+    pending.resolve({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { profileVersion: version, determinationId:"a".repeat(64),status:"pending_confirmation",suggestions: [], preferenceSuggestions:[],strategy: "model", warnings: [] },
+    });
+
+    const stale = await suggestionResponse;
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json()).toMatchObject({
+      error: "stale_profile_version",
+      expectedProfileVersion: version,
+      actualProfileVersion: version + 1,
+    });
+    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(stored.json()).toMatchObject({
+      profileVersion: version + 1,
+      profile: { personal: { full_name: "Later Candidate" } },
+    });
+    await app.close();
+  });
+
   it("persists profile, style, and template updates to relational rows without rewriting stray files", async () => {
     const app = buildApp(options);
     const originalStrayProfile = fs.readFileSync(strayProfileExportPath, "utf8");
@@ -9761,308 +11169,6 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("materializes profile achievement evidence from bullets when explicit evidence is absent", async () => {
-    const app = buildApp(options);
-    const profile = validProfileFixture("Bullet Evidence Candidate");
-    const resume = profile.resume as Record<string, unknown>;
-    const entries = resume.experience_entries as Array<Record<string, unknown>>;
-    entries[0]!.bullets = ["Reduced incidents 40% by hardening service ownership."];
-
-    const response = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-
-    expect(response.statusCode, response.body).toBe(200);
-    const body = response.json();
-    expect(body.profile.resume.experience_entries[0].achievement_evidence).toEqual([
-      expect.objectContaining({
-        id: "role_1_bullet_1",
-        source_text: "Reduced incidents 40% by hardening service ownership.",
-        metrics: ["40%"],
-        evidence_strength: "supported",
-        claim_confidence: 0.8,
-        user_confirmed: true,
-      }),
-    ]);
-
-    const db = new Database(options.dbPath);
-    try {
-      expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profile_achievement_evidence").get()).toMatchObject({
-        count: 1,
-      });
-      expect(
-        db.prepare("SELECT evidence_id, source_text, metrics_json FROM candidate_profile_achievement_evidence").get(),
-      ).toMatchObject({
-        evidence_id: "role_1_bullet_1",
-        source_text: "Reduced incidents 40% by hardening service ownership.",
-        metrics_json: '["40%"]',
-      });
-      db.prepare("DELETE FROM candidate_profile_achievement_evidence").run();
-    } finally {
-      db.close();
-    }
-
-    const repaired = await app.inject({ method: "GET", url: "/v1/profile" });
-    expect(repaired.statusCode, repaired.body).toBe(200);
-    expect(repaired.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
-      expect.objectContaining({
-        id: "role_1_bullet_1",
-        source_text: "Reduced incidents 40% by hardening service ownership.",
-        metrics: ["40%"],
-      }),
-    ]);
-
-    await app.close();
-  });
-
-  it.each([false, true])("preserves reordered bullet evidence occurrences across later saves (authored: %s)", async (withAuthored) => {
-    const app = buildApp(options);
-    try {
-      const profile = validProfileFixture("Sortable Bullet Candidate");
-      const entries = (profile.resume as Record<string, unknown>).experience_entries as Array<Record<string, unknown>>;
-      entries[0]!.bullets = ["Reduced incidents 40%.", "Built APIs.", "Reduced incidents 40%."];
-      const initial = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
-      expect(initial.statusCode, initial.body).toBe(200);
-      const materialized = initial.json().profile;
-      const entry = materialized.resume.experience_entries[0];
-      if (withAuthored) {
-        Object.assign(entry.achievement_evidence[1], { id: "authored_api", tags: ["authored"] });
-      }
-      const original = Object.fromEntries(entry.achievement_evidence.map((item: { id: string }) => [item.id, item]));
-      entry.bullets = [" ", " Built APIs. ", "Reduced incidents 40%.", "Reduced incidents 40%.", ""];
-      materialized.resume.tailoring_rules.required_bullets_by_experience_id = { role_1: ["Built APIs."] };
-      const reordered = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: materialized } });
-      expect(reordered.statusCode, reordered.body).toBe(200);
-      const nextProfile = reordered.json().profile;
-      nextProfile.personal.preferred_name = "Sort Candidate";
-      const savedAgain = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: nextProfile } });
-      expect(savedAgain.statusCode, savedAgain.body).toBe(200);
-      const loaded = await app.inject({ method: "GET", url: "/v1/profile" });
-      expect(loaded.statusCode, loaded.body).toBe(200);
-      const result = loaded.json().profile;
-      expect(Object.fromEntries(result.resume.experience_entries[0].achievement_evidence.map((item: { id: string }) => [item.id, item]))).toEqual(original);
-      expect(result.resume.tailoring_rules.required_bullets_by_experience_id).toEqual({ role_1: ["Built APIs."] });
-
-      result.resume.experience_entries[0].bullets = ["Built APIs.", "Reduced incidents 55%."];
-      const edited = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: result } });
-      expect(edited.statusCode, edited.body).toBe(200);
-      expect(edited.json().profile.resume_constraints.real_metrics).toEqual(["55%"]);
-      expect(edited.json().profile.resume.experience_entries[0].achievement_evidence).toHaveLength(2);
-      const apiId = withAuthored ? "authored_api" : "role_1_bullet_2";
-      expect(edited.json().profile.resume.experience_entries[0].achievement_evidence).toContainEqual(original[apiId]);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it.each([false, true])("preserves authored and derived evidence sharing one sorted bullet (authored first: %s)", async (authoredFirst) => {
-    const app = buildApp(options);
-    try {
-      const profile = validProfileFixture("Shared Bullet Evidence Candidate");
-      const entries = (profile.resume as Record<string, unknown>).experience_entries as Array<Record<string, unknown>>;
-      entries[0]!.bullets = ["Reduced incidents 40%.", "Built APIs."];
-      const initial = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
-      expect(initial.statusCode, initial.body).toBe(200);
-      const materialized = initial.json().profile;
-      const entry = materialized.resume.experience_entries[0];
-      const authored = { ...entry.achievement_evidence[0], id: "authored_incidents", tags: ["authored"] };
-      const original = authoredFirst ? [authored, ...entry.achievement_evidence] : [...entry.achievement_evidence, authored];
-      entry.achievement_evidence = original;
-      entry.bullets.reverse();
-
-      const reordered = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: materialized } });
-      expect(reordered.statusCode, reordered.body).toBe(200);
-      expect(reordered.json().profile.resume.experience_entries[0].achievement_evidence).toEqual(original);
-      const nextProfile = reordered.json().profile;
-      nextProfile.personal.preferred_name = "Shared Candidate";
-      const savedAgain = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: nextProfile } });
-      expect(savedAgain.statusCode, savedAgain.body).toBe(200);
-      const loaded = await app.inject({ method: "GET", url: "/v1/profile" });
-      expect(loaded.statusCode, loaded.body).toBe(200);
-      expect(loaded.json().profile.resume.experience_entries[0].achievement_evidence).toEqual(original);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("derives achievement metrics and preserves old flat values as unassigned legacy data", async () => {
-    const app = buildApp(options);
-    const profile = validProfileFixture("Scoped Metric Candidate");
-    const resume = profile.resume as Record<string, unknown>;
-    const entries = resume.experience_entries as Array<Record<string, unknown>>;
-    entries[0]!.bullets = [
-      "Reduced synthetic warehouse energy spend by £240k (12%) against a £2M+ budget.",
-    ];
-    entries[0]!.achievement_evidence = [];
-    const legacyMetric = "Unassigned synthetic legacy metric: 99.9% uptime";
-    profile.resume_constraints = { real_metrics: ["Caller-only synthetic metric: 77"] };
-
-    const response = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-
-    expect(response.statusCode, response.body).toBe(200);
-    expect(response.json().profile.resume_constraints.real_metrics).toEqual([
-      "£240k",
-      "12%",
-      "£2M+",
-    ]);
-    expect(response.json().profile.resume.experience_entries[0].achievement_evidence[0]).toMatchObject({
-      metrics: ["£240k", "12%", "£2M+"],
-    });
-
-    const db = new Database(options.dbPath);
-    try {
-      expect(
-        db.prepare(
-          "SELECT metric_text FROM candidate_profile_resume_constraint_metrics ORDER BY metric_index",
-        ).all(),
-      ).toEqual([
-        { metric_text: "£240k" },
-        { metric_text: "12%" },
-        { metric_text: "£2M+" },
-      ]);
-      db.prepare(
-        `INSERT INTO candidate_profile_resume_constraint_metrics (
-           tenant_id, profile_id, metric_index, metric_text
-         ) VALUES ('local', 'default', 3, ?)`,
-      ).run(legacyMetric);
-    } finally {
-      db.close();
-    }
-
-    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
-    expect(stored.statusCode, stored.body).toBe(200);
-    expect(stored.json().profile.resume_constraints.real_metrics).toEqual([
-      "£240k",
-      "12%",
-      "£2M+",
-      legacyMetric,
-    ]);
-    const nextProfile = stored.json().profile as ReturnType<typeof validProfileFixture>;
-    const nextResume = nextProfile.resume as Record<string, unknown>;
-    const nextEntries = nextResume.experience_entries as Array<Record<string, unknown>>;
-    nextEntries[0]!.bullets = [
-      "Reduced synthetic warehouse energy spend by £250k (13%) against a £2M+ budget.",
-    ];
-    nextEntries[0]!.achievement_evidence = [];
-
-    const nextResponse = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile: nextProfile },
-    });
-
-    expect(nextResponse.statusCode, nextResponse.body).toBe(200);
-    expect(nextResponse.json().profile.resume_constraints.real_metrics).toEqual([
-      "£250k",
-      "13%",
-      "£2M+",
-      legacyMetric,
-    ]);
-    expect(nextResponse.json().profile.resume_constraints.real_metrics).not.toContain("£240k");
-    expect(nextResponse.json().profile.resume_constraints.real_metrics).not.toContain("12%");
-    expect(nextResponse.json().profile.resume_constraints.real_metrics).not.toContain(
-      "Caller-only synthetic metric: 77",
-    );
-
-    await app.close();
-  });
-
-  it("rederives materialized bullet evidence when a profile bullet changes", async () => {
-    const app = buildApp(options);
-    const profile = validProfileFixture("Updated Bullet Evidence Candidate");
-    const resume = profile.resume as Record<string, unknown>;
-    const entries = resume.experience_entries as Array<Record<string, unknown>>;
-    entries[0]!.bullets = ["Reduced incidents 40% by hardening service ownership."];
-
-    const initial = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-
-    expect(initial.statusCode, initial.body).toBe(200);
-    const materializedProfile = initial.json().profile as Record<string, unknown>;
-    const materializedResume = materializedProfile.resume as Record<string, unknown>;
-    const materializedEntries = materializedResume.experience_entries as Array<Record<string, unknown>>;
-    materializedEntries[0]!.bullets = ["Reduced incidents 55% by hardening service ownership."];
-
-    const updated = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile: materializedProfile },
-    });
-
-    expect(updated.statusCode, updated.body).toBe(200);
-    expect(updated.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
-      expect.objectContaining({
-        id: "role_1_bullet_1",
-        source_text: "Reduced incidents 55% by hardening service ownership.",
-        metrics: ["55%"],
-      }),
-    ]);
-
-    const db = new Database(options.dbPath);
-    try {
-      expect(
-        db.prepare("SELECT evidence_id, source_text, metrics_json FROM candidate_profile_achievement_evidence").get(),
-      ).toMatchObject({
-        evidence_id: "role_1_bullet_1",
-        source_text: "Reduced incidents 55% by hardening service ownership.",
-        metrics_json: '["55%"]',
-      });
-    } finally {
-      db.close();
-    }
-
-    await app.close();
-  });
-
-  it("rederives precanonical materialized bullet evidence when a profile bullet changes", async () => {
-    const app = buildApp(options);
-    const profile = validProfileFixture("Precanonical Bullet Evidence Candidate");
-    const resume = profile.resume as Record<string, unknown>;
-    const entries = resume.experience_entries as Array<Record<string, unknown>>;
-    entries[0]!.bullets = ["Scaled the platform to 200 users."];
-
-    const initial = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-    expect(initial.statusCode, initial.body).toBe(200);
-
-    const materializedProfile = initial.json().profile as Record<string, unknown>;
-    const materializedResume = materializedProfile.resume as Record<string, unknown>;
-    const materializedEntries = materializedResume.experience_entries as Array<Record<string, unknown>>;
-    const staleEvidence = materializedEntries[0]!.achievement_evidence as Array<Record<string, unknown>>;
-    // The extractor used by the previous release did not recognize count metrics.
-    staleEvidence[0]!.metrics = [];
-    materializedEntries[0]!.bullets = ["Scaled the platform to 250 users."];
-
-    const updated = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile: materializedProfile },
-    });
-
-    expect(updated.statusCode, updated.body).toBe(200);
-    expect(updated.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
-      expect.objectContaining({
-        id: "role_1_bullet_1",
-        source_text: "Scaled the platform to 250 users.",
-        metrics: ["250 users"],
-      }),
-    ]);
-
-    await app.close();
-  });
-
   it("keeps explicit claim policy when legacy strict mode is present", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Explicit Claim Policy Candidate");
@@ -10199,369 +11305,81 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("records profile updates and resumes preparation without requiring an existing resume", async () => {
-    const dispatch = vi.fn(async (_command: ActionCommandPayload): Promise<ActionDispatchResult> => ({
-      status: "queued",
-      runId: "run-retailor",
-    }));
+  it.each([false, true])("saves profile revisions without preparation with cover generation %s", async (enabled) => {
+    const config = JSON.parse(fs.readFileSync(options.configPath!, "utf8"));
+    fs.writeFileSync(options.configPath!, JSON.stringify({ ...config, cover_letter_generation: enabled }));
+    const dispatch = vi.fn<ActionDispatcher>(async () => ({ status: "queued" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
-    const response = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile: validProfileFixture("Event Driven Candidate") },
-    });
+    try {
+      for (const name of ["First Candidate", "Second Candidate", "Second Candidate"]) {
+        const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture(name) } });
+        expect(response.statusCode, response.body).toBe(200);
+      }
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(dispatch).not.toHaveBeenCalled();
+      const db = new Database(options.dbPath);
+      try {
+        expect(db.prepare("SELECT version FROM candidate_profiles WHERE tenant_id='local' AND profile_id='default'").get()).toEqual({ version: 2 });
+        const events = db.prepare("SELECT job_id, stage, payload_json FROM job_events WHERE event_type='ProfileUpdated'").all() as Array<{ job_id: null; stage: null; payload_json: string }>;
+        expect(events).toHaveLength(2);
+        for (const event of events) {
+          expect(event.job_id).toBeNull(); expect(event.stage).toBeNull();
+          expect(JSON.parse(event.payload_json)).toMatchObject({ tenantId: "local", changedSections: ["profile"] });
+        }
+      } finally { db.close(); }
+    } finally { await app.close(); }
+  });
 
-    expect(response.statusCode, response.body).toBe(200);
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-    expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "run_stage",
-        jobKey: "pipeline",
-        stage: "score",
-        stages: ["score", "tailor", "cover"],
-        dryRun: false,
-        limit: 0,
-        workers: 5,
-        minScore: 6,
-        retailor: true,
-      }),
-      { appDir: tempDir, configPath: options.configPath, dbPath: options.dbPath },
-    );
-    expect(dispatch.mock.calls[0]?.[0].rescore).toBeUndefined();
-
+  it("rolls back a profile mutation if its audit event cannot commit", () => {
     const db = new Database(options.dbPath);
     try {
-      const event = db
-        .prepare(
-          "SELECT job_id, stage, event_type, payload_json FROM job_events WHERE event_type = 'ProfileUpdated' ORDER BY event_id DESC LIMIT 1",
-        )
-        .get() as { job_id: string | null; stage: string | null; event_type: string; payload_json: string };
-      expect(event).toMatchObject({
-        job_id: null,
-        stage: null,
-        event_type: "ProfileUpdated",
-      });
-      expect(JSON.parse(event.payload_json)).toMatchObject({
-        tenantId: "local",
-        changedSections: ["profile"],
-        updatedAt: expect.any(String),
-      });
-    } finally {
-      db.close();
-    }
-
-    await app.close();
+      expect(() => persistProfileUpdate(db, { profile: validProfileFixture("Atomic Candidate") }, () => { throw new Error("profile audit unavailable"); })).toThrow("profile audit unavailable");
+      expect(db.prepare("SELECT COUNT(*) AS n FROM candidate_profiles").get()).toEqual({ n: 0 });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type='ProfileUpdated'").get()).toEqual({ n: 0 });
+    } finally { db.close(); }
   });
 
-  it("does not redispatch preparation when a form resubmits the unchanged profile", async () => {
-    const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued" }));
+  it("coalesces identical concurrent saves without starting work", async () => {
+    const dispatch = vi.fn<ActionDispatcher>(async () => ({ status: "queued" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
-    const profile = validProfileFixture("Unchanged Candidate");
-
-    const first = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-    expect(first.statusCode, first.body).toBe(200);
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-
-    const beforeDb = new Database(options.dbPath);
-    const before = beforeDb.prepare(
-      "SELECT version FROM candidate_profiles WHERE tenant_id = 'local' AND profile_id = 'default'",
-    ).get() as { version: number };
-    beforeDb.close();
-    dispatch.mockClear();
-
-    const repeated = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-
-    expect(repeated.statusCode, repeated.body).toBe(200);
-    expect(dispatch).not.toHaveBeenCalled();
-    const db = new Database(options.dbPath);
     try {
-      expect(db.prepare(
-        "SELECT version FROM candidate_profiles WHERE tenant_id = 'local' AND profile_id = 'default'",
-      ).get()).toEqual(before);
-      expect(db.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
-      ).get()).toEqual({ count: 1 });
-    } finally {
-      db.close();
-    }
-
-    await app.close();
+      const save = () => app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture("Concurrent Candidate") } });
+      expect((await Promise.all([save(), save()])).map(response => response.statusCode)).toEqual([200, 200]);
+      expect(dispatch).not.toHaveBeenCalled();
+      const db = new Database(options.dbPath);
+      try { expect(db.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type='ProfileUpdated'").get()).toEqual({ n: 1 }); }
+      finally { db.close(); }
+    } finally { await app.close(); }
   });
 
-  it("rolls back the profile mutation when its durable continuation event cannot commit", async () => {
+  it.each([false, true])("does not drain historical profile continuations on startup (intended=%s)", async intended => {
     const db = new Database(options.dbPath);
-    expect(() => persistProfileUpdate(
-      db,
-      { profile: validProfileFixture("Atomic Candidate") },
-      () => {
-        throw new Error("profile outbox unavailable");
-      },
-    )).toThrow("profile outbox unavailable");
-    db.close();
-
-    const verifyDb = new Database(options.dbPath, { readonly: true });
-    try {
-      expect(verifyDb.prepare(
-        "SELECT COUNT(*) AS count FROM candidate_profiles WHERE tenant_id = 'local' AND profile_id = 'default'",
-      ).get()).toEqual({ count: 0 });
-      expect(verifyDb.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
-      ).get()).toEqual({ count: 0 });
-    } finally {
-      verifyDb.close();
-    }
-
-  });
-
-  it("coalesces concurrent identical profile saves into one version and continuation", async () => {
-    const dispatched = deferred<ActionDispatchResult>();
-    const dispatch = vi.fn<ActionDispatcher>(() => dispatched.promise);
+    const inserted = db.prepare(`INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
+      VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', 'Profile updated', '2026-08-04T20:00:00Z', '{"changedSections":["profile"]}')`).run();
+    if (intended) db.prepare(`INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json, idempotency_key)
+      VALUES ('local', NULL, 1, NULL, 'ProfileContinuationDispatchIntended', 'info', 'Old intent', '2026-08-04T20:00:00Z', ?, ?)`)
+      .run(JSON.stringify({ sourceEventId: Number(inserted.lastInsertRowid) }), `profile-continuation-dispatch-intended:${Number(inserted.lastInsertRowid)}`);
+    const before = db.prepare("SELECT * FROM job_events").all(); db.close();
+    const dispatch = vi.fn<ActionDispatcher>(async () => ({ status: "queued" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
-    const profile = validProfileFixture("Concurrent Candidate");
-    const save = () => app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-
-    const responses = Promise.all([save(), save()]);
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-    dispatched.resolve({ status: "queued", runId: "run-concurrent-profile" });
-    expect((await responses).map((response) => response.statusCode)).toEqual([200, 200]);
-    expect(dispatch).toHaveBeenCalledTimes(1);
-
-    const db = new Database(options.dbPath);
     try {
-      expect(db.prepare(
-        "SELECT version FROM candidate_profiles WHERE tenant_id = 'local' AND profile_id = 'default'",
-      ).get()).toEqual({ version: 1 });
-      expect(db.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
-      ).get()).toEqual({ count: 1 });
-    } finally {
-      db.close();
-    }
-
-    await app.close();
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(dispatch).not.toHaveBeenCalled();
+      const read = new Database(options.dbPath, { readonly: true });
+      try { expect(read.prepare("SELECT * FROM job_events").all()).toEqual(before); } finally { read.close(); }
+    } finally { await app.close(); }
   });
 
-  it("coalesces simultaneous genuine profile revisions into the newest durable continuation", async () => {
-    const dispatched = deferred<ActionDispatchResult>();
-    const dispatch = vi.fn<ActionDispatcher>(() => dispatched.promise);
-    const app = buildApp({ ...options, actionDispatcher: dispatch });
-
-    const responses = Promise.all([
-      app.inject({
-        method: "PATCH",
-        url: "/v1/profile",
-        payload: { profile: validProfileFixture("Concurrent Candidate A") },
-      }),
-      app.inject({
-        method: "PATCH",
-        url: "/v1/profile",
-        payload: { profile: validProfileFixture("Concurrent Candidate B") },
-      }),
-    ]);
-
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-    const pendingDb = new Database(options.dbPath, { readonly: true });
-    const events = pendingDb.prepare(
-      "SELECT event_id FROM job_events WHERE event_type = 'ProfileUpdated' ORDER BY event_id",
-    ).all() as Array<{ event_id: number }>;
-    pendingDb.close();
-    expect(events).toHaveLength(2);
-    expect(dispatch.mock.calls[0]?.[0].reason).toBe(
-      `profile_updated:${events[1]?.event_id}`,
-    );
-
-    dispatched.resolve({ status: "queued", runId: "run-latest-profile" });
-    expect((await responses).map((response) => response.statusCode)).toEqual([200, 200]);
-    await vi.waitFor(() => {
-      const db = new Database(options.dbPath, { readonly: true });
-      const row = db.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileContinuationHandled'",
-      ).get() as { count: number };
-      db.close();
-      expect(row.count).toBe(2);
-    });
-    expect(dispatch).toHaveBeenCalledTimes(1);
-
-    await app.close();
-  });
-
-  it("recovers an unacknowledged profile continuation on API startup", async () => {
-    const db = new Database(options.dbPath);
-    const inserted = db.prepare(
-      `INSERT INTO job_events (
-         tenant_id, job_id, identity_version, stage, event_type, level,
-         message, occurred_at, payload_json
-       ) VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', ?, ?, ?)`,
-    ).run(
-      "Candidate profile updated.",
-      "2026-08-04T20:00:00.000Z",
-      JSON.stringify({
-        tenantId: "local",
-        changedSections: ["profile"],
-        updatedAt: "2026-08-04T20:00:00.000Z",
-      }),
-    );
-    db.close();
-
-    const providerDispatcher: JsonRpcDispatcher = {
-      call: vi.fn(async () => ({
-        jsonrpc: "2.0" as const,
-        id: 1,
-        result: { capabilities: [], detectedBrowsers: [] },
-      })),
-      close: vi.fn(async () => undefined),
-    };
-    const dispatched = deferred<ActionDispatchResult>();
-    const dispatch = vi.fn<ActionDispatcher>(() => dispatched.promise);
-    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
-
-    await app.listen({ host: "127.0.0.1", port: 0 });
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-    expect(dispatch.mock.calls[0]?.[0].reason).toBe(
-      `profile_updated:${Number(inserted.lastInsertRowid)}`,
-    );
-    dispatched.resolve({ status: "queued", runId: "run-startup-profile" });
-    await vi.waitFor(() => {
-      const handledDb = new Database(options.dbPath, { readonly: true });
-      const row = handledDb.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE idempotency_key = ?",
-      ).get(`profile-continuation-handled:${Number(inserted.lastInsertRowid)}`) as { count: number };
-      handledDb.close();
-      expect(row.count).toBe(1);
-    });
-
-    await app.close();
-  });
-
-  it("does not launch startup continuations before the health-only database exists", async () => {
+  it("keeps health-only startup free of profile work when the database is absent", async () => {
     fs.rmSync(options.dbPath, { force: true });
-    const providerCall = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
-      jsonrpc: "2.0" as const,
-      id: 1,
-      result: { capabilities: [], detectedBrowsers: [] },
-    }));
-    const dispatch = vi.fn<ActionDispatcher>(async () => ({
-      status: "queued",
-      runId: "run-missing-database",
-    }));
-    const app = buildApp({
-      ...options,
-      providerDispatcher: {
-        call: providerCall,
-        close: vi.fn(async () => undefined),
-      },
-      actionDispatcher: dispatch,
-    });
-
-    await app.listen({ host: "127.0.0.1", port: 0 });
-
-    expect(providerCall).not.toHaveBeenCalled();
-    expect(dispatch).not.toHaveBeenCalled();
-    const health = await app.inject({ method: "GET", url: "/v1/health" });
-    expect(health.statusCode, health.body).toBe(200);
-    expect(health.json()).toMatchObject({ dbExists: false, dbPath: options.dbPath });
-
-    await app.close();
-  });
-
-  it("reattaches an intended older profile continuation before dispatching a newer revision", async () => {
-    const db = new Database(options.dbPath);
-    const insertProfileEvent = db.prepare(
-      `INSERT INTO job_events (
-         tenant_id, job_id, identity_version, stage, event_type, level,
-         message, occurred_at, payload_json
-       ) VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', ?, ?, ?)`,
-    );
-    const first = insertProfileEvent.run(
-      "Candidate profile updated.",
-      "2026-08-04T20:00:00.000Z",
-      JSON.stringify({ tenantId: "local", changedSections: ["profile"], updatedAt: "2026-08-04T20:00:00.000Z" }),
-    );
-    const second = insertProfileEvent.run(
-      "Candidate profile updated.",
-      "2026-08-04T20:00:01.000Z",
-      JSON.stringify({ tenantId: "local", changedSections: ["profile"], updatedAt: "2026-08-04T20:00:01.000Z" }),
-    );
-    const firstEventId = Number(first.lastInsertRowid);
-    const secondEventId = Number(second.lastInsertRowid);
-    db.prepare(
-      `INSERT INTO job_events (
-         tenant_id, job_id, identity_version, stage, event_type, level,
-         message, occurred_at, payload_json, idempotency_key
-       ) VALUES ('local', NULL, 1, NULL, 'ProfileContinuationDispatchIntended', 'info', ?, ?, ?, ?)`,
-    ).run(
-      "Profile update continuation dispatch reserved.",
-      "2026-08-04T20:00:00.500Z",
-      JSON.stringify({ sourceEventId: firstEventId, status: "dispatch_intended" }),
-      `profile-continuation-dispatch-intended:${firstEventId}`,
-    );
-    db.close();
-
-    const providerDispatcher: JsonRpcDispatcher = {
-      call: vi.fn(async () => ({
-        jsonrpc: "2.0" as const,
-        id: 1,
-        result: { capabilities: [], detectedBrowsers: [] },
-      })),
-      close: vi.fn(async () => undefined),
-    };
-    const firstDispatch = deferred<ActionDispatchResult>();
-    const dispatch = vi.fn<ActionDispatcher>((command) =>
-      command.reason === `profile_updated:${firstEventId}`
-        ? firstDispatch.promise
-        : Promise.resolve({ status: "queued", runId: "run-newer-profile" }),
-    );
-    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
-
-    await app.listen({ host: "127.0.0.1", port: 0 });
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-    expect(dispatch.mock.calls[0]?.[0].reason).toBe(`profile_updated:${firstEventId}`);
-    firstDispatch.resolve({ status: "queued", runId: "run-older-profile" });
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2));
-    expect(dispatch.mock.calls.map(([command]) => command.reason)).toEqual([
-      `profile_updated:${firstEventId}`,
-      `profile_updated:${secondEventId}`,
-    ]);
-
-    await vi.waitFor(() => {
-      const progressDb = new Database(options.dbPath, { readonly: true });
-      const row = progressDb.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileContinuationHandled'",
-      ).get() as { count: number };
-      progressDb.close();
-      expect(row.count).toBe(2);
-    });
-
-    const handledDb = new Database(options.dbPath, { readonly: true });
+    const dispatch = vi.fn<ActionDispatcher>(async () => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
     try {
-      const statuses = handledDb.prepare(
-        `SELECT json_extract(payload_json, '$.sourceEventId') AS source_event_id,
-                json_extract(payload_json, '$.status') AS status
-           FROM job_events
-          WHERE event_type = 'ProfileContinuationHandled'
-          ORDER BY source_event_id`,
-      ).all();
-      expect(statuses).toEqual([
-        { source_event_id: firstEventId, status: "completed" },
-        { source_event_id: secondEventId, status: "completed" },
-      ]);
-    } finally {
-      handledDb.close();
-    }
-
-    await app.close();
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      expect((await app.inject({ method: "GET", url: "/v1/health" })).json()).toMatchObject({ dbExists: false });
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally { await app.close(); }
   });
 
   it("preserves existing non-default style fields during partial style updates", async () => {
@@ -10864,6 +11682,7 @@ describe("local TypeScript API", () => {
         pipelineInternalConcurrency: 5,
         workerActivitySlots: 4,
         dailyBudgetUsd: 12.5,
+        laneTokenLimits: { scoring: 1801, tailoring: 0 },
         scoreCriteria: "Security leadership and platform reliability.",
         targetCriteria: "Director-plus infrastructure and security roles.",
         preferredModels: { claude: "opus" },
@@ -10873,6 +11692,7 @@ describe("local TypeScript API", () => {
       },
       effectiveSettings: {
         dailyBudgetUsd: { value: 12.5, source: "persisted", activation: "live", editable: true },
+        laneTokenLimits: { source: "persisted", activation: "live", editable: true },
         applyConcurrency: { value: 3, source: "persisted", activation: "next_poll", editable: true },
         pipelineInternalConcurrency: { value: 5, source: "persisted", activation: "next_workflow", editable: true },
         workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
@@ -10890,8 +11710,6 @@ describe("local TypeScript API", () => {
       method: "PATCH",
       url: "/v1/discovery/settings",
       payload: {
-        roleFilterMode: "llm",
-        roleFilterModel: "claude:sonnet",
         maxParallelFamilies: 3,
         crawlUserAgentProduct: "JobCtrlResearch",
         crawlUserAgentContact: "ops@example.test",
@@ -10903,8 +11721,6 @@ describe("local TypeScript API", () => {
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toMatchObject({
       settings: {
-        roleFilterMode: "llm",
-        roleFilterModel: "claude:sonnet",
         maxParallelFamilies: 3,
         crawlUserAgentProduct: "JobCtrlResearch",
         crawlUserAgentContact: "ops@example.test",
@@ -10912,12 +11728,40 @@ describe("local TypeScript API", () => {
         scheduleCron: "0 8 * * 1-5",
       },
       effectiveSettings: {
-        roleFilterMode: { source: "persisted", activation: "next_source_family", editable: true },
         maxParallelFamilies: { source: "persisted", activation: "next_run", editable: true },
         schedulingEnabled: { source: "persisted", activation: "restart", editable: true },
       },
     });
     await app.close();
+  });
+
+  it("defaults browser headers off, persists both modes, and preserves the legacy identity", async () => {
+    const app = buildApp(options);
+    const initial = await app.inject({ method: "GET", url: "/v1/discovery/settings" });
+    expect(initial.json()).toMatchObject({
+      settings: { useBrowserHeaders: false },
+      effectiveSettings: { useBrowserHeaders: { value: false, source: "default", activation: "next_source_family", editable: true } },
+    });
+    await app.inject({ method: "PATCH", url: "/v1/discovery/settings", payload: {
+      crawlUserAgentProduct: "SyntheticResearch", crawlUserAgentContact: "https://example.test/contact",
+    } });
+    for (const invalid of ["true", 1, null]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/discovery/settings", payload: { useBrowserHeaders: invalid } });
+      expect(response.statusCode).toBe(400);
+    }
+    for (const enabled of [true, false]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/discovery/settings", payload: { useBrowserHeaders: enabled } });
+      expect(response.statusCode, response.body).toBe(200);
+      const read = await app.inject({ method: "GET", url: "/v1/discovery/settings" });
+      expect(read.json()).toMatchObject({
+        settings: { useBrowserHeaders: enabled, crawlUserAgentProduct: "SyntheticResearch", crawlUserAgentContact: "https://example.test/contact" },
+        effectiveSettings: { useBrowserHeaders: { value: enabled, source: "persisted", activation: "next_source_family", editable: true } },
+      });
+    }
+    await app.close();
+    const restarted = buildApp(options);
+    expect((await restarted.inject({ method: "GET", url: "/v1/discovery/settings" })).json().settings.useBrowserHeaders).toBe(false);
+    await restarted.close();
   });
 
   it("keeps discovery settings SQLite-owned when a legacy environment variable is present", async () => {
@@ -10946,6 +11790,58 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("saves extra resume polish without probing unavailable model providers", async () => {
+    const call = vi.fn(async () => { throw new Error("Synthetic unavailable provider"); });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const original = JSON.parse(fs.readFileSync(options.configPath, "utf8"));
+    for (const enabled of [true, false]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { resumeVoicePolish: enabled } });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({
+        settings: { resumeVoicePolish: enabled },
+        effectiveSettings: { resumeVoicePolish: { value: enabled, source: "persisted", activation: "next_workflow", editable: true } },
+      });
+      expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).toEqual({ ...original, resume_voice_polish: enabled });
+    }
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([null, "true", 1])("rejects a non-boolean extra-polish update %s without writing", async (value) => {
+    const app = buildApp(options);
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { resumeVoicePolish: value } });
+    expect(response.statusCode).toBe(400);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
+  it("saves cover-letter generation without probing unavailable model providers", async () => {
+    const call = vi.fn(async () => { throw new Error("Synthetic unavailable provider"); });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const original = JSON.parse(fs.readFileSync(options.configPath, "utf8"));
+    for (const enabled of [true, false]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { coverLetterGeneration: enabled } });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({
+        settings: { coverLetterGeneration: enabled },
+        effectiveSettings: { coverLetterGeneration: { value: enabled, source: "persisted", activation: "next_workflow", editable: true } },
+      });
+      expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).toEqual({ ...original, cover_letter_generation: enabled });
+    }
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([null, "true", 1])("rejects a non-boolean cover-letter update %s without writing", async (value) => {
+    const app = buildApp(options);
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { coverLetterGeneration: value } });
+    expect(response.statusCode).toBe(400);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
   it("falls back to defaults when settings are missing", async () => {
     fs.rmSync(options.configPath);
     const app = buildApp(options);
@@ -10958,10 +11854,21 @@ describe("local TypeScript API", () => {
         pipelineInternalConcurrency: 1,
         workerActivitySlots: 4,
         dailyBudgetUsd: 25,
+        laneTokenLimits: {
+          discovery: 0,
+          enrichment: 0,
+          scoring: 0,
+          tailoring: 0,
+          apply: 0,
+          contact: 0,
+          interview: 0,
+          profile: 0,
+          compensation: 0,
+        },
         analysisLegs: ["claude", "codex", "google"],
         tailoringGeneratorModels: null,
         tailoringJudgeModel: null,
-        tailoringJudgeMinScore: 0.82,
+        resumeVoicePolish: false,
         applyMaxBudgetUsd: 5,
         applyTimeoutSeconds: 900,
         scoreCriteria: "",
@@ -10974,7 +11881,10 @@ describe("local TypeScript API", () => {
   });
 
   it("persists editable runtime settings", async () => {
-    const app = buildApp(options);
+    const app = buildApp({ ...options, providerDispatcher: {
+      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: providerModelsResult })),
+      close: vi.fn(async () => undefined),
+    } });
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/settings",
@@ -10983,10 +11893,10 @@ describe("local TypeScript API", () => {
         pipelineInternalConcurrency: 4,
         workerActivitySlots: 6,
         dailyBudgetUsd: 19.75,
+        laneTokenLimits: { scoring: 2500, tailoring: 5000 },
         analysisLegs: ["claude", "google"],
-        tailoringGeneratorModels: ["claude:sonnet", "codex:gpt-5.5"],
-        tailoringJudgeModel: "claude:opus",
-        tailoringJudgeMinScore: 0.9,
+        tailoringGeneratorModels: ["codex:synthetic-model"],
+        tailoringJudgeModel: "default",
         applyMaxBudgetUsd: 7.5,
         applyTimeoutSeconds: 1200,
         scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
@@ -11011,10 +11921,10 @@ describe("local TypeScript API", () => {
       pipeline_internal_concurrency: 4,
       worker_activity_slots: 6,
       daily_budget_usd: 19.75,
+      lane_token_limits: { scoring: 2500, tailoring: 5000 },
       analysis_legs: ["claude", "google"],
-      tailoring_generator_models: ["claude:sonnet", "codex:gpt-5.5"],
-      tailoring_judge_model: "claude:opus",
-      tailoring_judge_min_score: 0.9,
+      tailoring_generator_models: ["codex:synthetic-model"],
+      tailoring_judge_model: "default",
       apply_max_budget_usd: 7.5,
       apply_timeout_seconds: 1200,
       score_criteria: "Prioritize platform security, DevSecOps, and leadership scope.",
@@ -11113,13 +12023,35 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it.each([
+    { unknown: 1 },
+    { scoring: -1 },
+    { scoring: 1.5 },
+    { scoring: true },
+    { scoring: "1" },
+  ])("rejects invalid lane token limits: %j", async (laneTokenLimits) => {
+    const app = buildApp(options);
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { laneTokenLimits },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
   it("stores credential configuration through the injected credential store", async () => {
     const stored = new Map<CredentialKey, string>();
     const credentialStore = {
       list: vi.fn(async () => ({
         ok: true as const,
         store: {
-          kind: "config_and_macos_keychain" as const,
+          kind: "config_and_native_credential_store" as const,
+          nativeStore: "macos_keychain" as const,
+          maxSecretBytes: 128,
           available: true,
           unavailableReason: null,
           requiresWorkerRestart: true as const,
@@ -11128,8 +12060,8 @@ describe("local TypeScript API", () => {
           key,
           label: key,
           configured: stored.has(key),
-          storage: "keychain" as const,
-          effectiveSource: stored.has(key) ? "keychain" as const : "absent" as const,
+          storage: "native_store" as const,
+          effectiveSource: stored.has(key) ? "native_store" as const : "absent" as const,
           editable: true,
         })),
       })),
@@ -11158,8 +12090,8 @@ describe("local TypeScript API", () => {
     expect(initial.statusCode, initial.body).toBe(200);
     expect(initial.json().credentials).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ key: "OPENAI_API_KEY", configured: false, storage: "keychain" }),
-        expect.objectContaining({ key: "GEMINI_API_KEY", configured: false, storage: "keychain" }),
+        expect.objectContaining({ key: "OPENAI_API_KEY", configured: false, storage: "native_store" }),
+        expect.objectContaining({ key: "GEMINI_API_KEY", configured: false, storage: "native_store" }),
       ]),
     );
 
@@ -11184,6 +12116,135 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("keeps overlapping credential API responses consistent with the committed fake store", async () => {
+    const marker = "synthetic-api-credential-marker";
+    const state = new Map<CredentialKey, string>([
+      ["ANTHROPIC_API_KEY", `${marker}-original`],
+      ["GEMINI_API_KEY", `${marker}-untouched`],
+    ]);
+    const blocked = deferred<void>();
+    const release = deferred<void>();
+    const runSecurity = vi.fn<SecurityCommandRunner>(async (args, commandOptions) => {
+      const key = args[args.indexOf("-a") + 1] as CredentialKey;
+      if (args[0] === "find-generic-password") {
+        if (!state.has(key)) return { code: 44, stderr: "", stdout: "" };
+        return { code: 0, stderr: args.includes("-g") ? `password: ${JSON.stringify(state.get(key))}` : "", stdout: "" };
+      }
+      if (args[0] === "delete-generic-password" && key === "GEMINI_API_KEY") {
+        blocked.resolve();
+        await release.promise;
+        return { code: 1, stderr: marker, stdout: marker };
+      }
+      if (args[0] === "add-generic-password") state.set(key, commandOptions.sensitiveInput ?? "");
+      else state.delete(key);
+      return { code: 0, stderr: "", stdout: "" };
+    });
+    const credentialStore = new KeychainCredentialStore({
+      platform: "darwin", runSecurity, env: {}, configPath: options.configPath,
+      mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"), processIdentityReader: syntheticCredentialProcessIdentity,
+    });
+    const app = buildApp({ ...options, credentialStore });
+    const logError = vi.spyOn(app.log, "error");
+    try {
+      const older = app.inject({
+        method: "PATCH", url: "/v1/credentials/batch",
+        payload: { operations: [
+          { operation: "set", key: "ANTHROPIC_API_KEY", value: `${marker}-older` },
+          { operation: "delete", key: "GEMINI_API_KEY" },
+        ] },
+      });
+      await blocked.promise;
+      let newerFinished = false;
+      const newer = app.inject({
+        method: "PATCH", url: "/v1/credentials/batch",
+        payload: { operations: [{ operation: "set", key: "ANTHROPIC_API_KEY", value: `${marker}-newer` }] },
+      }).then((response) => { newerFinished = true; return response; });
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      expect(newerFinished).toBe(false);
+      release.resolve();
+      const [failed, saved] = await Promise.all([older, newer]);
+      expect(failed.statusCode).toBe(503);
+      expect(failed.json()).toMatchObject({ error: "credential_store_unavailable", reason: "operational_failure" });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json().credentials.find((entry: { key: string }) => entry.key === "ANTHROPIC_API_KEY")).toMatchObject({
+        configured: true, effectiveSource: "native_store",
+      });
+      expect(state.get("ANTHROPIC_API_KEY") === `${marker}-newer`).toBe(true);
+      expect(state.get("GEMINI_API_KEY") === `${marker}-untouched`).toBe(true);
+      expect(`${failed.body}${saved.body}`).not.toContain(marker);
+      expect(JSON.stringify(runSecurity.mock.calls.map(([args]) => args))).not.toContain(marker);
+      expect(logError).not.toHaveBeenCalled();
+    } finally {
+      release.resolve();
+      await app.close();
+    }
+  });
+
+  it("returns a sanitized busy response when credential ownership cannot be acquired", async () => {
+    const marker = "synthetic-api-busy-marker";
+    const blocked = deferred<void>();
+    const release = deferred<void>();
+    const state = new Set<string>();
+    const runSecurity = vi.fn<SecurityCommandRunner>(async (args) => {
+      const key = args[args.indexOf("-a") + 1] ?? "";
+      if (args[0] === "add-generic-password") {
+        blocked.resolve();
+        await release.promise;
+        state.add(key);
+        return { code: 0, stderr: "", stdout: "" };
+      }
+      return { code: state.has(key) ? 0 : 44, stderr: "", stdout: "" };
+    });
+    const credentialStore = new KeychainCredentialStore({
+      platform: "darwin", runSecurity, env: {}, configPath: options.configPath,
+      mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"), processIdentityReader: syntheticCredentialProcessIdentity, mutationLockTimeoutMs: 60,
+    });
+    const app = buildApp({ ...options, credentialStore });
+    try {
+      const first = app.inject({
+        method: "PATCH", url: "/v1/credentials",
+        payload: { key: "ANTHROPIC_API_KEY", value: `${marker}-first` },
+      });
+      await blocked.promise;
+      const busy = await app.inject({
+        method: "PATCH", url: "/v1/credentials",
+        payload: { key: "ANTHROPIC_API_KEY", value: `${marker}-second` },
+      });
+      expect(busy.statusCode).toBe(503);
+      expect(busy.json()).toMatchObject({
+        error: "credential_store_unavailable", reason: "busy",
+        message: "Another credential update is in progress. Retry after it finishes.",
+      });
+      expect(busy.body).not.toContain(marker);
+      release.resolve();
+      expect((await first).statusCode).toBe(200);
+    } finally {
+      release.resolve();
+      await app.close();
+    }
+  });
+
+  it("returns a sanitized ownership failure when process identity cannot be verified", async () => {
+    const marker = "synthetic-api-unverified-marker";
+    const runSecurity = vi.fn<SecurityCommandRunner>();
+    const credentialStore = new KeychainCredentialStore({
+      platform: "darwin", runSecurity, env: {}, configPath: options.configPath,
+      mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"),
+      processIdentityReader: async () => ({ state: "unverified" }),
+    });
+    const app = buildApp({ ...options, credentialStore });
+    try {
+      const response = await app.inject({
+        method: "PATCH", url: "/v1/credentials",
+        payload: { key: "ANTHROPIC_API_KEY", value: marker },
+      });
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toMatchObject({ error: "credential_store_unavailable", reason: "ownership_unverified" });
+      expect(response.body).not.toContain(marker);
+      expect(runSecurity).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+
   it("applies an allowlisted credential batch without returning values", async () => {
     const values = new Map<CredentialKey, string>([
       ["CLAUDE_CODE_USE_VERTEX", "1"],
@@ -11191,7 +12252,9 @@ describe("local TypeScript API", () => {
     const response = () => ({
       ok: true as const,
       store: {
-        kind: "config_and_macos_keychain" as const,
+        kind: "config_and_native_credential_store" as const,
+        nativeStore: "macos_keychain" as const,
+        maxSecretBytes: 128,
         available: true,
         unavailableReason: null,
         requiresWorkerRestart: true as const,
@@ -11200,8 +12263,8 @@ describe("local TypeScript API", () => {
         key,
         label: key,
         configured: values.has(key),
-        storage: "keychain" as const,
-        effectiveSource: values.has(key) ? "keychain" as const : "absent" as const,
+        storage: "native_store" as const,
+        effectiveSource: values.has(key) ? "native_store" as const : "absent" as const,
         editable: true,
       })),
     });
@@ -11293,11 +12356,45 @@ describe("local TypeScript API", () => {
       error: "credential_store_unavailable",
       reason: "partial_failure",
       message:
-        "Credential update failed and Keychain recovery was incomplete. Provider credentials may be partially updated; inspect Keychain before retrying.",
+        "Credential update failed and native-store recovery was incomplete. Provider credentials may be partially updated; inspect the native credential store before retrying.",
     });
     expect(response.body).not.toContain(secret);
     expect(logError).not.toHaveBeenCalled();
 
+    await app.close();
+  });
+
+  it.each([
+    ["PATCH", "/v1/credentials", { key: "ANTHROPIC_API_KEY", value: "oversized-secret" }, "set"],
+    [
+      "PATCH",
+      "/v1/credentials/batch",
+      { operations: [{ operation: "set", key: "ANTHROPIC_API_KEY", value: "oversized-secret" }] },
+      "applyBatch",
+    ],
+  ] as const)("returns an actionable validation error for the native byte limit (%s %s)", async (method, url, payload, failingMethod) => {
+    const credentialStore = {
+      list: vi.fn(),
+      set: vi.fn(),
+      delete: vi.fn(),
+      applyBatch: vi.fn(),
+    };
+    credentialStore[failingMethod].mockRejectedValue(
+      new CredentialValueUnsupportedError("ANTHROPIC_API_KEY", 128),
+    );
+    const app = buildApp({ ...options, credentialStore });
+
+    const response = await app.inject({ method, url, payload });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toEqual({
+      ok: false,
+      error: "credential_value_unsupported",
+      key: "ANTHROPIC_API_KEY",
+      maxBytes: 128,
+      message: "This credential exceeds the native store's secure 128-byte input limit.",
+    });
+    expect(response.body).not.toContain("oversized-secret");
     await app.close();
   });
 
@@ -11784,7 +12881,8 @@ describe("local TypeScript API", () => {
     expect(save.json().settings.preferredModels).toEqual({ codex: "gpt-test", google: "gemini-test" });
     const persisted = JSON.parse(fs.readFileSync(options.configPath, "utf8"));
     expect(persisted.preferred_models).toEqual({ codex: "gpt-test", google: "gemini-test" });
-    expect(JSON.stringify(persisted)).not.toMatch(/credential|api[_-]?key|token/i);
+    const { lane_token_limits: _laneTokenLimits, ...credentialFreeSettings } = persisted;
+    expect(JSON.stringify(credentialFreeSettings)).not.toMatch(/credential|api[_-]?key|token/i);
     expect(call).toHaveBeenCalledTimes(1);
     await app.close();
   });
@@ -11808,6 +12906,128 @@ describe("local TypeScript API", () => {
     expect(response.json().settings.preferredModels).toEqual({});
     expect(JSON.parse(fs.readFileSync(options.configPath, "utf8")).preferred_models).toEqual({});
     expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([
+    { patch: { defaultLlmModel: "codex:unoffered" }, status: 400, error: "invalid_default_model" },
+    { patch: { defaultLlmModel: "claude:synthetic-model" }, status: 409, error: "provider_not_ready" },
+    { patch: { tailoringGeneratorModels: ["codex:synthetic-model", "codex:unoffered"] }, status: 400, error: "invalid_tailoring_model" },
+    { patch: { tailoringJudgeModel: "codex:unoffered", preferredModels: { codex: "synthetic-model" } }, status: 400, error: "invalid_tailoring_model" },
+    { patch: { tailoringGeneratorModels: ["claude:unoffered"] }, status: 409, error: "provider_not_ready" },
+    { patch: { tailoringJudgeModel: "claude:default" }, status: 409, error: "provider_not_ready" },
+    { patch: { tailoringJudgeModel: "unknown:unoffered" }, status: 400, error: "invalid_tailoring_model" },
+    { patch: { tailoringGeneratorModels: ["unoffered"] }, status: 400, error: "invalid_tailoring_model" },
+  ])("rejects unsupported material model choices atomically: $patch", async ({ patch, status, error }) => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: providerModelsResult }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { ...patch, dailyBudgetUsd: 17 } });
+    expect(response.statusCode, response.body).toBe(status);
+    expect(response.json().error).toBe(error);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
+  it("validates material and preferred choices against one current provider catalog", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: providerModelsResult }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: {
+      defaultLlmModel: "synthetic-model",
+      tailoringGeneratorModels: ["default", "codex:synthetic-model"], tailoringJudgeModel: "codex:synthetic-model",
+      preferredModels: { codex: "synthetic-model" },
+    } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings.defaultLlmModel).toBe("codex:synthetic-model");
+    expect(response.json().effectiveSettings.defaultLlmModel).toEqual({ value: "codex:synthetic-model", source: "persisted", activation: "next_workflow", editable: true });
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8")).default_llm_model).toBe("codex:synthetic-model");
+    expect(response.json().settings).toMatchObject({ tailoringGeneratorModels: ["default", "codex:synthetic-model"], tailoringJudgeModel: "codex:synthetic-model" });
+    expect(call).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it.each(["high", "max"])("saves a current Codex effort and reads it back (%s)", async (effort) => {
+    const catalog = { providers: providerModelsResult.providers.map(provider => provider.provider === "codex" ? { ...provider, models: provider.models.map(model => ({ ...model, supportedReasoningEfforts: [{ reasoningEffort: "high" }, { reasoningEffort: "max" }] })) } : provider) };
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: catalog }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { codexReasoningEfforts: { "synthetic-model": effort } } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings.codexReasoningEfforts).toEqual({ "synthetic-model": effort });
+    expect(response.json().effectiveSettings.codexReasoningEfforts).toEqual({ value: { "synthetic-model": effort }, source: "persisted", activation: "next_workflow", editable: true });
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8")).codex_reasoning_efforts).toEqual({ "synthetic-model": effort });
+    expect(call).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it.each([
+    { model: "synthetic-model", effort: "unoffered", ready: true, empty: false, status: 400 },
+    { model: "unoffered-model", effort: "high", ready: true, empty: false, status: 400 },
+    { model: "synthetic-model", effort: "high", ready: false, empty: false, status: 409 },
+    { model: "synthetic-model", effort: "high", ready: true, empty: true, status: 503 },
+  ])("rejects an unsupported effort atomically: $model/$effort ($status)", async ({ model, effort, ready, empty, status }) => {
+    const catalog = { providers: providerModelsResult.providers.map(provider => provider.provider === "codex" ? { ...provider, ready, models: empty || !ready ? [] : provider.models, ...(empty ? { message: "Catalog unavailable" } : {}) } : provider) };
+    const app = buildApp({ ...options, providerDispatcher: { call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: catalog })), close: vi.fn(async () => undefined) } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { codexReasoningEfforts: { [model]: effort }, dailyBudgetUsd: 17 } });
+    expect(response.statusCode, response.body).toBe(status);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
+  it("clears a saved effort offline without losing another model's choice", async () => {
+    fs.writeFileSync(options.configPath, JSON.stringify({ codex_reasoning_efforts: { "model-a": "high", "model-b": "max" } }));
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => { throw new Error("No catalog for offline clearing"); });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { codexReasoningEfforts: { "model-a": null } } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings.codexReasoningEfforts).toEqual({ "model-b": "max" });
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("permits offline clearing and default material model selection", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => { throw new Error("offline catalog"); });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    for (const patch of [{ defaultLlmModel: null, tailoringGeneratorModels: ["default"], tailoringJudgeModel: null }, { defaultLlmModel: "default", tailoringGeneratorModels: null, tailoringJudgeModel: "default" }]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: patch });
+      expect(response.statusCode, response.body).toBe(200);
+    }
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([false, true])("binds a legacy bare material model only to a unique ready provider (ambiguous=%s)", async (ambiguous) => {
+    const app = buildApp({ ...options, providerDispatcher: {
+      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: {
+        providers: providerModelsResult.providers.map(provider => ambiguous && provider.provider === "google"
+          ? { ...provider, configured: true, ready: true, models: [{ id: "synthetic-model", displayName: "Synthetic model" }] } : provider),
+      } })),
+      close: vi.fn(async () => undefined),
+    } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: {
+      tailoringGeneratorModels: ["synthetic-model"], tailoringJudgeModel: "synthetic-model",
+    } });
+    expect(response.statusCode, response.body).toBe(ambiguous ? 400 : 200);
+    if (ambiguous) {
+      expect(response.json().error).toBe("invalid_tailoring_model");
+      expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    } else {
+      expect(response.json().settings).toMatchObject({ tailoringGeneratorModels: ["codex:synthetic-model"], tailoringJudgeModel: "codex:synthetic-model" });
+    }
+    await app.close();
+  });
+
+  it.each(["defaultLlmModel", "tailoringGeneratorModels", "tailoringJudgeModel", "bare"])("preserves settings when the %s live catalog fails", async (field) => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: {
+      providers: providerModelsResult.providers.map(provider => provider.provider === "codex" ? { ...provider, models: [], message: "private catalog failure" } : provider),
+    } }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: field === "bare" ? { tailoringJudgeModel: "synthetic-model" } : { [field]: field === "tailoringGeneratorModels" ? ["codex:synthetic-model"] : "codex:synthetic-model" } });
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.body).not.toContain("private catalog failure");
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
     await app.close();
   });
 
@@ -11939,6 +13159,7 @@ describe("local TypeScript API", () => {
       const credentialStore = new KeychainCredentialStore({
         platform: "darwin",
         runSecurity,
+        mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"), processIdentityReader: syntheticCredentialProcessIdentity,
       });
       const setCredential = vi.spyOn(credentialStore, "set");
       const app = buildApp({ ...options, credentialStore });
@@ -11967,7 +13188,9 @@ describe("local TypeScript API", () => {
     const response = {
       ok: true as const,
       store: {
-        kind: "config_and_macos_keychain" as const,
+        kind: "config_and_native_credential_store" as const,
+        nativeStore: "macos_keychain" as const,
+        maxSecretBytes: 128,
         available: true,
         unavailableReason: null,
         requiresWorkerRestart: true as const,
@@ -11976,8 +13199,8 @@ describe("local TypeScript API", () => {
         key,
         label: key,
         configured: true,
-        storage: "keychain" as const,
-        effectiveSource: "keychain" as const,
+        storage: "native_store" as const,
+        effectiveSource: "native_store" as const,
         editable: true,
       })),
     };
@@ -12003,14 +13226,36 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it.each(["linux", "win32"] as const)(
-    "reports unsupported Keychain storage on %s without spawning or failing credential reads",
-    async (platform) => {
+  it.each([
+    ["linux", "linux_secret_service", 8_191],
+    ["win32", "windows_credential_manager", 2_560],
+  ] as const)(
+    "exposes working native credential storage on %s through the HTTP contract",
+    async (platform, nativeStore, maxSecretBytes) => {
       const runSecurity = vi.fn();
+      const stored = new Map<string, string>();
+      const runNative = vi.fn<NativeCredentialCommandRunner>(async (command) => {
+        if (command.operation === "set") {
+          stored.set(command.key, command.value ?? "");
+          return { code: 0, stderr: "", stdout: "" };
+        }
+        if (command.operation === "delete") {
+          const existed = stored.delete(command.key);
+          return { code: existed ? 0 : 44, stderr: "", stdout: "" };
+        }
+        if (!stored.has(command.key)) return { code: 44, stderr: "", stdout: "" };
+        return {
+          code: 0,
+          stderr: "",
+          stdout: command.operation === "read" ? stored.get(command.key) ?? "" : "",
+        };
+      });
       const credentialStore = new KeychainCredentialStore({
         platform,
+        runNative,
         runSecurity,
         configPath: options.configPath,
+        mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"), processIdentityReader: syntheticCredentialProcessIdentity,
       });
       const app = buildApp({ ...options, credentialStore });
 
@@ -12019,9 +13264,11 @@ describe("local TypeScript API", () => {
       expect(initial.json()).toMatchObject({
         ok: true,
         store: {
-          kind: "config_and_macos_keychain",
-          available: false,
-          unavailableReason: "unsupported_platform",
+          kind: "config_and_native_credential_store",
+          nativeStore,
+          maxSecretBytes,
+          available: true,
+          unavailableReason: null,
           requiresWorkerRestart: true,
         },
       });
@@ -12030,7 +13277,7 @@ describe("local TypeScript API", () => {
           (credential: { key: string; configured: boolean | null }) => [credential.key, credential] as const,
         ),
       );
-      expect(SecretCredentialKeys.every((key) => byKey.get(key)?.configured === null)).toBe(true);
+      expect(SecretCredentialKeys.every((key) => byKey.get(key)?.configured === false)).toBe(true);
       expect(ProviderConfigurationKeys.every((key) => byKey.get(key)?.configured === false)).toBe(true);
       expect(runSecurity).not.toHaveBeenCalled();
 
@@ -12039,27 +13286,39 @@ describe("local TypeScript API", () => {
         url: "/v1/credentials",
         payload: { key: "OPENAI_API_KEY", value: "test-secret" },
       });
-      expect(save.statusCode, save.body).toBe(409);
-      expect(save.json()).toMatchObject({
-        ok: false,
-        error: "credential_store_unavailable",
-        reason: "unsupported_platform",
-      });
+      expect(save.statusCode, save.body).toBe(200);
+      expect(save.body).not.toContain("test-secret");
+      expect(stored.get("OPENAI_API_KEY")).toBe("test-secret");
 
       const remove = await app.inject({ method: "DELETE", url: "/v1/credentials/OPENAI_API_KEY" });
-      expect(remove.statusCode, remove.body).toBe(409);
-      expect(remove.json()).toMatchObject({
-        ok: false,
-        error: "credential_store_unavailable",
-        reason: "unsupported_platform",
-      });
+      expect(remove.statusCode, remove.body).toBe(200);
+      expect(stored.has("OPENAI_API_KEY")).toBe(false);
       expect(runSecurity).not.toHaveBeenCalled();
 
       await app.close();
     },
   );
 
-  it("keeps failed Keychain inspection unknown and returns sanitized 503 mutation errors", async () => {
+  it("reports null capability metadata on an unsupported platform", async () => {
+    const credentialStore = new KeychainCredentialStore({
+      platform: "freebsd",
+      configPath: options.configPath,
+    });
+    const app = buildApp({ ...options, credentialStore });
+
+    const response = await app.inject({ method: "GET", url: "/v1/credentials" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().store).toMatchObject({
+      nativeStore: null,
+      maxSecretBytes: null,
+      available: false,
+      unavailableReason: "unsupported_platform",
+    });
+    await app.close();
+  });
+
+  it("keeps failed native inspection unknown and returns sanitized 503 mutation errors", async () => {
     const secret = "server-secret-and-raw-stderr-must-not-appear";
     const runSecurity = vi.fn(async () => {
       throw new Error(secret);
@@ -12068,6 +13327,7 @@ describe("local TypeScript API", () => {
       platform: "darwin",
       runSecurity,
       configPath: options.configPath,
+      mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"), processIdentityReader: syntheticCredentialProcessIdentity,
     });
     const app = buildApp({ ...options, credentialStore });
     const logError = vi.spyOn(app.log, "error");
@@ -12100,7 +13360,7 @@ describe("local TypeScript API", () => {
       ok: false,
       error: "credential_store_unavailable",
       reason: "operational_failure",
-      message: "macOS Keychain is temporarily unavailable. Unlock Keychain Access and retry.",
+      message: "The native credential store is temporarily unavailable. Unlock it and retry.",
     });
     expect(save.body).not.toContain(secret);
 
@@ -12203,14 +13463,14 @@ function seedExactV7CompensationDatabase(
   dbPath: string,
   job?: { jobId: string; postingUrl: string },
 ): void {
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   seedBuiltInResumeTemplate(db);
   if (job) {
     db.prepare(
       `INSERT INTO jobs (
-        tenant_id, job_id, url, title, site, strategy, location, discovered_at, application_url
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tenant_id, job_id, url, title, site, strategy, location, discovered_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       "local",
       job.jobId,
@@ -12220,8 +13480,8 @@ function seedExactV7CompensationDatabase(
       "test",
       "Remote",
       "2026-04-29T10:00:00+00:00",
-      `${job.postingUrl}/apply`,
     );
+    seedApplicationUrl(db, "local", job.jobId, `${job.postingUrl}/apply`);
   }
   db.close();
 }
@@ -12397,116 +13657,122 @@ function seedDatabase(dbPath: string): void {
   const artifactPath = path.join(path.dirname(dbPath), "ready-resume.txt");
   fs.writeFileSync(artifactPath, "hello world!");
 
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
-  seedBuiltInResumeTemplate(db);
+  try {
+    // Publish the complete fixture before the app opens its own connection.
+    db.transaction(() => {
+      seedBuiltInResumeTemplate(db);
 
-  insertJob(db, {
-    url: "https://example.com/jobs/ready",
-    title: "Platform Engineer",
-    site: "ExampleCo",
-    company: "ExampleCo",
-    fitScore: 9,
-    tailoredPath: artifactPath,
-  });
-  insertJob(db, {
-    url: "https://example.com/jobs/failed-score",
-    title: "Backend Engineer",
-    site: "ExampleCo",
-    company: "ExampleCo",
-    fitScore: 8,
-  });
-  insertJob(db, {
-    url: "https://example.com/jobs/blocked-tailor",
-    title: "Frontend Engineer",
-    site: "Acme",
-    company: "Acme",
-    fitScore: 6,
-  });
-  insertScore(db, "https://example.com/jobs/ready", 1, 9);
-  insertScore(db, "https://example.com/jobs/failed-score", 1, 8);
-  insertScore(db, "https://example.com/jobs/blocked-tailor", 1, 6);
+      insertJob(db, {
+        url: "https://example.com/jobs/ready",
+        title: "Platform Engineer",
+        site: "ExampleCo",
+        company: "ExampleCo",
+        fitScore: 9,
+        tailoredPath: artifactPath,
+      });
+      insertJob(db, {
+        url: "https://example.com/jobs/failed-score",
+        title: "Backend Engineer",
+        site: "ExampleCo",
+        company: "ExampleCo",
+        fitScore: 8,
+      });
+      insertJob(db, {
+        url: "https://example.com/jobs/blocked-tailor",
+        title: "Frontend Engineer",
+        site: "Acme",
+        company: "Acme",
+        fitScore: 6,
+      });
+      insertScore(db, "https://example.com/jobs/ready", 1, 9);
+      insertScore(db, "https://example.com/jobs/failed-score", 1, 8);
+      insertScore(db, "https://example.com/jobs/blocked-tailor", 1, 6);
 
-  for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
-    insertStage(db, "https://example.com/jobs/ready", stage, "succeeded");
+      for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
+        insertStage(db, "https://example.com/jobs/ready", stage, "succeeded");
+      }
+      insertStage(db, "https://example.com/jobs/ready", "apply", "pending");
+      insertStage(db, "https://example.com/jobs/failed-score", "discover", "succeeded");
+      insertStage(db, "https://example.com/jobs/failed-score", "enrich", "succeeded");
+      insertStage(db, "https://example.com/jobs/failed-score", "score", "failed", "LLM_ERROR");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "discover", "succeeded");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "enrich", "succeeded");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "score", "succeeded");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "tailor", "blocked", "MIN_SCORE");
+
+      db.prepare(
+        "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        jobIdFor("https://example.com/jobs/ready"),
+        "tailor",
+        "tailored_resume_txt",
+        "active",
+        artifactPath,
+        "2026-04-29T10:05:00+00:00",
+        12,
+      );
+      db.prepare(
+        "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        jobIdFor("https://example.com/jobs/ready"),
+        "tailor",
+        "tailored_resume_pdf",
+        "active",
+        artifactPath,
+        "2026-04-29T10:05:00+00:00",
+        12,
+      );
+      db.prepare(
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at) VALUES ('local', ?, 1, ?, ?, ?, ?, ?)",
+      ).run(
+        jobIdFor("https://example.com/jobs/failed-score"),
+        "score",
+        "ActionFailed",
+        "error",
+        "Score failed",
+        "2026-04-29T10:10:00+00:00",
+      );
+      db.prepare(
+        "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, events_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        "run-1",
+        jobIdFor("https://example.com/jobs/ready"),
+        "Platform Engineer",
+        "ExampleCo",
+        "finished",
+        "succeeded",
+        1,
+        "2026-04-29T10:15:00+00:00",
+        JSON.stringify([
+          {
+            event_type: "ApplyRunStarted",
+            level: "info",
+            occurred_at: "2026-04-29T10:15:00+00:00",
+            message: "Apply agent acquired job",
+            payload: { run_id: "run-1" },
+          },
+        ]),
+      );
+      // The unified Workflow Runs list reads `workflow_run_projections` (all
+      // workflow types); apply runs are enriched with job context via the LEFT
+      // JOIN to `apply_run_projections`. Seed the matching workflow row so the
+      // apply run surfaces in the list with its job title/company/dry-run.
+      db.prepare(
+        "INSERT INTO workflow_run_projections (workflow_id, workflow_type, status, started_at, finished_at, temporal_run_id) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        "run-1",
+        "ApplyWorkflow",
+        "succeeded",
+        "2026-04-29T10:15:00+00:00",
+        "2026-04-29T10:20:00+00:00",
+        "temporal-run-1",
+      );
+    })();
+  } finally {
+    db.close();
   }
-  insertStage(db, "https://example.com/jobs/ready", "apply", "pending");
-  insertStage(db, "https://example.com/jobs/failed-score", "discover", "succeeded");
-  insertStage(db, "https://example.com/jobs/failed-score", "enrich", "succeeded");
-  insertStage(db, "https://example.com/jobs/failed-score", "score", "failed", "LLM_ERROR");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "discover", "succeeded");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "enrich", "succeeded");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "score", "succeeded");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "tailor", "blocked", "MIN_SCORE");
-
-  db.prepare(
-    "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    jobIdFor("https://example.com/jobs/ready"),
-    "tailor",
-    "tailored_resume_txt",
-    "active",
-    artifactPath,
-    "2026-04-29T10:05:00+00:00",
-    12,
-  );
-  db.prepare(
-    "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    jobIdFor("https://example.com/jobs/ready"),
-    "tailor",
-    "tailored_resume_pdf",
-    "active",
-    artifactPath,
-    "2026-04-29T10:05:00+00:00",
-    12,
-  );
-  db.prepare(
-    "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at) VALUES ('local', ?, 1, ?, ?, ?, ?, ?)",
-  ).run(
-    jobIdFor("https://example.com/jobs/failed-score"),
-    "score",
-    "ActionFailed",
-    "error",
-    "Score failed",
-    "2026-04-29T10:10:00+00:00",
-  );
-  db.prepare(
-    "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, events_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    "run-1",
-    jobIdFor("https://example.com/jobs/ready"),
-    "Platform Engineer",
-    "ExampleCo",
-    "finished",
-    "succeeded",
-    1,
-    "2026-04-29T10:15:00+00:00",
-    JSON.stringify([
-      {
-        event_type: "ApplyRunStarted",
-        level: "info",
-        occurred_at: "2026-04-29T10:15:00+00:00",
-        message: "Apply agent acquired job",
-        payload: { run_id: "run-1" },
-      },
-    ]),
-  );
-  // The unified Workflow Runs list reads `workflow_run_projections` (all
-  // workflow types); apply runs are enriched with job context via the LEFT
-  // JOIN to `apply_run_projections`. Seed the matching workflow row so the
-  // apply run surfaces in the list with its job title/company/dry-run.
-  db.prepare(
-    "INSERT INTO workflow_run_projections (workflow_id, workflow_type, status, started_at, finished_at, temporal_run_id) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(
-    "run-1",
-    "ApplyWorkflow",
-    "succeeded",
-    "2026-04-29T10:15:00+00:00",
-    "2026-04-29T10:20:00+00:00",
-    "temporal-run-1",
-  );
-  db.close();
 }
 
 const DISCOVER_OLD_START = "2026-07-04T07:57:11.751+00:00";
@@ -12655,10 +13921,10 @@ function insertJob(
 ): void {
   db.prepare(
     `INSERT INTO jobs (
-      tenant_id, job_id, url, title, site, company, strategy, location, salary, discovered_at, application_url,
+      tenant_id, job_id, url, title, site, company, strategy, location, salary, discovered_at,
       description, full_description, detail_scraped_at, fit_score, score_reasoning,
       scored_at, tailored_resume_path, tailored_at
-    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jobIdFor(job.url),
     job.url,
@@ -12669,7 +13935,6 @@ function insertJob(
     "Remote",
     "",
     "2026-04-29T10:00:00+00:00",
-    job.url,
     job.description ?? "Short description",
     job.fullDescription ?? "Long description",
     "2026-04-29T10:01:00+00:00",
@@ -12679,6 +13944,7 @@ function insertJob(
     job.tailoredPath ?? null,
     job.tailoredPath ? "2026-04-29T10:03:00+00:00" : null,
   );
+  seedApplicationUrl(db, "local", jobIdFor(job.url), job.url);
 }
 
 function jobIdFor(jobUrl: string): string {
@@ -12695,7 +13961,8 @@ function insertEnrichment(
     `INSERT INTO job_enrichments (
        tenant_id, job_id, current_status, full_description, application_url,
        enriched_at, extraction_tier, attempts_json, updated_at
-     ) VALUES ('local', ?, 'enriched', ?, ?, ?, 'css_selectors', '[]', ?)`,
+     ) VALUES ('local', ?, 'enriched', ?, ?, ?, 'css_selectors', '[]', ?)
+     ON CONFLICT (tenant_id, job_id) DO UPDATE SET current_status = excluded.current_status, full_description = excluded.full_description, application_url = excluded.application_url, enriched_at = excluded.enriched_at, extraction_tier = excluded.extraction_tier, updated_at = excluded.updated_at`,
   ).run(
     jobIdFor(jobUrl),
     fullDescription,
@@ -12734,6 +14001,7 @@ function insertPostedCompensationFact(db: Database.Database, jobUrl: string): vo
     "b".repeat(64),
     "2026-06-19T10:00:00Z",
   );
+  recordCompensationAuthority(db,jobIdFor(jobUrl));
 }
 
 function insertUnannualizedPostedCompensationFact(db: Database.Database, jobUrl: string): void {
@@ -12765,6 +14033,7 @@ function insertUnannualizedPostedCompensationFact(db: Database.Database, jobUrl:
     "c".repeat(64),
     "2026-06-19T10:00:30Z",
   );
+  recordCompensationAuthority(db,jobIdFor(jobUrl));
 }
 
 function insertMarketCompensationEstimate(db: Database.Database, jobUrl: string): void {
@@ -12837,6 +14106,7 @@ function insertMarketCompensationEstimate(db: Database.Database, jobUrl: string)
     "tier_2_ambitious",
     "exact_company_role",
   );
+  recordCompensationAuthority(db,jobIdFor(jobUrl));
 }
 
 function countRows(db: Database.Database, tableName: string, columnName: string, value: string): number {
@@ -12853,6 +14123,7 @@ function insertScore(
   fitScore: number,
   options: {
     correction?: Record<string, unknown> | null;
+    correctionHistory?: Record<string, unknown>[];
     policyVersion?: number;
     policyId?: string;
     keywords?: string[];
@@ -12909,7 +14180,7 @@ function insertScore(
             scoring_policy_version: options.policyVersion,
           }),
       parser_warnings: [],
-      correction_history: [],
+      correction_history: options.correctionHistory ?? [],
     }),
   );
 }
@@ -13173,3 +14444,290 @@ function insertStage(
     "[]",
   );
 }
+
+
+function rpcPreservationControls(seed = false) {
+  const db = new Database(options.dbPath);
+  try {
+    if (seed) {
+      insertMaterialsGeneration(db, { jobUrl: "https://example.com/jobs/ready", artifactId: "rpc-accepted", artifactType: "tailored_resume", status: "approved", path: path.join(tempDir, "ready-resume.txt") });
+      db.prepare(`INSERT INTO application_review_decisions (tenant_id, decision_id, job_id, decision, decided_at, materials_generation, profile_version, email_attachment_artifact_id) VALUES ('local', 'rpc-approved', ?, 'approve_dry_run', '2026-10-17T00:00:00Z', 1, 1, 'rpc-accepted')`).run(jobIdFor("https://example.com/jobs/ready"));
+    }
+    return { materials: db.prepare("SELECT * FROM job_materials").all(), artifacts: db.prepare("SELECT * FROM job_materials_artifacts").all(), approvals: db.prepare("SELECT * FROM application_review_decisions").all(), acceptedBytes: fs.readFileSync(path.join(tempDir, "ready-resume.txt"), "utf8") };
+  } finally { db.close(); }
+}
+
+describe("enforcing route to registered worker handoffs", () => {
+  it("carries exact source IDs through HTTP, action dispatch, subprocess and registered Discover input", async () => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    const app = buildApp({ ...options, actionDispatcher: createActionDispatcher(fixture.adapter) });
+    const observations: unknown[] = [];
+    try {
+      const sourceIds = ["jobspy:linkedin", "jobspy:indeed"];
+      const response = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds, workers: 2, limit: 25 } });
+      observations.push({ status: response.statusCode, body: response.json() });
+      expect(response.statusCode, response.body).toBe(202);
+      expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params: { sourceIds } } });
+      expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { source_ids: sourceIds, workers: 2, limit: 25 } });
+      const transmittedRequests = fixture.rows().filter(row => row.kind === "request").length;
+      for (const payload of [
+        { stages: ["discover"], sourceIds: ["jobspy:indeed", "jobspy:indeed"] },
+        { stages: ["discover"], workers: 0 },
+        { stages: ["discover"], limit: -1 },
+        { stages: ["discover"], minScore: 11 },
+        { stages: ["discover"], unexpected: true },
+        { stages: ["score"], sourceIds },
+      ]) {
+        const invalid = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload });
+        observations.push({ input: payload, status: invalid.statusCode, body: invalid.body });
+        expect(invalid.statusCode).toBe(400);
+        expect(fixture.rows().filter(row => row.kind === "request")).toHaveLength(transmittedRequests);
+      }
+      observations.push({ transmittedBeforeInvalidInputs: transmittedRequests, transmittedAfterInvalidInputs: fixture.rows().filter(row => row.kind === "request").length });
+      expect(fixture.rows().filter(row => row.kind === "start")).toHaveLength(1);
+      fixture.mode("invalid_ack");
+      const malformed = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds } });
+      observations.push({ malformedAckStatus: malformed.statusCode, body: malformed.json() });
+      expect(malformed.statusCode).toBeGreaterThanOrEqual(500);
+    } finally { fixture.retain("discover", observations); await app.close(); await fixture.adapter.close(); }
+  });
+
+  it.each([
+    { name: "single", stage: "discover" as const },
+    { name: "duplicate", stage: "discover" as const, stages: ["discover", "discover"] as const },
+    { name: "override", stage: "score" as const, stages: ["discover", "discover"] as const },
+  ])("requires the Discover completion dataclass for an awaited Discover call ($name)", async ({ name, stage, ...selection }) => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    const observations: unknown[] = [];
+    try {
+      const params = { stage, ...("stages" in selection ? { stages: [...selection.stages] } : {}), awaitResult: true, sourceIds: ["jobspy:indeed"], expectedAppDir: tempDir, expectedDbPath: options.dbPath };
+      const completed = await callRpc(fixture.adapter, "run_stage", params);
+      expect(completed.result).toMatchObject({ result: { families_completed: ["synthetic-source"], failure: null } });
+      observations.push({ params, completed });
+      expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params } });
+      expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { source_ids: params.sourceIds } });
+      fixture.mode("wrong_result_family");
+      await expect(callRpc(fixture.adapter, "run_stage", params)).rejects.toMatchObject({ name: "RpcContractError", phase: "result" });
+      observations.push({ rejectedPipelineResult: true });
+    } finally { fixture.retain("discover-awaited-" + name, observations); await fixture.adapter.close(); }
+  });
+
+  it.each([
+    { name: "duplicate", stage: "score" as const, stages: ["score", "score"] as const, effective: ["score"] },
+    { name: "mixed", stage: "discover" as const, stages: ["score", "discover", "score"] as const, effective: ["discover", "score"] },
+    { name: "override", stage: "discover" as const, stages: ["score"] as const, effective: ["score"] },
+  ])("requires pipeline completion for effective pipeline stages ($name)", async ({ name, stage, stages, effective }) => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    const observations: unknown[] = [];
+    try {
+      const params = { stage, stages: [...stages], awaitResult: true, expectedAppDir: tempDir, expectedDbPath: options.dbPath };
+      const completed = await callRpc(fixture.adapter, "run_stage", params);
+      expect(completed.result).toMatchObject({ result: { stages_completed: ["score", "tailor", "cover"], failure: null } });
+      expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params } });
+      expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { stages: effective } });
+      observations.push({ params, completed, effective });
+      fixture.mode("wrong_result_family");
+      await expect(callRpc(fixture.adapter, "run_stage", params)).rejects.toMatchObject({ name: "RpcContractError", phase: "result" });
+      observations.push({ rejectedDiscoverResult: true });
+    } finally { fixture.retain("pipeline-awaited-" + name, observations); await fixture.adapter.close(); }
+  });
+
+  it("profile saves and restart preserve accepted data without a scoring RPC handoff", async () => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    const controls = rpcPreservationControls(true);
+    const dispatch = vi.fn(createActionDispatcher(fixture.adapter));
+    let app = buildApp({ ...options, actionDispatcher: dispatch });
+    try {
+      for (const name of ["First Synthetic Revision", "Second Synthetic Revision"]) {
+        const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture(name) } });
+        expect(response.statusCode, response.body).toBe(200);
+      }
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(fixture.rows().filter(row => row.kind === "start")).toEqual([]);
+      expect(rpcPreservationControls()).toEqual(controls);
+      await app.close();
+      app = buildApp({ ...options, actionDispatcher: dispatch });
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(rpcPreservationControls()).toEqual(controls);
+      expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profile.personal.full_name).toBe("Second Synthetic Revision");
+    } finally { await app.close(); await fixture.adapter.close(); }
+  });
+});
+
+it("preserves invalid-result HTTP mappings after shared boundary enforcement", async () => {
+  const app = buildApp({ ...options, providerDispatcher: { call: async () => ({ jsonrpc: "2.0", id: 1, result: {} }), close: async () => {} } });
+  try {
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture("Invalid Result Controls") } });
+    for (const request of [
+      { method: "GET" as const, url: "/v1/providers/status" },
+      { method: "POST" as const, url: "/v1/providers/codex/verify" },
+      { method: "GET" as const, url: "/v1/browser-capabilities" },
+      { method: "POST" as const, url: `/v1/jobs/${jobIdFor("https://example.com/jobs/ready")}/actions/check-availability`, payload: {} },
+      { method: "POST" as const, url: "/v1/profile/target-role-suggestions", payload: { expectedProfileVersion: saved.json().profileVersion } },
+    ]) {
+      const response = await app.inject(request);
+      expect(response.statusCode, `${request.url}: ${response.body}`).toBe(502);
+    }
+  } finally { await app.close(); }
+});
+
+// Exercise the actual generated client, HTTP shell and typed worker boundary.
+describe("registered provider endpoint family", () => {
+  afterEach(() => vi.restoreAllMocks());
+  // Node fetch has no browser Origin; supply the first-party browser metadata.
+  function browserClient(baseUrl: string) {
+    const networkFetch = globalThis.fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => networkFetch(input, {
+      ...init, headers: { ...init?.headers, origin: "http://127.0.0.1:5173" },
+    }));
+    return createJobCtrlApiClient(baseUrl);
+  }
+  const cases = [
+    ["providerStatus", "GET", "/v1/providers/status", "provider_status", {}, { ok: true, ...providerStatusResult }, "provider_status_failed"],
+    ["providerModels", "GET", "/v1/providers/models", "provider_models", {}, { ok: true, ...providerModelsResult }, "provider_models_failed"],
+    ["verifyCodexProvider", "POST", "/v1/providers/codex/verify", "provider_verify", { provider: "codex" }, { ok: true, verification: providerVerifyResult }, "provider_verification_failed"],
+  ] as const;
+
+  it.each(cases)("%s preserves success, readiness and ignored legacy input", async (name, method, route, rpc, params, expected) => {
+    const result = rpc === "provider_status" ? providerStatusResult : rpc === "provider_models" ? providerModelsResult : providerVerifyResult;
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} }, requireHealthyWorkerForActions: true });
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      const address = app.server.address();
+      if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+      const client = browserClient(`http://127.0.0.1:${address.port}`);
+      await expect(client[name]()).resolves.toEqual(expected);
+      const legacy = await app.inject({ method, url: route + "?ignored=legacy", ...(method === "POST" ? { payload: { ignored: "legacy" } } : {}) });
+      expect(legacy.statusCode, legacy.body).toBe(200);
+      expect(legacy.json()).toEqual(expected);
+      expect(call).toHaveBeenCalledTimes(2);
+      for (const args of call.mock.calls) expect(args).toEqual([rpc, params]);
+    } finally { await app.close(); }
+  });
+
+  for (const failure of ["rpc", "invalid", "private", "transport"] as const) {
+    it.each(cases)(`%s sanitizes ${failure} failures through the client`, async (name, _method, _route, rpc, _params, _expected, errorCode) => {
+      const marker = "synthetic-private-failure-marker";
+      const call = vi.fn<JsonRpcDispatcher["call"]>(async () => {
+        if (failure === "transport") throw new Error(marker);
+        if (failure === "rpc") return { jsonrpc: "2.0", id: 1, error: { code: -32603, message: marker, data: { token: marker } } };
+        const valid = rpc === "provider_status" ? providerStatusResult : rpc === "provider_models" ? providerModelsResult : providerVerifyResult;
+        return { jsonrpc: "2.0", id: 1, result: failure === "private" ? { ...valid, token: marker } : {} };
+      });
+      const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+      try {
+        await app.listen({ host: "127.0.0.1", port: 0 });
+        const address = app.server.address();
+        if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+        const client = browserClient(`http://127.0.0.1:${address.port}`);
+        const status = name === "providerModels" || failure === "transport" ? 503 : 502;
+        const message = name === "providerModels" ? "Provider models are temporarily unavailable."
+          : name === "providerStatus" ? (failure === "invalid" || failure === "private"
+            ? "Provider status returned an invalid response." : "Provider status is temporarily unavailable.")
+          : failure === "rpc" ? "Codex verification could not be completed."
+          : failure === "transport" ? "Codex verification is temporarily unavailable."
+          : "Codex verification returned an invalid response.";
+        const request = client[name]();
+        await expect(request).rejects.toMatchObject({ status, responseBody: { ok: false, error: errorCode, message } });
+        await request.catch(error => expect(JSON.stringify(error)).not.toContain(marker));
+      } finally { await app.close(); }
+    });
+  }
+
+  it.each(cases)("%s rejects unsafe Host and remote peers before dispatch", async (_name, method, route) => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>();
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+    try {
+      for (const input of [{ headers: { host: "example.test" } }, { remoteAddress: "192.0.2.1" }]) {
+        const response = await app.inject({ method, url: route, ...input });
+        expect(response.statusCode, response.body).toBe(403);
+      }
+      expect(call).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+
+  it("rejects cross-site verification before dispatch and keeps read CORS restrictions", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: providerStatusResult }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+    try {
+      const rejected = await app.inject({ method: "POST", url: "/v1/providers/codex/verify", headers: { origin: "https://example.test" }, payload: {} });
+      expect(rejected.statusCode, rejected.body).toBe(403);
+      expect(rejected.json().error).toBe("cross_site_request");
+      expect(call).not.toHaveBeenCalled();
+      const read = await app.inject({ method: "GET", url: "/v1/providers/status", headers: { origin: "https://example.test" } });
+      expect(read.statusCode).toBe(200);
+      expect(read.headers["access-control-allow-origin"]).toBeUndefined();
+    } finally { await app.close(); }
+  });
+
+  it.each(["not_configured", "failed"] as const)("returns an unsuccessful %s verification as a checked 200 response", async status => {
+    const verification = { ...providerVerifyResult, ok: false, status };
+    const app = buildApp({ ...options, providerDispatcher: { call: async () => ({ jsonrpc: "2.0", id: 1, result: verification }), close: async () => {} } });
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      const address = app.server.address();
+      if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+      await expect(browserClient(`http://127.0.0.1:${address.port}`).verifyCodexProvider())
+        .resolves.toEqual({ ok: true, verification });
+      const response = await app.inject({ method: "POST", url: "/v1/providers/codex/verify", headers: { "content-type": "text/plain", origin: "http://127.0.0.1:5173" }, payload: "legacy ignored text" });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toEqual({ ok: true, verification });
+    } finally { await app.close(); }
+  });
+});
+
+it.each(["pending", "failed", "needs_verification", "running"])("HTTP Skip from %s retains original intent and refuses reset after reload", async (state) => {
+  const db = new Database(options.dbPath);
+  const url = "https://example.com/jobs/ready";
+  const job = db.prepare("SELECT job_id FROM jobs WHERE url=? AND tenant_id='local'").get(url) as { job_id: string };
+  db.prepare("UPDATE job_stage_states SET state=?,attempt_count=2 WHERE tenant_id='local' AND job_id=? AND stage='apply'").run(state, job.job_id);
+  db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','ApplySubmitIntended',?,'2026-10-24')").run(job.job_id, JSON.stringify({ run_id: "original-1173" }));
+  db.close();
+  const dispatch = vi.fn(async () => ({ status: "queued" }));
+  const app = buildApp({ ...options, actionDispatcher: dispatch });
+  try {
+    const skipped = await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/mark-skipped`, payload: {} });
+    expect(skipped.statusCode, skipped.body).toBe(200);
+    expect(skipped.json().message).toContain("in-flight submission may still complete");
+    const reset = await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/retry-stage`, payload: { stage: "apply", resetAttempts: true } });
+    expect(reset.statusCode, reset.body).toBe(409);
+    const loaded = await app.inject({ method: "GET", url: `/v1/jobs/${job.job_id}` });
+    expect(loaded.statusCode, loaded.body).toBe(200);
+    expect(loaded.json().applyAudit).toMatchObject({ state: "blocked", reviewEvidenceAvailable: true });
+    expect(loaded.json().applyAudit.hardBlockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "submission_intent_recorded", detail: expect.stringContaining("original-1173") }),
+      expect.objectContaining({ code: "manual_apply_skip" }),
+    ]));
+    const marked = await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/mark-applied`, payload: { reason: "Verified externally in synthetic QA" } });
+    expect(marked.statusCode, marked.body).toBe(200);
+    const resolved = await app.inject({ method: "GET", url: `/v1/jobs/${job.job_id}` });
+    expect(resolved.json().applyAudit.hardBlockers).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "submission_intent_recorded" })]));
+    expect(resolved.json().applyAudit.sources).toContainEqual(expect.objectContaining({ kind: "submit_intent", detail: expect.stringContaining("original-1173; manually recorded Applied") }));
+    expect(dispatch).not.toHaveBeenCalled();
+  } finally { await app.close(); }
+});
+
+it("HTTP Skip retains prior verification authority when the intent receipt is unavailable", async () => {
+  const db = new Database(options.dbPath);
+  const job = db.prepare("SELECT job_id FROM jobs WHERE tenant_id='local' AND url=?").get("https://example.com/jobs/ready") as { job_id: string };
+  expect(db.prepare("SELECT COUNT(*) AS n FROM job_events WHERE job_id=? AND event_type='ApplySubmitIntended'").get(job.job_id)).toEqual({ n: 0 });
+  db.prepare("UPDATE job_stage_states SET state='needs_verification' WHERE job_id=? AND stage='apply'").run(job.job_id);
+  db.close();
+  const app = buildApp(options);
+  try {
+    for (let repeat = 0; repeat < 2; repeat++) {
+      expect((await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/mark-skipped`, payload: {} })).statusCode).toBe(200);
+    }
+    const loaded = await app.inject({ method: "GET", url: `/v1/jobs/${job.job_id}` });
+    expect(loaded.json().applyAudit.hardBlockers).toContainEqual(expect.objectContaining({ code: "submission_outcome_uncertain" }));
+    const reset = await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/retry-stage`, payload: { stage: "apply" } });
+    expect(reset.statusCode, reset.body).toBe(409);
+    const marked = await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/mark-applied`, payload: {} });
+    expect(marked.statusCode, marked.body).toBe(200);
+    const resolved = await app.inject({ method: "GET", url: `/v1/jobs/${job.job_id}` });
+    expect(resolved.json().applyAudit.hardBlockers).not.toContainEqual(expect.objectContaining({ code: "submission_outcome_uncertain" }));
+  } finally { await app.close(); }
+});

@@ -1,21 +1,29 @@
-import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
 
-const E2E_DIR =
-  process.env["JOBCTRL_E2E_APP_DIR"] ??
-  path.join(os.tmpdir(), "jobctrl-e2e-current");
-const E2E_DB =
-  process.env["JOBCTRL_E2E_DB_PATH"] ?? path.join(E2E_DIR, "jobctrl.db");
-const E2E_CONFIG =
-  process.env["JOBCTRL_E2E_CONFIG_PATH"] ?? path.join(E2E_DIR, "config.json");
-const E2E_SERVICE_HOME =
-  process.env["JOBCTRL_E2E_SERVICE_HOME"] ?? path.join(E2E_DIR, "service-home");
+const { resolveE2eWebServerMode } = createRequire(import.meta.url)(
+  "./fixtures/start-web.cjs",
+) as {
+  resolveE2eWebServerMode(value: string | undefined): "preview" | "dev";
+};
+const E2E_WEB_SERVER = resolveE2eWebServerMode(
+  process.env["JOBCTRL_E2E_WEB_SERVER"],
+);
+const { configureE2eWorkspace } = createRequire(import.meta.url)(
+  "./fixtures/owned-workspace.cjs",
+) as {
+  configureE2eWorkspace(): { appDir: string };
+};
+const E2E_DIR = configureE2eWorkspace().appDir;
+const E2E_DB = process.env["JOBCTRL_E2E_DB_PATH"]!;
+const E2E_CONFIG = process.env["JOBCTRL_E2E_CONFIG_PATH"]!;
+const E2E_SERVICE_HOME = process.env["JOBCTRL_E2E_SERVICE_HOME"]!;
 const E2E_PLAYWRIGHT_BROWSERS_PATH = process.env["PLAYWRIGHT_BROWSERS_PATH"];
 
 process.env["JOBCTRL_E2E_APP_DIR"] = E2E_DIR;
@@ -30,14 +38,11 @@ const RUN_KEY = createHash("sha256")
   .update(path.resolve(E2E_DIR))
   .digest("hex")
   .slice(0, 12);
-const E2E_STATE_FILE = path.join(E2E_DIR, ".jobctrl-e2e-state.json");
-process.env["JOBCTRL_E2E_STATE_FILE"] = E2E_STATE_FILE;
-// Documentation screenshots are committed artifacts, so their run must own
-// both servers and the disposable workspace wired into them. A listening port
-// is not sufficient evidence that an existing process uses E2E_DIR.
-const ISOLATED_E2E = process.env["JOBCTRL_E2E_ISOLATED"] === "1";
-const REUSE_EXISTING_SERVERS =
-  !ISOLATED_E2E && !process.env["CI"] && process.env["JOBCTRL_DOCS_SCREENSHOTS"] !== "1";
+// Keep successful-run attachments beside the owned JUnit report. A broker
+// collecting that report's directory must retain PDFs and every-page images,
+// not just Playwright's .last-run.json in the checkout.
+const junitOutput = process.env["PLAYWRIGHT_JUNIT_OUTPUT_FILE"];
+// A listener does not prove which database it serves. Every mode owns both servers.
 const DOCS_SERVICE_ENVIRONMENT =
   process.env["JOBCTRL_DOCS_SCREENSHOTS"] === "1"
     ? {
@@ -57,12 +62,12 @@ const DOCS_SERVICE_ENVIRONMENT =
 
 export default defineConfig({
   testDir: "./tests",
-  outputDir: path.join(repoRoot, "dist", "playwright-report", RUN_KEY),
+  outputDir: junitOutput ? `${path.resolve(junitOutput)}.artifacts` : path.join(repoRoot, "dist", "playwright-report", RUN_KEY),
   fullyParallel: false,
   forbidOnly: Boolean(process.env["CI"]),
   retries: process.env["CI"] ? 2 : 0,
   workers: 1,
-  reporter: process.env["CI"] ? "github" : "list",
+  reporter: junitOutput ? [[process.env["CI"] ? "github" : "list"], ["junit"]] : process.env["CI"] ? "github" : "list",
   globalSetup: "./fixtures/global-setup.ts",
   globalTeardown: "./fixtures/global-teardown.ts",
   use: {
@@ -88,9 +93,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: ISOLATED_E2E
-        ? "corepack pnpm --filter @jobctrl/api exec tsx test/e2e-server.ts"
-        : "corepack pnpm --filter @jobctrl/api dev",
+      command: "node apps/web/e2e/fixtures/start-api.cjs",
       port: Number(API_PORT),
       cwd: repoRoot,
       env: {
@@ -105,20 +108,24 @@ export default defineConfig({
         // worker-readiness gate live against the seeded heartbeat.
         JOBCTRL_E2E_STUB_DISPATCH: "1",
       },
-      reuseExistingServer: REUSE_EXISTING_SERVERS,
+      reuseExistingServer: false,
       timeout: 120_000,
     },
     {
-      command: `corepack pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port ${WEB_PORT} --strictPort`,
+      // Build once per owned run: fresh browser contexts load the production
+      // chunks instead of repeatedly fetching Vite's development module graph.
+      command: "node apps/web/e2e/fixtures/start-web.cjs",
       port: Number(WEB_PORT),
       cwd: repoRoot,
       env: {
         ...DOCS_SERVICE_ENVIRONMENT,
+        JOBCTRL_E2E_WEB_SERVER: E2E_WEB_SERVER,
+        JOBCTRL_E2E_WEB_PORT: WEB_PORT,
         VITE_JOBCTRL_API_BASE_URL: "",
         VITE_DEV_API_PROXY_TARGET: `http://127.0.0.1:${API_PORT}`,
         VITE_JOBCTRL_HIDE_DEVTOOLS: "1",
       },
-      reuseExistingServer: REUSE_EXISTING_SERVERS,
+      reuseExistingServer: false,
       timeout: 120_000,
     },
   ],

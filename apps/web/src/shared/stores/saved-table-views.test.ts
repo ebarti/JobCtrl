@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   DEFAULT_SAVED_TABLE_VIEW_ID,
+  DISCOVERY_SOURCE_COLUMN_IDS,
+  DISCOVERY_SOURCES_TABLE_ID,
   JOBS_TABLE_COLUMN_IDS,
   JOBS_TABLE_ID,
   migrateSavedTableViewsState,
@@ -21,6 +23,7 @@ const snapshot: SavedTableViewSnapshot = {
   urlFilters: {
     q: "platform",
     stage: "apply",
+    jobStates: ["active", "deleted"],
     pageSize: 25,
     discoveredSince: "2026-07-01T00:00:00.000Z",
     scoredSince: "2026-07-01T00:00:00.000Z",
@@ -38,6 +41,99 @@ beforeEach(() => {
 });
 
 describe("saved table views store", () => {
+  it("keeps Discovery source views separate from Jobs views", () => {
+    const initial = useSavedTableViewsStore.getState();
+    const jobsViewIds = initial.views
+      .filter((view) => view.tableId === JOBS_TABLE_ID)
+      .map((view) => view.id);
+
+    expect(
+      initial.views.find(
+        (view) =>
+          view.tableId === DISCOVERY_SOURCES_TABLE_ID &&
+          view.id === DEFAULT_SAVED_TABLE_VIEW_ID,
+      ),
+    ).toMatchObject({
+      sort: { columnId: "displayName", direction: "asc" },
+      urlFilters: {
+        sourceFilters: {
+          state: {
+            operator: "contains",
+            text: "",
+            selectedValues: ["active"],
+          },
+        },
+      },
+    });
+
+    const discoveryViewId = initial.createView(
+      DISCOVERY_SOURCES_TABLE_ID,
+      "Needs review",
+      {
+        columns: {
+          order: [
+            "type",
+            ...DISCOVERY_SOURCE_COLUMN_IDS.filter(
+              (columnId) => columnId !== "type",
+            ),
+          ],
+          hidden: ["sourceId"],
+          widths: { displayName: 360 },
+        },
+        density: "compact",
+        sort: { columnId: "observedJobs", direction: "desc" },
+        urlFilters: {
+          sourceFilters: {
+            displayName: {
+              operator: "contains",
+              text: "alpha",
+              selectedValues: [],
+            },
+          },
+        },
+        gridFilters: {},
+        grouping: null,
+        colorRules: [],
+      },
+    );
+    const next = useSavedTableViewsStore.getState();
+    const discoveryView = next.views.find(
+      (view) =>
+        view.tableId === DISCOVERY_SOURCES_TABLE_ID &&
+        view.id === discoveryViewId,
+    );
+
+    expect(discoveryView).toMatchObject({
+      columns: {
+        hidden: ["sourceId"],
+        widths: { displayName: 360 },
+      },
+      density: "compact",
+      sort: { columnId: "observedJobs", direction: "desc" },
+      urlFilters: {
+        sourceFilters: {
+          displayName: {
+            operator: "contains",
+            text: "alpha",
+            selectedValues: [],
+          },
+        },
+      },
+    });
+    expect(discoveryView?.columns.order.slice(0, 2)).toEqual([
+      "type",
+      "displayName",
+    ]);
+    expect(
+      next.views
+        .filter((view) => view.tableId === JOBS_TABLE_ID)
+        .map((view) => view.id),
+    ).toEqual(jobsViewIds);
+    expect(next.activeViewIdByTable[JOBS_TABLE_ID]).toBe(
+      DEFAULT_SAVED_TABLE_VIEW_ID,
+    );
+  });
+
   it("migrates persisted views by dropping unknown columns and reconstructing Default", () => {
     const normalized = normalizeSavedTableViewsState({
       views: [
@@ -54,6 +150,7 @@ describe("saved table views store", () => {
           urlFilters: {
             stage: "apply",
             deleted: "closed",
+            jobStates: ["hidden", "invalid", "active", "hidden"],
             discoveredSince: "2026-07-01T00:00:00.000Z",
             scoredSince: "2026-07-01T00:00:00.000Z",
           },
@@ -111,8 +208,13 @@ describe("saved table views store", () => {
     });
     expect(defaultView?.columns.hidden).toEqual([
       "source",
+      "compensation_min_eur",
+      "compensation_max_eur",
+      "compensation_market",
+      "compensation_confidence",
       "compensation_warnings",
       "resume_template",
+      "discovered_at",
     ]);
     expect(legacy).toBeDefined();
     expect(legacy?.columns.order[0]).toBe("select");
@@ -128,6 +230,7 @@ describe("saved table views store", () => {
     expect(legacy?.urlFilters).toMatchObject({
       stage: "apply",
       deleted: "closed",
+      jobStates: ["active", "hidden"],
       discoveredSince: "2026-07-01T00:00:00.000Z",
       scoredSince: "2026-07-01T00:00:00.000Z",
     });
@@ -184,7 +287,16 @@ describe("saved table views store", () => {
     expect(
       normalized.views.find((view) => view.id === DEFAULT_SAVED_TABLE_VIEW_ID)
         ?.columns.hidden,
-    ).toEqual(["source", "compensation_warnings", "resume_template"]);
+    ).toEqual([
+      "source",
+      "compensation_min_eur",
+      "compensation_max_eur",
+      "compensation_market",
+      "compensation_confidence",
+      "compensation_warnings",
+      "resume_template",
+      "discovered_at",
+    ]);
   });
 
   it("uses the current hidden-column baseline for a fresh Default presentation", () => {
@@ -192,7 +304,16 @@ describe("saved table views store", () => {
 
     expect(
       normalized.presentationByTable[JOBS_TABLE_ID]?.columns.hidden,
-    ).toEqual(["source", "compensation_warnings", "resume_template"]);
+    ).toEqual([
+      "source",
+      "compensation_min_eur",
+      "compensation_max_eur",
+      "compensation_market",
+      "compensation_confidence",
+      "compensation_warnings",
+      "resume_template",
+      "discovered_at",
+    ]);
   });
 
   it("migrates the version-1 Default hidden baseline without losing its order", () => {
@@ -239,6 +360,90 @@ describe("saved table views store", () => {
     );
   });
 
+  it("updates the untouched version-2 Default but preserves explicit column choices", () => {
+    const state = {
+      activeViewIdByTable: { jobs: "default" },
+      presentationByTable: {
+        jobs: {
+          columns: {
+            order: [...JOBS_TABLE_COLUMN_IDS],
+            hidden: ["source", "compensation_warnings", "resume_template"],
+            widths: {},
+          },
+          density: "comfy",
+          grouping: null,
+          colorRules: [],
+        },
+      },
+    };
+    const migrated = normalizeSavedTableViewsState(
+      migrateSavedTableViewsState(state, 2),
+    );
+    expect(migrated.presentationByTable.jobs?.columns.hidden).toContain(
+      "compensation_market",
+    );
+    expect(migrated.presentationByTable.jobs?.density).toBe("comfy");
+    for (const custom of [
+      { ...state, activeViewIdByTable: { jobs: "my-view" } },
+      {
+        ...state,
+        presentationByTable: {
+          jobs: {
+            ...state.presentationByTable.jobs,
+            columns: { ...state.presentationByTable.jobs.columns, hidden: [] },
+          },
+        },
+      },
+      {
+        ...state,
+        presentationByTable: {
+          jobs: {
+            ...state.presentationByTable.jobs,
+            columns: {
+              ...state.presentationByTable.jobs.columns,
+              widths: { title: 340 },
+            },
+          },
+        },
+      },
+    ]) {
+      expect(migrateSavedTableViewsState(custom, 2)).toBe(custom);
+    }
+    expect(migrateSavedTableViewsState(state, 3)).toBe(state);
+  });
+
+  it("adds Job state to an untouched version-3 Default column order", () => {
+    const legacyOrder = JOBS_TABLE_COLUMN_IDS.filter(
+      (columnId) => columnId !== "job_state",
+    );
+    const state = {
+      activeViewIdByTable: { jobs: "default" },
+      presentationByTable: {
+        jobs: {
+          columns: {
+            order: legacyOrder,
+            hidden: [],
+            widths: {},
+          },
+          density: null,
+          grouping: null,
+          colorRules: [],
+        },
+      },
+    };
+
+    const migrated = normalizeSavedTableViewsState(
+      migrateSavedTableViewsState(state, 3),
+    );
+
+    expect(migrated.presentationByTable.jobs?.columns.order).toEqual(
+      JOBS_TABLE_COLUMN_IDS,
+    );
+    expect(migrated.presentationByTable.jobs?.columns.hidden).not.toContain(
+      "job_state",
+    );
+  });
+
   it("keeps templates unchanged until an explicit save/update action", () => {
     const store = useSavedTableViewsStore.getState();
     const createdId = store.createView(JOBS_TABLE_ID, "Apply review", snapshot);
@@ -262,6 +467,7 @@ describe("saved table views store", () => {
         .views.find((view) => view.id === createdId)?.urlFilters,
     ).toMatchObject({
       discoveredSince: "2026-07-01T00:00:00.000Z",
+      jobStates: ["active", "deleted"],
       scoredSince: "2026-07-01T00:00:00.000Z",
     });
 

@@ -1,3 +1,4 @@
+import { refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
 import { readFile } from "node:fs/promises";
 
 import { test, expect, type Locator } from "@playwright/test";
@@ -16,6 +17,10 @@ import {
   removeClaudeProviderBatch,
   removeGoogleProviderBatch,
 } from "../../src/contexts/profile/lib/provider-credential-plans.js";
+
+test.beforeEach(() => {
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") refreshE2eWorkerHeartbeat();
+});
 
 test("Profile edit + Plate baseline editor: edit a field, save, preview HTML refreshes with a new cache key", async ({
   page,
@@ -238,10 +243,11 @@ test("Plate baseline editor downloads the current unsaved document as a PDF", as
   await download.saveAs(pdfPath);
   const pdf = await readFile(pdfPath);
   expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
-  const pdfDocument = await getDocument({
+  const loadingTask = getDocument({
     data: new Uint8Array(pdf),
     verbosity: 0,
-  }).promise;
+  });
+  const pdfDocument = await loadingTask.promise;
   try {
     expect(pdfDocument.numPages).toBe(1);
     const pdfPage = await pdfDocument.getPage(1);
@@ -256,7 +262,7 @@ test("Plate baseline editor downloads the current unsaved document as a PDF", as
       .join(" ");
     expect(exportedText).toContain("Live browser PDF export proof");
   } finally {
-    await pdfDocument.destroy();
+    await loadingTask.destroy();
   }
 });
 
@@ -301,7 +307,7 @@ test("Credential notices keep a real, contained layout box at mobile width", asy
   for (const expected of [
     {
       scenario: "available" as const,
-      copy: "Claude and Google values saved here stay on this Mac in Keychain.",
+      copy: "Claude and Google values saved here stay in macOS Keychain.",
       display: "block",
       guidance: false,
       privacy: true,
@@ -315,7 +321,7 @@ test("Credential notices keep a real, contained layout box at mobile width", asy
     },
     {
       scenario: "inspection_failed" as const,
-      copy: "JobCtrl could not safely inspect Keychain.",
+      copy: "JobCtrl could not safely inspect macOS Keychain.",
       display: "block",
       guidance: false,
       privacy: false,
@@ -409,7 +415,7 @@ test("Guided Claude and Google setup can be removed through confirmed provider b
       ...credential,
       configured: configuredKeys.has(credential.key),
       effectiveSource: configuredKeys.has(credential.key)
-        ? ("keychain" as const)
+        ? ("native_store" as const)
         : ("absent" as const),
     })),
   });
@@ -528,7 +534,7 @@ test("Model Selection requires a ready provider and saves one provider preferenc
 
 test.describe("structured profile persistence", () => {
   test.skip(process.env["JOBCTRL_E2E_ISOLATED"] !== "1", "Requires the owned, no-subprocess API fixture");
-  const apiOrigin = `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"]}`;
+  const apiOrigin = `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"] ?? "8767"}`;
 
   async function selectPlateFieldContents(field: Locator): Promise<void> {
     // Deliver the native range change to Slate before the next keyboard edit.

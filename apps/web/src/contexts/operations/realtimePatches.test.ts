@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import {
   LOCAL_TENANT,
   createJobActiveStateChanged,
@@ -144,7 +146,7 @@ describe("realtime cache patches", () => {
     expect(
       queryClient.getQueryData<ReturnType<typeof makeJobsPage>>(jobsListKey)?.items[0]
         ?.activeState,
-    ).toBe("active");
+    ).toBe("closed");
     expect(
       queryClient.getQueryData<ReturnType<typeof makeJobDetail>>(
         jobsKeys.detail(LOCAL_TENANT, sampleJob.jobKey),

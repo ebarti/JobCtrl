@@ -29,7 +29,7 @@ from jobctrl.domain.materials.use_cases import (
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 from jobctrl.materials import activities as activities_module
 from jobctrl.materials.activities import TailorJobActivityInput
 from jobctrl.scoring import tailor as tailor_module
@@ -40,28 +40,39 @@ _JOB_ID = canonical_job_id("30000000-0000-4000-8000-000000000001")
 
 
 @pytest.fixture()
-def batch_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Real activity/selector/state with a separate connection per worker."""
+def batch_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog):
+    """Real activity/selector/state using the production thread-local connection."""
     from jobctrl import config, database
+    from jobctrl.infrastructure.events import get_default_publisher
+    from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
     from jobctrl.pipeline import runner
+    from jobctrl.scoring import cover_letter
 
     db_path = tmp_path / "batch.db"
     database.init_db(db_path)
-    database.close_connection()
-    local = threading.local()
-    connections = []
+    database.close_connection(db_path)
+    production_get_connection = database.get_connection
+    monkeypatch.setattr(database, "DB_PATH", db_path)
 
-    def connect():
-        if not hasattr(local, "connection"):
-            local.connection = sqlite3.connect(db_path, check_same_thread=False)
-            local.connection.row_factory = sqlite3.Row
-            connections.append(local.connection)
-        return local.connection
+    def connect(*args, **kwargs):
+        return production_get_connection(*args, **kwargs)
 
     monkeypatch.setattr(config, "APP_DIR", tmp_path)
     monkeypatch.setattr(config, "DB_PATH", db_path)
-    for module in (database, runner, tailor_module):
+    for module in (database, runner, tailor_module, cover_letter):
         monkeypatch.setattr(module, "get_connection", connect)
+    bus = get_default_publisher()
+    subscriptions = [
+        ProjectionBuilder(conn_factory=production_get_connection, tenant_id=tenant).subscribe_to(bus)
+        for tenant in (LOCAL_TENANT, _TENANT_A)
+    ]
+    projection_events = []
+
+    def observe(event):
+        conn = production_get_connection()
+        projection_events.append((str(event.tenant_id), event.event_type, conn is connect(), conn.in_transaction))
+
+    subscriptions.append(bus.subscribe(None, observe))
     monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
     monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
     snapshot = _snapshot(_TENANT_A)
@@ -76,11 +87,31 @@ def batch_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         lambda: SimpleNamespace(load_snapshot=load_snapshot),
     )
     yield SimpleNamespace(
-        connect=connect, snapshots=snapshots, snapshot=snapshot,
-        app_dir=str(tmp_path), db_path=str(db_path),
+        connect=connect,
+        snapshots=snapshots,
+        snapshot=snapshot,
+        app_dir=str(tmp_path),
+        db_path=str(db_path),
+        projection_events=projection_events,
     )
-    for connection in connections:
-        connection.close()
+    for subscription in subscriptions:
+        subscription.unsubscribe()
+    database.close_connection(db_path)
+    assert not [
+        record
+        for phase in ("setup", "call")
+        for record in caplog.get_records(phase)
+        if "ProjectionBuilder failed to refresh" in record.getMessage()
+    ]
+
+
+def _direct_with_connection_cleanup(fn, *args, **kwargs):
+    from jobctrl.database import close_thread_connections
+
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        close_thread_connections()
 
 
 @pytest.mark.asyncio
@@ -101,11 +132,16 @@ async def test_tailor_activity_routes_share_canonical_tenant_state(batch_runtime
     output = await ActivityEnvironment().run(
         activities_module.tailor_activity,
         activities_module.TailorActivityInput(
-            tenant_id=str(_TENANT_A), expected_app_dir=batch_runtime.app_dir,
-            expected_db_path=batch_runtime.db_path, workers=2, limit=2,
-            job_ids=job_ids if selected else (), validation_mode="lenient",
-            tailor_models=("codex:fixture",), tailor_judge_model="codex:judge",
-            tailor_judge_min_score=0.91, workflow_id="batch-owner",
+            tenant_id=str(_TENANT_A),
+            expected_app_dir=batch_runtime.app_dir,
+            expected_db_path=batch_runtime.db_path,
+            workers=2,
+            limit=2,
+            job_ids=job_ids if selected else (),
+            validation_mode="lenient",
+            tailor_models=("codex:fixture",),
+            tailor_judge_model="codex:judge",
+            workflow_id="batch-owner",
         ),
     )
     assert output.status == "ok"
@@ -117,7 +153,6 @@ async def test_tailor_activity_routes_share_canonical_tenant_state(batch_runtime
         assert mode == "lenient"
         assert kwargs["llm_policy"].candidate_models == ("codex:fixture",)
         assert kwargs["llm_policy"].judge_model == "codex:judge"
-        assert kwargs["llm_policy"].judge_min_score == 0.91
         assert kwargs["audit_execution_id"] == "batch-owner"
         assert callable(kwargs["commit_guard"])
     if not selected:
@@ -128,10 +163,13 @@ async def test_tailor_activity_routes_share_canonical_tenant_state(batch_runtime
         (str(_TENANT_A),),
     ).fetchall()
     assert sorted(tuple(row) for row in states) == [("pending", 0), ("succeeded", 1), ("succeeded", 1)]
-    assert conn.execute(
-        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND stage = 'tailor' AND event_type = 'StageStarted'",
-        (str(_TENANT_B),),
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND stage = 'tailor' AND event_type = 'StageStarted'",
+            (str(_TENANT_B),),
+        ).fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -178,13 +216,18 @@ async def test_unscoped_tailor_activity_cancellation_stops_dispatch_and_preserve
 
     monkeypatch.setattr(tailor_module, "_tailor_one_job", generate)
     monkeypatch.setattr(tailor_module, "tailor_job_by_id", run_job)
-    task = asyncio.create_task(ActivityEnvironment().run(
-        activities_module.tailor_activity,
-        activities_module.TailorActivityInput(
-            tenant_id=str(_TENANT_A), expected_app_dir=batch_runtime.app_dir,
-            expected_db_path=batch_runtime.db_path, workers=2, workflow_id="old-owner",
-        ),
-    ))
+    task = asyncio.create_task(
+        ActivityEnvironment().run(
+            activities_module.tailor_activity,
+            activities_module.TailorActivityInput(
+                tenant_id=str(_TENANT_A),
+                expected_app_dir=batch_runtime.app_dir,
+                expected_db_path=batch_runtime.db_path,
+                workers=2,
+                workflow_id="old-owner",
+            ),
+        )
+    )
     try:
         await asyncio.wait_for(started.wait(), 5)
         task.cancel()
@@ -209,14 +252,20 @@ async def test_unscoped_tailor_activity_cancellation_stops_dispatch_and_preserve
         "SELECT metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
         (str(_TENANT_A), successor),
     ).fetchone()[0] == json.dumps({"activityOwner": "successor"})
-    assert conn.execute(
-        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND stage = 'tailor' AND event_type = 'StageStarted'",
-        (str(_TENANT_A),),
-    ).fetchone()[0] == 2
-    assert conn.execute(
-        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND stage = 'tailor' AND event_type IN ('StageCompleted', 'StageFailed')",
-        (str(_TENANT_A),),
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND stage = 'tailor' AND event_type = 'StageStarted'",
+            (str(_TENANT_A),),
+        ).fetchone()[0]
+        == 2
+    )
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND stage = 'tailor' AND event_type IN ('StageCompleted', 'StageFailed')",
+            (str(_TENANT_A),),
+        ).fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -235,9 +284,12 @@ async def test_tailor_activity_keeps_aggregate_and_partial_failure_adapters(batc
     invocation = ActivityEnvironment().run(
         activities_module.tailor_activity,
         activities_module.TailorActivityInput(
-            tenant_id=str(_TENANT_A), expected_app_dir=batch_runtime.app_dir,
-            expected_db_path=batch_runtime.db_path, workers=2,
-            job_ids=job_ids if selected else (), workflow_id="mixed-owner",
+            tenant_id=str(_TENANT_A),
+            expected_app_dir=batch_runtime.app_dir,
+            expected_db_path=batch_runtime.db_path,
+            workers=2,
+            job_ids=job_ids if selected else (),
+            workflow_id="mixed-owner",
         ),
     )
     if selected:
@@ -249,10 +301,14 @@ async def test_tailor_activity_keeps_aggregate_and_partial_failure_adapters(batc
     else:
         with pytest.raises(ApplicationError, match="tailoring error"):
             await invocation
-    states = batch_runtime.connect().execute(
-        "SELECT state, attempt_count FROM job_stage_states WHERE tenant_id = ? AND stage = 'tailor' ORDER BY job_id",
-        (str(_TENANT_A),),
-    ).fetchall()
+    states = (
+        batch_runtime.connect()
+        .execute(
+            "SELECT state, attempt_count FROM job_stage_states WHERE tenant_id = ? AND stage = 'tailor' ORDER BY job_id",
+            (str(_TENANT_A),),
+        )
+        .fetchall()
+    )
     assert [tuple(row) for row in states] == [("succeeded", 1), ("failed", 1)]
 
 
@@ -260,13 +316,19 @@ async def test_tailor_activity_keeps_aggregate_and_partial_failure_adapters(batc
 @pytest.mark.parametrize("workers", [1, 2])
 @pytest.mark.parametrize("failure", ["before_claim", "successor_fence"])
 async def test_unscoped_tailor_activity_finishes_siblings_before_escalating_escaped_error(
-    batch_runtime, monkeypatch, caplog, workers, failure,
+    batch_runtime,
+    monkeypatch,
+    caplog,
+    workers,
+    failure,
 ):
     conn = batch_runtime.connect()
     job_ids = tuple(canonical_job_id(f"30000000-0000-4000-8000-{i:012d}") for i in range(1, 6))
     for job_id in job_ids:
         _seed_job(
-            conn, tenant_id=_TENANT_A, job_id=job_id,
+            conn,
+            tenant_id=_TENANT_A,
+            job_id=job_id,
             url=f"https://example.test/{job_id}",
             fit_score=10 if job_id == _JOB_ID else 8,
         )
@@ -285,8 +347,7 @@ async def test_unscoped_tailor_activity_finishes_siblings_before_escalating_esca
         if job["job_id"] == str(_JOB_ID):
             current = batch_runtime.connect()
             current.execute(
-                "UPDATE job_stage_states SET metadata_json = ? "
-                "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+                "UPDATE job_stage_states SET metadata_json = ? WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
                 (json.dumps({"activityOwner": "successor"}), str(_TENANT_A), str(_JOB_ID)),
             )
             current.commit()
@@ -300,8 +361,10 @@ async def test_unscoped_tailor_activity_finishes_siblings_before_escalating_esca
         await ActivityEnvironment().run(
             activities_module.tailor_activity,
             activities_module.TailorActivityInput(
-                tenant_id=str(_TENANT_A), expected_app_dir=batch_runtime.app_dir,
-                expected_db_path=batch_runtime.db_path, workers=workers,
+                tenant_id=str(_TENANT_A),
+                expected_app_dir=batch_runtime.app_dir,
+                expected_db_path=batch_runtime.db_path,
+                workers=workers,
                 workflow_id="cohort-owner",
             ),
         )
@@ -309,10 +372,7 @@ async def test_unscoped_tailor_activity_finishes_siblings_before_escalating_esca
     # Assert durable sibling completion before checking the aggregate error:
     # a fail-fast executor leaves the undispatched cohort pending here.
     assert set(attempted) == set(job_ids)
-    assert set(generated) == {
-        str(job_id) for job_id in job_ids
-        if failure == "successor_fence" or job_id != _JOB_ID
-    }
+    assert set(generated) == {str(job_id) for job_id in job_ids if failure == "successor_fence" or job_id != _JOB_ID}
     states = conn.execute(
         "SELECT job_id, state, attempt_count, metadata_json FROM job_stage_states "
         "WHERE tenant_id = ? AND stage = 'tailor' ORDER BY job_id",
@@ -333,11 +393,13 @@ async def test_unscoped_tailor_activity_finishes_siblings_before_escalating_esca
         assert states[0]["state"] == "pending"
     assert "1 tailoring error(s), 0 failed quality gate(s)" in str(raised.value)
     escaped_errors = [
-        record.getMessage() for record in caplog.records
+        record.getMessage()
+        for record in caplog.records
         if record.name == tailor_module.__name__ and record.levelname == "ERROR"
     ]
     cause = (
-        "synthetic target read failure" if failure == "before_claim"
+        "synthetic target read failure"
+        if failure == "before_claim"
         else "tailor activity no longer owns artifact persistence"
     )
     assert escaped_errors == [f"Tailoring failed for job {_JOB_ID}: {cause}"]
@@ -345,7 +407,9 @@ async def test_unscoped_tailor_activity_finishes_siblings_before_escalating_esca
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel_after_commit", [False, True])
-async def test_unscoped_tailor_reuses_commit_before_crash_or_cancellation(batch_runtime, monkeypatch, cancel_after_commit):
+async def test_unscoped_tailor_reuses_commit_before_crash_or_cancellation(
+    batch_runtime, monkeypatch, cancel_after_commit
+):
     from jobctrl.infrastructure.preparation_recovery import CancelPreparationStateInput, cancel_preparation_state_rows
 
     conn = batch_runtime.connect()
@@ -380,15 +444,23 @@ async def test_unscoped_tailor_reuses_commit_before_crash_or_cancellation(batch_
     monkeypatch.setattr(tailor_module, "_tailor_one_job", commit_then_fail)
     monkeypatch.setattr(tailor_module, "tailor_job_by_id", run_job)
     payload = activities_module.TailorActivityInput(
-        tenant_id=str(_TENANT_A), expected_app_dir=batch_runtime.app_dir,
-        expected_db_path=batch_runtime.db_path, workflow_id="committed-owner",
+        tenant_id=str(_TENANT_A),
+        expected_app_dir=batch_runtime.app_dir,
+        expected_db_path=batch_runtime.db_path,
+        workflow_id="committed-owner",
     )
     if cancel_after_commit:
         with pytest.raises(ApplicationError, match="canceled"):
             await ActivityEnvironment().run(activities_module.tailor_activity, payload)
-        result = cancel_preparation_state_rows(conn, CancelPreparationStateInput(
-            tenant_id=str(_TENANT_A), workflow_id="committed-owner", stage="tailor", job_ids=(str(_JOB_ID),),
-        ))
+        result = cancel_preparation_state_rows(
+            conn,
+            CancelPreparationStateInput(
+                tenant_id=str(_TENANT_A),
+                workflow_id="committed-owner",
+                stage="tailor",
+                job_ids=(str(_JOB_ID),),
+            ),
+        )
         assert result.restored == 1
     else:
         output = await ActivityEnvironment().run(activities_module.tailor_activity, payload)
@@ -396,10 +468,13 @@ async def test_unscoped_tailor_reuses_commit_before_crash_or_cancellation(batch_
     await ActivityEnvironment().run(activities_module.tailor_activity, payload)
     assert calls == [str(_JOB_ID)]
     assert artifact.read_text() == "Synthetic accepted resume"
-    assert conn.execute(
-        "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
-        (str(_TENANT_A), str(_JOB_ID)),
-    ).fetchone()[0] == "succeeded"
+    assert (
+        conn.execute(
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+            (str(_TENANT_A), str(_JOB_ID)),
+        ).fetchone()[0]
+        == "succeeded"
+    )
 
 
 @pytest.fixture()
@@ -407,7 +482,7 @@ def conn() -> sqlite3.Connection:
     candidate = sqlite3.connect(":memory:")
     candidate.row_factory = sqlite3.Row
     candidate.execute("PRAGMA foreign_keys = ON")
-    create_exact_v7_schema(candidate)
+    create_exact_v14_schema(candidate)
     return candidate
 
 
@@ -499,6 +574,9 @@ def _seed_job(
         """,
         (str(tenant_id), str(job_id)),
     )
+    from .availability_fixture import seed_fresh_availability
+
+    seed_fresh_availability(conn, str(job_id), str(tenant_id))
     conn.commit()
 
 
@@ -522,9 +600,7 @@ def _snapshot(tenant_id: TenantId) -> ProfileSnapshot:
             {
                 "personal": {"full_name": "Candidate"},
                 "resume": {
-                    "executive_profile": {
-                        "baseline_text": "Python platform engineer."
-                    },
+                    "executive_profile": {"baseline_text": "Python platform engineer."},
                     "experience_entries": [
                         {
                             "id": "platform",
@@ -534,9 +610,7 @@ def _snapshot(tenant_id: TenantId) -> ProfileSnapshot:
                         }
                     ],
                     "education_entries": [],
-                    "skill_categories": [
-                        {"id": "skills", "label": "Skills", "items": ["Python"]}
-                    ],
+                    "skill_categories": [{"id": "skills", "label": "Skills", "items": ["Python"]}],
                 },
             },
         )
@@ -558,9 +632,7 @@ class _FakeAnalyzeUseCase:
                 tenant_id=tenant_id,
                 job_id=canonical_job_id(str(job["job_id"])),
                 generation=1,
-                snapshot_hash=compute_snapshot_hash(
-                    str(job.get("full_description") or "")
-                ),
+                snapshot_hash=compute_snapshot_hash(str(job.get("full_description") or "")),
                 canonical=analysis,
                 sub_analyses=(),
                 failures=(),
@@ -576,6 +648,9 @@ class _CancelingTailorLlm:
     def __init__(self, cancel_event: threading.Event) -> None:
         self._cancel_event = cancel_event
         self.calls = 0
+
+    def chat_json(self, *args, **kwargs):
+        return json.loads(self.chat(*args, **kwargs))
 
     def chat(self, *_args, **_kwargs) -> str:
         self.calls += 1
@@ -614,6 +689,16 @@ def test_tailor_default_runner_fences_cancellation_before_material_or_terminal_w
         lambda **_kwargs: _FakeAnalyzeUseCase(),
     )
     monkeypatch.setattr(tailor_module, "_build_voice_port", lambda: None)
+    from tests.determination_fakes import JobInterpreter
+    from tests.compensation_fakes import dependencies
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.enrichment.interpretation.PersistedJobInterpreter", lambda *a, **kw: JobInterpreter()
+    )
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.determinations.determination_dependencies",
+        lambda connection, **kw: dependencies(connection, llm, kw["lane"], tenant_id=str(kw["tenant_id"])),
+    )
 
     with pytest.raises(RuntimeError, match="tailor activity canceled before persistence"):
         tailor_module.tailor_job_by_id(
@@ -628,19 +713,19 @@ def test_tailor_default_runner_fences_cancellation_before_material_or_terminal_w
         )
 
     assert llm.calls == 1
-    assert conn.execute(
-        "SELECT COUNT(*) FROM job_materials WHERE tenant_id = ? AND job_id = ?",
-        (str(_TENANT_A), str(_JOB_ID)),
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_materials WHERE tenant_id = ? AND job_id = ?",
+            (str(_TENANT_A), str(_JOB_ID)),
+        ).fetchone()[0]
+        == 0
+    )
     state = conn.execute(
-        "SELECT state, metadata_json FROM job_stage_states "
-        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
         (str(_TENANT_A), str(_JOB_ID)),
     ).fetchone()
     assert state["state"] == "running"
-    assert json.loads(state["metadata_json"])["activityOwner"] == (
-        "workflow-run-canceled"
-    )
+    assert json.loads(state["metadata_json"])["activityOwner"] == ("workflow-run-canceled")
     terminal_events = conn.execute(
         "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? "
         "AND stage = 'tailor' AND event_type IN ('StageCompleted', 'StageFailed')",
@@ -707,14 +792,17 @@ def test_tailor_job_by_id_is_tenant_scoped_and_writes_canonical_state(
         2,
         '{"activityOwner":"cover-run-2"}',
     )
-    assert conn.execute(
-        """
+    assert (
+        conn.execute(
+            """
         SELECT COUNT(*) FROM job_events
          WHERE tenant_id = ? AND job_id = ?
            AND stage = 'cover' AND event_type = 'StageReset'
         """,
-        (str(_TENANT_A), str(_JOB_ID)),
-    ).fetchone()[0] == 0
+            (str(_TENANT_A), str(_JOB_ID)),
+        ).fetchone()[0]
+        == 0
+    )
     other_tenant_state = conn.execute(
         """
         SELECT state FROM job_stage_states
@@ -738,11 +826,16 @@ def test_tailor_job_by_id_is_tenant_scoped_and_writes_canonical_state(
     }
 
 
+@pytest.mark.parametrize("cover_enabled", [False, True])
 def test_tailor_job_by_id_resets_tailor_owned_cover_block_exactly_once(
     conn: sqlite3.Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    cover_enabled: bool,
 ) -> None:
+    setting = tmp_path / "config.json"
+    setting.write_text(json.dumps({"cover_letter_generation": cover_enabled}))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(setting))
     _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/recovered-tailor")
     tailor_module.set_stage_state(
         conn,
@@ -755,11 +848,13 @@ def test_tailor_job_by_id_resets_tailor_owned_cover_block_exactly_once(
         validate_transition=False,
     )
     conn.commit()
-    assert conn.execute(
-        "SELECT state FROM job_stage_states "
-        "WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
-        (str(_TENANT_A), str(_JOB_ID)),
-    ).fetchone()[0] == "blocked"
+    assert (
+        conn.execute(
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
+            (str(_TENANT_A), str(_JOB_ID)),
+        ).fetchone()[0]
+        == "blocked"
+    )
 
     monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
     monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
@@ -779,11 +874,11 @@ def test_tailor_job_by_id_resets_tailor_owned_cover_block_exactly_once(
 
     assert result["status"] == "approved"
     cover_state = conn.execute(
-        "SELECT state, error_code FROM job_stage_states "
-        "WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
+        "SELECT state, error_code FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
         (str(_TENANT_A), str(_JOB_ID)),
     ).fetchone()
-    assert tuple(cover_state) == ("pending", None)
+    assert tuple(cover_state) == (("pending", None) if cover_enabled else
+                                  ("skipped", "COVER_LETTER_GENERATION_DISABLED"))
     reset_events = conn.execute(
         """
         SELECT payload_json FROM job_events
@@ -999,11 +1094,13 @@ def test_retailor_job_replay_reuses_generation_committed_by_same_activity_owner(
         WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
         """,
         (
-            json.dumps({
-                "activityOwner": "workflow-run-owned",
-                "retailor": True,
-                "priorApprovedGeneration": 2,
-            }),
+            json.dumps(
+                {
+                    "activityOwner": "workflow-run-owned",
+                    "retailor": True,
+                    "priorApprovedGeneration": 2,
+                }
+            ),
             str(_TENANT_A),
             str(_JOB_ID),
         ),
@@ -1025,17 +1122,25 @@ def test_retailor_job_replay_reuses_generation_committed_by_same_activity_owner(
 
     assert result["status"] == "already_done"
     assert result["materials"] is approved
-    assert conn.execute(
-        "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
-        (str(_TENANT_A), str(_JOB_ID)),
-    ).fetchone()["state"] == "succeeded"
+    assert (
+        conn.execute(
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+            (str(_TENANT_A), str(_JOB_ID)),
+        ).fetchone()["state"]
+        == "succeeded"
+    )
 
 
+@pytest.mark.parametrize("cover_enabled", [False, True])
 def test_tailor_job_by_id_enforces_score_boundary_before_generation(
     conn: sqlite3.Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    cover_enabled: bool,
 ) -> None:
+    setting = tmp_path / "config.json"
+    setting.write_text(json.dumps({"cover_letter_generation": cover_enabled}))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(setting))
     _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/low-fit", fit_score=6)
     calls: list[str] = []
 
@@ -1095,10 +1200,12 @@ def test_tailor_job_by_id_enforces_score_boundary_before_generation(
     ).fetchall()
     assert {row["stage"]: row["state"] for row in restored_rows} == {
         "apply": "pending",
-        "cover": "pending",
+        "cover": "pending" if cover_enabled else "skipped",
         "tailor": "succeeded",
     }
-    assert {row["error_code"] for row in restored_rows} == {None}
+    assert {row["error_code"] for row in restored_rows} == (
+        {None} if cover_enabled else {None, "COVER_LETTER_GENERATION_DISABLED"}
+    )
 
 
 def test_tailor_job_by_id_skips_blocked_scores_without_generation(
@@ -1143,7 +1250,7 @@ def test_tailor_job_by_id_skips_blocked_scores_without_generation(
     }
 
 
-def test_tailor_job_by_id_generates_for_historical_salary_only_block(
+def test_tailor_job_by_id_generates_for_model_advisory_eligibility(
     conn: sqlite3.Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1153,8 +1260,8 @@ def test_tailor_job_by_id_generates_for_historical_salary_only_block(
         tenant_id=_TENANT_A,
         url="https://example.com/salary-advisory",
         fit_score=9,
-        eligibility_status="blocked",
-        hard_blockers=["Base salary is below the preferred compensation range."],
+        eligibility_status="warning",
+        hard_blockers=[],
     )
     conn.execute(
         """
@@ -1187,6 +1294,37 @@ def test_tailor_job_by_id_generates_for_historical_salary_only_block(
 
     assert result["status"] == "approved"
     assert calls == [str(_JOB_ID)]
+
+
+@pytest.mark.parametrize("grade,manual_override", [(8, False), (6, True)])
+def test_per_job_tailor_hands_canonical_grade_to_resume_review(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    grade: int,
+    manual_override: bool,
+) -> None:
+    from jobctrl.domain.materials.adversarial import should_run_adversarial_review
+
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.test/current-grade", fit_score=grade)
+    _seed_job(conn, tenant_id=_TENANT_B, url="https://example.test/other-grade", fit_score=10)
+    conn.execute("UPDATE jobs SET fit_score = 1")
+    conn.commit()
+    calls = []
+
+    def generate(job, *_args, **_kwargs):
+        calls.append((job["fit_score"], job["score_version"], should_run_adversarial_review(job)))
+        return _fake_approved_result(job)
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", generate)
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID, tenant_id=_TENANT_A, snapshot=_snapshot(_TENANT_A),
+        llm_model=None, pdf_renderer=object(), allow_low_fit_override=manual_override,
+    )
+    assert result["status"] == "approved"
+    assert calls == [(grade, 1, grade >= 8)]
 
 
 @pytest.mark.parametrize(
@@ -1289,9 +1427,7 @@ def test_tailor_job_by_id_rejects_inactive_or_quarantined_postings(
     monkeypatch.setattr(
         tailor_module,
         "_tailor_one_job",
-        lambda *_args, **_kwargs: pytest.fail(
-            "inactive or quarantined posting reached generation"
-        ),
+        lambda *_args, **_kwargs: pytest.fail("inactive or quarantined posting reached generation"),
     )
 
     result = tailor_module.tailor_job_by_id(
@@ -1421,7 +1557,7 @@ def test_tailor_job_by_id_allows_temporal_retry_to_reenter_generation(
     assert tuple(state) == ("succeeded", 2)
 
 
-def test_tailor_job_by_id_keeps_inner_retry_exhaustion_outer_retryable(
+def test_tailor_job_by_id_keeps_inner_content_exhaustion_terminal_but_explicitly_retryable(
     conn: sqlite3.Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1460,7 +1596,7 @@ def test_tailor_job_by_id_keeps_inner_retry_exhaustion_outer_retryable(
     assert tuple(state) == (
         "failed",
         1,
-        1,
+        0,
         "jobctrl retry tailor https://example.com/inner-retries",
     )
     event_payload = json.loads(
@@ -1483,7 +1619,7 @@ def test_tailor_job_by_id_keeps_inner_retry_exhaustion_outer_retryable(
         "attempts": 1,
         "generationAttempts": 4,
         "generationStatus": "exhausted_retries",
-        "retryable": True,
+        "retryable": False,
     }
 
 
@@ -1631,10 +1767,13 @@ def test_tailor_job_by_id_does_not_reenter_generation_after_exhaustion(
         (str(_TENANT_A), str(_JOB_ID)),
     ).fetchone()
     assert tuple(state) == ("exhausted", 5, 0)
-    assert conn.execute(
-        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
-        (str(_TENANT_A), str(_JOB_ID)),
-    ).fetchone()[0] == prior_events
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+            (str(_TENANT_A), str(_JOB_ID)),
+        ).fetchone()[0]
+        == prior_events
+    )
 
 
 def test_legacy_tailor_batch_counts_all_failures_and_exhausts_durable_budget(
@@ -1689,7 +1828,7 @@ def test_legacy_tailor_batch_counts_all_failures_and_exhausts_durable_budget(
             "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
-    ) == ("failed", 1, 1)
+    ) == ("failed", 1, 0)
 
     conn.execute(
         "UPDATE job_stage_states SET state = 'failed', attempt_count = 4, retryable = 1 "
@@ -1799,6 +1938,7 @@ def test_tailor_job_by_id_rejects_deleted_and_url_shaped_targets_before_generati
         lambda *_args, **_kwargs: pytest.fail("rejected job reached generation"),
     )
 
+    before_events = conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0]
     deleted = tailor_module.tailor_job_by_id(
         _JOB_ID,
         tenant_id=_TENANT_A,
@@ -1811,7 +1951,7 @@ def test_tailor_job_by_id_rejects_deleted_and_url_shaped_targets_before_generati
         "status": "skipped",
         "reason": "not_found",
     }
-    assert conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == before_events
     monkeypatch.setattr(
         tailor_module,
         "get_connection",
@@ -1849,7 +1989,8 @@ def test_tailor_job_activity_wires_canonical_job_id_to_runtime(
     assert captured["retailor"] is True
 
 
-def test_tailor_one_job_passes_canonical_id_to_materials_use_case() -> None:
+@pytest.mark.parametrize("allow_override", [False, True])
+def test_tailor_one_job_passes_canonical_id_to_materials_use_case(allow_override) -> None:
     captured: dict[str, object] = {}
 
     class FakeUseCase:
@@ -1875,8 +2016,48 @@ def test_tailor_one_job_passes_canonical_id_to_materials_use_case() -> None:
         "normal",
         use_case=FakeUseCase(),
         audit_execution_id="temporal-run-owned",
+        allow_low_fit_override=allow_override,
     )
 
     assert result["status"] == "approved"
     assert captured["job_id"] == _JOB_ID
     assert captured["audit_execution_id"] == "temporal-run-owned"
+    assert captured["allow_low_fit_override"] is allow_override
+
+
+@pytest.mark.parametrize("code,retryable", [("provider_error", 1), ("provider_non_retryable", 0)])
+def test_tailor_persists_semantic_failure_retry_authority(conn, tmp_path, monkeypatch, code, retryable):
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.test/provider-failure")
+
+    def fail(*_args, **_kwargs):
+        raise DeterminationFailure(code)
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", fail)
+    result = tailor_module.tailor_job_by_id(_JOB_ID, tenant_id=_TENANT_A, snapshot=SimpleNamespace(), llm_model=None)
+    assert result["status"] == "error"
+    state = conn.execute(
+        "SELECT state,error_code,retryable,attempt_count FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(state) == ("failed", code.upper(), retryable, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["tailor", "cover"])
+async def test_material_activity_does_not_retry_a_terminal_semantic_provider_error(monkeypatch, stage):
+    from jobctrl.materials.activities import CoverLetterActivityInput
+
+    monkeypatch.setattr(activities_module, "_tailor_one_job" if stage == "tailor" else "_cover_one_job", lambda *a, **k: {
+        "status": "error", "error": "semantic_determination:provider_non_retryable",
+    })
+    function = activities_module.tailor_job_activity if stage == "tailor" else activities_module.cover_letter_activity
+    payload = TailorJobActivityInput(tenant_id="local", job_id=_JOB_ID) if stage == "tailor" else CoverLetterActivityInput(tenant_id="local", job_id=_JOB_ID)
+    with pytest.raises(ApplicationError) as raised:
+        await ActivityEnvironment().run(function, payload)
+    assert raised.value.non_retryable
+    assert raised.value.type == "provider_non_retryable"

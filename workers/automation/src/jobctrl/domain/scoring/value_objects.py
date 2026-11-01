@@ -55,6 +55,9 @@ HARD_BLOCKER_CATEGORIES = (
     "explicit_exclusion",
     "compensation_preference",
     "unknown",
+    "clearance",
+    "citizenship",
+    "qualification",
 )
 REQUIREMENT_TIERS = ("must_have", "nice_to_have")
 REQUIREMENT_FIT_KINDS = ("matched", "transferable", "missing", "blocked", "not_assessed")
@@ -164,9 +167,7 @@ class FitScore:
         if not isinstance(self.value, int) or isinstance(self.value, bool):
             raise ValueError(f"FitScore.value must be an int, got {type(self.value).__name__}")
         if self.value < _FIT_SCORE_MIN or self.value > _FIT_SCORE_MAX:
-            raise ValueError(
-                f"FitScore.value must be in [{_FIT_SCORE_MIN}, {_FIT_SCORE_MAX}], got {self.value}"
-            )
+            raise ValueError(f"FitScore.value must be in [{_FIT_SCORE_MIN}, {_FIT_SCORE_MAX}], got {self.value}")
 
     @classmethod
     def create(cls, value: int) -> "FitScore":
@@ -204,6 +205,7 @@ class EligibilityAssessment:
     status: str = "unknown"
     hard_blockers: tuple[str, ...] = ()
     hard_blocker_categories: tuple[str, ...] = ()
+    hard_blocker_citations: tuple[tuple[dict, ...], ...] = ()
     warnings: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -212,14 +214,8 @@ class EligibilityAssessment:
             status = "unknown"
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "hard_blockers", _clean_strings(self.hard_blockers))
-        categories = [
-            str(category or "unknown").strip().lower()
-            for category in self.hard_blocker_categories
-        ]
-        categories = [
-            category if category in HARD_BLOCKER_CATEGORIES else "unknown"
-            for category in categories
-        ]
+        categories = [str(category or "unknown").strip().lower() for category in self.hard_blocker_categories]
+        categories = [category if category in HARD_BLOCKER_CATEGORIES else "unknown" for category in categories]
         blocker_count = len(self.hard_blockers)
         categories = (categories + ["unknown"] * blocker_count)[:blocker_count]
         object.__setattr__(self, "hard_blocker_categories", tuple(categories))
@@ -238,9 +234,9 @@ class EligibilityAssessment:
             status=str(data.get("status") or "unknown"),
             hard_blockers=_clean_strings(blockers),
             hard_blocker_categories=tuple(blocker_categories)
-            if isinstance(blocker_categories, IterableABC)
-            and not isinstance(blocker_categories, (str, bytes))
+            if isinstance(blocker_categories, IterableABC) and not isinstance(blocker_categories, (str, bytes))
             else (),
+            hard_blocker_citations=tuple(tuple(cite for cite in row) for row in data.get("hard_blocker_citations", [])),
             warnings=_clean_strings(warnings),
         )
 
@@ -269,6 +265,7 @@ class EligibilityAssessment:
             "status": self.status,
             "hard_blockers": list(self.hard_blockers),
             "hard_blocker_categories": list(self.hard_blocker_categories),
+            "hard_blocker_citations": [list(row) for row in self.hard_blocker_citations],
             "warnings": list(self.warnings),
         }
 
@@ -305,9 +302,7 @@ class ScoreBreakdown:
             if not isinstance(value, int) or isinstance(value, bool):
                 raise ValueError(f"ScoreBreakdown.{name} must be an int, got {type(value).__name__}")
             if value < 0 or value > 10:
-                raise ValueError(
-                    f"ScoreBreakdown.{name} must be in [0, 10], got {value}"
-                )
+                raise ValueError(f"ScoreBreakdown.{name} must be in [0, 10], got {value}")
         if not isinstance(self.reasoning, str):
             raise ValueError("ScoreBreakdown.reasoning must be a string")
         fit_band = str(self.fit_band or "plausible").strip().lower()
@@ -343,9 +338,7 @@ class ScoreBreakdown:
             ),
             matched_signals=_clean_strings(data.get("matched_signals", data.get("matchedSignals", ()))),
             missing_signals=_clean_strings(data.get("missing_signals", data.get("missingSignals", ()))),
-            transferable_signals=_clean_strings(
-                data.get("transferable_signals", data.get("transferableSignals", ()))
-            ),
+            transferable_signals=_clean_strings(data.get("transferable_signals", data.get("transferableSignals", ()))),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -491,8 +484,18 @@ class RequirementScoreContribution:
     awarded_points: float
     weighted_impact: float
     rationale: str = ""
+    scope: str = "resume"
+    scope_source_id: str = ""
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "scope",
+            _clean_enum(self.scope, ("resume", "eligibility", "logistics", "employer_condition"), "resume"),
+        )
+        object.__setattr__(self, "scope_source_id", str(self.scope_source_id or "").strip())
+        if self.scope != "resume" and not self.scope_source_id:
+            raise ValueError("Non-resume requirement contributions require a recorded scope source")
         max_points = _non_negative_float(self.max_points, field_name="RequirementScoreContribution.max_points")
         awarded_points = _non_negative_float(
             self.awarded_points,
@@ -517,23 +520,31 @@ class RequirementScoreContribution:
             awarded_points=data.get("awarded_points", data.get("awardedPoints", 0.0)),
             weighted_impact=data.get("weighted_impact", data.get("weightedImpact", 0.0)),
             rationale=str(data.get("rationale") or ""),
+            scope=str(data.get("scope") or "resume"),
+            scope_source_id=str(data.get("scope_source_id", data.get("scopeSourceId", "")) or ""),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "max_points": self.max_points,
             "awarded_points": self.awarded_points,
             "weighted_impact": self.weighted_impact,
             "rationale": self.rationale,
         }
+        if self.scope_source_id:
+            payload.update(scope=self.scope, scope_source_id=self.scope_source_id)
+        return payload
 
     def to_read_model(self) -> dict[str, Any]:
-        return {
+        payload = {
             "maxPoints": self.max_points,
             "awardedPoints": self.awarded_points,
             "weightedImpact": self.weighted_impact,
             "rationale": self.rationale,
         }
+        if self.scope_source_id:
+            payload.update(scope=self.scope, scopeSourceId=self.scope_source_id)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -565,13 +576,9 @@ class RequirementTailoringDirective:
         return cls(
             action=str(data.get("action") or "low_priority"),
             priority=data.get("priority", 0.0),
-            allowed_evidence_ids=_clean_strings(
-                data.get("allowed_evidence_ids", data.get("allowedEvidenceIds", ()))
-            ),
+            allowed_evidence_ids=_clean_strings(data.get("allowed_evidence_ids", data.get("allowedEvidenceIds", ()))),
             target_keywords=_clean_strings(data.get("target_keywords", data.get("targetKeywords", ()))),
-            prohibited_claims=_clean_strings(
-                data.get("prohibited_claims", data.get("prohibitedClaims", ()))
-            ),
+            prohibited_claims=_clean_strings(data.get("prohibited_claims", data.get("prohibitedClaims", ()))),
             instruction=str(data.get("instruction") or ""),
         )
 
@@ -694,9 +701,7 @@ class RequirementFitAssessment:
             object.__setattr__(
                 self,
                 "tailoring",
-                RequirementTailoringDirective.from_dict(
-                    self.tailoring if isinstance(self.tailoring, dict) else None
-                ),
+                RequirementTailoringDirective.from_dict(self.tailoring if isinstance(self.tailoring, dict) else None),
             )
         if self.artifact_coverage is not None and not isinstance(
             self.artifact_coverage,
@@ -727,11 +732,7 @@ class RequirementFitAssessment:
             tailoring=RequirementTailoringDirective.from_dict(
                 data.get("tailoring") if isinstance(data.get("tailoring"), dict) else None
             ),
-            artifact_coverage=(
-                RequirementArtifactCoverage.from_dict(coverage)
-                if isinstance(coverage, dict)
-                else None
-            ),
+            artifact_coverage=(RequirementArtifactCoverage.from_dict(coverage) if isinstance(coverage, dict) else None),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -744,9 +745,7 @@ class RequirementFitAssessment:
             "fit": self.fit.to_dict(),
             "contribution": self.contribution.to_dict(),
             "tailoring": self.tailoring.to_dict(),
-            "artifact_coverage": self.artifact_coverage.to_dict()
-            if self.artifact_coverage is not None
-            else None,
+            "artifact_coverage": self.artifact_coverage.to_dict() if self.artifact_coverage is not None else None,
         }
 
     def to_read_model(self) -> dict[str, Any]:
@@ -759,9 +758,7 @@ class RequirementFitAssessment:
             "fit": self.fit.to_read_model(),
             "contribution": self.contribution.to_read_model(),
             "tailoring": self.tailoring.to_read_model(),
-            "artifactCoverage": self.artifact_coverage.to_read_model()
-            if self.artifact_coverage is not None
-            else None,
+            "artifactCoverage": self.artifact_coverage.to_read_model() if self.artifact_coverage is not None else None,
         }
 
 
@@ -894,9 +891,7 @@ class RequirementFitReport:
                 0,
             ),
             formula_version=str(data.get("formula_version", data.get("formulaVersion", "")) or ""),
-            resolved_fit_score=FitScore.from_optional(
-                data.get("resolved_fit_score", data.get("resolvedFitScore"))
-            ),
+            resolved_fit_score=FitScore.from_optional(data.get("resolved_fit_score", data.get("resolvedFitScore"))),
             fit_band=str(data.get("fit_band", data.get("fitBand", "plausible")) or "plausible"),
             confidence=str(data.get("confidence") or "medium"),
             summary=RequirementFitSummary.from_dict(
@@ -917,9 +912,7 @@ class RequirementFitReport:
             "profile_snapshot_version": self.profile_snapshot_version,
             "scoring_policy_version": self.scoring_policy_version,
             "formula_version": self.formula_version,
-            "resolved_fit_score": self.resolved_fit_score.value
-            if self.resolved_fit_score is not None
-            else None,
+            "resolved_fit_score": self.resolved_fit_score.value if self.resolved_fit_score is not None else None,
             "fit_band": self.fit_band,
             "confidence": self.confidence,
             "summary": self.summary.to_dict(),
@@ -936,9 +929,7 @@ class RequirementFitReport:
             "profileSnapshotVersion": self.profile_snapshot_version,
             "scoringPolicyVersion": self.scoring_policy_version,
             "formulaVersion": self.formula_version,
-            "resolvedFitScore": self.resolved_fit_score.value
-            if self.resolved_fit_score is not None
-            else None,
+            "resolvedFitScore": self.resolved_fit_score.value if self.resolved_fit_score is not None else None,
             "fitBand": self.fit_band,
             "confidence": self.confidence,
             "summary": self.summary.to_read_model(),
@@ -977,9 +968,7 @@ class MatchedKeywords:
             )
         for keyword in self.values:
             if not isinstance(keyword, str) or not keyword.strip():
-                raise ValueError(
-                    "MatchedKeywords entries must be non-empty trimmed strings"
-                )
+                raise ValueError("MatchedKeywords entries must be non-empty trimmed strings")
 
     @classmethod
     def from_iterable(cls, values: Iterable[Any] | None) -> "MatchedKeywords":
@@ -1088,11 +1077,14 @@ class ScoreCorrection:
 class ScoreTrace:
     """Non-sensitive trace metadata for one score version."""
 
+    determination_id: str = ""
+    scoring_source_fingerprint: str = ""
     prompt_version: str = "score-fit-assessment-v1"
     schema_version: str = "score-fit-assessment-v1"
     model: str = "llm-port-default"
     criteria_version: str = ""
     profile_snapshot_version: int = 0
+    profile_inputs: dict[str, Any] = field(default_factory=dict)
     scoring_policy_id: str = ""
     scoring_policy_version: int = 0
     rubric_version: str = ""
@@ -1109,6 +1101,8 @@ class ScoreTrace:
 
     def __post_init__(self) -> None:
         for name in (
+            "determination_id",
+            "scoring_source_fingerprint",
             "prompt_version",
             "schema_version",
             "model",
@@ -1125,6 +1119,7 @@ class ScoreTrace:
         except (TypeError, ValueError):
             profile_version = 0
         object.__setattr__(self, "profile_snapshot_version", profile_version)
+        object.__setattr__(self, "profile_inputs", _clean_mapping(self.profile_inputs))
         object.__setattr__(
             self,
             "scoring_policy_version",
@@ -1159,6 +1154,8 @@ class ScoreTrace:
     def from_dict(cls, data: dict[str, Any] | None) -> "ScoreTrace":
         data = data or {}
         return cls(
+            determination_id=str(data.get("determination_id") or ""),
+            scoring_source_fingerprint=str(data.get("scoring_source_fingerprint") or ""),
             prompt_version=str(data.get("prompt_version", data.get("promptVersion", "score-fit-assessment-v1"))),
             schema_version=str(data.get("schema_version", data.get("schemaVersion", "score-fit-assessment-v1"))),
             model=str(data.get("model") or "llm-port-default"),
@@ -1181,33 +1178,27 @@ class ScoreTrace:
                 ),
                 0,
             ),
+            profile_inputs=_clean_mapping(data.get("profile_inputs", {})),
             rubric_version=str(data.get("rubric_version", data.get("rubricVersion", ""))),
-            raw_weighted_score=_float_or_none(
-                data.get("raw_weighted_score", data.get("rawWeightedScore"))
-            ),
+            raw_weighted_score=_float_or_none(data.get("raw_weighted_score", data.get("rawWeightedScore"))),
             calibration_adjustment=_float_or_default(
                 data.get("calibration_adjustment", data.get("calibrationAdjustment", 0.0)),
                 0.0,
             ),
             anchor_ids=_clean_strings(data.get("anchor_ids", data.get("anchorIds", ()))),
-            resolved_fit_band=str(
-                data.get("resolved_fit_band", data.get("resolvedFitBand", "")) or ""
-            ),
-            resolution_reason=str(
-                data.get("resolution_reason", data.get("resolutionReason", "")) or ""
-            ),
+            resolved_fit_band=str(data.get("resolved_fit_band", data.get("resolvedFitBand", "")) or ""),
+            resolution_reason=str(data.get("resolution_reason", data.get("resolutionReason", "")) or ""),
             resolved_dimensions=_clean_mapping_tuple(
                 data.get("resolved_dimensions", data.get("resolvedDimensions", ()))
             ),
             fit_band_thresholds=_clean_mapping_tuple(
                 data.get("fit_band_thresholds", data.get("fitBandThresholds", ()))
             ),
-            policy_evidence=_clean_mapping(
-                data.get("policy_evidence", data.get("policyEvidence", {}))
-            ),
+            policy_evidence=_clean_mapping(data.get("policy_evidence", data.get("policyEvidence", {}))),
             parser_warnings=_clean_strings(data.get("parser_warnings", data.get("parserWarnings", ()))),
             correction_history=tuple(
-                item for item in data.get("correction_history", data.get("correctionHistory", ())) or ()
+                item
+                for item in data.get("correction_history", data.get("correctionHistory", ())) or ()
                 if isinstance(item, MappingABC)
             ),
         )
@@ -1232,15 +1223,9 @@ class ScoreTrace:
             anchor_ids=_clean_strings(getattr(resolved_score, "anchor_ids", ())),
             resolved_fit_band=str(getattr(resolved_score, "fit_band", "") or ""),
             resolution_reason=str(getattr(resolved_score, "resolution_reason", "") or ""),
-            resolved_dimensions=_policy_object_tuple_to_dicts(
-                getattr(resolved_score, "dimensions", ())
-            ),
-            fit_band_thresholds=_policy_object_tuple_to_dicts(
-                getattr(resolved_score, "fit_band_thresholds", ())
-            ),
-            policy_evidence=_clean_mapping(
-                getattr(resolved_score, "evidence_summary", {})
-            ),
+            resolved_dimensions=_policy_object_tuple_to_dicts(getattr(resolved_score, "dimensions", ())),
+            fit_band_thresholds=_policy_object_tuple_to_dicts(getattr(resolved_score, "fit_band_thresholds", ())),
+            policy_evidence=_clean_mapping(getattr(resolved_score, "evidence_summary", {})),
         )
 
     def with_correction(
@@ -1265,11 +1250,14 @@ class ScoreTrace:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "determination_id": self.determination_id,
+            **({"scoring_source_fingerprint": self.scoring_source_fingerprint} if self.scoring_source_fingerprint else {}),
             "prompt_version": self.prompt_version,
             "schema_version": self.schema_version,
             "model": self.model,
             "criteria_version": self.criteria_version,
             "profile_snapshot_version": self.profile_snapshot_version,
+            **({"profile_inputs": self.profile_inputs} if self.profile_inputs else {}),
             "scoring_policy_id": self.scoring_policy_id,
             "scoring_policy_version": self.scoring_policy_version,
             "rubric_version": self.rubric_version,
@@ -1311,9 +1299,7 @@ class ScoringCriteria:
         if not isinstance(self.min_fit_score, int) or isinstance(self.min_fit_score, bool):
             raise ValueError("ScoringCriteria.min_fit_score must be an int")
         if self.min_fit_score < 0 or self.min_fit_score > 10:
-            raise ValueError(
-                f"ScoringCriteria.min_fit_score must be in [0, 10], got {self.min_fit_score}"
-            )
+            raise ValueError(f"ScoringCriteria.min_fit_score must be in [0, 10], got {self.min_fit_score}")
         if not isinstance(self.criteria_text, str):
             raise ValueError("ScoringCriteria.criteria_text must be a string")
         if not isinstance(self.target_criteria, str):
@@ -1337,9 +1323,7 @@ class ScoringCriteria:
             min_fit_score=_int_or_default(data.get("min_fit_score", data.get("minFitScore", 7)), 7),
             criteria_text=str(data.get("criteria_text", data.get("criteriaText", "")) or ""),
             target_criteria=str(data.get("target_criteria", data.get("targetCriteria", "")) or ""),
-            profile_preferences=_clean_mapping(
-                data.get("profile_preferences", data.get("profilePreferences", {}))
-            ),
+            profile_preferences=_clean_mapping(data.get("profile_preferences", data.get("profilePreferences", {}))),
             criteria_version=str(data.get("criteria_version", data.get("criteriaVersion", "")) or ""),
         )
 

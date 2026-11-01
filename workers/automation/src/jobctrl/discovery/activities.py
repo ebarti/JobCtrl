@@ -35,6 +35,7 @@ class PlanDiscoverySourcesInput:
     expected_db_path: str | None = None
     discovery_execution: DiscoveryExecutionRef | None = None
 
+    use_source_result_budget: bool = False
 
 @dataclass(frozen=True)
 class PlanDiscoverySourcesOutput:
@@ -47,6 +48,8 @@ class PlanDiscoverySourcesOutput:
     max_parallel_families: int = 1
     next_run_settings: dict[str, Any] = field(default_factory=dict)
 
+    use_source_result_budget: bool = False
+    source_result_limits: dict[str, int] = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class DiscoverySourceActivityInput:
@@ -63,6 +66,8 @@ class DiscoverySourceActivityInput:
     next_run_settings: dict[str, Any] = field(default_factory=dict)
     discovery_execution: DiscoveryExecutionRef | None = None
 
+    use_source_result_budget: bool = False
+    source_result_limits: dict[str, int] = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class DiscoverySourceActivityOutput:
@@ -97,7 +102,6 @@ class DiscoveryEnrichmentActivityInput:
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
     discovery_execution: DiscoveryExecutionRef | None = None
     pipeline_step_item_key: str = "terminal"
     pipeline_step_detail_code: PipelineStepDetailCode = "terminal_reconciliation"
@@ -136,6 +140,7 @@ class AutomaticCompensationRefreshActivityOutput:
     estimates_unchanged: int = 0
     estimates_cleared: int = 0
     warnings: tuple[str, ...] = ()
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -149,7 +154,6 @@ class DiscoveryPreparationFanoutInput:
     validation_mode: str = "normal"
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     progress_completed: int = 0
     progress_total: int = 0
@@ -176,8 +180,25 @@ class DiscoveryPreparationFanoutOutput:
 @activity.defn(name="plan_discovery_sources")
 def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoverySourcesOutput:
     """Plan the source-family activities for ``DiscoverWorkflow``."""
-    from jobctrl.pipeline.runner import plan_discovery_source_families
+    from jobctrl.pipeline.runner import plan_discovery_source_families, require_discovery_result_plan
 
+    try:
+        require_discovery_result_plan(
+            limit=payload.limit, discovery_execution=payload.discovery_execution,
+            use_source_result_budget=payload.use_source_result_budget, planning=True,
+        )
+    except JobCtrlError as exc:
+        raise to_application_error(exc) from exc
+    if payload.discovery_execution is not None:
+        from jobctrl.database import get_connection
+        from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan_start
+
+        try:
+            check_result_plan_start(
+                get_connection(), payload.discovery_execution, limit=payload.limit, bounded=payload.limit > 0,
+            )
+        except JobCtrlError as exc:
+            raise to_application_error(exc) from exc
     lifecycle = begin_pipeline_step_attempt(
         _pipeline_step_scope(
             payload.discovery_execution,
@@ -192,6 +213,8 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
         plan = plan_discovery_source_families(
             limit=payload.limit,
             source_ids=payload.source_ids,
+            discovery_execution=payload.discovery_execution,
+            use_source_result_budget=payload.use_source_result_budget,
         )
         output = PlanDiscoverySourcesOutput(
             families=list(plan.get("families") or []),
@@ -199,6 +222,8 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
             start_count=int(plan.get("start_count") or 0),
             max_parallel_families=max(1, int(plan.get("max_parallel_families") or 1)),
             next_run_settings=dict(plan.get("next_run_settings") or {}),
+            use_source_result_budget=bool(plan.get("use_source_result_budget", False)),
+            source_result_limits=dict(plan.get("source_result_limits") or {}),
         )
     except Exception as exc:
         if lifecycle is not None:
@@ -206,6 +231,8 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
                 exc,
                 fallback_error_code="source_plan_failed",
             )
+        if isinstance(exc, JobCtrlError):
+            raise to_application_error(exc) from exc
         raise
     if lifecycle is not None:
         lifecycle.completed(item_count=len(output.families))
@@ -221,12 +248,31 @@ async def discovery_source_family_activity(
         run_blocking_with_heartbeat,
     )
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
-    from jobctrl.pipeline.runner import run_discovery_source_family
+    from jobctrl.pipeline.runner import require_discovery_result_plan, run_discovery_source_family
 
+    try:
+        require_discovery_result_plan(
+            limit=payload.limit, discovery_execution=payload.discovery_execution,
+            use_source_result_budget=payload.use_source_result_budget,
+            source_result_limits=payload.source_result_limits,
+        )
+    except JobCtrlError as exc:
+        raise to_application_error(exc) from exc
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
+    if payload.discovery_execution is not None:
+        from jobctrl.database import get_connection
+        from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan
+
+        try:
+            check_result_plan(
+                get_connection(), payload.discovery_execution, limit=payload.limit,
+                source_limits=payload.source_result_limits, bounded=payload.limit > 0, required=payload.limit > 0,
+            )
+        except JobCtrlError as exc:
+            raise to_application_error(exc) from exc
     lifecycle = begin_pipeline_step_attempt(
         _pipeline_step_scope(
             payload.discovery_execution,
@@ -262,6 +308,8 @@ async def discovery_source_family_activity(
                 discovery_execution=payload.discovery_execution,
                 activity_attempt=activity_attempt,
                 activity_owner_token=activity_owner_token,
+                use_source_result_budget=payload.use_source_result_budget,
+                source_result_limits=payload.source_result_limits,
             ),
             starting_message=f"discover {payload.family} starting",
             progress_message=f"discover {payload.family} still running",
@@ -456,6 +504,7 @@ async def automatic_compensation_refresh_activity(
         run_blocking_with_heartbeat,
     )
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
+    from jobctrl.domain.determinations import DeterminationFailure
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
@@ -467,6 +516,7 @@ async def automatic_compensation_refresh_activity(
     except RuntimeError:
         # Direct unit calls have no Temporal activity context.
         owner = f"discover:{payload.tenant_id}:direct"
+    cancel_event = threading.Event()
 
     def _run() -> AutomaticCompensationRefreshActivityOutput:
         refresh_started_at = datetime.now(timezone.utc).isoformat()
@@ -476,7 +526,10 @@ async def automatic_compensation_refresh_activity(
             owner=owner,
             now=refresh_started_at,
             conn=conn,
+            cancel_event=cancel_event,
         )
+        if cancel_event.is_set():
+            raise DeterminationFailure("compensation_refresh_canceled")
         materialized_at = datetime.now(timezone.utc).isoformat()
         materialization = materialize_automatic_compensation_estimates(
             conn,
@@ -508,6 +561,7 @@ async def automatic_compensation_refresh_activity(
             estimates_unchanged=materialization.estimates_unchanged,
             estimates_cleared=materialization.estimates_cleared,
             warnings=warnings,
+            diagnostics=refresh.diagnostics,
         )
 
     try:
@@ -516,6 +570,7 @@ async def automatic_compensation_refresh_activity(
             starting_message="automatic compensation refresh starting",
             progress_message="automatic compensation refresh still running",
             activity_name="discover:automatic-compensation",
+            on_cancel=cancel_event.set,
         )
     except JobCtrlError as exc:
         raise to_application_error(exc) from exc
@@ -553,7 +608,6 @@ def _build_per_job_handoff(
                 llm_model=payload.llm_model,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
-                tailor_judge_min_score=payload.tailor_judge_min_score,
                 tenant_id=TenantId(payload.tenant_id),
                 discovery_execution=payload.discovery_execution,
                 discovery_cohort_kind="observed_this_run",
@@ -619,7 +673,6 @@ async def discovery_preparation_fanout_activity(
                 llm_model=payload.llm_model,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
-                tailor_judge_min_score=payload.tailor_judge_min_score,
                 tenant_id=TenantId(payload.tenant_id),
                 include_pending_tailor=payload.include_pending_tailor,
                 discovery_execution=payload.discovery_execution,

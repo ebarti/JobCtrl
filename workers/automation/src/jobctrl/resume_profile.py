@@ -14,41 +14,6 @@ aggregate now.
 
 from __future__ import annotations
 
-import re
-
-from jobctrl.domain.profile.achievement_metrics import extract_achievement_metrics
-
-# Recognition-only compatibility for materialized evidence written before the
-# canonical achievement-metric extractor was introduced.  New rows are always
-# derived with ``extract_achievement_metrics``; this pattern exists solely so a
-# subsequent profile save can recognize and replace the old auto-derived row.
-_LEGACY_BULLET_METRIC_RE_V1 = re.compile(
-    r"(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?"
-    r"|\d+(?:\.\d+)?%"
-    r"|\d+(?:\.\d+)?x"
-    r"|\d+(?:\.\d+)?\s?(?:ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|qps|req/s))",
-    re.IGNORECASE,
-)
-_LEGACY_BULLET_SENIORITY_TERMS = (
-    "own",
-    "owned",
-    "ownership",
-    "scope",
-    "influence",
-    "influenced",
-    "cross-team",
-    "stakeholder",
-    "stakeholders",
-    "led",
-    "lead",
-    "mentor",
-    "mentored",
-    "architect",
-    "architected",
-    "strategy",
-    "technical leadership",
-)
-
 
 def has_resume_master(profile: dict) -> bool:
     """Return True when the profile uses the structured resume master schema."""
@@ -92,12 +57,25 @@ def get_skill_categories(profile: dict) -> list[dict]:
 
 
 def get_required_experience_entry_ids(profile: dict) -> list[str]:
-    """Return the required experience entry IDs."""
+    """Return mandatory roles, including owners of explicitly pinned bullets."""
     rules = get_resume_master(profile).get("tailoring_rules", {})
     ids = rules.get("required_experience_entry_ids")
-    if isinstance(ids, list) and ids:
-        return ids
-    return [entry.get("id", "") for entry in get_experience_entries(profile) if entry.get("id")]
+    known_ids = [entry.get("id", "") for entry in get_experience_entries(profile) if entry.get("id")]
+    required_ids = list(ids) if isinstance(ids, list) and ids else list(known_ids)
+    bullet_pins = get_required_bullets_by_experience_id(profile)
+    required_ids.extend(entry_id for entry_id in known_ids if entry_id in bullet_pins and entry_id not in required_ids)
+    return required_ids
+
+
+def get_selected_experience_entries(profile: dict, tailored_payload: dict) -> list[dict]:
+    """Render mandatory roles plus explicitly selected known roles in profile order.
+
+    Validation owns unknown IDs and evidence eligibility. Missing updates still
+    preserve mandatory metadata and the existing legacy required-role fallback.
+    """
+    selected_ids = set(get_required_experience_entry_ids(profile))
+    selected_ids.update(experience_updates_by_id(tailored_payload))
+    return [entry for entry in get_experience_entries(profile) if entry.get("id") in selected_ids]
 
 
 def get_required_education_entry_ids(profile: dict) -> list[str]:
@@ -110,12 +88,24 @@ def get_required_education_entry_ids(profile: dict) -> list[str]:
 
 
 def get_required_skill_category_ids(profile: dict) -> list[str]:
-    """Return the required skill category IDs."""
+    """Return mandatory categories, including owners of individually pinned skills."""
     rules = get_resume_master(profile).get("tailoring_rules", {})
     ids = rules.get("required_skill_category_ids")
-    if isinstance(ids, list) and ids:
-        return ids
-    return [entry.get("id", "") for entry in get_skill_categories(profile) if entry.get("id")]
+    known_ids = [entry.get("id", "") for entry in get_skill_categories(profile) if entry.get("id")]
+    required_ids = list(ids) if isinstance(ids, list) and ids else list(known_ids)
+    skill_pins = get_required_skills_by_category_id(profile)
+    required_ids.extend(ident for ident in known_ids if ident in skill_pins and ident not in required_ids)
+    return required_ids
+
+
+def get_selected_skill_categories(profile: dict, tailored_payload: dict) -> list[dict]:
+    """Render mandatory categories plus model-selected known categories in source order."""
+    selected_ids = set(get_required_skill_category_ids(profile))
+    selected_ids.update(
+        update.get("id") for update in tailored_payload.get("skill_category_updates", [])
+        if isinstance(update, dict) and isinstance(update.get("id"), str)
+    )
+    return [category for category in get_skill_categories(profile) if category.get("id") in selected_ids]
 
 
 def get_required_bullets_by_experience_id(profile: dict) -> dict[str, list[str]]:
@@ -205,9 +195,7 @@ def get_tailoring_policy(profile: dict) -> dict:
     raw_auto = policy.get("auto_approvable_claim_modes")
     if isinstance(raw_auto, list):
         policy["auto_approvable_claim_modes"] = [
-            str(mode)
-            for mode in raw_auto
-            if str(mode) in AUTO_APPROVABLE_CLAIM_MODES
+            str(mode) for mode in raw_auto if str(mode) in AUTO_APPROVABLE_CLAIM_MODES
         ] or list(DEFAULT_TAILORING_POLICY["auto_approvable_claim_modes"])
     else:
         policy["auto_approvable_claim_modes"] = list(DEFAULT_TAILORING_POLICY["auto_approvable_claim_modes"])
@@ -226,9 +214,7 @@ def get_tailoring_policy(profile: dict) -> dict:
                 policy[key] = False
 
     policy["allow_title_reframing"] = False
-    policy["allow_adjacent_achievement_drafts"] = (
-        policy["claim_mode"] == "draft_requires_confirmation"
-    )
+    policy["allow_adjacent_achievement_drafts"] = policy["claim_mode"] == "draft_requires_confirmation"
     return policy
 
 
@@ -253,28 +239,14 @@ def get_tailoring_quality_controls(profile: dict) -> dict:
 
 
 def get_achievement_evidence(profile: dict) -> list[dict]:
-    """Return normalized achievement evidence flattened across experience entries."""
-    evidence: list[dict] = []
-    for entry in get_experience_entries(profile):
-        if not isinstance(entry, dict):
-            continue
-        entry_id = str(entry.get("id", "")).strip()
-        raw_items = entry.get("achievement_evidence")
-        normalized_items: list[dict] = []
-        if isinstance(raw_items, list):
-            for item in raw_items:
-                if not isinstance(item, dict):
-                    continue
-                normalized = _normalize_achievement_evidence(item)
-                normalized["experience_entry_id"] = entry_id
-                normalized_items.append(normalized)
-        if normalized_items:
-            evidence.extend(_reconciled_achievement_evidence(entry, entry_id, normalized_items))
-            continue
-        if not entry_id:
-            continue
-        evidence.extend(_legacy_bullet_achievement_evidence_for_entry(entry, entry_id))
-    return evidence
+    """Read explicitly stored evidence; never derive or reconcile semantic facts."""
+    return [
+        {**_normalize_achievement_evidence(item), "experience_entry_id": str(entry.get("id", ""))}
+        for entry in get_experience_entries(profile)
+        if isinstance(entry, dict)
+        for item in entry.get("achievement_evidence", [])
+        if isinstance(item, dict)
+    ]
 
 
 def get_writing_style(profile: dict) -> dict:
@@ -326,9 +298,9 @@ def _normalize_text(value: object) -> str:
 
 
 def _normalize_achievement_evidence(item: dict) -> dict:
-    strength = str(item.get("evidence_strength") or "supported").strip()
+    strength = str(item.get("evidence_strength") or "draft").strip()
     if strength not in EVIDENCE_STRENGTHS:
-        strength = "supported"
+        strength = "draft"
     try:
         confidence = float(item.get("claim_confidence", 0.0))
     except (TypeError, ValueError):
@@ -343,164 +315,12 @@ def _normalize_achievement_evidence(item: dict) -> dict:
         "tools": _text_list(item.get("tools")),
         "metrics": _text_list(item.get("metrics")),
         "outcome": str(item.get("outcome", "")).strip(),
-        "seniority_signal": str(item.get("seniority_signal", "")).strip(),
         "evidence_strength": strength,
         "claim_confidence": confidence,
         "user_confirmed": bool(item.get("user_confirmed", False)),
+        **({"confirmation_review_required": True} if item.get("confirmation_review_required") else {}),
         "tags": _text_list(item.get("tags")),
     }
-
-
-def _reconciled_achievement_evidence(entry: dict, entry_id: str, items: list[dict]) -> list[dict]:
-    if not entry_id:
-        return items
-    derived_items = _legacy_bullet_achievement_evidence_for_entry(entry, entry_id)
-    materialized = [_is_materialized_legacy_bullet_evidence(item, entry_id) for item in items]
-    all_derived = all(materialized)
-    available = dict.fromkeys(range(len(derived_items)))
-    matched: dict[int, int] = {}
-    # Match each unchanged occurrence first; persisted IDs own source text, not
-    # the current display position. Authored records may share a derived source,
-    # so reserve their otherwise-unclaimed sources after materialized matches.
-    for index in sorted(range(len(items)), key=lambda candidate: not materialized[candidate]):
-        item = items[index]
-        bullet_index = next(
-            (candidate for candidate in available if derived_items[candidate]["source_text"] == item["source_text"]),
-            None,
-        )
-        if bullet_index is not None:
-            matched[index] = bullet_index
-            del available[bullet_index]
-    for index, item in enumerate(items):
-        if not materialized[index] or index in matched:
-            continue
-        preferred = index if all_derived else (_legacy_bullet_evidence_index(item["id"], entry_id) or 0) - 1
-        bullet_index = preferred if preferred in available else next(iter(available), None)
-        if bullet_index is not None:
-            matched[index] = bullet_index
-            del available[bullet_index]
-    replacements: dict[int, dict] = {}
-    by_bullet: dict[int, dict] = {}
-    for index, bullet_index in matched.items():
-        if materialized[index]:
-            replacement = {**derived_items[bullet_index], "id": items[index]["id"]}
-            replacements[index] = replacement
-            by_bullet[bullet_index] = replacement
-    if not all_derived:
-        return [
-            replacements[index] if materialized[index] else item
-            for index, item in enumerate(items)
-            if not materialized[index] or index in replacements
-        ]
-    reserved_ids = {item["id"] for item in items}
-    reconciled: list[dict] = []
-    for index, item in enumerate(derived_items):
-        if index in by_bullet:
-            reconciled.append(by_bullet[index])
-            continue
-        suffix = index + 1
-        while legacy_bullet_evidence_id(entry_id, suffix) in reserved_ids:
-            suffix += 1
-        evidence_id = legacy_bullet_evidence_id(entry_id, suffix)
-        reserved_ids.add(evidence_id)
-        reconciled.append({**item, "id": evidence_id})
-    return reconciled
-
-
-def _legacy_bullet_achievement_evidence_for_entry(entry: dict, entry_id: str) -> list[dict]:
-    evidence: list[dict] = []
-    for bullet_index, bullet in enumerate(_text_list(entry.get("bullets")), start=1):
-        normalized = _legacy_bullet_achievement_evidence(
-            entry=entry,
-            entry_id=entry_id,
-            bullet=bullet,
-            bullet_index=bullet_index,
-        )
-        normalized["experience_entry_id"] = entry_id
-        evidence.append(normalized)
-    return evidence
-
-
-def _is_materialized_legacy_bullet_evidence(item: dict, entry_id: str) -> bool:
-    if _legacy_bullet_evidence_index(str(item.get("id", "")), entry_id) is None:
-        return False
-    source_text = str(item.get("source_text", "")).strip()
-    if not source_text:
-        return False
-    return (
-        str(item.get("action", "")).strip() == source_text
-        and str(item.get("outcome", "")).strip() == source_text
-        and _text_list(item.get("tools")) == []
-        and _text_list(item.get("metrics"))
-        in (
-            _legacy_bullet_metrics(source_text),
-            _legacy_bullet_metrics_v1(source_text),
-        )
-        and str(item.get("evidence_strength", "supported")).strip() == "supported"
-        and float(item.get("claim_confidence", 0.0)) == 0.8
-        and bool(item.get("user_confirmed", False)) is True
-        and _text_list(item.get("tags")) == []
-    )
-
-
-def legacy_bullet_evidence_id(entry_id: str, bullet_index: int) -> str:
-    """Return the stable evidence id used for legacy resume bullets."""
-    safe_entry_id = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(entry_id).strip()).strip("_")
-    safe_entry_id = safe_entry_id or "experience"
-    return f"{safe_entry_id}_bullet_{max(1, int(bullet_index))}"
-
-
-def _legacy_bullet_evidence_index(evidence_id: str, entry_id: str) -> int | None:
-    match = re.search(r"_bullet_([1-9]\d*)$", evidence_id)
-    if match is None:
-        return None
-    bullet_index = int(match.group(1))
-    return bullet_index if evidence_id == legacy_bullet_evidence_id(entry_id, bullet_index) else None
-
-
-def _legacy_bullet_achievement_evidence(
-    *,
-    entry: dict,
-    entry_id: str,
-    bullet: str,
-    bullet_index: int,
-) -> dict:
-    source_text = str(bullet).strip()
-    title = str(entry.get("title", "")).strip()
-    company = str(entry.get("company", "")).strip()
-    normalized = _normalize_text(" ".join([title, company, source_text]))
-    seniority_signal = (
-        "resume bullet contains seniority signal"
-        if any(term in normalized for term in _LEGACY_BULLET_SENIORITY_TERMS)
-        else ""
-    )
-    return {
-        "id": legacy_bullet_evidence_id(entry_id, bullet_index),
-        "source_text": source_text,
-        "scope": " ".join(part for part in [title, company] if part),
-        "action": source_text,
-        "tools": [],
-        "metrics": _legacy_bullet_metrics(source_text),
-        "outcome": source_text,
-        "seniority_signal": seniority_signal,
-        "evidence_strength": "supported",
-        "claim_confidence": 0.8,
-        "user_confirmed": True,
-        "tags": [],
-    }
-
-
-def _legacy_bullet_metrics(source_text: str) -> list[str]:
-    return list(extract_achievement_metrics(source_text))
-
-
-def _legacy_bullet_metrics_v1(source_text: str) -> list[str]:
-    """Reproduce the pre-canonical extractor for stale-row recognition only."""
-
-    return [
-        re.sub(r"\s+", " ", match.group(0).strip())
-        for match in _LEGACY_BULLET_METRIC_RE_V1.finditer(source_text)
-    ]
 
 
 def _text_list(value: object) -> list[str]:
@@ -534,6 +354,10 @@ def mark_current_artifact_budget(tailored_payload: dict) -> dict:
 def experience_updates_by_id(tailored_payload: dict) -> dict:
     """Index updates while preserving already-approved legacy artifacts.
 
+    Match validation and claim bindings by trimming surrounding ID whitespace.
+    Otherwise an approved optional role can disappear from every rendered
+    artifact and its provenance when joined to the canonical profile.
+
     Current generation rejects a candidate whose mandatory achievements exceed
     the configured ceiling before it can be accepted.  Older accepted payloads
     can legitimately contain that overflow, however, and are identifiable by
@@ -544,13 +368,17 @@ def experience_updates_by_id(tailored_payload: dict) -> dict:
 
     preserve_accepted_overflow = (
         isinstance(tailored_payload.get("generated_claim_mappings"), list)
-        and tailored_payload.get(_ARTIFACT_BUDGET_VERSION_KEY)
-        != _CURRENT_ARTIFACT_BUDGET_VERSION
+        and tailored_payload.get(_ARTIFACT_BUDGET_VERSION_KEY) != _CURRENT_ARTIFACT_BUDGET_VERSION
     )
     return {
-        update.get("id"): {
+        str(update.get("id", "")).strip(): {
             **update,
             _MANDATORY_BULLET_OVERFLOW_KEY: preserve_accepted_overflow,
+            "_jobctrl_baseline_selection_recorded": isinstance(tailored_payload.get("experience_omissions"), list),
+            "_jobctrl_baseline_omission_proposals": [
+                row for row in tailored_payload.get("experience_omissions", ())
+                if isinstance(row, dict) and row.get("experience_entry_id") == str(update.get("id", "")).strip()
+            ],
         }
         for update in tailored_payload.get("experience_updates") or []
         if isinstance(update, dict) and update.get("id")
@@ -560,12 +388,28 @@ def experience_updates_by_id(tailored_payload: dict) -> dict:
 def tailored_experience_bullets(entry: dict, update: dict, profile: dict) -> list[str]:
     """Return bullets allowed by policy, with required baseline bullets preserved."""
     policy = get_tailoring_policy(profile)
-    source = update.get("bullets") if policy["allow_achievement_rewriting"] and isinstance(update, dict) else None
+    baseline = entry.get("bullets", [])
+    entry_id = str(entry.get("id", ""))
+    required = get_required_bullets_by_experience_id(profile).get(entry_id, [])
+    source = update.get("bullets") if isinstance(update, dict) else None
+    if not policy["allow_achievement_rewriting"] and isinstance(source, list):
+        # New selection can keep exact authored strings; legacy exports retain
+        # their prior baseline fallback. Neither path permits a rewrite.
+        if not update.get("_jobctrl_baseline_selection_recorded") or any(
+            str(bullet).strip() not in baseline for bullet in source
+        ):
+            source = None
+    if source == [] and not required:
+        baseline_ids = {f"experience:{entry_id}:source:{index}" for index, bullet in enumerate(baseline)
+                        if str(bullet).strip()}
+        omitted_ids = {row.get("evidence_id") for row in update.get("_jobctrl_baseline_omission_proposals", ())
+                       if isinstance(row, dict) and row.get("reason") == "clearly_inapplicable"}
+        if baseline_ids and baseline_ids == omitted_ids:
+            return []  # accepted only after independent quality review of these proposals
     if not isinstance(source, list) or not source:
-        source = entry.get("bullets", [])
+        source = baseline
 
     bullets = [str(bullet).strip() for bullet in source if str(bullet).strip()]
-    required = get_required_bullets_by_experience_id(profile).get(str(entry.get("id", "")), [])
     seen = {_normalize_text(bullet) for bullet in bullets}
     for bullet in required:
         normalized = _normalize_text(bullet)

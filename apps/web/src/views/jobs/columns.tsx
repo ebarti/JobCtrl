@@ -6,15 +6,17 @@ import { ApplyRunBadge } from "../../contexts/apply/components/ApplyRunBadge.js"
 import { isApplyRunStatus } from "../../contexts/apply/lib/apply-run-status.js";
 import { ResumeTemplateStatusBadge } from "../../contexts/materials/components/ResumeTemplateStatusBadge.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
+import { ScoreProfileFreshnessBadge } from "../../contexts/scoring/components/ScoreProfileFreshnessBadge.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
 import { UserFacingStageBadge } from "../../contexts/pipeline/components/UserFacingStageBadge.js";
-import type { JobSummary } from "../../contexts/operations/types.js";
+import type { JobState, JobSummary } from "@jobctrl/contracts";
 import type {
   DataGridColumn,
   DataGridCellContext,
   DataGridHeaderContext,
 } from "../../shared/ui/filterable-data-grid.js";
+import { Badge } from "../../shared/ui/badge.js";
 import { Checkbox } from "../../shared/ui/checkbox.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
 import { TitleStack } from "../../shared/ui/title-stack.js";
@@ -27,6 +29,34 @@ export interface JobColumnsOptions {
 }
 
 const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
+export const JOB_STATE_FILTER_VALUES = [
+  "Active",
+  "Deleted",
+  "Hidden",
+] as const;
+
+export function jobStateValue(
+  job: Pick<JobSummary, "deletedAt" | "hiddenAt">,
+): JobState {
+  if (job.hiddenAt) return "hidden";
+  if (job.deletedAt) return "deleted";
+  return "active";
+}
+
+export function jobStateLabel(
+  job: Pick<JobSummary, "deletedAt" | "hiddenAt">,
+) {
+  return JOB_STATE_LABEL_BY_VALUE[jobStateValue(job)];
+}
+
+const JOB_STATE_LABEL_BY_VALUE: Record<
+  JobState,
+  (typeof JOB_STATE_FILTER_VALUES)[number]
+> = {
+  active: "Active",
+  deleted: "Deleted",
+  hidden: "Hidden",
+};
 
 type CompensationSummary = NonNullable<JobSummary["compensationSummary"]>;
 type MarketSummary = CompensationSummary["market"];
@@ -597,6 +627,7 @@ export function JobMobileRow({
           <UserFacingStageBadge stage={row.currentStage} />
           <StageBadge state={row.currentState} />
           {applyStatus ? <ApplyRunBadge result={applyStatus} /> : null}
+          <ScoreProfileFreshnessBadge freshness={row.scoreProfileFreshness} />
           {row.scoreStaleness.isStale ? (
             <span data-typography="label">
               <ScoreStalenessBadge staleness={row.scoreStaleness} />
@@ -614,6 +645,7 @@ export function jobColumns(
   return [
     {
       id: "select",
+      width: 38,
       label: "Select",
       header: (context) => selectHeader(options, context),
       className: "row-check",
@@ -625,6 +657,7 @@ export function jobColumns(
     },
     {
       id: "fit_score",
+      width: 92,
       label: "Fit",
       sortable: true,
       getFilterValue: (row) => String(row.fitScore ?? "unscored"),
@@ -633,6 +666,7 @@ export function jobColumns(
           <ScoreBadge score={row.fitScore} />
           <span data-typography="label">
             <ScoreStalenessBadge staleness={row.scoreStaleness} />
+            <ScoreProfileFreshnessBadge compact freshness={row.scoreProfileFreshness} />
           </span>
         </div>
       ),
@@ -640,6 +674,8 @@ export function jobColumns(
     {
       id: "title",
       label: "Title",
+      width: 230,
+      minWidth: 210,
       sortable: true,
       rowHeader: true,
       getFilterValue: (row) => row.title,
@@ -657,14 +693,29 @@ export function jobColumns(
     },
     {
       id: "company",
+      width: 130,
       label: "Company",
       sortable: true,
       getFilterValue: (row) => row.company || "-",
       render: (row) => (
-        <span className="muted-cell" data-typography="body">
+        <span
+          className="muted-cell"
+          data-typography="body"
+          title={row.company || "-"}
+        >
           {row.company || "-"}
         </span>
       ),
+    },
+    {
+      id: "job_state",
+      width: 144,
+      minWidth: 144,
+      label: "Job state",
+      getFilterValue: jobStateLabel,
+      filterValues: JOB_STATE_FILTER_VALUES,
+      filterText: false,
+      render: (row) => <Badge variant="category">{jobStateLabel(row)}</Badge>,
     },
     {
       id: "source",
@@ -793,6 +844,7 @@ export function jobColumns(
     },
     {
       id: "location",
+      width: 140,
       label: "Location",
       sortable: true,
       getFilterValue: (row) => row.location || "-",
@@ -802,10 +854,12 @@ export function jobColumns(
     },
     {
       id: "current_stage",
+      width: 112,
       label: "Stage",
       sortable: true,
       getFilterValue: (row) => row.currentStage,
       filterValues: JOB_TABLE_STAGE_FILTERS,
+      filterText: false,
       render: (row) => (
         <span data-typography="label">
           <UserFacingStageBadge stage={row.currentStage} />
@@ -814,7 +868,8 @@ export function jobColumns(
     },
     {
       id: "current_state",
-      label: "State",
+      width: 136,
+      label: "Stage state",
       sortable: true,
       getFilterValue: (row) => row.currentState,
       getFilterSearchValue: (row) =>
@@ -845,6 +900,7 @@ export function jobColumns(
     },
     {
       id: "discovered_at",
+      width: 136,
       label: "Discovered",
       sortable: true,
       getFilterValue: (row) => row.discoveredAt || "-",
@@ -856,6 +912,7 @@ export function jobColumns(
     },
     {
       id: "apply_status",
+      width: 104,
       label: "Apply",
       sortable: true,
       getSortValue: (row) => row.applyStatus ?? "",

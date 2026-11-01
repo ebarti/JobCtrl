@@ -19,9 +19,11 @@ from pathlib import Path
 
 from jobctrl import config
 from jobctrl.domain.ports.events import EventPublisher
-from jobctrl.database import init_db
+from jobctrl.database import get_connection, init_db
 from jobctrl.infrastructure.events import get_default_publisher, reset_default_publisher
 from jobctrl.infrastructure.profile.pdf_parser import PyPdfProfileParser
+from jobctrl.infrastructure.profile.interpretation import PersistedCandidateInterpreter
+from jobctrl.infrastructure.determinations import determination_dependencies
 from jobctrl.infrastructure.profile.sqlite_repository import SqliteProfileRepository
 
 _lock = threading.Lock()
@@ -43,7 +45,8 @@ def build_profile_repository(
     return SqliteProfileRepository(
         conn,
         publisher=publisher or get_default_publisher(),
-        pdf_parser=PyPdfProfileParser(),
+        candidate_interpreter=PersistedCandidateInterpreter(conn, tenant_id="local"),
+        pdf_parser=PyPdfProfileParser(dependencies=determination_dependencies(conn, tenant_id="local", lane="profile")),
     )
 
 
@@ -60,10 +63,17 @@ def get_profile_repository() -> SqliteProfileRepository:
         generation = _generation
     cached = getattr(_local, "repository", None)
     cached_generation = getattr(_local, "generation", None)
-    if cached is None or cached_generation != generation:
+    stale = (
+        cached is None or cached_generation != generation
+        or getattr(_local, "db_path", None) != str(config.DB_PATH)
+    )
+    if not stale:
+        stale = cached._conn is not get_connection(config.DB_PATH)
+    if stale:
         cached = build_profile_repository()
         _local.repository = cached
         _local.generation = generation
+        _local.db_path = str(config.DB_PATH)
     return cached
 
 

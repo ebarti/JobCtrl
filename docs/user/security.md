@@ -52,9 +52,10 @@ identity, and privacy contact, read the canonical
 
 | Outbound call | When | What can be sent |
 | --- | --- | --- |
-| LLM providers | Scoring, analysis, tailoring, cover letters, contact extraction | Posting text, relevant profile evidence, generated text, or opted-in page text. Employer analysis uses Claude, Codex, and Gemini legs. |
+| LLM providers | Scoring, analysis, tailoring, cover letters, contact extraction, opt-in Required-bullet coaching | Posting text, relevant profile evidence, generated text, or opted-in page text. Required-bullet coaching sends only selected saved claims, role/company context and matching achievement evidence. Employer analysis uses Claude, Codex, and Gemini legs. |
 | Apply model | Apply/dry-run or an enabled standing loop | The reviewed application URL and page content observed during the transport-locked inspection. Stored profile fields, job-description prose, tailored resume text, cover-letter text, local artifact paths, and artifact-upload authority are excluded. |
 | Job/ATS/public pages | Integrated Discovery and its enrichment drain through the user's current Chrome profile; supervised contact research through its separate gateway | Search terms and network/page requests. During Discovery, Chrome may also send that site's existing cookies/session state; those browser-owned values are not copied into worker tasks. |
+| Salary data sources | At the end of a Discover run, only for benchmark slices that are missing or past their seven-day freshness window; Levels.fyi or Glassdoor only when their Settings policy permits | Requests for public benchmark data from Euro Top Tech, ECB exchange rates when a currency conversion is needed, and Eurostat price levels when a slice has no direct benchmark. Levels.fyi public-page URLs name the role and location being benchmarked. |
 | Gmail | Authenticated verification/outcome flows or approved email applications | Bounded queries/evidence, or the exact reviewed send. |
 | Google Maps | Configured profile autocomplete | Address text typed in the field. |
 | CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the local solver tool. |
@@ -66,7 +67,7 @@ posting. Extracted posting text can be stored locally, and snapshots or posting
 text can reach configured LLM providers during extraction and later stages.
 See the [data-flow notice](data-and-safety.md#external-services). Cookie values
 are never copied into worker tasks or results; the browser user-agent string is
-returned with results for robots evaluation only.
+returned with results as transport metadata; it is not used for robots checks.
 
 The Apply model receives no applicant profile or generated-material prose.
 Reviewed resume and cover-letter files remain local for the user to handle
@@ -127,8 +128,9 @@ valid token for its scoped routes, but it cannot read, mint, or rotate the token
 itself.
 
 Once paired, the extension polls a loopback-only lease route and supplies the
-heartbeat shown in Settings. Integrated Discovery creates only execution-bound,
-idempotent tasks carrying the exact Temporal workflow/run identity, one public
+heartbeat shown in Settings. When selected for acquisition, the extension
+receives only execution-bound, idempotent tasks carrying the exact Temporal
+workflow/run identity, one public
 HTTP(S) URL, a `GET` or `POST` request or a rendered-page request, a maximum
 two-minute timeout, and bounded bodies/results. Browser-owned `Cookie`,
 `User-Agent`, `Origin`, `Referer`, `Host`, and all `Sec-*`/`Proxy-*` headers are
@@ -141,12 +143,24 @@ complete work until the user replaces the selection there. The broker is
 memory-only and admits at most four active/pending tasks for four extension
 executors. Queue waiting and lease execution use separate bounds. Each active
 lease heartbeats while Chrome works; cancellation or a hard timeout aborts the
-request, closes an inactive tab when one exists, and invalidates stale
-completion. If the live heartbeat disappears, new Discovery work fails closed
-rather than copying or launching a profile.
+request, closes its owned tab when one exists, and invalidates stale
+completion. A selected extension disconnect can fail its acquisition; it does
+not trigger another transport for that fetch. The next acquisition setup may
+select anonymous access if the bounded status probe reports unavailable.
 
-Capture requires a click and sends the active page URL/visible text to the local
-API. If the stack is down, the extension holds a bounded local queue. Autofill
+Capture requires a click. Before sending the active page URL/visible text to the
+local API, the extension stores it in its local queue. The queue holds up to 25
+pending captures. Pending captures remain until JobCtrl acknowledges
+each one or you choose **Clear queue**; saving a pairing token and the passage
+of time do not remove them. If synchronization times out or JobCtrl has not
+confirmed an import or dismissal, the capture stays queued. A retry after
+re-pairing waits for any in-flight sync, then uses the new token. A full queue
+refuses a new capture and
+reports that the current page was not saved. Reconnect and choose **Sync queued
+captures** to retry pending captures, then save the current page again, or
+explicitly clear them. An unreadable queue is preserved
+and reported; **Clear queue** discards its stored contents. A capture already
+being sent when you clear the queue cannot be recalled from JobCtrl. Autofill
 has page access on ordinary HTTP(S) sites so it is not coupled to a fixed ATS
 host list, but its content script stays passive until **Review autofill** is
 clicked. Only then does it read the current form and receive whitelisted profile
@@ -178,7 +192,18 @@ The content script and broker also reject
 non-web, credential-bearing, lexically local, or cross-origin final URLs. A
 rendered page's ordinary subresource loading remains owned by Chrome and the
 visited site, as it would during normal browsing in that profile.
-Contact research and apply retain their own stricter transport guards.
+Anonymous JobStreaming uses guarded Requests sessions for every provider,
+including providers normally backed by native tls-client. URL/DNS checks run
+before each send, including automatic redirects; direct sockets connect to
+validated numeric public addresses. Search-session replacement and per-detail
+sessions use the same guard. Public redirects preserve normal Requests
+handling, including removal of cross-origin credentials. Proxy routing is
+rejected in this anonymous broad-board path because proxy-side destination DNS
+cannot be pinned by the worker; it never silently ignores a configured proxy.
+Provider headers, cookies, request bodies and timeout options remain supported.
+ATS/API and Workday use the existing guarded HTTP gateway; anonymous Smart
+Extract and Enrich use the public Playwright route guard described below.
+Contact research and Apply retain their own stricter transport guards.
 
 For public-page rendering, JobCtrl replays only safe public `GET` and `HEAD`
 requests through its DNS-pinned fetcher. It drops public write subrequests such
@@ -280,14 +305,14 @@ choosing not to click Submit.
 
 ### Browser Capabilities Are Explicit
 
-Integrated Discovery and LinkedIn Enrich use only the selected extension in the
-user's currently running Chrome profile. The normal Settings flow does not
-launch Playwright for those stages, adopt a Chrome executable, or offer a
-browser-profile copy. A live extension heartbeat is required before dispatch,
-and an Enrich retry is rejected before its stage is reset when that heartbeat is
-absent. The bundled managed Playwright Chromium remains available for separate
-rendering/compatibility work, and the optional Apply browser remains disabled
-until explicitly adopted.
+Discovery and Enrich prefer the selected paired extension when its bounded
+status probe reports connected. Otherwise they use guarded public HTTP or
+anonymous managed Playwright. API launch and job-level/bulk retries remain
+available offline, subject to worker readiness, authorization and stage gates.
+A failed acquisition or cancellation never switches transports. Neither mode
+adopts a Chrome executable or reads a copied profile, even if a standalone
+compatibility capability has prior consent. The optional Apply browser remains
+disabled until explicitly adopted.
 
 The Apply-browser Settings read path may detect supported Chrome/Chromium installations, but
 it returns only a bounded ID and label. Detection never launches, adopts,
@@ -338,27 +363,25 @@ unsupported/failed challenges, the apply path stops.
 
 ### Crawl Politeness
 
-Integrated Discovery and its enrichment drain apply the crawl-policy gateway
-around the paired live-Chrome transport:
+Discovery and Enrich do not request, evaluate, or enforce `robots.txt` in
+connected or anonymous mode. Legacy blocked outcomes remain readable and
+retryable; old source-policy values cannot reactivate enforcement.
 
-- `robots.txt` is enforced for page rendering: `2xx` parses the file, `4xx`
-  means absent, `5xx`/timeout is inconclusive and fails closed, and definitive
-  network absence fails open with a warning;
-- initial task URLs and browser-reported final URLs must be public HTTP(S);
-- per-host pacing, concurrency, and per-run request budgets limit load;
-- Chrome owns cookies, proxy, and user agent, and the returned browser user agent
-  is used for robots evaluation; and
-- denied/rate-limited/budget/unsafe destinations are recorded as outcomes, not
-  generic scrape errors.
+- Initial URLs, DNS resolution, redirects and final URLs retain their public
+  destination checks; rendered browser tasks retain exact-origin navigation guards.
+- Per-host pacing, concurrency, and per-run request budgets limit load.
+- Chrome owns its cookies, proxy and user agent; anonymous acquisition never
+  borrows a personal profile or ambient credentials.
+- Rate-limit, budget and unsafe-destination outcomes remain distinguishable from
+  generic scrape errors, and cancellation still ends owned work.
 
-JobStreaming owns its internal board traversal, but its provider sessions are
-replaced with the same extension transport during integrated Discovery; JobCtrl
-therefore applies only invocation-level pacing/budget where it cannot truthfully
-count the library's internal requests. The configured
-`JobCtrl/<version> (+<contact>)` identity remains in use for standalone/non-
-extension gateway operations and is never substituted for Chrome's live user
-agent. Existing copied-profile capabilities remain separate and are not a
-Discovery fallback. See
+JobStreaming owns internal board traversal. JobCtrl applies invocation-level
+pacing/budget there, with a public-destination guard on every anonymous request,
+rather than claiming per-request budget accounting.
+Its provider sessions prefer the extension when connected. The configured
+`JobCtrl/<version> (+<contact>)` identity remains in use for non-extension
+gateways and integrated anonymous broad-board requests; it is never substituted
+for Chrome's live user agent. Copied-profile capabilities remain separate. See
 [Discovery → Crawl Politeness](discovery.md#crawl-politeness).
 
 ## Credentials
@@ -368,10 +391,10 @@ or verify that login.
 
 | Secret | Boundary |
 | --- | --- |
-| Provider/runtime keys | Shell, plaintext `~/.jobctrl/.env`, or the guided macOS Keychain boundary; never SQLite. |
-| Codex login | Stable `$JOBCTRL_DIR/codex_home/auth.json`, separate from SQLite and the normal Codex home. Valid normal CLI auth may be reused once only when this file is absent; existing isolated auth is never overwritten. Prompt-driven reads are limited to `codex_home/workspace/` plus the exact canonical Codex executable required to start the app server—not its package directory or sibling files. |
-| Claude/Google web entries | Keychain for API keys plus cloud activation flags/non-secret identifiers; AWS, Google, and Azure credential files remain in their vendor stores. Status only is returned. |
-| CAPTCHA key | `CAPSOLVER_API_KEY` saved from Settings to Keychain on macOS, or supplied by the environment elsewhere; read by the owned local solver, not the model. |
+| Provider/runtime keys | Native OS credential store for guided persistent setup; inherited environment for ephemeral use; legacy `.env` until migrated. Never SQLite. |
+| Codex login | Stable `$JOBCTRL_DIR/codex_home/auth.json`, separate from SQLite and the normal Codex home. Valid normal CLI auth may be reused once only when this file is absent; only `auth.json` is copied, and existing isolated auth is never overwritten. Generation chats are ephemeral. Overlapping app-server clients share temporary SQLite metadata and SQLite logs until the last client closes; their text logs remain independently temporary. An exclusive owner lease protects live stores during abandoned-store reclamation. Prompt-driven reads are limited to the private project rooted at `codex_home/workspace/` plus the exact canonical Codex executable required to start the app server—not its package directory or sibling files. Configuration discovery stops at that generated project boundary. |
+| Claude/Google web entries | Native OS credential store for API keys; `config.json` for cloud activation flags/non-secret identifiers; AWS, Google, and Azure credential files remain in their vendor stores. Status only is returned. |
+| CAPTCHA key | `CAPSOLVER_API_KEY` saved from Settings to the native OS credential store, or supplied by the environment; read by the owned local solver, not the model. |
 | Job-site passwords | Optional local profile value typed through a focused-field credential tool, never returned to the model. |
 
 Codex token refresh and revocation use OpenAI's default HTTPS endpoints;
@@ -382,14 +405,17 @@ with owner-only mode `0600`. The extension capability token is also `0600`.
 This limits accidental access by other local accounts, but it is not encryption
 and does not protect against a compromised user account.
 
-Environment values win over Keychain and make the matching Settings control
-read-only. Keychain is loaded only for missing/empty values at process startup,
+Environment values win over the OS credential store and make the matching Settings control
+read-only. Native credentials are loaded only for missing/empty values at process startup,
 so restart the relevant Python process after Claude, Google, or CapSolver
 changes. Codex verification, model preference, browser capability, and
 extension-pairing changes do not require that restart. Provider
-replacement is atomic from the web contract; stored secrets are used internally
-only to restore a failed batch and never cross the HTTP boundary. Windows and
-Linux use environment configuration today.
+replacement is atomic from the web contract; native reads for presence,
+rollback, or migration stay internal and never cross the HTTP boundary. Windows uses Credential Manager and Linux uses Secret Service. Unavailable or
+locked stores are reported without falling back to plaintext persistence.
+API credential updates share an OS-user lock and a temporary helper identity
+record containing no credential values. Later saves wait for a surviving helper
+to exit; the separate plaintext migration has its own ownership rules.
 
 ## Runtime And Supply-Chain Boundary
 
@@ -435,19 +461,18 @@ legal/screening attestation is missing, the agent stops instead of guessing.
 
 ## Content Integrity And Auditability
 
-Job postings, imported documents, page text, and all model responses are
-untrusted inputs. JobCtrl uses structured schemas and deterministic validation
-before model output becomes a score, employer analysis, resume, cover letter,
-or application answer. Employer-analysis evidence spans must exist literally in
-the captured posting. Resume and cover-letter gates reject unsupported numbers,
-dates, titles, employers, skills, and tools; rendered-text coverage and
-provenance are computed from the actual selected artifact rather than inferred
-from the prompt.
+Job postings, imported documents, page text and model responses are untrusted
+inputs. Semantic claim support comes from a strict model determination. Code
+checks canonical IDs, exact verbatim citations, numeric/date/currency equality,
+schemas and versions before an artifact is accepted. An independent quality
+judge remains separate. Generated lines record source and requirement anchors;
+read-side code cannot infer provenance from text overlap. Model failure has a
+distinct safe status and never selects a lexical fallback.
 
-Judge and adversarial review add another integrity layer, but deterministic
-grounding remains authoritative. Retry prompts use only fixed, code-owned reason
-guidance; free-form validator, judge, adversarial-review, and prior-model text
-stays in the audit trail and is never promoted into a later generator message.
+Bounded verifier findings can request repair while remaining untrusted source
+data. They cannot add a profile fact, change the allowlisted source inventory,
+override a user pin or bypass the structural gates.
+
 When regeneration or review fails, JobCtrl keeps the last accepted artifact
 visible and records the failed attempt at a separate audit path instead of
 overwriting, replacing, or hiding known-good material. Approval decisions,
@@ -471,3 +496,10 @@ validation, notice, and human-review controls.
 Prefer GitHub private vulnerability reporting. Otherwise request a private
 contact path in a minimal public issue; omit exploit details, secrets, logs,
 profiles, artifacts, and local paths. See [SECURITY.md](../../SECURITY.md).
+
+
+## Semantic Determination Authority
+
+Semantic decisions come from strict model determinations with source citations. Code owns ID membership, verbatim spans, exact values, version fences, URL/security controls and privacy minimization. No provider failure selects a lexical substitute. Form mapping uses captured questions, saved fact IDs and native option IDs; the user confirms filling and JobCtrl never submits.
+
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

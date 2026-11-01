@@ -1,8 +1,16 @@
+import { actionIdentity, actionReceiptKey, assertActionReceipt, readActionReceipt, ActionReceiptConflictError } from "./action-receipts.js";
+import { ManualApplicationOutcomeRequestSchema } from "@jobctrl/contracts";
+import { selectResumeMaterial, materialArtifactCandidates, RESUME_TEXT_ARTIFACT_TYPES, RESUME_PDF_ARTIFACT_TYPES, type MaterialArtifactCandidate } from "./material-preview-selection.js";
+import { safeCoverLetterAccepted, coverLetterAccepted, coverLetterSourceBytes, coverLetterTextForSource, requireCoverLetterApproval } from "./cover-letter-review.js";
+import { MessageOutcomeDeterminationSchema } from "@jobctrl/contracts";
+import { readArtifactLineAnchors, readDetermination } from "./semantic-determinations.js";
 import crypto from "node:crypto";
-import fs from "node:fs";
+import path from "node:path";
+import { emailApprovalBinding, emailCandidateSha256 } from "./email-approval-binding.js";
 
 import type {
   ApplicationOutcome,
+  EmployerAnalysis,
   ApplicationOutcomeKind,
   ApplicationOutcomeListResponse,
   ApplicationOutcomeSource,
@@ -38,14 +46,18 @@ import type {
 } from "./contracts.js";
 import {
   APPLICATION_OUTCOME_KINDS,
+  EMPLOYER_ANALYSIS_PROMPT_VERSION,
   APPLY_REVIEW_DECISION_VALUES,
   OUTCOME_SUGGESTION_STATUSES,
   STAGES,
   STAGE_STATES,
 } from "./contracts.js";
+import { bindRequirementFitReport, requirementCoverageForArtifact, requirementIdentities, unrecordedRequirementCoverage } from "./requirement-evidence.js";
+import { missingApplicationAttestationFields } from "./application-attestations.js";
 import { buildApplyAudit } from "./apply-audit.js";
+import { readApplyAuditControls } from "./apply-controls.js";
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
-import { refreshProjections } from "./projections.js";
+import { ensureJobDetailProjection, refreshProjections } from "./projections.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
 import { resumeTemplateStateForJob } from "./resume-templates.js";
 import { InputError, resolveJobId } from "./write-model.js";
@@ -55,10 +67,6 @@ const DEFAULT_PROFILE_ID = "default";
 const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"];
 const POSITION_PREVIEW_CHAR_LIMIT = 6000;
-const MATERIAL_PREVIEW_CHAR_LIMIT = 4000;
-const MATERIAL_PREVIEW_BYTE_LIMIT = 24_000;
-const RESUME_AUDIT_TEXT_BYTE_LIMIT = 128_000;
-const COVER_LETTER_REVIEW_TEXT_BYTE_LIMIT = 128_000;
 const EVIDENCE_LIST_LIMIT = 12;
 const EVIDENCE_TEXT_LIMIT = 180;
 const IDEAL_CANDIDATE_TEXT_LIMIT = 1400;
@@ -108,6 +116,7 @@ interface ReviewQueueRow extends Record<string, unknown> {
   dry_run: number | null;
   started_at: string | null;
   finished_at: string | null;
+  employer_analysis_generation: number | null;
   employer_ideal_candidate_narrative: string | null;
   employer_requirements_json: string | null;
   requirement_fit_report_json: string | null;
@@ -144,7 +153,7 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
   void db;
 }
 
-export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueResponse {
+export function listApplyReviewQueue(db: SqliteDatabase, appDir?: string): ApplyReviewQueueResponse {
   ensureApplicationFeedbackTables(db);
   refreshProjections(db);
 
@@ -162,22 +171,23 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
   )`;
   const employerAnalysisCte = `,
     latest_employer_analysis AS (
-      SELECT tenant_id, job_id, ideal_candidate_narrative, requirements_json
+      SELECT tenant_id, job_id, generation, ideal_candidate_narrative, requirements_json
       FROM (
-        SELECT tenant_id, job_id, ideal_candidate_narrative, requirements_json,
+        SELECT tenant_id, job_id, generation, ideal_candidate_narrative, requirements_json,
                ROW_NUMBER() OVER (
                  PARTITION BY tenant_id, job_id
                  ORDER BY generation DESC
                ) AS row_num
         FROM job_employer_analysis
-        WHERE tenant_id = ?
+        WHERE tenant_id = ? AND prompt_version = '${EMPLOYER_ANALYSIS_PROMPT_VERSION}'
       )
       WHERE row_num = 1
     )`;
   const employerAnalysisSelect = `,
+         latest_employer_analysis.generation AS employer_analysis_generation,
          latest_employer_analysis.ideal_candidate_narrative AS employer_ideal_candidate_narrative,
          latest_employer_analysis.requirements_json AS employer_requirements_json`;
-  const rows = allRows<ReviewQueueRow>(
+  const loadRows = () => allRows<ReviewQueueRow>(
     db,
     `
     WITH latest_decision AS (
@@ -190,7 +200,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
                partial_override_run_id, email_recipient, email_attachment_artifact_id,
                ROW_NUMBER() OVER (
                  PARTITION BY tenant_id, job_id
-                 ORDER BY decided_at DESC, decision_id DESC
+                 ORDER BY decided_at DESC, CASE WHEN decision = 'approve_submit' THEN 0 ELSE 1 END DESC, decision_id DESC
                ) AS row_num
         FROM application_review_decisions
         WHERE tenant_id = ?
@@ -292,12 +302,23 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
     ],
   );
 
+  // Keep selected list metadata and detail evidence in one SQLite snapshot,
+  // including when both consumers are behind a missed Python notification.
+  const rows = db.transaction(() => {
+    const selected = loadRows();
+    let repaired = false;
+    for (const row of selected) {
+      if (ensureJobDetailProjection(db, DEFAULT_TENANT, row.job_id)) repaired = true;
+    }
+    return repaired ? loadRows() : selected;
+  }).immediate();
+
   const profileSourceFields = profileSourceFieldsForApplyReview(db);
   const missingProfileData = missingApplicationAttestationFields(db);
   return {
     ok: true,
     items: rows.map((row) =>
-      reviewQueueItemFromRow(db, row, profileSourceFields, missingProfileData),
+      reviewQueueItemFromRow(db, row, profileSourceFields, missingProfileData, appDir),
     ),
   };
 }
@@ -306,7 +327,11 @@ export function recordApplyReviewDecision(
   db: SqliteDatabase,
   jobLocator: string,
   request: ApplyReviewDecisionRequest,
+  appDir?: string,
 ): ApplyReviewDecisionResponse {
+  return db.transaction(() => recordApplyReviewDecisionSnapshot(db, jobLocator, request, appDir)).immediate();
+}
+function recordApplyReviewDecisionSnapshot(db: SqliteDatabase, jobLocator: string, request: ApplyReviewDecisionRequest, appDir?: string): ApplyReviewDecisionResponse {
   ensureApplicationFeedbackTables(db);
   const jobId = resolveExternalJobId(db, jobLocator);
   const applicationUrl = currentApplicationUrl(db, jobId);
@@ -315,6 +340,8 @@ export function recordApplyReviewDecision(
   const partialOverrideRunId =
     request.decision === "approve_submit" ? request.partialOverrideRunId ?? null : null;
   if (request.decision === "approve_submit") {
+    const cover = requireCoverLetterApproval(db, jobId, appDir);
+    if ((cover?.acceptedVersion ?? null) !== (request.coverLetterAcceptedVersion ?? null)) throw new InputError("approval_stale_materials");
     if (
       request.materialsGeneration === undefined ||
       request.materialsGeneration !== materialsGeneration
@@ -354,14 +381,21 @@ export function recordApplyReviewDecision(
   }
   const emailCandidate =
     request.decision === "approve_submit" ? latestEmailApplicationCandidate(db, jobId) : null;
-  if (emailCandidate) {
+  if (request.decision === "approve_submit" && (emailCandidate || request.reviewedEmailCandidate || request.emailRecipient || request.emailAttachmentArtifactId)) {
     if (
+      !emailCandidate ||
       request.emailRecipient?.toLowerCase() !== emailCandidate.recipient.toLowerCase() ||
-      request.emailAttachmentArtifactId !== emailCandidate.attachmentArtifactId
+      request.emailAttachmentArtifactId !== emailCandidate.attachmentArtifactId ||
+      !request.reviewedEmailCandidate ||
+      request.reviewedEmailCandidate.candidateRunId !== emailCandidate.candidateRunId ||
+      request.reviewedEmailCandidate.recordedAt !== emailCandidate.recordedAt ||
+      emailCandidateSha256(request.reviewedEmailCandidate) !== emailCandidateSha256(emailCandidate)
     ) {
       throw new InputError("approval_stale_email_candidate");
     }
   }
+  const emailBinding = emailCandidate ? emailApprovalBinding(db, jobId, emailCandidate) : null;
+  if (emailCandidate && !emailBinding) throw new InputError("approval_stale_materials");
   const decidedAt = new Date().toISOString();
   const decision: ApplyReviewDecision = {
     decisionId: crypto.randomUUID(),
@@ -409,6 +443,8 @@ export function recordApplyReviewDecision(
       tenantId: DEFAULT_TENANT,
       jobId,
       decisionId: decision.decisionId,
+      emailApprovalBinding: emailBinding,
+      coverLetterBinding: safeCoverLetterAccepted(db, jobId, appDir),
       decision: decision.decision,
       reasonPresent: Boolean(decision.reason),
       materialsGeneration: decision.materialsGeneration,
@@ -430,7 +466,7 @@ export function listApplicationOutcomes(
   return {
     ok: true,
     outcomes: readOutcomes(db),
-    suggestions: readSuggestions(db),
+    ...readSuggestions(db),
   };
 }
 
@@ -447,7 +483,7 @@ export function listJobApplicationOutcomes(
     ok: true,
     jobKey: jobId,
     outcomes: readOutcomes(db, jobId),
-    suggestions: readSuggestions(db, jobId),
+    ...readSuggestions(db, jobId),
   };
 }
 
@@ -456,24 +492,45 @@ export function recordManualApplicationOutcome(
   jobLocator: string,
   request: ManualApplicationOutcomeRequest,
 ): ApplicationOutcomeWriteResponse {
-  ensureApplicationFeedbackTables(db);
-  const jobId = resolveExternalJobId(db, jobLocator);
-  const interviewPrepGeneration = resolveInterviewPrepGeneration(
-    db,
-    jobId,
-    request.interviewPrepGeneration,
-  );
-  const outcome = insertOutcome(db, {
-    jobKey: jobId,
-    kind: request.kind,
-    source: "manual",
-    note: request.note ?? null,
-    occurredAt: request.occurredAt ?? new Date().toISOString(),
-    suggestionId: null,
-    evidenceId: null,
-    interviewPrepGeneration,
-  });
-  return { ok: true, outcome };
+  request = ManualApplicationOutcomeRequestSchema.parse(request);
+  return db.transaction(() => {
+    ensureApplicationFeedbackTables(db);
+    const jobId = resolveExternalJobId(db, jobLocator);
+    const operation = request.interviewPrepGeneration === undefined ? "manual-outcome" : "interview-reflection";
+    const identity = actionIdentity(DEFAULT_TENANT, operation, jobId, request.requestId, request);
+    const receipt = readActionReceipt(db, DEFAULT_TENANT, identity, "ApplicationOutcomeRecorded", "job");
+    if (receipt) {
+      const raw = getRow<OutcomeRow & { created_by: string }>(db,
+        `SELECT outcome_id, job_id, kind, source, note, occurred_at, recorded_at,
+                suggestion_id, evidence_id, interview_prep_generation, created_by
+         FROM application_outcomes WHERE tenant_id=? AND outcome_id=?`,
+        [DEFAULT_TENANT, receipt.factId]);
+      if (!raw || raw.job_id !== jobId || raw.kind !== request.kind || raw.source !== "manual" || raw.created_by !== "user") {
+        throw new ActionReceiptConflictError();
+      }
+      const outcome = outcomeFromRow(raw);
+      if (outcome.jobKey !== jobId || outcome.source !== "manual"
+        || outcome.kind !== request.kind || outcome.note !== (request.note ?? null)
+        || outcome.interviewPrepGeneration !== (request.interviewPrepGeneration ?? null)
+        || (request.occurredAt !== undefined && outcome.occurredAt !== request.occurredAt)) {
+        throw new ActionReceiptConflictError();
+      }
+      assertActionReceipt(identity, receipt, { ...outcome, createdBy: raw.created_by });
+      return { ok: true as const, outcome };
+    }
+    const interviewPrepGeneration = resolveInterviewPrepGeneration(db, jobId, request.interviewPrepGeneration);
+    const outcome = insertOutcome(db, {
+      jobKey: jobId,
+      kind: request.kind,
+      source: "manual",
+      note: request.note ?? null,
+      occurredAt: request.occurredAt ?? new Date().toISOString(),
+      suggestionId: null,
+      evidenceId: null,
+      interviewPrepGeneration,
+    }, identity);
+    return { ok: true as const, outcome };
+  }).immediate();
 }
 
 export function decideOutcomeSuggestion(
@@ -489,10 +546,11 @@ export function decideOutcomeSuggestion(
   if (existing.status !== "pending") {
     return {
       ok: true,
-      suggestion: suggestionFromRow(existing),
+      suggestion: suggestionFromRow(db, existing),
       outcome: existing.decided_outcome_id ? readOutcome(db, existing.decided_outcome_id) : null,
     };
   }
+  if (!suggestionFromRow(db, existing).determination) throw new InputError("outcome_determination_unavailable");
   const decidedAt = new Date().toISOString();
   let outcome: ApplicationOutcome | null = null;
 
@@ -558,7 +616,7 @@ export function decideOutcomeSuggestion(
   }
   return {
     ok: true,
-    suggestion: suggestionFromRow(suggestion),
+    suggestion: suggestionFromRow(db, suggestion),
     outcome,
   };
 }
@@ -575,6 +633,7 @@ function insertOutcome(
     evidenceId: string | null;
     interviewPrepGeneration: number | null;
   },
+  identity?: ReturnType<typeof actionIdentity>,
 ): ApplicationOutcome {
   const recordedAt = new Date().toISOString();
   const outcome: ApplicationOutcome = {
@@ -610,23 +669,25 @@ function insertOutcome(
     "user",
   );
 
+  const event = {
+    tenantId: DEFAULT_TENANT,
+    jobId: outcome.jobKey,
+    outcomeId: outcome.outcomeId,
+    kind: outcome.kind,
+    source: outcome.source,
+    occurredAt: outcome.occurredAt,
+    suggestionId: outcome.suggestionId,
+    evidenceId: outcome.evidenceId,
+    interviewPrepGeneration: outcome.interviewPrepGeneration,
+    notePresent: Boolean(outcome.note),
+  };
   recordEvent(db, {
+    ...(identity ? { idempotencyKey: actionReceiptKey(identity, { ...outcome, createdBy: "user" }, event) } : {}),
     eventType: "ApplicationOutcomeRecorded",
     jobId: canonicalJobId(outcome.jobKey),
     stage: "apply",
     message: "Application outcome recorded.",
-    payload: {
-      tenantId: DEFAULT_TENANT,
-      jobId: outcome.jobKey,
-      outcomeId: outcome.outcomeId,
-      kind: outcome.kind,
-      source: outcome.source,
-      occurredAt: outcome.occurredAt,
-      suggestionId: outcome.suggestionId,
-      evidenceId: outcome.evidenceId,
-      interviewPrepGeneration: outcome.interviewPrepGeneration,
-      notePresent: Boolean(outcome.note),
-    },
+    payload: { ...event, ...(identity ? { receipt: { ...identity.binding, factId: outcome.outcomeId } } : {}) },
   });
 
   return outcome;
@@ -683,10 +744,10 @@ function resolveInterviewPrepGeneration(
   return generation;
 }
 
-function readSuggestions(db: SqliteDatabase, jobId?: JobId): OutcomeSuggestion[] {
+function readSuggestions(db: SqliteDatabase, jobId?: JobId): Pick<ApplicationOutcomeListResponse,"suggestions"|"interpretationStatus"> {
   const where = jobId ? "WHERE tenant_id = ? AND job_id = ?" : "WHERE tenant_id = ?";
   const params = jobId ? [DEFAULT_TENANT, jobId] : [DEFAULT_TENANT];
-  return allRows<SuggestionRow>(
+  const rows = allRows<SuggestionRow>(
     db,
     `SELECT suggestion_id, job_id, evidence_id, suggested_kind, confidence,
             rationale, status, created_at, decided_at, decision_reason,
@@ -695,7 +756,22 @@ function readSuggestions(db: SqliteDatabase, jobId?: JobId): OutcomeSuggestion[]
      ${where}
      ORDER BY created_at DESC, suggestion_id DESC`,
     params,
-  ).map(suggestionFromRow);
+  );
+  const suggestions:OutcomeSuggestion[]=[];
+  let failureCode:string|null=null;
+  for(const row of rows){
+    try {
+      const suggestion=suggestionFromRow(db,row);
+      if(suggestion.determination) suggestions.push(suggestion);
+      else failureCode="outcome_determination_unavailable";
+    }catch(error){
+      if(error instanceof InputError || error instanceof Error && error.message.startsWith("determination_")) failureCode="outcome_determination_binding_invalid";
+      else throw error;
+    }
+  }
+  const blocked = db.prepare(`SELECT s.failure_code FROM (SELECT *,ROW_NUMBER() OVER (PARTITION BY tenant_id,entity_id,kind ORDER BY updated_at DESC,input_fingerprint DESC) AS revision FROM semantic_stage_states) s WHERE s.revision=1 AND s.kind IN ('message_link','message_outcome') AND s.state='blocked' AND s.tenant_id=? ${jobId?"AND EXISTS (SELECT 1 FROM application_email_evidence e WHERE e.tenant_id=s.tenant_id AND e.provider_message_id=s.entity_id AND e.job_id=?)":""} ORDER BY s.updated_at DESC LIMIT 1`).get(...(jobId?[DEFAULT_TENANT,jobId]:[DEFAULT_TENANT])) as {failure_code:string}|undefined;
+  failureCode ??= blocked?.failure_code??null;
+  return {suggestions,interpretationStatus:{status:failureCode?"unavailable":suggestions.length?"available":"not_requested",failureCode}};
 }
 
 function getSuggestionRow(db: SqliteDatabase, suggestionId: string): SuggestionRow | undefined {
@@ -715,6 +791,7 @@ function reviewQueueItemFromRow(
   row: ReviewQueueRow,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
   missingProfileData: readonly string[],
+  appDir?: string,
 ): ApplyReviewQueueItem {
   const jobId = canonicalJobId(row.job_id);
   const currentState = stageState(row.current_state);
@@ -723,7 +800,7 @@ function reviewQueueItemFromRow(
   const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
   const scoreKeywords = boundedEvidenceList(parseStringListJson(row.score_keywords_json));
   const applicationUrl = applyTargetUrl(row);
-  const materialsPreview = materialPreviewsForJob(db, jobId, profileSourceFields);
+  const materialsPreview = materialPreviewsForJob(db, jobId, profileSourceFields, appDir);
   const emailApplication = latestEmailApplicationCandidate(db, jobId);
   const materialsGeneration = materialsPreview.materialsGeneration;
   const profileVersion = currentProfileVersion(db);
@@ -748,11 +825,50 @@ function reviewQueueItemFromRow(
     dryRunEvidence,
     partialDryRunEvidence,
   });
+  if (row.decision === "approve_submit") {
+    const event = getRow<{ payload_json: string }>(db, `SELECT payload_json FROM job_events
+      WHERE tenant_id=? AND job_id=? AND event_type='ApplyReviewDecisionRecorded'
+        AND json_extract(payload_json, '$.decisionId')=? ORDER BY event_id DESC LIMIT 1`, [DEFAULT_TENANT, jobId, row.decision_id]);
+    const payload = event ? parseJsonRecord(event.payload_json) : null;
+    const emailBinding = payload?.["emailApprovalBinding"] as {
+      version?: number; candidateSha256?: string; postingUrlSha256?: string;
+      postingInputsSha256?: string; materialsSha256?: string;
+    } | null;
+    if ((emailApplication || row.email_recipient || row.email_attachment_artifact_id) && !approvalReasons.length) {
+      if (!emailApplication || emailBinding?.version !== 1) {
+        approvalReasons.push("approval_stale_email_candidate");
+      } else {
+        // A changed candidate can refer to a different attachment; compare the
+        // existing source fingerprints before reporting the candidate mismatch.
+        const current = emailApprovalBinding(db, jobId, emailApplication, { allowUnmatchedAttachment: true });
+        if (!current) approvalReasons.push("approval_stale_materials");
+        else if (emailBinding.postingUrlSha256 !== current.postingUrlSha256) approvalReasons.push("approval_stale_url");
+        else if (emailBinding.materialsSha256 !== current.materialsSha256) approvalReasons.push("approval_stale_materials");
+        else if (emailBinding.candidateSha256 !== current.candidateSha256 ||
+          emailBinding.postingInputsSha256 !== current.postingInputsSha256 ||
+          row.email_recipient?.toLowerCase() !== emailApplication.recipient.toLowerCase() ||
+          row.email_attachment_artifact_id !== emailApplication.attachmentArtifactId) {
+          approvalReasons.push("approval_stale_email_candidate");
+        }
+      }
+    }
+    const bound = payload?.["coverLetterBinding"] ?? null;
+    const boundVersion = (bound as { acceptedVersion?: string } | null)?.acceptedVersion ?? null;
+    if (boundVersion !== (materialsPreview.coverLetter?.acceptedVersion ?? null)
+      || materialsPreview.coverLetterPdfError || (materialsPreview.coverLetter && !materialsPreview.coverLetter.pdfSourceCurrent)) {
+      approvalReasons.splice(0, approvalReasons.length, "approval_stale_materials");
+    }
+  }
   const idealCandidate = cleanLimitedText(
     row.employer_ideal_candidate_narrative,
     IDEAL_CANDIDATE_TEXT_LIMIT,
   );
-  const requirementFitReport = parseRequirementFitReport(row.requirement_fit_report_json);
+  const sourceRequirements = requirementIdentities(row.employer_requirements_json);
+  const projectedFitReport = parseRequirementFitReport(row.requirement_fit_report_json);
+  const requirementFitReport = bindRequirementFitReport(
+    projectedFitReport?.scoreVersion === nullableNumber(row.score_version) ? projectedFitReport : null,
+    row.employer_analysis_generation, sourceRequirements,
+  );
   const rawIdealRequirements = parseIdealRequirementsJson(row.employer_requirements_json);
   const idealRequirements = requirementsWithTailoredResumeCoverage(
     db,
@@ -760,6 +876,7 @@ function reviewQueueItemFromRow(
     rawIdealRequirements,
     materialsPreview.resumeTextArtifactId,
     requirementFitReport,
+    sourceRequirements,
   );
   const scoreEvidenceRequirements = boundedEvidenceList([
     ...(scoreBreakdown?.matchedSignals ?? []),
@@ -777,6 +894,7 @@ function reviewQueueItemFromRow(
       }
     : null;
   const applyAudit = buildApplyAudit({
+    ...readApplyAuditControls(db, DEFAULT_TENANT, jobId),
     applicationUrl,
     hasResume: Boolean(row.has_resume),
     hasCoverLetter: Boolean(row.has_cover_letter),
@@ -926,9 +1044,10 @@ function applyTargetUrl(row: ReviewQueueRow): string | null {
 function currentApplicationUrl(db: SqliteDatabase, jobId: JobId): string | null {
   const row = getRow<{ application_url: string | null; url: string }>(
     db,
-    `SELECT application_url, url
-       FROM jobs
-      WHERE tenant_id = ? AND job_id = ?`,
+    `SELECT e.application_url, j.url
+       FROM jobs j LEFT JOIN job_enrichments e
+         ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+      WHERE j.tenant_id = ? AND j.job_id = ?`,
     [DEFAULT_TENANT, jobId],
   );
   return cleanBlockerText(row?.application_url ?? null) || cleanBlockerText(row?.url ?? null) || null;
@@ -1245,16 +1364,6 @@ function parseJsonRecord(value: string | null): Record<string, unknown> | null {
   }
 }
 
-function isReviewRequiredMaterialMetadata(value: string | null): boolean {
-  const metadata = parseJsonRecord(value);
-  if (!metadata) return false;
-  if (Boolean(recordValue(metadata, "reviewRequired", "review_required"))) return true;
-  const fit = asRecord(recordValue(metadata, "postGenerationFit", "post_generation_fit"));
-  const decision = asRecord(recordValue(fit, "revisionDecision", "revision_decision"));
-  if (Boolean(recordValue(decision, "reviewBlocked", "review_blocked"))) return true;
-  const fitScore = asRecord(recordValue(fit, "fitScore", "fit_score"));
-  return parseStringList(recordValue(fitScore, "reviewBlockers", "review_blockers")).length > 0;
-}
 
 function parseQueueCompensationSummary(value: string | null): JobCompensationSummary | null {
   if (!value) {
@@ -1371,12 +1480,7 @@ function idealRequirementFromValue(value: unknown, index: number): ApplyReviewId
 }
 
 function emptyRequirementCoverage(): ApplyReviewIdealRequirement["coverage"] {
-  return {
-    state: "not_recorded",
-    source: "tailored_resume_bullet_provenance",
-    bulletCount: 0,
-    examples: [],
-  };
+  return unrecordedRequirementCoverage();
 }
 
 function requirementsWithTailoredResumeCoverage(
@@ -1385,67 +1489,29 @@ function requirementsWithTailoredResumeCoverage(
   requirements: readonly ApplyReviewIdealRequirement[],
   resumeTextArtifactId: string | null,
   requirementFitReport: RequirementFitReport | null,
+  sourceRequirements: readonly { id: string; text: string }[],
 ): ApplyReviewIdealRequirement[] {
-  if (!requirements.length) {
-    return [];
-  }
   const fitByRequirement = requirementFitByRequirementId(requirementFitReport);
-  if (!resumeTextArtifactId) {
-    return requirements.map((requirement) =>
-      requirementWithFitAssessment(requirement, fitByRequirement.get(requirement.id), emptyRequirementCoverage()),
-    );
-  }
-  const requirementIds = new Set(requirements.map((requirement) => requirement.id));
-  const rows = allRows<{
-    generated_text: string;
-    requirement_ids_json: string;
-  }>(
-    db,
-    `SELECT generated_text, requirement_ids_json
-       FROM job_bullet_provenance
-      WHERE tenant_id = ?
-        AND job_id = ?
-        AND artifact_id = ?
-      ORDER BY position, bullet_id`,
-    [DEFAULT_TENANT, jobId, resumeTextArtifactId],
-  );
-  if (!rows.length) {
-    return requirements.map((requirement) =>
-      requirementWithFitAssessment(requirement, fitByRequirement.get(requirement.id), emptyRequirementCoverage()),
-    );
-  }
+  const coverage = requirementCoverageForArtifact(db, jobId, resumeTextArtifactId, sourceRequirements, requirementFitReport);
+  return requirements.map((requirement) => requirementWithFitAssessment(
+    requirement, fitByRequirement.get(requirement.id), coverage.get(requirement.id) ?? emptyRequirementCoverage(),
+  ));
+}
 
-  const covered = new Map<string, { bulletCount: number; examples: string[] }>();
-  for (const row of rows) {
-    const ids = parseStringListJson(row.requirement_ids_json).filter((id) => requirementIds.has(id));
-    if (!ids.length) continue;
-    const example = cleanText(row.generated_text);
-    for (const id of ids) {
-      const current = covered.get(id) ?? { bulletCount: 0, examples: [] };
-      current.bulletCount += 1;
-      if (example && current.examples.length < 3) {
-        current.examples.push(example);
-      }
-      covered.set(id, current);
-    }
-  }
-
-  return requirements.map((requirement) => {
-    const hit = covered.get(requirement.id);
-    const assessment = fitByRequirement.get(requirement.id);
-    return requirementWithFitAssessment(
-      requirement,
-      assessment,
-      hit
-        ? {
-            state: "covered",
-            source: "tailored_resume_bullet_provenance",
-            bulletCount: hit.bulletCount,
-            examples: hit.examples,
-          }
-        : uncoveredRequirementCoverage(assessment),
-    );
-  });
+/** Job Detail uses the same selected resume and source bindings as Apply Review. */
+export function requirementFitForCurrentAnalysis(
+  db: SqliteDatabase,
+  jobId: string,
+  analysis: EmployerAnalysis | null,
+  report: RequirementFitReport | null,
+): RequirementFitReport | null {
+  const current = bindRequirementFitReport(report, analysis?.generation, analysis?.requirements ?? []);
+  if (!current || !analysis) return null;
+  const selected = resumeMaterialPreviewForJob(db, canonicalJobId(jobId));
+  const coverage = requirementCoverageForArtifact(db, jobId, selected.resumeTextArtifactId, analysis.requirements, current);
+  return { ...current, assessments: current.assessments.map((assessment) => ({
+    ...assessment, artifactCoverage: coverage.get(assessment.requirementId) ?? emptyRequirementCoverage(),
+  })) };
 }
 
 function requirementFitByRequirementId(
@@ -1475,28 +1541,6 @@ function requirementWithFitAssessment(
     tailoring: assessment?.tailoring ?? null,
     coverage,
   };
-}
-
-function uncoveredRequirementCoverage(
-  assessment: RequirementFitAssessment | undefined,
-): ApplyReviewIdealRequirement["coverage"] {
-  if (assessment?.fit.kind === "missing" || assessment?.fit.kind === "blocked") {
-    return {
-      state: "missing_from_profile",
-      source: "tailored_resume_bullet_provenance",
-      bulletCount: 0,
-      examples: [],
-    };
-  }
-  if (assessment?.fit.kind === "matched" || assessment?.fit.kind === "transferable") {
-    return {
-      state: "missing_from_resume",
-      source: "tailored_resume_bullet_provenance",
-      bulletCount: 0,
-      examples: [],
-    };
-  }
-  return emptyRequirementCoverage();
 }
 
 function cleanRequirementWeight(value: unknown): number | null {
@@ -1546,12 +1590,24 @@ function materialPreviewsForJob(
   db: SqliteDatabase,
   jobId: JobId,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
+  appDir?: string,
 ): ApplyReviewQueueItem["materialsPreview"] {
   const resumePreview = resumeMaterialPreviewForJob(db, jobId);
+  let coverLetter: ReturnType<typeof coverLetterAccepted> = null;
+  let coverLetterText: string | null = null;
+  let coverLetterPdfError: string | null = null;
+  try {
+    coverLetter = coverLetterAccepted(db, jobId, appDir);
+    coverLetterText = coverLetter ? coverLetterTextForSource(db, appDir ?? path.dirname(path.resolve(db.name)), coverLetter.source)
+      : coverLetterMaterialPreviewForJob(db, jobId, appDir);
+  }
+  catch { coverLetterPdfError = "The accepted cover-letter source cannot be read or exceeds the supported size. Restore or regenerate the letter before previewing or approving."; }
   return {
     ...resumePreview,
     profileSourceFields: [...profileSourceFields],
-    coverLetterText: coverLetterMaterialPreviewForJob(db, jobId),
+    coverLetterText,
+    coverLetter,
+    coverLetterPdfError,
   };
 }
 
@@ -1584,27 +1640,6 @@ function profileSourceFieldsForApplyReview(db: SqliteDatabase): ApplyReviewProfi
   appendProfileEducationSourceFields(db, fields);
   appendProfileSkillSourceFields(db, fields);
   return uniqueProfileSourceFields(fields).slice(0, PROFILE_SOURCE_FIELD_LIMIT);
-}
-
-const APPLICATION_ATTESTATION_PROFILE_COLUMNS = [
-  ["age_18_plus", "application_attestation_age_18_plus"],
-  ["background_check_consent", "application_attestation_background_check_consent"],
-  ["felony_conviction", "application_attestation_felony_conviction"],
-  ["previously_worked_at_employer", "application_attestation_previously_worked_at_employer"],
-] as const;
-
-function missingApplicationAttestationFields(db: SqliteDatabase): string[] {
-  const row = getRow<Record<string, unknown>>(
-    db,
-    `SELECT ${APPLICATION_ATTESTATION_PROFILE_COLUMNS.map(([, column]) => column).join(", ")}
-       FROM candidate_profiles
-      WHERE tenant_id = ? AND profile_id = ?`,
-    [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
-  );
-  if (!row) return [];
-  return APPLICATION_ATTESTATION_PROFILE_COLUMNS
-    .filter(([, column]) => row[column] === undefined || row[column] === null || row[column] === "")
-    .map(([field]) => field);
 }
 
 function appendProfileRootSourceFields(db: SqliteDatabase, fields: ApplyReviewProfileSourceField[]): void {
@@ -1816,119 +1851,40 @@ type ResumeMaterialPreview = Pick<
   | "resumeTemplate"
 >;
 
-interface MaterialArtifactCandidate {
-  readonly artifactId: string | null;
-  readonly createdAt: string;
-  readonly generation: number | null;
-  readonly metadataJson: string | null;
-  readonly path: string;
-  readonly reviewRequired: boolean;
-  readonly rowRank: number;
-  readonly sourceRank: number;
-}
-
-const RESUME_TEXT_ARTIFACT_TYPES = ["tailored_resume", "tailored_resume_txt", "resume_txt"] as const;
-const RESUME_PDF_ARTIFACT_TYPES = ["tailored_resume_pdf", "resume_pdf"] as const;
 const COVER_LETTER_TEXT_ARTIFACT_TYPES = ["cover_letter", "cover_letter_txt"] as const;
 
-function coverLetterMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId): string | null {
-  const text = firstReadableTextCandidate(
-    materialArtifactCandidates(db, {
+function coverLetterMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId, appDir = path.dirname(path.resolve(db.name))): string | null {
+  for (const candidate of materialArtifactCandidates(db, {
       artifactTypes: COVER_LETTER_TEXT_ARTIFACT_TYPES,
       binary: false,
       includeLegacyJobColumn: "cover_letter_path",
       jobId,
-    }),
-    { byteLimit: COVER_LETTER_REVIEW_TEXT_BYTE_LIMIT, charLimit: null },
-  );
-  return text?.preview ?? null;
+    })) {
+    try { return coverLetterSourceBytes(appDir, candidate.path).toString("utf8"); }
+    catch { /* An unreadable or unowned candidate is never displayed. */ }
+  }
+  return null;
 }
 
 function resumeMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId): ResumeMaterialPreview {
-  const textCandidates = materialArtifactCandidates(db, {
-    artifactTypes: RESUME_TEXT_ARTIFACT_TYPES,
-    binary: false,
-    includeLegacyJobColumn: "tailored_resume_path",
-    jobId,
-  });
-  const pdfCandidates = materialArtifactCandidates(db, {
-    artifactTypes: RESUME_PDF_ARTIFACT_TYPES,
-    binary: true,
-    jobId,
-  }).filter((candidate) => candidate.artifactId);
-  const reviewRequiredText = textCandidates.find((candidate) => candidate.reviewRequired);
-  if (reviewRequiredText) {
-    const text = firstReadableTextCandidate([reviewRequiredText], {
-      byteLimit: RESUME_AUDIT_TEXT_BYTE_LIMIT,
-      charLimit: null,
-    });
-    if (text) {
-      return {
-        materialsGeneration: text.candidate.generation,
-        resumeText: text.preview,
-        resumeTextArtifactId: text.candidate.artifactId,
-        resumePdfArtifactId: null,
-        resumePdfLayoutBoxes: [],
-        requirementLedAudit: requirementLedAuditForCandidates(db, jobId, text.candidate),
-        resumeTemplate: resumeTemplateStateForJob(db, jobId),
-      };
-    }
-  }
-
-  for (const pdf of pdfCandidates) {
-    const text = firstReadableTextCandidate(
-      textCandidates.filter((candidate) => sameMaterialGeneration(candidate, pdf)),
-      { byteLimit: RESUME_AUDIT_TEXT_BYTE_LIMIT, charLimit: null },
-    );
-    if (text) {
-      return {
-        materialsGeneration: text.candidate.generation,
-        resumeText: text.preview,
-        resumeTextArtifactId: text.candidate.artifactId,
-        resumePdfArtifactId: pdf.artifactId,
-        resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdf.artifactId),
-        requirementLedAudit: requirementLedAuditForCandidates(db, jobId, text.candidate, pdf),
-        resumeTemplate: resumeTemplateStateForJob(db, jobId),
-      };
-    }
-  }
-
-  const pdfOnly = pdfCandidates[0];
-  if (pdfOnly) {
+  const { text, pdf } = selectResumeMaterial(db, jobId);
+  if (text || pdf) {
+    const candidates = [text?.candidate, pdf].filter((candidate): candidate is MaterialArtifactCandidate => Boolean(candidate));
     return {
-      materialsGeneration: pdfOnly.generation,
-      resumeText: null,
-      resumeTextArtifactId: null,
-      resumePdfArtifactId: pdfOnly.artifactId,
-      resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdfOnly.artifactId),
-        requirementLedAudit: requirementLedAuditForCandidates(db, jobId, pdfOnly),
-        resumeTemplate: resumeTemplateStateForJob(db, jobId),
-    };
-  }
-
-  const text = firstReadableTextCandidate(textCandidates, { byteLimit: RESUME_AUDIT_TEXT_BYTE_LIMIT, charLimit: null });
-  if (text) {
-    return {
-      materialsGeneration: text.candidate.generation,
-      resumeText: text.preview,
-      resumeTextArtifactId: text.candidate.artifactId,
-      resumePdfArtifactId: null,
-      resumePdfLayoutBoxes: [],
-      requirementLedAudit: requirementLedAuditForCandidates(db, jobId, text.candidate),
+      materialsGeneration: text?.candidate.generation ?? pdf?.generation ?? null,
+      resumeText: text?.preview ?? null,
+      resumeTextArtifactId: text?.candidate.artifactId ?? null,
+      resumePdfArtifactId: pdf?.artifactId ?? null,
+      resumePdfLayoutBoxes: pdf?.artifactId ? resumeLayoutBoxesForArtifact(db, pdf.artifactId) : [],
+      requirementLedAudit: requirementLedAuditForCandidates(db, jobId, ...candidates),
       resumeTemplate: resumeTemplateStateForJob(db, jobId),
     };
   }
-
   const failedAudit = failedRequirementLedAuditForJob(db, jobId);
   return {
-    materialsGeneration: failedAudit?.generation ?? pdfCandidates[0]?.generation ?? null,
-    resumeText: null,
-    resumeTextArtifactId: null,
-    resumePdfArtifactId: pdfCandidates[0]?.artifactId ?? null,
-    resumePdfLayoutBoxes: pdfCandidates[0]?.artifactId
-      ? resumeLayoutBoxesForArtifact(db, pdfCandidates[0].artifactId)
-      : [],
-    requirementLedAudit: failedAudit?.audit ?? (pdfCandidates[0] ? requirementLedAuditForCandidates(db, jobId, pdfCandidates[0]) : null),
+    materialsGeneration: failedAudit?.generation ?? null,
+    resumeText: null, resumeTextArtifactId: null, resumePdfArtifactId: null,
+    resumePdfLayoutBoxes: [], requirementLedAudit: failedAudit?.audit ?? null,
     resumeTemplate: resumeTemplateStateForJob(db, jobId),
   };
 }
@@ -2006,9 +1962,6 @@ function reconcileRequirementLedAuditWithProvenance(
   }
 
   const rows = provenanceRowsForCandidate(db, jobId, candidate);
-  if (!rows.length) {
-    return audit;
-  }
 
   const coveredIds = new Set<string>();
   for (const row of rows) {
@@ -2063,29 +2016,11 @@ function provenanceRowsForCandidate(
   jobId: JobId,
   candidate: MaterialArtifactCandidate,
 ): Array<{ requirement_ids_json: string }> {
-  const rowsByArtifact = candidate.artifactId
-    ? allRows<{ requirement_ids_json: string }>(
-        db,
-        `SELECT requirement_ids_json
-           FROM job_bullet_provenance
-          WHERE tenant_id = ?
-            AND job_id = ?
-            AND artifact_id = ?`,
-        [DEFAULT_TENANT, jobId, candidate.artifactId],
-      )
-    : [];
-  if (rowsByArtifact.length || candidate.generation === null) {
-    return rowsByArtifact;
-  }
-  return allRows<{ requirement_ids_json: string }>(
-    db,
-    `SELECT requirement_ids_json
-       FROM job_bullet_provenance
-      WHERE tenant_id = ?
-        AND job_id = ?
-        AND generation = ?`,
-    [DEFAULT_TENANT, jobId, candidate.generation],
-  );
+  if(!candidate.artifactId || candidate.generation===null)return [];
+  const artifact=db.prepare("SELECT artifact_type FROM job_materials_artifacts WHERE tenant_id=? AND job_id=? AND artifact_id=? AND generation=?").get(DEFAULT_TENANT,jobId,candidate.artifactId,candidate.generation) as {artifact_type:string}|undefined;
+  if(!artifact)return [];
+  const anchors=readArtifactLineAnchors(db,DEFAULT_TENANT,artifact.artifact_type,candidate.artifactId,candidate.generation,jobId);
+  return Array.from(anchors.values()).map(anchor=>({requirement_ids_json:JSON.stringify(anchor.requirementIds)}));
 }
 
 function parseRequirementLedAuditMetadata(value: string | null): ApplyReviewRequirementLedAudit | null {
@@ -2348,258 +2283,6 @@ function parseResumeLayoutBoxes(value: string | null): ResumeLayoutBox[] {
   return boxes;
 }
 
-function firstReadableTextCandidate(
-  candidates: readonly MaterialArtifactCandidate[],
-  options: ReadTextOptions = {},
-): { candidate: MaterialArtifactCandidate; preview: string } | null {
-  for (const candidate of candidates) {
-    const preview = readTextPreview(candidate.path, options);
-    if (preview) {
-      return { candidate, preview };
-    }
-  }
-  return null;
-}
-
-function materialArtifactCandidates(
-  db: SqliteDatabase,
-  {
-    artifactTypes,
-    binary,
-    includeLegacyJobColumn,
-    jobId,
-  }: {
-    readonly artifactTypes: readonly string[];
-    readonly binary: boolean;
-    readonly includeLegacyJobColumn?: "tailored_resume_path" | "cover_letter_path";
-    readonly jobId: JobId;
-  },
-): MaterialArtifactCandidate[] {
-  const candidates: MaterialArtifactCandidate[] = [];
-  const placeholders = artifactTypes.map(() => "?").join(", ");
-
-  const projectedRows = allRows<{
-    artifact_id: string | null;
-    created_at: string | null;
-    generation: number | null;
-    local_path: string | null;
-    metadata_json: string | null;
-    status: string | null;
-  }>(
-    db,
-    `SELECT artifact_id, local_path, generation, created_at, status, metadata_json
-     FROM artifact_list_projections
-     WHERE tenant_id = ?
-       AND job_id = ?
-       AND artifact_type IN (${placeholders})
-       AND COALESCE(status, 'active') IN ('approved', 'active', 'candidate')
-       AND local_path IS NOT NULL
-       AND local_path != ''
-     ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, artifact_id DESC
-     LIMIT 16`,
-    [DEFAULT_TENANT, jobId, ...artifactTypes],
-  );
-  for (const [index, row] of projectedRows.entries()) {
-    const reviewRequired = row.status === "candidate" && isReviewRequiredMaterialMetadata(row.metadata_json);
-    if (row.status === "candidate" && !reviewRequired) continue;
-    pushMaterialCandidate(candidates, {
-      artifactId: row.artifact_id,
-      binary,
-      createdAt: row.created_at,
-      generation: row.generation,
-      metadataJson: row.metadata_json,
-      path: row.local_path,
-      reviewRequired,
-      rowRank: index,
-      sourceRank: 0,
-    });
-  }
-
-  const materialRows = allRows<{
-    artifact_id: string | null;
-    created_at: string | null;
-    generation: number | null;
-    metadata_json: string | null;
-    path: string | null;
-    status: string | null;
-  }>(
-    db,
-    `SELECT artifact_id, path, generation, created_at, status, metadata_json
-     FROM job_materials_artifacts
-     WHERE tenant_id = ?
-       AND job_id = ?
-       AND artifact_type IN (${placeholders})
-       AND COALESCE(status, 'approved') IN ('approved', 'active', 'candidate')
-       AND path IS NOT NULL
-       AND path != ''
-     ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, rowid DESC
-     LIMIT 16`,
-    [DEFAULT_TENANT, jobId, ...artifactTypes],
-  );
-  for (const [index, row] of materialRows.entries()) {
-    const reviewRequired = row.status === "candidate" && isReviewRequiredMaterialMetadata(row.metadata_json);
-    if (row.status === "candidate" && !reviewRequired) continue;
-    pushMaterialCandidate(candidates, {
-      artifactId: row.artifact_id,
-      binary,
-      createdAt: row.created_at,
-      generation: row.generation,
-      metadataJson: row.metadata_json,
-      path: row.path,
-      reviewRequired,
-      rowRank: index,
-      sourceRank: 1,
-    });
-  }
-
-  const artifactRows = allRows<{
-    created_at: string | null;
-    path: string | null;
-    artifact_id: string | number | null;
-  }>(
-    db,
-    `SELECT artifact_id, path, created_at
-     FROM job_artifacts
-     WHERE tenant_id = ?
-       AND job_id = ?
-       AND artifact_type IN (${placeholders})
-       AND COALESCE(status, 'active') NOT IN ('missing', 'failed', 'superseded', 'suppressed')
-       AND path IS NOT NULL
-       AND path != ''
-     ORDER BY COALESCE(created_at, '') DESC, artifact_id DESC
-     LIMIT 16`,
-    [DEFAULT_TENANT, jobId, ...artifactTypes],
-  );
-  for (const [index, row] of artifactRows.entries()) {
-    pushMaterialCandidate(candidates, {
-      artifactId: row.artifact_id === null || row.artifact_id === undefined ? null : String(row.artifact_id),
-      binary,
-      createdAt: row.created_at,
-      generation: null,
-      metadataJson: null,
-      path: row.path,
-      reviewRequired: false,
-      rowRank: index,
-      sourceRank: 2,
-    });
-  }
-
-  if (includeLegacyJobColumn) {
-    const legacyRow = getRow<{ path: string | null }>(
-      db,
-      `SELECT ${includeLegacyJobColumn} AS path FROM jobs WHERE tenant_id = ? AND job_id = ?`,
-      [DEFAULT_TENANT, jobId],
-    );
-    pushMaterialCandidate(candidates, {
-      artifactId: null,
-      binary,
-      createdAt: "",
-      generation: null,
-      metadataJson: null,
-      path: legacyRow?.path ?? null,
-      reviewRequired: false,
-      rowRank: 0,
-      sourceRank: 3,
-    });
-  }
-
-  return candidates.sort(compareMaterialCandidates);
-}
-
-function pushMaterialCandidate(
-  candidates: MaterialArtifactCandidate[],
-  input: {
-    readonly artifactId: string | null | undefined;
-    readonly binary: boolean;
-    readonly createdAt: string | null | undefined;
-    readonly generation: number | null | undefined;
-    readonly metadataJson: string | null | undefined;
-    readonly path: string | null | undefined;
-    readonly reviewRequired?: boolean;
-    readonly rowRank: number;
-    readonly sourceRank: number;
-  },
-): void {
-  const path = String(input.path ?? "").trim();
-  if (!path || !artifactPathExists(path, { binary: input.binary })) {
-    return;
-  }
-  candidates.push({
-    artifactId: input.artifactId ? String(input.artifactId) : null,
-    createdAt: String(input.createdAt ?? ""),
-    generation: nullableNumber(input.generation),
-    metadataJson: input.metadataJson ? String(input.metadataJson) : null,
-    path,
-    reviewRequired: Boolean(input.reviewRequired),
-    rowRank: input.rowRank,
-    sourceRank: input.sourceRank,
-  });
-}
-
-function compareMaterialCandidates(a: MaterialArtifactCandidate, b: MaterialArtifactCandidate): number {
-  const generation = (b.generation ?? -1) - (a.generation ?? -1);
-  if (generation !== 0) return generation;
-  const createdAt = b.createdAt.localeCompare(a.createdAt);
-  if (createdAt !== 0) return createdAt;
-  const source = a.sourceRank - b.sourceRank;
-  if (source !== 0) return source;
-  return a.rowRank - b.rowRank;
-}
-
-function sameMaterialGeneration(a: MaterialArtifactCandidate, b: MaterialArtifactCandidate): boolean {
-  return a.generation === b.generation;
-}
-
-function artifactPathExists(artifactPath: string, { binary }: { readonly binary: boolean }): boolean {
-  try {
-    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
-      return false;
-    }
-    return binary || !isBinaryPreviewPath(artifactPath);
-  } catch {
-    // Artifact files can disappear while the local projection still exists.
-    // In that case the review UI should fall back to the next available source.
-    return false;
-  }
-}
-
-function isBinaryPreviewPath(artifactPath: string): boolean {
-  return /\.(pdf|docx?|png|jpe?g|webp|gif|zip)$/i.test(artifactPath);
-}
-
-interface ReadTextOptions {
-  readonly byteLimit?: number;
-  readonly charLimit?: number | null;
-}
-
-function readTextPreview(artifactPath: string, options: ReadTextOptions = {}): string | null {
-  let fd: number | null = null;
-  try {
-    const stats = fs.statSync(artifactPath);
-    if (!stats.isFile()) {
-      return null;
-    }
-    const byteCount = Math.min(stats.size, options.byteLimit ?? MATERIAL_PREVIEW_BYTE_LIMIT);
-    if (byteCount <= 0) {
-      return null;
-    }
-    const buffer = Buffer.alloc(byteCount);
-    fd = fs.openSync(artifactPath, "r");
-    const bytesRead = fs.readSync(fd, buffer, 0, byteCount, 0);
-    const text = buffer.subarray(0, bytesRead).toString("utf8");
-    if (!text.trim() || text.includes("\u0000")) {
-      return null;
-    }
-    return options.charLimit === null ? previewText(text, text.length) : previewText(text, options.charLimit ?? MATERIAL_PREVIEW_CHAR_LIMIT);
-  } catch {
-    return null;
-  } finally {
-    if (fd !== null) {
-      fs.closeSync(fd);
-    }
-  }
-}
-
 function outcomeFromRow(row: OutcomeRow): ApplicationOutcome {
   return {
     outcomeId: row.outcome_id,
@@ -2615,8 +2298,19 @@ function outcomeFromRow(row: OutcomeRow): ApplicationOutcome {
   };
 }
 
-function suggestionFromRow(row: SuggestionRow): OutcomeSuggestion {
+function suggestionFromRow(db: SqliteDatabase, row: SuggestionRow): OutcomeSuggestion {
+  const binding = db.prepare("SELECT determination_id FROM semantic_entity_bindings WHERE tenant_id=? AND entity_kind='outcome_suggestion' AND entity_id=? AND determination_kind='message_outcome'").get(DEFAULT_TENANT, row.suggestion_id) as {determination_id:string} | undefined;
+  const determination = binding ? readDetermination(db, DEFAULT_TENANT, binding.determination_id) : null;
+  if (determination && determination.kind !== "message_outcome") throw new InputError("outcome_determination_binding_invalid");
+  const result = determination ? MessageOutcomeDeterminationSchema.parse(determination.result) : null;
+  if (result) {
+    const source = db.prepare("SELECT job_id,provider_message_id,subject,snippet,body_text FROM application_email_evidence WHERE tenant_id=? AND evidence_id=?").get(DEFAULT_TENANT,row.evidence_id) as {job_id:string;provider_message_id:string;subject:string|null;snippet:string|null;body_text:string|null}|undefined;
+    const text = source ? [source.subject,source.snippet,source.body_text].map(value=>(value??"").trim()).join("\n") : "";
+    if (!source || source.job_id !== row.job_id || determination!.entity_id !== source.provider_message_id || result.kind !== row.suggested_kind || result.confidence !== Number(row.confidence) || result.citations.some(cite => cite.source_id !== "message" || !text.includes(cite.quote))) throw new InputError("outcome_determination_binding_invalid");
+  }
   return {
+    determination,
+    citations: result?.citations ?? [],
     suggestionId: row.suggestion_id,
     jobKey: canonicalJobId(row.job_id),
     evidenceId: row.evidence_id,
@@ -2657,6 +2351,7 @@ function recordEvent(
   db: SqliteDatabase,
   event: {
     eventType: string;
+    idempotencyKey?: string;
     payload: Record<string, unknown>;
     message: string;
     jobId: JobId;
@@ -2666,8 +2361,8 @@ function recordEvent(
   db.prepare(
     `INSERT INTO job_events (
        tenant_id, job_id, identity_version, stage, event_type, level, message,
-       occurred_at, payload_json, entity_kind, entity_ref
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       occurred_at, payload_json, entity_kind, entity_ref, idempotency_key
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     DEFAULT_TENANT,
     event.jobId,
@@ -2680,6 +2375,7 @@ function recordEvent(
     JSON.stringify(event.payload),
     "job",
     event.jobId,
+    event.idempotencyKey ?? null,
   );
 }
 

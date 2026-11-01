@@ -7,6 +7,7 @@ import { DiscoveryRuntimeSettingsPanel } from "./DiscoveryRuntimeSettingsPanel.j
 const meta = {
   title: "Contexts/Discovery/DiscoveryRuntimeSettingsPanel",
   component: DiscoveryRuntimeSettingsPanel,
+  tags: ["search-settings"],
 } satisfies Meta<typeof DiscoveryRuntimeSettingsPanel>;
 
 export default meta;
@@ -20,13 +21,13 @@ export const EnvironmentManaged: Story = {
       handlers: [
         http.get("*/v1/discovery/settings", () => HttpResponse.json({
           ...sampleDiscoverySettingsResponse,
-          settings: { ...sampleDiscoverySettingsResponse.settings, roleFilterMode: "llm" },
+          settings: { ...sampleDiscoverySettingsResponse.settings, maxParallelFamilies: 4 },
           effectiveSettings: {
             ...sampleDiscoverySettingsResponse.effectiveSettings,
-            roleFilterMode: {
-              value: "llm",
+            maxParallelFamilies: {
+              value: 4,
               source: "environment",
-              activation: "next_source_family",
+              activation: "next_run",
               editable: false,
             },
           },
