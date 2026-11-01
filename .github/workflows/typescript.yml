@@ -18,8 +18,28 @@ jobs:
     uses: "./.github/workflows/ci-frontend.yml"
     with:
       web: true
+      storybook: false
+      e2e: false
+      extension: false
+      docs: false
+      demo: false
+  support:
+    name: Support
+    uses: "./.github/workflows/ci-frontend.yml"
+    with:
+      web: false
       storybook: true
-      e2e: true
+      e2e: false
       extension: true
+      docs: false
+      demo: false
+  browser:
+    name: Browser
+    uses: "./.github/workflows/ci-frontend.yml"
+    with:
+      web: false
+      storybook: false
+      e2e: true
+      extension: false
       docs: false
       demo: false

@@ -123,12 +123,13 @@ test("trusted proof binds repository, PR, producer, base, head, merge and helper
   assert.equal(proof.base.sha, f.base);
   assert.deepEqual(proof.policy, { commit: f.base, blob: f.git("rev-parse", `${f.base}:scripts/pr-ci-routing.mjs`) });
   assert.deepEqual(names(proof), ["docs"]);
-  assert.equal(Object.keys(proof.contexts).length, 10);
+  assert.equal(Object.keys(proof.contexts).length, 11);
   assert.equal(proof.contexts["Admission / Release check"], true);
   assert.equal(proof.contexts["Backend / Core checks"], true);
-  assert.equal(proof.contexts["Frontend / UI checks"], true);
+  assert.equal(proof.contexts["Support / UI checks"], true);
+  assert.equal(proof.contexts["Frontend / UI checks"], false);
   assert.equal(proof.selected.python, false);
-  assert.equal(new Set(Object.values(SUITE_CONTEXTS).flat()).size, 9);
+  assert.equal(new Set(Object.values(SUITE_CONTEXTS).flat()).size, 10);
 });
 
 test("credential ownership tests retain every native adapter OS context", (t) => {
@@ -347,6 +348,7 @@ test("main uses its exact complete diff and leaves site publication to its exist
   assert.deepEqual(names(docsProof),[]);
   assert.deepEqual(docsProof.publicationBuilds,{docs:true,demo:false});
   assert.equal(docsProof.contexts["Frontend / UI checks"],false);
+  assert.equal(docsProof.contexts["Support / UI checks"],false);
 });
 
 test("main deletions and renames include both sides of the complete change",t=>{
