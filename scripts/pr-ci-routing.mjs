@@ -5,19 +5,19 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const SUITE_CONTEXTS = Object.freeze({
-  api: ["API checks and tests"],
-  web: ["Web unit, types, and build"],
-  storybook: ["Storybook build and browser tests"],
-  e2e: ["Web end-to-end"],
-  extension: ["Browser extension"],
-  python: ["Python / Python 3.12"],
-  docs: ["Build (dead-link gate)"],
-  launcher: ["Darwin launcher shard 0", "Darwin launcher shard 1"],
-  credentials: ["Native credentials (macos-latest)", "Native credentials (windows-latest)", "Native credentials (ubuntu-latest)"],
-  gmail: ["Synthetic Gmail token ACL (Windows)"],
-  distribution: ["Release distribution contracts"],
-  demo: ["Build and verify demo"],
-  edge: ["Demo edge checks"],
+  api: ["Backend / Core checks"],
+  web: ["Frontend / UI checks"],
+  storybook: ["Frontend / UI checks"],
+  e2e: ["Frontend / UI checks"],
+  extension: ["Frontend / UI checks"],
+  python: ["Backend / Core checks"],
+  docs: ["Frontend / UI checks"],
+  launcher: ["Native / Darwin launcher shard 0", "Native / Darwin launcher shard 1"],
+  credentials: ["Credentials / Native credentials (macos-latest)", "Credentials / Native credentials (windows-latest)", "Credentials / Native credentials (ubuntu-latest)"],
+  gmail: ["Gmail / Synthetic Gmail token ACL (Windows)"],
+  distribution: ["Backend / Core checks"],
+  demo: ["Frontend / UI checks"],
+  edge: ["Backend / Core checks"],
 });
 export const SURFACES = Object.freeze(Object.keys(SUITE_CONTEXTS));
 const HELPER = "scripts/pr-ci-routing.mjs";
@@ -140,8 +140,7 @@ export function planPullRequest({ event, repository, policy, environment = proce
     // The union covers candidate input and the actual merge's conflict resolution.
     scope = selectSurfaces([...diff(pr.head.sha), ...diff(environment.GITHUB_SHA)]);
   }
-  const contexts = { "Release check": true, "Script unit tests": true };
-  for (const [key, names] of Object.entries(SUITE_CONTEXTS)) for (const name of names) contexts[name] = scope.selected[key];
+  const contexts = selectedContexts(scope.selected);
   const proof = {
     schemaVersion: 1,
     repository: { id: repo.id, fullName: repo.full_name },
@@ -157,6 +156,47 @@ export function planPullRequest({ event, repository, policy, environment = proce
   };
   requireValue(Object.keys(proof.selected).join(",") === SURFACES.join(",") && Object.values(proof.selected).every((value) => typeof value === "boolean") && typeof proof.headPrivacy === "boolean" && Object.values(proof.contexts).every((value) => typeof value === "boolean"), "Incomplete scope output");
   return proof;
+}
+
+function selectedContexts(selected) {
+  const contexts = { "Admission / Release check": true, "Backend / Core checks": true };
+  for (const [key, names] of Object.entries(SUITE_CONTEXTS))
+    for (const name of names) contexts[name] = Boolean(contexts[name] || selected[key]);
+  return contexts;
+}
+
+export function planPush({ event, repository, policy, environment = process.env }) {
+  const repo = event?.repository;
+  requireValue(environment.GITHUB_EVENT_NAME === "push" && repo, "A main push event is required");
+  requireValue(positiveInteger(repo.id) && REPOSITORY.test(repo.full_name) && environment.GITHUB_REPOSITORY === repo.full_name, "Invalid repository identity");
+  requireValue(typeof repo.default_branch === "string" && repo.default_branch.length > 0 &&
+    event.ref === `refs/heads/${repo.default_branch}` && environment.GITHUB_REF === event.ref && !event.deleted,
+    "Only the accepted default branch can select affected main checks");
+  requireValue(SHA.test(event.after) && event.after === environment.GITHUB_SHA && SHA.test(policy), "Invalid push commit identity");
+  const run = { id: runInteger(environment.GITHUB_RUN_ID), attempt: runInteger(environment.GITHUB_RUN_ATTEMPT) };
+  const git = gitReader(resolve(repository), environment);
+  requireValue(git(["rev-parse", "--verify", "HEAD"]).toString("utf8").trim() === event.after, "Checkout is not the pushed source");
+  for (const sha of new Set([event.after, policy]))
+    requireValue(git(["rev-parse", "--verify", `${sha}^{commit}`]).toString("utf8").trim() === sha, "Commit identity is not exact");
+  const entry = git(["ls-tree", "-z", policy, "--", HELPER]).toString("utf8");
+  const blob = entry.match(/^100(?:644|755) blob ([a-f0-9]{40})\tscripts\/pr-ci-routing\.mjs\0$/)?.[1];
+  requireValue(blob && git(["cat-file", "blob", blob]).equals(readFileSync(fileURLToPath(import.meta.url))), "Running helper does not match the policy blob");
+  let scope = full(policy === event.after ? "unproven-before" : "moving-policy-base");
+  if (policy === event.after && SHA.test(event.before) && event.before !== "0".repeat(40) && !event.forced) {
+    try {
+      requireValue(git(["rev-parse", "--verify", `${event.before}^{commit}`]).toString("utf8").trim() === event.before, "Missing before commit");
+      git(["merge-base", "--is-ancestor", event.before, event.after]);
+      scope = selectSurfaces(parseDiff(git(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-status", "-z", event.before, event.after, "--"])));
+    } catch { scope = full("unproven-before"); }
+  }
+  // These main builds and their isolated publication remain event-owned by
+  // docs-site.yml and demo-site.yml. PR builds stay in the frontend worker.
+  const publicationBuilds = { docs: scope.selected.docs, demo: scope.selected.demo };
+  scope.selected.docs = false;
+  scope.selected.demo = false;
+  return { schemaVersion: 1, repository: { id: repo.id, fullName: repo.full_name }, run, event: "push",
+    before: event.before ?? null, head: { sha: event.after }, policy: { commit: policy, blob },
+    ...scope, publicationBuilds, contexts: selectedContexts(scope.selected) };
 }
 
 function publish(output, proof) {
@@ -190,7 +230,9 @@ function main(args) {
   }
   requireValue(["--event", "--repository", "--policy", "--output"].every((key) => typeof options[key] === "string" && options[key].length > 0), "Missing routing arguments");
   requireValue(lstatSync(options["--event"]).size <= 8 * 1024 * 1024, "Event input is too large");
-  const proof = planPullRequest({ event: JSON.parse(readFileSync(options["--event"], "utf8")), repository: options["--repository"], policy: options["--policy"] });
+  const event = JSON.parse(readFileSync(options["--event"], "utf8"));
+  const plan = process.env.GITHUB_EVENT_NAME === "push" ? planPush : planPullRequest;
+  const proof = plan({ event, repository: options["--repository"], policy: options["--policy"] });
   const notice = JSON.stringify(proof).replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
   publish(options["--output"], proof);
   if (options["--notice"]) process.stdout.write(`::notice title=JobCtrl CI scope v1::${notice}\n`);
