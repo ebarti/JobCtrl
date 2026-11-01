@@ -68,8 +68,8 @@ fs.writeFileSync(args[args.indexOf('-o') + 1], state.pointer);
     await chmod(path.join(bin, name), 0o755);
   }
 
-  const source = "a".repeat(40), recovery = "b".repeat(40), tag = "v0.4.2";
-  const pointer = `${JSON.stringify({ channel: "stable", sequence: 13, buildId: `0.4.2-${source}-darwin-arm64` })}\n`;
+  const source = "a".repeat(40), recovery = "b".repeat(40), tag = "v0.3.5";
+  const pointer = `${JSON.stringify({ channel: "stable", sequence: 13, buildId: `0.3.5-${source}-darwin-arm64` })}\n`;
   const baseline = {
     source, recovery, tag, pointer, recoveryRelation: "ahead", sourceRelation: "ahead", latest: tag,
     run: { path: ".github/workflows/release-distribution.yml", event: "workflow_dispatch", head_branch: tag, head_sha: source, status: "completed", conclusion: "failure" },
