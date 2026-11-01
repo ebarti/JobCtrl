@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { parseDiff, planPullRequest, selectSurfaces, SUITE_CONTEXTS, SURFACES } from "./pr-ci-routing.mjs";
+import { parseDiff, planPullRequest, planPush, selectSurfaces, SUITE_CONTEXTS, SURFACES } from "./pr-ci-routing.mjs";
 
 const helper = fileURLToPath(new URL("./pr-ci-routing.mjs", import.meta.url));
 const names = (scope) => Object.entries(scope.selected).filter(([, selected]) => selected).map(([key]) => key).sort();
@@ -123,19 +123,19 @@ test("trusted proof binds repository, PR, producer, base, head, merge and helper
   assert.equal(proof.base.sha, f.base);
   assert.deepEqual(proof.policy, { commit: f.base, blob: f.git("rev-parse", `${f.base}:scripts/pr-ci-routing.mjs`) });
   assert.deepEqual(names(proof), ["docs"]);
-  assert.equal(Object.keys(proof.contexts).length, 18);
-  assert.equal(proof.contexts["Release check"], true);
-  assert.equal(proof.contexts["Script unit tests"], true);
-  assert.equal(proof.contexts["Build (dead-link gate)"], true);
-  for (const python of ["Python / Python 3.12"]) assert.equal(proof.contexts[python], false);
-  assert.equal(new Set(Object.values(SUITE_CONTEXTS).flat()).size, 16);
+  assert.equal(Object.keys(proof.contexts).length, 10);
+  assert.equal(proof.contexts["Admission / Release check"], true);
+  assert.equal(proof.contexts["Backend / Core checks"], true);
+  assert.equal(proof.contexts["Frontend / UI checks"], true);
+  assert.equal(proof.selected.python, false);
+  assert.equal(new Set(Object.values(SUITE_CONTEXTS).flat()).size, 9);
 });
 
 test("credential ownership tests retain every native adapter OS context", (t) => {
   const f = fixture(t, ({ write }) => write("apps/api/test/credential-mutation-lock.test.ts", "synthetic ownership regression\n"));
   const proof = f.plan();
   assertFull(proof);
-  for (const os of ["macos-latest", "windows-latest", "ubuntu-latest"]) assert.equal(proof.contexts[`Native credentials (${os})`], true);
+  for (const os of ["macos-latest", "windows-latest", "ubuntu-latest"]) assert.equal(proof.contexts[`Credentials / Native credentials (${os})`], true);
 });
 
 test("forks, stacked bases and moving policies expand every group", (t) => {
@@ -323,4 +323,85 @@ test("only the accepted helper runs; changed head code cannot choose its own sco
   const refused = cli(f, { source: otherSource });
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, /policy blob/);
+});
+
+function pushFixture(t, mutate) {
+  const f=fixture(t,mutate);
+  f.git("checkout","--detach",f.head);
+  const environment={...f.environment,GITHUB_EVENT_NAME:"push",GITHUB_REF:"refs/heads/main",GITHUB_SHA:f.head};
+  const event={repository:f.event.repository,ref:"refs/heads/main",before:f.base,after:f.head,forced:false,deleted:false};
+  return {...f,environment,event,plan(options={}) { return planPush({event,repository:f.repository,policy:f.head,environment,...options}); }};
+}
+
+test("main uses its exact complete diff and leaves site publication to its existing owners",t=>{
+  const f=pushFixture(t,({write})=>write("apps/api/src/jobs.ts","accepted API change\n"));
+  const proof=f.plan();
+  assert.equal(proof.event,"push");
+  assert.equal(proof.before,f.base);
+  assert.deepEqual(names(proof),["api","e2e"]);
+  assert.equal(proof.contexts["Backend / Core checks"],true);
+  assert.equal(proof.contexts["Browser / UI checks"],true);
+  assert.equal(proof.contexts["Frontend / UI checks"],false);
+  const docs=pushFixture(t);
+  const docsProof=docs.plan();
+  assert.deepEqual(names(docsProof),[]);
+  assert.deepEqual(docsProof.publicationBuilds,{docs:true,demo:false});
+  assert.equal(docsProof.contexts["Frontend / UI checks"],false);
+});
+
+test("main deletions and renames include both sides of the complete change",t=>{
+  const f=pushFixture(t,({repository,write})=>{
+    rmSync(join(repository,"docs/user/getting-started.md"));
+    write("apps/api/src/renamed.ts","base\n");
+  });
+  assert.deepEqual(names(f.plan()),["api","e2e"]);
+  assert.equal(f.plan().publicationBuilds.docs,true);
+});
+
+test("unavailable, forced, nonancestor and moving main identities cannot omit a product suite",t=>{
+  const f=pushFixture(t);
+  const check=proof=>{
+    assert.equal(proof.mode,"full");
+    assert.equal(proof.headPrivacy,true);
+    assert.ok(Object.entries(proof.selected).every(([key,value])=>value===!["docs","demo"].includes(key)));
+    assert.deepEqual(proof.publicationBuilds,{docs:true,demo:true});
+  };
+  for(const before of [undefined,"bad","0".repeat(40),"1".repeat(40)]) check(f.plan({event:{...f.event,before}}));
+  check(f.plan({event:{...f.event,forced:true}}));
+  const unrelated=f.git("commit-tree",`${f.head}^{tree}`,"-m","Unrelated root");
+  check(f.plan({event:{...f.event,before:unrelated}}));
+  check(f.plan({policy:f.base}));
+});
+
+test("main rejects mismatched repository, ref, checkout, policy and producer identities",t=>{
+  const f=pushFixture(t);
+  for(const event of [
+    {...f.event,ref:"refs/heads/other"}, {...f.event,deleted:true},
+    {...f.event,after:f.base}, {...f.event,repository:{...f.event.repository,id:0}},
+  ]) assert.throws(()=>f.plan({event}));
+  for(const overrides of [
+    {GITHUB_EVENT_NAME:"pull_request"},{GITHUB_REF:"refs/heads/other"},
+    {GITHUB_SHA:f.base},{GITHUB_REPOSITORY:"other/repo"},{GITHUB_RUN_ATTEMPT:"0"},
+  ]) assert.throws(()=>f.plan({environment:{...f.environment,...overrides}}));
+  assert.throws(()=>f.plan({policy:"1".repeat(40)}));
+  const policyFile=join(f.repository,"scripts/pr-ci-routing.mjs");
+  writeFileSync(policyFile,"candidate code cannot choose main scope\n");
+  f.git("add",".");f.git("commit","-m","Synthetic changed policy");
+  const after=f.git("rev-parse","HEAD");
+  assert.throws(()=>f.plan({policy:after,event:{...f.event,after},environment:{...f.environment,GITHUB_SHA:after}}),/policy blob/);
+});
+
+test("the real shallow admission fetch preserves main ancestry and affected routing",t=>{
+  const f=pushFixture(t,({write})=>write("apps/api/src/jobs.ts","main API change\n"));
+  f.git("branch","-f","main",f.head);
+  const clone=join(f.root,"shallow");
+  const git=(...args)=>execFileSync("git",["-c","core.hooksPath=/dev/null",...args],{env:f.environment,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
+  git("clone","--depth=2","--branch","main","file://"+f.repository,clone);
+  git("-C",clone,"fetch","--no-tags","--depth=2","origin","refs/heads/main");
+  git("-C",clone,"fetch","--no-tags","--depth=1","origin",f.base);
+  assert.deepEqual(names(f.plan({repository:clone})),["api","e2e"]);
+  // A depth-one policy fetch would mark the pushed source itself shallow and
+  // needlessly expand every main push despite having the exact before object.
+  git("-C",clone,"fetch","--no-tags","--depth=1","origin","refs/heads/main");
+  assert.equal(f.plan({repository:clone}).mode,"full");
 });

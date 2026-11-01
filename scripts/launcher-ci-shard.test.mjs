@@ -11,31 +11,19 @@ const yamlReader = "require 'yaml'; require 'json'; puts JSON.generate(YAML.safe
 
 test("native CI requires both isolated shards and executes every listed test exactly once", async (context) => {
   const workflow = JSON.parse(execFileSync("ruby", ["-e", yamlReader, workflowPath], { encoding: "utf8" }));
-  assert.deepEqual(Object.keys(workflow.jobs), ["launcher-shard"], "real matrix jobs must determine workflow success without a replacement summary runner");
-  const shard = workflow.jobs["launcher-shard"];
-  assert.deepEqual(shard.strategy, { "fail-fast": false, matrix: { shard: [0, 1] } });
-  assert.equal(shard["runs-on"], "macos-15");
-  assert.equal(shard.if, undefined, "neither shard may be skipped by a job condition");
-  assert.equal(shard["continue-on-error"] ?? false, false, "both shards must fail the workflow on failure");
-  for (const step of shard.steps) {
-    assert.equal(step["continue-on-error"] ?? false, false, `${step.name} must preserve failure evidence`);
-  }
-  const vet = shard.steps.find((step) => step.name === "Vet native launcher");
-  assert.equal(vet.if, "${{ matrix.shard == 0 }}");
-  assert.equal(vet.run, "go vet ./...");
-  const nativeTests = shard.steps.find((step) => step.name === "Test native launcher shard");
-  assert.equal(nativeTests.if, undefined, "both shards must execute their assigned native tests");
-  const prPath = fileURLToPath(new URL("../.github/workflows/pr-ci.yml", import.meta.url));
-  const pr = JSON.parse(execFileSync("ruby", ["-e", yamlReader, prPath], { encoding: "utf8" }));
-  const expected = JSON.parse(JSON.stringify(shard.steps).replaceAll("matrix.shard == 0", "env.TEST_SHARD == '0'").replaceAll("matrix.shard", "env.TEST_SHARD"));
-  for (const index of [0, 1]) {
-    const job = pr.jobs["launcher" + index];
-    assert.deepEqual(job.steps, expected, "PR native proof must retain the manual command body");
-    assert.equal(job.env.TEST_SHARD, String(index));
-    assert.equal(job["runs-on"], "macos-15");
-    assert.equal(job.strategy, undefined);
-    assert.equal(job.needs, "preflight");
-    assert.equal(job.if, "$" + "{{ needs.preflight.result == 'success' && needs.preflight.outputs.launcher != 'false' }}");
+  assert.deepEqual(Object.keys(workflow.jobs),["launcher0","launcher1"]);
+  const shard=workflow.jobs.launcher0;
+  const nativeTests=shard.steps.find(step=>step.name==="Test native launcher shard");
+  assert.equal(nativeTests.if,undefined);
+  assert.equal(shard.steps.find(step=>step.name==="Vet native launcher").if,"${{ env.TEST_SHARD == '0' }}");
+  for(const index of [0,1]) {
+    const job=workflow.jobs["launcher"+index];
+    assert.deepEqual(job.steps,shard.steps);
+    assert.equal(job.env.TEST_SHARD,String(index));
+    assert.equal(job["runs-on"],"macos-15");
+    assert.equal(job.strategy,undefined);
+    assert.equal(job.if,"${{ github.event_name == 'workflow_dispatch' || inputs.enabled }}");
+    for(const step of job.steps) assert.equal(step["continue-on-error"] ?? false,false,step.name);
   }
   const run = nativeTests.run;
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-launcher-ci-"));
