@@ -261,32 +261,63 @@ class SqlitePostingSnapshotSetRepository:
 
     def save(self, snapshot_set: PostingSnapshotSet, *, commit: bool = True) -> None:
         latest = snapshot_set.latest_snapshot
-        self._conn.execute(
-            """
-            INSERT INTO posting_snapshot_sets (
-                tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
-                latest_active_state, latest_confidence, latest_quarantine_reason,
-                updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(tenant_id, job_id) DO UPDATE SET
-                snapshot_set_json = excluded.snapshot_set_json,
-                latest_snapshot_version = excluded.latest_snapshot_version,
-                latest_active_state = excluded.latest_active_state,
-                latest_confidence = excluded.latest_confidence,
-                latest_quarantine_reason = excluded.latest_quarantine_reason,
-                updated_at = excluded.updated_at
-            """,
-            (
-                str(snapshot_set.tenant_id),
-                str(snapshot_set.job_id),
-                json.dumps(snapshot_set.to_dict(), sort_keys=True),
-                latest.snapshot_version if latest else 0,
-                snapshot_set.latest_active_state.value,
-                latest.confidence.value if latest else None,
-                latest.quarantine_reason.value if latest else None,
-                snapshot_set.updated_at,
-            ),
-        )
+        tenant_id, job_id = str(snapshot_set.tenant_id), str(snapshot_set.job_id)
+        started = not self._conn.in_transaction
+        if started:
+            self._conn.execute("BEGIN IMMEDIATE")
+        self._conn.execute("SAVEPOINT posting_snapshot_save")
+        try:
+            # Promote inherited deferred transactions to a writer before
+            # observing the actual state, including when the row is absent.
+            self._conn.execute("UPDATE posting_snapshot_sets SET updated_at=updated_at WHERE 0")
+            previous = self._conn.execute(
+                "SELECT latest_active_state FROM posting_snapshot_sets WHERE tenant_id=? AND job_id=?",
+                (tenant_id, job_id),
+            ).fetchone()
+            self._conn.execute(
+                """
+                INSERT INTO posting_snapshot_sets (
+                    tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
+                    latest_active_state, latest_confidence, latest_quarantine_reason,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(tenant_id, job_id) DO UPDATE SET
+                    snapshot_set_json = excluded.snapshot_set_json,
+                    latest_snapshot_version = excluded.latest_snapshot_version,
+                    latest_active_state = excluded.latest_active_state,
+                    latest_confidence = excluded.latest_confidence,
+                    latest_quarantine_reason = excluded.latest_quarantine_reason,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    tenant_id,
+                    job_id,
+                    json.dumps(snapshot_set.to_dict(), sort_keys=True),
+                    latest.snapshot_version if latest else 0,
+                    snapshot_set.latest_active_state.value,
+                    latest.confidence.value if latest else None,
+                    latest.quarantine_reason.value if latest else None,
+                    snapshot_set.updated_at,
+                ),
+            )
+            if previous is None or previous[0] != snapshot_set.latest_active_state.value:
+                # This private receipt is a monotonic selection fence, not a
+                # domain availability determination or a user-facing event.
+                # It must commit with the actual state change even if an event
+                # publisher is absent, fails, or a stale aggregate is saved.
+                self._conn.execute(
+                    "INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,"
+                    "occurred_at,payload_json,entity_kind,entity_ref) "
+                    "VALUES (?,?,1,NULL,'PostingSnapshotStatePersisted','info',?,'{}','posting_retry_lifecycle',?)",
+                    (tenant_id, job_id, snapshot_set.updated_at, job_id),
+                )
+        except BaseException:
+            self._conn.execute("ROLLBACK TO SAVEPOINT posting_snapshot_save")
+            self._conn.execute("RELEASE SAVEPOINT posting_snapshot_save")
+            if started:
+                self._conn.rollback()
+            raise
+        self._conn.execute("RELEASE SAVEPOINT posting_snapshot_save")
         if commit:
             self._conn.commit()
 

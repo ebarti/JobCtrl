@@ -26,6 +26,12 @@ uncertain is kept for inspection rather than deleted.
 If another preparation is still running, reusing the earlier approved material
 leaves that work running and able to save its replacement.
 
+Retrying a failed Tailor or Cover stage preserves approved material and its
+review evidence. If an approved resume or cover already exists, a plain retry
+reports that a replacement requires an explicit re-tailor; it does not start a
+replacement automatically. A newer incomplete generation may be cleared for
+recovery while the earlier approved material remains available.
+
 Tailoring keeps as many applicable baseline accomplishments as possible in each
 selected role, up to **Max bullets per role**. The configured maximum is a hard
 cap even when your baseline has more bullets. Tailoring can reorder or rewrite

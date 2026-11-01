@@ -1629,6 +1629,7 @@ export type BulkPermanentDeleteRequest = z.infer<typeof BulkPermanentDeleteReque
 
 export const BulkRetryFailedRequestSchema = BulkJobMutationRequestBaseSchema
   .extend({
+    resetAttempts: z.boolean().optional(),
     runAfter: z.boolean().default(false),
     workers: z.coerce.number().int().min(1).max(16).default(1),
     minScore: z.coerce.number().int().min(0).max(10).default(7),
@@ -4715,9 +4716,13 @@ export interface JobMutationResponse {
 }
 
 export interface BulkRetryFailedResponse extends JobMutationResponse {
+  /** Canonical job IDs, even when a request selected jobs by URL. */
+  jobKeys: string[];
   status: string;
   runAfter: boolean;
   stageCounts: Partial<Record<Stage, number>>;
+  /** Canonical job IDs requiring an explicit re-tailor. */
+  retailorRequiredJobKeys?: string[];
   actions: ActionRunResponse[];
   eventCursor?: string | null;
   message?: string;
