@@ -258,7 +258,12 @@ The paired extension and local worker share a bounded task protocol under
 Task schemas allow public HTTP(S) `GET`/`POST` or rendered-page acquisition,
 cap request bodies at 2 MB of UTF-8 data and response text/HTML at 4 MB of
 UTF-8 data each, cap timeouts at 120 seconds, and forbid browser-owned
-cookie/user-agent/origin plus `Sec-*`/`Proxy-*` headers. The broker is
+cookie/user-agent/origin plus `Sec-*`/`Proxy-*` headers. Task creation also
+requires a supported provider-owned hostname; other hosts receive `400
+untrusted_discovery_browser_host` and stay on the worker's address-pinned
+public transport. The extension repeats this hostname check before network
+access so API-side DNS approval cannot be raced through an attacker-controlled
+hostname. The broker is
 process-memory-only, idempotently binds a task ID to its workflow/run request
 fingerprint, separates a 30-second pending/admission window from the execution
 timeout that starts on lease, and admits at most four active/pending tasks for
