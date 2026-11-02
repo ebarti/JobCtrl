@@ -31,6 +31,19 @@ board identity with `ConfigurationError` before provider dispatch; it never
 silently omits a board while retaining its allocated budget. Registry state,
 budgets and saved defaults are not rewritten during loading.
 
+Remote target rows with no place retain an empty location through immutable
+search units and become an absent JobStreaming location, never an invented
+place. Each board unit rejects Indeed Remote plus lookback, Glassdoor Remote
+plus a place, and non-day-aligned Remote lookbacks for Glassdoor or ZipRecruiter
+before its provider request. Supported board/row combinations retain their
+results, and the saved selection remains intact. An already-recorded older
+plan is checked again before acquisition; completed boards and source families
+continue through enrichment and preparation, and the workflow reports the
+unsupported scope as a failure. History replay keeps its recorded branch.
+New plans freeze queries, locations, tier and location-label filters, including
+absence; older recorded plans retain their live-filter fallback. Removing a Profile
+override checks any newly exposed legacy locations before accepting the save.
+
 `DiscoverWorkflow` decomposes into **four activities**, not one monolithic run:
 
 ```mermaid
@@ -83,7 +96,9 @@ Key facts about the four activities:
   progress totals, and the starting job count) from the source registry, source
   quality, and the global limit. Literal saved roles and location/work-model controls
   become board parameters without a model or a second approval. The captured
-  execution settings remain stable on retries. JobStreaming owns execution of supported provider search/filter parameters. Fetched, structurally valid postings proceed to canonical ingestion; no metadata-only model decides admission. Smart Extract first resolves arbitrary-site cards to full individual postings: cited page/extraction/qualification determinations establish the actual role, employer, description quality and saved location/work-model compatibility before canonical ingestion. Unknown captures remain in Manual Capture; confirmed mismatches remain outside Jobs with durable progress evidence. Accepted captures seed snapshots/enrichment and retain all three determination IDs. Archived Smart Extract captures use the same qualification. A private prepared-capture event receipt binds the qualified bytes to the original canonical insert. Interrupted publication resumes that owner without another observation or admission; snapshot, enrichment, accepted progress and completion commit together under a writer lock. Changed content, later observations, accepted enrichment, deletion, cancellation and superseded source activity attempts fence stale publication. Capture acknowledgement requires that completion or a recorded supersession. Source wrappers preserve typed determination failure retryability. Full-posting analysis/scoring assess role fit. Page or extraction determination failures retain typed `ApplicationError` values with their retry policy.
+  execution settings remain stable on retries. New plans capture the resolved
+  board country; older snapshots without that field retain their existing live
+  country fallback. JobStreaming owns execution of supported provider search/filter parameters. Fetched, structurally valid postings proceed to canonical ingestion; no metadata-only model decides admission. Smart Extract first resolves arbitrary-site cards to full individual postings: cited page/extraction/qualification determinations establish the actual role, employer, description quality and saved location/work-model compatibility before canonical ingestion. Unknown captures remain in Manual Capture; confirmed mismatches remain outside Jobs with durable progress evidence. Accepted captures seed snapshots/enrichment and retain all three determination IDs. Archived Smart Extract captures use the same qualification. A private prepared-capture event receipt binds the qualified bytes to the original canonical insert. Interrupted publication resumes that owner without another observation or admission; snapshot, enrichment, accepted progress and completion commit together under a writer lock. Changed content, later observations, accepted enrichment, deletion, cancellation and superseded source activity attempts fence stale publication. Capture acknowledgement requires that completion or a recorded supersession. Source wrappers preserve typed determination failure retryability. Full-posting analysis/scoring assess role fit. Page or extraction determination failures retain typed `ApplicationError` values with their retry policy.
 - **`discovery_source_family`** runs *one* source family under
   `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
   window (crawls legitimately run long). Each family is isolated: a broad-board, ATS,

@@ -3,11 +3,13 @@
 package launcher
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -215,6 +217,7 @@ func TestDevelopmentEntryAutomaticallyMigratesOwnedWorkspace(t *testing.T) {
 		}
 		if err := os.RemoveAll(ownedRoot); err != nil {
 			t.Errorf("remove synthetic workspace: %v", err)
+			logSyntheticCleanupRemainder(t, ownedRoot)
 		}
 	})
 	root, home := filepath.Join(ownedRoot, "source"), filepath.Join(ownedRoot, "home")
@@ -303,6 +306,44 @@ Server(('127.0.0.1',int(os.environ['JOBCTRL_API_PORT'])),H).serve_forever()`
 	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte("#!/bin/bash\nexit 1\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	realGo, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	realGo, err = filepath.Abs(realGo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the detached outer driver needs a delegated original-child wait.
+	// The real Go invocation, native controller and all scoped actors stay real.
+	goWrapper := `#!/bin/bash
+set -euo pipefail
+if [[ -n "${TEST_DETACHED_GO_RECEIPT:-}" && $# == 9 &&
+      "$1" == -C && "$2" == "$TEST_ROOT/launcher" &&
+      "$3" == run && "$4" == ./cmd/jobctrl-source &&
+      "$5" == run && "$6" == "$TEST_ROOT" &&
+      "$7" == temporal && "$8" == api && "$9" == worker ]]; then
+  exec "$TEST_PYTHON" -I -S -B "$TEST_ROOT/wait-detached-go.py" "$TEST_REAL_GO" "$@"
+fi
+exec "$TEST_REAL_GO" "$@"
+`
+	goWaiter := `import json,os,pathlib,subprocess,sys
+child = subprocess.Popen(sys.argv[1:])
+code = child.wait()
+receipt = pathlib.Path(os.environ['TEST_DETACHED_GO_RECEIPT'])
+temporary = receipt.with_name(receipt.name + '.tmp')
+with temporary.open('x', encoding='utf-8') as stream:
+ json.dump({'launchToken': os.environ['TEST_DETACHED_GO_TOKEN'], 'returnCode': code}, stream)
+ stream.write('\n')
+os.replace(temporary, receipt)
+raise SystemExit(code if code >= 0 else 128 - code)
+`
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(goWrapper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "wait-detached-go.py"), []byte(goWaiter), 0600); err != nil {
+		t.Fatal(err)
+	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -313,6 +354,7 @@ Server(('127.0.0.1',int(os.environ['JOBCTRL_API_PORT'])),H).serve_forever()`
 	env := append(os.Environ(), "HOME="+home, "JOBCTRL_DIR="+state, "JOBCTRL_RUNTIME_HOME="+runtimeHome,
 		"JOBCTRL_DEV_DIR="+filepath.Join(root, "dev"), "JOBCTRL_USER_ENV_PATH="+filepath.Join(home, "missing.env"),
 		"TEST_ROOT="+root, "TEST_PYTHON="+python, "TEST_WORKER_PID="+filepath.Join(root, "worker.pid"),
+		"TEST_REAL_GO="+realGo, "TEST_DETACHED_GO_RECEIPT=", "TEST_DETACHED_GO_TOKEN=",
 		"JOBCTRL_API_PORT="+fmt.Sprint(port), "JOBCTRL_DEV_INNER=", "JOBCTRL_TEMPORAL_DB="+filepath.Join(state, "temporal", "temporal.db"), "PATH="+bin+":"+os.Getenv("PATH"))
 	inst, err := resolveInstance(env)
 	if err != nil {
@@ -334,6 +376,7 @@ Server(('127.0.0.1',int(os.environ['JOBCTRL_API_PORT'])),H).serve_forever()`
 	var secondDone <-chan error
 	firstWaited, secondWaited := false, false
 	firstExited, secondExited := false, false
+	var detachedReceipt, detachedToken string
 	safeToRemove = false
 	t.Cleanup(func() {
 		if err := stop(ctx); err != nil {
@@ -364,7 +407,45 @@ Server(('127.0.0.1',int(os.environ['JOBCTRL_API_PORT'])),H).serve_forever()`
 		if secondWaited && !secondExited {
 			t.Error("second synthetic source command exit could not be verified")
 		}
-		safeToRemove = firstExited && (second == nil || secondExited)
+		t.Logf("synthetic cleanup: Stop succeeded; first waited=%t exited=%t; second started=%t waited=%t exited=%t",
+			firstWaited, firstExited, second != nil, secondWaited, secondExited)
+		detachedExited := detachedReceipt == ""
+		if detachedReceipt != "" {
+			deadline := time.Now().Add(15 * time.Second)
+			for {
+				info, err := os.Lstat(detachedReceipt)
+				if os.IsNotExist(err) && time.Now().Before(deadline) {
+					time.Sleep(25 * time.Millisecond)
+					continue
+				}
+				if err != nil {
+					t.Errorf("detached Go driver exit is unverified; retain synthetic workspace: %v", err)
+					return
+				}
+				if !info.Mode().IsRegular() || info.Size() > 256 {
+					t.Error("detached Go driver exit receipt is not a bounded regular file; retain synthetic workspace")
+					return
+				}
+				var receipt struct {
+					LaunchToken string `json:"launchToken"`
+					ReturnCode  *int   `json:"returnCode"`
+				}
+				if err := decodeStrictRegular(detachedReceipt, &receipt); err != nil || receipt.LaunchToken != detachedToken || receipt.ReturnCode == nil {
+					t.Errorf("detached Go driver exit receipt is invalid or mismatched; retain synthetic workspace: %v", err)
+					return
+				}
+				// runSourceInsideScope handles Stop's TERM and returns success.
+				// A signal/failure of the outer Go driver is not that handled TERM.
+				if *receipt.ReturnCode != 0 {
+					t.Errorf("detached Go driver exited with unexpected return code %d; retain synthetic workspace", *receipt.ReturnCode)
+					return
+				}
+				detachedExited = true
+				break
+			}
+		}
+		safeToRemove = firstExited && (second == nil || secondExited) && detachedExited
+		t.Logf("synthetic cleanup: detached exit verified=%t; safeToRemove=%t", detachedExited, safeToRemove)
 	})
 	markerPattern := filepath.Join(inst.Dir, "source-runs", "*.json")
 	deadline := time.Now().Add(30 * time.Second)
@@ -518,8 +599,17 @@ c=sqlite3.connect(sys.argv[1]); assert c.execute('select value from history').fe
 	}
 	// Exercise the supported detached entry point against the same workspace.
 	// Its writers must remain inside the native scope after the command exits.
+	receiptDir, err := os.MkdirTemp(ownedRoot, "detached-go-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	detachedToken, err = releaseRandomID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	detachedReceipt = filepath.Join(receiptDir, "exit.json")
 	detached := exec.Command(dev, "start", "temporal", "api", "worker")
-	detached.Env = env
+	detached.Env = append(append([]string{}, env...), "TEST_DETACHED_GO_RECEIPT="+detachedReceipt, "TEST_DETACHED_GO_TOKEN="+detachedToken)
 	if output, err := detached.CombinedOutput(); err != nil {
 		t.Fatalf("start detached source: %v\n%s", err, output)
 	}
@@ -548,6 +638,78 @@ c=sqlite3.connect(sys.argv[1]); assert c.execute('select value from history').fe
 	} else {
 		releaseLock(lock)
 	}
+}
+
+// This runs only after the first removal failure on a disposable hosted runner.
+// Observed PIDs are evidence only: no diagnostic may signal them or retry removal.
+func logSyntheticCleanupRemainder(t *testing.T, ownedRoot string) {
+	t.Helper()
+	if os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("RUNNER_OS") != "macOS" {
+		t.Log("synthetic cleanup remainder retained; hosted-only diagnostics not enabled")
+		return
+	}
+	if info, err := os.Lstat(ownedRoot); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Logf("synthetic root unavailable or redirected: %q (%v)", ownedRoot, err)
+		return
+	}
+	func() {
+		cache := ownedRoot
+		for _, part := range []string{"home", "Library", "Caches", "go-build"} {
+			cache = filepath.Join(cache, part)
+			info, err := os.Lstat(cache)
+			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				t.Logf("synthetic cache directory unavailable or redirected: %q (%v)", cache, err)
+				return
+			}
+		}
+		dir, err := os.Open(cache)
+		if err != nil {
+			t.Logf("synthetic cache listing: %v", err)
+			return
+		}
+		entries, readErr := dir.ReadDir(64)
+		closeErr := dir.Close()
+		t.Logf("synthetic cache listing: at most 64 entries; read=%v close=%v", readErr, closeErr)
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil {
+				t.Logf("synthetic cache entry %q: %v", entry.Name(), err)
+				continue
+			}
+			t.Logf("synthetic cache entry %q: mode=%v size=%d modified=%s", entry.Name(), info.Mode(), info.Size(), info.ModTime().Format(time.RFC3339Nano))
+		}
+		for _, name := range []string{"trim.txt", "README"} {
+			info, err := os.Lstat(filepath.Join(cache, name))
+			if err != nil {
+				t.Logf("synthetic cache metadata %q: %v", name, err)
+				continue
+			}
+			t.Logf("synthetic cache metadata %q: mode=%v size=%d modified=%s", name, info.Mode(), info.Size(), info.ModTime().Format(time.RFC3339Nano))
+		}
+	}() // A vanished cache must not suppress the remaining root-scoped evidence.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	// -O avoids lsof's forked stat helpers; -Di disables its device-cache writes.
+	// +D stays under this owned root and does not follow links without -x.
+	command := exec.CommandContext(ctx, "/usr/sbin/lsof", "-nP", "-l", "-O", "-Di", "-a", "-u", strconv.Itoa(os.Getuid()), "-FpcRftn", "+D", ownedRoot)
+	command.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + filepath.Join(ownedRoot, "home"), "TMPDIR=" + ownedRoot, "LC_ALL=C"}
+	command.WaitDelay = time.Second
+	var output syntheticCleanupOutput
+	command.Stdout, command.Stderr = &output, &output
+	err := command.Run() // Wait/reap only this original read-only diagnostic child.
+	t.Logf("synthetic root open-file/process evidence (max 16 KiB; truncated=%t):\n%s\nlsof=%v deadline=%v", output.truncated, output.data, err, ctx.Err())
+}
+
+type syntheticCleanupOutput struct {
+	data      []byte
+	truncated bool
+}
+
+func (out *syntheticCleanupOutput) Write(p []byte) (int, error) {
+	n := min(len(p), (16<<10)-len(out.data))
+	out.data = append(out.data, p[:n]...)
+	out.truncated = out.truncated || n < len(p)
+	return len(p), nil
 }
 
 func TestDevelopmentEntryPointUsesNativeWorkspaceScope(t *testing.T) {

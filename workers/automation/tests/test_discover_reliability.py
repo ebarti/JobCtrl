@@ -652,7 +652,7 @@ async def test_discovery_next_run_settings_stay_frozen_after_planning(
 ) -> None:
     persisted = {
         "boards": ["indeed"],
-        "defaults": {"results_per_site": 20, "hours_old": 48},
+        "defaults": {"results_per_site": 20, "hours_old": 48, "country_indeed": "canada"},
         "role_filter": {"mode": "auto", "model": None},
         "crawl_user_agent": {"product": "JobCtrl", "contact": "old@example.test"},
     }
@@ -672,7 +672,7 @@ async def test_discovery_next_run_settings_stay_frozen_after_planning(
 
     persisted = {
         "boards": ["linkedin"],
-        "defaults": {"results_per_site": 99, "hours_old": 1},
+        "defaults": {"results_per_site": 99, "hours_old": 1, "country_indeed": "usa"},
         "role_filter": {"mode": "llm", "model": "claude:sonnet"},
         "crawl_user_agent": {"product": "Changed", "contact": "new@example.test"},
     }
@@ -711,7 +711,7 @@ async def test_discovery_next_run_settings_stay_frozen_after_planning(
         captured_settings,
     )
     assert effective["boards"] == ["indeed"]
-    assert effective["defaults"] == {"results_per_site": 20, "hours_old": 48}
+    assert effective["defaults"] == {"results_per_site": 20, "hours_old": 48, "country_indeed": "canada"}
     assert effective["role_filter"] == {"mode": "llm", "model": "claude:sonnet"}
     assert effective["crawl_user_agent"] == {
         "product": "Changed",

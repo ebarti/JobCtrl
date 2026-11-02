@@ -1104,43 +1104,72 @@ func attestFinishedOrdinaryExecution(ctx launchContext, scope executionScope) er
 		count, err := readCoalitionActiveTaskCount(scope.CoalitionIDs[0])
 		return errors.Is(err, syscall.ESRCH) || (err == nil && count == 0)
 	}
-	if !zero() {
-		return nil // Live or unavailable: leave the receipt for ordinary Stop.
-	}
-	controlPath := ctx.Instance.ControlPath
-	if controlPath == "" {
-		controlPath = filepath.Join(filepath.Dir(ctx.Instance.StatePath), "control.lock")
-	}
-	lock, err := acquireLock(controlPath, false)
-	if err != nil {
-		return err
-	}
-	defer releaseLock(lock)
-	bootAfter, err := executionBootSession()
-	if err != nil || bootAfter != boot {
-		return errors.Join(errors.New("execution scope boot identity changed"), err)
-	}
-	scopes, err := readOwnedExecutionScopes(ctx)
-	if err != nil {
-		return err
-	}
-	for _, active := range scopes {
-		if active.ID != scope.ID {
-			continue
-		}
-		if active != scope {
-			return errors.New("execution receipt changed before completion")
+	// The helper may become a zombie just before the coalition's task count
+	// reflects its exit, or a count read may be temporarily unavailable. Keep
+	// this controller's original witness briefly so a later verified zero can
+	// be made durable before the coalition is reaped. Live or persistently
+	// unavailable scopes still retain their active receipt for ordinary Stop.
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for {
+		if time.Until(deadline) <= 0 {
+			return nil
 		}
 		if zero() {
-			raw, err := json.Marshal(scope)
-			if err != nil {
+			finished, err := func() (bool, error) {
+				controlPath := ctx.Instance.ControlPath
+				if controlPath == "" {
+					controlPath = filepath.Join(filepath.Dir(ctx.Instance.StatePath), "control.lock")
+				}
+				if time.Until(deadline) <= 0 {
+					return false, nil
+				}
+				lock, err := acquireLock(controlPath, true)
+				if errors.Is(err, ErrLockHeld) {
+					return false, nil
+				}
+				if err != nil {
+					return false, err
+				}
+				defer releaseLock(lock)
+				bootAfter, err := executionBootSession()
+				if err != nil || bootAfter != boot {
+					return false, errors.Join(errors.New("execution scope boot identity changed"), err)
+				}
+				scopes, err := readOwnedExecutionScopes(ctx)
+				if err != nil {
+					return false, err
+				}
+				for _, active := range scopes {
+					if active.ID != scope.ID {
+						continue
+					}
+					if active != scope {
+						return false, errors.New("execution receipt changed before completion")
+					}
+					if !zero() {
+						return false, nil
+					}
+					raw, err := json.Marshal(scope)
+					if err != nil {
+						return false, err
+					}
+					return true, publishExecutionCompletion(ctx, executionCompletionForReceipt(scope, append(raw, '\n'), boot))
+				}
+				return true, nil // A concurrent Stop already retired the scope.
+			}()
+			if finished || err != nil {
 				return err
 			}
-			return publishExecutionCompletion(ctx, executionCompletionForReceipt(scope, append(raw, '\n'), boot))
 		}
-		return nil
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil
+		}
+		if remaining > 25*time.Millisecond {
+			remaining = 25 * time.Millisecond
+		}
+		time.Sleep(remaining)
 	}
-	return nil // A concurrent Stop already retired the scope.
 }
 
 // Called only after an all-instance zero census, with the stop control lock
