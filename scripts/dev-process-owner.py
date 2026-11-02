@@ -220,16 +220,20 @@ def launch(directory: Path, name: str, secret: str, command: str, log: str | Non
 
     def cleanup() -> bool:
         nonlocal failed
+        phase = "child termination"
         with cleanup_budget(16):
             try:
                 terminate_owned_process(child, launched_pid=child_pid)
+                phase = "output drain"
                 if output is not None:
                     output.join(timeout=1)
                     if output.is_alive():
                         raise Unverified()
                 with lock(directory, name):
+                    phase = "receipt verification"
                     if receipt(directory, name, secret) != value:
                         raise Unverified()
+                    phase = "endpoint retirement"
                     current = endpoint.lstat()
                     if (current.st_dev, current.st_ino) != (endpoint_identity.st_dev, endpoint_identity.st_ino):
                         raise Unverified()
@@ -239,9 +243,10 @@ def launch(directory: Path, name: str, secret: str, command: str, log: str | Non
                     atomic_write(identity_file, json.dumps(stopped).encode())
                     value.update(stopped)
                 return True
-            except (ProcessOwnershipError, OSError, Unverified, subprocess.TimeoutExpired):
+            except (ProcessOwnershipError, OSError, Unverified, subprocess.TimeoutExpired) as error:
                 failed = True
-                print(f"dev: {name} cleanup failed; ownership records retained for review or retry.", file=sys.stderr, flush=True)
+                detail = str(error) if isinstance(error, ProcessOwnershipError) else type(error).__name__
+                print(f"dev: {name} cleanup failed during {phase}: {detail}; ownership records retained for review or retry.", file=sys.stderr, flush=True)
                 return False
 
     while True:
