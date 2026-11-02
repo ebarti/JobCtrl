@@ -29,6 +29,7 @@ from jobctrl.workflow_specs import (
     build_apply_workflow_spec,
     build_compensation_refresh_workflow_spec,
     build_run_stage_workflow_spec,
+    reject_discover_preview,
     start_workflow_spec_and_wait_sync,
     workflow_result_to_dict,
 )
@@ -286,9 +287,12 @@ def _write_env_updates(path: Path, updates: dict[str, str], *, dry_run: bool, qu
         if not quiet:
             console.print(f"[yellow]Would update {path}:[/yellow] {', '.join(sorted(updates))}")
         return
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.write_text(_env_file_updates(path, updates), encoding="utf-8")
-    path.chmod(0o600)
+    from jobctrl.config import config_file_lock
+
+    # Coordinate the read/merge/write with the init wizard's file updates.
+    with config_file_lock(path=path):
+        path.write_text(_env_file_updates(path, updates), encoding="utf-8")
+        path.chmod(0o600)
     for key, value in updates.items():
         import os
 
@@ -730,6 +734,14 @@ def _render_run_timeline(run: dict, limit: int = 8) -> Panel | None:
     )
 
 
+def _check_discover_preview(stages: list[str], *, dry_run: bool) -> None:
+    try:
+        reject_discover_preview(stages, dry_run=dry_run)
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+
 def _run_stage_command(
     stage: str,
     *,
@@ -744,6 +756,7 @@ def _run_stage_command(
     tailor_judge_model: str | None = None,
 ) -> None:
     """Run a single pipeline stage through the shared orchestrator."""
+    _check_discover_preview([stage], dry_run=dry_run)
     _bootstrap()
 
     _check_tier2_stage(stage)
@@ -991,8 +1004,13 @@ def action(
 def init() -> None:
     """Run the first-time setup wizard (profile, resume, search config)."""
     from jobctrl.wizard.init import run_wizard
+    from jobctrl.domain.errors import ConfigurationError
 
-    run_wizard()
+    try:
+        run_wizard()
+    except ConfigurationError as exc:
+        console.print(f"[red]Setup stopped:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()
@@ -1355,9 +1373,9 @@ def run(
     ),
 ) -> None:
     """Run one or more pipeline stages in order."""
-    _bootstrap()
-
     stage_list = stages if stages else ["all"]
+    _check_discover_preview(stage_list, dry_run=dry_run)
+    _bootstrap()
 
     # Validate stage names
     for s in stage_list:
@@ -2131,6 +2149,9 @@ def retry(
         raise typer.Exit(code=1)
 
     console.print(f"[green]Reset {stage} for retry:[/green] {job_url}")
+    if job_url.retailor_required:
+        console.print("Approved materials remain available. Use explicit re-tailor to create a replacement.")
+        return
     if run_after:
         if stage == "apply":
             identity = SqliteJobIdentityResolver(get_connection()).resolve_current_by_posting_url(

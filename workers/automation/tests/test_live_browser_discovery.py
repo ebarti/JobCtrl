@@ -383,7 +383,7 @@ def test_live_browser_smartextract_failure_preserves_remaining_targets(
     monkeypatch.setattr(smartextract, "LiveChromeDiscoveryClient", broker.client)
     monkeypatch.setattr(smartextract, "_run_one_site", run_one)
     result = smartextract._run_all(
-        [{"name": "Slow", "url": "https://slow.example/jobs"}, {"name": "Ready", "url": "https://ready.example/jobs"}],
+        [{"name": "Slow", "url": "https://slow.example.test/jobs"}, {"name": "Ready", "url": "https://ready.example.test/jobs"}],
         {},
         workers=workers,
         discovery_execution=_execution(),

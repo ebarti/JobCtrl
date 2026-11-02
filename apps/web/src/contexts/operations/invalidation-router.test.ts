@@ -1,10 +1,11 @@
 // @vitest-environment node
 
-import { LOCAL_TENANT, createTenantId, createAvailabilityLeaseChanged, createJobUpdated, type DomainEventUnion } from "@jobctrl/domain-types";
-import { QueryClient, QueryObserver, type QueryKey } from "@tanstack/react-query";
+import { LOCAL_TENANT, createTenantId, createAvailabilityLeaseChanged, createJobUpdated, createApplyRunEventRecorded, type DomainEventUnion } from "@jobctrl/domain-types";
+import { MutationObserver, QueryClient, QueryObserver, type QueryKey } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { eventByType } from "../../test/fixtures/events.js";
+import { createOptimisticMutation } from "../../shared/lib/createOptimisticMutation.js";
 import { parseDomainEvent } from "../../shared/ports/lib/parseDomainEvent.js";
 import { activityKeys } from "./activityKeys.js";
 import { analyticsKeys } from "./analyticsKeys.js";
@@ -793,6 +794,35 @@ describe("invalidationRouter", () => {
       }
     });
   }
+
+  it("keeps an appended event and its timestamp when an older optimistic write fails", async () => {
+    const key = applyRunsKeys.detail(LOCAL_TENANT, RUN_ID);
+    queryClient.setQueryData(key, { events: [] });
+    let reject!: (error: Error) => void;
+    const mutation = new MutationObserver(queryClient, createOptimisticMutation(queryClient, {
+      mutationFn: () => new Promise((_resolve, fail) => { reject = fail; }),
+      optimisticUpdates: () => [{ queryKey: key, patch: (current: unknown) => ({ ...(current as object), pending: true }) }],
+    })).mutate(undefined).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    let serial = 0;
+    const clock = vi.spyOn(Date.prototype, "toISOString").mockImplementation(() =>
+      `2026-10-01T00:00:${String(serial++).padStart(2, "0")}.000Z`,
+    );
+    try {
+      invalidationRouter.handle(createApplyRunEventRecorded(LOCAL_TENANT, {
+        runId: RUN_ID, event: { type: "navigation" },
+      }), queryClient);
+      const before = queryClient.getQueryData<{ events: Array<{ at: string }> }>(key)!.events[0]!.at;
+      reject(new Error("old failure"));
+      await mutation;
+      const after = queryClient.getQueryData<{ events: Array<{ at: string }>; pending?: boolean }>(key)!;
+      expect(after.events).toHaveLength(1);
+      expect(after.events[0]!.at).toBe(before);
+      expect(after.pending).toBeUndefined();
+    } finally {
+      clock.mockRestore();
+    }
+  });
 
   it("appends the apply-run event in place rather than invalidating", () => {
     queryClient.setQueryData(applyRunsKeys.detail(LOCAL_TENANT, RUN_ID), {

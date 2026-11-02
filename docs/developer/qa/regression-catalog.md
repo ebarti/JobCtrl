@@ -690,6 +690,23 @@ observed product-path evidence; fixture coverage is not independent runtime QA.
 
 ## Auditability Checks
 
+For source-supervisor process identity (#1297), run
+`node --test scripts/dev-lifecycle.test.mjs` with synthetic homes, state and
+processes only. Exercise the actual `scripts/dev` status, stop, start, restart
+and foreground paths. PID-only, malformed, changed-identity and unreachable
+records must remain unverified, preserve exact metadata and a separately owned
+peer, and refuse automatic replacement. Verify metadata-only recovery without
+signals, successful stop followed by ordinary restart, TERM-ignoring owned
+descendants, and cancellation. An actual cleanup refusal must remain a visible
+failure with retained ownership, never a successful stop or reboot instruction.
+Keep signal authority in the original unreaped child handle/session; a kernel
+birth check followed by numeric `kill` is not an atomic identity guarantee.
+Hold a component's real publication lock beyond the leaf-process grace while
+the synthetic controller drains its inner supervisor; every owner must still
+publish and retire verified completion, preserving an independent peer. Gate
+one Stop request and overlap another original client: the second operation
+waits without blocking the owner's publication lock, then reads fresh state.
+
 For Skip during Apply custody, run `test_apply_stopped_owner_recovery.py` and
 `test_apply_crash_custody.py`, with the existing Apply claim, workflow, reset
 and projection selections. A real owned source process and retained child must
@@ -1034,6 +1051,26 @@ both completion orders with independent writers. No raw prompts, page text or
 candidate values enter events or determination receipts. Exercise the actual
 activity with Temporal heartbeats, dispatch and replay, including old-format
 activity output and both preflight histories, then inspect the API and UI.
+
+For stage reset parity, run locked
+`pytest tests/test_stage_retry_consistency.py tests/test_enrichment_retry.py tests/test_exact_v7_state_reset.py tests/test_materials_queue_selectors.py`
+and the API enrichment-retry, write-model-state and write-model-cancel suites.
+Use owned synthetic SQLite, files, and the actual local RPC and CLI. Compare
+default and explicit attempt resets across Tailor and Cover aliases; verify
+exhaustion, metadata/version fences, accepted file and provenance preservation,
+newer incomplete and approved generations, and full-cohort rollback when a
+selected member changes state or retryability. A plain
+retry of already approved materials must report the explicit re-tailor action
+and not dispatch a replacement. Preserve the prior Enrich and mixed-cohort checks.
+Include `test_retry_material_predecessor.py` in both completion orders and the
+direct, activity and batch material-attempt suites. Combine material cleanup
+with a refused Apply cohort member and verify complete rollback. Through the
+actual reset RPC, retain Apply intent, unsettled-owner and policy refusals and
+their HTTP 409 classification; safe reset must preserve the precise Skip release
+frontier, reject earlier dispatches and admit a newly reviewed dispatch. API
+fixtures use the registered RPC handlers with credential bootstrap, network and
+child providers denied. Their synthetic evidence does not certify independently
+running older source processes.
 
 For legacy evidence preservation (#1281), run locked
 `pytest tests/test_legacy_evidence_preservation.py tests/test_legacy_evidence_recovery.py tests/test_semantic_storage.py tests/test_v12_activation.py`
@@ -2402,9 +2439,23 @@ real store. The `Native credential stores` CI workflow runs it on hosted macOS,
 Windows (Python 3.12), and Linux. Linux runs a temporary Secret Service inside
 an owned D-Bus session; Windows additionally checks restrictive source DACLs
 after migration and rollback. A queued or blocked job is not host evidence.
-From a prepared source checkout on macOS or Windows, run it with a Python
-environment containing `python-dotenv` and the installed Node dependencies.
-On Linux, use `dbus-run-session -- python scripts/native-credentials-host.py
+Run the fake-only diagnostic contracts through the locked core runtime before
+native proof: `uv --project workers/automation run --locked --no-default-groups
+--no-dev python scripts/test_native_credentials_host.py`. The harness reports
+the primary proof failure and cleanup failures separately, with only fixed
+phase names, timings and error types. Its Windows Python-reader probe adds
+fixed stderr markers around script entry, module load, compilation, input
+parsing, native-call entry and script exit; raw command output is never emitted.
+Missing markers do not establish a startup cause, and script exit can still
+precede native-buffer cleanup and process exit. The TypeScript bridge retains
+its coarser API phase. A hosted Windows run is required to observe these
+boundaries; fake tests do not qualify Windows behavior.
+From a prepared source checkout with the installed Node dependencies, use
+`uv --project workers/automation run --locked --no-default-groups --no-dev
+python scripts/native-credentials-host.py` on macOS or Windows. This uses the
+locked core runtime with provider SDK dependency groups excluded. On Linux, use
+`dbus-run-session -- uv --project workers/automation run --locked
+--no-default-groups --no-dev python scripts/native-credentials-host.py
 --linux-session` after installing `secret-tool` and `gnome-keyring-daemon`.
 
 Exercise the API's presence-only response, fixed key allowlist, unavailable

@@ -9,7 +9,7 @@ import { createProviderHandlers, dispatchProviderModelCatalog, providerOperation
 import { acceptCoverLetterPreview, coverLetterArtifactPdfBytes, coverLetterJobId, coverLetterPreviewBytes, CoverLetterReviewError, renderCoverLetterPreview, type CoverLetterPdfRenderer } from "./cover-letter-review.js";
 import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import { readTargetRoleProposal } from "./candidate-interpretations.js";
-import { resetJobStageWithEnrichmentOwner, retryFailedJobsWithEnrichmentOwner } from "./enrichment-retry.js";
+import { resetJobStageWithEnrichmentOwner, retryFailedJobsWithEnrichmentOwner, RetrySelectionConflict } from "./enrichment-retry.js";
 import { ResumeEditIntentReviewSchema } from "@jobctrl/contracts";
 import { readDetermination } from "./semantic-determinations.js";
 import { isDeepStrictEqual } from "node:util";
@@ -210,6 +210,7 @@ import {
   SUPPORTED_SCHEMA_VERSION,
 } from "./db.js";
 import { ConfigFileInputError } from "./config-file.js";
+import { isTrustedLiveBrowserUrl } from "./discovery-browser-destination.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
 import {
@@ -397,6 +398,7 @@ import {
   MAX_REQUIRED_COACHING_SOURCE_ROWS,
 } from "@jobctrl/domain-types";
 import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
+import { InvalidSavedTargetSearchError, UnsupportedRemoteSearchInputError } from "./discovery-targets.js";
 import {
   persistProfileUpdate,
 } from "./profile-events.js";
@@ -819,6 +821,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       const body = parseBody(reply, DiscoveryBrowserTaskCreateSchema, request.body ?? {});
       if (!body) return undefined;
+      if (!isTrustedLiveBrowserUrl(body.request.url)) {
+        void reply.code(400);
+        return {
+          ok: false,
+          error: "untrusted_discovery_browser_host",
+          message:
+            "The live Chrome transport is limited to supported provider hosts; use the address-pinned worker transport for other URLs.",
+        };
+      }
       const destination = await jobUrlValidator(body.request.url);
       if (!destination.allowed) {
         void reply.code(400);
@@ -1458,6 +1469,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
+    if (body.dryRun && body.stages.includes("discover")) {
+      void reply.code(400);
+      return {
+        ok: false,
+        error: "discover_preview_unsupported",
+        message: "Discover does not support dry runs. Turn off Dry run to start a search.",
+      };
+    }
     const actions: ActionRunResponse[] = [];
     const firstStage = body.stages[0] as Stage | undefined;
     if (!firstStage) {
@@ -1937,11 +1956,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const reset = await retryFailedJobsWithEnrichmentOwner(db, providerDispatcher, actionContext, body);
       const actions: ActionRunResponse[] = [];
       const runnableGroups = body.runAfter
-        ? groupRunnableBulkRetryTargets(reset.targets)
+        ? groupRunnableBulkRetryTargets(reset.targets.filter((target) => !target.retailorRequired))
         : [];
 
       for (const group of runnableGroups) {
-        const command = bulkRetryRunStageCommand(db, group.stage, group.jobUrls, body);
+        const command = bulkRetryRunStageCommand(group.stage, group.targets.map((target) => target.jobId), body);
         const dispatch = await actionDispatcher(command, actionContext);
         const executionRunId = temporalExecutionRunId(dispatch);
         if (dispatch.workflowId) {
@@ -1956,7 +1975,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         if (dispatch.status === "queued") {
           queueRetriedJobsForWorkflow(
             db,
-            group.jobUrls.map((jobUrl) => ({ jobUrl, stage: group.stage })),
+            group.targets,
             {
               ...(dispatch.workflowId ? { workflowId: dispatch.workflowId } : {}),
               ...(executionRunId ? { temporalRunId: executionRunId } : {}),
@@ -1969,17 +1988,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         actions.push(buildActionResponse(command, dispatch));
       }
 
-      const status = body.runAfter ? stageRunStatus(actions) : "reset";
+      const status = body.runAfter && !(actions.length === 0 && reset.retailorRequiredJobKeys?.length)
+        ? stageRunStatus(actions) : "reset";
       void reply.code(body.runAfter && actions.some((action) => action.status === "queued") ? 202 : 200);
       return {
         ok: true,
         count: reset.count,
         jobKeys: reset.jobKeys,
         stageCounts: reset.stageCounts,
+        ...(reset.retailorRequiredJobKeys?.length ? { retailorRequiredJobKeys: reset.retailorRequiredJobKeys } : {}),
         runAfter: body.runAfter,
         status,
         actions,
-        ...(body.runAfter && reset.count > 0 && actions.length === 0
+        ...(reset.retailorRequiredJobKeys?.length
+          ? { message: "Approved materials remain available. Use explicit re-tailor to create a replacement." }
+          : body.runAfter && reset.count > 0 && actions.length === 0
           ? { message: "Failed stages were reset; no preparation stages were eligible for automatic run-after dispatch." }
           : {}),
       } satisfies BulkRetryFailedResponse;
@@ -2005,7 +2028,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
 
       for (const group of runnableGroups) {
-        const command = pendingPreparationRunStageCommand(db, group.stage, group.jobUrls, body);
+        const command = pendingPreparationRunStageCommand(db, group.stage, group.targets.map((target) => target.jobUrl), body);
         const dispatch = await actionDispatcher(command, actionContext);
         const executionRunId = temporalExecutionRunId(dispatch);
         if (dispatch.workflowId) {
@@ -2020,7 +2043,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         if (dispatch.status === "queued") {
           queueRetriedJobsForWorkflow(
             db,
-            group.jobUrls.map((jobUrl) => ({ jobUrl, stage: group.stage })),
+            group.targets,
             {
               ...(dispatch.workflowId ? { workflowId: dispatch.workflowId } : {}),
               ...(executionRunId ? { temporalRunId: executionRunId } : {}),
@@ -2324,7 +2347,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const reset = await resetJobStageWithEnrichmentOwner(db, providerDispatcher, actionContext, decodeRouteParam(request.params.jobKey), body.stage, {
         resetAttempts: body.resetAttempts,
       });
-      const jobId = requireJobId(db, reset.jobUrl);
+      const jobId = reset.jobId;
       const command: ActionCommandPayload = {
         action: "retry_stage" as const,
         jobKey: jobId,
@@ -2338,8 +2361,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (continuationStages.length > 0 && body.stage !== "apply") {
         command.stages = continuationStages;
       }
-      const dispatch = body.runAfter ? await actionDispatcher(command, actionContext) : { status: "reset" };
-      void reply.code(body.runAfter ? 202 : 200);
+      const dispatch = reset.retailorRequired
+        ? { status: "reset", message: "Approved materials remain available. Use explicit re-tailor to create a replacement." }
+        : body.runAfter ? await actionDispatcher(command, actionContext) : { status: "reset" };
+      void reply.code(body.runAfter && !reset.retailorRequired ? 202 : 200);
       return buildActionResponse(command, dispatch, { stage: reset.stage });
     });
   });
@@ -3115,6 +3140,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const update = persistProfileUpdate(db, body);
       profileResponse = update.profile;
     } catch (error) {
+      if (error instanceof InvalidSavedDiscoverySettingsError) {
+        void reply.code(409);
+        return { ok: false, error: "invalid_saved_search", message: error.message };
+      }
+      if (error instanceof InvalidSavedTargetSearchError) {
+        void reply.code(409);
+        return { ok: false, error: "invalid_saved_search", message: error.message };
+      }
+      if (error instanceof UnsupportedRemoteSearchInputError) {
+        void reply.code(400);
+        return { ok: false, error: "unsupported_remote_search", message: error.message };
+      }
       if (error instanceof ProfileVersionConflictError) {
         void reply.code(409);
         return {
@@ -4761,22 +4798,22 @@ const PREPARATION_PICKUP_MAX_ATTEMPTS: Partial<Record<Stage, number>> = {
   cover: 5,
 };
 
-interface BulkRetryTargetGroup {
+interface BulkRetryTargetGroup<T extends RetryFailedJobTarget> {
   readonly stage: Stage;
-  readonly jobUrls: string[];
+  readonly targets: T[];
 }
 
-function groupRunnableBulkRetryTargets(targets: readonly RetryFailedJobTarget[]): BulkRetryTargetGroup[] {
-  const groups = new Map<Stage, string[]>();
+function groupRunnableBulkRetryTargets<T extends RetryFailedJobTarget>(targets: readonly T[]): BulkRetryTargetGroup<T>[] {
+  const groups = new Map<Stage, T[]>();
   for (const target of targets) {
     if (!PREPARATION_PICKUP_STAGES.has(target.stage)) {
       continue;
     }
     const group = groups.get(target.stage) ?? [];
-    group.push(target.jobUrl);
+    group.push(target);
     groups.set(target.stage, group);
   }
-  return [...groups.entries()].map(([stage, jobUrls]) => ({ stage, jobUrls }));
+  return [...groups.entries()].map(([stage, groupTargets]) => ({ stage, targets: groupTargets }));
 }
 
 function pendingPreparationTargets(
@@ -4872,20 +4909,19 @@ function stageCountsForTargets(targets: readonly RetryFailedJobTarget[]): Partia
 }
 
 function bulkRetryRunStageCommand(
-  db: ApiDb,
   stage: Stage,
-  jobUrls: readonly string[],
+  jobIds: readonly string[],
   request: BulkRetryFailedRequest,
 ): ActionCommandPayload {
   const stages = retryContinuationStages(stage);
   const command: ActionCommandPayload = {
     action: "run_stage",
     jobKey: PIPELINE_ACTION_JOB_KEY,
-    jobIds: requireJobIds(db, jobUrls),
+    jobIds: [...new Set(jobIds)],
     stage,
     stages,
     dryRun: request.dryRun,
-    limit: jobUrls.length,
+    limit: jobIds.length,
     workers: request.workers,
     minScore: request.minScore,
     validationMode: request.validationMode,
@@ -4903,7 +4939,7 @@ function pendingPreparationRunStageCommand(
   jobUrls: readonly string[],
   request: BulkRunPendingPreparationRequest,
 ): ActionCommandPayload {
-  const command = bulkRetryRunStageCommand(db, stage, jobUrls, {
+  const command = bulkRetryRunStageCommand(stage, requireJobIds(db, jobUrls), {
     allMatching: false,
     jobKeys: [...jobUrls],
     runAfter: true,
@@ -5287,6 +5323,14 @@ async function withWritableDb<T>(
       void reply.code(409);
       return { ok: false, error: "invalid_saved_search", message: error.message };
     }
+    if (error instanceof InvalidSavedTargetSearchError) {
+      void reply.code(409);
+      return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
+    if (error instanceof UnsupportedRemoteSearchInputError) {
+      void reply.code(400);
+      return { ok: false, error: "unsupported_remote_search", message: error.message };
+    }
     if (error instanceof PermanentDeleteSelectionConflict) {
       void reply.code(409);
       return { ok: false, error: "permanent_delete_selection_conflict", message: error.message,
@@ -5355,6 +5399,10 @@ async function withWritableDb<T>(
     if (error instanceof ActionReceiptConflictError) {
       void reply.code(409);
       return { ok: false, error: "action_identity_conflict", message: error.message };
+    }
+    if (error instanceof RetrySelectionConflict) {
+      void reply.code(409);
+      return { ok: false, error: "retry_selection_changed", message: error.message };
     }
     if (error instanceof InputError) {
       if (APPLY_REVIEW_PRECONDITION_ERRORS.has(error.message)) {
