@@ -14,6 +14,7 @@ import type {
   Stage,
 } from "@jobctrl/contracts";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { JobCtrlApiError } from "@jobctrl/api-client";
 import { http, HttpResponse } from "msw";
 import {
   fireEvent,
@@ -46,6 +47,8 @@ import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { FakeEventStreamPort, buildTestPorts } from "../../test/testPorts.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
+import { createQueryClient } from "../../shared/lib/queryClient.js";
+import { useToastStore } from "../../shared/stores/toasts.js";
 import { routeTree } from "../../routeTree.gen.js";
 import {
   JOBS_TABLE_COLUMN_IDS,
@@ -96,6 +99,7 @@ beforeEach(() => {
 afterEach(() => {
   useStageTriggerStore.getState().reset();
   useSavedTableViewsStore.getState().reset();
+  act(() => useToastStore.getState().clear());
   if (typeof originalConfirm === "function") {
     Object.defineProperty(window, "confirm", {
       configurable: true,
@@ -2037,6 +2041,88 @@ describe("<JobsView> bulk delete integration", () => {
       validationMode: "normal",
       dryRun: false,
     });
+  });
+
+  it("shows a retry selection conflict without clearing the selected job or controls", async () => {
+    const user = userEvent.setup();
+    const failedJob: JobSummary = {
+      ...sampleJob, jobKey: "synthetic-retry-conflict", title: "Synthetic failed job", currentState: "failed",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([failedJob]));
+    const attempts: unknown[] = [];
+    const message = "A selected job or its retry stage changed or is no longer eligible. Refresh the jobs list and review the selection, then retry.";
+    server.use(http.post("*/v1/jobs/bulk-retry-failed", async ({ request }) => {
+      attempts.push(await request.json());
+      return HttpResponse.json({ ok: false, error: "retry_selection_changed", message }, { status: 409 });
+    }));
+    act(() => {
+      useToastStore.getState().clear();
+      useStageTriggerStore.getState().patchStageConfig("score", { workers: "14" });
+    });
+    const queryClient = createQueryClient();
+    const harness = buildProviderHarness({ queryClient, ports: buildTestPorts({ api: { jobs } }) });
+    const failedSearch = SEARCH.replace("state=all", "state=failed");
+    const { router, Wrapper } = buildRouter(harness, failedSearch);
+    const { unmount } = render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(failedJob.title)).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: `Select ${failedJob.title}` }));
+    const searchBeforeRetry = router.state.location.search;
+    await user.click(within(await openJobOperationsMenu(user)).getByRole("menuitem", { name: "Retry selected" }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    await waitFor(() => expect(queryClient.getMutationCache().getAll().at(-1)?.state.status).toBe("error"));
+    await waitFor(() => expect(jobs.mock.calls.length).toBeGreaterThan(1));
+    const error = queryClient.getMutationCache().getAll().at(-1)?.state.error;
+    expect(error).toBeInstanceOf(JobCtrlApiError);
+    expect(error).toMatchObject({ status: 409, writeOutcomeUnknown: false });
+    expect(attempts).toEqual([expect.objectContaining({
+      allMatching: false, jobKeys: [failedJob.jobKey], runAfter: true, workers: 14,
+    })]);
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: `Select ${failedJob.title}` })).toBeChecked();
+    expect(router.state.location.search).toEqual(searchBeforeRetry);
+    expect(useStageTriggerStore.getState().configs.score.workers).toBe("14");
+    expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({ variant: "error", message })]);
+    expect(within(await openJobOperationsMenu(user)).getByRole("menuitem", { name: "Retry selected" })).not.toHaveAttribute("aria-disabled", "true");
+    unmount();
+    act(() => useToastStore.getState().clear());
+    queryClient.clear();
+  });
+
+  it("uses canonical retry result keys while showing re-tailor guidance", async () => {
+    const user = userEvent.setup();
+    const jobId = "00000000-0000-4000-8000-000000001008";
+    const failedJob: JobSummary = {
+      ...sampleJob, jobKey: jobId, url: "https://example.test/observed", title: "Synthetic approved job", currentState: "failed",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([failedJob]));
+    const attempts: unknown[] = [];
+    const message = "Approved materials remain available. Use explicit re-tailor to create a replacement.";
+    server.use(http.post("*/v1/jobs/bulk-retry-failed", async ({ request }) => {
+      attempts.push(await request.json());
+      return HttpResponse.json({ ok: true, count: 1, jobKeys: [jobId], status: "reset", runAfter: true,
+        stageCounts: { tailor: 1 }, actions: [], retailorRequiredJobKeys: [jobId], message });
+    }));
+    act(() => useToastStore.getState().clear());
+    const queryClient = createQueryClient();
+    const harness = buildProviderHarness({ queryClient, ports: buildTestPorts({ api: { jobs } }) });
+    const { router, Wrapper } = buildRouter(harness, SEARCH.replace("state=all", "state=failed"));
+    const { unmount } = render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(failedJob.title)).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: `Select ${failedJob.title}` }));
+    await user.click(within(await openJobOperationsMenu(user)).getByRole("menuitem", { name: "Retry selected" }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    await waitFor(() => expect(queryClient.getMutationCache().getAll().at(-1)?.state.status).toBe("success"));
+    await waitFor(() => expect(screen.queryByText("1 selected")).not.toBeInTheDocument());
+    expect(screen.getByRole("checkbox", { name: `Select ${failedJob.title}` })).not.toBeChecked();
+    expect(attempts).toEqual([expect.objectContaining({ allMatching: false, jobKeys: [jobId], runAfter: true })]);
+    expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({ variant: "info", message })]);
+    unmount();
+    act(() => useToastStore.getState().clear());
+    queryClient.clear();
   });
 
   it("posts all matching failed jobs to bulk retry from the pending filter", async () => {

@@ -20,6 +20,7 @@ from jobctrl import config
 from jobctrl.database import get_connection, init_db
 from jobctrl.domain.discovery import Employer, JobMetadata, PostingUrl, SearchStrategy, Source
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+from jobctrl.domain.discovery.remote_search import RemoteSearchConfigurationError, validate_remote_search_scope
 from jobctrl.domain.discovery.search_units import (
     DiscoverySearchSpec,
     DiscoverySearchUnit,
@@ -1093,7 +1094,7 @@ def _run_one_search(
     label = f'''"{s["query"]}" in {s["location"]} {("(remote)" if s.get("remote") else "")}'''
     if "tier" in s:
         label += f" [tier {s['tier']}]"
-    gd_location = glassdoor_map.get(s["location"], s["location"].split(",")[0])
+    gd_location = glassdoor_map.get(s["location"], s["location"].split(",")[0]) if s["location"] else ""
     has_glassdoor = "glassdoor" in sites
     other_sites = [si for si in sites if si != "glassdoor"]
     all_dfs = []
@@ -1322,6 +1323,19 @@ def _configured_searches(
     ]
 
 
+def validate_remote_search_config(search_cfg: dict, sites: list[str]) -> None:
+    """Preflight the exact selected rows and boards before starting a crawl."""
+    defaults = search_cfg.get("defaults") or {}
+    searches = _configured_searches(
+        search_cfg, tiers=search_cfg.get("tiers"), locations=search_cfg.get("location_labels"),
+    )
+    for search in searches:
+        validate_remote_search_scope(
+            sites, location=str(search["location"]), remote_only=bool(search.get("remote")),
+            hours_old=defaults.get("hours_old", 72),
+        )
+
+
 def _durable_search_specs(
     search_cfg: dict,
     *,
@@ -1339,6 +1353,11 @@ def _durable_search_specs(
     glassdoor_map = search_cfg.get("glassdoor_location_map", {})
     specs: list[DiscoverySearchSpec] = []
     for search in searches:
+        # A location-free non-Remote row cannot form a search unit at all.
+        # Board-specific limitations are handled per unit below.
+        validate_remote_search_scope(
+            (), location=str(search["location"]), remote_only=bool(search.get("remote")), hours_old=hours_old,
+        )
         common = {
             "query": str(search["query"]),
             "target_location": str(search["location"]),
@@ -1350,7 +1369,7 @@ def _durable_search_specs(
         for site in sites:
             target_location = str(search["location"])
             provider_location = target_location
-            if site == "glassdoor":
+            if site == "glassdoor" and target_location:
                 provider_location = str(glassdoor_map.get(target_location, target_location.split(",")[0]))
             specs.append(
                 DiscoverySearchSpec(
@@ -1729,19 +1748,20 @@ def _durable_full_crawl(
     persisted_linkedin_detail = any(
         unit.spec.sites == ("linkedin",) and unit.spec.linkedin_fetch_description for unit in existing_units
     )
-    specs = _durable_search_specs(
-        search_cfg,
-        tiers=tiers,
-        locations=locations,
-        sites=sites,
-        results_per_site=results_per_site,
-        hours_old=hours_old,
-        linkedin_fetch_description=persisted_linkedin_detail,
-    )
     if result_budget is not None and existing_units:
         # Live disable/quarantine controls reduce the frozen source allowance;
         # they must not rewrite provider request/checkpoint identities on retry.
         specs = [unit.spec for unit in existing_units]
+    else:
+        specs = _durable_search_specs(
+            search_cfg,
+            tiers=tiers,
+            locations=locations,
+            sites=sites,
+            results_per_site=results_per_site,
+            hours_old=hours_old,
+            linkedin_fetch_description=persisted_linkedin_detail,
+        )
     repository.plan_units(discovery_execution, specs)
     proxy_config = parse_proxy(proxy) if proxy else None
     proxies = [proxy_config.jobspy] if proxy_config else None
@@ -1810,10 +1830,23 @@ def _durable_full_crawl(
             emit_progress(unit, "JobStreaming discovery canceled")
             raise DiscoveryCancelled("JobStreaming discovery canceled")
 
+        try:
+            validate_remote_search_scope(
+                unit.spec.sites, location=unit.spec.target_location,
+                remote_only=unit.spec.remote_only, hours_old=unit.spec.hours_old,
+            )
+        except RemoteSearchConfigurationError:
+            repository.record_failure(
+                lease, error_code=f"{unit.spec.sites[0]}:unsupported_remote_search",
+                error_type="RemoteSearchConfigurationError", retryable=False, reset_checkpoint=False,
+            )
+            emit_progress(repository.get_unit(discovery_execution, lease.unit_id), "Board search rejected")
+            continue
+
         invocations = sum(
             (1 + candidate.recovery_count)
             for candidate in repository.list_units(discovery_execution)
-            if candidate.lease_attempt > 0
+            if candidate.lease_attempt > 0 and candidate.last_error_type != "RemoteSearchConfigurationError"
         )
         if invocations > BROAD_BOARD_LEAD_POLICY.max_requests_per_run:
             repository.mark_skipped(lease)
@@ -2077,21 +2110,44 @@ def _durable_full_crawl(
     failed_units = [unit for unit in units if unit.state == "failed"]
     completed_units = [unit for unit in units if unit.state == "completed"]
     canceled_units = [unit for unit in units if unit.state == "canceled"]
+    unsupported_reasons: list[str] = []
+    unsupported_source_ids: set[str] = set()
+    for unit in units:
+        if unit.last_error_type == "UnsupportedRemoteSearch":
+            reason = (
+                f"{', '.join(unit.spec.sites)} cannot apply the selected Remote search filters. "
+                "Remove the board from this search or adjust the target and lookback."
+            )
+            if reason not in unsupported_reasons:
+                unsupported_reasons.append(reason)
+            unsupported_source_ids.update(_jobspy_source_id(site) for site in unit.spec.sites)
+        try:
+            validate_remote_search_scope(
+                unit.spec.sites, location=unit.spec.target_location,
+                remote_only=unit.spec.remote_only, hours_old=unit.spec.hours_old,
+            )
+        except RemoteSearchConfigurationError as exc:
+            if str(exc) not in unsupported_reasons:
+                unsupported_reasons.append(str(exc))
+            unsupported_source_ids.update(_jobspy_source_id(site) for site in unit.spec.sites)
     if canceled_units:
         raise DiscoveryCancelled("JobStreaming discovery canceled")
     if failed_units and not completed_units and counts["accepted"] == 0:
+        if unsupported_reasons:
+            raise RemoteSearchConfigurationError(" ".join(unsupported_reasons))
         raise RuntimeError(f"JobStreaming failed for all {len(failed_units)} search unit(s)")
 
     db_total = int(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
     admitted_new = sum(count for source, count in result_budget.counts().items() if source.startswith("jobspy:")) if result_budget is not None else counts["new"]
+    failed_source_ids = sorted(set(_failed_jobstreaming_source_ids(units)) | unsupported_source_ids)
     result = {
         "total": counts["accepted"] + max(admitted_new - counts["new"], 0),
         "raw_total": repository.execution_provider_job_count(discovery_execution),
         "new": admitted_new,
         "existing": counts["existing"],
-        "errors": len(_failed_jobstreaming_source_ids(units)),
+        "errors": len(failed_source_ids),
         "failed_queries": len(failed_units),
-        "failed_source_ids": _failed_jobstreaming_source_ids(units),
+        "failed_source_ids": failed_source_ids,
         "filtered": repository.execution_filtered_count(discovery_execution),
         "db_total": db_total,
         "queries": sum(unit.state in {"completed", "skipped", "failed"} for unit in units),
@@ -2099,6 +2155,8 @@ def _durable_full_crawl(
         "recovered_units": sum(unit.recovered for unit in units),
         "skipped_units": sum(unit.state == "skipped" for unit in units),
     }
+    if unsupported_reasons:
+        result["unsupported_remote_error"] = " ".join(unsupported_reasons)
     emit_progress(None, "JobStreaming discovery complete")
     return result
 
@@ -2144,6 +2202,9 @@ def run_discovery(
     hours_old = cfg.get("defaults", {}).get("hours_old", 72)
     tiers = cfg.get("tiers")
     locations = cfg.get("location_labels")
+
+    if discovery_execution is None:
+        validate_remote_search_config(cfg, sites)
 
     if discovery_execution is not None:
         if activity_attempt is None or activity_attempt < 1:

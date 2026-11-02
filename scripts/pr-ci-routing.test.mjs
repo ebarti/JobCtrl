@@ -19,6 +19,8 @@ const assertFull = (scope) => {
 test("ordinary surface changes select complete real consumer groups", () => {
   for (const [path, expected] of [
     ["docs/user/getting-started.md", ["docs"]],
+    ["README.md", ["docs"]],
+    ["SECURITY.md", ["docs"]],
     ["docs/plans/synthetic-plan.md", []],
     ["docs/incidents/synthetic-incident.md", []],
     ["docs/decisions.md", []],
@@ -45,8 +47,8 @@ test("ordinary surface changes select complete real consumer groups", () => {
 test("shared, dependency, CI, privacy, migration and submission inputs retain full proof", () => {
   for (const path of [
     ".github/workflows/python.yml", ".github/dependabot.yml", "scripts/dev-supervisor.mjs",
-    "packages/shared/src/contracts.ts", "packaging/distribution/api-native/package.json", "launcher/internal/launcher/run.go",
-    "pnpm-lock.yaml", "pnpm-workspace.yaml", "workers/automation/uv.lock", "workers/automation/pyproject.toml",
+    "packages/shared/src/contracts.ts", "packaging/distribution/api-native/package.json", "launcher/internal/launcher/unknown-runtime.js",
+    "pnpm-lock.yaml", "pnpm-workspace.yaml", "launcher/go.mod",
     "apps/web/tsconfig.json", ".npmrc", ".node-version", ".python-version", "launcher/go.sum",
     "docs/public/install.sh", "apps/extension/public/manifest.json", "apps/api/src/credentials.ts",
     "apps/api/src/config.ts", "apps/api/src/contracts.ts", "apps/api/src/db.ts", "apps/api/src/schema-manifest.ts",
@@ -57,11 +59,42 @@ test("shared, dependency, CI, privacy, migration and submission inputs retain fu
     "workers/automation/src/jobctrl/infrastructure/database.py", "workers/automation/src/jobctrl/runtime.py",
     "workers/automation/tests/test_v15_migration.py", "workers/automation/tests/v6_migration_fixture.py",
     "workers/automation/tests/fixtures/shipped_v6_schema.sql", "workers/automation/tests/test_gmail_token_privacy.py",
-    "workers/automation/tests/test_gmail_windows_acl.py", "README.md", "SECURITY.md", "new-product/new-surface.ts",
+    "workers/automation/tests/test_gmail_windows_acl.py", "new-product/new-surface.ts",
   ]) assertFull(selectSurfaces([changed(path), changed("docs/user/getting-started.md")]));
   assertFull(selectSurfaces([]));
   assertFull(selectSurfaces([changed("docs/user/getting-started.md", "T")]));
   assertFull(selectSurfaces([changed("docs/../unregistered") ]));
+});
+
+test("owned dependencies and platform recipes retain every consumer without unrelated UI jobs", () => {
+  const python = ["api", "credentials", "distribution", "e2e", "gmail", "launcher", "python"];
+  const native = ["api", "distribution", "e2e", "launcher", "python"];
+  for (const [path, expected] of [
+    ["workers/automation/pyproject.toml", python],
+    ["workers/automation/uv.lock", python],
+    ["launcher/internal/launcher/owned_execution_darwin.go", native],
+    ["launcher/cmd/jobctrl/main.go", native],
+    [".github/workflows/launcher.yml", native],
+    [".github/workflows/ci-backend.yml", ["api", "distribution", "edge", "python"]],
+    [".github/workflows/ci-frontend.yml", ["demo", "docs", "e2e", "extension", "storybook", "web"]],
+    [".github/workflows/native-credentials.yml", ["api", "credentials", "python"]],
+    [".github/workflows/gmail-token-windows.yml", ["gmail", "python"]],
+    ["scripts/native-credentials-host.py", ["api", "credentials", "python"]],
+    ["scripts/native-credentials-workflow.test.mjs", ["api", "credentials", "python"]],
+    ["scripts/test_native_credentials_host.py", ["api", "credentials", "python"]],
+  ]) for (const status of ["A", "M", "D"]) {
+    const result = selectSurfaces([changed(path, status)]);
+    assert.equal(result.mode, "affected", `${status} ${path}`);
+    assert.deepEqual(names(result), expected, `${status} ${path}`);
+    assert.equal(result.headPrivacy, false);
+    assertFull(selectSurfaces([changed(path, status), changed("packages/contracts/src/rpc.ts")]));
+    assertFull(selectSurfaces([changed(path, status), changed("apps/api/src/config.ts")]));
+    assertFull(selectSurfaces([changed(path, "T")]));
+  }
+  const union = selectSurfaces([changed("workers/automation/uv.lock"), changed("apps/web/src/views/Overview.tsx")]);
+  assert.deepEqual(names(union), [...new Set([...python, "demo", "storybook", "web"])].sort());
+  for (const path of [".github/workflows/ci.yml", ".github/workflows/ci-admission.yml", "scripts/pr-ci-routing.mjs", ".github/actions/worker-checks/action.yml", ".github/workflows/new-check.yml", "scripts/new-helper.py"])
+    assertFull(selectSurfaces([changed(path)]));
 });
 
 test("NUL diff parsing preserves names and rejects incomplete or unknown formats", () => {

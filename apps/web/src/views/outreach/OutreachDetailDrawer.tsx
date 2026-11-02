@@ -3,6 +3,7 @@ import { IconArrowLeft } from "@tabler/icons-react";
 
 import { ContactDeleteButton } from "../../contexts/outreach/components/ContactDeleteButton.js";
 import { ContactEditButton } from "../../contexts/outreach/components/ContactEditButton.js";
+import { ContactRefreshNotice } from "../../contexts/outreach/components/ContactRefreshNotice.js";
 import { ContactProvenanceList } from "../../contexts/outreach/components/ContactProvenanceList.js";
 import { ContactRoleBadge } from "../../contexts/outreach/components/ContactRoleBadge.js";
 import { OutreachThreadPanel } from "../../contexts/outreach/components/OutreachThreadPanel.js";
@@ -29,7 +30,7 @@ export function OutreachDetailDrawer({
   contactId,
   onClose,
 }: OutreachDetailDrawerProps) {
-  const { data, error } = useContactDetailQuery(contactId);
+  const { data, error, isRefetchError, refetch } = useContactDetailQuery(contactId);
   const errorMessage = detailErrorTitle(error);
   const contact = data?.contact;
 
@@ -39,7 +40,9 @@ export function OutreachDetailDrawer({
       aria-label="Contact details"
     >
       {errorMessage && !contact ? <Empty title={errorMessage} /> : null}
+      {errorMessage && !contact ? <ContactRefreshNotice detail initial retry={() => { void refetch(); }} /> : null}
       {!contact && !errorMessage ? <Empty title="Loading contact." /> : null}
+      {contact && isRefetchError ? <ContactRefreshNotice detail retry={() => { void refetch(); }} /> : null}
       {contact ? (
         <RouteWorkspace
           aria-label="Contact details"

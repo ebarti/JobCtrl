@@ -6,6 +6,7 @@ import { act } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { jobsKeys } from "../../operations/jobsKeys.js";
+import { createQueryClient } from "../../../shared/lib/queryClient.js";
 import { useToastStore } from "../../../shared/stores/toasts.js";
 import { server } from "../../../test/msw/server.js";
 import { createTestQueryClient, renderHookWithProviders } from "../../../test/render.js";
@@ -316,6 +317,48 @@ describe("useRetryStageMutation", () => {
       }
     },
   );
+  it("rolls back a stale single-stage retry and exposes the actionable conflict", async () => {
+    const message = "A selected job or its retry stage changed or is no longer eligible. Refresh the jobs list and review the selection, then retry.";
+    server.use(http.post("*/v1/jobs/:jobKey/actions/retry-stage", () => HttpResponse.json({
+      ok: false, error: "retry_selection_changed", message,
+    }, { status: 409 })));
+    const queryClient = createQueryClient();
+    const { result, unmount } = renderHookWithProviders(() => useRetryStageMutation(), { queryClient });
+    queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"), initialDetail);
+    await act(async () => {
+      await expect(result.current.mutateAsync({ jobId: "job-1", stage: "tailor", runAfter: true }))
+        .rejects.toMatchObject({ status: 409, message, writeOutcomeUnknown: false });
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"))).toEqual(initialDetail);
+    expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({ variant: "error", message })]);
+    unmount();
+    queryClient.clear();
+  });
+
+  it("shows the re-tailor outcome and settles the optimistic stage to pending", async () => {
+    server.use(
+      http.post("*/v1/jobs/:jobKey/actions/retry-stage", () => HttpResponse.json({
+        ok: true, runId: "reset-1", actionId: "reset-1", action: "retry_stage", jobKey: "job-1",
+        command: { action: "retry_stage", jobKey: "job-1" }, status: "reset",
+        message: "Approved materials remain available. Use explicit re-tailor to create a replacement.",
+        stage: { stage: "tailor", state: "pending" },
+      })),
+    );
+    const { result, queryClient } = renderHookWithProviders(() => useRetryStageMutation());
+    queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"), initialDetail);
+
+    await act(async () => {
+      await result.current.mutateAsync({ jobId: "job-1", stage: "tailor", runAfter: true });
+    });
+    expect(queryClient.getQueryData<typeof initialDetail>(jobsKeys.detail(LOCAL_TENANT, "job-1"))?.stages.find((stage) => stage.stage === "tailor")?.state)
+      .toBe("pending");
+    expect(queryClient.getQueryData<typeof initialDetail>(jobsKeys.detail(LOCAL_TENANT, "job-1"))?.stages.find((stage) => stage.stage === "score")?.state)
+      .toBe("failed");
+    expect(useToastStore.getState().toasts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: expect.stringContaining("explicit re-tailor") }),
+    ]));
+  });
 });
 
 it("keeps uncertain Apply visible when reset is refused", async () => {

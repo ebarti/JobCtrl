@@ -2,6 +2,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 
 import { ContactCreateButton } from "../../contexts/outreach/components/ContactCreateButton.js";
 import { ContactImportButton } from "../../contexts/outreach/components/ContactImportButton.js";
+import { ContactRefreshNotice } from "../../contexts/outreach/components/ContactRefreshNotice.js";
 import { DueFollowUpsBadge } from "../../contexts/outreach/components/DueFollowUpsBadge.js";
 import { DueFollowUpsPanel } from "../../contexts/outreach/components/DueFollowUpsPanel.js";
 import {
@@ -31,9 +32,9 @@ export function OutreachView() {
   const search = useSearch({ from: "/outreach" });
   const navigate = useNavigate({ from: "/outreach" });
 
-  const { data, isFetching, error } = useContactsListQuery(listFilters(search));
+  const { data, isFetching, isRefetchError, error, refetch } = useContactsListQuery(listFilters(search));
   const isMobile = useIsMobile();
-  const message = error instanceof Error ? error.message : null;
+  const message = !isRefetchError && error instanceof Error ? error.message : null;
   const hasContacts = Boolean(data?.items.length);
   const filtersActive = Boolean(search.employer || search.jobId);
 
@@ -62,6 +63,8 @@ export function OutreachView() {
       <DueFollowUpsPanel />
       <section className="card full data-list-card">
         {message ? <div className="banner inline">{message}</div> : null}
+        {message && !data ? <ContactRefreshNotice initial retry={() => { void refetch(); }} /> : null}
+        {isRefetchError ? <ContactRefreshNotice retry={() => { void refetch(); }} /> : null}
         <details
           className="contacts-filter-disclosure"
           open={!isMobile || filtersActive ? true : undefined}
@@ -96,7 +99,7 @@ export function OutreachView() {
             </Field>
           </FieldGroup>
         </details>
-        {data && !hasContacts && !isFetching ? (
+        {data && !hasContacts && !isFetching && !isRefetchError ? (
           <div className="contacts-empty-state">
             <Empty
               title={filtersActive ? "No contacts match." : "No contacts yet."}
