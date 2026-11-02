@@ -205,8 +205,16 @@ three audiences:
 - **Developers** — visual playground while building.
 - **Designers** — review surface without booting the full app.
 - **Accessibility + interaction** — the Storybook test runner
-  (`pnpm web:storybook:test`) drives the a11y addon (zero critical/serious
+  (`corepack pnpm web:storybook:test`) drives the a11y addon (zero critical/serious
   axe violations, §10.7) and play functions.
+
+Runner-scoped dependency overrides retain the verified Jest 30.3.0 runtime.
+Storybook's configuration loader registers a Node TypeScript loader,
+which [Jest 30.5 rejects inside its test sandbox](https://github.com/jestjs/jest/releases/tag/v30.5.0).
+Advance those overrides when the actual project configuration and both
+accessibility hooks load successfully with the newer runtime, then verify the
+full Chromium Storybook suite. The axe thresholds and play functions remain
+required.
 
 Stories live next to components (`<Component>.stories.tsx`).
 Domain-component stories use the **MSW addon** to mock API responses, so a
