@@ -26,6 +26,6 @@ jobs:
       run: corepack pnpm install --frozen-lockfile
     - name: Test repository scripts
       timeout-minutes: 10
-      run: corepack pnpm scripts:test
+      run: node --test --test-concurrency=1 scripts/dev-lifecycle.test.mjs
 'on':
   workflow_dispatch:
