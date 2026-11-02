@@ -43,7 +43,11 @@ const validRuntimeManifest = `{
 const loopbackOnlySandboxProfile = `(version 1)
 (allow default)
 (deny network-outbound (remote ip))
-(allow network-outbound (remote ip "localhost:*"))`
+(allow network-outbound (remote ip "localhost:*"))
+(deny file-read* (regex #"/Library/Keychains(/|$)"))
+(deny file-write* (regex #"/Library/Keychains(/|$)"))
+(deny mach-lookup (global-name-regex #"^com[.]apple[.](security|Security).*"))
+(deny process-exec (literal "/usr/bin/security"))`
 
 func TestSandboxedNativeProcessIdentity(t *testing.T) {
 	if os.Getenv("JOBCTRL_SANDBOX_IDENTITY_HELPER") == "1" {

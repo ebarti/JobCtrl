@@ -76,7 +76,7 @@ which workflow is selected.
 | Jobs URL import | `POST /v1/jobs/import-url` | Starts `JobUrlImportWorkflow`; an active, policy-admitted posting records completed intake/enrichment and starts a root `JobPreparationWorkflow` for score → tailor → cover → PDF. It never starts Apply. |
 | Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Starts a job-scoped `JobPipelineWorkflow` for one visible `pending` internal substage (`enrich`/`score`/`tailor`/`cover`), gated by the API on observable eligibility. |
 | Jobs bulk pending prep | `POST /v1/jobs/bulk-run-pending-preparation` | Groups selected job URLs by their first eligible pending substage and dispatches bounded `run_stage` workflows. |
-| Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | Resets retryable failed stages and, with `runAfter: true`, dispatches batch `run_stage` workflows for the reset job URLs. |
+| Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | Resets retryable failed stages and, with `runAfter: true`, dispatches batch `run_stage` workflows for the reset canonical job IDs. |
 | CLI | `jobctrl <command>` | Builds the same spec, starts Temporal, waits for the handle, and exits non-zero on workflow failure. `jobctrl discover` / `run discover` is the normal path; `score`/`tailor`/`cover` are maintenance commands. |
 | Temporal schedule | `jobctrl-discovery-local` | Optional cron schedule that starts `DiscoverWorkflow`. Off by default (see [Discovery Schedule](operations.md#discovery-schedule)). |
 

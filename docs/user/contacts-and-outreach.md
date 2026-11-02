@@ -54,6 +54,13 @@ while their save is pending, as described below.
 The Contact Detail route workspace at `/outreach/:contactId` shows each fact
 and its source, capture method, timestamp, confidence, and confirmation state.
 A Job Detail workspace also composes the contacts linked to that application.
+After you save or remove a contact, its list row changes when the save is
+confirmed. If a list cannot refresh, JobCtrl keeps the displayed contacts and
+marks the list as potentially out of date. Choose **Retry refresh** to check it
+again. Contact details retain the same warning and retry action after a failed
+detail refresh.
+If the first contact read fails, **Retry refresh** is available before any
+contact data has loaded.
 
 Supervised research proposes contacts for review. You start the run for an
 employer or job and may opt into a permitted public source. No public page is

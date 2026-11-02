@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import Database from "better-sqlite3";
 import { expect, it, vi } from "vitest";
 import { buildApp } from "../src/server.js";
+import { createRetryFixturePythonRuntime } from "./retry-rpc-runtime.js";
 
 it.each([
   ["after_intent", "succeeded", "applied"],
@@ -30,7 +31,7 @@ it.each([
     const stageBefore = db.prepare("SELECT state,attempt_count,version FROM job_stage_states WHERE job_id=? AND stage='apply'").get(observed.job_id);
     const eventsBefore = db.prepare("SELECT * FROM job_events ORDER BY event_id").all();
     db.close();
-    const app = buildApp({ dbPath, appDir: directory, configPath: path.join(directory, "config.json"), actionDispatcher: dispatch, requireHealthyWorkerForActions: false });
+    const app = buildApp({ pythonRuntime: createRetryFixturePythonRuntime(), dbPath, appDir: directory, configPath: path.join(directory, "config.json"), actionDispatcher: dispatch, requireHealthyWorkerForActions: false });
     try {
       for (let reload = 0; reload < 2; reload++) {
         const response = await app.inject({ method: "GET", url: `/v1/jobs/${observed.job_id}` });

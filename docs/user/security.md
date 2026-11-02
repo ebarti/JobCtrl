@@ -173,8 +173,13 @@ JobCtrl treats URLs from postings, redirects, captured pages, and model output
 as untrusted. Its shared public-destination guard resolves the target and accepts
 only public HTTP(S). It blocks loopback, private-network, link-local, reserved,
 unspecified, multicast, cloud-metadata, `file:`, and other non-web targets.
-For connected-extension acquisition, the API validates each task's initial URL
-before leasing it and revalidates DNS immediately before returning the lease. The extension's
+Integrated Discovery allows live-profile tasks only for supported,
+provider-owned DNS zones, validates each task's initial URL before leasing it,
+and revalidates DNS immediately before returning the lease. The extension
+checks the provider-host boundary again before requesting or navigating.
+Arbitrary posting hosts use the worker's address-pinned public transport, so a
+host controlled by posting content cannot exploit Chrome's independent DNS
+resolution. The extension's
 wildcard HTTP(S) host permission exists only to execute those brokered tasks in
 the installed profile. Direct HTTP/API tasks run in the service worker with
 redirect following disabled. Rendered-page navigation uses a tab-scoped

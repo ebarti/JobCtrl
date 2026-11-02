@@ -946,3 +946,12 @@ def test_live_chrome_preserves_typed_destination_denial(
     assert result["blocked_url"] == url
     assert "non-public" in result["error"]
     assert not detail._detail_failure_retryable(result)
+
+
+def test_live_browser_host_policy_rejects_attacker_controlled_posting_host() -> None:
+    from jobctrl.infrastructure.discovery.live_browser import trusted_live_browser_url
+
+    assert trusted_live_browser_url("https://www.linkedin.com/jobs/view/1")
+    assert trusted_live_browser_url("https://careers.example.test/jobs/1")
+    assert not trusted_live_browser_url("https://linkedin.com.attacker.invalid/private")
+    assert not trusted_live_browser_url("https://rebind.attacker.invalid/private")
