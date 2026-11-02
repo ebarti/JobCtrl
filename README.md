@@ -102,7 +102,9 @@ worker rechecks due saved postings:
 - **Job boards and other sites:** Discover, Enrich, and dry-run requests, plus
   opt-in contact research, company briefings and bounded saved-posting availability checks. The
   availability checks use public APIs or an anonymous browser. With the browser extension paired and connected,
-  Discover and Enrich run in your Chrome session and carry its cookies.
+  Discover and Enrich use your Chrome session and its cookies for supported
+  provider-owned hosts. Other posting hosts use the worker’s address-pinned
+  public transport.
 - **Salary data sources:** when a benchmark is missing or over a week old, a
   Discover run fetches public data from Euro Top Tech, plus ECB exchange rates
   and Eurostat price levels when needed; Levels.fyi or Glassdoor only if you

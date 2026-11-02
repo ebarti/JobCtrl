@@ -68,12 +68,26 @@ describe("LinkedIn unfocused rendering window lifecycle", () => {
     expect(f.removeWindow).not.toHaveBeenCalled();
   });
 
-  it.each(["https://careers.example/jobs/1", "https://linkedin.com.example/jobs/1", "https://example.com/linkedin.com/jobs/1", "https://www.linkedin.com/in/profile"])(
+  it.each(["https://careers.example.test/jobs/1", "https://linkedin.com.example.test/jobs/1", "https://example.com/linkedin.com/jobs/1", "https://www.linkedin.com/in/profile"])(
     "keeps the inactive-tab path for %s", async (url) => {
       const f = fixture();
       expect(await executeDiscoveryBrowserTask(f.browser, task(url))).toMatchObject({ status: "succeeded" });
       expect(f.createWindow).not.toHaveBeenCalled();
       expect(f.update).toHaveBeenCalledWith(42, { active: false, url });
+      expect(f.tabs).toEqual(new Set([99]));
+    },
+  );
+
+  it.each(["https://careers.example/jobs/1", "https://linkedin.com.example/jobs/1"])(
+    "rejects the untrusted host before opening a tab or window: %s", async (url) => {
+      const f = fixture();
+      expect(await executeDiscoveryBrowserTask(f.browser, task(url))).toMatchObject({
+        status: "failed", errorCode: "unsupported_page", retryable: false,
+      });
+      expect(f.create).not.toHaveBeenCalled();
+      expect(f.createWindow).not.toHaveBeenCalled();
+      expect(f.update).not.toHaveBeenCalled();
+      expect(f.sendMessage).not.toHaveBeenCalled();
       expect(f.tabs).toEqual(new Set([99]));
     },
   );
