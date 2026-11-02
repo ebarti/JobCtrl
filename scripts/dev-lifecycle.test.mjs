@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -317,6 +317,21 @@ wait "$controller_child"
         run("stop", "temporal", "api", "web", "worker", "docs", "demo-api", "demo-web");
       } catch (error) {
         recordCleanupFailure("managed-stop", error);
+        for (const name of ["temporal", "api", "web", "worker", "docs", "demo-api", "demo-web"]) {
+          try {
+            const file = path.join(devDir, "logs", `${name}.log`);
+            const info = await lstat(file);
+            if (!info.isFile() || info.nlink !== 1) continue;
+            const handle = await open(file, "r");
+            try {
+              const tail = Buffer.alloc(Math.min(info.size, 2048));
+              await handle.read(tail, 0, tail.length, Math.max(0, info.size - tail.length));
+              diagnostics.push(`owned ${name} fixture log: ${tail.toString("utf8")}`);
+            } finally { await handle.close(); }
+          } catch (logError) {
+            if (logError.code !== "ENOENT") diagnostics.push(`owned ${name} fixture log: ${logError.name}`);
+          }
+        }
       }
       for (const record of ownedChildren.values()) {
         const { child } = record;
