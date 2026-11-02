@@ -45,6 +45,10 @@ job helper. Verify the actual compiled native-to-CPython dispatch can connect to
 loopback and receives `EPERM` on a reserved non-loopback TCP permission probe,
 with no application bytes sent. Keep direct extracted-runtime sandbox probes
 and signed/notarized first-use qualification distinct.
+The same fixed QA profile denies Keychain file reads and writes, security-service
+lookups and execution of the native credential command. Verify denial through
+the actual native helper using an owned synthetic Keychain-path file and the
+credential command's harmless help operation; preserve the synthetic bytes.
 
 For the job-data purge gate, the disposable workspace must contain a Candidate
 Profile, Discovery settings, source registry, resume template/default, at least

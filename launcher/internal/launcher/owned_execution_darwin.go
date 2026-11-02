@@ -38,7 +38,11 @@ const executionQASandboxSelector = "loopback-only-v1"
 const executionQASandboxProfile = `(version 1)
 (allow default)
 (deny network-outbound (remote ip))
-(allow network-outbound (remote ip "localhost:*"))`
+(allow network-outbound (remote ip "localhost:*"))
+(deny file-read* (regex #"/Library/Keychains(/|$)"))
+(deny file-write* (regex #"/Library/Keychains(/|$)"))
+(deny mach-lookup (global-name-regex #"^com[.]apple[.](security|Security).*"))
+(deny process-exec (literal "/usr/bin/security"))`
 
 type executionScope struct {
 	SchemaVersion int       `json:"schemaVersion"`
