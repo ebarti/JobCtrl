@@ -42,11 +42,11 @@ describe("contact list response reconciliation", () => {
       list: useContactsListQuery(),
     }), { queryClient, ports: buildTestPorts({ api: { updateContact, deleteContact, listContacts } }) });
     act(() => {
-      if (operation === "update") result.current.older.mutate({ contactId: contactA.contactId, body: { role: "referrer" } });
+      if (operation === "update") result.current.older.mutate({ contactId: contactA.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } });
       else result.current.deletion.mutate({ contactId: contactA.contactId });
     });
     await waitFor(() => expect(operation === "update" ? updateContact : deleteContact).toHaveBeenCalledTimes(1));
-    act(() => result.current.newer.mutate({ contactId: contactB.contactId, body: { role: "hiring_manager" } }));
+    act(() => result.current.newer.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "hiring_manager" } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(operation === "update" ? 2 : 1));
     act(() => rejectOlder(new Error("Synthetic older failure")));
     await waitFor(() => expect(result.current.list.isRefetchError).toBe(true));
@@ -72,8 +72,8 @@ describe("contact list response reconciliation", () => {
       first: useUpdateContactMutation(), second: useUpdateContactMutation(), list: useContactsListQuery(),
     }), { queryClient, ports: buildTestPorts({ api: { updateContact, listContacts } }) });
     act(() => {
-      result.current.first.mutate({ contactId: contactA.contactId, body: { role: "referrer" } });
-      result.current.second.mutate({ contactId: contactB.contactId, body: { role: "hiring_manager" } });
+      result.current.first.mutate({ contactId: contactA.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } });
+      result.current.second.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "hiring_manager" } });
     });
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(2));
     act(() => responses.get(contactA.contactId)!(makeContactMutationResponse(detailFor({ ...contactA, role: "referrer" }))));
@@ -100,7 +100,7 @@ describe("contact list response reconciliation", () => {
     const { result } = renderHookWithProviders(() => ({
       older: useUpdateContactMutation(), deletion: useDeleteContactMutation(), list: useContactsListQuery({ employer: "Employer A" }),
     }), { queryClient, ports: buildTestPorts({ api: { updateContact, deleteContact, listContacts } }) });
-    act(() => result.current.older.mutate({ contactId: contactB.contactId, body: { employer: "Employer A" } }));
+    act(() => result.current.older.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, employer: "Employer A" } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
     act(() => result.current.deletion.mutate({ contactId: contactB.contactId }));
     await waitFor(() => expect(result.current.deletion.isSuccess).toBe(true));
@@ -150,9 +150,9 @@ describe("contact list response reconciliation", () => {
     }), { queryClient, ports: buildTestPorts({ api: { updateContact } }) });
 
     // Another client moved A, but its event has not arrived at this query client.
-    act(() => result.current.edit.mutate({ contactId: contactA.contactId, body: { role: "referrer" } }));
+    act(() => result.current.edit.mutate({ contactId: contactA.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
-    act(() => result.current.other.mutate({ contactId: contactB.contactId, body: { attributes: [{ kind: "name", value: "B after" }] } }));
+    act(() => result.current.other.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, attributes: [{ kind: "name", value: "B after" }] } }));
     await waitFor(() => expect(result.current.other.isSuccess).toBe(true));
     await waitFor(() => expect(result.current.listB.data?.items).toEqual([moved, updatedB]));
     expect(readsB).toBe(1);
@@ -195,7 +195,7 @@ describe("contact list response reconciliation", () => {
     void queryClient.refetchQueries({ queryKey: keyB, exact: true });
     await waitFor(() => expect(readsB).toBe(1));
     if (operation === "update") {
-      act(() => result.current.first.mutate({ contactId: contactA.contactId, body: { role: "referrer" } }));
+      act(() => result.current.first.mutate({ contactId: contactA.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } }));
       await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
     } else {
       act(() => result.current.deletion.mutate({ contactId: contactA.contactId }));
@@ -204,7 +204,7 @@ describe("contact list response reconciliation", () => {
     expect(queryClient.getQueryState(keyB)?.fetchStatus).toBe("fetching");
     act(() => finishEarlierRead(serverB));
     await waitFor(() => expect(result.current.listB.fetchStatus).toBe("idle"));
-    act(() => result.current.other.mutate({ contactId: contactB.contactId, body: { attributes: [{ kind: "name", value: "B after" }] } }));
+    act(() => result.current.other.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, attributes: [{ kind: "name", value: "B after" }] } }));
     await waitFor(() => expect(result.current.other.isSuccess).toBe(true));
     await waitFor(() => expect(result.current.listB.data?.items[0]?.displayName).toBe("B after"));
     expect(readsB).toBeGreaterThan(1);
@@ -227,7 +227,7 @@ describe("contact list response reconciliation", () => {
       update: useUpdateContactMutation(), create: useCreateContactMutation(),
       list: useQuery<ContactListResponse>({ queryKey: key, queryFn: async () => { reads += 1; throw new Error("Synthetic read failure"); } }),
     }), { queryClient, ports: buildTestPorts({ api: { updateContact, createContact } }) });
-    act(() => result.current.update.mutate({ contactId: contactB.contactId, body: { attributes: [{ kind: "name", value: "B after" }] } }));
+    act(() => result.current.update.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, attributes: [{ kind: "name", value: "B after" }] } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
     act(() => result.current.create.mutate({ employer: "Employer B", role: "other", attributes: [{ kind: "name", value: "New synthetic" }] }));
     await waitFor(() => expect(createContact).toHaveBeenCalledTimes(1));
@@ -261,7 +261,7 @@ describe("contact list response reconciliation", () => {
     const { result } = renderHookWithProviders(() => ({
       update: useUpdateContactMutation(), create: useCreateContactMutation(), list: useContactsListQuery(),
     }), { queryClient, ports: buildTestPorts({ api: { updateContact, createContact, listContacts } }) });
-    act(() => result.current.update.mutate({ contactId: contactB.contactId, body: { role: "referrer" } }));
+    act(() => result.current.update.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
     let cancelledRead!: ReturnType<typeof result.current.list.refetch>;
     act(() => { cancelledRead = result.current.list.refetch(); });
@@ -299,7 +299,7 @@ describe("contact list response reconciliation", () => {
     expect(result.current.list.isRefetchError).toBe(false);
     await act(async () => { await result.current.list.refetch(); });
     await waitFor(() => expect(result.current.list.isRefetchError).toBe(true));
-    act(() => result.current.update.mutate({ contactId: contactB.contactId, body: { role: "referrer" } }));
+    act(() => result.current.update.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
     act(() => result.current.create.mutate({ employer: "Employer B", role: "other", attributes: [{ kind: "name", value: "New synthetic" }] }));
     await waitFor(() => expect(createContact).toHaveBeenCalledTimes(1));
@@ -325,7 +325,7 @@ describe("contact list response reconciliation", () => {
       update: useUpdateContactMutation(), create: useCreateContactMutation(),
       list: useQuery<ContactListResponse>({ queryKey: key, queryFn: async () => { throw new Error("Synthetic read failure"); } }),
     }), { queryClient, ports: buildTestPorts({ api: { updateContact, createContact } }) });
-    act(() => result.current.update.mutate({ contactId: "contact-created", body: { role: "referrer" } }));
+    act(() => result.current.update.mutate({ contactId: "contact-created", body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
     act(() => result.current.create.mutate({ employer: "Employer B", role: "other", attributes: [{ kind: "name", value: "New synthetic" }] }));
     await waitFor(() => expect(createContact).toHaveBeenCalledTimes(1));
@@ -355,11 +355,11 @@ describe("contact list response reconciliation", () => {
       first: useUpdateContactMutation(), second: useUpdateContactMutation(), create: useCreateContactMutation(),
       list: useQuery<ContactListResponse>({ queryKey: key, queryFn: async () => { throw new Error("Synthetic read failure"); } }),
     }), { queryClient, ports: buildTestPorts({ api: { updateContact, createContact } }) });
-    act(() => result.current.first.mutate({ contactId: contactB.contactId, body: { attributes: [{ kind: "name", value: "B after" }] } }));
+    act(() => result.current.first.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, attributes: [{ kind: "name", value: "B after" }] } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
     act(() => result.current.create.mutate({ employer: "Employer B", role: "other", attributes: [{ kind: "name", value: "New synthetic" }] }));
     await waitFor(() => expect(createContact).toHaveBeenCalledTimes(1));
-    act(() => result.current.second.mutate({ contactId: contactC.contactId, body: { attributes: [{ kind: "name", value: "C after" }] } }));
+    act(() => result.current.second.mutate({ contactId: contactC.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, attributes: [{ kind: "name", value: "C after" }] } }));
     await waitFor(() => expect(result.current.second.isSuccess).toBe(true));
     act(() => resolveB(makeContactMutationResponse(detailFor({ ...contactB, displayName: "B after" }))));
     await waitFor(() => expect(result.current.first.isSuccess).toBe(true));
@@ -387,11 +387,11 @@ describe("contact list response reconciliation", () => {
       older: useUpdateContactMutation(), newer: useUpdateContactMutation(), create: useCreateContactMutation(),
       list: useQuery<ContactListResponse>({ queryKey: key, queryFn: async () => { throw new Error("Synthetic read failure"); } }),
     }), { queryClient, ports: buildTestPorts({ api: { updateContact, createContact } }) });
-    act(() => result.current.older.mutate({ contactId: contactB.contactId, body: { role: "referrer" } }));
+    act(() => result.current.older.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
     act(() => result.current.create.mutate({ employer: "Employer B", role: "other", attributes: [{ kind: "name", value: "New synthetic" }] }));
     await waitFor(() => expect(createContact).toHaveBeenCalledTimes(1));
-    act(() => result.current.newer.mutate({ contactId: contactB.contactId, body: { role: "hiring_manager" } }));
+    act(() => result.current.newer.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "hiring_manager" } }));
     await waitFor(() => expect(result.current.newer.isSuccess).toBe(true));
     act(() => resolveOlder(makeContactMutationResponse(detailFor({ ...contactB, role: "referrer" }))));
     await waitFor(() => expect(result.current.older.isSuccess).toBe(true));
@@ -414,7 +414,7 @@ describe("contact list response reconciliation", () => {
       update: useUpdateContactMutation(), create: useCreateContactMutation(),
       list: useQuery<ContactListResponse>({ queryKey: key, queryFn: async () => { throw new Error("Synthetic read failure"); } }),
     }), { queryClient, ports: buildTestPorts({ api: { updateContact, createContact } }) });
-    act(() => result.current.update.mutate({ contactId: contactB.contactId, body: { role: "referrer" } }));
+    act(() => result.current.update.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
     act(() => result.current.create.mutate({ employer: "Employer B", role: "other", attributes: [{ kind: "name", value: "New synthetic" }] }));
     await waitFor(() => expect(createContact).toHaveBeenCalledTimes(1));
@@ -447,7 +447,7 @@ describe("contact list response reconciliation", () => {
       listA: useQuery<ContactListResponse>({ queryKey: keyA, queryFn: async () => { throw new Error("Synthetic A read failure"); } }),
       listB: useQuery<ContactListResponse>({ queryKey: keyB, queryFn: async () => { throw new Error("Synthetic B read failure"); } }),
     }), { queryClient, ports: buildTestPorts({ api: { updateContact } }) });
-    act(() => result.current.move.mutate({ contactId: contactB.contactId, body: { employer: "Employer A", role: "referrer" } }));
+    act(() => result.current.move.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, employer: "Employer A", role: "referrer" } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
     expect(queryClient.getQueryData<ContactDetailResponse>(detailKey)?.contact.role).toBe("referrer");
     expect(result.current.listA.data?.items).toEqual([contactA]);
@@ -473,7 +473,7 @@ describe("contact list response reconciliation", () => {
     const { result } = renderHookWithProviders(() => ({ update: useUpdateContactMutation(), deletion: useDeleteContactMutation() }),
       { queryClient, ports: buildTestPorts({ api: { updateContact, deleteContact } }) });
     if (operation === "update") {
-      act(() => result.current.update.mutate({ contactId: contactA.contactId, body: { role: "referrer" } }));
+      act(() => result.current.update.mutate({ contactId: contactA.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } }));
       await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
       expect(queryClient.getQueryData<ContactDetailResponse>(detailKey)?.contact.role).toBe("referrer");
     } else {
@@ -520,7 +520,7 @@ describe("contact list response reconciliation", () => {
     act(() => result.current.deletion.mutate({ contactId: contactB.contactId }));
     await waitFor(() => expect(deleteContact).toHaveBeenCalledTimes(1));
     expect(result.current.list.data?.items).toEqual([contactB]);
-    act(() => result.current.update.mutate({ contactId: contactB.contactId, body: { role: "referrer" } }));
+    act(() => result.current.update.mutate({ contactId: contactB.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } }));
     await waitFor(() => expect(result.current.update.isSuccess).toBe(true));
     await waitFor(() => expect(result.current.list.isRefetchError).toBe(true));
     expect(result.current.list.data?.items[0]?.role).toBe("referrer");
@@ -544,9 +544,9 @@ describe("contact list response reconciliation", () => {
       detail: useQuery<ContactDetailResponse>({ queryKey: detailKey, queryFn: async () => { throw new Error("Synthetic detail read failure"); } }),
       list: useQuery<ContactListResponse>({ queryKey: key, queryFn: async () => { throw new Error("Synthetic list read failure"); } }),
     }), { queryClient, ports: buildTestPorts({ api: { updateContact } }) });
-    act(() => result.current.older.mutate({ contactId: contactA.contactId, body: { role: "referrer" } }));
+    act(() => result.current.older.mutate({ contactId: contactA.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
-    act(() => result.current.newer.mutate({ contactId: contactA.contactId, body: { role: "hiring_manager" } }));
+    act(() => result.current.newer.mutate({ contactId: contactA.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "hiring_manager" } }));
     await waitFor(() => expect(result.current.newer.isSuccess).toBe(true));
     expect(result.current.detail.data?.contact.role).toBe("hiring_manager");
     act(() => rejectOlder(new Error("Synthetic older failure")));
@@ -565,7 +565,7 @@ describe("contact list response reconciliation", () => {
     queryClient.setQueryData(key, makeContactListResponse([contactA]));
     const ports = buildTestPorts({ api: { updateContact } });
     const { result } = renderHookWithProviders(() => useUpdateContactMutation(), { queryClient, ports });
-    act(() => result.current.mutate({ contactId: contactA.contactId, body: { role: "referrer" } }));
+    act(() => result.current.mutate({ contactId: contactA.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } }));
     await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(1));
     const accepted = change === "same-value"
       ? queryClient.getQueryData<ContactListResponse>(key)!

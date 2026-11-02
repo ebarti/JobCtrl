@@ -84,7 +84,7 @@ describe("useCreateContactMutation", () => {
     act(() => finishEarlierRead(makeContactListResponse([before])));
     await waitFor(() => expect(result.current.listB.fetchStatus).toBe("idle"));
 
-    act(() => result.current.update.mutate({ contactId: "contact-b", body: { attributes: [{ kind: "name", value: "After synthetic" }] } }));
+    act(() => result.current.update.mutate({ contactId: "contact-b", body: { expectedFingerprint: makeContactDetail().fingerprint, attributes: [{ kind: "name", value: "After synthetic" }] } }));
     await waitFor(() => expect(result.current.update.isSuccess).toBe(true));
     await waitFor(() => expect(result.current.listB.data?.items[0]?.displayName).toBe("After synthetic"));
     expect(readsB).toBeGreaterThan(1);

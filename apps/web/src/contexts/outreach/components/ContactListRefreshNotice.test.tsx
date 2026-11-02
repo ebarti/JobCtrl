@@ -21,7 +21,7 @@ function View({ surface }: { surface: "job" | "offer" }) {
   const update = useUpdateContactMutation();
   return <>
     {surface === "job" ? <JobContactsPanel jobId={jobId} /> : <OfferCommunication jobId={jobId} revisionId="revision-synthetic" />}
-    <button type="button" onClick={() => update.mutate({ contactId: contact.contactId, body: { role: "referrer" } })}>Save synthetic</button>
+    <button type="button" onClick={() => update.mutate({ contactId: contact.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } })}>Save synthetic</button>
   </>;
 }
 
@@ -33,7 +33,7 @@ function FirstReadView({ operation }: { operation: "update" | "delete" | "create
   return <>
     <JobContactsPanel jobId={jobId} />
     <button type="button" onClick={() => {
-      if (operation === "update") update.mutate({ contactId: contact.contactId, body: { role: "referrer" } });
+      if (operation === "update") update.mutate({ contactId: contact.contactId, body: { expectedFingerprint: makeContactDetail().fingerprint, role: "referrer" } });
       else if (operation === "delete") deletion.mutate({ contactId: contact.contactId });
       else creation.mutate({ jobId, role: "other", attributes: [{ kind: "name", value: "Synthetic contact" }] });
     }}>Save synthetic</button>
