@@ -1,31 +1,16 @@
 name: Repo Scripts
-permissions:
-  contents: read
-concurrency:
-  group: repo-scripts-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: "${{ github.ref != 'refs/heads/main' }}"
-jobs:
-  scripts:
-    name: Script unit tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      with:
-        persist-credentials: false
-    - name: Set up pnpm
-      uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-    - name: Set up Node
-      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-      with:
-        node-version: 22.21.1
-        cache: pnpm
-    - name: Install locked dependencies
-      id: dependencies
-      run: corepack pnpm install --frozen-lockfile
-    - name: Test repository scripts
-      timeout-minutes: 10
-      run: corepack pnpm scripts:test
 'on':
   workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  extension:
+    name: Extension browser diagnostic
+    uses: ./.github/workflows/ci-frontend.yml
+    with:
+      web: false
+      storybook: false
+      e2e: false
+      extension: true
+      docs: false
+      demo: false
