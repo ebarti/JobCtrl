@@ -635,9 +635,15 @@ logs and per-command outcomes. Both E2E modes retain separate JUnit and
 screenshot evidence. Resource logs record available CPUs and memory for timing
 comparisons.
 
+`corepack pnpm scripts:test` runs regular repository tests in parallel, then
+runs the source-supervisor lifecycle suite after those test processes exit.
+Lifecycle cleanup requires a stable process census; separating the phases keeps
+other fixtures' process churn from invalidating that verification. Every test
+and the existing cleanup deadlines remain in effect.
+
 Native shard 0 also runs the complete source-supervisor lifecycle in an owned
 offline macOS workspace with Python 3.14.4. The manual repository-scripts
-workflow retains the same standalone diagnostic.
+workflow uses the same ordered Linux entry point.
 
 The web profile keeps the original lint, types, unit, public-type and production
 build sequence. Browser installation is selected only for profiles that need it
