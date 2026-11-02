@@ -409,6 +409,13 @@ the `409 apply_reset_refused` response; an earlier API precheck is not authority
 Discovery reads the saved profile target, location, and work-model preferences.
 The precedence and filter details remain in the
 [complete contract](api/complete-contract.md#discovery-target-search).
+`PATCH /v1/profile` and `PATCH /v1/discovery/settings` reject newly unsupported
+Remote, board, location and lookback combinations, and active location-free
+Hybrid or On-site rows, with HTTP 400 `unsupported_remote_search`. Clearing a
+Profile target checks the legacy locations it would expose. Legacy combinations
+are refused before their broad-board dispatch; supported boards may finish and
+the workflow reports the incompatibility. Saved values and unrelated edits are
+preserved.
 
 ## Worker Runtime And Health
 

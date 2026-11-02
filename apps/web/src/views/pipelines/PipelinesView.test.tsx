@@ -940,6 +940,23 @@ describe("PipelinesView", () => {
     expect(screen.getAllByText("reconciled_not_found").length).toBeGreaterThan(0);
   });
 
+  it("explains unsupported Remote board filters before retrying", async () => {
+    await renderPipelineOperations({
+      ...pipelinesFailedHistorySnapshot,
+      execution: {
+        ...pipelinesFailedHistorySnapshot.execution!,
+        errorCode: "unsupported_remote_search",
+      },
+    });
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Remote search needs different boards or targets");
+    expect(alert).toHaveTextContent("Indeed cannot combine Remote with a lookback");
+    expect(alert).toHaveTextContent("Glassdoor cannot combine Remote with a location");
+    expect(alert).toHaveTextContent("Glassdoor and ZipRecruiter require a Remote lookback in whole days");
+    expect(alert).toHaveTextContent("Deselect the incompatible board or adjust the target and lookback");
+  });
+
   it("does not claim a failed execution is idle while active work remains", async () => {
     const capacity = pipelinesFailedHistorySnapshot.capacity;
     if (capacity.status !== "available") throw new Error("Expected available synthetic capacity");

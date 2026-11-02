@@ -65,7 +65,17 @@ jobctrl doctor
 
 `jobctrl init` creates the local CLI workspace, starter profile, resume, and
 search configuration under `~/.jobctrl/`. The web app remains the full editor
-for structured profile fields and resume review.
+for structured profile fields and resume review. In a new workspace, the
+wizard's Remote search uses LinkedIn and ZipRecruiter with a 72-hour lookback.
+On rerun, the existing Profile is retained; edit it in the web app. Saved
+Profile target roles and location/work-model rows take precedence over the
+corresponding Discovery rows entered in the wizard.
+Existing resume files, AI settings, and Apply automation settings are retained
+unless you choose to change them. See [Getting Started](getting-started.md) for
+how resume replacements, AI credentials, and Apply approval choices are saved.
+The wizard's location and title inputs replace those Discovery rows while saved
+board and lookback choices remain in place. A saved tier or location-label
+filter that excludes the new search is cleared only with your confirmation.
 
 </WorkflowSurfacePanel>
 

@@ -46,6 +46,8 @@ class _PostingAdapter(Scraper):
 
 
 class _RateLimitedAdapter(Scraper):
+    capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote"}))
+
     def __init__(self, **_: object) -> None:
         super().__init__(Site.LINKEDIN)
 
@@ -86,6 +88,7 @@ class _SelectiveDetailLinkedIn(_RemoteFilterLinkedIn):
 
 
 class _TlsTimeoutInspectingAdapter(Scraper):
+    capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote"}))
     seen_timeouts: list[object] = []
 
     def __init__(self, **_: object) -> None:
@@ -163,7 +166,7 @@ def test_tls_backed_adapters_receive_an_integral_request_timeout() -> None:
         JobStreamingSearchSpec(
             sites=("glassdoor",),
             query="Director of Engineering",
-            location="Remote",
+            location="",
             results_per_site=10,
             remote_only=True,
         ),
