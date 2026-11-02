@@ -10969,7 +10969,11 @@ function createExtractedRuntimeStackPlan({ payloadRoot, stateRoot, temporalPort,
 var LOOPBACK_ONLY_SANDBOX_PROFILE = `(version 1)
 (allow default)
 (deny network-outbound (remote ip))
-(allow network-outbound (remote ip "localhost:*"))`;
+(allow network-outbound (remote ip "localhost:*"))
+(deny file-read* (regex #"/Library/Keychains(/|$)"))
+(deny file-write* (regex #"/Library/Keychains(/|$)"))
+(deny mach-lookup (global-name-regex #"^com[.]apple[.](security|Security).*"))
+(deny process-exec (literal "/usr/bin/security"))`;
 var NATIVE_EXECUTION_QA_SANDBOX = "loopback-only-v1";
 function createNativeLauncherSmokePlan({ payloadRoot, extractedRoot, stockEnvironment = {} }) {
   invariant3(path3.isAbsolute(payloadRoot) && path3.isAbsolute(extractedRoot), "native launcher smoke requires absolute owned extraction paths");
