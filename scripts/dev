@@ -97,6 +97,7 @@ new_launch_id() { python3 -c 'import secrets; print(secrets.token_hex(32))'; }
 wait_for_owner() {
   local name="$1" launch_id="$2" pid="$3" result i
   for i in $(seq 1 100); do
+    [[ "${run_exit_code:-0}" -eq 0 ]] || return "$run_exit_code"
     result=$(process_owner state "$name" "$launch_id" || true)
     [[ "$result" == "up $pid" ]] && return 0
     sleep 0.02
@@ -355,6 +356,7 @@ run_pids=()
 run_names=()
 run_ids=()
 run_cleaned=0
+run_exit_code=0
 
 run_cleanup() {
   [[ "$run_cleaned" -eq 0 ]] || return 0
@@ -522,12 +524,18 @@ cmd_run() {
     select_default_targets
   fi
 
-  trap 'run_cleanup; exit 130' INT
-  trap 'run_cleanup; exit 143' TERM
+  # A signal can arrive inside a state command substitution. Defer cleanup
+  # until normal shell flow instead of evaluating nested commands in the trap.
+  trap 'run_exit_code=130' INT
+  trap 'run_exit_code=143' TERM
   trap 'run_cleanup' EXIT
 
   local n
-  for n in "${targets[@]}"; do start_run_one "$n"; done
+  for n in "${targets[@]}"; do
+    [[ "$run_exit_code" -eq 0 ]] || return "$run_exit_code"
+    start_run_one "$n"
+    [[ "$run_exit_code" -eq 0 ]] || return "$run_exit_code"
+  done
 
   echo "dev: foreground run active; press Ctrl-C to stop ($(IFS=,; echo "${targets[*]}"))"
 
@@ -540,10 +548,12 @@ cmd_run() {
 
   local i name pid status state
   while true; do
+    [[ "$run_exit_code" -eq 0 ]] || return "$run_exit_code"
     for i in "${!run_pids[@]}"; do
       name="${run_names[$i]}"
       pid="${run_pids[$i]}"
       state=$(process_state "$name" "${run_ids[$i]}")
+      [[ "$run_exit_code" -eq 0 ]] || return "$run_exit_code"
       if [[ "$state" != "up" ]]; then
         status=1
         if [[ "$state" == "down" ]]; then
