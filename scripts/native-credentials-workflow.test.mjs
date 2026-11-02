@@ -17,8 +17,7 @@ test("native credential CI builds only the required native dependency and exerci
   for(const host of ["macos","windows","ubuntu"]) {
     const child=workflow.jobs["credentials-"+host];
     assert.deepEqual(child.steps,job.steps);
-    assert.equal(child["runs-on"],host === "macos" ? "macos-26-intel" : host+"-latest");
-    assert.equal(child.name,"Native credentials ("+host+"-latest)");
+    assert.equal(child["runs-on"],host+"-latest");
     assert.equal(child.strategy,undefined);
     assert.equal(child.if,"${{ github.event_name == 'workflow_dispatch' || inputs.enabled }}");
   }

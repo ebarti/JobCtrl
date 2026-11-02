@@ -670,11 +670,6 @@ Native credential checks retain macOS, Windows and Linux jobs; synthetic Gmail
 ACL checks retain Windows. Full scope therefore needs eleven allocations. These
 platform boundaries are preserved rather than replaced with Linux substitutes.
 
-The macOS credential harness uses the Intel macOS 26 pool to avoid arm64 runner
-capacity delays. It still exercises the real system Keychain command, retains
-its existing required check name, and runs every native credential scenario.
-Launcher and source-ownership gates continue to use arm64 runners.
-
 The entry also owns affected checks on `main` pushes. It verifies the exact
 before/after diff; absent or forced history and moving policy use full core
 coverage. Documentation and demo publication remain in `docs-site.yml` and
