@@ -331,6 +331,15 @@ def main() -> int:
         if action == "state":
             observed = state(value)
             print(f"{observed} {value['pid'] if observed == 'up' else '-'}")
+        elif action == "check":
+            # Foreground supervision uses exit status instead of a shell
+            # command substitution while its signal handlers are installed.
+            if len(args) != 2 or not args[1].isdecimal() or int(args[1]) <= 1:
+                raise Unverified()
+            if value is not None and value["pid"] != int(args[1]):
+                raise Unverified()
+            observed = state(value)
+            return 0 if observed == "up" else 3 if observed == "down" else 1
         elif action == "stop":
             result = "not running"
             if value is not None:

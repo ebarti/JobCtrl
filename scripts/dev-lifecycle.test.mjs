@@ -701,6 +701,15 @@ test("a verified source launch stops, restarts normally, and preserves an indepe
   try {
     harness.run("start", "docs");
     const previous = await harness.pid("docs");
+    const receipt = JSON.parse(await readFile(path.join(harness.devDir, "pids/docs.identity.json"), "utf8"));
+    const check = (pid, id = receipt.id) => spawnSync("python3", [
+      "-B", path.join(harness.temporaryRoot, "scripts/dev-process-owner.py"), "check",
+      path.join(harness.devDir, "pids"), "docs", id, String(pid),
+    ], { env: harness.env, encoding: "utf8" });
+    assert.equal(check(receipt.pid).status, 0);
+    assert.notEqual(check(peer.pid).status, 0);
+    assert.notEqual(check(receipt.pid, "0".repeat(64)).status, 0);
+    process.kill(peer.pid, 0);
     const refused = harness.runResult("forget", "docs");
     assert.notEqual(refused.status, 0);
     assert.equal(await harness.pid("docs"), previous);
