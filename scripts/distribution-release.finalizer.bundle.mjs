@@ -7625,10 +7625,10 @@ var EXPECTED_NODE_LICENSE_EVIDENCE = /* @__PURE__ */ new Map([
   ["jotai-x@2.3.4", { license: "MIT", evidenceKind: "license-text" }],
   ["react-compiler-runtime@1.0.0", { license: "MIT", evidenceKind: "license-text" }],
   ["react-remove-scroll-bar@2.3.8", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate@0.126.2", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-dom@0.126.0", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-hyperscript@0.127.0", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-react@0.127.1", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate@0.146.0", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-dom@0.146.0", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-hyperscript@0.138.3", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-react@0.145.1", { license: "MIT", evidenceKind: "license-text" }],
   ["zustand-x@6.2.1", { license: "MIT", evidenceKind: "license-text" }]
 ]);
 function invariant(condition, message) {
