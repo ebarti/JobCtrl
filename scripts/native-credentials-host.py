@@ -1,7 +1,8 @@
 """Opt-in real native-store proof; all credentials and files are synthetic.
 
-Requires Node workspace dependencies and python-dotenv. Linux must run inside
-an owned dbus-run-session with --linux-session; it never uses the user's bus.
+Requires Node workspace dependencies and the locked core worker runtime. Linux
+must run inside an owned dbus-run-session with --linux-session; it never uses
+the user's bus.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PHASE = "setup"
 PHASE_STARTED = time.monotonic()
 PHASE_NAMES = {
-    "setup", "api_set", "api_delete", "api_list", "initial_native_read",
+    "setup", "migration_runtime", "api_set", "api_delete", "api_list", "initial_native_read",
     "cross_runtime_readback", "windows_acl_setup", "migration_setup", "migration",
     "migration_result", "migration_source_readback", "migration_acl_readback",
     "migration_native_readback", "migration_marker", "migration_once",
@@ -275,6 +276,12 @@ def main() -> int:
     daemon = None
     with tempfile.TemporaryDirectory(prefix="jobctrl-native-host-") as directory:
         owned = Path(directory)
+        os.environ.update({
+            "JOBCTRL_DIR": str(owned),
+            "JOBCTRL_CONFIG_PATH": str(owned / "config.json"),
+            "LANGFUSE_DISABLE": "1",
+            "OTEL_SDK_DISABLED": "true",
+        })
         if args.linux_session:
             for name, folder in (("HOME", "home"), ("XDG_DATA_HOME", "data"), ("XDG_RUNTIME_DIR", "run")):
                 location = owned / folder
@@ -335,6 +342,12 @@ def main() -> int:
         primary_failure = None
         cleanup_failures = []
         try:
+            # Verify the real migration lock runtime before writing a credential.
+            set_phase("migration_runtime")
+            from jobctrl import config
+
+            assert config.APP_DIR == owned
+            assert config.get_config_path() == owned / "config.json"
             set_phase("initial_native_read")
             assert store.read(key) is None, "Synthetic target must start absent"
             # Cross-runtime exactness, including quote/backslash/Unicode and hex-looking ASCII.

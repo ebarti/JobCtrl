@@ -188,7 +188,7 @@ def _config(
         "locations": [{"label": "remote", "location": FIXED_LOCATION, "remote": True}],
         "defaults": {
             "results_per_site": results_per_site,
-            "hours_old": 72,
+            "hours_old": None,
             "country_indeed": "usa",
         },
         "location": {

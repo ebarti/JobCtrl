@@ -16,7 +16,7 @@ export async function launchExtensionContext(
     args: [
       `--disable-extensions-except=${DIST}`,
       `--load-extension=${DIST}`,
-      "--host-resolver-rules=MAP careers.jobctrl.test 127.0.0.1, MAP www.linkedin.com 127.0.0.1",
+      "--host-resolver-rules=MAP careers.example.test 127.0.0.1, MAP www.linkedin.com 127.0.0.1",
     ],
   });
 }

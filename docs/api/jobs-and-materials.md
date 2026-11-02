@@ -344,8 +344,10 @@ A replacement preview requires fresh review even when those two IDs match.
 `POST /v1/outcomes/gmail/scan` returns bounded evidence and suggestion summaries
 with canonical `jobId` values. It never returns raw message bodies. Scan events
 use that same identity to invalidate the matching outcome detail. Worker-side
-failures include a safe `failureCode`; invalid input returns 400, and Gmail or
-model unavailability returns 503. Previously stored evidence is preserved.
+failures preserve safe `failureCode` values and known committed counts and IDs;
+invalid scan input returns 400, and Gmail/model unavailability returns 503.
+Unknown progress is `null`. Retry skips already ingested messages without
+removing earlier evidence or suggestions.
 
 Outcome-suggestion decisions serialize against the canonical row. A matching
 retry returns the original outcome; a different or unprovable request returns a

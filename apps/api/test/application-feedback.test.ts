@@ -1,3 +1,4 @@
+import { RpcContractError, RpcMethods } from "../src/contracts.js";
 import { spawnSync } from "node:child_process";
 import { AUTOMATION_PROJECT_DIR } from "../src/python-runtime.js";
 import { recordArtifactAuthority, recordCompensationAuthority, recordRoleFeedback } from "./semantic-fixtures.js";
@@ -2200,7 +2201,7 @@ describe("application feedback API", () => {
 
   it("maps Gmail outcome worker errors without exposing raw body fields", async () => {
     const gmailFeedbackScanner = vi.fn(async () => {
-      throw new GmailFeedbackScanError("missing Gmail token at local auth path", 503);
+      throw new GmailFeedbackScanError("gmail_auth_required");
     }) as ReturnType<typeof vi.fn> & GmailFeedbackScanner;
     const app = buildApp({ ...options, gmailFeedbackScanner });
 
@@ -2214,7 +2215,10 @@ describe("application feedback API", () => {
     expect(response.json()).toEqual({
       ok: false,
       error: "gmail_feedback_scan_failed",
-      message: "missing Gmail token at local auth path",
+      status: "unavailable",
+      failureCode: "gmail_auth_required",
+      message: "Gmail authorization is unavailable. Reconnect Gmail before retrying.",
+      progress: null,
     });
 
     await app.close();
@@ -2242,8 +2246,10 @@ describe("application feedback API", () => {
     expect(response.json()).toEqual({
       ok: false,
       error: "gmail_feedback_scan_failed",
-      message: "Gmail feedback worker transport failed.",
+      status: "unavailable",
+      message: "The worker connection failed. Committed progress is unknown; retry to reconcile it.",
       failureCode: "rpc_transport_error",
+      progress: null,
     });
 
     await app.close();
@@ -2267,7 +2273,7 @@ describe("application feedback API", () => {
   it("does not expose an unrecognized worker failure code or RPC error data", async () => {
     const privateText = "Synthetic private mail text in worker error";
     for (const rpcReply of [
-      { jsonrpc: "2.0" as const, id: 1, result: { ok: false, failureCode: privateText, message: privateText } },
+      { jsonrpc: "2.0" as const, id: 1, result: { ok: false, status: privateText, failureCode: privateText, message: privateText } },
       { jsonrpc: "2.0" as const, id: 1, error: { code: -32603, message: privateText, data: privateText } },
     ]) {
       const dispatcher: JsonRpcDispatcher = { call: async () => rpcReply, close: async () => {} };
@@ -2275,6 +2281,89 @@ describe("application feedback API", () => {
       const response = await app.inject({ method: "POST", url: "/v1/outcomes/gmail/scan", payload: {} });
       expect(response.statusCode).toBe(500);
       expect(response.body).not.toContain(privateText);
+      await app.close();
+    }
+  });
+
+  it.each([
+    ["provider_unavailable", "unavailable", 503],
+    ["provider_error", "unavailable", 500],
+    ["budget_denied", "unavailable", 503],
+    ["spend_denied", "blocked", 429],
+    ["foreign_source_id", "blocked", 500],
+    ["message_identity_changed", "blocked", 500],
+    ["runtime_mismatch", "blocked", 409],
+    ["invalid_recipient", "invalid", 400],
+    ["invalid_scan_options", "invalid", 400],
+    ["invalid_search", "invalid", 400],
+    ["gmail_timeout", "unavailable", 503],
+    ["gmail_transport_error", "unavailable", 503],
+    ["gmail_rate_limited", "unavailable", 503],
+    ["gmail_provider_unavailable", "unavailable", 503],
+  ])("preserves the %s cause and committed progress through the API", async (code, status, httpStatus) => {
+    const privateText = "private mail and note canary";
+    const dispatcher: JsonRpcDispatcher = {
+      call: async () => ({
+        jsonrpc: "2.0", id: 1,
+        result: {
+          ok: false, status, failureCode: code, message: privateText,
+          scannedAnchorCount: 1, searchedMessageCount: 2, linkedEvidenceCount: 1,
+          suggestionsCreatedCount: 1, duplicateMessageCount: 0, unlinkedCandidateCount: 0,
+          evidence: [{ evidenceId: "evidence-1", jobId: READY_JOB_ID, providerMessageId: "message-1",
+            linkConfidence: 0.9, bodyText: privateText }],
+          suggestions: [{ suggestionId: "suggestion-1", evidenceId: "evidence-1", jobId: READY_JOB_ID,
+            kind: "interview", confidence: 0.8, citations: [{ quote: privateText }] }],
+        },
+      }),
+      close: async () => {},
+    };
+    const app = buildApp({ ...options, gmailFeedbackScanner: createWorkerGmailFeedbackScanner(dispatcher) });
+    try {
+      const response = await app.inject({ method: "POST", url: "/v1/outcomes/gmail/scan", payload: { limit: 1 } });
+      expect(response.statusCode, response.body).toBe(httpStatus);
+      expect(response.json()).toMatchObject({
+        ok: false, status, failureCode: code,
+        progress: {
+          scannedAnchorCount: 1, searchedMessageCount: 2, linkedEvidenceCount: 1,
+          suggestionsCreatedCount: 1, duplicateMessageCount: 0, unlinkedCandidateCount: 0,
+          evidence: [{ evidenceId: "evidence-1", jobId: READY_JOB_ID, providerMessageId: "message-1", linkConfidence: 0.9 }],
+          suggestions: [{ suggestionId: "suggestion-1", evidenceId: "evidence-1", jobId: READY_JOB_ID, kind: "interview", confidence: 0.8 }],
+        },
+      });
+      expect(response.body).not.toContain(privateText);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does not invent progress or echo unknown worker failure details", async () => {
+    const privateText = "private failure detail";
+    const dispatcher: JsonRpcDispatcher = {
+      call: async () => ({ jsonrpc: "2.0", id: 1, result: { ok: false, status: privateText, failureCode: privateText, message: privateText } }),
+      close: async () => {},
+    };
+    const app = buildApp({ ...options, gmailFeedbackScanner: createWorkerGmailFeedbackScanner(dispatcher) });
+    try {
+      const response = await app.inject({ method: "POST", url: "/v1/outcomes/gmail/scan" });
+      expect(response.statusCode, response.body).toBe(500);
+      expect(response.json()).toMatchObject({ ok: false, failureCode: "gmail_scan_failed", progress: null });
+      expect(response.body).not.toContain(privateText);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("distinguishes an invalid worker result from a lost transport response", async () => {
+    const dispatcher: JsonRpcDispatcher = {
+      call: async () => { throw new RpcContractError(RpcMethods.GmailFeedbackScan, "result"); },
+      close: async () => {},
+    };
+    const app = buildApp({ ...options, gmailFeedbackScanner: createWorkerGmailFeedbackScanner(dispatcher) });
+    try {
+      const response = await app.inject({ method: "POST", url: "/v1/outcomes/gmail/scan" });
+      expect(response.statusCode, response.body).toBe(502);
+      expect(response.json()).toMatchObject({ ok: false, failureCode: "worker_response_invalid", progress: null });
+    } finally {
       await app.close();
     }
   });
