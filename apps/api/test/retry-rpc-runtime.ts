@@ -13,8 +13,20 @@ export function createRetryFixturePythonRuntime(): PythonRuntimeCommandResolver 
   return {
     id: "owned-retry-rpc-fixture",
     resolve: (invocation, context) => {
+      const resolve = (request: typeof invocation) => {
+        const command = source.resolve(request, context);
+        return { ...command, env: {
+          ...command.env,
+          HOME: context.appDir,
+          XDG_CONFIG_HOME: path.join(context.appDir, ".config"),
+          XDG_DATA_HOME: path.join(context.appDir, ".local", "share"),
+          XDG_CACHE_HOME: path.join(context.appDir, ".cache"),
+          UV_CACHE_DIR: path.join(context.appDir, ".cache", "uv"),
+          UV_NO_SYNC: "1",
+        } };
+      };
       if (invocation.kind === "cli" && invocation.args[0] === "retry") {
-        return source.resolve({ kind: "script", args: invocation.args, script: `
+        return resolve({ kind: "script", args: invocation.args, script: `
 import functools, os, runpy, sys
 from jobctrl import config
 from jobctrl.native_credentials import PROVIDER_SECRET_KEYS, load_native_credential_fallbacks
@@ -29,12 +41,12 @@ config.load_native_credential_fallbacks = functools.partial(
 )
 sys.argv = ["jobctrl", *sys.argv[1:]]
 runpy.run_module("jobctrl", run_name="__main__", alter_sys=True)
-` }, context);
+` });
       }
       if (invocation.kind !== "cli" || invocation.args.length !== 1 || invocation.args[0] !== "rpc") {
-        return source.resolve(invocation, context);
+        return resolve(invocation);
       }
-      return source.resolve({ kind: "script", args: [], script: `
+      return resolve({ kind: "script", args: [], script: `
 import socket, subprocess
 def denied(*_args, **_kwargs):
     raise AssertionError("External work is outside the owned retry fixture")
@@ -48,7 +60,7 @@ from jobctrl.infrastructure.rpc.server import JsonRpcServer
 server = JsonRpcServer()
 register_default_handlers(server, canceler=denied)
 server.serve()
-` }, context);
+` });
     },
   };
 }

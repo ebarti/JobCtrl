@@ -5,8 +5,6 @@ import { expect, test } from "@playwright/test";
 
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID, refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
 
-test.skip(process.env["JOBCTRL_E2E_ISOLATED"] === "1", "Requires the real local stage-reset RPC");
-
 test("bulk retry explains why approved materials require explicit re-tailor", async ({ page }, testInfo) => {
   const db = new Database(loadE2eDbPath());
   const approved = db.prepare(`SELECT artifact_id,path,metadata_json FROM job_materials_artifacts
