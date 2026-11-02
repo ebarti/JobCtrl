@@ -168,6 +168,11 @@ secret-free `.native-credentials-migrated.json` marker under `JOBCTRL_DIR`
 makes a completed migration a no-op on subsequent runs. This marker is not a
 backup of credential values.
 
+If the directory for a configured JobCtrl-owned environment file does not yet
+exist or cannot be locked, migration stops without writing its completion
+marker. Configure a provider with `jobctrl setup`, or create the directory or
+correct its permissions, then retry the migration.
+
 A migration lock prevents overlapping invocations using the same completion
 marker. Do not run migrations with different markers concurrently or edit
 credentials while migrating. A malformed marker fails closed. If a process is

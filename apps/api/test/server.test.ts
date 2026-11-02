@@ -132,6 +132,15 @@ function profileWithTargetSearch(fullName: string, location: string, workModel: 
   };
 }
 
+async function selectRemoteCompatibleSearch(app: ReturnType<typeof buildApp>): Promise<void> {
+  // These tests exercise Profile/suggestion behavior after a supported save.
+  // First-use Indeed/lookback defaults deliberately reject a new Remote target.
+  const response = await app.inject({
+    method: "PATCH", url: "/v1/discovery/settings", payload: { boards: ["linkedin"] },
+  });
+  expect(response.statusCode, response.body).toBe(200);
+}
+
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -10763,6 +10772,7 @@ describe("local TypeScript API", () => {
       placeValidator: async (place) => place === "Barcelona",
       providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
     });
+    await selectRemoteCompatibleSearch(app);
     const initial = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
@@ -10814,6 +10824,7 @@ describe("local TypeScript API", () => {
     async () => {
       const placeValidator = vi.fn(async (place: string) => place === "Barcelona");
       const seedApp = buildApp({ ...options, placeValidator });
+      await selectRemoteCompatibleSearch(seedApp);
       const seeded = await seedApp.inject({
         method: "PATCH",
         url: "/v1/profile",
@@ -10885,11 +10896,13 @@ describe("local TypeScript API", () => {
 
   it("atomically rejects stale suggestion saves without a profile event", async () => {
     const app = buildApp(options);
+    await selectRemoteCompatibleSearch(app);
     const initial = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
       payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
     });
+    expect(initial.statusCode, initial.body).toBe(200);
     const version = initial.json().profileVersion as number;
     const beforeDb = new Database(options.dbPath, { readonly: true });
     const beforeEvents = beforeDb.prepare(
@@ -10938,11 +10951,13 @@ describe("local TypeScript API", () => {
       ...options,
       providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
     });
+    await selectRemoteCompatibleSearch(app);
     const initial = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
       payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
     });
+    expect(initial.statusCode, initial.body).toBe(200);
     const version = initial.json().profileVersion as number;
     expect(providerCall).not.toHaveBeenCalled();
     const suggestionResponse = app.inject({
@@ -11243,6 +11258,7 @@ describe("local TypeScript API", () => {
   it("validates target-search locations before saving profile preferences", async () => {
     const placeValidator = vi.fn(async (place: string) => place === "Austin, TX");
     const app = buildApp({ ...options, placeValidator });
+    await selectRemoteCompatibleSearch(app);
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
