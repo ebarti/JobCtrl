@@ -42,7 +42,7 @@ from jobctrl.infrastructure.materials import (
     TailoringPolicyCommandConflictError,
 )
 from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
-from jobctrl.infrastructure.rpc.enrichment_retry import reset_enrichment
+from jobctrl.infrastructure.rpc.enrichment_retry import reset_enrichment, reset_stages
 from jobctrl.infrastructure.rpc.workflow_starter import WorkflowCanceler
 from jobctrl.infrastructure.runtime_identity import assert_expected_runtime
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -1362,6 +1362,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
 
     server.register("screening_answers", screening_answers, mode="sync")
     server.register("reset_enrichment", reset_enrichment, mode="sync")
+    server.register("reset_stages", reset_stages, mode="sync")
     server.register("map_extension_form", map_extension_form, mode="sync")
     server.register("review_resume_edit", review_resume_edit, mode="sync")
     server.register("prepare_repeat_application_determinations", prepare_repeat_application_determinations, mode="sync")

@@ -88,6 +88,33 @@ afterEach(() => {
   for (const dir of directories.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
+it("skips internal posting-state receipts while streaming later visible events", async () => {
+  const { dbPath } = workspace();
+  makeValidDatabase(dbPath);
+  const writer = new Database(dbPath);
+  try {
+    writer.prepare(`INSERT INTO job_events
+      (event_id,tenant_id,job_id,identity_version,stage,event_type,level,occurred_at,payload_json,entity_kind,entity_ref)
+      VALUES (5,'local',NULL,1,NULL,'PostingSnapshotStatePersisted','info','2026-01-01','{}','posting_retry_lifecycle','synthetic')`).run();
+    insertEvent(writer, 6, "local", "visible-after-receipt");
+  } finally { writer.close(); }
+  const app = Fastify();
+  registerEventStreamRoute(app, { dbPath, pollIntervalMs: 10, heartbeatIntervalMs: 30 });
+  let stream: Awaited<ReturnType<typeof openStream>> | undefined;
+  try {
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === "string") throw new Error("no listener");
+    stream = await openStream(`http://127.0.0.1:${address.port}/v1/events/stream?since=4`);
+    await waitFor(() => expect(stream!.text()).toContain("visible-after-receipt"));
+    expect(stream.text()).not.toContain("PostingSnapshotStatePersisted");
+    expect(stream.text()).not.toContain("id: 5\n");
+  } finally {
+    await stream?.close();
+    await app.close();
+  }
+});
+
 it.each(["incompatible", "corrupt", "open-failing"] as const)(
   "keeps active streams bounded and recovers cursors after an absent database becomes %s",
   async (kind) => {

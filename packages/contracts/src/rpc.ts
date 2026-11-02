@@ -41,6 +41,12 @@ export const JsonRpcErrorCodes = {
 } as const;
 export type JsonRpcErrorCode = (typeof JsonRpcErrorCodes)[keyof typeof JsonRpcErrorCodes];
 
+/** Structured INVALID_PARAMS reason emitted by the current reset_stages RPC. */
+export const ResetStagesErrorReasons = {
+  RetrySelectionChanged: "retry_selection_changed",
+  ApplyResetRefused: "apply_reset_refused",
+} as const;
+
 /* ---------------------------------------------------------------- envelope */
 
 export const JsonRpcIdSchema = z.union([z.string(), z.number(), z.null()]);
@@ -83,6 +89,7 @@ export type JsonRpcResponse = z.infer<typeof JsonRpcResponseSchema>;
 export const RpcMethods = {
   CareerLearning: "career_learning",
   ResetEnrichment: "reset_enrichment",
+  ResetStages: "reset_stages",
   MaterialLocaleVariants: "material_locale_variants",
   AcceptedMaterialExports: "accepted_material_exports",
   ScreeningAnswers: "screening_answers",
@@ -133,17 +140,39 @@ const CanonicalJobIdParam = z
     "jobId must be a canonical lowercase UUID",
   );
 
-/** Enrichment reset plus companion stages in the same atomic bulk retry. */
-export const ResetEnrichmentParamsSchema = z.object({
+const RetryTargetSchema = z.object({ jobId: CanonicalJobIdParam, stage: z.enum(STAGES) }).strict();
+const ResetStagesParamsBaseSchema = z.object({
   tenantId: TenantParam,
   expectedAppDir: z.string().trim().min(1),
   expectedDbPath: z.string().trim().min(1),
-  targets: z.array(z.object({ jobId: CanonicalJobIdParam, stage: z.enum(STAGES) }).strict()).min(1),
+  targets: z.array(RetryTargetSchema.extend({
+    expectedFingerprint: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  }).strict()).min(1),
   resetAttempts: z.boolean().default(false),
   onlyFailed: z.boolean().default(false),
-}).strict().refine((value) => value.targets.some((target) => target.stage === "enrich"), {
+}).strict();
+/** Canonical stage resets in one atomic cohort. */
+export const ResetStagesParamsSchema = ResetStagesParamsBaseSchema.refine(
+  (value) => value.targets.every((target) => target.expectedFingerprint !== undefined),
+  { message: "Each selected stage requires its observed identity." },
+);
+/** Compatibility alias retains its enrichment-target and response requirements. */
+export const ResetEnrichmentParamsSchema = ResetStagesParamsBaseSchema.refine(
+  (value) => !value.onlyFailed || value.targets.every((target) => target.expectedFingerprint !== undefined),
+  { message: "A selected failed stage requires its observed identity." },
+).refine(
+  (value) => value.targets.every((target) => target.expectedFingerprint !== undefined)
+    || value.targets.every((target) => target.expectedFingerprint === undefined),
+  { message: "All retry targets must carry an observed identity when one is supplied." },
+).refine((value) => value.targets.some((target) => target.stage === "enrich"), {
   message: "An enrichment target is required.",
 });
+export const ResetStagesResultSchema = z.object({
+  resets: z.array(z.object({
+    jobId: CanonicalJobIdParam, jobUrl: z.string().min(1), stage: z.enum(STAGES),
+    retailorRequired: z.literal(true).optional(),
+  }).strict()).min(1),
+}).strict();
 export const ResetEnrichmentResultSchema = z.object({
   resets: z.array(z.object({
     jobId: CanonicalJobIdParam, jobUrl: z.string().min(1), stage: z.enum(STAGES),
@@ -989,6 +1018,7 @@ export const RpcContracts = {
   [RpcMethods.CareerLearning]: { params: CareerLearningParamsSchema, result: CareerLearningResponseSchema },
   [RpcMethods.AcceptedMaterialExports]: { params: AcceptedMaterialExportParamsSchema, result: AcceptedMaterialExportsSchema },
   [RpcMethods.ResetEnrichment]: { params: ResetEnrichmentParamsSchema, result: ResetEnrichmentResultSchema },
+  [RpcMethods.ResetStages]: { params: ResetStagesParamsSchema, result: ResetStagesResultSchema },
   [RpcMethods.ProviderStatus]: { params: z.object({ provider: z.enum(["codex", "claude", "google"]).optional() }).strict(), result: ProviderStatusResultSchema },
   [RpcMethods.ProviderModels]: { params: EmptyRpcParamsSchema, result: ProviderModelCatalogResultSchema },
   [RpcMethods.ProviderVerify]: { params: z.object({ provider: z.literal("codex") }).strict(), result: CodexVerifyResultSchema },

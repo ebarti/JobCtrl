@@ -74,7 +74,7 @@ function entered(child: ChildProcess, requestId: string): Promise<void> {
 function seed() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-action-retry-"));
   directories.push(dir);
-  const dbPath = path.join(dir, "jobs.db");
+  const dbPath = path.join(dir, "jobctrl.db");
   initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
