@@ -141,16 +141,15 @@ describe("cancelJobAction", () => {
   });
 
   it.each(["score", "tailor", "cover", "apply"] as const)(
-    "resets %s through canonical stage state without writing retired jobs columns",
+    "refuses a %s reset outside the canonical Python owner",
     (stage) => {
       insertStage(stage, "failed", 3);
       const retiredBefore = retiredJobState();
 
-      const result = resetJobStage(db, JOB_URL, stage, { resetAttempts: true });
-
-      expect(result.stage).toMatchObject({ state: "pending", attemptCount: 0 });
+      expect(() => resetJobStage(db, JOB_URL, stage, { resetAttempts: true }))
+        .toThrow("canonical Python retry service");
       expect(retiredJobState()).toEqual(retiredBefore);
-      expect(eventCount("StageReset")).toBe(1);
+      expect(eventCount("StageReset")).toBe(0);
     },
   );
 

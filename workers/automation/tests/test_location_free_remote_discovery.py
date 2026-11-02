@@ -709,9 +709,10 @@ def test_nonempty_indeed_request_identity_is_preserved_but_unsupported_scope_is_
     )
     request = JobStreamingGateway.build_request(jobspy._jobstreaming_spec(spec))
     assert (request.location, request.is_remote, request.hours_old) == ("Synthetic City", True, 48)
+    requests_before = list(_Indeed.requests)
     with pytest.raises(ConfigurationError, match="Indeed.*lookback"):
         JobStreamingGateway().collect(jobspy._jobstreaming_spec(spec), registry=_registry(_Indeed), max_retries=0)
-    assert _Indeed.requests == []
+    assert _Indeed.requests == requests_before
     with pytest.raises(ValueError, match="provider_location"):
         DiscoverySearchSpec(
             query="Synthetic role", provider_location="", target_location="", sites=("linkedin",),

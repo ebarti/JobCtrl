@@ -390,9 +390,19 @@ user-provided reason in the event payload is not interpreted as a marker.
 Historical score-policy skips are recognized from the producer's structured
 score fields and exact generated event message, not a user-provided reason.
 
-Enrichment resets use the synchronous Python application service through
-`reset_enrichment`; its transaction and preservation rules are defined in
-[Enrichment Retry Ownership](architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
+Stage resets use the synchronous Python application service through
+`reset_stages`; the `reset_enrichment` compatibility method still requires an
+Enrich target and retains its original response shape. Every `reset_stages`
+target requires a captured stage fingerprint; `reset_enrichment` requires one
+for failed-stage cohorts but retains unbound single Enrich reset. Older APIs also have
+direct non-Enrich writes that do not reach the RPC. A changed current bulk
+selection returns a `409 retry_selection_changed` conflict; refresh and review
+the jobs selection before retrying. Bulk response keys are canonical job IDs,
+including when URLs were supplied for selection. Transaction and preservation rules are defined in
+[Stage Retry Ownership](architecture/contracts-types-and-api-boundaries.md#stage-retry-ownership).
+The same Python writer validates Apply reset authority before any cohort member
+commits and records its exact Skip release frontier. Its typed refusal retains
+the `409 apply_reset_refused` response; an earlier API precheck is not authority.
 
 ## Discovery Target Search
 
