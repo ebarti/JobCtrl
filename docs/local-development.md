@@ -848,7 +848,9 @@ The extracted-payload smoke runs the real API, JSON-RPC, Temporal workflow,
 worker activities and SQLite persistence without provider credentials. Its
 private worker bootstrap supplies explicit page-interpretation and description
 quality model choices through `LlmPort`; normal spend preflight, source/citation
-validation and determination persistence still execute. The bootstrap is passed
+validation and determination persistence still execute. Smoke processes run
+inside a loopback-only QA sandbox that also denies macOS Keychain files,
+security-service lookups and native credential-command execution. The bootstrap is passed
 as test code outside the immutable payload and is never installed or selected
 by product configuration. The resulting `semanticModel` evidence identifies
 the synthetic boundary. This proves capture plumbing and restart preservation,
