@@ -427,6 +427,7 @@ class ClaudeCodeCliAdapter:
         consumed_browser_results: set[str] = set()
         stats: dict[str, Any] = {}
         usage_recorded = False
+        assistant_usage_observed = False
         spend_observation = None
         spend_failed = False
         spend_error: Exception | None = None
@@ -519,6 +520,24 @@ class ClaudeCodeCliAdapter:
 
                     msg_type = msg.get("type")
                     if msg_type == "assistant":
+                        message = msg.get("message")
+                        raw_usage = message.get("usage") if isinstance(message, Mapping) else None
+                        if raw_usage is not None:
+                            # Per-message observations survive a lost terminal.
+                            # Only its complete cumulative total enters the ledger.
+                            assistant_usage_observed = True
+                            usage = raw_usage if isinstance(raw_usage, Mapping) else {}
+                            try:
+                                spend_observation.observed(
+                                    day=_utc_spend_day(),
+                                    input_tokens=_observed_token_count(usage.get("input_tokens")),
+                                    output_tokens=_observed_token_count(usage.get("output_tokens")),
+                                )
+                            except BaseException as error:
+                                spend_failed = True
+                                if not isinstance(error, Exception):
+                                    raise
+                                spend_error = error
                         for block in msg.get("message", {}).get("content", []):
                             bt = block.get("type")
                             if bt == "text":
@@ -732,7 +751,7 @@ class ClaudeCodeCliAdapter:
                 if spend_observation is not None:
                     primary = sys.exception()
                     try:
-                        spend_observation.close(unresolved=spend_failed)
+                        spend_observation.close(unresolved=spend_failed or (assistant_usage_observed and not usage_recorded))
                     except BaseException:
                         if primary is None:
                             raise

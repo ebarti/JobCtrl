@@ -480,7 +480,10 @@ before any receipt.
 
 For observed-spend recovery, use fake Claude and Google SDK streams and an owned
 synthetic database. Fail and cancel after provider usage appears, including
-Claude assistant usage before a terminal message. Inject insert, pre-commit and
+Claude assistant usage before a terminal message. In the Apply JSON stream,
+preserve assistant usage
+when the terminal total is missing, and count a complete terminal total only once.
+Inject insert, pre-commit and
 post-commit failures and reopen the workspace in a fresh process. Known usage
 must be recorded once or remain explicitly unresolved without automatic replay;
 check the lane and provider/model receipt, original error or cancellation,

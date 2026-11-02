@@ -710,6 +710,40 @@ def test_apply_cancelled_process_keeps_observed_usage(monkeypatch, tmp_path) -> 
     assert [(call["input_tokens"], call["output_tokens"]) for call in calls] == [(3, 2)]
 
 
+@pytest.mark.parametrize("terminal", [False, True])
+def test_apply_preserves_assistant_usage_when_terminal_total_is_missing(monkeypatch, tmp_path, terminal, request):
+    import jobctrl.database as database
+    import jobctrl.llm as accounting
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved
+
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "jobctrl.db")
+    database.init_db(tmp_path / "jobctrl.db")
+    request.addfinalizer(lambda: database.close_connection(tmp_path / "jobctrl.db"))
+    monkeypatch.setattr(accounting, "enforce_spend_budget", lambda _lane: None)
+    calls = []
+    monkeypatch.setattr(accounting, "record_llm_spend", lambda **kwargs: calls.append(kwargs))
+    assistant = {"type": "assistant", "message": {"content": [], "usage": {"input_tokens": 12, "output_tokens": 7}}}
+
+    class Process(_StreamPopen):
+        messages = (assistant, _terminal_message(_report("failed", reason="unsafe_page"))) if terminal else (assistant,)
+
+    monkeypatch.setattr("subprocess.Popen", Process)
+    result = ClaudeCodeCliAdapter(log_dir=tmp_path, app_dir=tmp_path).submit_application(
+        prompt=ApplyPrompt(text="synthetic", mcp_config={}), browser=_session(), model="default", dry_run=True,
+    )
+    assert result.submission_result.kind == "failed"
+    if terminal:
+        assert [(call["input_tokens"], call["output_tokens"]) for call in calls] == [(1, 1)]
+        assert not list((tmp_path / ".jobctrl.db.llm-spend-pending").glob("*.jsonl"))
+    else:
+        assert calls == []
+        with pytest.raises(SpendAccountingUnresolved):
+            accounting.read_llm_spend()
+        receipts = list((tmp_path / ".jobctrl.db.llm-spend-pending").glob("*.jsonl"))
+        assert len(receipts) == 1
+        assert {"input_tokens": 12, "output_tokens": 7}.items() <= json.loads(receipts[0].read_text().splitlines()[-1]).items()
+
+
 def test_claude_subprocess_starts_in_isolated_unix_session(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
     monkeypatch.setattr("platform.system", lambda: "Darwin")
