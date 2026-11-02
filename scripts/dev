@@ -95,14 +95,15 @@ is_running() { [[ "$(process_state "$1" "${2:-}")" == "up" ]]; }
 new_launch_id() { python3 -c 'import secrets; print(secrets.token_hex(32))'; }
 
 wait_for_owner() {
-  local name="$1" launch_id="$2" pid="$3" result i
-  for i in $(seq 1 100); do
+  local name="$1" launch_id="$2" pid="$3" i
+  for (( i=0; i<100; i++ )); do
     [[ "${run_exit_code:-0}" -eq 0 ]] || return "$run_exit_code"
-    result=$(process_owner state "$name" "$launch_id" || true)
-    [[ "$result" == "up $pid" ]] && return 0
+    if process_owner check "$name" "$launch_id" "$pid" 2>/dev/null; then
+      return 0
+    fi
     sleep 0.02
   done
-  echo "dev: $name did not establish its launch ownership; see $(log_file "$name")" >&2
+  echo "dev: $name did not establish its launch ownership; see $LOG_DIR/$name.log" >&2
   return 1
 }
 
@@ -360,6 +361,7 @@ run_exit_code=0
 
 run_cleanup() {
   [[ "$run_cleaned" -eq 0 ]] || return 0
+  trap '' INT TERM
   run_cleaned=1
   local i failed=0
   for i in "${!run_pids[@]}"; do
@@ -369,17 +371,11 @@ run_cleanup() {
 }
 
 start_run_one() {
-  local name="$1"
+  local name="$1" cmd="$2" log="$3" launch_id="$4"
   if ! is_known "$name"; then
     echo "dev: unknown process '$name' (try: $(known_process_names))" >&2
     return 1
   fi
-  ensure_not_running "$name"
-  local cmd log launch_id
-  cmd=$(process_shell_command "$name")
-  log=$(log_file "$name")
-  rotate_log "$log"
-  launch_id=$(new_launch_id)
   (
     cd "$ROOT"
     exec python3 -B "$ROOT/scripts/dev-process-owner.py" launch "$PID_DIR" "$name" "$launch_id" "$cmd" "$log"
@@ -524,20 +520,35 @@ cmd_run() {
     select_default_targets
   fi
 
-  # A signal can arrive inside a state command substitution. Defer cleanup
-  # until normal shell flow instead of evaluating nested commands in the trap.
+  # Finish shell command substitutions before any new owner is launched or
+  # signal handler is installed. Bash can corrupt a pending substitution when
+  # a foreground signal interrupts its parser.
+  local prepared_commands=() prepared_logs=() prepared_ids=()
+  local n cmd log display_targets
+  for n in "${targets[@]}"; do
+    ensure_not_running "$n"
+    cmd=$(process_shell_command "$n")
+    log=$(log_file "$n")
+    rotate_log "$log"
+    prepared_commands+=("$cmd")
+    prepared_logs+=("$log")
+    prepared_ids+=("$(new_launch_id)")
+  done
+  printf -v display_targets '%s,' "${targets[@]}"
+
+  # Keep signal handlers assignment-only and use direct owner checks below.
   trap 'run_exit_code=130' INT
   trap 'run_exit_code=143' TERM
   trap 'run_cleanup' EXIT
 
-  local n
-  for n in "${targets[@]}"; do
+  local i
+  for i in "${!targets[@]}"; do
     [[ "$run_exit_code" -eq 0 ]] || return "$run_exit_code"
-    start_run_one "$n"
+    start_run_one "${targets[$i]}" "${prepared_commands[$i]}" "${prepared_logs[$i]}" "${prepared_ids[$i]}"
     [[ "$run_exit_code" -eq 0 ]] || return "$run_exit_code"
   done
 
-  echo "dev: foreground run active; press Ctrl-C to stop ($(IFS=,; echo "${targets[*]}"))"
+  echo "dev: foreground run active; press Ctrl-C to stop (${display_targets%,})"
 
   # The native source controller provides this private readiness pipe only
   # inside its authenticated workspace scope.
@@ -546,17 +557,23 @@ cmd_run() {
     exec 3>&-
   fi
 
-  local i name pid status state
+  local name pid status state probe_status
   while true; do
     [[ "$run_exit_code" -eq 0 ]] || return "$run_exit_code"
     for i in "${!run_pids[@]}"; do
       name="${run_names[$i]}"
       pid="${run_pids[$i]}"
-      state=$(process_state "$name" "${run_ids[$i]}")
+      if process_owner check "$name" "${run_ids[$i]}" "$pid"; then
+        probe_status=0
+      else
+        probe_status=$?
+      fi
       [[ "$run_exit_code" -eq 0 ]] || return "$run_exit_code"
-      if [[ "$state" != "up" ]]; then
+      if [[ "$probe_status" -ne 0 ]]; then
+        state=unverified
         status=1
-        if [[ "$state" == "down" ]]; then
+        if [[ "$probe_status" -eq 3 ]]; then
+          state=down
           status=0
           wait "$pid" || status=$?
         fi
