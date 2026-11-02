@@ -210,6 +210,21 @@ the worker starts and any scheduled Discovery still goes through the same
 planning guard. Unrelated network operations read only their crawler identity;
 they do not need the profile's saved Discovery targets.
 
+The CLI setup wizard retains an existing Profile on reruns and directs edits to
+the Profile editor. First-time Profile creation checks absence under a write
+lock. Before saving Discovery settings, the wizard rechecks the Profile target
+snapshot and version presented to the user; a concurrent change stops the save.
+It explains that saved Profile targets take precedence over the corresponding
+wizard-entered Discovery rows. The wizard chooses compatible first-use boards for a Remote search.
+Its settings update distinguishes an absent row under the same write lock used
+for validation. On reruns it replaces the prompted location and title rows
+while preserving saved board, lookback and other controls; incompatible
+combinations fail before the row changes. If saved tier or location-label
+filters exclude all effective targets, the wizard displays the affected filter
+and clears it only after confirmation. It rechecks saved Discovery settings and
+Profile targets under the writer lock before committing; declining or a
+concurrent change leaves the row unchanged.
+
 Scheduled discovery is **off by default**. A single Temporal Schedule,
 `jobctrl-discovery-local`, can run `DiscoverWorkflow` on a cron expression, but
 it is reconciled from settings only at **worker startup**
@@ -725,10 +740,10 @@ readiness before resetting a stage or appending the reset event. A
 `503 worker_runtime_unavailable` leaves the durable failed/blocked stage and
 its events unchanged. The reset happens first only after dispatch prerequisites
 are satisfied; a reset-only command remains a deliberate local transition.
-Explicit Enrich reset uses the same Python application service from HTTP and
+Explicit stage reset uses the same Python application service from HTTP and
 CLI. Its atomic reset and durable event invalidate the previous execution
 fence without discarding accepted content. See
-[Enrichment Retry Ownership](../contracts-types-and-api-boundaries.md#enrichment-retry-ownership)
+[Stage Retry Ownership](../contracts-types-and-api-boundaries.md#stage-retry-ownership)
 for transactions, bulk cohorts, attempt counters and downstream preservation.
 
 The authoritative TypeScript runtime registry lives in
@@ -831,6 +846,11 @@ defensive dashboard read keep them truthful on existing databases:
   units persist accepted results before acknowledgement, fence old activity
   attempts, and resume only unfinished work. Cancellation terminalizes units;
   incompatible checkpoints fail rather than reset silently.
+  A location-free Remote unit retains empty target/provider locations and sends
+  an absent location to JobStreaming. The pinned Indeed adapter cannot combine
+  that Remote filter and lookback, so its board unit fails before dispatch
+  while compatible units finish. The workflow reports
+  `unsupported_remote_search`; neither control is discarded.
 - **Preparation isolates jobs.** A failed step fails only that job's workflow and
   resumes at the failed step; other jobs are unaffected.
 - **Apply fails safe.** At-most-once + one live attempt + the CDP dry-run guard

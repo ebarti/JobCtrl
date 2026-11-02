@@ -460,6 +460,17 @@ complete without another admission. After checking that receipt and the
 missing-original condition, recovery leaves other unprepared captures pending
 before initializing a browser or qualifying another posting.
 
+## Retry posting-lifecycle receipts
+
+The SQLite posting snapshot writer records `PostingSnapshotStatePersisted` in
+the existing job event journal when the stored active state changes or is first
+inserted. The snapshot and receipt share the writer transaction. The receipt
+contains job identity only and supplies an ordered fence for an already selected
+Retry; it is not an observation or proof that a posting is available. Generic
+Activity and SSE omit this internal receipt. A worker using the older snapshot
+writer does not produce it, so mixed-version safety still requires verified
+old-writer quiescence or a compatible write fence.
+
 ## Company briefing reads
 
 The optional briefing ledger is read directly by Operations through exact tenant/company/job identities and its persisted determination ID. It adds no projection family. Accepted snapshots and failed attempts remain separate immutable records. Source bodies stay out of SSE; reference-only `JobUpdated` notifications invalidate each linked Job Detail and the existing digest. The [storage owner](storage.md#company-briefing-ledger) defines physical retention.

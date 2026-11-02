@@ -573,6 +573,11 @@ update availability on `posting_snapshot_sets`; unchanged positives advance
 only the observation clock. No availability path writes hide/delete tombstones,
 application outcomes, approvals, scores or materials. A location-policy finding
 keeps its separate gate when external availability becomes active.
+Snapshot active-state changes also write a private `posting_retry_lifecycle`
+receipt in `job_events` in the same transaction. The per-job event frontier
+fences stale Retry selections even when the snapshot returns to identical data.
+The receipt has the job's normal deletion lifetime and does not add a table or
+schema migration.
 
 Reviewed locale variants use `job_artifacts` with a separately versioned
 `material-locale-v1` metadata contract, plus the existing semantic determination

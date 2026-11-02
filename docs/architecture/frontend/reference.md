@@ -38,15 +38,15 @@ and roll back in `onError`. A patch that does not symmetrically reverse
 leaves the cache in an invalid state.
 
 **Mitigations:**
-- The `onMutate` patcher is a **pure function**; the rollback simply
-  restores the snapshot, never re-derives.
-- Mutation hooks have unit tests (§10.3) that assert: (a) the optimistic
-  shape after `onMutate`, (b) the rolled-back shape after `onError`,
-  (c) the reconciled shape after `onSettled` invalidates and refetches.
-- The standard pattern (snapshot → patch → rollback → invalidate) is
-  encoded in a small helper (`createOptimisticMutation` in
-  `shared/lib/`); per-mutation code provides only the patcher and the
-  affected key set, not the full ceremony.
+- Each `onMutate` patcher is a **pure function**. The shared helper removes a
+  failed operation and reapplies other overlapping mutation and partial cache
+  patches in order, while an independent canonical publication fences out older
+  rollback authority. A settlement defers refetching queries with pending writes
+  until they settle, because the read cannot identify which writes it includes.
+- Mutation tests assert the optimistic shape, ordinary rollback, concurrent
+  edits, newer publications and failed reconciliation, and targeted invalidation.
+- The helper (`createOptimisticMutation` in `shared/lib/`) owns the operation
+  ledger; each mutation supplies its patcher and affected key set.
 
 ### R3. SSE delivery gaps under reverse-proxy / CDN buffering
 
