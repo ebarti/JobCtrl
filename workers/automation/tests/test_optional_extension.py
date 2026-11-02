@@ -315,13 +315,15 @@ def test_workday_search_detail_and_persistence_keep_execution_on_both_transports
 
 
 @pytest.mark.parametrize("connected", [True, False])
-def test_smartextract_parses_and_persists_on_both_transports(tmp_path, monkeypatch, connected) -> None:
+@pytest.mark.parametrize("browser_host", [True, False])
+def test_smartextract_parses_and_persists_on_both_transports(tmp_path, monkeypatch, connected, browser_host) -> None:
     from jobctrl.discovery import smartextract
     from jobctrl.infrastructure.discovery.smart_postings import SmartPostingIntake
     from jobctrl.infrastructure.enrichment import playwright_fetcher
     from tests.smart_posting_fakes import PageFetcher, PostingModel, allow_url, model_dependencies
     from jobctrl.infrastructure.enrichment.posting_sources import live_posting_page
 
+    source_url = f"https://careers.example{'.test' if browser_host else ''}/jobs"
     job = {
         "@type": "JobPosting",
         "title": "Director of Engineering",
@@ -329,7 +331,7 @@ def test_smartextract_parses_and_persists_on_both_transports(tmp_path, monkeypat
         "hiringOrganization": {"name": "Acme"},
         "location": "Remote",
         "jobLocation": {"address": {"addressLocality": "Remote"}},
-        "url": "https://careers.example/jobs/1",
+        "url": f"{source_url}/1",
         "description": "Lead engineering and reliable systems. " * 180,
     }
     html = (
@@ -389,14 +391,15 @@ def test_smartextract_parses_and_persists_on_both_transports(tmp_path, monkeypat
     monkeypatch.setattr(smartextract, "ask_llm", lambda _prompt: (plan, 0, {"response_chars": len(plan)}))
     try:
         result = smartextract._run_all(
-            [{"name": "Acme", "url": "https://careers.example/jobs"}], {}, discovery_execution=execution()
+            [{"name": "Acme", "url": source_url}], {}, discovery_execution=execution()
         )
         assert result["total_new"] == 1
         assert_cohort(conn, "smartextract")
-        assert broker.status_checks == 1
-        assert anonymous == ([] if connected else ["https://careers.example/jobs"])
-        assert bool(broker.visited) is connected
-        assert detail_fetcher.calls == ([] if connected else [job["url"]])
+        uses_browser = browser_host and connected
+        assert broker.status_checks == (1 if browser_host else 0)
+        assert anonymous == ([] if uses_browser else [source_url])
+        assert bool(broker.visited) is uses_browser
+        assert detail_fetcher.calls == ([] if uses_browser else [job["url"]])
         assert [call[0] for call in model.calls] == [
             "PageInterpretation", "PostingSelectionExtraction", "PostingQualification",
         ]
