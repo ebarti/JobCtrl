@@ -1,4 +1,5 @@
 import { execFileSync, spawn, type ChildProcessByStdio } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -23,31 +24,52 @@ function fixtureDevScript(tempDir: string): string {
   const script = join(tempDir, "repo", "scripts", "dev");
   mkdirSync(join(tempDir, "repo", "scripts"), { recursive: true });
   copyFileSync(sourceDevScript, script);
+  copyFileSync(join(repoRoot, "scripts/dev-process-owner.py"), join(tempDir, "repo/scripts/dev-process-owner.py"));
+  const infrastructure = join(tempDir, "repo/workers/automation/src/jobctrl/infrastructure");
+  mkdirSync(infrastructure, { recursive: true });
+  copyFileSync(join(repoRoot, "workers/automation/src/jobctrl/infrastructure/process_ownership.py"), join(infrastructure, "process_ownership.py"));
+  const python = execFileSync("python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" }).trim();
+  writeFileSync(join(tempDir, "python3"), `#!/bin/bash\nexec '${python.replaceAll("'", "'\\''")}' -I -S -B "$@"\n`);
+  chmodSync(join(tempDir, "python3"), 0o755);
+  writeFileSync(join(tempDir, "repo/scripts/fixture-controller-owner.py"), `import importlib.util,sys
+script = sys.argv.pop(1)
+spec = importlib.util.spec_from_file_location('fixture_source_owner', script)
+owner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(owner)
+from jobctrl.infrastructure import process_ownership
+# The synthetic controller must give the real inner owner time to drain.
+# Leaf owners, custody checks and the total cleanup deadline stay unchanged.
+process_ownership._PROCESS_TERMINATION_GRACE_SECONDS = 8.0
+raise SystemExit(owner.main())
+`);
   chmodSync(script, 0o755);
   const go = join(tempDir, "go");
   writeFileSync(go, `#!/usr/bin/env bash
 set -euo pipefail
 [[ "$1" == "-C" && "$3" == "run" && "$4" == "./cmd/jobctrl-source" ]]
+root="$6"
+controller_dir="$JOBCTRL_DEV_DIR/source-controller"
+mkdir -p "$controller_dir"
 if [[ "$5" == "stop" || "$5" == "switch" ]]; then
-  controller="$JOBCTRL_DEV_DIR/pids/source-controller.pid"
-  if [[ -f "$controller" ]]; then
-    pid=$(cat "$controller")
-    kill -TERM "$pid" 2>/dev/null || true
-    for _ in $(seq 1 100); do
-      kill -0 "$pid" 2>/dev/null || break
-      sleep 0.05
-    done
-    rm -f "$controller"
-  fi
-  exit 0
+  exec python3 -B "$root/scripts/dev-process-owner.py" stop "$controller_dir" api
 fi
 [[ "$5" != "verify" ]] || exit 0
 [[ "$5" == "run" ]]
-root="$6"
 shift 6
 export JOBCTRL_DEV_INNER=1
-echo "$$" > "$JOBCTRL_DEV_DIR/pids/source-controller.pid"
-exec "$root/scripts/dev" run "$@"
+printf -v command 'exec %q run' "$root/scripts/dev"
+for component in "$@"; do printf -v command '%s %q' "$command" "$component"; done
+launch_id=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+python3 -B "$root/scripts/fixture-controller-owner.py" "$root/scripts/dev-process-owner.py" launch "$controller_dir" api "$launch_id" "$command" &
+controller_child=$!
+finish() {
+  python3 -B "$root/scripts/dev-process-owner.py" stop "$controller_dir" api
+  wait "$controller_child"
+  exit "$1"
+}
+trap 'finish 130' INT
+trap 'finish 143' TERM
+wait "$controller_child"
 `);
   chmodSync(go, 0o755);
   return script;
@@ -63,6 +85,58 @@ exit 0
 }
 
 type DevLauncherProcess = ChildProcessByStdio<null, Readable, Readable>;
+
+function childClosed(child: DevLauncherProcess): Promise<void> {
+  const closed = new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", () => resolve());
+  });
+  // Keep an early spawn error handled until the owning cleanup awaits it.
+  void closed.catch(() => {});
+  return closed;
+}
+
+async function waitForChildClose(closed: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([closed, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Owned fixture child did not close; retain its workspace")), 10_000);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function startStatusOwner(tempDir: string, component: "api" | "worker", env: NodeJS.ProcessEnv): Promise<() => Promise<void>> {
+  const directory = join(env.JOBCTRL_DEV_DIR!, "pids");
+  mkdirSync(directory, { recursive: true });
+  const id = randomBytes(32).toString("hex");
+  const script = join(tempDir, "repo/scripts/dev-process-owner.py");
+  const child: DevLauncherProcess = spawn("python3", ["-B", script, "launch", directory, component, id,
+    "exec sleep 300", join(tempDir, `${component}.log`)], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const closed = childClosed(child);
+  const stop = async () => {
+    execFileSync("python3", ["-B", script, "stop", directory, component, id], { env });
+    await waitForChildClose(closed);
+  };
+  try {
+    await waitForPidFile(join(directory, `${component}.pid`));
+    execFileSync("python3", ["-B", script, "check", directory, component, id, String(child.pid)], { env });
+    return stop;
+  } catch (error) {
+    child.kill("SIGTERM");
+    await waitForChildClose(closed);
+    throw error;
+  }
+}
+
+function cleanupDevFixture(tempDir: string, script: string, component: string, env: NodeJS.ProcessEnv): void {
+  // A failed managed stop retains the fixture and receipts for diagnosis.
+  // A PID recovered from those receipts never authorizes fallback signals.
+  execFileSync(script, ["stop", component], { cwd: repoRoot, env, timeout: 20_000 });
+  expect(existsSync(join(env.JOBCTRL_DEV_DIR!, "pids", `${component}.pid`))).toBe(false);
+  rmSync(tempDir, { force: true, recursive: true });
+}
 
 function waitForOutput(child: DevLauncherProcess, text: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -232,15 +306,16 @@ describe("dev launcher contract", () => {
     }
   });
 
-  it("reports worker heartbeat health in status output", () => {
+  it("reports worker heartbeat health in status output", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
     const devScript = fixtureDevScript(tempDir);
     const devDir = join(tempDir, "dev-state");
     const pidDir = join(devDir, "pids");
+    const env = devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}`, JOBCTRL_API_PORT: "9988" });
+    let stopOwned: (() => Promise<void>) | undefined;
 
     try {
       mkdirSync(pidDir, { recursive: true });
-      writeFileSync(join(pidDir, "worker.pid"), String(process.pid));
       writeFileSync(
         join(tempDir, "curl"),
         `#!/usr/bin/env bash
@@ -248,39 +323,45 @@ echo '{"worker":{"status":"stale"}}'
 `,
       );
       chmodSync(join(tempDir, "curl"), 0o755);
+      stopOwned = await startStatusOwner(tempDir, "worker", env);
 
       const output = execFileSync(devScript, ["status"], {
         cwd: repoRoot,
         encoding: "utf8",
-        env: devScriptEnv(devDir, {
-          PATH: `${tempDir}:${process.env.PATH ?? ""}`,
-          JOBCTRL_API_PORT: "9988",
-        }),
+        env,
       });
 
       expect(output).toContain("HEALTH");
       expect(output).toMatch(/worker\s+up\s+\d+\s+stale\s+/);
     } finally {
-      rmSync(tempDir, { force: true, recursive: true });
+      if (stopOwned) {
+        await stopOwned();
+        rmSync(tempDir, { force: true, recursive: true });
+      }
     }
   });
 
-  it("distinguishes a running API watcher from a schema-blocked API", () => {
+  it("distinguishes a running API watcher from a schema-blocked API", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
     const devScript = fixtureDevScript(tempDir);
     const devDir = join(tempDir, "dev-state");
+    const env = devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}` });
+    let stopOwned: (() => Promise<void>) | undefined;
     try {
       mkdirSync(join(devDir, "pids"), { recursive: true });
-      writeFileSync(join(devDir, "pids/api.pid"), String(process.pid));
       writeFileSync(join(tempDir, "curl"), "#!/usr/bin/env bash\necho '{\"ok\":false,\"error\":\"database_migration_required\"}'\n");
       chmodSync(join(tempDir, "curl"), 0o755);
+      stopOwned = await startStatusOwner(tempDir, "api", env);
       const output = execFileSync(devScript, ["status", "api"], {
         cwd: repoRoot, encoding: "utf8",
-        env: devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}` }),
+        env,
       });
       expect(output).toMatch(/api\s+up\s+\d+\s+migration\s+/);
     } finally {
-      rmSync(tempDir, { force: true, recursive: true });
+      if (stopOwned) {
+        await stopOwned();
+        rmSync(tempDir, { force: true, recursive: true });
+      }
     }
   });
 
@@ -358,17 +439,7 @@ while true; do sleep 1; done
       expect(existsSync(join(home, ".jobctrl"))).toBe(true);
       expect(existsSync(join(home, legacyDirname))).toBe(true);
     } finally {
-      if (env) {
-        try {
-          execFileSync(devScript, ["stop", "api"], { cwd: repoRoot, env });
-        } catch {
-          // The process may already be stopped if the start assertion failed.
-        }
-      }
-      if (apiPid !== undefined && processExists(apiPid)) {
-        process.kill(apiPid, "SIGKILL");
-      }
-      rmSync(tempDir, { force: true, recursive: true });
+      cleanupDevFixture(tempDir, devScript, "api", env ?? devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}` }));
     }
   });
 
@@ -411,20 +482,7 @@ while true; do sleep 1; done
       expect(processExists(secondPid)).toBe(true);
       expect(readFileSync(callsLog, "utf8").match(/fake pnpm --filter @jobctrl\/api dev/g)).toHaveLength(2);
     } finally {
-      try {
-        execFileSync(devScript, ["stop", "api"], {
-          cwd: repoRoot, env: devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}` }),
-        });
-      } catch {
-        // The process may already be stopped if an assertion failed late.
-      }
-      if (firstPid !== undefined && processExists(firstPid)) {
-        process.kill(firstPid, "SIGKILL");
-      }
-      if (secondPid !== undefined && processExists(secondPid)) {
-        process.kill(secondPid, "SIGKILL");
-      }
-      rmSync(tempDir, { force: true, recursive: true });
+      cleanupDevFixture(tempDir, devScript, "api", devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}` }));
     }
   });
 
@@ -471,18 +529,7 @@ while true; do sleep 1; done
       expect(readFileSync(callsLog, "utf8").split("\n")[0]).toBe("fake corepack pnpm extension:build");
       expect(processExists(webPid)).toBe(true);
     } finally {
-      try {
-        execFileSync(devScript, ["stop", "web"], {
-          cwd: repoRoot,
-          env: env ?? devScriptEnv(devDir),
-        });
-      } catch {
-        // The process may already be stopped if an assertion failed late.
-      }
-      if (webPid !== undefined && processExists(webPid)) {
-        process.kill(webPid, "SIGKILL");
-      }
-      rmSync(tempDir, { force: true, recursive: true });
+      cleanupDevFixture(tempDir, devScript, "web", env ?? devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}` }));
     }
   });
 
@@ -526,18 +573,7 @@ while true; do sleep 1; done
       expect(readFileSync(callsLog, "utf8").split("\n")[0]).toBe("fake corepack pnpm extension:build");
       expect(processExists(webPid)).toBe(true);
     } finally {
-      try {
-        execFileSync(devScript, ["stop", "web"], {
-          cwd: repoRoot,
-          env: env ?? devScriptEnv(devDir),
-        });
-      } catch {
-        // The process may already be stopped if an assertion failed late.
-      }
-      if (webPid !== undefined && processExists(webPid)) {
-        process.kill(webPid, "SIGKILL");
-      }
-      rmSync(tempDir, { force: true, recursive: true });
+      cleanupDevFixture(tempDir, devScript, "web", env ?? devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}` }));
     }
   });
 
@@ -550,6 +586,7 @@ while true; do sleep 1; done
     const grandchildPidFile = join(tempDir, "grandchild.pid");
     const pidFile = join(devDir, "pids/api.pid");
     let child: DevLauncherProcess | undefined;
+    let closed: Promise<void> | undefined;
     let spawnedChildPid: number | undefined;
     let spawnedGrandchildPid: number | undefined;
 
@@ -582,6 +619,7 @@ while true; do sleep 1; done
         stdio: ["ignore", "pipe", "pipe"],
       });
       child = runningChild;
+      closed = childClosed(runningChild);
 
       await waitForOutput(runningChild, "dev: foreground run active");
       expect(existsSync(pidFile)).toBe(true);
@@ -602,14 +640,8 @@ while true; do sleep 1; done
       expect(processExists(spawnedGrandchildPid)).toBe(false);
     } finally {
       child?.kill("SIGTERM");
-      if (spawnedChildPid !== undefined && processExists(spawnedChildPid)) {
-        process.kill(spawnedChildPid, "SIGKILL");
-      }
-      if (spawnedGrandchildPid !== undefined && processExists(spawnedGrandchildPid)) {
-        process.kill(spawnedGrandchildPid, "SIGKILL");
-      }
-      rmSync(pidFile, { force: true });
-      rmSync(tempDir, { force: true, recursive: true });
+      if (closed) await waitForChildClose(closed);
+      cleanupDevFixture(tempDir, devScript, "api", devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}` }));
     }
   });
 
@@ -650,18 +682,7 @@ while true; do sleep 1; done
         join(devDir, "temporal/temporal.db"),
       );
     } finally {
-      try {
-        execFileSync(devScript, ["stop", "temporal"], {
-          cwd: repoRoot,
-          env: env ?? devScriptEnv(devDir),
-        });
-      } catch {
-        // The process may already be stopped if an assertion failed late.
-      }
-      if (temporalPid !== undefined && processExists(temporalPid)) {
-        process.kill(temporalPid, "SIGKILL");
-      }
-      rmSync(tempDir, { force: true, recursive: true });
+      cleanupDevFixture(tempDir, devScript, "temporal", env ?? devScriptEnv(devDir, { PATH: `${tempDir}:${process.env.PATH ?? ""}` }));
     }
   });
 });

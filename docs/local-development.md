@@ -641,6 +641,11 @@ Lifecycle cleanup requires a stable process census; separating the phases keeps
 other fixtures' process churn from invalidating that verification. Every test
 and the existing cleanup deadlines remain in effect.
 
+`corepack pnpm api:test` likewise finishes the other API files before running
+`dev-launcher-contract.test.ts`. Those launcher fixtures use the actual
+authenticated source owner and preserve failed cleanup records; they do not
+derive signal authority from recorded numeric PIDs.
+
 Native shard 0 also runs the complete source-supervisor lifecycle in an owned
 offline macOS workspace with Python 3.14.4. The manual repository-scripts
 workflow uses the same ordered Linux entry point.
