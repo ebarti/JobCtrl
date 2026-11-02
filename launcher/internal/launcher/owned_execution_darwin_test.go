@@ -484,8 +484,8 @@ func TestOwnedExecutionStdin(t *testing.T) {
 	}
 }
 
-// A conservative nonzero observation must never authorize completion, but a
-// later real stop can verify and retire the same synthetic execution safely.
+// Nonzero throughout the controller's witness window must not authorize
+// completion, but a later real stop can verify and retire the same execution.
 func TestFinishedOrdinaryExecutionRecoversFromTransientScopeCount(t *testing.T) {
 	ctx := executionTestContext(t)
 	root := filepath.Dir(ctx.Instance.StatePath)
@@ -499,12 +499,11 @@ func TestFinishedOrdinaryExecutionRecoversFromTransientScopeCount(t *testing.T) 
 	stdin, originalCount := os.Stdin, readCoalitionActiveTaskCount
 	os.Stdin = reader
 	injected := false
-	readCoalitionActiveTaskCount = func(id uint64) (uint64, error) {
-		if !injected {
-			injected = true
-			return 1, nil
-		}
-		return originalCount(id)
+	readCoalitionActiveTaskCount = func(uint64) (uint64, error) {
+		// Hold the negative input through every bounded retry. A one-shot
+		// injection can be followed by real zero and valid completion.
+		injected = true
+		return 1, nil
 	}
 	defer func() { os.Stdin, readCoalitionActiveTaskCount = stdin, originalCount }()
 	command := []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "stdin", "unused"}
