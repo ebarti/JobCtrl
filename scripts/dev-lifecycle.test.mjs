@@ -548,7 +548,7 @@ if role == 'first':
  original_request = owner.request
  def request(value, action):
   if action == 'stop':
-   pathlib.Path(ready).write_text('entered')
+   owner.atomic_write(pathlib.Path(ready), b'entered')
    while not pathlib.Path(release).exists(): time.sleep(0.02)
   return original_request(value, action)
  owner.request = request
@@ -556,9 +556,9 @@ else:
  fd = os.open(pathlib.Path(directory) / (name + '.stop.lock'), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
  try:
   try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-  except BlockingIOError: pathlib.Path(ready).write_text('blocked')
+  except BlockingIOError: owner.atomic_write(pathlib.Path(ready), b'blocked')
   else:
-   pathlib.Path(ready).write_text('unlocked')
+   owner.atomic_write(pathlib.Path(ready), b'unlocked')
    fcntl.flock(fd, fcntl.LOCK_UN)
  finally: os.close(fd)
 sys.argv = [script, 'stop', directory, name]

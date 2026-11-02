@@ -236,6 +236,7 @@ func TestDevelopmentEntryAutomaticallyMigratesOwnedWorkspace(t *testing.T) {
 	if err := os.WriteFile(dev, scriptBytes, 0700); err != nil {
 		t.Fatal(err)
 	}
+	stageSourceProcessOwnerFixture(t, root, moduleRoot)
 	if err := os.Symlink(moduleRoot, filepath.Join(root, "launcher")); err != nil {
 		t.Fatal(err)
 	}
@@ -567,6 +568,7 @@ func TestDevelopmentEntryPointUsesNativeWorkspaceScope(t *testing.T) {
 	if err := os.WriteFile(dev, scriptBytes, 0700); err != nil {
 		t.Fatal(err)
 	}
+	stageSourceProcessOwnerFixture(t, root, moduleRoot)
 	if err := os.Symlink(moduleRoot, filepath.Join(root, "launcher")); err != nil {
 		t.Fatal(err)
 	}
@@ -636,5 +638,25 @@ func TestDevelopmentEntryPointUsesNativeWorkspaceScope(t *testing.T) {
 	case <-done:
 	case <-time.After(15 * time.Second):
 		t.Fatal("development entry remained alive after native stop")
+	}
+}
+
+func stageSourceProcessOwnerFixture(t *testing.T, root, moduleRoot string) {
+	t.Helper()
+	for _, relative := range []string{
+		filepath.Join("scripts", "dev-process-owner.py"),
+		filepath.Join("workers", "automation", "src", "jobctrl", "infrastructure", "process_ownership.py"),
+	} {
+		contents, err := os.ReadFile(filepath.Join(moduleRoot, "..", relative))
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(root, relative)
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, contents, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
