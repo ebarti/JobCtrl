@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+import errno
 import os
 import subprocess
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
-from jobctrl import native_credentials as credentials
+from jobctrl import cli as cli_module, config, native_credentials as credentials
 from jobctrl.cli import app
 
 
@@ -166,6 +168,383 @@ def test_migration_preserves_crlf_bytes_in_retained_lines(tmp_path: Path) -> Non
     credentials.migrate_persistent_env_credentials([source], marker, store=FakeStore())  # type: ignore[arg-type]
 
     assert source.read_bytes() == b"KEEP=one\r\nTAIL=two\r\n"
+
+
+def test_migration_locks_each_existing_source_directory_once_in_stable_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_dir, second_dir = tmp_path / "a", tmp_path / "b"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    first, second = first_dir / ".env", second_dir / ".env"
+    first.write_text("ANTHROPIC_API_KEY=first-synthetic\n", encoding="utf-8")
+    second.write_text("ANTHROPIC_API_KEY=lower-precedence\nGEMINI_API_KEY=second-synthetic\n", encoding="utf-8")
+    missing = tmp_path / "missing" / ".env"
+    marker = tmp_path / "marker"
+    acquired: list[Path] = []
+    original_lock = config.config_file_lock
+
+    @contextmanager
+    def observed_lock(*, path):
+        with original_lock(path=path):
+            acquired.append(path.parent)
+            yield
+
+    monkeypatch.setattr(config, "config_file_lock", observed_lock)
+    store = FakeStore()
+    credentials.migrate_persistent_env_credentials(
+        [second, first, first_dir / "absent.env", missing], marker, store=store,  # type: ignore[arg-type]
+    )
+    assert acquired == [first_dir.resolve(), second_dir.resolve()]
+    assert not missing.parent.exists()
+    assert store.values == {"ANTHROPIC_API_KEY": "first-synthetic", "GEMINI_API_KEY": "second-synthetic"}
+    assert first.read_text(encoding="utf-8") == "" and second.read_text(encoding="utf-8") == ""
+
+
+def test_absent_source_in_read_only_unrelated_directory_does_not_block_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owned, unrelated = tmp_path / "owned", tmp_path / "unrelated"
+    owned.mkdir()
+    unrelated.mkdir(mode=0o500)
+    source = owned / ".env"
+    source.write_text("KEEP=unchanged\nGEMINI_API_KEY=synthetic-owned\n", encoding="utf-8")
+    absent = unrelated / ".env"
+    marker = owned / "marker"
+    original_lock = config.config_file_lock
+    denied = []
+    before = unrelated.stat().st_mtime_ns
+
+    @contextmanager
+    def denied_lock(*, path):
+        if path.parent == unrelated.resolve():
+            denied.append(path)
+            raise PermissionError(errno.EACCES, "synthetic read-only directory")
+        with original_lock(path=path):
+            yield
+
+    monkeypatch.setattr(config, "config_file_lock", denied_lock)
+    store = FakeStore()
+    result = credentials.migrate_persistent_env_credentials([source, absent], marker, store=store)  # type: ignore[arg-type]
+    assert result.migrated_keys == ("GEMINI_API_KEY",)
+    assert store.values == {"GEMINI_API_KEY": "synthetic-owned"}
+    assert source.read_text(encoding="utf-8") == "KEEP=unchanged\n"
+    assert marker.exists() and denied
+    assert list(unrelated.iterdir()) == [] and unrelated.stat().st_mtime_ns == before
+
+
+def test_denied_owned_inner_workspace_cannot_publish_marker_after_second_workspace_creates_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outer = tmp_path / "outer"
+    inner = outer / "inner"
+    inner.mkdir(parents=True, mode=0o500)
+    source = inner / ".env"
+    marker = outer / "custom-marker.json"
+    store = FakeStore()
+    monkeypatch.setattr(config, "APP_DIR", outer)
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-prior")
+    original_lock = config.config_file_lock
+    original_check = credentials._require_absent_sources
+    absence_checked, release_migration = threading.Event(), threading.Event()
+    outcomes: list[object] = []
+
+    @contextmanager
+    def denied_outer_lock(*, path):
+        if threading.current_thread() is migration_thread and path.parent == inner.resolve():
+            raise PermissionError(errno.EACCES, "synthetic owned directory lock denied")
+        with original_lock(path=path):
+            yield
+
+    def pause_after_absence(paths):
+        original_check(paths)
+        if source in paths:
+            absence_checked.set()
+            assert release_migration.wait(5)
+
+    monkeypatch.setattr(config, "config_file_lock", denied_outer_lock)
+    monkeypatch.setattr(credentials, "_require_absent_sources", pause_after_absence)
+
+    def migrate():
+        try:
+            outcomes.append(credentials.migrate_persistent_env_credentials([source], marker, store=store))  # type: ignore[arg-type]
+        except Exception as exc:
+            outcomes.append(exc)
+
+    migration_thread = threading.Thread(target=migrate)
+    migration_thread.start()
+    try:
+        assert absence_checked.wait(3)
+        assert stat_mode(inner) == 0o500
+        # A second workspace owns the inner directory and can repair its mode.
+        monkeypatch.setattr(config, "APP_DIR", inner)
+        cli_module._write_env_updates(source, {"GEMINI_API_KEY": "synthetic-late"}, dry_run=False, quiet=True)
+        assert source.exists() and not marker.exists()
+    finally:
+        release_migration.set()
+        migration_thread.join(timeout=5)
+    assert not migration_thread.is_alive()
+    assert len(outcomes) == 1 and isinstance(outcomes[0], credentials.NativeCredentialMigrationError)
+    assert "cannot be locked" in str(outcomes[0]) and "retry" in str(outcomes[0])
+    assert not marker.exists() and store.values == {}
+    assert source.read_text(encoding="utf-8").endswith("GEMINI_API_KEY=synthetic-late\n")
+
+    # Once the inner workspace has created the source, retry migrates it.
+    monkeypatch.setattr(config, "APP_DIR", outer)
+    result = credentials.migrate_persistent_env_credentials([source], marker, store=store)  # type: ignore[arg-type]
+    assert result.migrated_keys == ("GEMINI_API_KEY",)
+    assert store.values == {"GEMINI_API_KEY": "synthetic-late"}
+    assert "synthetic-late" not in source.read_text(encoding="utf-8") and marker.exists()
+
+
+def test_custom_marker_in_source_directory_keeps_writer_blocked_through_marker_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = tmp_path / "owned"
+    owner.mkdir()
+    source = owner / ".env"
+    marker = owner / "custom-marker.json"
+    source.write_text("KEEP=synthetic\nGEMINI_API_KEY=synthetic-key\n", encoding="utf-8")
+    monkeypatch.setattr(config, "APP_DIR", owner)
+    monkeypatch.setenv("SYNTHETIC_SETTING", "prior")
+    store = FakeStore()
+    marker_waiting, release_marker = threading.Event(), threading.Event()
+    writer_attempted, writer_finished = threading.Event(), threading.Event()
+    outcomes: list[object] = []
+    original_marker = credentials._write_marker
+    original_lock = config.config_file_lock
+
+    def pause_marker(path, keys):
+        marker_waiting.set()
+        assert release_marker.wait(5)
+        original_marker(path, keys)
+
+    @contextmanager
+    def observed_lock(*, path):
+        if threading.current_thread() is writer_thread:
+            writer_attempted.set()
+        with original_lock(path=path) as lock:
+            yield lock
+
+    monkeypatch.setattr(credentials, "_write_marker", pause_marker)
+    monkeypatch.setattr(config, "config_file_lock", observed_lock)
+
+    def migrate():
+        try:
+            outcomes.append(credentials.migrate_persistent_env_credentials([source], marker, store=store))  # type: ignore[arg-type]
+        except Exception as exc:
+            outcomes.append(exc)
+
+    def write_setting():
+        try:
+            cli_module._write_env_updates(source, {"SYNTHETIC_SETTING": "updated"}, dry_run=False, quiet=True)
+        except Exception as exc:
+            outcomes.append(exc)
+        finally:
+            writer_finished.set()
+
+    migration_thread = threading.Thread(target=migrate)
+    writer_thread = threading.Thread(target=write_setting)
+    migration_thread.start()
+    try:
+        assert marker_waiting.wait(3)
+        assert (owner / ".custom-marker.json.lock").is_file()
+        assert (owner / ".config.lock").is_dir() and not marker.exists()
+        writer_thread.start()
+        assert writer_attempted.wait(3)
+        assert not writer_finished.wait(0.05), "the writer must wait until the marker is published"
+    finally:
+        release_marker.set()
+        migration_thread.join(timeout=5)
+        if writer_thread.ident is not None:
+            writer_thread.join(timeout=5)
+    assert not migration_thread.is_alive() and not writer_thread.is_alive()
+    assert len(outcomes) == 1 and isinstance(outcomes[0], credentials.MigrationResult)
+    assert marker.exists() and not (owner / ".custom-marker.json.lock").exists()
+    assert not (owner / ".config.lock").exists()
+    assert store.values == {"GEMINI_API_KEY": "synthetic-key"}
+    assert source.read_text(encoding="utf-8") == "KEEP=synthetic\nSYNTHETIC_SETTING=updated\n"
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink"])
+def test_denied_lock_refuses_a_source_that_appeared_before_absence_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    owned, unrelated = tmp_path / "owned", tmp_path / "unrelated"
+    owned.mkdir()
+    unrelated.mkdir()
+    source = owned / ".env"
+    original = "GEMINI_API_KEY=synthetic-owned\n"
+    source.write_text(original, encoding="utf-8")
+    appeared = unrelated / ".env"
+    marker = owned / "marker"
+    original_lock = config.config_file_lock
+
+    @contextmanager
+    def denied_lock(*, path):
+        if path.parent == unrelated.resolve():
+            if kind == "file":
+                appeared.write_text("ANTHROPIC_API_KEY=synthetic-late\n", encoding="utf-8")
+            else:
+                appeared.symlink_to(unrelated / "missing-target")
+            raise PermissionError(errno.EACCES, "synthetic denied lock")
+        with original_lock(path=path):
+            yield
+
+    monkeypatch.setattr(config, "config_file_lock", denied_lock)
+    store = FakeStore()
+    with pytest.raises(credentials.NativeCredentialMigrationError, match="unlocked credential source exists"):
+        credentials.migrate_persistent_env_credentials([source, appeared], marker, store=store)  # type: ignore[arg-type]
+    assert source.read_text(encoding="utf-8") == original and store.values == {}
+    if kind == "symlink":
+        assert appeared.is_symlink()
+    else:
+        assert appeared.read_text(encoding="utf-8") == "ANTHROPIC_API_KEY=synthetic-late\n"
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("missing_parent", [False, True])
+def test_source_appearing_in_unlocked_directory_rolls_back_before_completion_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_parent: bool,
+) -> None:
+    owned, unrelated = tmp_path / "owned", tmp_path / "unrelated"
+    owned.mkdir()
+    if not missing_parent:
+        unrelated.mkdir()
+    source = owned / ".env"
+    original = b"KEEP=unchanged\r\nGEMINI_API_KEY=synthetic-owned\r\n"
+    source.write_bytes(original)
+    appeared = unrelated / ".env"
+    marker = owned / "marker"
+    original_lock = config.config_file_lock
+
+    @contextmanager
+    def denied_lock(*, path):
+        if path.parent == unrelated.resolve():
+            raise PermissionError(errno.EACCES, "synthetic denied lock")
+        with original_lock(path=path):
+            yield
+
+    monkeypatch.setattr(config, "config_file_lock", denied_lock)
+
+    class AppearingSourceStore(FakeStore):
+        def write(self, key: str, value: str) -> None:
+            super().write(key, value)
+            appeared.parent.mkdir(parents=True, exist_ok=True)
+            appeared.write_text("ANTHROPIC_API_KEY=synthetic-late\n", encoding="utf-8")
+
+    store = AppearingSourceStore()
+    with pytest.raises(credentials.NativeCredentialMigrationError, match="unlocked credential source exists"):
+        credentials.migrate_persistent_env_credentials([source, appeared], marker, store=store)  # type: ignore[arg-type]
+    assert source.read_bytes() == original and store.values == {}
+    assert appeared.read_text(encoding="utf-8") == "ANTHROPIC_API_KEY=synthetic-late\n"
+    assert not marker.exists()
+
+
+def test_missing_bundled_env_parent_refuses_marker_even_if_setup_creates_source_after_absence_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = tmp_path / "owned"
+    owner.mkdir()
+    source = owner / "nested" / ".env"
+    marker = tmp_path / "custom-marker.json"
+    monkeypatch.setattr(config, "APP_DIR", owner)
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "bundled")
+    monkeypatch.setenv("JOBCTRL_ENV_FILE", str(source))
+    monkeypatch.setenv("GEMINI_API_KEY", "test-preexisting-process-value")
+    assert config.get_env_path() == source
+    fake_store = FakeStore()
+    monkeypatch.setattr(credentials, "NativeCredentialStore", lambda: fake_store)
+    absence_checked, release_migration = threading.Event(), threading.Event()
+    original_check = credentials._require_absent_sources
+    results = []
+
+    def pause_after_absence(paths):
+        original_check(paths)
+        if source in paths:
+            absence_checked.set()
+            assert release_migration.wait(5)
+
+    monkeypatch.setattr(credentials, "_require_absent_sources", pause_after_absence)
+
+    def migrate():
+        results.append(CliRunner().invoke(app, ["credentials", "migrate", "--marker", str(marker)]))
+
+    migration_thread = threading.Thread(target=migrate)
+    migration_thread.start()
+    try:
+        assert absence_checked.wait(3)
+        # This real setup writer creates the source in the exact former gap:
+        # the absence check has passed, but the marker has not been published.
+        cli_module._write_env_updates(source, {"GEMINI_API_KEY": "synthetic-new"}, dry_run=False, quiet=True)
+        assert not marker.exists()
+    finally:
+        release_migration.set()
+        migration_thread.join(timeout=5)
+    assert not migration_thread.is_alive()
+    assert results and results[0].exit_code == 1
+    output = " ".join(results[0].output.lower().split())
+    assert "directory is missing" in output and "retry" in output
+    assert not marker.exists() and fake_store.values == {}
+    assert source.read_text(encoding="utf-8").endswith("GEMINI_API_KEY=synthetic-new\n")
+
+    # Once setup creates the parent, a normal retry migrates that exact source.
+    result = CliRunner().invoke(app, ["credentials", "migrate", "--marker", str(marker)])
+    assert result.exit_code == 0, result.output
+    assert fake_store.values == {"GEMINI_API_KEY": "synthetic-new"}
+    assert "synthetic-new" not in source.read_text(encoding="utf-8")
+    assert marker.exists()
+
+
+def test_default_first_use_allows_missing_optional_source_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = tmp_path / "owned"
+    source = owner / ".env"
+    optional = tmp_path / "optional" / ".env"
+    marker = owner / "marker.json"
+    monkeypatch.setattr(config, "APP_DIR", owner)
+    store = FakeStore()
+
+    result = credentials.migrate_persistent_env_credentials([source, optional], marker, store=store)  # type: ignore[arg-type]
+    assert not result.already_completed and result.migrated_keys == ()
+    assert marker.exists() and not source.exists() and not optional.parent.exists()
+
+
+@pytest.mark.parametrize("workspace", ["outer", "inner"])
+def test_nested_workspaces_refuse_missing_shared_owned_source_without_creating_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workspace: str,
+) -> None:
+    outer = tmp_path / "outer"
+    inner = outer / "inner"
+    inner.mkdir(parents=True)
+    source = inner / "missing" / ".env"
+    owner = outer if workspace == "outer" else inner
+    monkeypatch.setattr(config, "APP_DIR", owner)
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "bundled")
+    monkeypatch.setenv("JOBCTRL_ENV_FILE", str(source))
+    marker = tmp_path / f"{workspace}-marker.json"
+    store = FakeStore()
+    assert config.get_env_path() == source
+
+    with pytest.raises(credentials.NativeCredentialMigrationError, match="directory is missing"):
+        credentials.migrate_persistent_env_credentials([source], marker, store=store)  # type: ignore[arg-type]
+    assert not source.parent.exists() and not marker.exists() and store.values == {}
+
+
+def test_owned_source_parent_symlink_cannot_escape_to_missing_external_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, external = tmp_path / "owned", tmp_path / "external"
+    owner.mkdir()
+    external.mkdir()
+    (owner / "link").symlink_to(external, target_is_directory=True)
+    monkeypatch.setattr(config, "APP_DIR", owner)
+    source = owner / "link" / "missing" / ".env"
+    marker = tmp_path / "marker.json"
+    store = FakeStore()
+
+    with pytest.raises(credentials.NativeCredentialMigrationError, match="resolves outside"):
+        credentials.migrate_persistent_env_credentials([source], marker, store=store)  # type: ignore[arg-type]
+    assert not (external / "missing").exists() and not marker.exists() and store.values == {}
 
 
 def test_failed_migration_restores_exact_crlf_source_bytes(

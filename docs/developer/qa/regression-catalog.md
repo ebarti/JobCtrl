@@ -2385,9 +2385,23 @@ real store. The `Native credential stores` CI workflow runs it on hosted macOS,
 Windows (Python 3.12), and Linux. Linux runs a temporary Secret Service inside
 an owned D-Bus session; Windows additionally checks restrictive source DACLs
 after migration and rollback. A queued or blocked job is not host evidence.
-From a prepared source checkout on macOS or Windows, run it with a Python
-environment containing `python-dotenv` and the installed Node dependencies.
-On Linux, use `dbus-run-session -- python scripts/native-credentials-host.py
+Run the fake-only diagnostic contracts through the locked core runtime before
+native proof: `uv --project workers/automation run --locked --no-default-groups
+--no-dev python scripts/test_native_credentials_host.py`. The harness reports
+the primary proof failure and cleanup failures separately, with only fixed
+phase names, timings and error types. Its Windows Python-reader probe adds
+fixed stderr markers around script entry, module load, compilation, input
+parsing, native-call entry and script exit; raw command output is never emitted.
+Missing markers do not establish a startup cause, and script exit can still
+precede native-buffer cleanup and process exit. The TypeScript bridge retains
+its coarser API phase. A hosted Windows run is required to observe these
+boundaries; fake tests do not qualify Windows behavior.
+From a prepared source checkout with the installed Node dependencies, use
+`uv --project workers/automation run --locked --no-default-groups --no-dev
+python scripts/native-credentials-host.py` on macOS or Windows. This uses the
+locked core runtime with provider SDK dependency groups excluded. On Linux, use
+`dbus-run-session -- uv --project workers/automation run --locked
+--no-default-groups --no-dev python scripts/native-credentials-host.py
 --linux-session` after installing `secret-tool` and `gnome-keyring-daemon`.
 
 Exercise the API's presence-only response, fixed key allowlist, unavailable
