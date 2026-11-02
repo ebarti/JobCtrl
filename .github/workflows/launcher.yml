@@ -1,7 +1,6 @@
----
 name: Native Launcher CI
 'on':
-  workflow_dispatch: 
+  workflow_dispatch:
   workflow_call:
     inputs:
       enabled:
