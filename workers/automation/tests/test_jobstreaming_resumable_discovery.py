@@ -323,7 +323,10 @@ def _config(
     return {
         "boards": list(boards),
         "queries": [{"query": query} for query in queries],
-        "locations": [{"label": "remote", "location": "Remote", "remote": True}],
+        # Indeed cannot combine the Remote filter with the lookback below.
+        # Keep LinkedIn-only coverage remote while retry/cancellation tests
+        # that include Indeed use an ordinary literal location request.
+        "locations": [{"label": "remote", "location": "Remote", "remote": boards == ("linkedin",)}],
         "defaults": {
             "results_per_site": 10,
             "hours_old": 72,
