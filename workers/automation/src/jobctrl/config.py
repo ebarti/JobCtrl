@@ -469,11 +469,14 @@ def load_discovery_control_settings() -> dict:
     if search_cfg is None:
         search_cfg = _default_discovery_search_config()
     effective = effective_discovery_search_config(search_cfg)
-    # Legacy JSON may contain numeric tier strings. Comparisons in provider
-    # planning use integers; normalize the execution copy, not the saved row.
+    # Legacy JSON may contain numeric strings. Normalize only the execution
+    # copy so planning and adapter capability checks keep the stored bytes.
     for query in effective.get("queries", []):
         if "tier" in query:
             query["tier"] = int(query["tier"])
+    for key in ("results_per_site", "hours_old", "distance"):
+        if key in effective.get("defaults", {}):
+            effective["defaults"][key] = int(effective["defaults"][key])
     return effective
 
 
@@ -542,18 +545,31 @@ def load_discovery_automation_settings() -> dict[str, object]:
 def save_discovery_automation_settings(
     *,
     auto_apply: bool,
-    apply_approval_required: bool,
+    apply_approval_required: bool | None,
+    expected_automation: Mapping[str, object] | None = None,
+    initialize_approval_default: bool = False,
 ) -> None:
     """Persist Apply automation choices with the SQLite-owned Discovery settings."""
     def update(search_cfg: dict) -> dict:
         raw_automation = search_cfg.get("automation")
         automation = dict(raw_automation) if isinstance(raw_automation, dict) else {}
-        automation.update(
-            {
-                "auto_apply": bool(auto_apply),
-                "apply_approval_required": bool(apply_approval_required),
-            }
-        )
+        updates = {"auto_apply": bool(auto_apply)}
+        if apply_approval_required is not None:
+            updates["apply_approval_required"] = bool(apply_approval_required)
+        if expected_automation is not None and any(
+            (key in automation, automation.get(key))
+            != (key in expected_automation, expected_automation.get(key))
+            for key in updates
+        ):
+            from jobctrl.domain.errors import ConfigurationError
+
+            raise ConfigurationError(
+                "Apply automation changed while setup was awaiting your choice. "
+                "Your Apply settings were not changed; retry jobctrl init."
+            )
+        if initialize_approval_default:
+            automation.setdefault("apply_approval_required", True)
+        automation.update(updates)
         search_cfg["automation"] = automation
         return search_cfg
 
@@ -657,7 +673,9 @@ def _read_discovery_search_config(
     return loaded
 
 
-def _update_discovery_search_config(update: Callable[[dict], dict]) -> None:
+def _update_discovery_search_config(
+    update: Callable[[dict], dict], *, first_use_update: Callable[[dict], dict] | None = None,
+) -> None:
     """Validate and update under the same write lock, preserving invalid rows."""
     try:
         DB_PATH.lstat()
@@ -674,7 +692,48 @@ def _update_discovery_search_config(update: Callable[[dict], dict]) -> None:
         conn.row_factory = sqlite3.Row
         conn.execute("BEGIN IMMEDIATE")
         current = _read_discovery_search_config(conn)
-        next_config = update(current or _default_discovery_search_config())
+        current_config = current or _default_discovery_search_config()
+        previous_config = json.loads(json.dumps(current_config))
+        current_boards = resolve_jobspy_boards(current_config, warn=False)
+        current_hours = current_config.get("defaults", {}).get("hours_old", 72)
+        current_hours = int(current_hours) if current_hours is not None else None
+        updater = first_use_update if current is None and first_use_update is not None else update
+        next_config = updater(current_config)
+        next_boards = resolve_jobspy_boards(next_config, warn=False)
+        next_hours = next_config.get("defaults", {}).get("hours_old", 72)
+        next_hours = int(next_hours) if next_hours is not None else None
+        selection_changed = previous_config.get("location_labels") != next_config.get("location_labels")
+        changed_boards = next_boards if next_hours != current_hours or selection_changed else [
+            board for board in next_boards if board not in current_boards
+        ]
+        from jobctrl.domain.profile.search_targets import legacy_remote_target_rows
+
+        old_legacy = legacy_remote_target_rows(previous_config.get("locations"))
+        new_legacy = legacy_remote_target_rows(next_config.get("locations"))
+        if changed_boards or old_legacy != new_legacy:
+            row = conn.execute(
+                "SELECT experience_target_locations, experience_target_work_models FROM candidate_profiles "
+                "WHERE tenant_id = ? AND profile_id = ?",
+                (str(LOCAL_TENANT), "default"),
+            ).fetchone()
+            from jobctrl.domain.discovery.remote_search import validate_target_row
+            from jobctrl.domain.profile.search_targets import active_target_rows, guarded_target_rows, has_profile_target_rows
+
+            rows = new_legacy
+            profile_overrides = False
+            if row is not None:
+                locations, models = row["experience_target_locations"], row["experience_target_work_models"]
+                if not isinstance(locations, str) or not isinstance(models, str):
+                    raise InvalidSavedSearchError("Saved Candidate Profile targets")
+                profile_overrides = has_profile_target_rows(locations, models)
+                if profile_overrides:
+                    rows = guarded_target_rows(locations, models)
+            for location, choices, label in active_target_rows(rows, next_config):
+                boards = next_boards if not profile_overrides and (location, choices, label) not in old_legacy else changed_boards
+                if boards:
+                    validate_target_row(
+                        location=location, choices=choices, sites=tuple(boards), hours_old=next_hours
+                    )
         _ensure_discovery_settings_table(conn)
         now = datetime_utc_now()
         conn.execute(

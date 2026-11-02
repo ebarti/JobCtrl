@@ -3,6 +3,7 @@ import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/r
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import { useToastStore } from "../../../shared/stores/toasts.js";
 import { dashboardKeys } from "../../operations/dashboardKeys.js";
 import { jobsKeys } from "../../operations/jobsKeys.js";
 import { workflowRunsKeys } from "../../operations/workflowRunsKeys.js";
@@ -17,6 +18,11 @@ export function useRetryFailedJobsMutation(): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body) => api.retryFailedJobs(body),
+    onSuccess: (data) => {
+      if (data.retailorRequiredJobKeys?.length && data.message) {
+        useToastStore.getState().toast({ variant: "info", message: data.message });
+      }
+    },
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: jobsKeys.lists(tenantId) }),

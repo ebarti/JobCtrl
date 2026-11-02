@@ -7,6 +7,7 @@ import { seedApplicationUrl } from "./seed-enrichment.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createRetryFixturePythonRuntime } from "./retry-rpc-runtime.js";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -132,6 +133,15 @@ function profileWithTargetSearch(fullName: string, location: string, workModel: 
   };
 }
 
+async function selectRemoteCompatibleSearch(app: ReturnType<typeof buildApp>): Promise<void> {
+  // These tests exercise Profile/suggestion behavior after a supported save.
+  // First-use Indeed/lookback defaults deliberately reject a new Remote target.
+  const response = await app.inject({
+    method: "PATCH", url: "/v1/discovery/settings", payload: { boards: ["linkedin"] },
+  });
+  expect(response.statusCode, response.body).toBe(200);
+}
+
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -159,14 +169,14 @@ beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-"));
   enrichmentRetryRpc = new SubprocessJsonRpcAdapter({
     appDir: tempDir,
-    pythonRuntime: createSourcePythonRuntime({ environment: { ...process.env, LANGFUSE_DISABLE: "1" } }),
+    pythonRuntime: createRetryFixturePythonRuntime(),
   });
   options = {
     dbPath: path.join(tempDir, "jobctrl.db"),
     configPath: path.join(tempDir, "config.json"),
     providerDispatcher: {
       call: vi.fn(async (method, params) => {
-        if (method === RpcMethods.ResetEnrichment) return enrichmentRetryRpc.call(method, params);
+        if (method === RpcMethods.ResetEnrichment || method === RpcMethods.ResetStages) return enrichmentRetryRpc.call(method, params);
         if (method !== "browser_capabilities_list") throw new Error(`Unexpected provider RPC in API fixture: ${method}`);
         return { jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } };
       }),
@@ -8288,7 +8298,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       count: 1,
-      jobKeys: ["https://example.com/jobs/failed-score"],
+      jobKeys: [jobIdFor("https://example.com/jobs/failed-score")],
     });
 
     const db = new Database(options.dbPath);
@@ -8353,7 +8363,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       count: 2,
-      jobKeys: ["https://example.com/jobs/failed-score", secondFailedUrl],
+      jobKeys: [jobIdFor("https://example.com/jobs/failed-score"), jobIdFor(secondFailedUrl)],
       stageCounts: { score: 2 },
       runAfter: true,
       status: "queued",
@@ -8757,7 +8767,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       count: 1,
-      jobKeys: [jobUrl],
+      jobKeys: [jobIdFor(jobUrl)],
     });
 
     const db = new Database(options.dbPath);
@@ -10763,6 +10773,7 @@ describe("local TypeScript API", () => {
       placeValidator: async (place) => place === "Barcelona",
       providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
     });
+    await selectRemoteCompatibleSearch(app);
     const initial = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
@@ -10814,6 +10825,7 @@ describe("local TypeScript API", () => {
     async () => {
       const placeValidator = vi.fn(async (place: string) => place === "Barcelona");
       const seedApp = buildApp({ ...options, placeValidator });
+      await selectRemoteCompatibleSearch(seedApp);
       const seeded = await seedApp.inject({
         method: "PATCH",
         url: "/v1/profile",
@@ -10885,11 +10897,13 @@ describe("local TypeScript API", () => {
 
   it("atomically rejects stale suggestion saves without a profile event", async () => {
     const app = buildApp(options);
+    await selectRemoteCompatibleSearch(app);
     const initial = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
       payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
     });
+    expect(initial.statusCode, initial.body).toBe(200);
     const version = initial.json().profileVersion as number;
     const beforeDb = new Database(options.dbPath, { readonly: true });
     const beforeEvents = beforeDb.prepare(
@@ -10938,11 +10952,13 @@ describe("local TypeScript API", () => {
       ...options,
       providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
     });
+    await selectRemoteCompatibleSearch(app);
     const initial = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
       payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
     });
+    expect(initial.statusCode, initial.body).toBe(200);
     const version = initial.json().profileVersion as number;
     expect(providerCall).not.toHaveBeenCalled();
     const suggestionResponse = app.inject({
@@ -11243,6 +11259,7 @@ describe("local TypeScript API", () => {
   it("validates target-search locations before saving profile preferences", async () => {
     const placeValidator = vi.fn(async (place: string) => place === "Austin, TX");
     const app = buildApp({ ...options, placeValidator });
+    await selectRemoteCompatibleSearch(app);
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/profile",

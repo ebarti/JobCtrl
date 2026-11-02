@@ -327,15 +327,23 @@ describe("<ApplyRuntimeSettingsPanel>", () => {
     if (timing === "before") await startGuidanceSave();
     await act(async () => runtimeSave.resolve(canonical));
     await within(runtime).findByText("Saved; newer changes pending.");
-    await waitFor(() => expect(settings.mock.calls.length).toBeGreaterThan(1));
-    if (timing === "after") await startGuidanceSave();
+    if (timing === "before") {
+      await waitFor(() => expect(queryClient.getQueryState(settingsKeys.settings(LOCAL_TENANT))?.isInvalidated).toBe(true));
+      expect(settings).toHaveBeenCalledTimes(1);
+    } else {
+      await waitFor(() => expect(settings.mock.calls.length).toBeGreaterThan(1));
+      await startGuidanceSave();
+    }
 
     const cached = queryClient.getQueryData<SettingsResponse>(settingsKeys.settings(LOCAL_TENANT));
     expect(cached?.settings.scoreCriteria).toBe("Synthetic priority");
+    expect(timeout).toHaveValue(1500);
     await user.click(within(runtime).getByRole("button", { name: "Discard changes" }));
     expect(timeout).toHaveValue(1201);
+    const readsBeforeSiblingSettlement = settings.mock.calls.length;
     await act(async () => guidanceSave.reject(new Error("Synthetic guidance failure")));
     await waitFor(() => expect(within(guidance).getByRole("alert")).toHaveTextContent("could not be saved"));
+    await waitFor(() => expect(settings.mock.calls.length).toBeGreaterThan(readsBeforeSiblingSettlement));
     rerender(<ScoringGuidancePanel />);
     rerender(panels);
     expect(await screen.findByLabelText("Apply agent timeout (seconds)")).toHaveValue(1201);
