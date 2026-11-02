@@ -10,6 +10,10 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const launcher = path.join(root, "scripts/dev");
 const cleanupDiagnosticLimit = 4096;
+// A verified stop can spend 20 seconds awaiting its owner. The fixture client
+// must allow that bounded cleanup to finish, including serial fleet shutdown.
+const fixtureCommandTimeout = 30_000;
+const fixtureCaseTimeout = 3 * fixtureCommandTimeout;
 
 function boundedFixtureDiagnostic(value, limit) {
   if (value.length <= limit) return value;
@@ -143,7 +147,7 @@ from jobctrl.infrastructure import process_ownership
 # Only this synthetic supervisor process selects a different cooperative grace.
 # The original handle, session census, cleanup budget and receipts stay intact.
 # The controller coordinates six owners; leaf owners retain their two-second grace.
-# Keep headroom within the existing 16-second cleanup and 10-second client bounds.
+# Keep headroom within the existing 16-second cleanup and 20-second client bounds.
 process_ownership._PROCESS_TERMINATION_GRACE_SECONDS = 8.0
 original_terminate = owner.terminate_owned_process
 def terminate(child, *, launched_pid):
@@ -211,7 +215,7 @@ wait "$controller_child"
       cwd: homeDir,
       env,
       encoding: "utf8",
-      timeout: 10_000,
+      timeout: fixtureCommandTimeout,
     });
 
   const run = (...args) => {
@@ -247,8 +251,8 @@ wait "$controller_child"
       };
       const deadline = setTimeout(() => {
         signalChild("SIGTERM");
-        reject(new Error(`Foreground fixture did not start and stop within 10s:\n${stdout}\n${stderr}`));
-      }, 10_000);
+        reject(new Error(`Foreground fixture did not start and stop within ${fixtureCommandTimeout / 1000}s:\n${stdout}\n${stderr}`));
+      }, fixtureCommandTimeout);
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
       child.stdout.on("data", (chunk) => {
@@ -1009,7 +1013,7 @@ test("foreground demo API advances from migrations to the long-lived server", as
 
 for (const mode of ["run", "start", "restart"]) {
   for (const targets of [[], ["api", "web"]]) {
-    test(`${mode} ${targets.join(" ") || "default fleet"} builds the extension once before replacing processes`, { timeout: 30_000 }, async () => {
+    test(`${mode} ${targets.join(" ") || "default fleet"} builds the extension once before replacing processes`, { timeout: fixtureCaseTimeout }, async () => {
       const harness = await createHarness();
       try {
         harness.run("start", "api", "web");
@@ -1050,7 +1054,7 @@ for (const mode of ["run", "start", "restart"]) {
     });
   }
 
-  test(`${mode} preserves existing processes and logs when the extension build fails`, { timeout: 30_000 }, async () => {
+  test(`${mode} preserves existing processes and logs when the extension build fails`, { timeout: fixtureCaseTimeout }, async () => {
     const harness = await createHarness();
     try {
       harness.run("start", "api", "web");
@@ -1084,7 +1088,7 @@ for (const mode of ["run", "start", "restart"]) {
     }
   });
 
-  test(`${mode} skips the extension for component sets without product web`, { timeout: 30_000 }, async () => {
+  test(`${mode} skips the extension for component sets without product web`, { timeout: fixtureCaseTimeout }, async () => {
     const harness = await createHarness();
     try {
       await harness.failBuild();
