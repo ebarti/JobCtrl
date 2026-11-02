@@ -3764,6 +3764,15 @@ input[type="radio"] {
   font-size: var(--jh-type-component-title-size);
 }
 
+.outcome-suggestion-card .outcome-decision-notice {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.outcome-suggestion-card .outcome-decision-notice > button {
+  align-self: flex-start;
+}
+
 .outcome-submit,
 .outcome-retry-notice,
 .outcome-form .status-line,

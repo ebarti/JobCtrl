@@ -54,6 +54,13 @@ async function exerciseConflict(page: Page, info: TestInfo): Promise<void> {
   await expect(card.getByRole("alert")).toContainText("Your requested decision was not applied");
   await expect(card.getByRole("alert")).toContainText("Saved decision: ignored");
   await expect(card.getByRole("alert")).toContainText("Earlier review");
+  const notice = card.getByRole("alert");
+  const firstLine = await notice.locator("p").first().boundingBox();
+  const lastLine = await notice.locator("p").last().boundingBox();
+  expect(firstLine).not.toBeNull();
+  expect(lastLine).not.toBeNull();
+  expect(lastLine!.y).toBeGreaterThanOrEqual(firstLine!.y + firstLine!.height);
+  expect(firstLine!.width).toBeGreaterThan((await notice.boundingBox())!.width * 0.8);
   await expect(card.getByLabel("Reason")).toHaveValue("My attempted correction");
   await expect(card.getByLabel("Local note")).toHaveValue("Keep my synthetic draft");
   await expect(card.getByRole("button", { name: /^correct suggestion/i })).toBeDisabled();

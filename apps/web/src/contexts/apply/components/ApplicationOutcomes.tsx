@@ -872,7 +872,7 @@ function OutcomeSuggestionCard({
         ? `Model: ${suggestion.determination.provider}/${suggestion.determination.model} · Prompt: ${suggestion.determination.prompt_version} · Source: ${suggestion.determination.input_fingerprint}`
         : "No recorded determination"}</p>
       {conflict ? (
-        <div role="alert" className="banner inline">
+        <div role="alert" className="banner inline outcome-decision-notice">
           <p>{conflict.error === "outcome_suggestion_conflict"
             ? "Your requested decision was not applied."
             : "The stored decision or earlier request could not be verified."}</p>
@@ -885,7 +885,7 @@ function OutcomeSuggestionCard({
         </div>
       ) : null}
       {completion ? (
-        <div role="status" className="banner inline">
+        <div role="status" className="banner inline outcome-decision-notice">
           <p>Your {requestedDecision} decision was recorded while you were away.</p>
           <p>Saved decision: {completion.suggestion.status}{completion.outcome ? ` · ${outcomeLabel(completion.outcome.kind)} · ${formatDateTime(completion.outcome.occurredAt)}` : ""}.</p>
           <p>Your correction fields remain below for review or copying.</p>
