@@ -899,6 +899,8 @@ def import_manual_capture_item(
             (str(tenant_id), capture.item_id),
         ).fetchone()
         if row is None:
+            if expected_queue_state is not None:
+                raise ManualCaptureStateChanged("Manual capture changed before input retention")
             raise ValueError(f"Manual capture item {capture.item_id!r} was not found")
         if expected_queue_state is not None and (
             _row_value(row, "originating_url", 1), _row_value(row, "source_id", 2),

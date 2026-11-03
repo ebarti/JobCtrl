@@ -21,7 +21,7 @@ test.afterEach(() => {
   finally { db.close(); }
 });
 
-test("manual capture recovery advances the review lifecycle and retries the reviewed draft", async ({ page }) => {
+test("manual capture recovery advances the review lifecycle and retries the reviewed draft", async ({ page }, testInfo) => {
   await page.route("**/v1/health", async (route) => {
     await route.fulfill({ json: {
       ...sampleHealthResponse,
@@ -85,6 +85,7 @@ test("manual capture recovery advances the review lifecycle and retries the revi
   await expect(page.getByLabel("Saved HTML")).toHaveValue(corrected);
   await expect(page.getByLabel("Saved HTML")).toBeDisabled();
   await expect(page.getByText("Prevent earlier imports for this capture from saving before you review and retry.")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("manual-capture-recovery-retained-desktop.png"), fullPage: true });
   const recovery = page.waitForResponse((response) => response.url().endsWith(`/v1/discovery/manual-capture/${itemId}/supersede`)
     && response.request().method() === "POST");
   await page.getByRole("button", { name: "Prevent earlier imports from saving" }).click();
@@ -126,11 +127,13 @@ test("manual capture recovery advances the review lifecycle and retries the revi
     { content: retried, lifecycleId: retryPrepared.lifecycleId },
   ]);
   await expect(page.getByLabel("Saved HTML")).toBeDisabled();
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await page.getByRole("tab", { name: "Manual capture" }).click();
   await expect(page.getByLabel("Saved HTML")).toHaveValue(retried);
   await expect(page.getByLabel("Saved HTML")).toBeDisabled();
   await expect(page.getByText("An earlier import may still finish. Review the retained capture before retrying.")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("manual-capture-recovery-retained-mobile.png"), fullPage: true });
   const check = new Database(loadE2eDbPath());
   try { expect(check.prepare("SELECT status FROM manual_capture_queue WHERE tenant_id='local' AND item_id=?").get(itemId))
     .toEqual({ status: "pending" }); }

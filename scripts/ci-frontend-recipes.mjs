@@ -50,7 +50,8 @@ export const frontendRecipes = {
     {
       "name": "Test isolated manual-capture recovery",
       "env": {
-        "JOBCTRL_E2E_ISOLATED": "1"
+        "JOBCTRL_E2E_ISOLATED": "1",
+        "PLAYWRIGHT_JUNIT_OUTPUT_FILE": "${{ runner.temp }}/e2e-manual-capture.xml"
       },
       "run": "node --test apps/web/e2e/fixtures/manual-capture-recovery-guard.test.cjs\ncorepack pnpm --filter @jobctrl/web exec playwright test --config e2e/manual-capture-recovery.playwright.config.ts\n"
     },

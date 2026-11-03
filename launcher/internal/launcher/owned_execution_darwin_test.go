@@ -4,6 +4,7 @@ package launcher
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1127,6 +1128,9 @@ func TestOwnedExecutionFixedLoopbackSandbox(t *testing.T) {
 	}
 	ctx := executionTestContext(t)
 	ctx.Environment = append(ctx.Environment, executionQASandboxVariable+"="+executionQASandboxSelector)
+	if err := os.MkdirAll(ctx.Instance.StateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -1140,9 +1144,9 @@ func TestOwnedExecutionFixedLoopbackSandbox(t *testing.T) {
 		}
 		accepted <- err
 	}()
-	var out, stderr bytes.Buffer
-	if err = runInOwnedExecution(ctx, []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "network", listener.Addr().String()}, &out, &stderr); err != nil {
-		t.Fatalf("sandboxed native helper network check: %v; stderr=%s", err, stderr.String())
+	var out boundedProbeOutput
+	if err = runTemporalProbeInOwnedExecution(context.Background(), ctx, ctx.Executable, []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "network", listener.Addr().String()}, &out); err != nil {
+		t.Fatalf("native helper payload network check: %v; output=%s", err, out.String())
 	}
 	select {
 	case err := <-accepted:
@@ -1156,8 +1160,8 @@ func TestOwnedExecutionFixedLoopbackSandbox(t *testing.T) {
 		t.Fatalf("missing network proof: %s", out.String())
 	}
 	scopes, err := readOwnedExecutionScopes(ctx)
-	if err != nil || len(scopes) != 1 {
-		t.Fatalf("sandboxed helper did not authenticate durable scope: %v", err)
+	if err != nil || len(scopes) != 0 {
+		t.Fatalf("native helper did not retire its verified payload scope: %v", err)
 	}
 }
 
@@ -1177,6 +1181,9 @@ func TestOwnedExecutionQASandboxDeniesCredentialAccess(t *testing.T) {
 	ctx.Instance.ControlPath = filepath.Join(filepath.Dir(ctx.Instance.StatePath), "control.lock")
 	ctx.Instance.LockPath = filepath.Join(filepath.Dir(ctx.Instance.StatePath), "instance.lock")
 	ctx.Environment = append(ctx.Environment, executionQASandboxVariable+"="+executionQASandboxSelector)
+	if err := os.MkdirAll(ctx.Instance.StateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		if err := stop(ctx); err != nil {
 			t.Errorf("owned privacy fixture cleanup: %v", err)
@@ -1190,9 +1197,9 @@ func TestOwnedExecutionQASandboxDeniesCredentialAccess(t *testing.T) {
 	if err := os.WriteFile(keychain, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	var out, stderr bytes.Buffer
-	if err := runInOwnedExecution(ctx, []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "qa-privacy", keychain}, &out, &stderr); err != nil {
-		t.Fatalf("native QA credential boundary failed: %v; stderr=%s", err, stderr.String())
+	var out boundedProbeOutput
+	if err := runTemporalProbeInOwnedExecution(context.Background(), ctx, ctx.Executable, []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "qa-privacy", keychain}, &out); err != nil {
+		t.Fatalf("native QA credential boundary failed: %v; output=%s", err, out.String())
 	}
 	if !strings.Contains(out.String(), "Keychain files and credential command denied") {
 		t.Fatalf("missing privacy proof: %s", out.String())
@@ -1202,10 +1209,10 @@ func TestOwnedExecutionQASandboxDeniesCredentialAccess(t *testing.T) {
 	}
 }
 
-func TestOwnedExecutionPlistPreservesCompiledProfileText(t *testing.T) {
-	plist := executionPlist("owned-label", "/tmp/native&<helper>", "/tmp/socket", "challenge", true)
-	if !bytes.Contains(plist, []byte(executionQASandboxProfile)) {
-		t.Fatal("launchd plist did not preserve literal compiled sandbox profile")
+func TestOwnedExecutionPlistKeepsNativeControlOutsideSandbox(t *testing.T) {
+	plist := executionPlist("owned-label", "/tmp/native&<helper>", "/tmp/socket", "challenge")
+	if bytes.Contains(plist, []byte("sandbox-exec")) || bytes.Contains(plist, []byte(executionQASandboxProfile)) {
+		t.Fatal("launchd plist sandboxed native control instead of payload dispatch")
 	}
 	if bytes.Contains(plist, []byte("&#")) {
 		t.Fatal("launchd plist uses truncating numeric character references")

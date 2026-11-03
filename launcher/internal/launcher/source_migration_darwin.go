@@ -227,7 +227,7 @@ func sourceSnapshotPair(ctx launchContext, journal sourceMigrationJournal, tempo
 			source = temporal
 		}
 		dest := filepath.Join(dir, name)
-		version, err := sqliteOnlineBackup(ctx.SourcePython, source, dest)
+		version, err := sqliteOnlineBackup(ctx.SourcePython, source, dest, ctx.Environment)
 		if err != nil {
 			return "", fmt.Errorf("back up %s: %w", name, err)
 		}
@@ -261,7 +261,7 @@ try:
  assert_exact_manifest(c,EXACT_V15_MANIFEST)
  if c.execute('pragma integrity_check').fetchone()!=('ok',) or c.execute('pragma foreign_key_check').fetchall(): raise RuntimeError('integrity')
 finally: c.close()`
-	cmd := exec.Command(ctx.SourcePython, "-I", "-B", "-c", code, database)
+	cmd := payloadCommand(ctx.Environment, ctx.SourcePython, "-I", "-B", "-c", code, database)
 	cmd.Env = ctx.Environment
 	if err := cmd.Run(); err != nil {
 		return errors.New("migrated source database failed exact-schema or integrity validation")
@@ -303,7 +303,7 @@ func automaticSourceMigration(ctx launchContext, output io.Writer) error {
 	} else if err != nil {
 		return err
 	}
-	version, err := sqliteUserVersion(ctx.SourcePython, database)
+	version, err := sqliteUserVersion(ctx.SourcePython, database, ctx.Environment)
 	if err != nil {
 		return fmt.Errorf("inspect source workspace schema: %w", err)
 	}
@@ -371,7 +371,7 @@ func automaticSourceMigration(ctx launchContext, output io.Writer) error {
 		return err
 	}
 	defer releaseLock(lock)
-	version, err = sqliteUserVersion(ctx.SourcePython, database)
+	version, err = sqliteUserVersion(ctx.SourcePython, database, ctx.Environment)
 	if err != nil {
 		return err
 	}

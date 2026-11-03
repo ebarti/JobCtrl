@@ -276,10 +276,14 @@ ownership. The [QA matrix](../local-reliability-qa.md) requires detached platfor
 and writer cases, other-instance preservation, ordered cancellation, actual
 process interruption, paired readback and restart.
 
-The distribution smoke runs native controllers outside Seatbelt so launchd can
-establish the jobs, while the exact internal QA selector applies the compiled
-loopback-only sandbox to the authenticated helper and all payload descendants.
-Actual native Python dispatch proves loopback access and non-loopback `EPERM`.
+The distribution smoke keeps authenticated native helpers, launchers and
+supervisors outside Seatbelt so they can establish launchd jobs, including each
+health probe's fresh owned scope. The exact internal QA selector applies the
+compiled loopback-only and Keychain-denying profile at every payload dispatch:
+components, source shells, Python CLI/Apply, probes and migration/backup Python.
+Payload descendants inherit that restriction; a nested native caller cannot
+escape an inherited sandbox. Actual compiled startup/status/restart and native
+Python dispatch prove loopback access, non-loopback `EPERM` and credential denial.
 Direct extracted Python/Node/Temporal/MCP smoke subprocesses keep their existing
 sandbox. Signed/notarized artifact and clean-machine qualification remain
 release/first-use gates, separately from synthetic source proof.

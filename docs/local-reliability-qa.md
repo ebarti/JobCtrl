@@ -54,14 +54,22 @@ fail. The fixture is not evidence of a real Temporal freeze.
 
 The bundled native smoke must preserve network isolation across launchd: run its
 native control process outside Seatbelt and select the fixed internal
-`JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1` restriction at the authenticated
-job helper. Verify the actual compiled native-to-CPython dispatch can connect to
+`JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1` restriction at every payload
+dispatch from authenticated native control. Keep the native helper, launcher and
+supervisor outside Seatbelt so startup can establish each health probe's fresh
+owned scope. Cover component and source-shell launch, both Python dispatches,
+probe payloads and migration/backup Python commands. Unknown selectors must
+refuse execution. A native controller invoked from an already-sandboxed payload
+cannot escape that restriction; nested launchd admission still fails closed.
+Verify the actual compiled native startup, status, stop and restart under this
+selector, with each component and health payload proving isolation. Verify the
+actual compiled native-to-CPython dispatch can connect to
 loopback and receives `EPERM` on a reserved non-loopback TCP permission probe,
 with no application bytes sent. Keep direct extracted-runtime sandbox probes
 and signed/notarized first-use qualification distinct.
 The same fixed QA profile denies Keychain file reads and writes, security-service
 lookups and execution of the native credential command. Verify denial through
-the actual native helper using an owned synthetic Keychain-path file and the
+the actual native helper and CPython dispatch using an owned synthetic Keychain-path file and the
 credential command's harmless help operation; preserve the synthetic bytes.
 
 For the job-data purge gate, the disposable workspace must contain a Candidate

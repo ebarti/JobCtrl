@@ -243,12 +243,14 @@ def test_dismissal_during_model_work_is_not_overwritten(monkeypatch, tmp_path):
     assert _counts(conn) == (0, 0, 0)
 
 
-def test_concurrent_attempts_publish_only_once(monkeypatch, tmp_path):
+@pytest.mark.parametrize("delay_second_admission", [False, True])
+def test_concurrent_attempts_publish_only_once(monkeypatch, tmp_path, delay_second_admission):
     from jobctrl.discovery import manual_capture_workflow as module
 
     path = tmp_path / 'jobctrl.db'
     conn = _seed_pending(path)
     barrier = threading.Barrier(2)
+    first_finished = threading.Event()
     original = module._capture_row
     local = threading.local()
     def synchronized(*args, **kwargs):
@@ -256,9 +258,12 @@ def test_concurrent_attempts_publish_only_once(monkeypatch, tmp_path):
         if not getattr(local, 'waited', False):
             local.waited = True
             barrier.wait(timeout=15)
+            if delay_second_admission and local.index == 1:
+                assert first_finished.wait(timeout=15)
         return row
     monkeypatch.setattr(module, '_capture_row', synchronized)
-    def run():
+    def run(index):
+        local.index = index
         other = sqlite3.connect(path, timeout=15)
         other.row_factory = sqlite3.Row
         try:
@@ -267,8 +272,10 @@ def test_concurrent_attempts_publish_only_once(monkeypatch, tmp_path):
             return exc.type
         finally:
             other.close()
+            if index == 0:
+                first_finished.set()
     with ThreadPoolExecutor(max_workers=2) as executor:
-        outcomes = list(executor.map(lambda _: run(), range(2)))
+        outcomes = list(executor.map(run, range(2)))
     assert sum(getattr(outcome, 'status', None) == 'succeeded' for outcome in outcomes) == 1
     assert 'manual_capture_state_changed' in outcomes
     assert _counts(conn) == (1, 1, 1)

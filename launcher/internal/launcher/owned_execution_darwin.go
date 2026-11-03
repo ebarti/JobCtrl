@@ -33,7 +33,7 @@ const applyExecutionVariable = "JOBCTRL_APPLY_EXECUTION_SCOPE"
 const executionQASandboxVariable = "JOBCTRL_EXECUTION_QA_SANDBOX"
 const executionQASandboxSelector = "loopback-only-v1"
 
-// This internal selector can only add this fixed restriction at the helper
+// This internal selector can only add this fixed restriction at each payload
 // boundary. It never supplies a profile, executable, or authorization bypass.
 const executionQASandboxProfile = `(version 1)
 (allow default)
@@ -674,6 +674,9 @@ func ownedExecutionHelper(args []string) (handled bool, resultErr error) {
 		}
 	}()
 	child := exec.Command(command.Executable, command.Arguments...)
+	if command.TemporalProbe {
+		child = payloadCommand(command.Environment, command.Executable, command.Arguments...)
+	}
 	child.Env = command.Environment
 	child.Dir = command.Directory
 	// os.File owns each descriptor from this point.
@@ -839,16 +842,11 @@ waiting:
 	return true, nil
 }
 
-func executionPlist(label, executable, socket, challenge string, sandboxed bool) []byte {
-	// launchd's CFPropertyList parser truncates this multiline string at
-	// numeric character references emitted by encoding/xml.EscapeText.
-	// Element text needs only these three escapes; preserve literal profile
-	// whitespace and quotes so sandbox-exec receives the exact compiled bytes.
+func executionPlist(label, executable, socket, challenge string) []byte {
+	// Keep authenticated native control outside Seatbelt. Payload dispatches
+	// apply the fixed QA profile before any payload code executes.
 	escape := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace
 	arguments := []string{executable, executionHelperArgument, socket, challenge}
-	if sandboxed {
-		arguments = append([]string{"/usr/bin/sandbox-exec", "-p", executionQASandboxProfile}, arguments...)
-	}
 	var program bytes.Buffer
 	for _, argument := range arguments {
 		program.WriteString("<string>" + escape(argument) + "</string>")
@@ -937,9 +935,8 @@ func runTemporalProbeInOwnedExecution(parent context.Context, ctx launchContext,
 
 func runOwnedExecution(parent context.Context, ctx launchContext, args []string, stdout, stderr io.Writer, probe *executionCommand, afterAdmission func() error) (resultErr error) {
 	isProbe := probe != nil
-	sandboxSelector := environmentMap(ctx.Environment)[executionQASandboxVariable]
-	if sandboxSelector != "" && sandboxSelector != executionQASandboxSelector {
-		return errors.New("unknown execution QA sandbox restriction")
+	if err := validateExecutionQASandbox(ctx.Environment); err != nil {
+		return err
 	}
 	controlPath := ctx.Instance.ControlPath
 	if controlPath == "" {
@@ -999,7 +996,7 @@ func runOwnedExecution(parent context.Context, ctx launchContext, args []string,
 	}
 	label := "dev.jobctrl.exec." + ctx.Instance.ID + "." + id
 	plist := filepath.Join(temporary, "job.plist")
-	if err = os.WriteFile(plist, executionPlist(label, executable, socket, challenge, sandboxSelector == executionQASandboxSelector), 0600); err != nil {
+	if err = os.WriteFile(plist, executionPlist(label, executable, socket, challenge), 0600); err != nil {
 		return err
 	}
 	domain := ""

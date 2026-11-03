@@ -2139,7 +2139,7 @@ func startComponent(ctx launchContext, state *instanceState, name string) (*exec
 		return nil, err
 	}
 	argv := append([]string{"-p", "-c", gatedComponentScript, "jobctrl-component", executable}, arguments...)
-	command := exec.Command("/bin/bash", argv...)
+	command := payloadCommand(ctx.Environment, "/bin/bash", argv...)
 	command.Env, command.Dir, command.Stdout, command.Stderr = temporalGateEnvironment(ownedProcessEnvironment(ctx)), ctx.Instance.StateDir, logFile, logFile
 	command.ExtraFiles = []*os.File{gateRead}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -3001,7 +3001,7 @@ func dispatchPython(ctx launchContext, args []string) error {
 		return fmt.Errorf("retain release selection lock for command: %w", err)
 	}
 	defer restore()
-	return syscall.Exec(python, argv, ownedProcessEnvironment(ctx))
+	return execPayload(ownedProcessEnvironment(ctx), python, argv[1:]...)
 }
 
 func dispatchApplyWorker(ctx launchContext) error {
@@ -3014,5 +3014,5 @@ func dispatchApplyWorker(ctx launchContext) error {
 		return fmt.Errorf("retain release selection lock for Apply worker: %w", err)
 	}
 	defer restore()
-	return syscall.Exec(python, []string{python, "-I", "-B", "-m", "jobctrl.apply.execution"}, ownedProcessEnvironment(ctx))
+	return execPayload(ownedProcessEnvironment(ctx), python, "-I", "-B", "-m", "jobctrl.apply.execution")
 }
