@@ -26,6 +26,24 @@ function pdfDocumentDouble() {
 }
 
 describe("BrowserPdfExportAdapter", () => {
+  it("keeps an entry heading and its first line together, including an overlapping section heading", () => {
+    const intervals = [
+      { topPx: 70, bottomPx: 90 },
+      { topPx: 85, bottomPx: 115 },
+      { topPx: 90, bottomPx: 98 },
+      { topPx: 102, bottomPx: 110 },
+    ];
+    const slices = pdfPageSlices(180, 100, intervals);
+    expect(slices[0]).toEqual({ startPx: 0, endPx: 70 });
+    expect(slices.at(-1)?.endPx).toBe(180);
+    for (const slice of slices) {
+      expect(intervals.some(interval => interval.topPx < slice.endPx && interval.bottomPx > slice.endPx)).toBe(false);
+    }
+    expect(pdfPageSlices(220, 100, [{ topPx: 10, bottomPx: 210 }])).toEqual([
+      { startPx: 0, endPx: 100 }, { startPx: 100, endPx: 200 }, { startPx: 200, endPx: 220 },
+    ]);
+  });
+
   it("reserves the configured top and bottom margins on every continuation page", () => {
     const slices = pdfPageSlices(300, 100, [], undefined, { topPx: 10, bottomPx: 15 });
     expect(slices).toEqual([

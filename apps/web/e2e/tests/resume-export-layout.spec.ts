@@ -42,10 +42,14 @@ for (const pageSize of ["a4", "letter"] as const) {
       effectiveDefaultVersion: { ...sampleResumeTemplateListResponse.effectiveDefaultVersion, theme },
     } }));
     const markers = Array.from({ length: 110 }, (_, index) => `SyntheticLine${String(index + 1).padStart(3, "0")}`);
+    const entries = Array.from({ length: 11 }, (_, index) => ({
+      company: `SyntheticCompany${index + 1}`, role: `SyntheticRole${index + 1}`,
+      lines: markers.slice(index * 10, (index + 1) * 10),
+    }));
     const html = `<main class="resume-page"><h1 class="resume-name">Synthetic Layout Candidate</h1>
-      <section class="resume-section"><h2 class="resume-section-title">Experience</h2><ul class="resume-bullets">
-      ${markers.map(marker => `<li>${marker}: Maintained an invented service and documented its operational improvements.</li>`).join("")}
-      </ul></section><section class="resume-section"><h2 class="resume-section-title">Education</h2>
+      <section class="resume-section"><h2 class="resume-section-title">Experience</h2>
+      ${entries.map(entry => `<article class="resume-entry"><div class="resume-entry-heading"><span class="resume-entry-row resume-entry-company-row"><span class="resume-entry-company">${entry.company}</span><span class="resume-entry-location">Example City</span></span><span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">${entry.role}</span><span class="resume-entry-date">2020</span></span></div><ul class="resume-bullets">${entry.lines.map(marker => `<li>${marker}: Maintained an invented service and documented its operational improvements.</li>`).join("")}</ul></article>`).join("")}
+      </section><section class="resume-section"><h2 class="resume-section-title">Education</h2>
       <article class="resume-entry compact"><div class="resume-entry-heading" data-resume-layout-target="education:layout-school:subtitle">
       <span class="resume-entry-row resume-entry-education-row"><span class="resume-entry-main"><span class="resume-entry-institution" data-resume-layout-target="education:layout-school:institution">Example University</span> | <span class="resume-entry-location" data-resume-layout-target="education:layout-school:location">Example City</span></span><span class="resume-entry-date" data-resume-layout-target="education:layout-school:date">2020</span></span></div>
       <p class="resume-entry-title resume-education-degree" data-resume-layout-target="education:layout-school:degree">Example Degree</p></article></section></main>`;
@@ -86,6 +90,12 @@ for (const pageSize of ["a4", "letter"] as const) {
       for (const marker of markers) expect(text.split(marker)).toHaveLength(2);
       expect(text).toContain("Example University");
       expect(text).toContain("Example City");
+      for (const entry of entries) {
+        const entryPage = texts.find(pageText => pageText.includes(`${entry.company} `));
+        expect(entryPage).toContain(entry.role);
+        expect(entryPage).toContain(entry.lines[0]);
+      }
+      expect(texts.find(pageText => pageText.includes("Example University"))).toContain("Example Degree");
     } finally { await loading.destroy(); }
     const prefix = testInfo.outputPath("physical-page");
     execFileSync("pdftoppm", ["-r", "72", "-gray", pdfPath, prefix]);

@@ -411,7 +411,21 @@ function collectTextLineIntervals(
       });
     }
   }
-  return intervals.sort((left, right) => left.topPx - right.topPx);
+  intervals.sort((left, right) => left.topPx - right.topPx);
+  // Keep structural headings with their first content line. An experience
+  // heading includes both company/location and role/date rows.
+  const headingIntervals: PdfVerticalInterval[] = [];
+  for (const heading of page.querySelectorAll(".resume-entry-heading, .resume-section-title")) {
+    const rect = heading.getBoundingClientRect();
+    if (rect.height <= 0 || rect.width <= 0) continue;
+    const bottomPx = rect.bottom - sourceRect.top;
+    const followingLine = intervals.find((interval) => interval.topPx >= bottomPx - PDF_PAGE_SLICE_EPSILON_PX);
+    headingIntervals.push({
+      topPx: rect.top - sourceRect.top,
+      bottomPx: followingLine?.bottomPx ?? bottomPx,
+    });
+  }
+  return [...intervals, ...headingIntervals].sort((left, right) => left.topPx - right.topPx);
 }
 
 export function pdfPageSlices(
@@ -437,18 +451,22 @@ export function pdfPageSlices(
       (slices.length === 0 ? 0 : insets.topPx);
     let endPx = Math.min(startPx + contentHeightPx, totalHeightPx);
     if (endPx < totalHeightPx - PDF_PAGE_SLICE_EPSILON_PX) {
-      const crossingLines = lineIntervals.filter(
-        (interval) => interval.topPx < endPx && interval.bottomPx > endPx,
-      );
-      const candidatePx =
-        crossingLines.length > 0
-          ? Math.floor(
-              Math.min(...crossingLines.map((interval) => interval.topPx)),
-            )
-          : endPx;
+      // Overlapping section/entry headings can require more than one move.
+      // An element taller than a printable page must remain splittable.
+      const protectedIntervals = lineIntervals.filter((interval) => interval.bottomPx - interval.topPx <= contentHeightPx);
+      const crosses = (position: number) => protectedIntervals.filter((interval) => interval.topPx < position && interval.bottomPx > position);
+      let candidatePx = endPx;
+      for (let crossing = crosses(candidatePx); crossing.length > 0; crossing = crosses(candidatePx)) {
+        const previousPx = candidatePx;
+        candidatePx = Math.floor(Math.min(...crossing.map((interval) => interval.topPx)));
+        if (candidatePx <= startPx + PDF_PAGE_SLICE_EPSILON_PX || candidatePx >= previousPx) break;
+      }
       if (candidatePx > startPx + PDF_PAGE_SLICE_EPSILON_PX) {
-        const resolvedEndPx =
+        let resolvedEndPx =
           resolveSafeCut?.(candidatePx, startPx, endPx) ?? candidatePx;
+        if (crosses(resolvedEndPx).length > 0) {
+          resolvedEndPx = resolveSafeCut?.(candidatePx, startPx, candidatePx) ?? candidatePx;
+        }
         endPx =
           resolvedEndPx > startPx + PDF_PAGE_SLICE_EPSILON_PX &&
           resolvedEndPx <= endPx

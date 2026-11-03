@@ -243,6 +243,7 @@ The user-visible surfaces divide the work:
   the current document, including unsaved edits, directly to a PDF download.
   The selected template's margins apply to every exported page, including
   continuation pages; the download keeps searchable text aligned with the page.
+  Section and entry headings stay with their first content line at page breaks.
 - `/preferences` owns tailoring permissions, writing style, resume templates,
   and the default template; Apply Review can override the template for one job.
   Template payloads hold style/layout only, not candidate or job facts. An
