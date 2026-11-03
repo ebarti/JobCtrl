@@ -714,7 +714,9 @@ Useful web app views:
 - Runs for the shared Discover, preparation, and Apply history, using one status
   vocabulary, terminal-state contract, cancellation control, and route-level
   timeline. A run's heading and **Selected stages** field identify the exact
-  stage scope recorded in its workflow input.
+  stage scope recorded in its workflow input. The timeline separates recorded
+  attempts, labels the current attempt, and keeps its failure details with that
+  attempt. Repeated start notifications appear once per identified attempt.
 - Evidence for profile-evidence reuse, generated-material usage, and gaps.
 - Artifacts for generated files and same-job artifact comparisons.
 - Apply Review for approval and resume edits.

@@ -76,6 +76,16 @@
   margin: 0 0 var(--jh-surface-gap);
 }
 
+.workflow-run-attempt + .workflow-run-attempt {
+  border-top: 1px solid var(--border);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.workflow-run-attempt > p {
+  margin: 0 0 0.75rem;
+}
+
 .workflow-run-timeline {
   display: grid;
   min-width: 0;

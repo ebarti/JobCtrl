@@ -67,7 +67,7 @@ describe("re-tailor current-policy mutations", () => {
 
     expect(retailorJob).toHaveBeenCalledWith("job-1", {
       dryRun: false,
-      suppressExistingArtifacts: true,
+      suppressExistingArtifacts: false,
       tailorModels: [],
     });
     await waitFor(() => {
@@ -95,7 +95,7 @@ describe("re-tailor current-policy mutations", () => {
       jobKeys: ["job-1"],
       limit: 10,
       dryRun: false,
-      suppressExistingArtifacts: true,
+      suppressExistingArtifacts: false,
       tailorModels: [],
     });
   });

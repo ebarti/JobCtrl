@@ -573,6 +573,48 @@ def test_requirement_fit_report_loads_latest_score_version(conn: sqlite3.Connect
     assert first.score_version == 1
 
 
+def test_manual_score_correction_carries_requirement_evidence_without_rescoring(conn):
+    job_id = _seed_job(conn, job_id=_job_id(27), url="https://example.test/corrected-evidence")
+    scores = SqliteScoreRepository(conn)
+    reports = SqliteRequirementFitReportRepository(conn)
+    original = _build_score(job_id, fit=7, trace=ScoreTrace(determination_id="recorded-source"))
+    scores.save(original)
+    report = _requirement_report(job_id, fit=7)
+    reports.save(LOCAL_TENANT, report)
+    correction = ScoreCorrection(corrected_fit_score=FitScore.create(9), rationale="Manual review",
+                                 corrected_by=LOCAL_TENANT, corrected_at="2026-11-03T10:00:00Z")
+    corrected = original.with_correction(correction)
+    scores.save(corrected)
+
+    assert scores.load(LOCAL_TENANT, job_id).fit_score.value == 9
+    assert reports.load(LOCAL_TENANT, job_id) == replace(report, score_version=2)
+    assert reports.load(LOCAL_TENANT, job_id, score_version=1) == report
+
+
+@pytest.mark.parametrize("same_determination", [True, False])
+def test_legacy_correction_evidence_repair_requires_its_recorded_source(conn, same_determination):
+    job_id = _seed_job(conn, job_id=_job_id(28), url="https://example.test/legacy-correction")
+    scores = SqliteScoreRepository(conn)
+    reports = SqliteRequirementFitReportRepository(conn)
+    original = _build_score(job_id, trace=ScoreTrace(determination_id="recorded-source"))
+    scores.save(original)
+    report = _requirement_report(job_id)
+    reports.save(LOCAL_TENANT, report)
+    corrected = original.with_correction(ScoreCorrection(corrected_fit_score=FitScore.create(9),
+        rationale="Manual review", corrected_by=LOCAL_TENANT, corrected_at="2026-11-03T10:00:00Z"))
+    scores.save(corrected)
+    # Reproduce a pre-fix correction with no evidence bound to its new version.
+    conn.execute("DELETE FROM job_requirement_fit_items WHERE score_version=2")
+    conn.execute("DELETE FROM job_requirement_fit_reports WHERE score_version=2")
+    if not same_determination:
+        conn.execute("UPDATE job_scores SET trace_json=? WHERE version=2",
+                     (json.dumps({"determination_id": "different-source"}),))
+    reports.carry_forward_correction(scores.load(LOCAL_TENANT, job_id))
+    bound = reports.load(LOCAL_TENANT, job_id)
+    assert bound == (replace(report, score_version=2) if same_determination else None)
+    assert scores.load(LOCAL_TENANT, job_id).fit_score.value == 9
+
+
 def test_requirement_fit_report_scopes_same_job_id_by_tenant(conn: sqlite3.Connection) -> None:
     job_id = _job_id(8)
     other_tenant = TenantId("other")

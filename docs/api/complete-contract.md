@@ -454,7 +454,9 @@ SSE invalidation router refresh the dashboard digest query without any external
 delivery channel.
 `POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`
 version, records `ScoreCorrected`, and updates the versioned `scoring_policies`
-table with a correction-derived calibration anchor. It mirrors the Python
+table with a correction-derived calibration anchor. It also copies the existing
+requirement report and its items to the new score version in the same transaction,
+retaining their original profile and analysis provenance. It mirrors the Python
 `CorrectScoreUseCase` policy update path because this TypeScript API mutation writes
 directly to SQLite instead of crossing the Python JSON-RPC boundary. When the
 policy version changes, the API also marks comparable latest uncorrected scores
@@ -1500,6 +1502,12 @@ status, input summary, failure cause (`errorCode` / `errorMessage` /
 `retryable`), Temporal run id, and the folded lifecycle timeline — or `404`
 (`{ ok: false, error: "workflow_run_not_found" }`) for an unknown id. The
 `/runs/$runId` detail workspace renders it for every workflow type.
+Lifecycle events retain their recorded `temporalRunId` (nullable/absent for
+legacy records). The detail reads the complete canonical lifecycle history,
+including superseded executions, while its summary describes the current
+execution. The UI groups events by those IDs, sorts each attempt by event time,
+and displays one start per identified execution. Unknown identities remain
+separate history; stored events are not deleted or inferred from their text.
 Apply details also return `applyEvents`, a separate array of summaries from
 the selected tenant/job/run's durable Apply event rows. Each has a
 `sourceEventId`, a nullable monotonic `runEventId`, `type`, `at`, `level`, and
@@ -2113,11 +2121,13 @@ Current-version preparation maintenance actions are separate endpoints:
   `rescore_jobs_not_on_current_scoring_policy` for selected or bounded active
   jobs.
 - `POST /v1/jobs/:jobKey/actions/retailor-current-policy` dispatches
-  `retailor_job` for one job and can suppress the prior active artifacts;
+  `retailor_job` for one job. `suppressExistingArtifacts` defaults to `false`,
+  preserving accepted materials until replacement approval. It
+  permits stale scoring and does not schedule a score refresh;
   successful re-tailoring continues into cover generation for that job.
 - `POST /v1/materials/actions/retailor-current-policy` dispatches
-  `retailor_current_policy` for selected or bounded eligible jobs and can
-  suppress prior active artifacts.
+  `retailor_current_policy` for selected or bounded eligible jobs.
+  `suppressExistingArtifacts` also defaults to `false`.
 - `POST /v1/jobs/:jobKey/actions/mark-skipped` atomically records a local Apply
   stop and `StageSkipped` event, preserving the attempt budget and materials.
   The response `message` explains that an in-flight submission may still complete;

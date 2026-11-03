@@ -5407,6 +5407,8 @@ const WORKFLOW_TERMINAL_STATUS_BY_EVENT: Record<string, WorkflowRunStatus> = {
 };
 
 interface WorkflowLifecycleFold {
+  temporalRunId: string | null;
+  timeline: WorkflowRunTimelineEvent[];
   status: WorkflowRunStatus;
   errorCode: string | null;
   errorMessage: string | null;
@@ -5572,7 +5574,17 @@ function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): Workf
     // twin of this fold).
     return null;
   }
-  return { status, errorCode, errorMessage, retryable, startedAt, finishedAt, durationMs };
+  const timeline = events.map(({ eventType, occurredAt, payload }) => ({
+    eventType,
+    occurredAt,
+    temporalRunId: workflowLifecycleRunId(payload),
+    status: WORKFLOW_TERMINAL_STATUS_BY_EVENT[eventType]
+      ?? (eventType === "WorkflowStarted" ? "in_progress" : nullableString(payload.status)),
+    message: isPrivateApplyEvent(eventType, payload)
+      ? null : nullableString(payload.errorMessage ?? payload.message),
+  }));
+  return { status, errorCode, errorMessage, retryable, startedAt, finishedAt, durationMs,
+    temporalRunId: runId, timeline };
 }
 
 function applyWorkflowLifecycleFold(
@@ -5584,6 +5596,7 @@ function applyWorkflowLifecycleFold(
   }
   return {
     ...row,
+    temporal_run_id: fold.temporalRunId ?? row.temporal_run_id,
     status: fold.status,
     error_code: fold.errorCode,
     error_message: fold.errorMessage,
@@ -5712,10 +5725,10 @@ export function getWorkflowRunDetail(
   if (!rawRow) {
     return null;
   }
-  // Correct the run-scoped verdict from the canonical lifecycle stream while
-  // leaving `events_json` untouched so the timeline keeps the full history
-  // (including the superseded execution's terminal events).
-  const row = applyWorkflowLifecycleFold(rawRow, loadWorkflowRunLifecycleFolds(db).get(runId));
+  // Keep the full canonical history and its execution identities. The legacy
+  // projection timeline discarded those IDs and mixed retries in the UI.
+  const lifecycle = loadWorkflowRunLifecycleFolds(db).get(runId);
+  const row = applyWorkflowLifecycleFold(rawRow, lifecycle);
   const summary = rowToWorkflowRunSummary(row);
   const automaticRetryable = Boolean(row.retryable);
   const inputSummary = parseInputSummary(row.input_summary_json);
@@ -5752,7 +5765,7 @@ export function getWorkflowRunDetail(
     startedAt: summary.startedAt,
     finishedAt: summary.finishedAt,
     durationMs: summary.durationMs,
-    events: parseWorkflowRunTimeline(row.events_json),
+    events: lifecycle?.timeline ?? parseWorkflowRunTimeline(row.events_json),
     applyEvents: summary.workflowType === "ApplyWorkflow" || (!summary.workflowType && row.apply_job_id)
       ? readWorkflowApplyTimeline(db, runId, nullableString(row.apply_job_id), inputSummary, requestedJobId)
       : [],
@@ -6100,6 +6113,7 @@ function parseWorkflowRunTimeline(value: unknown): WorkflowRunTimelineEvent[] {
   }
   if (!Array.isArray(parsed)) return [];
   return parsed.filter(isRecord).map((event) => ({
+    temporalRunId: workflowLifecycleRunId(isRecord(event.payload) ? event.payload : event),
     eventType: stringField(event.eventType ?? event.event_type) || "event",
     occurredAt: nullableString(event.occurredAt ?? event.occurred_at),
     status: nullableString(event.status),

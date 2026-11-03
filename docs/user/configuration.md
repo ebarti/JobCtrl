@@ -419,8 +419,13 @@ usage has not yet settled. If accounting still shows as unresolved after active
 calls finish, a provider observation or its database commit needs inspection.
 The local digest still shows its other sections and marks the budget incomplete
 without guessing the spend or remaining amount.
-JobCtrl stops admitting further model calls rather than presenting a complete
-zero or automatically repeating an ambiguous ledger write. If a usage report
+When both the global USD budget and the current lane's token limit are `0`,
+unresolved past accounting does not block new model calls: those limits are
+disabled. Spend reporting still shows incomplete totals, and the retained
+receipts are preserved. A positive global budget or current-lane token limit
+still requires resolved accounting before another model call. JobCtrl never
+presents unknown usage as a complete zero or automatically repeats an ambiguous
+ledger write. If a usage report
 contains only some token counts, the known values are retained for inspection
 and the missing values stay unknown. `jobctrl doctor`
 reports the condition. Preserve the private `.jobctrl.db.llm-spend-pending`

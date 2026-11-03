@@ -250,10 +250,13 @@ only observation metadata and provider-reported usage, never prompt or output
 content. A confirmed `llm_spend` write removes it; a failed or interrupted write
 leaves it for inspection. Because the aggregate has no per-observation identity,
 an uncertain commit is never automatically replayed. Active receipts are locked
-so they do not serialize worker admission; abandoned receipts block new model
-calls and make spend totals incomplete across health and digest readers.
-Receipt creation rechecks for abandoned peers under the same gate as peer
-release, while still allowing concurrent, genuinely active calls.
+so they do not serialize worker admission. Abandoned receipts make spend totals
+incomplete across health and digest readers. They block new model calls only
+when the global budget or the selected lane's token limit is positive; when
+both limits are zero, admission proceeds without claiming complete accounting.
+Receipt creation rechecks the saved limits and abandoned peers under the same
+gate as peer release, while still allowing concurrent, genuinely active calls.
+Unlimited admission preserves every existing receipt and private-file check.
 Native rollback and interrupted-transition recovery check the receipt authority
 after managed shutdown and before restoring a database pair or starting an
 older release. An absent, empty or safe gate-only directory permits recovery;

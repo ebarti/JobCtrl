@@ -101,8 +101,11 @@ function isFailureEvent(event: WorkflowRunTimelineEvent): boolean {
 }
 
 function timelineEntries(run: WorkflowRunDetail): readonly TimelineEntry[] {
+  const hasExecutionIds = run.events.some((event) => event.temporalRunId);
   const failureIndex = run.events.reduce(
-    (match, event, index) => (isFailureEvent(event) ? index : match),
+    (match, event, index) => (isFailureEvent(event)
+      && (!hasExecutionIds || (run.temporalRunId && event.temporalRunId === run.temporalRunId))
+      ? index : match),
     -1,
   );
   const entries = run.events.map((event, index) => ({
@@ -115,6 +118,7 @@ function timelineEntries(run: WorkflowRunDetail): readonly TimelineEntry[] {
     ...entries,
     {
       eventType: "Workflow failure recorded",
+      temporalRunId: run.temporalRunId,
       occurredAt: run.finishedAt,
       status: "failed",
       message: null,
@@ -122,6 +126,36 @@ function timelineEntries(run: WorkflowRunDetail): readonly TimelineEntry[] {
       synthetic: true,
     },
   ];
+}
+
+function timelineAttempts(run: WorkflowRunDetail) {
+  const groups = new Map<string | null, TimelineEntry[]>();
+  const started = new Set<string>();
+  const ordered = [...timelineEntries(run)].sort((left, right) => {
+    const leftTime = Date.parse(left.occurredAt ?? "");
+    const rightTime = Date.parse(right.occurredAt ?? "");
+    return (Number.isNaN(leftTime) ? Infinity : leftTime)
+      - (Number.isNaN(rightTime) ? Infinity : rightTime);
+  });
+  for (const event of ordered) {
+    const id = event.temporalRunId ?? null;
+    // Two writers may record the same execution's start. Keep one display
+    // entry, without changing history or guessing identities for legacy rows.
+    if (id && event.eventType === "WorkflowStarted") {
+      if (started.has(id)) continue;
+      started.add(id);
+    }
+    const events = groups.get(id) ?? [];
+    events.push(event);
+    groups.set(id, events);
+  }
+  let attempt = 0;
+  return [...groups].map(([id, events]) => ({
+    id,
+    events,
+    label: id ? `Attempt ${++attempt}${id === run.temporalRunId ? " — current" : ""}`
+      : "History without execution IDs",
+  }));
 }
 
 function CopyValueButton({
@@ -445,13 +479,16 @@ function FailureDetails({
 }
 
 function RunTimeline({ run }: { readonly run: WorkflowRunDetail }) {
-  const events = timelineEntries(run);
+  const attempts = timelineAttempts(run);
+  const grouped = attempts.some((attempt) => attempt.id !== null);
   return (
     <RunSection id="workflow-run-timeline-title" title="Timeline">
-      {events.length === 0 ? (
+      {attempts.length === 0 ? (
         <Empty title="No lifecycle events recorded yet." />
-      ) : (
-        <ol aria-label="Workflow lifecycle" className="workflow-run-timeline">
+      ) : attempts.map(({ id, label, events }) => (
+        <div aria-label={grouped ? label : undefined} className="workflow-run-attempt" key={id ?? "legacy"} role={grouped ? "group" : undefined}>
+        {grouped ? <p data-typography="component-title"><strong>{label}</strong></p> : null}
+        <ol aria-label={grouped ? `${label} lifecycle` : "Workflow lifecycle"} className="workflow-run-timeline">
           {events.map((event, index) => {
             const eventLabel = humanizeIdentifier(event.eventType);
             const eventMessage = event.message?.trim() || null;
@@ -501,7 +538,8 @@ function RunTimeline({ run }: { readonly run: WorkflowRunDetail }) {
             );
           })}
         </ol>
-      )}
+        </div>
+      ))}
     </RunSection>
   );
 }

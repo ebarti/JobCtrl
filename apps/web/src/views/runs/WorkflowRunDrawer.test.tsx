@@ -39,6 +39,47 @@ function buildRouter() {
 }
 
 describe("<WorkflowRunDrawer>", () => {
+  it("groups recorded executions, orders late events and shows one start per attempt", async () => {
+    const workflowRun = vi.fn(async () => makeWorkflowRunDetail({
+      temporalRunId: "new-run",
+      errorCode: "current_failure",
+      events: [
+        { temporalRunId: "old-run", eventType: "WorkflowStarted", occurredAt: "2026-11-03T18:00:00Z", status: "in_progress", message: null },
+        { temporalRunId: "new-run", eventType: "WorkflowStarted", occurredAt: "2026-11-03T18:01:00Z", status: "in_progress", message: null },
+        { temporalRunId: "new-run", eventType: "WorkflowStarted", occurredAt: "2026-11-03T18:01:01Z", status: "in_progress", message: null },
+        { temporalRunId: "new-run", eventType: "WorkflowFailed", occurredAt: "2026-11-03T18:01:02Z", status: "failed", message: null },
+        { temporalRunId: "old-run", eventType: "WorkflowFailed", occurredAt: "2026-11-03T18:00:02Z", status: "failed", message: "Previous failure" },
+        { temporalRunId: "old-run", eventType: "WorkflowStarted", occurredAt: "2026-11-03T18:00:01Z", status: "in_progress", message: null },
+      ],
+    }));
+    const harness = buildProviderHarness({ ports: buildTestPorts({ api: { workflowRun } }) });
+    render(<RouterProvider router={buildRouter()} />, { wrapper: harness.Wrapper });
+    const previous = await screen.findByRole("group", { name: "Attempt 1" });
+    const current = screen.getByRole("group", { name: "Attempt 2 — current" });
+    for (const attempt of [previous, current]) {
+      expect(within(attempt).getAllByRole("listitem").map((event) => event.getAttribute("aria-label")))
+        .toEqual(["Workflow started", "Workflow failed"]);
+    }
+    expect(within(previous).queryByRole("region", { name: "Failure details" })).not.toBeInTheDocument();
+    expect(within(current).getByRole("region", { name: "Failure details" })).toHaveTextContent("current_failure");
+  });
+
+  it("keeps unidentified history separate without guessing which execution owns it", async () => {
+    const workflowRun = vi.fn(async () => makeWorkflowRunDetail({
+      temporalRunId: "new-run",
+      events: [
+        { eventType: "WorkflowFailed", occurredAt: "2026-11-03T18:00:02Z", status: "failed", message: "Legacy failure" },
+        { temporalRunId: "new-run", eventType: "WorkflowStarted", occurredAt: "2026-11-03T18:01:00Z", status: "in_progress", message: null },
+      ],
+    }));
+    const harness = buildProviderHarness({ ports: buildTestPorts({ api: { workflowRun } }) });
+    render(<RouterProvider router={buildRouter()} />, { wrapper: harness.Wrapper });
+    const legacy = await screen.findByRole("group", { name: "History without execution IDs" });
+    expect(within(legacy).queryByRole("region", { name: "Failure details" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "Attempt 1 — current" }))
+      .getByRole("region", { name: "Failure details" })).toBeInTheDocument();
+  });
+
   it("renders one full-width run workspace with failure facts owned by the failed timeline event", async () => {
     const harness = buildProviderHarness();
     const router = buildRouter();

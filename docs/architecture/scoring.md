@@ -227,6 +227,14 @@ The score breakdown separates soft fit from hard eligibility. `fit_band`,
 are exposed through the TypeScript API and Job Detail route workspace. User corrections create a new
 score version, preserve the correction rationale, publish `ScoreCorrected`, and
 can be read back as transparent feedback signals alongside existing job actions.
+Both API and worker correction writers carry the existing requirement-fit report
+and items to the new score version in the score transaction. The assessment's
+profile, employer-analysis and policy versions remain unchanged. Its model-derived
+summary remains evidence; the corrected JobScore is the user's authoritative fit
+score. Explicit re-tailor can proceed with stale or failed scoring without
+changing that score. Older missing correction bindings are repaired at the
+tailoring write boundary only through the same recorded scoring determination
+ID, scoped to the tenant and job; unrelated older reports are never substituted.
 They also create a non-sensitive correction signal that is persisted as a
 calibration anchor on the next `scoring_policies` version. The current policy
 keeps rubric weights and fit-band thresholds stable; subsequent scores load the

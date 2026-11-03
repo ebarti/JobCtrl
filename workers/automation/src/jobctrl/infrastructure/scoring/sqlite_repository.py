@@ -444,6 +444,17 @@ class SqliteRequirementFitReportRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
+    def carry_forward_correction(self, score: JobScore, *, source_score_version: int | None = None) -> None:
+        """Bind unchanged evidence to a manual correction in the caller's transaction."""
+        if score.correction is None:
+            return
+        report = self.load(score.tenant_id, score.job_id,
+                           score_version=source_score_version or score.version)
+        if report is not None and report.score_version != score.version:
+            from dataclasses import replace
+
+            self.save(score.tenant_id, replace(report, score_version=score.version))
+
     def load(
         self,
         tenant_id: TenantId,
@@ -452,39 +463,49 @@ class SqliteRequirementFitReportRepository:
         score_version: int | None = None,
     ) -> RequirementFitReport | None:
         stable_job_id = canonical_job_id(str(job_id))
-        if score_version is None:
-            row = self._conn.execute(
-                """
-                SELECT job_id, score_version, tenant_id,
-                       employer_analysis_generation, profile_snapshot_version,
-                       scoring_policy_version, formula_version,
-                       resolved_fit_score, fit_band, confidence, summary_json
-                 FROM job_requirement_fit_reports
-                 WHERE tenant_id = ?
-                   AND job_id = ?
-                   AND score_version = (
-                       SELECT MAX(version) FROM job_scores
-                       WHERE tenant_id = ? AND job_id = ?
-                   )
-                 LIMIT 1
-                """,
-                (str(tenant_id), str(stable_job_id), str(tenant_id), str(stable_job_id)),
-            ).fetchone()
-        else:
-            row = self._conn.execute(
-                """
-                SELECT job_id, score_version, tenant_id,
-                       employer_analysis_generation, profile_snapshot_version,
-                       scoring_policy_version, formula_version,
-                       resolved_fit_score, fit_band, confidence, summary_json
-                  FROM job_requirement_fit_reports
-                 WHERE tenant_id = ?
-                   AND job_id = ?
-                   AND score_version = ?
-                 LIMIT 1
-                """,
-                (str(tenant_id), str(stable_job_id), score_version),
-            ).fetchone()
+        # A manual score correction preserves the original model determination.
+        # Resolve its evidence by that recorded ID, never by a nearby version or
+        # similar text. Keep the report's original score/profile provenance.
+        source = self._conn.execute(
+            """
+            SELECT report.score_version
+              FROM job_scores target
+              JOIN job_requirement_fit_reports report
+                ON report.tenant_id = target.tenant_id AND report.job_id = target.job_id
+              JOIN job_scores source
+                ON source.tenant_id = report.tenant_id AND source.job_id = report.job_id
+               AND source.version = report.score_version
+             WHERE target.tenant_id = ? AND target.job_id = ?
+               AND target.version = COALESCE(?, (
+                   SELECT MAX(version) FROM job_scores WHERE tenant_id = ? AND job_id = ?))
+               AND (report.score_version = target.version OR (
+                   report.score_version < target.version
+                   AND json_valid(target.correction_json)
+                   AND json_type(target.correction_json, '$.corrected_fit_score') = 'integer'
+                   AND json_valid(target.trace_json) AND json_valid(source.trace_json)
+                   AND json_extract(target.trace_json, '$.determination_id') <> ''
+                   AND json_extract(target.trace_json, '$.determination_id')
+                       = json_extract(source.trace_json, '$.determination_id')
+               ))
+             ORDER BY report.score_version DESC LIMIT 1
+            """,
+            (str(tenant_id), str(stable_job_id), score_version, str(tenant_id), str(stable_job_id)),
+        ).fetchone()
+        if source is None:
+            return None
+        score_version = int(source[0])
+        row = self._conn.execute(
+            """
+            SELECT job_id, score_version, tenant_id,
+                   employer_analysis_generation, profile_snapshot_version,
+                   scoring_policy_version, formula_version,
+                   resolved_fit_score, fit_band, confidence, summary_json
+              FROM job_requirement_fit_reports
+             WHERE tenant_id = ? AND job_id = ? AND score_version = ?
+             LIMIT 1
+            """,
+            (str(tenant_id), str(stable_job_id), score_version),
+        ).fetchone()
         if row is None:
             return None
 
@@ -920,6 +941,10 @@ class SqliteScoreRepository:
                     )
                 ),
             )
+            if score.correction is not None and current_max:
+                SqliteRequirementFitReportRepository(self._conn).carry_forward_correction(
+                    score, source_score_version=current_max,
+                )
         except BaseException:
             self._conn.execute(f"ROLLBACK TO SAVEPOINT {_SCORE_SAVEPOINT}")
             self._conn.execute(f"RELEASE SAVEPOINT {_SCORE_SAVEPOINT}")

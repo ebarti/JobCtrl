@@ -983,6 +983,14 @@ Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#_2026-10-07-s
 
 Status: accepted
 
+Amended (2026-11-03): explicit re-tailoring may run with a stale score and never
+implicitly requests re-scoring. Manual score corrections carry the existing
+requirement report and items to the new score version atomically. The evidence
+retains its original profile, analysis and policy provenance until separately
+updated; the corrected score remains authoritative for the user's rating.
+Older missing correction bindings can be repaired only through their recorded
+scoring determination identity. Automatic preparation retains scoring gates.
+
 Decision: a job's fit score is derived deterministically from a per-requirement
 ledger, not from independent free-text signals. The Materials employer analysis
 supplies grounded requirements (tier, weight, verbatim job-evidence span); the
@@ -1463,6 +1471,16 @@ observation remain idempotent. Cached input and reasoning output are subsets and
 are not added twice. An admitted call may overshoot because no proven maximum
 call cost exists; the design does not reserve tokens or claim a strict in-flight
 cap.
+
+Amended (2026-11-03): budget admission and complete accounting reports have
+separate requirements. When both the global USD budget and the current lane's
+token threshold are zero, an unresolved prior observation cannot impose a
+disabled limit. Admission returns unknown totals with `accounting_complete =
+false` and permits new work; the receipt boundary rechecks those saved limits.
+Positive limits still require resolved accounting. Health/digest reporting,
+receipt integrity checks and native rollback gates remain strict, and unlimited
+mode neither deletes receipts nor fabricates usage. Idempotent reconciliation
+of uncertain aggregate-ledger writes remains an outstanding recovery limitation.
 
 ## 2026-07-03: Heavy Sync RPC Handlers Become Workflows
 

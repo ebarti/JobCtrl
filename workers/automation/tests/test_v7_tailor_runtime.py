@@ -1332,13 +1332,18 @@ def test_per_job_tailor_hands_canonical_grade_to_resume_review(
     [
         ("stale", False),
         ("succeeded", True),
+        ("failed", False),
+        ("canceled", False),
     ],
 )
-def test_tailor_job_by_id_rejects_stale_score_state_before_generation(
+@pytest.mark.parametrize("retailor", [False, True])
+def test_retailor_admits_stale_scores_without_changing_automatic_tailoring(
     conn: sqlite3.Connection,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     score_state: str,
     seed_staleness: bool,
+    retailor: bool,
 ) -> None:
     _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/stale-score")
     tailor_module.ensure_job_stage_rows(
@@ -1373,21 +1378,30 @@ def test_tailor_job_by_id_rejects_stale_score_state_before_generation(
             ),
         )
     conn.commit()
+    before_scores = conn.execute("SELECT * FROM job_scores").fetchall()
     monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
     monkeypatch.setattr(
         tailor_module,
         "_tailor_one_job",
-        lambda *_args, **_kwargs: pytest.fail("stale score reached generation"),
+        lambda job, *_args, **_kwargs: _fake_approved_result(job) if retailor
+        else pytest.fail("automatic tailoring must still wait for scoring"),
     )
 
     result = tailor_module.tailor_job_by_id(
         _JOB_ID,
         tenant_id=_TENANT_A,
-        snapshot=SimpleNamespace(),
+        snapshot=_snapshot(_TENANT_A),
         llm_model=None,
+        pdf_renderer=object(),
+        retailor=retailor,
     )
 
-    assert result["reason"] == "not_eligible"
+    if retailor:
+        assert result["status"] == "approved"
+    else:
+        assert result["reason"] == "not_eligible"
+    assert conn.execute("SELECT * FROM job_scores").fetchall() == before_scores
 
 
 @pytest.mark.parametrize(

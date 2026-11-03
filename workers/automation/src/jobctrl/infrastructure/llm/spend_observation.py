@@ -112,7 +112,7 @@ def _append(fd: int, value: dict) -> None:
     os.fsync(fd)
 
 
-def _require_resolved_locked(root: Path) -> None:
+def _require_resolved_locked(root: Path, *, allow_abandoned: bool = False) -> None:
     """Check peers while holding the same gate used to publish receipts."""
     try:
         for path in root.iterdir():
@@ -126,9 +126,10 @@ def _require_resolved_locked(root: Path) -> None:
                     if error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
                         continue
                     raise
-                raise SpendAccountingUnresolved(
-                    "LLM spend accounting is unresolved; inspect the retained receipt before further model calls."
-                )
+                if not allow_abandoned:
+                    raise SpendAccountingUnresolved(
+                        "LLM spend accounting is unresolved; inspect the retained receipt before further model calls."
+                    )
             finally:
                 os.close(fd)
     except SpendAccountingUnresolved:
@@ -143,7 +144,14 @@ class SpendObservation:
         path = root / f"{uuid.uuid4().hex}.jsonl"
         fd = -1
         with _gate(root):
-            _require_resolved_locked(root)
+            from jobctrl.infrastructure.scoring.criteria_provider import read_daily_budget_usd, read_lane_token_limits
+            from jobctrl.llm_lanes import validate_llm_lane
+
+            # Recheck the saved limits at the receipt boundary. An interrupted
+            # observation remains incomplete, but cannot impose a disabled cap.
+            # Private-file checks still apply and no peer receipt is modified.
+            unlimited = read_daily_budget_usd() == 0 and read_lane_token_limits()[validate_llm_lane(lane)] == 0
+            _require_resolved_locked(root, allow_abandoned=unlimited)
             try:
                 fd = _open_file(path, create=True, exclusive=True)
                 if os.name == "nt":
