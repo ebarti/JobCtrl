@@ -463,6 +463,13 @@ archives — for:
 - browser-profile artifacts and the private `.planning/` corpus;
 - a blocked distribution name combined with a tag-publish trigger.
 
+`PUBLIC_COMPARISON_SOURCE_URLS` permits four exact, reviewed public competitor
+source/release URLs in `docs/comparison.md` for the legacy-owner check only.
+This exception does not exclude the page from scanning: bare owner text,
+unreviewed references, forbidden paths, and private facts alongside a permitted
+citation still fail. The four exact reference pins and their positive and
+negative regression cases are maintained in the release checker and its tests.
+
 It also scans for apply-prompt tripwires: CapSolver key interpolation,
 hardcoded attestation defaults, and profile-password interpolation. The default
 local mode keeps these as compatibility warnings for investigations, while both
