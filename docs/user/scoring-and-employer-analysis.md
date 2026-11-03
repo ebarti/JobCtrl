@@ -194,6 +194,11 @@ offers bounded current-policy maintenance for selected or outdated scores.
 A correction and a re-score are different: correction records your reviewed
 decision; re-score runs the current scoring pipeline and creates a new model-
 derived version.
+Manual corrections carry the existing requirement evidence forward to the new
+score version, preserving its original profile and employer-analysis provenance.
+They do not reassess that evidence. You can re-tailor with your current profile
+at any time even when the saved score is stale; re-tailoring does not require or
+start a score refresh.
 Resetting stale scores prepares their stages for another run; it does not run
 scoring. The suggested `jobctrl score --rescore` command starts the scoring
 queue for eligible enriched jobs, including jobs with existing scores; it is not
