@@ -1,5 +1,5 @@
 import { actionIdentity, actionReceiptKey, assertActionReceipt, readActionReceipt, ActionReceiptConflictError } from "./action-receipts.js";
-import { ManualApplicationOutcomeRequestSchema } from "@jobctrl/contracts";
+import { ManualApplicationOutcomeRequestSchema, OutcomeSuggestionDecisionRequestSchema } from "@jobctrl/contracts";
 import { selectResumeMaterial, materialArtifactCandidates, RESUME_TEXT_ARTIFACT_TYPES, RESUME_PDF_ARTIFACT_TYPES, type MaterialArtifactCandidate } from "./material-preview-selection.js";
 import { safeCoverLetterAccepted, coverLetterAccepted, coverLetterSourceBytes, coverLetterTextForSource, requireCoverLetterApproval } from "./cover-letter-review.js";
 import { MessageOutcomeDeterminationSchema } from "@jobctrl/contracts";
@@ -34,6 +34,7 @@ import type {
   OutcomeSuggestion,
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
+  OutcomeSuggestionDecisionConflict,
   OutcomeSuggestionStatus,
   RequirementFitAssessment,
   RequirementFitReport,
@@ -46,6 +47,7 @@ import type {
 } from "./contracts.js";
 import {
   APPLICATION_OUTCOME_KINDS,
+  compareOutcomeSuggestionDecision,
   EMPLOYER_ANALYSIS_PROMPT_VERSION,
   APPLY_REVIEW_DECISION_VALUES,
   OUTCOME_SUGGESTION_STATUSES,
@@ -143,6 +145,7 @@ interface SuggestionRow extends Record<string, unknown> {
   confidence: number;
   rationale: string;
   status: string;
+  decision: string | null;
   created_at: string;
   decided_at: string | null;
   decision_reason: string | null;
@@ -533,33 +536,99 @@ export function recordManualApplicationOutcome(
   }).immediate();
 }
 
+const OUTCOME_SUGGESTION_OPERATION = "outcome-suggestion-decision";
+
+interface StoredOutcome {
+  readonly outcome: ApplicationOutcome;
+  readonly createdBy: string;
+}
+
+function suggestionDecisionFact(suggestion: SuggestionRow, stored: StoredOutcome | null): object {
+  return {
+    suggestionId: suggestion.suggestion_id,
+    jobId: suggestion.job_id,
+    evidenceId: suggestion.evidence_id,
+    suggestedKind: suggestion.suggested_kind,
+    status: suggestion.status,
+    decision: suggestion.decision,
+    decidedAt: suggestion.decided_at,
+    decisionReason: suggestion.decision_reason,
+    decidedOutcomeId: suggestion.decided_outcome_id,
+    outcome: stored ? { ...stored.outcome, createdBy: stored.createdBy } : null,
+  };
+}
+
 export function decideOutcomeSuggestion(
   db: SqliteDatabase,
   suggestionId: string,
   request: OutcomeSuggestionDecisionRequest,
-): OutcomeSuggestionDecisionResponse {
+): OutcomeSuggestionDecisionResponse | OutcomeSuggestionDecisionConflict {
+  request = OutcomeSuggestionDecisionRequestSchema.parse(request);
   ensureApplicationFeedbackTables(db);
-  const existing = getSuggestionRow(db, suggestionId);
-  if (!existing) {
-    throw new InputError("Outcome suggestion not found.");
-  }
-  if (existing.status !== "pending") {
-    return {
-      ok: true,
-      suggestion: suggestionFromRow(db, existing),
-      outcome: existing.decided_outcome_id ? readOutcome(db, existing.decided_outcome_id) : null,
-    };
-  }
-  if (!suggestionFromRow(db, existing).determination) throw new InputError("outcome_determination_unavailable");
-  const decidedAt = new Date().toISOString();
-  let outcome: ApplicationOutcome | null = null;
-
-  const write = db.transaction(() => {
+  // The read and decision are under the same writer reservation. Separate API
+  // connections can never both act on the same pending suggestion.
+  return db.transaction((): OutcomeSuggestionDecisionResponse | OutcomeSuggestionDecisionConflict => {
+    const existing = getSuggestionRow(db, suggestionId);
+    if (!existing) throw new InputError("Outcome suggestion not found.");
+    const previous = suggestionFromRow(db, existing);
+    const stored = existing.decided_outcome_id ? readOutcome(db, existing.decided_outcome_id) : null;
+    const recordedOutcome = stored?.outcome ?? null;
+    const unverifiable = (): OutcomeSuggestionDecisionConflict => ({
+      ok: false, error: "outcome_suggestion_replay_unverifiable", suggestion: previous, outcome: recordedOutcome,
+    });
+    const identity = actionIdentity(DEFAULT_TENANT, OUTCOME_SUGGESTION_OPERATION, existing.job_id, suggestionId, request);
+    let receipt: ReturnType<typeof readActionReceipt>;
+    try {
+      receipt = readActionReceipt(db, DEFAULT_TENANT, identity, "OutcomeSuggestionDecided", "job");
+    } catch (error) {
+      if (error instanceof ActionReceiptConflictError) return unverifiable();
+      throw error;
+    }
+    const decisionEvents = db.prepare(`SELECT COUNT(*) AS count FROM job_events
+      WHERE tenant_id=? AND job_id=? AND event_type='OutcomeSuggestionDecided'
+        AND json_valid(payload_json) AND json_extract(payload_json, '$.suggestionId')=?`)
+      .get(DEFAULT_TENANT, existing.job_id, suggestionId) as { count: number };
+    if (existing.status !== "pending") {
+      const savedDecision = existing.status === "accepted" ? "accept"
+        : existing.status === "corrected" ? "correct"
+        : existing.status === "ignored" ? "ignore" : null;
+      if (!receipt || decisionEvents.count !== 1 || receipt.factId !== suggestionId || !savedDecision || existing.decision !== savedDecision ||
+          receipt.event.decisionRequestVersion !== 2 || typeof receipt.event.occurredAtProvided !== "boolean" ||
+          (savedDecision !== "ignore" && !recordedOutcome)) return unverifiable();
+      const provided = receipt.event.occurredAtProvided;
+      const recordedRequest: OutcomeSuggestionDecisionRequest = {
+        decision: savedDecision,
+        ...(savedDecision === "correct" && recordedOutcome ? { outcomeKind: recordedOutcome.kind } : {}),
+        ...(provided && recordedOutcome ? { occurredAt: recordedOutcome.occurredAt } : {}),
+        ...(recordedOutcome?.note != null ? { note: recordedOutcome.note } : {}),
+        ...(existing.decision_reason !== null ? { reason: existing.decision_reason } : {}),
+      };
+      if (compareOutcomeSuggestionDecision(recordedRequest, previous, recordedOutcome, provided) !== "replayed") return unverifiable();
+      const recordedIdentity = actionIdentity(DEFAULT_TENANT, OUTCOME_SUGGESTION_OPERATION, existing.job_id, suggestionId, recordedRequest);
+      try {
+        assertActionReceipt(recordedIdentity, receipt, suggestionDecisionFact(existing, stored));
+      } catch (error) {
+        if (error instanceof ActionReceiptConflictError) return unverifiable();
+        throw error;
+      }
+      const comparison = compareOutcomeSuggestionDecision(request, previous, recordedOutcome, provided);
+      if (comparison === "replayed") return { ok: true, disposition: "replayed", suggestion: previous, outcome: recordedOutcome };
+      return {
+        ok: false,
+        error: comparison === "conflict" ? "outcome_suggestion_conflict" : "outcome_suggestion_replay_unverifiable",
+        suggestion: previous,
+        outcome: recordedOutcome,
+      };
+    }
+    if (receipt || decisionEvents.count !== 0 || existing.decision !== null || existing.decided_at !== null ||
+        existing.decision_reason !== null || existing.decided_outcome_id !== null) return unverifiable();
+    if (!previous.determination) throw new InputError("outcome_determination_unavailable");
+    const decidedAt = new Date().toISOString();
+    let outcome: ApplicationOutcome | null = null;
     if (request.decision === "accept" || request.decision === "correct") {
-      const kind =
-        request.decision === "correct"
-          ? (request.outcomeKind as ApplicationOutcomeKind)
-          : outcomeKind(existing.suggested_kind);
+      const kind = request.decision === "correct"
+        ? (request.outcomeKind as ApplicationOutcomeKind)
+        : outcomeKind(existing.suggested_kind);
       outcome = insertOutcome(db, {
         jobKey: canonicalJobId(existing.job_id),
         kind,
@@ -571,54 +640,33 @@ export function decideOutcomeSuggestion(
         interviewPrepGeneration: null,
       });
     }
-
     db.prepare(
       `UPDATE application_outcome_suggestions
-       SET status = ?,
-           decision = ?,
-           decided_at = ?,
-           decision_reason = ?,
-           decided_outcome_id = ?
+       SET status = ?, decision = ?, decided_at = ?, decision_reason = ?, decided_outcome_id = ?
        WHERE tenant_id = ? AND suggestion_id = ?`,
     ).run(
-      suggestionStatusForDecision(request.decision),
-      request.decision,
-      decidedAt,
-      request.reason ?? null,
-      outcome?.outcomeId ?? null,
-      DEFAULT_TENANT,
-      existing.suggestion_id,
+      suggestionStatusForDecision(request.decision), request.decision, decidedAt,
+      request.reason ?? null, outcome?.outcomeId ?? null, DEFAULT_TENANT, existing.suggestion_id,
     );
-
+    const suggestion = getSuggestionRow(db, suggestionId);
+    if (!suggestion) throw new InputError("Outcome suggestion not found.");
+    const event = {
+      tenantId: DEFAULT_TENANT, jobId: existing.job_id, suggestionId: existing.suggestion_id,
+      evidenceId: existing.evidence_id, decision: request.decision,
+      outcomeId: outcome?.outcomeId ?? null, outcomeKind: outcome?.kind ?? null,
+      notePresent: Boolean(request.note), reasonPresent: Boolean(request.reason),
+      decisionRequestVersion: 2, occurredAtProvided: request.occurredAt !== undefined,
+    };
     recordEvent(db, {
       eventType: "OutcomeSuggestionDecided",
       jobId: canonicalJobId(existing.job_id),
       stage: "apply",
       message: "Application outcome suggestion decision recorded.",
-      payload: {
-        tenantId: DEFAULT_TENANT,
-        jobId: existing.job_id,
-        suggestionId: existing.suggestion_id,
-        evidenceId: existing.evidence_id,
-        decision: request.decision,
-        outcomeId: outcome?.outcomeId ?? null,
-        outcomeKind: outcome?.kind ?? null,
-        notePresent: Boolean(request.note),
-        reasonPresent: Boolean(request.reason),
-      },
+      idempotencyKey: actionReceiptKey(identity, suggestionDecisionFact(suggestion, outcome ? { outcome, createdBy: "user" } : null), event),
+      payload: { ...event, receipt: { ...identity.binding, factId: suggestionId } },
     });
-  });
-  write();
-
-  const suggestion = getSuggestionRow(db, suggestionId);
-  if (!suggestion) {
-    throw new InputError("Outcome suggestion not found.");
-  }
-  return {
-    ok: true,
-    suggestion: suggestionFromRow(db, suggestion),
-    outcome,
-  };
+    return { ok: true, disposition: "applied", suggestion: suggestionFromRow(db, suggestion), outcome };
+  }).immediate();
 }
 
 function insertOutcome(
@@ -707,16 +755,19 @@ function readOutcomes(db: SqliteDatabase, jobId?: JobId): ApplicationOutcome[] {
   ).map(outcomeFromRow);
 }
 
-function readOutcome(db: SqliteDatabase, outcomeId: string): ApplicationOutcome | null {
-  const row = getRow<OutcomeRow>(
+function readOutcome(db: SqliteDatabase, outcomeId: string): StoredOutcome | null {
+  const row = getRow<OutcomeRow & { created_by: string }>(
     db,
     `SELECT outcome_id, job_id, kind, source, note, occurred_at,
-            recorded_at, suggestion_id, evidence_id, interview_prep_generation
+            recorded_at, suggestion_id, evidence_id, interview_prep_generation, created_by
      FROM application_outcomes
      WHERE tenant_id = ? AND outcome_id = ?`,
     [DEFAULT_TENANT, outcomeId],
   );
-  return row ? outcomeFromRow(row) : null;
+  // The general read model normalizes unknown raw kinds for display. A replay
+  // receipt must never treat an invalid stored value as the valid "unknown" kind.
+  if (!row || !APPLICATION_OUTCOME_KINDS.includes(row.kind as ApplicationOutcomeKind)) return null;
+  return { outcome: outcomeFromRow(row), createdBy: row.created_by };
 }
 
 function resolveInterviewPrepGeneration(
@@ -750,7 +801,7 @@ function readSuggestions(db: SqliteDatabase, jobId?: JobId): Pick<ApplicationOut
   const rows = allRows<SuggestionRow>(
     db,
     `SELECT suggestion_id, job_id, evidence_id, suggested_kind, confidence,
-            rationale, status, created_at, decided_at, decision_reason,
+            rationale, status, decision, created_at, decided_at, decision_reason,
             decided_outcome_id
      FROM application_outcome_suggestions
      ${where}
@@ -778,7 +829,7 @@ function getSuggestionRow(db: SqliteDatabase, suggestionId: string): SuggestionR
   return getRow<SuggestionRow>(
     db,
     `SELECT suggestion_id, job_id, evidence_id, suggested_kind, confidence,
-            rationale, status, created_at, decided_at, decision_reason,
+            rationale, status, decision, created_at, decided_at, decision_reason,
             decided_outcome_id
      FROM application_outcome_suggestions
      WHERE tenant_id = ? AND suggestion_id = ?`,

@@ -13,12 +13,19 @@ test("native CI requires both isolated shards and executes every listed test exa
   const workflow = JSON.parse(execFileSync("ruby", ["-e", yamlReader, workflowPath], { encoding: "utf8" }));
   assert.deepEqual(Object.keys(workflow.jobs),["launcher0","launcher1"]);
   const shard=workflow.jobs.launcher0;
+  const sourceGateNames = new Set([
+    "Set up source lifecycle Python",
+    "Test the complete source lifecycle in an owned offline workspace",
+  ]);
+  assert.deepEqual(shard.steps.filter(step => sourceGateNames.has(step.name)).map(step => step.name), [...sourceGateNames]);
+  assert.equal(workflow.jobs.launcher1.steps.some(step => sourceGateNames.has(step.name)), false);
+  const nativeRecipe = steps => steps.filter(step => !sourceGateNames.has(step.name));
   const nativeTests=shard.steps.find(step=>step.name==="Test native launcher shard");
   assert.equal(nativeTests.if,undefined);
   assert.equal(shard.steps.find(step=>step.name==="Vet native launcher").if,"${{ env.TEST_SHARD == '0' }}");
   for(const index of [0,1]) {
     const job=workflow.jobs["launcher"+index];
-    assert.deepEqual(job.steps,shard.steps);
+    assert.deepEqual(nativeRecipe(job.steps),nativeRecipe(shard.steps));
     assert.equal(job.env.TEST_SHARD,String(index));
     assert.equal(job["runs-on"],"macos-15");
     assert.equal(job.strategy,undefined);

@@ -7,6 +7,7 @@ import { once } from "node:events";
 import Database from "better-sqlite3";
 import { expect, it, vi } from "vitest";
 import { buildApp } from "../src/server.js";
+import { createRetryFixturePythonRuntime } from "./retry-rpc-runtime.js";
 
 it.each([false, true])("HTTP reset refuses untracked owner exit with intent=%s", async (intended) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-stopped-owner-"));
@@ -31,7 +32,7 @@ it.each([false, true])("HTTP reset refuses untracked owner exit with intent=%s",
     }
     expect(fs.existsSync(ready), diagnostics).toBe(true);
     const context = JSON.parse(fs.readFileSync(ready, "utf8")) as { run_id: string };
-    app = buildApp({ dbPath, appDir: directory, configPath: path.join(directory, "config.json"), actionDispatcher: dispatch, requireHealthyWorkerForActions: false });
+    app = buildApp({ pythonRuntime: createRetryFixturePythonRuntime(), dbPath, appDir: directory, configPath: path.join(directory, "config.json"), actionDispatcher: dispatch, requireHealthyWorkerForActions: false });
     const skipped = await app.inject({ method: "POST", url: `/v1/jobs/${jobId}/actions/mark-skipped`, payload: {} });
     expect(skipped.statusCode, skipped.body).toBe(200);
     const beforeExit = await app.inject({ method: "POST", url: `/v1/jobs/${jobId}/actions/retry-stage`, payload: { stage: "apply" } });

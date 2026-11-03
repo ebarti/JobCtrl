@@ -8,6 +8,43 @@ afterEach(() => {
 });
 
 describe("Discovery browser executor", () => {
+  it("rejects arbitrary hostnames before Chrome can resolve or request them", async () => {
+    const fetchRequest = vi.fn();
+    vi.stubGlobal("fetch", fetchRequest);
+    const browser = {
+      webNavigation: { onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() } },
+      declarativeNetRequest: { updateSessionRules: vi.fn() },
+      tabs: {
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+        sendMessage: vi.fn(),
+      },
+    } as unknown as BrowserApi;
+
+    const result = await executeDiscoveryBrowserTask(browser, {
+      ok: true,
+      status: "task",
+      taskId: "task-rebind",
+      leaseId: "lease-rebind",
+      timeoutMs: 60_000,
+      request: {
+        mode: "http_request",
+        url: "https://rebind.attacker.invalid/private",
+        method: "GET",
+        headers: {},
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      errorCode: "unsupported_page",
+      retryable: false,
+    });
+    expect(fetchRequest).not.toHaveBeenCalled();
+    expect(browser.tabs.create).not.toHaveBeenCalled();
+  });
+
   it("uses an inactive tab in the current Chrome profile and closes it after a rendered snapshot", async () => {
     const create = vi.fn(async () => ({ id: 42 }));
     const update = vi.fn(async () => ({ id: 42 }));

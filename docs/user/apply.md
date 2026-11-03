@@ -30,7 +30,8 @@ checkout-prefixed commands in [Local Development](../local-development.md).
 
 Your active Candidate Profile is stored in the `jobctrl.db` SQLite database;
 there is no second JSON-backed runtime profile. Values entered through the
-Profile screen or `jobctrl init` are validated and saved to SQLite.
+Profile screen or a first-time `jobctrl init` are validated and saved to SQLite.
+Later wizard runs retain the existing Profile; use the Profile screen to edit it.
 
 The Candidate Profile includes these `application_attestations` fields for
 legal or screening questions that Apply automation is not allowed to infer:

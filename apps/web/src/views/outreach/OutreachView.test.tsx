@@ -8,12 +8,16 @@ import {
 } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { DemoFeatureFlagAdapter } from "../../demo/ports.js";
 import { outreachSearchSchema } from "../../routes/-outreach.search.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { makeContactListResponse, makeContactSummary } from "../../test/fixtures/contacts.js";
+import { outreachKeys } from "../../contexts/outreach/queryKeys.js";
 import { OutreachView } from "./OutreachView.js";
 
 function renderOutreachView(
@@ -39,12 +43,27 @@ function renderOutreachView(
     ]),
     history: createMemoryHistory({ initialEntries: [initialPath] }),
   });
-  return render(<RouterProvider router={router} />, {
-    wrapper: harness.Wrapper,
-  });
+  return {
+    ...render(<RouterProvider router={router} />, { wrapper: harness.Wrapper }),
+    queryClient: harness.queryClient,
+  };
 }
 
 describe("<OutreachView>", () => {
+  it("marks retained contacts out of date after a failed refresh and clears the notice on retry", async () => {
+    const contact = makeContactSummary({ contactId: "contact-synthetic", displayName: "Synthetic contact" });
+    const accepted = makeContactListResponse([contact]);
+    const listContacts = vi.fn().mockResolvedValueOnce(accepted).mockRejectedValueOnce(new Error("Synthetic read failure")).mockResolvedValueOnce(accepted);
+    const { queryClient } = renderOutreachView("/outreach", buildTestPorts({ api: { listContacts } }));
+    await screen.findByText("Synthetic contact");
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: outreachKeys.contactLists(LOCAL_TENANT) }); });
+    expect(await screen.findByText("Contacts could not be refreshed. The list shown may be out of date.")).toBeVisible();
+    expect(screen.getByText("Synthetic contact")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry refresh" }));
+    await waitFor(() => expect(screen.queryByText("Contacts could not be refreshed. The list shown may be out of date.")).not.toBeInTheDocument());
+    expect(listContacts).toHaveBeenCalledTimes(3);
+  });
+
   it("lists contacts from the read model", async () => {
     renderOutreachView();
     await waitFor(() =>

@@ -26,6 +26,10 @@ test("Discovery Target search reviews persisted model decisions and saves only e
     if (message.type() === "error") errors.push(message.text());
   });
   const headers = { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" };
+  const search = await page.request.patch("/v1/discovery/settings", {
+    headers, data: { boards: ["linkedin"] },
+  });
+  expect(search.status(), await search.text()).toBe(200);
   const initial = await (await page.request.get("/v1/profile")).json();
   const profile = structuredClone(initial.profile);
   profile.personal.full_name = "Synthetic Search Preferences";

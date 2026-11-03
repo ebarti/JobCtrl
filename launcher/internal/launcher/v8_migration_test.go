@@ -208,7 +208,7 @@ func TestLifecycleMigratesV6AndV7ToV8AndRestoresExactSourceOnRollback(t *testing
 			fixture := newV6ActivationFixture(t)
 			setJobCtrlUserVersion(t, fixture.python, fixture.state, sourceVersion)
 			proofs := 0
-			temporalQuiescenceProof = func(_, _ launchContext) error {
+			temporalQuiescenceProof = func(_, _, _ launchContext) error {
 				proofs++
 				return nil
 			}

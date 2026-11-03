@@ -107,6 +107,26 @@ func init() {
 			fmt.Fprintln(os.Stdout, "loopback allowed; nonloopback denied")
 			os.Exit(0)
 		}
+		if os.Args[4] == "qa-privacy" {
+			if _, err := os.ReadFile(os.Args[5]); !errors.Is(err, syscall.EPERM) {
+				fmt.Fprintln(os.Stderr, "synthetic Keychain file read was not denied")
+				os.Exit(105)
+			}
+			file, err := os.OpenFile(os.Args[5], os.O_WRONLY|os.O_TRUNC, 0)
+			if file != nil {
+				file.Close()
+			}
+			if !errors.Is(err, syscall.EPERM) {
+				fmt.Fprintln(os.Stderr, "synthetic Keychain file write was not denied")
+				os.Exit(106)
+			}
+			if err := exec.Command("/usr/bin/security", "help").Run(); !errors.Is(err, syscall.EPERM) {
+				fmt.Fprintln(os.Stderr, "credential command execution was not denied")
+				os.Exit(107)
+			}
+			fmt.Fprintln(os.Stdout, "Keychain files and credential command denied")
+			os.Exit(0)
+		}
 		if os.Args[4] == "signal" || os.Args[4] == "disconnect" || os.Args[4] == "ignore-root" {
 			paths := strings.Split(os.Args[5], "|")
 			script := `import os,signal,sys,time
@@ -348,7 +368,7 @@ func TestOwnedExecutionParentEOFDoesNotAdmitWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(directory, "must-not-exist")
-	payload, err := json.Marshal(executionCommand{"/usr/bin/touch", []string{marker}, nil, directory})
+	payload, err := json.Marshal(executionCommand{Executable: "/usr/bin/touch", Arguments: []string{marker}, Directory: directory})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,8 +504,8 @@ func TestOwnedExecutionStdin(t *testing.T) {
 	}
 }
 
-// A conservative nonzero observation must never authorize completion, but a
-// later real stop can verify and retire the same synthetic execution safely.
+// Nonzero throughout the controller's witness window must not authorize
+// completion, but a later real stop can verify and retire the same execution.
 func TestFinishedOrdinaryExecutionRecoversFromTransientScopeCount(t *testing.T) {
 	ctx := executionTestContext(t)
 	root := filepath.Dir(ctx.Instance.StatePath)
@@ -499,12 +519,11 @@ func TestFinishedOrdinaryExecutionRecoversFromTransientScopeCount(t *testing.T) 
 	stdin, originalCount := os.Stdin, readCoalitionActiveTaskCount
 	os.Stdin = reader
 	injected := false
-	readCoalitionActiveTaskCount = func(id uint64) (uint64, error) {
-		if !injected {
-			injected = true
-			return 1, nil
-		}
-		return originalCount(id)
+	readCoalitionActiveTaskCount = func(uint64) (uint64, error) {
+		// Hold the negative input through every bounded retry. A one-shot
+		// injection can be followed by real zero and valid completion.
+		injected = true
+		return 1, nil
 	}
 	defer func() { os.Stdin, readCoalitionActiveTaskCount = stdin, originalCount }()
 	command := []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "stdin", "unused"}
@@ -1150,6 +1169,36 @@ func TestOwnedExecutionUnknownSandboxRefusesBeforeAdmission(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(ctx.Instance.StatePath), "executions")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("unknown sandbox selector created receipt directory")
+	}
+}
+
+func TestOwnedExecutionQASandboxDeniesCredentialAccess(t *testing.T) {
+	ctx := executionTestContext(t)
+	ctx.Instance.ControlPath = filepath.Join(filepath.Dir(ctx.Instance.StatePath), "control.lock")
+	ctx.Instance.LockPath = filepath.Join(filepath.Dir(ctx.Instance.StatePath), "instance.lock")
+	ctx.Environment = append(ctx.Environment, executionQASandboxVariable+"="+executionQASandboxSelector)
+	defer func() {
+		if err := stop(ctx); err != nil {
+			t.Errorf("owned privacy fixture cleanup: %v", err)
+		}
+	}()
+	keychain := filepath.Join(filepath.Dir(ctx.Instance.StatePath), "Library", "Keychains", "synthetic.keychain")
+	if err := os.MkdirAll(filepath.Dir(keychain), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("owned synthetic credential canary")
+	if err := os.WriteFile(keychain, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	if err := runInOwnedExecution(ctx, []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "qa-privacy", keychain}, &out, &stderr); err != nil {
+		t.Fatalf("native QA credential boundary failed: %v; stderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(out.String(), "Keychain files and credential command denied") {
+		t.Fatalf("missing privacy proof: %s", out.String())
+	}
+	if actual, err := os.ReadFile(keychain); err != nil || !bytes.Equal(actual, original) {
+		t.Fatal("owned synthetic Keychain bytes changed")
 	}
 }
 

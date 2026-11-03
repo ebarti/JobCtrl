@@ -1,6 +1,6 @@
 [project]
 name = "jobctrl"
-version = "0.4.0"
+version = "0.4.1"
 description = "AI-powered end-to-end job application pipeline"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -65,7 +65,7 @@ dev = [
     "pytest-timeout>=2.4,<3",
     "pytest-xdist>=3.8,<4",
     "python-docx>=1.2,<2",
-    "ruff==0.17.1",
+    "ruff==0.17.3",
 ]
 providers = [
     "claude-agent-sdk==0.2.121",

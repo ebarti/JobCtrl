@@ -8,7 +8,11 @@ import { refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
 test("Discovery launches offline and prefers a connected extension in its status", async ({ page }) => {
   refreshE2eWorkerHeartbeat();
   const pageErrors: string[] = [];
+  let dispatches = 0;
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/v1/pipeline/actions/run-stage") dispatches += 1;
+  });
   await page.goto("/pipelines");
   await expect(page).toHaveURL(/\/pipelines$/);
   await expect(page).toHaveTitle(/JobCtrl/);
@@ -18,6 +22,18 @@ test("Discovery launches offline and prefers a connected extension in its status
   await expect(status).toContainText("can run with anonymous access");
 
   const run = page.getByRole("button", { name: "Run Discover", exact: true });
+  const dryRun = page.getByRole("checkbox", { name: "Dry run" });
+  await expect(dryRun).not.toBeChecked();
+  await expect(run).toBeEnabled();
+  await dryRun.check();
+  await expect(dryRun).toBeChecked();
+  await expect(run).toBeDisabled();
+  await expect(run).toHaveAccessibleDescription(
+    "Discover does not support dry runs. Turn off Dry run to start a search.",
+  );
+  expect(dispatches).toBe(0);
+  await dryRun.uncheck();
+  await expect(dryRun).not.toBeChecked();
   await expect(run).toBeEnabled();
   const offlineDispatch = page.waitForResponse((response) =>
     new URL(response.url()).pathname === "/v1/pipeline/actions/run-stage"
@@ -26,7 +42,12 @@ test("Discovery launches offline and prefers a connected extension in its status
   await run.click();
   const offlineResponse = await offlineDispatch;
   expect(offlineResponse.status()).toBe(202);
-  expect(offlineResponse.request().postDataJSON()).toMatchObject({ stages: ["discover"] });
+  expect(offlineResponse.request().postDataJSON()).toMatchObject({ stages: ["discover"], dryRun: false });
+  expect(await offlineResponse.json()).toMatchObject({
+    command: { stages: ["discover"], dryRun: false },
+    actions: [{ command: { stage: "discover", dryRun: false } }],
+  });
+  expect(dispatches).toBe(1);
   await expect(page.getByText(/Discover queued successfully/)).toBeVisible();
 
   // Model a freshly paired selected installation through the authenticated
@@ -45,13 +66,21 @@ test("Discovery launches offline and prefers a connected extension in its status
   expect(claim.status()).toBe(200);
   await page.reload();
   await expect(status).toContainText("Connected extension preferred for Discovery and Enrich");
+  await expect(dryRun).not.toBeChecked();
   await expect(run).toBeEnabled();
   const connectedDispatch = page.waitForResponse((response) =>
     new URL(response.url()).pathname === "/v1/pipeline/actions/run-stage"
     && response.request().method() === "POST",
   );
   await run.click();
-  expect((await connectedDispatch).status()).toBe(202);
+  const connectedResponse = await connectedDispatch;
+  expect(connectedResponse.status()).toBe(202);
+  expect(connectedResponse.request().postDataJSON()).toMatchObject({ stages: ["discover"], dryRun: false });
+  expect(await connectedResponse.json()).toMatchObject({
+    command: { stages: ["discover"], dryRun: false },
+    actions: [{ command: { stage: "discover", dryRun: false } }],
+  });
+  expect(dispatches).toBe(2);
   await expect(page.getByText(/Discover queued successfully/)).toBeVisible();
   expect(pageErrors).toEqual([]);
 });

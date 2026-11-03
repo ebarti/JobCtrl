@@ -210,6 +210,17 @@ API worker-heartbeat health. Each canonical `JOBCTRL_DIR` has one locked runtime
 registry. Records bind its instance, payload, manifest, PID/start identities,
 process groups and execution scope.
 
+Each Temporal health command runs in its own receipt-bound native execution
+scope, with a three-second host deadline and a bounded diagnostic buffer. The
+startup phase's remaining deadline and shutdown signals also cancel the probe.
+The helper verifies and drains that scope's descendants even if they detach;
+the running Temporal service and other instances remain outside its authority.
+Status marks a live Temporal process unhealthy when its probe fails or times
+out and reports the bounded diagnostic. Unverified probe cleanup fails the
+status command and retains any unverified ownership receipt for inspection and stop. A
+legacy v6 quiescence proof probes the verified old Temporal payload through
+the separately authenticated current controller.
+
 Runtime starts and Python CLI commands execute inside uniquely labeled,
 ephemeral per-user launchd jobs. The launcher records the kernel resource and
 jetsam coalition IDs in a private instance receipt **before authorizing work**.
@@ -333,6 +344,20 @@ candidate, and activates it in place. A source journal fences installed writers
 until recovery finishes; retries take a fresh stopped-pair backup instead of
 restoring old data. A locally trusted checkout does not impersonate a signed
 release. Unverified older source processes are not migration authority.
+
+The source shell's component records also bind a private per-launch control
+endpoint. A small launch owner retains the original `Popen` and unreaped child
+identity; status and stop authenticate that owner before requesting cleanup.
+Stop clients serialize each component's initial read, request and receipt
+retirement under a separate operation lock. The owner's publication lock stays
+available while that operation waits for verified cleanup.
+The existing original-child/session ownership helper performs termination. No
+recovered PID is signalled, so a birth check followed by a numeric signal is not
+used as cross-process authority. Legacy, changed or unreachable records remain
+unverified and block automatic replacement. An explicit `scripts/dev forget`
+retires only reviewed metadata, without signalling or certifying earlier exit.
+Lost ownership or unverified descendant cleanup remains a visible source-mode
+failure; it does not require a reboot or weaken the native workspace scope.
 
 The current runtime admits only exact schema v15. A stopped v6 database retains
 the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8
