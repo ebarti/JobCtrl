@@ -250,6 +250,25 @@ describe("BrowserPdfExportAdapter", () => {
         xMm: 5,
         yMm: 10,
       });
+      const clonePositioned = searchableTextLayer(source, [
+        {
+          canvas: document.createElement("canvas"),
+          slice: { startPx: 0, endPx: 25 },
+          textLayout: {
+            pageWidthPx: 200,
+            pageLeftPx: 0,
+            fragments: measured.map(fragment => ({ ...fragment, topPx: fragment.topPx + 20 })),
+          },
+        },
+        {
+          canvas: document.createElement("canvas"),
+          contentOffsetTopPx: 20,
+          slice: { startPx: 25, endPx: 200 },
+        },
+      ], { format: "a4", heightMm: 100, heightPx: 200, widthMm: 100, widthPx: 200 });
+      // The export clone wraps differently from the live editor. Both the PDF
+      // page and selectable text must follow that rendered layout.
+      expect(clonePositioned[0]).toMatchObject({ text: "First", pageNumber: 2, yMm: 12.5 });
     } finally {
       if (originalDescriptor) {
         Object.defineProperty(

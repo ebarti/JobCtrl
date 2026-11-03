@@ -86,6 +86,14 @@ export interface PdfRasterizedPage {
   /** Space inserted above a continuation slice, in source CSS pixels. */
   readonly contentOffsetTopPx?: number;
   readonly slice: PdfPageSlice;
+  /** Captured from the same cleaned clone that produced the bitmap. */
+  readonly textLayout?: PdfTextLayout;
+}
+
+interface PdfTextLayout {
+  readonly pageLeftPx: number;
+  readonly pageWidthPx: number;
+  readonly fragments: readonly PdfMeasuredTextFragment[];
 }
 
 interface PdfPageInsets {
@@ -406,7 +414,7 @@ function collectTextLineIntervals(
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     if (!node.textContent?.trim()) continue;
     const parent = node.parentElement;
-    if (!parent || parent.closest(EDITOR_CHROME_SELECTOR)) continue;
+    if (!parent || parent.closest(`${EDITOR_CHROME_SELECTOR}, html2canvaspseudoelement`)) continue;
     const range = ownerDocument.createRange();
     range.selectNodeContents(node);
     if (typeof range.getClientRects !== "function") continue;
@@ -628,11 +636,23 @@ async function rasterizePdfPages(
     element: HTMLElement,
     options?: Partial<Html2CanvasOptions>,
   ) => Promise<HTMLCanvasElement>;
+  let renderedLineIntervals = options.lineIntervals;
+  let renderedInsets = options.pageInsets;
+  let renderedTextLayout: PdfTextLayout | undefined;
   const continuousCanvas = await html2canvas(source, {
     backgroundColor: "#ffffff",
     ignoreElements: options.ignoreElements,
     logging: false,
-    onclone: options.onclone,
+    onclone: (clonedDocument) => {
+      options.onclone(clonedDocument);
+      const clone = clonedDocument.querySelector<HTMLElement>(`[${PDF_EXPORT_SOURCE_ATTRIBUTE}="true"]`);
+      if (!clone) throw new Error("The browser could not measure the resume export layout.");
+      // The clone has the export viewport and cleaned editor styles. Measuring
+      // the live editor instead can paginate and select different text lines.
+      renderedLineIntervals = collectTextLineIntervals(clone);
+      renderedInsets = pdfPageInsets(clone);
+      renderedTextLayout = measurePdfTextLayout(clone);
+    },
     scale: PDF_BITMAP_SCALE,
     useCORS: true,
     width: options.windowWidth,
@@ -646,7 +666,7 @@ async function rasterizePdfPages(
     1,
     Math.round(options.pageHeightPx * canvasScale),
   );
-  const scaledLineIntervals = options.lineIntervals.map((interval) => ({
+  const scaledLineIntervals = renderedLineIntervals.map((interval) => ({
     bottomPx: interval.bottomPx * canvasScale,
     topPx: interval.topPx * canvasScale,
   }));
@@ -667,8 +687,8 @@ async function rasterizePdfPages(
           )
       : undefined,
     {
-      topPx: options.pageInsets.topPx * canvasScale,
-      bottomPx: options.pageInsets.bottomPx * canvasScale,
+      topPx: renderedInsets.topPx * canvasScale,
+      bottomPx: renderedInsets.bottomPx * canvasScale,
     },
   );
 
@@ -683,7 +703,7 @@ async function rasterizePdfPages(
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
     const sliceHeightPx = Math.max(1, slice.endPx - slice.startPx);
-    const contentOffsetTopPx = index === 0 ? 0 : options.pageInsets.topPx;
+    const contentOffsetTopPx = index === 0 ? 0 : renderedInsets.topPx;
     context.drawImage(
       continuousCanvas,
       0,
@@ -698,6 +718,7 @@ async function rasterizePdfPages(
     return {
       canvas: pageCanvas,
       contentOffsetTopPx,
+      ...(index === 0 && renderedTextLayout ? { textLayout: renderedTextLayout } : {}),
       slice: {
         endPx: slice.endPx / canvasScale,
         startPx: slice.startPx / canvasScale,
@@ -875,7 +896,7 @@ export function collectSearchableTextFragments(
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const parent = node.parentElement;
     const nodeText = node.textContent ?? "";
-    if (!parent || parent.closest(EDITOR_CHROME_SELECTOR) || !nodeText.trim()) {
+    if (!parent || parent.closest(`${EDITOR_CHROME_SELECTOR}, html2canvaspseudoelement`) || !nodeText.trim()) {
       continue;
     }
     for (const match of nodeText.matchAll(/\S+/gu)) {
@@ -928,25 +949,32 @@ function fallbackSearchableTextFragments(
   });
 }
 
-export function searchableTextLayer(
-  source: HTMLElement,
-  pages: readonly PdfRasterizedPage[],
-  geometry: PdfPageGeometry,
-): readonly PdfSearchableTextFragment[] {
+function measurePdfTextLayout(source: HTMLElement): PdfTextLayout {
   const sourceRect = source.getBoundingClientRect();
   const pageRect =
     source
       .querySelector<HTMLElement>(".resume-page")
       ?.getBoundingClientRect() ?? sourceRect;
-  const pageWidthPx = pageRect.width > 0 ? pageRect.width : geometry.widthPx;
-  const pageLeftPx = pageRect.left - sourceRect.left;
   const measuredFragments = collectSearchableTextFragments(source);
-  const textFragments =
-    measuredFragments.length > 0
+  return {
+    pageWidthPx: pageRect.width,
+    pageLeftPx: pageRect.left - sourceRect.left,
+    fragments: measuredFragments.length > 0
       ? measuredFragments
-      : fallbackSearchableTextFragments(source);
+      : fallbackSearchableTextFragments(source),
+  };
+}
+
+export function searchableTextLayer(
+  source: HTMLElement,
+  pages: readonly PdfRasterizedPage[],
+  geometry: PdfPageGeometry,
+): readonly PdfSearchableTextFragment[] {
+  const layout = pages[0]?.textLayout ?? measurePdfTextLayout(source);
+  const pageWidthPx = layout.pageWidthPx > 0 ? layout.pageWidthPx : geometry.widthPx;
+  const pageLeftPx = layout.pageLeftPx;
   const fragments: PdfSearchableTextFragment[] = [];
-  for (const fragment of textFragments) {
+  for (const fragment of layout.fragments) {
     const topPx = fragment.topPx;
     const centerPx = topPx + fragment.heightPx / 2;
     const matchingPageIndex = pages.findIndex(
