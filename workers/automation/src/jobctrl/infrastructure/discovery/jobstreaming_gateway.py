@@ -22,10 +22,12 @@ from jobstreaming import (
     CheckpointStore,
     Scraper,
     ErrorEvent,
+    InvalidRequestError,
     JobEvent,
     JobPost,
     ProgressEvent,
     SearchCompleteEvent,
+    SearchFilter,
     SearchRequest,
     SearchStream,
     Site,
@@ -36,7 +38,11 @@ from jobstreaming import (
     fetch_job_detail,
     stream_search,
 )
+
 from jobstreaming.batch import jobs_to_dataframe
+
+from jobctrl.domain.discovery.remote_search import RemoteSearchConfigurationError as RemoteSearchConfigurationError
+from jobctrl.domain.discovery.remote_search import validate_remote_search_scope
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,8 +63,8 @@ class JobStreamingSearchSpec:
             raise ValueError("sites must contain at least one board")
         if not self.query.strip():
             raise ValueError("query must be non-empty")
-        if not self.location.strip():
-            raise ValueError("location must be non-empty")
+        if not isinstance(self.location, str) or (not self.location.strip() and not (self.location == "" and self.remote_only)):
+            raise ValueError("location must be non-empty unless remote-only")
         if self.results_per_site < 1:
             raise ValueError("results_per_site must be positive")
 
@@ -114,6 +120,70 @@ class JobStreamingSearchError(RuntimeError):
 
 
 _TLS_CLIENT_SITES = frozenset({Site.GLASSDOOR, Site.ZIP_RECRUITER})
+
+
+class UnsupportedRemoteSearch(InvalidRequestError):
+    """A board cannot apply the selected Remote search scope exactly."""
+
+
+class _RemoteScopeAdapter:
+    """Check the actual adapter before it can issue a broadened request."""
+
+    def __init__(self, delegate: Any) -> None:
+        self._delegate = delegate
+        self.site = delegate.site
+        self.capabilities = delegate.capabilities
+
+    def scrape(self, scraper_input: SearchRequest, context: Any | None = None) -> Any:
+        required = {SearchFilter.IS_REMOTE}
+        if scraper_input.location:
+            required.add(SearchFilter.LOCATION)
+        if scraper_input.hours_old:
+            required.add(SearchFilter.HOURS_OLD)
+        if not required.issubset(self.capabilities.filters):
+            raise UnsupportedRemoteSearch("The board cannot apply the selected Remote search filters.")
+
+        # These pinned SDK adapters advertise each filter separately but cannot
+        # apply these combinations together. Inspect the real delegate rather
+        # than guessing from a site label or constructing an extra adapter.
+        from jobstreaming.glassdoor import Glassdoor
+        from jobstreaming.indeed import Indeed
+
+        actual = self._delegate
+        while isinstance(actual, _IntegralTlsTimeoutAdapter):
+            actual = actual._delegate
+        if isinstance(actual, Indeed) and scraper_input.hours_old:
+            raise UnsupportedRemoteSearch("Indeed cannot combine the selected Remote and lookback filters.")
+        if isinstance(actual, Glassdoor) and scraper_input.location:
+            raise UnsupportedRemoteSearch("Glassdoor cannot combine the selected Remote and location filters.")
+        return self._delegate.scrape(scraper_input, context=context)
+
+    def close(self) -> None:
+        close = getattr(self._delegate, "close", None)
+        if callable(close):
+            close()
+
+
+def _remote_safe_registry(spec: JobStreamingSearchSpec, registry: AdapterRegistry | None) -> AdapterRegistry:
+    """Retain unsupported boards as failures instead of broadening a search."""
+    normalized = _normalize_tls_adapter_timeouts(registry)
+    if not spec.remote_only:
+        return normalized
+    guarded = normalized.copy()
+    registered = {site.value for site in normalized.sites}
+    for site in spec.sites:
+        if site not in registered:
+            continue
+        cursor_version = normalized.cursor_schema_version(site)
+
+        def guarded_factory(*, _site: str = site, **kwargs: Any) -> _RemoteScopeAdapter:
+            return _RemoteScopeAdapter(normalized.create(_site, **kwargs))
+
+        # The provider's public cursor-version contract must remain unchanged
+        # for existing checkpoints. Version 1 is the registry default.
+        options = {"cursor_schema_version": cursor_version} if cursor_version != 1 else {}
+        guarded.register(site, guarded_factory, replace=True, **options)
+    return guarded
 
 
 def _apply_provider_filter_evidence(
@@ -194,7 +264,7 @@ class JobStreamingGateway:
         return build_search_request(
             site_name=list(spec.sites),
             search_term=spec.query,
-            location=spec.location,
+            location=spec.location or None,
             results_wanted=spec.results_per_site,
             hours_old=spec.hours_old,
             is_remote=spec.remote_only,
@@ -223,6 +293,9 @@ class JobStreamingGateway:
         outrunning JobCtrl's durable write.
         """
 
+        validate_remote_search_scope(
+            spec.sites, location=spec.location, remote_only=spec.remote_only, hours_old=spec.hours_old,
+        )
         return stream_search(
             self.build_request(spec),
             proxies=proxies,
@@ -233,7 +306,7 @@ class JobStreamingGateway:
             retry_backoff=retry_backoff,
             ack_mode=AckMode.EXPLICIT,
             cancel_event=cancel_event,
-            registry=_normalize_tls_adapter_timeouts(registry),
+            registry=_remote_safe_registry(spec, registry),
         )
 
     @classmethod

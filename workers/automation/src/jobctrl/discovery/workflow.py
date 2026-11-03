@@ -104,6 +104,7 @@ _AUTOMATIC_COMPENSATION_REFRESH_PATCH = "discover-automatic-compensation-refresh
 _COMPENSATION_MODEL_BUDGET_PATCH = "discover-compensation-model-budget-v1"
 _SOURCE_RESULT_BUDGET_PATCH = "discover-source-result-budget-v1"
 _TERMINAL_ENRICHMENT_HANDOFF_PATCH = "discover-terminal-enrichment-handoff-v1"
+_UNSUPPORTED_REMOTE_FAILURE_PATCH = "discover-unsupported-remote-failure-v1"
 
 
 @workflow.defn(name="DiscoverWorkflow")
@@ -205,6 +206,7 @@ class DiscoverWorkflow:
         completed: list[str] = []
         failed: list[str] = []
         failures: list[str] = []
+        unsupported_remote_failures: list[str] = []
         # Score-as-you-discover uses the durable job commit as its handoff
         # boundary. One execution-scoped enrichment activity polls while source
         # activities are still producing jobs and hands each successful job to
@@ -249,6 +251,8 @@ class DiscoverWorkflow:
                     failed.append(family)
                     if failure is not None:
                         failures.append(failure)
+                        if status == "unsupported_remote":
+                            unsupported_remote_failures.append(failure)
             if batch_completed:
                 streaming_pass_ordinal += 1
                 await self._stream_family_preparation(
@@ -329,6 +333,29 @@ class DiscoverWorkflow:
                 raise CancelledError() from exc
             preparation_error = exc
 
+        # A pre-upgrade plan can reach a source activity without the new
+        # planning preflight. Finish healthy-family work before reporting the
+        # rejected board scope, rather than letting a peer's success hide it.
+        if unsupported_remote_failures:
+            failure = "; ".join(failures)
+            if enrichment_failure is not None:
+                failure += f"; enrichment also failed: {enrichment_failure}"
+            if preparation_error is not None:
+                prep_cause = str(preparation_error.cause) if preparation_error.cause else str(preparation_error)
+                failure += f"; preparation also failed: {prep_cause}"
+            return DiscoverWorkflowResult(
+                families_completed=completed,
+                families_failed=failed,
+                preparation_started=preparation_started,
+                enrichment_status=enrichment_status,
+                enrichment_site_errors=enrichment_site_errors,
+                compensation_refresh_status=compensation_refresh_status,
+                compensation_estimates_written=compensation_estimates_written,
+                compensation_refresh_warnings=compensation_refresh_warnings,
+                failure=failure,
+                error_code="unsupported_remote_search",
+            )
+
         all_families_failed = bool(failed) and not completed
         if all_families_failed:
             return DiscoverWorkflowResult(
@@ -384,7 +411,7 @@ class DiscoverWorkflow:
         """Run one family's source crawl; return ``(family, status, failure)``.
 
         Never raises: it folds every outcome into a status
-        (``"ok"``/``"failed"``/``"canceled"``) so ``asyncio.gather`` over a
+        (``"ok"``/``"failed"``/``"unsupported_remote"``/``"canceled"``) so ``asyncio.gather`` over a
         parallel batch always completes and the caller folds results in a
         deterministic, submission-order pass. Cancellation is surfaced as
         ``"canceled"`` and re-raised by the caller so it fans out to the whole
@@ -416,6 +443,11 @@ class DiscoverWorkflow:
         except ActivityError as exc:
             if _activity_error_was_cancelled(exc):
                 return (family, "canceled", None)
+            if (
+                _activity_error_code(exc) == "unsupported_remote_search"
+                and workflow.patched(_UNSUPPORTED_REMOTE_FAILURE_PATCH)
+            ):
+                return (family, "unsupported_remote", f"{family}: {exc.cause if exc.cause else exc}")
             return (family, "failed", f"{family}: {exc.cause if exc.cause else exc}")
         return (family, "ok", None)
 

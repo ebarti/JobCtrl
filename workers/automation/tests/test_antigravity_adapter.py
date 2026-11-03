@@ -58,6 +58,14 @@ def _valid_analysis_dict() -> dict[str, Any]:
     }
 
 
+class _FakeConversation:
+    def __init__(self, response):
+        self.response = response
+
+    async def receive_steps(self):
+        yield SimpleNamespace(usage_metadata=self.response.usage_metadata)
+
+
 class _FakeResponse:
     """Mimics the SDK response: an async ``chunks`` iterator + structured_output()."""
 
@@ -68,11 +76,13 @@ class _FakeResponse:
         self._chunks = chunks if chunks is not None else ["chunk-a", "chunk-b"]
         self.drained = False
         self.usage_metadata = usage_metadata
+        self._conversation = _FakeConversation(self)
 
     @property
     async def chunks(self):  # noqa: D401 - async generator property mirroring the SDK
-        for chunk in self._chunks:
-            yield chunk
+        async for _ in self._conversation.receive_steps():
+            for chunk in self._chunks:
+                yield chunk
         self.drained = True
 
     async def structured_output(self) -> Any:
@@ -97,6 +107,7 @@ class _FakeAgent:
 
     async def chat(self, prompt: str) -> _FakeResponse:
         self._calls["chat_prompt"] = prompt
+        self.conversation = self._response._conversation
         return self._response
 
 

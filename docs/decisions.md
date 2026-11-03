@@ -2729,6 +2729,12 @@ that a timed-out activity thread has stopped. An explicit, reviewed-lifecycle
 recovery action advances the capture generation atomically before allowing a
 retry, preventing earlier attempts from publishing while retaining the draft.
 
+Gmail feedback scans report those safe failure codes and the progress observed
+after each committed message. A failed later determination or provider call
+does not erase accepted evidence, and retry uses message deduplication. Source
+citations remain in their canonical determination records; scan responses and
+events do not carry message text. A lost worker response leaves progress unknown.
+
 Saved search controls are already authoritative when the user saves them. Source/query planning executes their literal values and performs no model reinterpretation or second approval. Downstream determinations assess posting meaning against the supplied saved criteria without replacing those choices. Scoring receives the exact saved target-source snapshot and profile version; later profile edits cannot rewrite earlier determinations’ sources. Provider search/filter execution belongs to JobStreaming. Structurally valid fetched listings proceed through canonical ingestion to full-posting analysis and scoring without a separate intake model gate. Source-native listing flags, exact identity, limits, security rules and literal user-authored title exclusions remain mechanical.
 
 Owner correction (2026-10-07): remove the separate metadata-only intake filter, its queue and batch/model settings. JobStreaming executes saved provider searches; supported filters and unsupported-filter warnings belong to its adapters. Company ATS feeds may expose all listed vacancies and currently use JobCtrl’s direct API adapters; their suitability is assessed from full postings downstream. Historical intake captures and envelopes remain under the frozen native schema. Unconsumed source payloads recover through canonical ingestion in bounded source-family batches, with current literal exclusions and limits; the retired verdict, preferences and envelope are never consulted. Each new determination uses one provider. Employer analysis retains its optional ensemble; BR-058 permits one ready provider. Claim verification is a separate call alongside the existing quality judge. Generators record line IDs, evidence/requirement IDs, transform and reason; the verifier affirms source contributions and findings by line ID. Readers join recorded IDs; unanchored lines say “No recorded source”.

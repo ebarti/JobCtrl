@@ -1988,7 +1988,11 @@ export function createExtractedRuntimeStackPlan({ payloadRoot, stateRoot, tempor
 const LOOPBACK_ONLY_SANDBOX_PROFILE = `(version 1)
 (allow default)
 (deny network-outbound (remote ip))
-(allow network-outbound (remote ip "localhost:*"))`;
+(allow network-outbound (remote ip "localhost:*"))
+(deny file-read* (regex #"/Library/Keychains(/|$)"))
+(deny file-write* (regex #"/Library/Keychains(/|$)"))
+(deny mach-lookup (global-name-regex #"^com[.]apple[.](security|Security).*"))
+(deny process-exec (literal "/usr/bin/security"))`;
 
 const NATIVE_EXECUTION_QA_SANDBOX = "loopback-only-v1";
 

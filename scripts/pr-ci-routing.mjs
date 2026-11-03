@@ -29,6 +29,23 @@ const apiSafety = new Set([
   "native-credential-store.ts", "config-file.ts", "config.ts", "contracts.ts", "db.ts", "schema-manifest.ts",
 ].map((name) => `apps/api/src/${name}`));
 const workerSafety = /(?:^|\/)(?:database|browser_capabilities|config|state|runtime|native_credentials)\.py$/;
+const rootDocumentation = new Set([
+  "AGENTS.md", "CODE_OF_CONDUCT.md", "CONTRIBUTING.md", "DESIGN.md", "README.md", "ROADMAP.md", "SECURITY.md",
+]);
+// Exact owners only: a new helper or workflow still falls back to full proof.
+// These groups cover their runtime consumers without selecting unrelated UI.
+const ownedInputs = new Map([
+  ["workers/automation/pyproject.toml", ["api", "python", "e2e", "launcher", "credentials", "gmail", "distribution"]],
+  ["workers/automation/uv.lock", ["api", "python", "e2e", "launcher", "credentials", "gmail", "distribution"]],
+  [".github/workflows/ci-backend.yml", ["api", "python", "distribution", "edge"]],
+  [".github/workflows/ci-frontend.yml", ["web", "storybook", "e2e", "extension", "docs", "demo"]],
+  [".github/workflows/native-credentials.yml", ["api", "python", "credentials"]],
+  [".github/workflows/gmail-token-windows.yml", ["python", "gmail"]],
+  [".github/workflows/launcher.yml", ["api", "python", "e2e", "launcher", "distribution"]],
+  ["scripts/native-credentials-host.py", ["api", "python", "credentials"]],
+  ["scripts/native-credentials-workflow.test.mjs", ["api", "python", "credentials"]],
+  ["scripts/test_native_credentials_host.py", ["api", "python", "credentials"]],
+]);
 
 function requireValue(condition, message) {
   if (!condition) throw new Error(message);
@@ -60,6 +77,12 @@ export function selectSurfaces(changes) {
   for (const { status, path } of changes) {
     if (status === "T") return full("file-type-change");
     if (!/^[ADM]$/.test(status) || !path || path.startsWith("/") || path.includes("\\") || path.split("/").some((part) => part === "." || part === "..")) return full("unknown-path");
+    if (rootDocumentation.has(path)) { select("docs"); continue; }
+    if (ownedInputs.has(path)) { select(...ownedInputs.get(path)); continue; }
+    if (/^launcher\/(?:cmd|internal)\/.+\.go$/.test(path)) {
+      select("api", "python", "e2e", "launcher", "distribution");
+      continue;
+    }
     if (/^(?:\.github|scripts|packages|packaging|launcher)\//.test(path) || configuration.test(path)) return full("shared-input");
     if (path === "docs/public/install.sh" || path === "apps/extension/public/manifest.json" || apiSafety.has(path) || /^apps\/api\/test\/[^/]*credential[^/]*\.ts$/.test(path) || path === "apps/api/test/support/reopen-exact-v8.ts") return full("safety-input");
     if (path.startsWith("workers/automation/src/jobctrl/") && (

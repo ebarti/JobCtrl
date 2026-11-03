@@ -25,13 +25,22 @@ The stale-score reset response and its `ScoreRescoreRequested` event provide
 `jobctrl score --rescore` as `nextAction`. That explicit command operates on the
 eligible scoring queue; the reset itself does not dispatch scoring.
 
+Discover does not support preview. A global request containing Discover with
+`dryRun: true` returns `400 discover_preview_unsupported` before dispatch,
+including mixed-stage requests. Because the HTTP default is `true`, explicitly
+send `dryRun: false` for an ordinary search.
+
 `POST /v1/jobs/:jobKey/actions/retry-stage` has two distinct commands. A plain
-reset (`runAfter: false`) is local and synchronous. Enrichment resets cross the
+reset (`runAfter: false`) is local and synchronous. Stage resets cross the
 local Python RPC boundary and acknowledge the committed application-service
 transaction with the same `200` reset response; Temporal and a healthy activity
-worker are not required for reset-only. A mixed bulk retry containing Enrich
-uses that same transaction for the complete cohort. See
-[ownership and preservation](../architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
+worker are not required for reset-only. All bulk retry cohorts use that same
+transaction. If approved materials make a replacement require an explicit
+re-tailor, the reset response explains that and does not dispatch that job;
+bulk responses include its canonical job ID in `retailorRequiredJobKeys`. A stale
+single or bulk selection returns `409 retry_selection_changed` without resetting
+or dispatching that request; refresh the jobs list and review the selection before retrying. See
+[ownership and preservation](../architecture/contracts-types-and-api-boundaries.md#stage-retry-ownership).
 A reset-and-run
 (`runAfter: true`) checks worker readiness before the reset; on
 `503 worker_runtime_unavailable`, the failed/blocked stage and its event history
@@ -325,6 +334,10 @@ an event row never silently replaces the event view with a job redirect.
 `GET /v1/health` distinguishes API process health from worker readiness. A
 command that requires the worker must fail clearly when the JSON-RPC/Temporal
 path is unavailable; the API must not manufacture a successful queued state.
+`llmSpend.status` is `incomplete` while a provider usage receipt is pending or
+unresolved. Spend and token totals are then null, not a known zero; the digest
+budget also carries the incomplete status.
+
 If startup finds an incompatible database version or schema manifest, a
 diagnostic-only API returns HTTP 503 with `database_migration_required` for
 supported older versions or `database_schema_incompatible` otherwise. It

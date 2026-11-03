@@ -2,6 +2,7 @@ import type { CheckAvailabilityResponse } from "../../operations/types.js";
 import type { JobDetail } from "@jobctrl/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
+import { createOptimisticMutation, invalidateQueriesWithOptimisticOwnership, type OptimisticContext } from "../../../shared/lib/createOptimisticMutation.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { jobsKeys } from "../../operations/jobsKeys.js";
@@ -10,24 +11,27 @@ export function useCheckAvailabilityMutation() {
   const tenantId = useTenantId();
   const { api } = usePorts();
   const queryClient = useQueryClient();
-  return useMutation<CheckAvailabilityResponse, Error, string, { previous: JobDetail | undefined }>({
+  const options = createOptimisticMutation<CheckAvailabilityResponse, string>(queryClient, {
     mutationFn: (jobId) => api.checkPostingAvailability(jobId, {}),
-    onMutate: async (jobId) => {
-      const key = jobsKeys.detail(tenantId, jobId);
-      await queryClient.cancelQueries({ queryKey: key });
-      const previous = queryClient.getQueryData<JobDetail>(key);
-      queryClient.setQueryData<JobDetail>(key, (current) => current?.job.availability ? {
-        ...current, job: { ...current.job, availability: { ...current.job.availability, checkInProgress: true } },
-      } : current);
-      return { previous };
-    },
-    onError: (_error, jobId, context) => {
-      if (context?.previous) queryClient.setQueryData(jobsKeys.detail(tenantId, jobId), context.previous);
-    },
-    onSettled: async (_data, _error, jobId) => {
+    optimisticUpdates: (jobId) => [{
+      queryKey: jobsKeys.detail(tenantId, jobId),
+      cancelExact: false,
+      patch: (current) => {
+        const detail = current as JobDetail | undefined;
+        return detail?.job.availability ? {
+          ...detail, job: { ...detail.job, availability: { ...detail.job.availability, checkInProgress: true } },
+        } : current;
+      },
+    }],
+  });
+  return useMutation<CheckAvailabilityResponse, Error, string, OptimisticContext>({
+    ...options,
+    onSettled: async (data, error, jobId, mutationResult, context) => {
+      const settled = options.onSettled?.(data, error, jobId, mutationResult, context);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: jobsKeys.detail(tenantId, jobId) }),
-        queryClient.invalidateQueries({ queryKey: jobsKeys.lists(tenantId) }),
+        settled,
+        invalidateQueriesWithOptimisticOwnership(queryClient, jobsKeys.detail(tenantId, jobId)),
+        invalidateQueriesWithOptimisticOwnership(queryClient, jobsKeys.lists(tenantId)),
       ]);
     },
   });

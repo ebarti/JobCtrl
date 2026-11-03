@@ -200,6 +200,9 @@ export function useRetryStageMutation(): UseMutationResult<
         const reason = data.message?.trim();
         useToastStore.getState().toast({ variant: "error", message: reason ? `${summary} ${reason}` : summary });
       }
+      if (data.status === "reset" && data.message) {
+        useToastStore.getState().toast({ variant: "info", message: data.message });
+      }
     },
     onSettled: (_data, _error, { jobId, detailQueryId, refreshApplyUrl }, context) => {
       const queryKey = jobsKeys.detail(tenantId, detailQueryId ?? jobId);

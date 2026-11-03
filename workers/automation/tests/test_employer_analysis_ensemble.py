@@ -340,10 +340,13 @@ class TestClaudeAdapter:
         assert len(spans) == 1
         assert spans[0].status.status_code == StatusCode.ERROR
 
-    async def test_draft_span_survives_malformed_sdk_usage(self, in_memory_exporter) -> None:
-        # A drifted / non-int usage field must NEVER fail the leg — token
-        # extraction runs inside the re-raising span block, so it degrades the
-        # unparseable count to omitted rather than raising.
+    async def test_draft_span_retains_partial_sdk_usage_as_unresolved(self, in_memory_exporter, monkeypatch, tmp_path) -> None:
+        import jobctrl.database as database
+        from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved
+
+        db_path = tmp_path / "jobctrl.db"
+        monkeypatch.setattr(database, "DB_PATH", db_path)
+        database.init_db(db_path)
         adapter = ClaudeAnalysisAdapter(
             query_fn=_fake_claude_query(
                 _grounded_dict(),
@@ -351,14 +354,17 @@ class TestClaudeAdapter:
             ),
             options_factory=_FakeClaudeOptions,
         )
-        draft = await adapter.draft("system", JD)  # must not raise
-        assert draft.model_id == "claude-opus-4-8"
+        with pytest.raises(SpendAccountingUnresolved):
+            await adapter.draft("system", JD)
 
         attrs = dict(in_memory_exporter.get_finished_spans()[0].attributes or {})
         assert "gen_ai.usage.input_tokens" not in attrs
         assert "langfuse.observation.usage_details" not in attrs
         # A well-formed sibling field is still recorded.
         assert attrs["gen_ai.usage.output_tokens"] == 10
+        with pytest.raises(SpendAccountingUnresolved):
+            legacy_llm.read_llm_spend()
+        database.close_connection(db_path)
 
 
 class TestClaudeSynthesizer:
@@ -462,6 +468,7 @@ class TestCodexAdapter:
                 "input_tokens": 17,
                 "output_tokens": 9,
                 "model": "gpt-5.5",
+                "day": legacy_llm._utc_spend_day(),
                 "lane": "discovery",
             }
         ]

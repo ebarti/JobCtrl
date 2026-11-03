@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { lstatSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 
@@ -37,11 +37,11 @@ export interface WorkerHealthSnapshot {
 }
 
 export interface LlmSpendHealthSnapshot {
-  status: "ok" | "over_budget";
+  status: "ok" | "over_budget" | "incomplete";
   day: string;
-  inputTokens: number;
-  outputTokens: number;
-  estimatedUsd: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  estimatedUsd: number | null;
   dailyBudgetUsd: number;
   remainingUsd: number | null;
   unlimited: boolean;
@@ -50,10 +50,10 @@ export interface LlmSpendHealthSnapshot {
 }
 
 export interface LlmLaneSpendHealthSnapshot {
-  status: "ok" | "over_budget";
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
+  status: "ok" | "over_budget" | "incomplete";
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
   tokenLimit: number;
   remainingTokens: number | null;
   unlimited: boolean;
@@ -169,6 +169,7 @@ export function readLlmSpendHealth(
   const settings = readJobCtrlSettings(configPath).settings;
   const dailyBudgetUsd = settings.dailyBudgetUsd;
   const unlimited = dailyBudgetUsd <= 0;
+  const incomplete = spendAccountingIncomplete(dbPath);
   const usage = readTodayLlmSpend(dbPath, day);
   const overBudget = !unlimited && usage.estimatedUsd >= dailyBudgetUsd;
   const remainingUsd = unlimited ? null : Math.max(0, dailyBudgetUsd - usage.estimatedUsd);
@@ -179,28 +180,43 @@ export function readLlmSpendHealth(
       const totalTokens = laneUsage.inputTokens + laneUsage.outputTokens;
       const laneUnlimited = tokenLimit <= 0;
       return [lane, {
-        status: !laneUnlimited && totalTokens >= tokenLimit ? "over_budget" : "ok",
-        inputTokens: laneUsage.inputTokens,
-        outputTokens: laneUsage.outputTokens,
-        totalTokens,
+        status: incomplete ? "incomplete" : !laneUnlimited && totalTokens >= tokenLimit ? "over_budget" : "ok",
+        inputTokens: incomplete ? null : laneUsage.inputTokens,
+        outputTokens: incomplete ? null : laneUsage.outputTokens,
+        totalTokens: incomplete ? null : totalTokens,
         tokenLimit,
-        remainingTokens: laneUnlimited ? null : Math.max(0, tokenLimit - totalTokens),
+        remainingTokens: incomplete || laneUnlimited ? null : Math.max(0, tokenLimit - totalTokens),
         unlimited: laneUnlimited,
       }];
     }),
   ) as Record<LlmLane, LlmLaneSpendHealthSnapshot>;
   return {
-    status: overBudget ? "over_budget" : "ok",
+    status: incomplete ? "incomplete" : overBudget ? "over_budget" : "ok",
     day,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    estimatedUsd: usage.estimatedUsd,
+    inputTokens: incomplete ? null : usage.inputTokens,
+    outputTokens: incomplete ? null : usage.outputTokens,
+    estimatedUsd: incomplete ? null : usage.estimatedUsd,
     dailyBudgetUsd,
-    remainingUsd,
+    remainingUsd: incomplete ? null : remainingUsd,
     unlimited,
     lanes,
-    message: `LLM spend is $${usage.estimatedUsd.toFixed(2)} / ${budgetLabel} today.`,
+    message: incomplete
+      ? "LLM usage is pending or unresolved; spend totals are incomplete."
+      : `LLM spend is $${usage.estimatedUsd.toFixed(2)} / ${budgetLabel} today.`,
   };
+}
+
+function spendAccountingIncomplete(dbPath: string): boolean {
+  const directory = path.join(path.dirname(dbPath), `.${path.basename(dbPath)}.llm-spend-pending`);
+  try {
+    const info = lstatSync(directory);
+    if (!info.isDirectory() || info.isSymbolicLink()) return true;
+    // The worker locks live receipts. Node has no portable lock probe, so all
+    // live or abandoned receipts make this read incomplete rather than zero.
+    return readdirSync(directory).some((name) => name !== "lock");
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ENOENT";
+  }
 }
 
 export function dbFileIdentity(dbPath: string): string | null {

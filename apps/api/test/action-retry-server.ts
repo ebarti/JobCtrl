@@ -1,9 +1,10 @@
-// Owned synthetic HTTP process used by action-retry.test.ts; no worker or send transport.
+// Owned synthetic HTTP process; resets use registered RPC handlers without workflows or sending.
 import path from "node:path";
 import { buildApp } from "../src/server.js";
+import { createRetryFixturePythonRuntime } from "./retry-rpc-runtime.js";
 
 const dbPath = process.argv[2]!;
-const app = buildApp({ dbPath, configPath: path.join(path.dirname(dbPath), "config.json") });
+const app = buildApp({ pythonRuntime: createRetryFixturePythonRuntime(), dbPath, configPath: path.join(path.dirname(dbPath), "config.json") });
 app.addHook("preHandler", async (request) => {
   if (request.method === "POST" && (request.url.endsWith("/outcomes") || request.url.endsWith("/send-logs"))) {
     process.send?.({ stage: "mutation-entered", requestId: (request.body as { requestId?: string })?.requestId });

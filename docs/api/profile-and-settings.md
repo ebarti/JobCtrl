@@ -70,6 +70,14 @@ Remote row does not make a following city remote, and a location-only row keeps
 its local search behavior. It does not invent a city for a model-only Hybrid or
 On-site row. Rows with neither field set are jointly discarded before the
 home-location fallback and Discovery overlay.
+An edit that introduces an unsupported Remote, location, board and lookback
+combination returns HTTP 400 `unsupported_remote_search` and leaves the profile
+and Discovery settings unchanged. The message identifies the adjustment needed.
+New active Hybrid or On-site rows without a location are rejected too. Clearing
+a Profile target checks the legacy saved locations that would then apply.
+Existing unsupported board units are rejected before dispatch; supported units
+can finish and the workflow reports the incompatibility. Unrelated edits remain
+available.
 
 The API binds the RPC request to its trusted app-directory and database
 identity; those values are never accepted from the browser. The worker checks

@@ -186,7 +186,7 @@ test("backend and manual Python share the complete primary locked recipe", () =>
   assert.equal(worker.using,"composite");
   assert.ok(command(worker,"uv --project workers/automation run --locked --all-extras ruff check workers/automation/src workers/automation/tests"));
   assert.ok(command(worker,"uv --project workers/automation run --locked --all-extras python scripts/generate-semantic-result-schemas.py --check"));
-  assert.ok(command(worker,'uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25 --junitxml="$RUNNER_TEMP/python-$PYTHON_VERSION.xml"'));
+  assert.ok(command(worker,'uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 4 --dist=loadfile --max-worker-restart=0 --durations=25 --junitxml="$RUNNER_TEMP/python-$PYTHON_VERSION.xml"'));
   assert.ok(command(worker,"uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation"));
   assert.equal(command(worker,"bash scripts/install-temporal-test-server.sh").name,"Install verified Temporal time-skipping test server");
   assert.equal(worker.steps.find(step=>step.name==="Upload synthetic Python JUnit report").if,"always()");
