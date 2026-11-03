@@ -271,11 +271,36 @@ corepack pnpm dev:logs worker
 scripts/dev list
 ```
 
-`corepack pnpm dev:status` reports tracked PID liveness separately from health.
+`corepack pnpm dev:status` reports authenticated source-launch ownership separately
+from health. Each component's launch owner retains its original child handle;
+status and stop authenticate that same launch through a private local endpoint.
+A PID file alone never grants signal authority. `unverified` means a legacy,
+malformed, changed or unreachable launch record could not establish ownership.
+Stop and replacement then fail visibly and preserve the records and processes.
 The API row can show `migration`, `incompatible`, `healthy`, or `unknown` when
 its watcher is alive. `unknown` means the health probe did not establish a
 result; it does not prove the process is down. When the worker process is alive
 but its heartbeat is stale, the worker row reports `stale`.
+
+After reviewing an unverifiable earlier process, retire only its local metadata
+with an explicit component name, for example:
+
+```bash
+scripts/dev forget docs
+```
+
+This command never signals a process or removes logs or workspace data. It
+refuses an authenticated live owner, which must be stopped normally first.
+Forgetting an unreachable record does not prove its earlier processes exited;
+review those processes and any occupied bindings before starting a replacement.
+No reboot is required. Successful managed stop and ordinary start/restart keep
+their existing commands.
+
+Source cleanup uses the existing original-child/session ownership helper. If
+the original owner is lost, a child changes ownership, or descendant exit cannot
+be verified, cleanup remains a reported failure rather than recovering signal
+authority from a PID or process-group number. This source-only recovery is best
+effort; the macOS workspace scope remains the stronger database-writer boundary.
 
 For a detached background stack in a normal shell, use the explicit daemon mode:
 
@@ -610,6 +635,21 @@ logs and per-command outcomes. Both E2E modes retain separate JUnit and
 screenshot evidence. Resource logs record available CPUs and memory for timing
 comparisons.
 
+`corepack pnpm scripts:test` runs regular repository tests in parallel, then
+runs the source-supervisor lifecycle suite after those test processes exit.
+Lifecycle cleanup requires a stable process census; separating the phases keeps
+other fixtures' process churn from invalidating that verification. Every test
+and the existing cleanup deadlines remain in effect.
+
+`corepack pnpm api:test` likewise finishes the other API files before running
+`dev-launcher-contract.test.ts`. Those launcher fixtures use the actual
+authenticated source owner and preserve failed cleanup records; they do not
+derive signal authority from recorded numeric PIDs.
+
+Native shard 0 also runs the complete source-supervisor lifecycle in an owned
+offline macOS workspace with Python 3.14.4. The manual repository-scripts
+workflow uses the same ordered Linux entry point.
+
 The web profile keeps the original lint, types, unit, public-type and production
 build sequence. Browser installation is selected only for profiles that need it
 and has an eight-minute bound. Hosted Ubuntu package transport uses bounded
@@ -808,7 +848,9 @@ The extracted-payload smoke runs the real API, JSON-RPC, Temporal workflow,
 worker activities and SQLite persistence without provider credentials. Its
 private worker bootstrap supplies explicit page-interpretation and description
 quality model choices through `LlmPort`; normal spend preflight, source/citation
-validation and determination persistence still execute. The bootstrap is passed
+validation and determination persistence still execute. Smoke processes run
+inside a loopback-only QA sandbox that also denies macOS Keychain files,
+security-service lookups and native credential-command execution. The bootstrap is passed
 as test code outside the immutable payload and is never installed or selected
 by product configuration. The resulting `semanticModel` evidence identifies
 the synthetic boundary. This proves capture plumbing and restart preservation,
@@ -1268,8 +1310,11 @@ Native launcher tests use temporary same-user launchd jobs and private ownership
 receipts. They need access to the per-user launchd domain and native process
 inspection; an outer tool sandbox can deny those probes without proving a
 service is absent. Keep HOME, JOBCTRL_DIR and runtime paths synthetic. The
-bundled smoke applies its fixed loopback restriction inside the job helper via
-`JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1`; unknown selector values fail.
+bundled smoke keeps native launchd control outside Seatbelt and applies its
+fixed network and Keychain restriction at each authenticated payload dispatch
+via `JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1`; unknown selectors fail.
+Components, source shells, Python CLI/Apply, probes and migration/backup Python
+all use that boundary. A caller already inside a sandbox cannot remove it.
 The actual native CPython network test and independent direct-runtime sandbox
 checks must both execute. No arbitrary sandbox profile or ownership bypass is
 accepted from the environment.

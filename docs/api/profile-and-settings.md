@@ -14,10 +14,23 @@ For every request/response field, use the
 | --- | --- |
 | `GET /v1/profile` | Read the normalized candidate profile and current preferences. |
 | `PATCH /v1/profile` | Save validated profile fields and preference changes. |
+| `POST /v1/profile/import-resume` | Extract a transient resume draft for explicit review. |
 | `POST /v1/profile/target-role-suggestions` | Generate transient evidence-backed role proposals from an exact saved profile version. |
 | `POST /v1/profile/required-bullet-suggestions` | Inspect LLM coaching for Required bullets from an exact saved profile version. |
 | `GET /v1/profile/preview.html` | Render the baseline profile resume as HTML. |
 | `GET /v1/profile/preview.pdf` | Render the baseline profile resume as PDF. |
+
+The API gives each resume import a unique attempt ID. The worker binds that ID,
+the parsed PDF digest, its extraction determination and observed style together
+in the local database before returning. The API verifies the submitted bytes and
+worker response against that binding and builds the review from the recorded
+determination and observed style. Inherited Profile values cannot become import
+proposals. Missing or invalid authority returns `502`; the upload remains for
+retry and the Profile is unchanged. The binding contains no PDF bytes. Accepting
+either Profile or style changes rejoins the same attempt and determination in the
+version-fenced Profile transaction, with the draft ID matching that attempt.
+PDF style proposals include only observed
+page size, font size and font family.
 
 Profile writes are explicit saves/autosaves of canonical candidate data. A job
 tailoring run consumes a versioned snapshot; it does not silently mutate the
@@ -37,8 +50,8 @@ new evidence-based generation, preserving accepted artifacts.
 `GET /v1/profile` includes `profileVersion` (`null` before initialization, then
 a positive monotonic integer). The API remains backward-compatible with
 callers that omit `expectedProfileVersion`, but the web form includes its saved
-base version on every full-profile manual and autosave write. It omits the field
-only for the initial save while the version is `null`. A suggestion-derived
+base version on every full-profile manual and autosave write. It sends `null`
+for an initially absent profile, fencing its creation. A suggestion-derived
 save uses its reviewed version. The API compares and writes in one transaction;
 a mismatch returns `409
 stale_profile_version`, writes no profile row, records no `ProfileUpdated`
@@ -132,6 +145,12 @@ source fields, input/output limits, model-use flags and error codes.
 | Review queues | locator candidates, quarantine, and manual-capture routes |
 | Feedback | discovery feedback and role-match decision routes |
 
+Manual-capture conflict reasons can distinguish terminal workflow outcomes from
+an import still in progress. An explicit recovery action fences earlier attempts
+for the reviewed capture; see the [complete contract](complete-contract.md#discovery-controls).
+Queue lifetimes bind imports and dismissals to the reviewed item, including
+when the same URL is explicitly reopened.
+
 Source-locator reads are strictly read-only. The opt-in
 `source-proposals from-history` CLI path feeds the same queue and registry with
 saved origin/extraction receipts and unknown completeness. Explicit review
@@ -142,6 +161,9 @@ and the [wire contract](complete-contract.md#discovery-controls).
 
 These controls decide where discovery may look and how proposed sources or jobs
 enter the system. They do not hold provider credentials or raw feed contents.
+The Manual Capture queue retains user-submitted pending page content locally for
+review and retry, with a durable unresolved-attempt flag across reloads; see the
+[capture contract](complete-contract.md#discovery-controls).
 
 ## Settings And Credentials
 

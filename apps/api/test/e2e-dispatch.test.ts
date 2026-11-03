@@ -10,6 +10,7 @@ describe("e2e dispatch stubs", () => {
         pdfBytes: Buffer.from("%PDF test"),
         importProfile: true,
         importStyle: true,
+        attemptId: "00000000-0000-4000-8000-000000000001",
       },
       { appDir: "/tmp/jobctrl-e2e", dbPath: "/tmp/jobctrl-e2e/jobctrl.db" },
     );

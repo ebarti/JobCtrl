@@ -36,6 +36,10 @@ const removeDataPhrase = "REMOVE JOBCTRL DATA"
 // it nil; tests inject each durable boundary and prove journal recovery rather
 // than trying to simulate a process crash between arbitrary instructions.
 var transitionFailure func(release.State) error
+
+// Tests may interrupt either side of the durable recovery-start milestone.
+// Production leaves this nil.
+var recoveryRestoringCheckpoint func(string) error
 var uninstallInput io.Reader = os.Stdin
 var errTransitionInterrupted = errors.New("injected abrupt transition interruption")
 var homebrewExecutableLookup = exec.LookPath
@@ -74,6 +78,7 @@ var homebrewAssetsReader = readHomebrewFormulaAssets
 var homebrewPromotion = promoteExisting
 var curlPromotion = promoteExisting
 var startReleaseCommand = startRelease
+var stopForRecoveryCommand = stop
 var removeSQLiteSidecar = os.Remove
 
 type databaseFile struct {
@@ -133,6 +138,21 @@ func refuseUncertainTransitionRollback(journal release.Journal, pair *databasePa
 		return errors.New("transition may have activated a migration without a verified database pair; automatic recovery is unavailable; retain the live databases and journal")
 	}
 	return errors.New("transition may have activated or started a candidate; automatic recovery is unavailable; retain the live databases and journal")
+}
+
+func advanceRecoveryRestoring(store *release.Store, journal *release.Journal) error {
+	if recoveryRestoringCheckpoint != nil {
+		if err := recoveryRestoringCheckpoint("before"); err != nil {
+			return err
+		}
+	}
+	if err := store.Advance(journal, release.RollbackRestoring, nil); err != nil {
+		return err
+	}
+	if recoveryRestoringCheckpoint != nil {
+		return recoveryRestoringCheckpoint("after")
+	}
+	return nil
 }
 
 // recoverRevokedTransitionBeforePrepare handles an interrupted security
@@ -199,16 +219,25 @@ func recoverRevokedTransitionBeforePrepare(env []string, output io.Writer) (bool
 	if err := refuseUncertainTransitionRollback(journal, &pair); err != nil {
 		return true, err
 	}
-	if err := store.Advance(&journal, release.RollbackRestoring, nil); err != nil {
+	if err := stopForRecoveryCommand(ctx); err != nil {
+		return true, fmt.Errorf("quiesce possibly-live candidate before security recovery restore: %w", err)
+	}
+	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
 		return true, err
 	}
-	if err := stop(ctx); err != nil {
-		return true, fmt.Errorf("quiesce possibly-live candidate before security recovery restore: %w", err)
+	if err := advanceRecoveryRestoring(store, &journal); err != nil {
+		return true, err
+	}
+	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
+		return true, err
 	}
 	if err := restorePair(ctx, pair); err != nil {
 		return true, err
 	}
 	if err := store.Advance(&journal, release.CandidateStarting, nil); err != nil {
+		return true, err
+	}
+	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
 		return true, err
 	}
 	if err := startReleaseCommand(ctx, *journal.Candidate, journal.ID); err != nil {
@@ -878,7 +907,11 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	if err := advance(store, &journal, release.Quiescing); err != nil {
 		return err
 	}
-	if err := stop(ctx); err != nil {
+	if err := stopForRecoveryCommand(ctx); err != nil {
+		_ = store.Advance(&journal, release.Failed, err)
+		return err
+	}
+	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
 		_ = store.Advance(&journal, release.Failed, err)
 		return err
 	}
@@ -900,10 +933,16 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	if err := store.Advance(&journal, release.RollbackRestoring, nil); err != nil {
 		return fail(err)
 	}
+	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
+		return fail(err)
+	}
 	if err := restorePair(ctx, targetPair); err != nil {
 		return fail(fmt.Errorf("restore rollback target pair: %w", err))
 	}
 	if err := advance(store, &journal, release.CandidateStarting); err != nil {
+		return fail(err)
+	}
+	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
 		return fail(err)
 	}
 	if err := startReleaseCommand(ctx, target, journal.ID); err != nil {
@@ -1047,7 +1086,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		preactivation := journal.State == release.PairBackedUp || journal.State == release.PolicyPending || journal.State == release.MigrationCandidateReady
 		if sourceErr == nil && (preactivation || intent != nil) {
 			python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
-			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
+			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"), ctx.Environment)
 			if errors.Is(liveErr, errUnresolvedDatabasePublication) {
 				return false, liveErr
 			}
@@ -1062,13 +1101,18 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 			}
 		}
 	}
-	// Make the old release executable through the direct transition gate before
-	// any stop/restart action, including crashes before PairBackedUp.
-	if err := store.Advance(&journal, release.RollbackRestoring, nil); err != nil {
+	// Stop is in-process and performs its own ownership checks; it does not
+	// need selector startup authority. Keep the prior milestone retryable if
+	// shutdown or spend admission refuses before any database replacement.
+	if err := stopForRecoveryCommand(ctx); err != nil {
+		return false, fmt.Errorf("quiesce interrupted transition: %w", err)
+	}
+	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
 		return false, err
 	}
-	if err := stop(ctx); err != nil {
-		return false, fmt.Errorf("quiesce interrupted transition: %w", err)
+	// A selector may start the predecessor only after this durable milestone.
+	if err := advanceRecoveryRestoring(store, &journal); err != nil {
+		return false, err
 	}
 	cleanupV7Candidate(ctx.Instance.StateDir, journal.ID)
 	cleanupV9Candidate(ctx.Instance.StateDir, journal.ID)
@@ -1077,6 +1121,9 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	cleanupV14Candidate(ctx.Instance.StateDir, journal.ID)
 	cleanupV15Candidate(ctx.Instance.StateDir, journal.ID)
 	if recoveryPair != nil && !preserveUnactivatedSource {
+		if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
+			return false, err
+		}
 		if err := restorePair(ctx, *recoveryPair); err != nil {
 			return false, err
 		}
@@ -1108,6 +1155,9 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		return false, err
 	}
 	if err := writeLegacyCurrent(store.Home, *journal.Old); err != nil {
+		return false, err
+	}
+	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
 		return false, err
 	}
 	if err := startReleaseCommand(ctx, *journal.Old, journal.ID); err != nil {
@@ -1154,6 +1204,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 			return err
 		}
 	}
+	// Rebinding below selects the service payload. Keep the originally
+	// authenticated controller separately for any native health scope.
+	controller := ctx
 	transition, err := store.TransitionLock()
 	if err != nil {
 		return fmt.Errorf("acquire lifecycle transition lock: %w", err)
@@ -1277,6 +1330,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		if stopErr := stop(ctx); stopErr != nil {
 			return fmt.Errorf("%v; old runtime could not be made safe to restart: %w", cause, stopErr)
 		}
+		if spendErr := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); spendErr != nil {
+			return fmt.Errorf("%v; predecessor restart refused: %w", cause, spendErr)
+		}
 		if legacyErr := writeLegacyCurrent(store.Home, active.Receipt); legacyErr != nil {
 			return fmt.Errorf("%v; restore legacy receipt: %w", cause, legacyErr)
 		}
@@ -1287,6 +1343,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		return cause
 	}
 	if unused {
+		if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
+			return err
+		}
 		if err := advance(store, &journal, release.RollbackRestoring); err != nil {
 			return err
 		}
@@ -1312,7 +1371,7 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	}
 	switch databaseVersion {
 	case legacyJobCtrlSchemaVersion:
-		if err := temporalQuiescenceProof(activeRuntime, candidateRuntime); err != nil {
+		if err := temporalQuiescenceProof(activeRuntime, candidateRuntime, controller); err != nil {
 			return restartBeforeBackup(fmt.Errorf("v6-to-v10 upgrade blocked before backup: %w", err))
 		}
 	case exactJobCtrlSchemaVersion:
@@ -1607,7 +1666,7 @@ func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (
 			source = temporal
 		}
 		destination := filepath.Join(dir, name)
-		version, err := sqliteOnlineBackup(filepath.Join(ctx.PayloadRoot, "python", "bin", "python3"), source, destination)
+		version, err := sqliteOnlineBackup(filepath.Join(ctx.PayloadRoot, "python", "bin", "python3"), source, destination, ctx.Environment)
 		if err != nil {
 			return databasePair{}, fmt.Errorf("snapshot %s: %w", name, err)
 		}
@@ -1632,7 +1691,7 @@ func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (
 	return pair, nil
 }
 
-func sqliteOnlineBackup(python, source, destination string) (int64, error) {
+func sqliteOnlineBackup(python, source, destination string, environment ...[]string) (int64, error) {
 	info, err := os.Lstat(source)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return 0, errors.New("source database is not a regular file")
@@ -1657,7 +1716,11 @@ try:
  if not r or r[0] != "ok": raise RuntimeError("backup integrity_check failed")
  print(d.execute("PRAGMA user_version").fetchone()[0])
 finally: d.close()`
-	out, err := exec.Command(python, "-I", "-B", "-c", code, source, destination).CombinedOutput()
+	var env []string
+	if len(environment) > 0 && environmentMap(environment[0])[executionQASandboxVariable] != "" {
+		env = environment[0]
+	}
+	out, err := payloadCommand(env, python, "-I", "-B", "-c", code, source, destination).CombinedOutput()
 	if err != nil {
 		return 0, fmt.Errorf("SQLite online backup: %w: %s", err, strings.TrimSpace(string(out)))
 	}

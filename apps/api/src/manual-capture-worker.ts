@@ -14,6 +14,7 @@ import { createSourcePythonRuntime, type PythonRuntimeCommandResolver } from "./
 export interface ManualCaptureImportContext {
   appDir: string;
   dbPath: string;
+  expectedCaptureGeneration?: string | null;
 }
 
 export type ManualCaptureImporter = (
@@ -34,13 +35,18 @@ export interface WorkerManualCaptureImporterOptions {
   dispatcherFactory?: ManualCaptureJsonRpcDispatcherFactory;
 }
 
+type ManualCaptureConflictReason = "manual_capture_state_changed" | "manual_capture_in_progress"
+  | "capture_replay_mismatch" | "manual_capture_provider_failed" | "manual_capture_database_failed";
+
 export class ManualCaptureImportError extends Error {
   readonly statusCode: number;
+  readonly reason: ManualCaptureConflictReason | undefined;
 
-  constructor(message: string, statusCode: number) {
+  constructor(message: string, statusCode: number, reason?: ManualCaptureConflictReason) {
     super(message);
     this.name = "ManualCaptureImportError";
     this.statusCode = statusCode;
+    this.reason = reason;
   }
 }
 
@@ -70,11 +76,15 @@ export function createWorkerManualCaptureImporter(
       }));
 
   return async (itemId, input, context) => {
+    if (context.expectedCaptureGeneration === undefined) {
+      throw new ManualCaptureImportError("This capture changed. Refresh the queue and review it again.", 409, "manual_capture_state_changed");
+    }
     let response;
     try {
       response = await callRpc(dispatcherFactory(context), "manual_capture_import", {
         tenantId: "local",
         itemId,
+        expectedCaptureGeneration: context.expectedCaptureGeneration,
         captureMode: input.captureMode,
         ...(input.contentText !== undefined ? { contentText: input.contentText } : {}),
         ...(input.contentHtmlBase64 !== undefined ? { contentHtmlBase64: input.contentHtmlBase64 } : {}),
@@ -100,7 +110,7 @@ export function createWorkerManualCaptureImporter(
     if (workflowResult.status === "failed") {
       throw workflowImportError(workflowResult.error_code);
     }
-    return workflowResultToResponse(workflowResult, input);
+    return workflowResultToResponse(workflowResult, input, itemId);
   };
 }
 
@@ -118,6 +128,7 @@ function extractWorkflowResult(result: unknown): ManualCaptureImportWorkflowResu
 function workflowResultToResponse(
   result: ManualCaptureImportWorkflowResult,
   input: ManualCaptureImportRequest,
+  expectedItemId: string,
 ): ManualCaptureImportResponse {
   const itemId = requiredText(result.item_id);
   const jobKey = requiredText(result.job_id);
@@ -125,6 +136,12 @@ function workflowResultToResponse(
   const provenance = recordValue(result.retry_context.manual_capture_provenance);
   if (!provenance) {
     throw invalidWorkflowResultError();
+  }
+  const captureMode = provenance.capture_mode ?? provenance.captureMode;
+  const futureManualActionRequired = provenance.future_manual_action_required ?? provenance.futureManualActionRequired;
+  if (itemId !== expectedItemId || captureMode !== input.captureMode
+      || futureManualActionRequired !== input.futureManualActionRequired) {
+    throw new ManualCaptureImportError("This capture conflicts with another import. Review it and try again.", 409);
   }
   const originatingUrl = requiredText(provenance.originating_url ?? provenance.originatingUrl);
   const captureClient = optionalText(provenance.capture_client ?? provenance.captureClient);
@@ -146,6 +163,9 @@ function workflowResultToResponse(
 }
 
 function jsonRpcImportError(message: unknown, data: unknown): ManualCaptureImportError {
+  if (message === "manual_capture_in_progress") {
+    return new ManualCaptureImportError("Another import for this capture is in progress. Try again when it finishes.", 409, "manual_capture_in_progress");
+  }
   if (hasTemporalUnavailableSignal(message) || hasTemporalUnavailableSignal(data)) {
     return new ManualCaptureImportError("Manual capture import is temporarily unavailable.", 503);
   }
@@ -162,8 +182,28 @@ function workflowImportError(errorCode: string | null): ManualCaptureImportError
       return new ManualCaptureImportError(
         "This capture conflicts with an already imported item. Submit the original capture again or create a new capture.",
         409,
+        "capture_replay_mismatch",
       );
+    case "manual_capture_extraction_failed":
+      return new ManualCaptureImportError(
+        "JobCtrl could not extract a posting from this capture. Review the retained content and try again.",
+        422,
+      );
+    case "manual_capture_state_changed":
+      return new ManualCaptureImportError(
+        "This capture or its Job changed during import. Review the pending capture and try again.",
+        409,
+        "manual_capture_state_changed",
+      );
+    case "manual_capture_database_error":
+      return new ManualCaptureImportError("The capture could not be saved. Review it and try again.", 500, "manual_capture_database_failed");
     default:
+      if (errorCode === "semantic_determination_provider_error") {
+        return new ManualCaptureImportError("The capture interpreter is temporarily unavailable. Try again.", 503, "manual_capture_provider_failed");
+      }
+      if (errorCode?.startsWith("semantic_determination_")) {
+        return new ManualCaptureImportError("The captured page could not be interpreted. Review it and try again.", 422);
+      }
       if (hasTemporalUnavailableSignal(errorCode)) {
         return new ManualCaptureImportError("Manual capture import is temporarily unavailable.", 503);
       }

@@ -693,6 +693,7 @@ describe("manual_capture_import RPC contract", () => {
     expect(
       ManualCaptureImportParamsSchema.parse({
         itemId: "manual-1",
+        expectedCaptureGeneration: "capture-generation-1",
         captureMode: "pasted_text",
         contentText: "User-provided posting text.",
         capturedUrl: "https://example.test/jobs/1",
@@ -705,6 +706,7 @@ describe("manual_capture_import RPC contract", () => {
     ).toEqual({
       tenantId: "local",
       itemId: "manual-1",
+      expectedCaptureGeneration: "capture-generation-1",
       captureMode: "pasted_text",
       contentText: "User-provided posting text.",
       capturedUrl: "https://example.test/jobs/1",
@@ -720,6 +722,7 @@ describe("manual_capture_import RPC contract", () => {
     expect(() =>
       ManualCaptureImportParamsSchema.parse({
         itemId: "manual-1",
+        expectedCaptureGeneration: "capture-generation-1",
         captureMode: "pasted_text",
         awaitResult: true,
       }),
@@ -727,10 +730,23 @@ describe("manual_capture_import RPC contract", () => {
     expect(() =>
       ManualCaptureImportParamsSchema.parse({
         itemId: "manual-1",
+        expectedCaptureGeneration: "capture-generation-1",
         captureMode: "pasted_text",
         contentText: "User-provided posting text.",
       }),
     ).toThrow();
+  });
+
+  it("requires a capture generation while accepting the legacy null generation", () => {
+    const request = {
+      itemId: "manual-1",
+      captureMode: "pasted_text",
+      contentText: "User-provided posting text.",
+      awaitResult: true,
+    };
+    expect(() => ManualCaptureImportParamsSchema.parse(request)).toThrow();
+    expect(ManualCaptureImportParamsSchema.parse({ ...request, expectedCaptureGeneration: null }))
+      .toMatchObject({ expectedCaptureGeneration: null });
   });
 
   it("parses the snake_case workflow result contract", () => {

@@ -160,9 +160,15 @@ function isTemporalBridgeBuildSourcePath(relativePath) {
 }
 
 function isKnownPythonNonRuntimePath(relativePath) {
+  const [packageName, metadataDirectory, resourceDirectory] = relativePath.split("/");
+  // Typer wheels can include hidden development instruction trees. They are
+  // not needed at runtime; keep other package files and metadata untouched.
+  const isTyperDevelopmentInstructions = packageName === "typer"
+    && metadataDirectory?.startsWith(".")
+    && resourceDirectory === "skills";
   return [...PYTHON_RUNTIME_NON_RUNTIME_PATHS].some(
     (nonRuntimePath) => relativePath === nonRuntimePath || relativePath.startsWith(`${nonRuntimePath}/`),
-  ) || /^temporalio\/contrib\/.+\/README\.md$/.test(relativePath);
+  ) || isTyperDevelopmentInstructions || /^temporalio\/contrib\/.+\/README\.md$/.test(relativePath);
 }
 
 function pythonRuntimeRelativePath(payloadPath) {
@@ -651,7 +657,8 @@ export async function normalizeInstalledPythonMetadata(sitePackagesRoots) {
         const installedPath = pythonRecordPath(row);
         return !installedPath.startsWith("bin/")
           && !installedPath.endsWith("/direct_url.json")
-          && !installedPath.endsWith("/uv_cache.json");
+          && !installedPath.endsWith("/uv_cache.json")
+          && !isKnownPythonNonRuntimePath(installedPath);
       });
       await writeFile(recordPath, `${canonicalRows.join("\n")}\n`, { mode: 0o644 });
       await chmod(recordPath, 0o644);
@@ -1981,7 +1988,11 @@ export function createExtractedRuntimeStackPlan({ payloadRoot, stateRoot, tempor
 const LOOPBACK_ONLY_SANDBOX_PROFILE = `(version 1)
 (allow default)
 (deny network-outbound (remote ip))
-(allow network-outbound (remote ip "localhost:*"))`;
+(allow network-outbound (remote ip "localhost:*"))
+(deny file-read* (regex #"/Library/Keychains(/|$)"))
+(deny file-write* (regex #"/Library/Keychains(/|$)"))
+(deny mach-lookup (global-name-regex #"^com[.]apple[.](security|Security).*"))
+(deny process-exec (literal "/usr/bin/security"))`;
 
 const NATIVE_EXECUTION_QA_SANDBOX = "loopback-only-v1";
 

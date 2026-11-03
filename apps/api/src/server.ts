@@ -9,9 +9,10 @@ import { createProviderHandlers, dispatchProviderModelCatalog, providerOperation
 import { acceptCoverLetterPreview, coverLetterArtifactPdfBytes, coverLetterJobId, coverLetterPreviewBytes, CoverLetterReviewError, renderCoverLetterPreview, type CoverLetterPdfRenderer } from "./cover-letter-review.js";
 import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import { readTargetRoleProposal } from "./candidate-interpretations.js";
-import { resetJobStageWithEnrichmentOwner, retryFailedJobsWithEnrichmentOwner } from "./enrichment-retry.js";
+import { resetJobStageWithEnrichmentOwner, retryFailedJobsWithEnrichmentOwner, RetrySelectionConflict } from "./enrichment-retry.js";
 import { ResumeEditIntentReviewSchema } from "@jobctrl/contracts";
 import { readDetermination } from "./semantic-determinations.js";
+import { assertReviewedImportStyle, bindImportedDraft } from "./profile-import-provenance.js";
 import { isDeepStrictEqual } from "node:util";
 import { FormSnapshotSchema, FormMappingResponseSchema } from "@jobctrl/contracts";
 import { ResumeEditReviewSchema } from "@jobctrl/contracts";
@@ -77,6 +78,7 @@ import {
   MarkJobActionRequestSchema,
   ManualApplicationOutcomeRequestSchema,
   ManualCaptureDismissSchema,
+  ManualCaptureSupersedeSchema,
   ManualCaptureImportSchema,
   OutcomeSuggestionDecisionRequestSchema,
   ExtensionCaptureIngestSchema,
@@ -210,11 +212,19 @@ import {
   SUPPORTED_SCHEMA_VERSION,
 } from "./db.js";
 import { ConfigFileInputError } from "./config-file.js";
+import { isTrustedLiveBrowserUrl } from "./discovery-browser-destination.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
 import {
   decideQuarantineEntry,
   dismissManualCapture,
+  supersedeManualCapture,
+  prepareManualCapture,
+  prepareExtensionManualCapture,
+  preparedManualCaptureGeneration,
+  ManualCaptureLifecycleConflict,
+  ExtensionCaptureSuperseded,
+  isExtensionCaptureSuperseded,
   decideRoleMatchFeedbackSuggestion,
   listManualCaptureQueue,
   listQuarantine,
@@ -820,6 +830,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       const body = parseBody(reply, DiscoveryBrowserTaskCreateSchema, request.body ?? {});
       if (!body) return undefined;
+      if (!isTrustedLiveBrowserUrl(body.request.url)) {
+        void reply.code(400);
+        return {
+          ok: false,
+          error: "untrusted_discovery_browser_host",
+          message:
+            "The live Chrome transport is limited to supported provider hosts; use the address-pinned worker transport for other URLs.",
+        };
+      }
       const destination = await jobUrlValidator(body.request.url);
       if (!destination.allowed) {
         void reply.code(400);
@@ -936,7 +955,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(503);
       return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${options.dbPath}` };
     }
-    const seeded = await withWritableDb(reply, options.dbPath, (db) => seedExtensionManualCapture(db, body));
+    const seeded = await withWritableDb(reply, options.dbPath, (db) => db.transaction(() => {
+      const result = seedExtensionManualCapture(db, body);
+      if ("ok" in result) return result;
+      const generation = prepareExtensionManualCapture(db, result.itemId, body, extensionCaptureToManualCapture(body));
+      return { ...result, expectedCaptureGeneration: generation };
+    }).immediate());
     if (!seeded || "ok" in seeded) {
       return seeded;
     }
@@ -944,14 +968,27 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return await manualCaptureImporter(seeded.itemId, extensionCaptureToManualCapture(body), {
         appDir,
         dbPath: options.dbPath,
+        expectedCaptureGeneration: seeded.expectedCaptureGeneration,
       });
     } catch (error) {
+      // This request may have seeded before the user superseded it. The
+      // durable marker also identifies that case when the old import fails.
+      let superseded = false;
+      try {
+        const db = openReadOnlyDatabase(options.dbPath);
+        try { superseded = isExtensionCaptureSuperseded(db, seeded.itemId); } finally { db.close(); }
+      } catch { /* Preserve the original failure when the marker is unavailable. */ }
+      if (superseded) {
+        void reply.code(409);
+        return { ok: false, error: "extension_capture_superseded", message: new ExtensionCaptureSuperseded().message };
+      }
       if (error instanceof ManualCaptureImportError) {
         void reply.code(error.statusCode);
         return {
           ok: false,
           error: error.statusCode === 404 ? "not_found" : "manual_capture_import_failed",
           message: error.message,
+          ...(error.reason ? { reason: error.reason } : {}),
         };
       }
       throw error;
@@ -1151,15 +1188,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         } catch (error) {
           if (error instanceof GmailFeedbackScanError) {
             void reply.code(error.statusCode);
-            return {
-              ok: false,
-              error:
-                error.statusCode === 400
-                  ? "invalid_gmail_feedback_scan"
-                  : "gmail_feedback_scan_failed",
-              message: error.message,
-              ...(error.failureCode ? { failureCode: error.failureCode } : {}),
-            };
+            return error.response;
           }
           throw error;
         }
@@ -1391,6 +1420,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   );
 
   app.post<{ Params: { itemId: string } }>(
+    "/v1/discovery/manual-capture/:itemId/prepare",
+    async (request, reply) => {
+      const body = parseBody(reply, ManualCaptureImportSchema, request.body ?? {});
+      if (!body) return undefined;
+      return withWritableDb(reply, options.dbPath, (db) =>
+        prepareManualCapture(db, decodeRouteParam(request.params.itemId), body));
+    },
+  );
+
+  app.post<{ Params: { itemId: string } }>(
     "/v1/discovery/manual-capture/:itemId/import",
     async (request, reply) => {
       const body = parseBody(reply, ManualCaptureImportSchema, request.body ?? {});
@@ -1401,10 +1440,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         void reply.code(503);
         return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${options.dbPath}` };
       }
+      const itemId = decodeRouteParam(request.params.itemId);
+      const generation = withReadOnlyDb(reply, options.dbPath, (db) => preparedManualCaptureGeneration(db, itemId, body));
+      if (generation && typeof generation === "object") return generation;
+      if (generation === undefined) {
+        void reply.code(409);
+        return { ok: false, error: "manual_capture_import_failed", reason: "manual_capture_state_changed",
+          message: "This capture changed. Refresh the queue and review it again." };
+      }
+      const { expectedLifecycleId: _expectedLifecycleId, ...capture } = body;
       try {
-        return await manualCaptureImporter(decodeRouteParam(request.params.itemId), body, {
+        return await manualCaptureImporter(itemId, capture, {
           appDir,
           dbPath: options.dbPath,
+          expectedCaptureGeneration: generation,
         });
       } catch (error) {
         if (error instanceof ManualCaptureImportError) {
@@ -1413,10 +1462,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             ok: false,
             error: error.statusCode === 404 ? "not_found" : "manual_capture_import_failed",
             message: error.message,
+            ...(error.reason ? { reason: error.reason } : {}),
           };
         }
         throw error;
       }
+    },
+  );
+
+  app.post<{ Params: { itemId: string } }>(
+    "/v1/discovery/manual-capture/:itemId/supersede",
+    async (request, reply) => {
+      const body = parseBody(reply, ManualCaptureSupersedeSchema, request.body ?? {});
+      if (!body) return undefined;
+      return withWritableDb(reply, options.dbPath, (db) =>
+        supersedeManualCapture(db, decodeRouteParam(request.params.itemId), body.expectedLifecycleId));
     },
   );
 
@@ -1427,8 +1487,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
+      if (!body.expectedLifecycleId) {
+        void reply.code(409);
+        return { ok: false, error: "manual_capture_state_changed", message: "Refresh the queue and review this capture again." };
+      }
       return withWritableDb(reply, options.dbPath, (db) =>
-        dismissManualCapture(db, decodeRouteParam(request.params.itemId), body.reason),
+        dismissManualCapture(db, decodeRouteParam(request.params.itemId), body.reason, body.expectedLifecycleId),
       );
     },
   );
@@ -1466,6 +1530,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     const body = parseBody(reply, RunPipelineStagesRequestSchema, request.body ?? {});
     if (!body) {
       return undefined;
+    }
+    if (body.dryRun && body.stages.includes("discover")) {
+      void reply.code(400);
+      return {
+        ok: false,
+        error: "discover_preview_unsupported",
+        message: "Discover does not support dry runs. Turn off Dry run to start a search.",
+      };
     }
     const actions: ActionRunResponse[] = [];
     const firstStage = body.stages[0] as Stage | undefined;
@@ -1946,11 +2018,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const reset = await retryFailedJobsWithEnrichmentOwner(db, providerDispatcher, actionContext, body);
       const actions: ActionRunResponse[] = [];
       const runnableGroups = body.runAfter
-        ? groupRunnableBulkRetryTargets(reset.targets)
+        ? groupRunnableBulkRetryTargets(reset.targets.filter((target) => !target.retailorRequired))
         : [];
 
       for (const group of runnableGroups) {
-        const command = bulkRetryRunStageCommand(db, group.stage, group.jobUrls, body);
+        const command = bulkRetryRunStageCommand(group.stage, group.targets.map((target) => target.jobId), body);
         const dispatch = await actionDispatcher(command, actionContext);
         const executionRunId = temporalExecutionRunId(dispatch);
         if (dispatch.workflowId) {
@@ -1965,7 +2037,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         if (dispatch.status === "queued") {
           queueRetriedJobsForWorkflow(
             db,
-            group.jobUrls.map((jobUrl) => ({ jobUrl, stage: group.stage })),
+            group.targets,
             {
               ...(dispatch.workflowId ? { workflowId: dispatch.workflowId } : {}),
               ...(executionRunId ? { temporalRunId: executionRunId } : {}),
@@ -1978,17 +2050,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         actions.push(buildActionResponse(command, dispatch));
       }
 
-      const status = body.runAfter ? stageRunStatus(actions) : "reset";
+      const status = body.runAfter && !(actions.length === 0 && reset.retailorRequiredJobKeys?.length)
+        ? stageRunStatus(actions) : "reset";
       void reply.code(body.runAfter && actions.some((action) => action.status === "queued") ? 202 : 200);
       return {
         ok: true,
         count: reset.count,
         jobKeys: reset.jobKeys,
         stageCounts: reset.stageCounts,
+        ...(reset.retailorRequiredJobKeys?.length ? { retailorRequiredJobKeys: reset.retailorRequiredJobKeys } : {}),
         runAfter: body.runAfter,
         status,
         actions,
-        ...(body.runAfter && reset.count > 0 && actions.length === 0
+        ...(reset.retailorRequiredJobKeys?.length
+          ? { message: "Approved materials remain available. Use explicit re-tailor to create a replacement." }
+          : body.runAfter && reset.count > 0 && actions.length === 0
           ? { message: "Failed stages were reset; no preparation stages were eligible for automatic run-after dispatch." }
           : {}),
       } satisfies BulkRetryFailedResponse;
@@ -2014,7 +2090,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
 
       for (const group of runnableGroups) {
-        const command = pendingPreparationRunStageCommand(db, group.stage, group.jobUrls, body);
+        const command = pendingPreparationRunStageCommand(db, group.stage, group.targets.map((target) => target.jobUrl), body);
         const dispatch = await actionDispatcher(command, actionContext);
         const executionRunId = temporalExecutionRunId(dispatch);
         if (dispatch.workflowId) {
@@ -2029,7 +2105,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         if (dispatch.status === "queued") {
           queueRetriedJobsForWorkflow(
             db,
-            group.jobUrls.map((jobUrl) => ({ jobUrl, stage: group.stage })),
+            group.targets,
             {
               ...(dispatch.workflowId ? { workflowId: dispatch.workflowId } : {}),
               ...(executionRunId ? { temporalRunId: executionRunId } : {}),
@@ -2143,9 +2219,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
-      return withWritableDb(reply, options.dbPath, (db) =>
-        decideOutcomeSuggestion(db, decodeRouteParam(request.params.suggestionId), body),
-      );
+      return withWritableDb(reply, options.dbPath, (db) => {
+        const result = decideOutcomeSuggestion(db, decodeRouteParam(request.params.suggestionId), body);
+        if (!result.ok) void reply.code(409);
+        return result;
+      });
     },
   );
 
@@ -2333,7 +2411,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const reset = await resetJobStageWithEnrichmentOwner(db, providerDispatcher, actionContext, decodeRouteParam(request.params.jobKey), body.stage, {
         resetAttempts: body.resetAttempts,
       });
-      const jobId = requireJobId(db, reset.jobUrl);
+      const jobId = reset.jobId;
       const command: ActionCommandPayload = {
         action: "retry_stage" as const,
         jobKey: jobId,
@@ -2347,8 +2425,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (continuationStages.length > 0 && body.stage !== "apply") {
         command.stages = continuationStages;
       }
-      const dispatch = body.runAfter ? await actionDispatcher(command, actionContext) : { status: "reset" };
-      void reply.code(body.runAfter ? 202 : 200);
+      const dispatch = reset.retailorRequired
+        ? { status: "reset", message: "Approved materials remain available. Use explicit re-tailor to create a replacement." }
+        : body.runAfter ? await actionDispatcher(command, actionContext) : { status: "reset" };
+      void reply.code(body.runAfter && !reset.retailorRequired ? 202 : 200);
       return buildActionResponse(command, dispatch, { stage: reset.stage });
     });
   });
@@ -3121,7 +3201,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     const db = openDatabase(options.dbPath);
     let profileResponse: ProfileConfigResponse | undefined;
     try {
-      const update = persistProfileUpdate(db, body);
+      const update = persistProfileUpdate(db, body, undefined,
+        (receiptId, style) => assertReviewedImportStyle(db, receiptId, style, body.importReview));
       profileResponse = update.profile;
     } catch (error) {
       if (error instanceof InvalidSavedDiscoverySettingsError) {
@@ -3386,16 +3467,27 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     try {
       const pdfBytes = decodeBase64Pdf(body.pdfBase64);
+      const attemptId = randomUUID();
       const draft = await profileImporter(
         {
           filename: body.filename,
           pdfBytes,
           importProfile: body.importProfile,
           importStyle: body.importStyle,
+          attemptId,
         },
         actionContext,
       );
-      return { ok: true, ...draft };
+      try {
+        const db = openReadOnlyDatabase(options.dbPath);
+        try {
+          return { ok: true, ...bindImportedDraft(db, attemptId, pdfBytes, body.filename, body.importProfile, body.importStyle, draft) };
+        } finally { db.close(); }
+      } catch {
+        void reply.code(502);
+        return { ok: false, error: body.importProfile ? "resume_extraction_receipt_unavailable" : "resume_style_receipt_unavailable",
+          message: "The import source could not be verified. Your saved PDF remains available for retry." };
+      }
     } catch (error) {
       if (error instanceof InputError) {
         void reply.code(400);
@@ -4782,22 +4874,22 @@ const PREPARATION_PICKUP_MAX_ATTEMPTS: Partial<Record<Stage, number>> = {
   cover: 5,
 };
 
-interface BulkRetryTargetGroup {
+interface BulkRetryTargetGroup<T extends RetryFailedJobTarget> {
   readonly stage: Stage;
-  readonly jobUrls: string[];
+  readonly targets: T[];
 }
 
-function groupRunnableBulkRetryTargets(targets: readonly RetryFailedJobTarget[]): BulkRetryTargetGroup[] {
-  const groups = new Map<Stage, string[]>();
+function groupRunnableBulkRetryTargets<T extends RetryFailedJobTarget>(targets: readonly T[]): BulkRetryTargetGroup<T>[] {
+  const groups = new Map<Stage, T[]>();
   for (const target of targets) {
     if (!PREPARATION_PICKUP_STAGES.has(target.stage)) {
       continue;
     }
     const group = groups.get(target.stage) ?? [];
-    group.push(target.jobUrl);
+    group.push(target);
     groups.set(target.stage, group);
   }
-  return [...groups.entries()].map(([stage, jobUrls]) => ({ stage, jobUrls }));
+  return [...groups.entries()].map(([stage, groupTargets]) => ({ stage, targets: groupTargets }));
 }
 
 function pendingPreparationTargets(
@@ -4893,20 +4985,19 @@ function stageCountsForTargets(targets: readonly RetryFailedJobTarget[]): Partia
 }
 
 function bulkRetryRunStageCommand(
-  db: ApiDb,
   stage: Stage,
-  jobUrls: readonly string[],
+  jobIds: readonly string[],
   request: BulkRetryFailedRequest,
 ): ActionCommandPayload {
   const stages = retryContinuationStages(stage);
   const command: ActionCommandPayload = {
     action: "run_stage",
     jobKey: PIPELINE_ACTION_JOB_KEY,
-    jobIds: requireJobIds(db, jobUrls),
+    jobIds: [...new Set(jobIds)],
     stage,
     stages,
     dryRun: request.dryRun,
-    limit: jobUrls.length,
+    limit: jobIds.length,
     workers: request.workers,
     minScore: request.minScore,
     validationMode: request.validationMode,
@@ -4924,7 +5015,7 @@ function pendingPreparationRunStageCommand(
   jobUrls: readonly string[],
   request: BulkRunPendingPreparationRequest,
 ): ActionCommandPayload {
-  const command = bulkRetryRunStageCommand(db, stage, jobUrls, {
+  const command = bulkRetryRunStageCommand(stage, requireJobIds(db, jobUrls), {
     allMatching: false,
     jobKeys: [...jobUrls],
     runAfter: true,
@@ -5308,6 +5399,14 @@ async function withWritableDb<T>(
       void reply.code(409);
       return { ok: false, error: "invalid_saved_search", message: error.message };
     }
+    if (error instanceof ExtensionCaptureSuperseded) {
+      void reply.code(409);
+      return { ok: false, error: "extension_capture_superseded", message: error.message };
+    }
+    if (error instanceof ManualCaptureLifecycleConflict) {
+      void reply.code(409);
+      return { ok: false, error: "manual_capture_state_changed", message: error.message };
+    }
     if (error instanceof InvalidSavedTargetSearchError) {
       void reply.code(409);
       return { ok: false, error: "invalid_saved_search", message: error.message };
@@ -5384,6 +5483,10 @@ async function withWritableDb<T>(
     if (error instanceof ActionReceiptConflictError) {
       void reply.code(409);
       return { ok: false, error: "action_identity_conflict", message: error.message };
+    }
+    if (error instanceof RetrySelectionConflict) {
+      void reply.code(409);
+      return { ok: false, error: "retry_selection_changed", message: error.message };
     }
     if (error instanceof InputError) {
       if (APPLY_REVIEW_PRECONDITION_ERRORS.has(error.message)) {

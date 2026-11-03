@@ -7632,10 +7632,10 @@ var EXPECTED_NODE_LICENSE_EVIDENCE = /* @__PURE__ */ new Map([
   ["jotai-x@2.3.4", { license: "MIT", evidenceKind: "license-text" }],
   ["react-compiler-runtime@1.0.0", { license: "MIT", evidenceKind: "license-text" }],
   ["react-remove-scroll-bar@2.3.8", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate@0.126.2", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-dom@0.126.0", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-hyperscript@0.127.0", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-react@0.127.1", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate@0.146.0", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-dom@0.146.0", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-hyperscript@0.138.3", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-react@0.145.1", { license: "MIT", evidenceKind: "license-text" }],
   ["zustand-x@6.2.1", { license: "MIT", evidenceKind: "license-text" }]
 ]);
 function invariant(condition, message) {
@@ -9250,9 +9250,11 @@ function isTemporalBridgeBuildSourcePath(relativePath) {
   return TEMPORAL_BRIDGE_BUILD_SOURCE_PATHS.some((sourcePath) => relativePath === sourcePath || relativePath.startsWith(`${sourcePath}/`));
 }
 function isKnownPythonNonRuntimePath(relativePath) {
+  const [packageName, metadataDirectory, resourceDirectory] = relativePath.split("/");
+  const isTyperDevelopmentInstructions = packageName === "typer" && metadataDirectory?.startsWith(".") && resourceDirectory === "skills";
   return [...PYTHON_RUNTIME_NON_RUNTIME_PATHS].some(
     (nonRuntimePath) => relativePath === nonRuntimePath || relativePath.startsWith(`${nonRuntimePath}/`)
-  ) || /^temporalio\/contrib\/.+\/README\.md$/.test(relativePath);
+  ) || isTyperDevelopmentInstructions || /^temporalio\/contrib\/.+\/README\.md$/.test(relativePath);
 }
 function pythonRuntimeRelativePath(payloadPath) {
   return payloadPath.replace(/^(?:worker|playwright-python)\/site-packages\//, "").replace(/^python\/lib\/python3\.12\//, "");
@@ -9687,7 +9689,7 @@ async function normalizeInstalledPythonMetadata(sitePackagesRoots) {
       const rows = (await readFile3(recordPath, "utf8")).split(/\r?\n/).filter(Boolean);
       const canonicalRows = rows.filter((row) => {
         const installedPath = pythonRecordPath(row);
-        return !installedPath.startsWith("bin/") && !installedPath.endsWith("/direct_url.json") && !installedPath.endsWith("/uv_cache.json");
+        return !installedPath.startsWith("bin/") && !installedPath.endsWith("/direct_url.json") && !installedPath.endsWith("/uv_cache.json") && !isKnownPythonNonRuntimePath(installedPath);
       });
       await writeFile2(recordPath, `${canonicalRows.join("\n")}
 `, { mode: 420 });
@@ -10976,7 +10978,11 @@ function createExtractedRuntimeStackPlan({ payloadRoot, stateRoot, temporalPort,
 var LOOPBACK_ONLY_SANDBOX_PROFILE = `(version 1)
 (allow default)
 (deny network-outbound (remote ip))
-(allow network-outbound (remote ip "localhost:*"))`;
+(allow network-outbound (remote ip "localhost:*"))
+(deny file-read* (regex #"/Library/Keychains(/|$)"))
+(deny file-write* (regex #"/Library/Keychains(/|$)"))
+(deny mach-lookup (global-name-regex #"^com[.]apple[.](security|Security).*"))
+(deny process-exec (literal "/usr/bin/security"))`;
 var NATIVE_EXECUTION_QA_SANDBOX = "loopback-only-v1";
 function createNativeLauncherSmokePlan({ payloadRoot, extractedRoot, stockEnvironment = {} }) {
   invariant3(path3.isAbsolute(payloadRoot) && path3.isAbsolute(extractedRoot), "native launcher smoke requires absolute owned extraction paths");

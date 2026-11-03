@@ -807,6 +807,7 @@ def tailor_job_by_id(
             "job_id": str(stable_job_id),
             "status": "already_done",
             "reason": "approved_resume_already_committed",
+            "message": "Approved resume retained. Use explicit re-tailor to create a replacement.",
             "materials": existing_materials,
         }
 
@@ -1308,7 +1309,7 @@ def _reconcile_existing_approved_resume(
                 "tailor",
                 "StageCompleted",
                 tenant_id=tenant_id,
-                message="Tailoring recovered from the committed approved resume.",
+                message="Tailoring recovered from the committed approved resume. Use explicit re-tailor to create a replacement.",
                 payload={"recoveredAfterActivityReplay": True},
             )
     return materials

@@ -113,6 +113,12 @@ Use `jobctrl start --no-open` when you do not want a browser window, or
 Your workspace is stored under `~/.jobctrl/` by default and survives stops,
 updates, and rollbacks.
 
+If the local workflow engine's health check does not answer, startup reports a
+deadline failure and status can show the engine as unhealthy even when its
+process is still running. Status includes the bounded health diagnostic. If
+probe cleanup cannot be verified, status exits with an error and keeps the
+unverified ownership receipt; preserve it and use `jobctrl stop` to retry cleanup.
+
 `jobctrl stop` requests a clean shutdown, terminates verified leftovers that
 exceed the timeout, and waits for exit. It tracks the instance's children even
 if they detach or their parent crashes. Successful cleanup permits normal
@@ -325,7 +331,13 @@ Rollback keeps a compatible launcher for recovery while restoring the older
 application. Homebrew commands preserve that selection until you explicitly run
 `jobctrl update` again. If an older updater reports a failed candidate and cannot
 restart its previous release, recovery depends on the transition state and the
-available compatible controller. The installer and formula also handle an
+available compatible controller. If rollback or recovery reports unresolved
+provider-usage accounting, preserve the current database pair, pre-rollback and
+other backups, journal and spend receipts, and inspect the accounting. A late
+refusal may follow a pair replacement, and retry depends on the transition
+state. See
+[Data, Privacy & Safety](data-and-safety.md#back-up-and-restore) for details.
+The installer and formula also handle an
 installation you have never started. If an existing database/history pair is
 incomplete, updating refuses
 to replace it; preserve those files and recover the pair before retrying.

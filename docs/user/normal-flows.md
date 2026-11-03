@@ -150,7 +150,11 @@ model policy, and the shared spend ceiling remain in
 <WorkflowSurfacePanel surface="web">
 
 Open Pipelines, choose the `Discover` tab, set the run limit, internal
-concurrency, optional source selection, and dry-run mode, then start the run.
+concurrency and optional source selection, then start the run. Discover does
+not support a dry run. When no pipeline controls are saved, **Dry run** starts
+off; a saved choice stays unchanged. If it is checked, turn it off to enable an
+ordinary search. If saved controls cannot be read, review the displayed values
+before changing the setting.
 The source picker accepts up to 50 sources; leave it on **All runnable sources**
 to use the complete enabled registry.
 
@@ -170,6 +174,9 @@ Start the same Discover workflow from the terminal:
 ```bash
 jobctrl run discover
 ```
+
+`jobctrl discover --dry-run` and `jobctrl run --dry-run` when Discover is
+selected are rejected before a workflow starts. Omit `--dry-run` to search.
 
 The CLI uses the same optional transport selection. An offline extension does
 not prevent dispatch; public-source restrictions and worker readiness still
@@ -212,6 +219,8 @@ outcomes** expands the exact succeeded, skipped, blocked, failed, canceled,
 needs-verification, stale, and unknown counts. An attempt budget that has run
 out is a failed outcome with **attempt budget exhausted** as its reason, not a
 separate lifecycle state. Retrying that failure resets its attempt budget.
+If a bulk retry reports that a selected job or stage changed, refresh the Jobs
+list and review the selection before retrying.
 During an active source crawl, planned source families that have not entered
 their bounded execution batch appear as **waiting**, not unknown. Unknown is
 reserved for a planned family whose lifecycle is still missing after the
@@ -864,7 +873,7 @@ Cross-protocol rollback is refused. See
 | Lifecycle command | What it does |
 | --- | --- |
 | `start` | Start the local services and open the app (`--no-open`, `--foreground`). |
-| `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. Stop refuses to report success when recorded service ownership or exit is unresolved; see [Start JobCtrl](getting-started.md#_2-start-jobctrl). |
+| `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. Status includes Temporal probe errors in `healthError` and exits with an error if probe cleanup is unverified. Stop refuses to report success when recorded service ownership or exit is unresolved; see [Start JobCtrl](getting-started.md#_2-start-jobctrl). |
 | `logs [component]` | Show the last 200 lines of the `temporal`, `worker`, or `api` log, or of all three when no component is given. |
 | `version` | Print the installed version (`--json`). |
 | `update` / `rollback` / `uninstall` | Install a newer release, restore an earlier application and its saved database pair (`--to <build-id>`), or remove JobCtrl. Rollback keeps a compatible recovery launcher; Homebrew preserves the selection until an explicit update. `uninstall --remove-data` also deletes your local data after you type a confirmation phrase. |
@@ -881,11 +890,11 @@ Cross-protocol rollback is refused. See
 | `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` includes eligible jobs that already have a score, across the scoring queue. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
 | `apply` | Start apply automation (`--dry-run`, `--url`, `--limit` for a maximum number of claimed jobs, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
-| `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). Enrich retains accepted content and automatically renews an exhausted stage budget; see [Enrichment](enrichment-and-extraction.md). |
+| `retry <stage> <url>` | Reset one stage for one job (`--reset-attempts`, `--run`). An exhausted budget renews automatically; other counts are retained unless reset explicitly. Accepted materials remain available, and the command reports when a replacement requires explicit re-tailoring. |
 | `action <stage>` | Low-level single-action dispatch with JSON output, for scripts. |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates for all jobs or one (`--job-id`, `--observations-json`, `--no-eurotoptech`). |
 | `pipeline-status` / `runs` | Show pipeline stats, or recent apply runs and one run's event timeline (`runs --failed-only`, `--run-id`). |
-| `digest` | Print the local daily digest; it sends no notifications. Only `--acknowledge` marks it reviewed (`--json`, `--min-fit-score`). |
+| `digest` | Print the local daily digest; it sends no notifications. Incomplete spend is shown as unknown. Only `--acknowledge` marks it reviewed (`--json`, `--min-fit-score`). |
 | `capability list` / `enable` / `disable` | Inspect or change optional browser capabilities, for example `capability enable auto-apply-browser --browser-path <path>`. |
 | `credentials migrate` | Move allowlisted provider secrets from legacy `.env` files into the native credential store. |
 | `gmail-auth` | Connect Gmail for verification codes, outcome lookup, and approved email applications. |
@@ -900,8 +909,10 @@ identity. Hidden, closed and deleted jobs are excluded from those counts. New
 matches use the last review time and the configured high-fit threshold, which
 `--min-fit-score` can override for one read. Follow-ups use saved application
 outcomes and the seven-day threshold. Reading the digest does not advance its
-review time; `--acknowledge` records it with a review event. If the digest cannot
-refresh or read its data, the command fails instead of reporting zero counts.
+review time; `--acknowledge` records it with a review event. Pending or
+unresolved model usage leaves the other digest sections available and marks
+the budget incomplete, with unknown spend and remaining amounts. Other failed
+refreshes or reads fail instead of reporting zero counts.
 
 
 ## Semantic Determination Authority

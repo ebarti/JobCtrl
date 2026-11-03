@@ -13,6 +13,16 @@ ceiling, use [Configuration](configuration.md).
 
 <DiscoveryPipeline />
 
+Discover does not support a dry run. When no pipeline controls are saved,
+Discover starts with **Dry run** off; a previously saved choice remains
+unchanged. If it is checked, Pipelines explains how to turn it off before
+starting an ordinary search.
+If saved pipeline controls cannot be read, Discover stays in dry-run mode and
+Pipelines asks you to review the displayed values before replacing the unreadable
+controls. If storage is unavailable, changes last only for the current session.
+The CLI likewise rejects Discover with `--dry-run` before initializing the
+workspace or starting a workflow.
+
 ::: info One persistence authority
 Discovery settings and source records editable on `/discovery` are stored in
 `~/.jobctrl/jobctrl.db`. SQLite is the sole persistence authority for target
@@ -236,8 +246,9 @@ omitted from the requested run.
 
 Discovery owns the controls that decide what may enter a run; **Pipelines** owns
 starting and observing that run. In Pipelines, choose the Discover action, set a
-bounded result limit, internal source concurrency, optional sources, and dry-run
-mode, then keep the operations workspace open while work proceeds. The source
+bounded result limit, internal source concurrency, and optional sources. If
+**Dry run** is checked, turn it off to enable an ordinary search, then keep the
+operations workspace open while work proceeds. The source
 picker supports up to 50 selections and labels broad-board adapters as
 JobStreaming; the persisted `jobspy:` prefix remains only a compatibility ID.
 

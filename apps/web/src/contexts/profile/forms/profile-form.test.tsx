@@ -1207,7 +1207,7 @@ describe("<ProfileForm>", () => {
     });
   });
 
-  it("allows the first profile save without a version and fences the next full-profile save", async () => {
+  it("fences the first profile save against absence and the next save against its version", async () => {
     const user = userEvent.setup();
     const initial = { ...structuredClone(sampleProfileResponse), profileVersion: null };
     let nextVersion = 1;
@@ -1222,7 +1222,7 @@ describe("<ProfileForm>", () => {
     await user.type(screen.getByLabelText("Target roles 1"), "Director of Engineering");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
-    expect((updateProfile.mock.calls[0]![0] as ProfileUpdateRequest)).not.toHaveProperty("expectedProfileVersion");
+    expect((updateProfile.mock.calls[0]![0] as ProfileUpdateRequest).expectedProfileVersion).toBeNull();
 
     await user.clear(screen.getByLabelText("Target roles 1"));
     await user.type(screen.getByLabelText("Target roles 1"), "VP of Engineering");

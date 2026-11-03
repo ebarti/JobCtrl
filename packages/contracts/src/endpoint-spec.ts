@@ -508,6 +508,32 @@ export type GmailOutcomeScanResponse = z.infer<
   typeof GmailOutcomeScanResponseSchema
 >;
 
+export const GmailOutcomeScanProgressSchema = GmailOutcomeScanResponseSchema.omit({ ok: true });
+export type GmailOutcomeScanProgress = z.infer<typeof GmailOutcomeScanProgressSchema>;
+
+export const GmailOutcomeScanFailureCodeSchema = z.enum([
+  "provider_unavailable", "provider_error", "provider_non_retryable", "budget_denied", "spend_denied",
+  "malformed_json", "schema_violation", "source_schema_violation", "duplicate_source_id",
+  "foreign_source_id", "non_verbatim_quote", "mismatched_value", "missing_evidence_citation",
+  "inconsistent_verdict", "cache_binding_invalid", "cache_lock_unavailable", "persistence_error",
+  "configuration_invalid", "message_identity_changed", "message_recipient_changed",
+  "determination_failed", "gmail_auth_required", "gmail_provider_error", "invalid_recipient",
+  "gmail_scan_failed", "rpc_transport_error", "rpc_dispatch_error", "worker_response_invalid", "runtime_mismatch",
+  "gmail_timeout", "gmail_transport_error", "gmail_rate_limited", "gmail_provider_unavailable",
+  "invalid_scan_options", "invalid_search",
+]);
+export type GmailOutcomeScanFailureCode = z.infer<typeof GmailOutcomeScanFailureCodeSchema>;
+
+export const GmailOutcomeScanFailureSchema = z.object({
+  ok: z.literal(false),
+  error: z.enum(["invalid_gmail_feedback_scan", "gmail_feedback_scan_failed"]),
+  status: z.enum(["invalid", "blocked", "unavailable"]),
+  failureCode: GmailOutcomeScanFailureCodeSchema,
+  message: z.string(),
+  progress: GmailOutcomeScanProgressSchema.nullable(),
+}).strict();
+export type GmailOutcomeScanFailure = z.infer<typeof GmailOutcomeScanFailureSchema>;
+
 const RenderResumeReviewDraftRequestSchema =
   ResumeReviewDraftRenderRequestSchema.optional().transform((request) => request ?? {});
 

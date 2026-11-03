@@ -1,4 +1,5 @@
 import { act, fireEvent, screen } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import type { Value } from "platejs";
 import { describe, expect, it, vi } from "vitest";
 
@@ -12,6 +13,24 @@ import {
   pinsFromResumeLines,
 } from "../lib/resume-provenance.js";
 import { ResumePlateDocument } from "./ResumePlateDocument.js";
+
+const observedPlate = vi.hoisted(() => ({
+  editor: null as {
+    selection: { anchor: { offset: number }; focus: { offset: number } } | null;
+  } | null,
+}));
+
+vi.mock("platejs/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("platejs/react")>();
+  const { createElement } = await import("react");
+  return {
+    ...actual,
+    Plate: (props: ComponentProps<typeof actual.Plate>) => {
+      observedPlate.editor = props.editor ?? null;
+      return createElement(actual.Plate, props);
+    },
+  };
+});
 
 describe("resume Plate presentation", () => {
   it("renders identity, missing-source warnings, link safety and block formatting without a session", () => {
@@ -73,7 +92,7 @@ describe("resume Plate presentation", () => {
     expect(onFormattingApiChange).toHaveBeenLastCalledWith(null);
   });
 
-  it("preserves native and Slate-owned selections through immediate editor rerenders", async () => {
+  it("preserves native ranges on rerender and declines handled or composing keyup ranges", async () => {
     const html = '<main class="resume-page"><p>First pasted paragraph</p></main>';
     const value = resumePlateValueFromHtml(html);
     const renderDocument = () => (
@@ -124,21 +143,30 @@ describe("resume Plate presentation", () => {
     await act(async () => {
       selection.setBaseAndExtent(leaf.firstChild!, 2, leaf.firstChild!, 2);
       fireEvent.keyUp(editor, { key: "ArrowRight", keyCode: 39, which: 39 });
+      expect(observedPlate.editor?.selection).toMatchObject({
+        anchor: { offset: 6 }, focus: { offset: 6 },
+      });
     });
-    rerender(renderDocument());
-    expect(selection.anchorNode).toBe(leaf.firstChild);
-    expect(selection.anchorOffset).toBe(6);
+    // The programmatic DOM move also emits a separate selectionchange, which
+    // Slate may accept later. The assertion above isolates JobCtrl's keyup
+    // handler rather than depending on that event's scheduling.
+    await act(async () => {
+      selection.setBaseAndExtent(leaf.firstChild!, 6, leaf.firstChild!, 6);
+      fireEvent.pointerUp(leaf, { button: 0 });
+    });
 
     // Composition may end between a keydown and its keyup. The earlier
     // composing event must not grant authority to an out-of-date DOM range.
     await act(async () => {
-      selection.setBaseAndExtent(leaf.firstChild!, 1, leaf.firstChild!, 1);
       fireEvent.keyDown(editor, { key: "Home", isComposing: true });
+      selection.setBaseAndExtent(leaf.firstChild!, 1, leaf.firstChild!, 1);
       fireEvent.keyUp(editor, { key: "Home", isComposing: false });
+      // Observe JobCtrl's handler before Slate receives its separate native
+      // selectionchange event. That later event has its own native authority.
+      expect(observedPlate.editor?.selection).toMatchObject({
+        anchor: { offset: 6 }, focus: { offset: 6 },
+      });
     });
-    rerender(renderDocument());
-    expect(selection.anchorNode).toBe(leaf.firstChild);
-    expect(selection.anchorOffset).toBe(6);
   });
 
   it("keeps audit selection on editor chrome and clears it on outside pointer and Escape", () => {

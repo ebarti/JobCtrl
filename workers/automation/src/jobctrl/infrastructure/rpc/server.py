@@ -28,6 +28,7 @@ from typing import Any, Callable, Iterable, TextIO
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from jobctrl.domain.rpc.messages import (
     INTERNAL_ERROR,
@@ -137,7 +138,7 @@ class JsonRpcServer:
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
                 return JsonRpcResponse.failure(
                     request.id,
-                    JsonRpcError(INVALID_PARAMS, str(exc)),
+                    JsonRpcError(INVALID_PARAMS, str(exc), data=exc.data),
                 )
             except Exception as exc:  # noqa: BLE001 — surface as INTERNAL_ERROR
                 logger.exception("Handler %s raised", request.method)
@@ -182,7 +183,7 @@ class JsonRpcServer:
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             return JsonRpcResponse.failure(
                 request.id,
-                JsonRpcError(INVALID_PARAMS, str(exc)),
+                JsonRpcError(INVALID_PARAMS, str(exc), data=exc.data),
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Workflow handler %s raised while building spec", request.method)
@@ -206,6 +207,10 @@ class JsonRpcServer:
             start_spec = bind_apply_dispatch_spec(start_spec)
             handle = asyncio.run(self._workflow_starter(start_spec))
         except Exception as exc:  # noqa: BLE001
+            if request.method == "manual_capture_import" and isinstance(exc, WorkflowAlreadyStartedError):
+                return JsonRpcResponse.failure(
+                    request.id, JsonRpcError(-32009, "manual_capture_in_progress"),
+                )
             logger.exception("Workflow start failed for %s", request.method)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
@@ -350,7 +355,11 @@ class JsonRpcServer:
 class _RpcParamError(ValueError):
     """Raise inside a handler to surface ``INVALID_PARAMS``."""
 
+    def __init__(self, message: str, *, data: Any = None) -> None:
+        super().__init__(message)
+        self.data = data
 
-def invalid_params(message: str) -> _RpcParamError:
+
+def invalid_params(message: str, *, data: Any = None) -> _RpcParamError:
     """Helper for handlers to signal a parameter validation failure."""
-    return _RpcParamError(message)
+    return _RpcParamError(message, data=data)

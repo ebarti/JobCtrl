@@ -86,7 +86,8 @@ export function readActionReceipt(
     const payload = JSON.parse(row.payload_json);
     const receipt = ReceiptSchema.parse(payload.receipt);
     const eventFactId = eventType === "ApplicationOutcomeRecorded" ? payload.outcomeId
-      : eventType === "OutreachSendLogged" ? payload.sendLogId : undefined;
+      : eventType === "OutreachSendLogged" ? payload.sendLogId
+      : eventType === "OutcomeSuggestionDecided" ? payload.suggestionId : undefined;
     if (row.tenant_id !== tenant || row.event_type !== eventType || row.entity_kind !== entityKind || row.entity_ref !== identity.binding.target
       || eventFactId !== receipt.factId || !new RegExp(`^${identity.key}:[0-9a-f]{64}$`).test(row.idempotency_key)
       || Object.entries(identity.binding).some(([key, value]) => receipt[key as keyof ActionReceipt] !== value)) {

@@ -98,6 +98,15 @@ workflow-engine state, not the JobCtrl read model. Generated files are physical
 artifacts whose registered metadata determines whether the product may serve
 them.
 
+Outcome-suggestion review acquires the SQLite writer before reading pending or
+terminal state. The suggestion, optional outcome, decision event and its receipt
+commit as one unit. The private SQLite idempotency index binds the normalized
+request, canonical decision and outcome, and safe event. The event carries only
+safe receipt references and whether the time was supplied; it never carries the
+binding digest, note or reason. Missing or inconsistent historical receipts never
+authorize a guessed replay. Stored outcome kinds must be valid before replay
+verification; display normalization does not prove a canonical value unchanged.
+
 ## Canonical State And Physical Storage
 
 `~/.jobctrl/jobctrl.db` contains canonical rows, the event log, and derived
@@ -459,6 +468,17 @@ At an exhausted run or source allowance, the prepared publication may still
 complete without another admission. After checking that receipt and the
 missing-original condition, recovery leaves other unprepared captures pending
 before initializing a browser or qualifying another posting.
+
+## Retry posting-lifecycle receipts
+
+The SQLite posting snapshot writer records `PostingSnapshotStatePersisted` in
+the existing job event journal when the stored active state changes or is first
+inserted. The snapshot and receipt share the writer transaction. The receipt
+contains job identity only and supplies an ordered fence for an already selected
+Retry; it is not an observation or proof that a posting is available. Generic
+Activity and SSE omit this internal receipt. A worker using the older snapshot
+writer does not produce it, so mixed-version safety still requires verified
+old-writer quiescence or a compatible write fence.
 
 ## Company briefing reads
 

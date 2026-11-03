@@ -1,4 +1,4 @@
-import { InMemoryStoragePort } from "../../../test/testPorts.js";
+import { buildTestPorts, InMemoryStoragePort } from "../../../test/testPorts.js";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -39,6 +39,43 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("<ImportUploadForm>", () => {
+  it("keeps removal ordered after a pending load of the latest saved PDF", async () => {
+    const firstLegacy = JSON.stringify({ version: 1, state: {
+      filename: "legacy.pdf", pdfBase64: "legacy", importProfile: true, importStyle: true,
+    } });
+    window.localStorage.setItem("jh:profile-import", firstLegacy);
+    const storage = new InMemoryStoragePort();
+    await useProfileImportStore.getState().retryStorage(storage);
+    await useProfileImportStore.getState().setUpload("current.pdf", "current", storage);
+    renderWithProviders(<ImportUploadForm />, {
+      withRouter: true,
+      ports: { ...buildTestPorts(), storage },
+    });
+    window.localStorage.setItem("jh:profile-import", firstLegacy.replace("legacy.pdf", "later.pdf"));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove saved PDF" }));
+    await screen.findByRole("button", { name: "Load latest saved PDF" });
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const transact = storage.transact.bind(storage);
+    vi.spyOn(storage, "transact").mockImplementationOnce(async (name, operation, signal) => {
+      started.resolve();
+      await release.promise;
+      return transact(name, operation, signal);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Load latest saved PDF" }));
+    await started.promise;
+    const remove = screen.getByRole("button", { name: "Remove saved PDF" });
+    expect(remove).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading the latest saved PDF");
+    fireEvent.click(remove);
+    expect(JSON.parse(InMemoryStoragePort.transactionValues.get("jh:profile-import-v2")!).state.filename).toBe("current.pdf");
+    await act(async () => release.resolve());
+    await waitFor(() => expect(remove).toBeEnabled());
+    fireEvent.click(remove);
+    await waitFor(() => expect(useProfileImportStore.getState().filename).toBe(""));
+    expect(JSON.parse(InMemoryStoragePort.transactionValues.get("jh:profile-import-v2")!).state.filename).toBe("");
+    expect(window.localStorage.getItem("jh:profile-import")).toBe(firstLegacy.replace("legacy.pdf", "later.pdf"));
+  });
   it("keeps continuation disabled until upload state is complete", async () => {
     renderWithProviders(<ImportUploadForm />, { withRouter: true });
 

@@ -107,6 +107,62 @@ function json(value: unknown): Response {
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
 describe("background capture ownership", () => {
+  it("reviews and discards only the superseded capture while another queued entry remains", async () => {
+    const fixture = await harness([entry("old", "old-id"), entry("new", "new-id"), entry("pending", "pending-id")]);
+    fixture.sendCapture(async (body) => {
+      if (body.captureId === "old-id") return new Response(JSON.stringify({ ok: false, error: "extension_capture_superseded" }), { status: 409 });
+      if (body.captureId === "new-id") return json(acknowledgement(body));
+      throw new Error("synthetic offline");
+    });
+    expect(await fixture.send({ type: "retryQueue" })).toMatchObject({ ok: true, status: "queue_flushed", flushed: 1, queueSize: 2 });
+    await fixture.restart();
+    expect(await fixture.send({ type: "reviewQueue" })).toMatchObject({ ok: true, status: "queue_items", items: [
+      { id: "queued-old", originatingUrl: "https://example.com/jobs/old", reviewStatus: "superseded" },
+      { id: "queued-pending", originatingUrl: "https://example.com/jobs/pending", reviewStatus: "pending" },
+    ] });
+    expect(await fixture.send({ type: "getQueuedCapture", id: "queued-old" })).toMatchObject({ ok: true, status: "queue_item",
+      reviewStatus: "superseded", item: { contentText: "Synthetic old", captureId: "old-id" } });
+    expect(await fixture.send({ type: "discardQueuedCapture", id: "queued-old" }))
+      .toMatchObject({ ok: true, status: "queue_item_discarded", removed: true });
+    expect(fixture.queue()).toEqual([entry("pending", "pending-id")]);
+    expect(await fixture.send({ type: "discardQueuedCapture", id: "queued-old" }))
+      .toMatchObject({ ok: true, status: "queue_item_discarded", removed: false });
+  });
+
+  it("frees one slot in a full queue only after the selected capture is discarded", async () => {
+    const pending = Array.from({ length: MAX_CAPTURE_QUEUE_SIZE }, (_, index) => ({ ...entry(`item-${index}`, `id-${index}`), reviewStatus: "superseded" }));
+    const fixture = await harness(pending);
+    expect(await fixture.send({ type: "captureCurrentTab" })).toMatchObject({ ok: false, message: expect.stringContaining("full") });
+    expect(fixture.queue()).toEqual(pending);
+    expect(await fixture.send({ type: "discardQueuedCapture", id: "queued-item-0" }))
+      .toMatchObject({ ok: true, removed: true });
+    expect(await fixture.send({ type: "captureCurrentTab" })).toMatchObject({ ok: true, status: "queued", queueSize: MAX_CAPTURE_QUEUE_SIZE });
+    const remaining = fixture.queue() as Array<{ id: string; capture: { contentText: string } }>;
+    expect(remaining).toHaveLength(MAX_CAPTURE_QUEUE_SIZE);
+    expect(remaining.some((item) => item.id === "queued-item-0")).toBe(false);
+    expect(remaining.some((item) => item.capture.contentText === "Synthetic page-2")).toBe(true);
+    for (const item of pending.slice(1)) expect(remaining).toContainEqual(item);
+  });
+
+  it("keeps other entries when one is discarded during an in-flight send", async () => {
+    const fixture = await harness([entry("old", "old-id"), entry("other", "other-id")]);
+    const started = deferred();
+    const release = deferred();
+    fixture.sendCapture(async (body) => {
+      if (body.captureId === "old-id") { started.resolve(); await release.promise; return json(acknowledgement(body)); }
+      throw new Error("synthetic offline");
+    });
+    const flushing = fixture.send({ type: "retryQueue" });
+    await started.promise;
+    expect(await fixture.send({ type: "getQueuedCapture", id: "queued-old" }))
+      .toMatchObject({ ok: true, reviewStatus: "pending" });
+    expect(await fixture.send({ type: "discardQueuedCapture", id: "queued-old" }))
+      .toMatchObject({ ok: true, removed: true });
+    expect(fixture.queue()).toEqual([entry("other", "other-id")]);
+    release.resolve();
+    expect(await flushing).toMatchObject({ ok: true, status: "queue_flushed", flushed: 1, queueSize: 1 });
+    expect(fixture.queue()).toEqual([entry("other", "other-id")]);
+  });
   it("preserves pending captures when pairing and across service-worker restart, until explicit clear", async () => {
     const pending = [entry("old")];
     const fixture = await harness(pending);

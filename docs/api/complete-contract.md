@@ -59,8 +59,22 @@ need:
 `GET /v1/profile` and `PATCH /v1/profile` use the normalized Candidate
 Profile tables in `jobctrl.db` as the source of truth. When the profile
 tables are empty, `GET /v1/profile` returns an empty profile with default
-rendering settings. Explicit profile saves and resume-PDF imports create or
-update the SQLite rows.
+rendering settings. Explicit profile saves create or update the SQLite rows;
+resume-PDF extraction returns a draft without saving it. For a Profile import,
+`POST /v1/profile/import-resume` validates the returned determination ID against
+the local persisted `resume_extraction` receipt and returns only its personal
+fields in `profile.personal` and `source.extractedPersonal`. A missing, malformed,
+foreign or incompatible receipt returns `502 resume_extraction_receipt_unavailable`;
+the request writes no Profile data. Style-only imports do not require a personal
+projection. `source.inferredStyle` contains only PDF-observed page size, font size,
+and font family; `source.attemptId` identifies the worker-owned database binding
+between the API-issued attempt, parsed PDF digest, extraction and observed
+style. The API checks the submitted bytes and returned source against this binding.
+The browser uses that same attempt ID as the review draft ID. Every import
+acceptance, including style-only, sends `importReview` with both IDs and, when
+style is selected, `importStyleReceiptId` with that ID. The version-fenced
+transaction rejoins the attempt and extraction and rejects identity mismatches;
+ordinary Profile and style edits omit these fields.
 Profile reads optionally include `legacyEvidenceReview: { status:
 "review_required", count: number }`. Each affected achievement retains all saved
 fields, including `user_confirmed`, and adds read-computed
@@ -74,12 +88,13 @@ not a new HTTP write route. `LegacyEvidenceReviewRecorded` private event payload
 are excluded from generic SSE.
 
 Profile reads include `profileVersion: number | null`. `PATCH /v1/profile`
-accepts optional `expectedProfileVersion`; when supplied, a mismatch returns
+accepts optional `expectedProfileVersion` (a positive integer or `null` for an
+absent profile); when supplied, a mismatch returns
 `409 stale_profile_version` and the same transaction writes neither canonical
 rows nor `ProfileUpdated`.
 The web form sends its actual saved base version on every full-profile manual
-or autosave write. It omits the field only for the first save when
-`profileVersion` is `null`; a conflict keeps the draft for explicit rebase.
+or autosave write, including `null` for the first save; a conflict keeps the
+draft for explicit rebase.
 
 `POST /v1/profile/required-bullet-suggestions` accepts only
 `expectedProfileVersion` (positive integer) and optional `maximumSuggestions`
@@ -522,7 +537,15 @@ when refused. Existing direct permanent-delete requests without `selectionId`
 and the explicitly authorized job-data purge retain their existing behavior.
 `POST /v1/jobs/bulk-retry-failed` accepts the same selected-job or
 all-matching bulk mutation body and resets each active failed job's failed stage
-to `pending`; non-failed selected jobs are ignored. A persisted legacy
+to `pending`; non-failed selected jobs are ignored. Response `jobKeys` and
+`retailorRequiredJobKeys` use canonical job IDs, even when a request selected
+jobs by URL. Earlier API versions returned posting URLs in these fields;
+clients that use the keys to identify jobs should use the IDs to read job
+details. A selected stage, job visibility, or posting availability that changes
+after the API captures its identity aborts the whole cohort before any reset or
+dispatch. Hidden or deleted jobs and closed, expired, removed or location-incompatible
+postings are ineligible. The response is `409 retry_selection_changed` with a message to
+refresh the jobs list and review the selection before retrying. A persisted legacy
 `exhausted` row is exposed as `state: "failed"` with
 `failureReason: "attempt_budget_exhausted"`, remains retryable, and has its
 attempt count reset atomically by this action.
@@ -931,6 +954,11 @@ type and policy metadata are visible as columns instead of compact badges:
   their existing local review queues. Direct URLs from broad-board discovery
   retain their normal learning path, fenced by pending history proposals,
   durable rejection and disabled/quarantined source intent.
+  Manual Capture returns pending submitted drafts in `retryContext` for local
+  review. It also lists historical imports with an exact original observation
+  but no matching saved snapshot using their stored `status: "imported"` and
+  `manual_capture_recovery_unverified: true`; absence of a matching snapshot
+  does not attribute a recorded failure to that item.
 - `POST /v1/discovery/locator-candidates/:candidateId/promote` explicitly promotes
   the candidate, reusing a history proposal's active registry overlap without
   changing its configuration. It records `SourceLocationCandidateReviewed`
@@ -951,10 +979,53 @@ type and policy metadata are visible as columns instead of compact badges:
   quarantined lead and records feedback for source-quality aggregation.
 - `POST /v1/discovery/manual-capture/:itemId/import` records user-mediated
   capture provenance for copied URLs, current-page URLs, pasted text, saved
-  HTML, and email imports. Raw pasted or saved content is not copied into domain
-  events; the API stores only local metadata such as content length and hash.
+  HTML, and email imports. Pending capture content and details are stored locally
+  for retry and returned by the queue read. They are removed from the queue on
+  successful import or dismissal, and are not copied into domain events.
+  Before dispatch, `POST /v1/discovery/manual-capture/:itemId/prepare` takes the
+  same capture fields and the reviewed `expectedLifecycleId`, atomically retains
+  the draft, and returns a new `lifecycleId`. The import request must use that
+  new identity and the same capture fields; an unprepared, stale, or changed
+  submission returns `409` without dispatch. The queue exposes the safe boolean
+  `manual_capture_import_unresolved` while a prepared or worker-admitted attempt
+  may still finish; internal admission details are not returned. After a reload,
+  the user must supersede that reviewed lifetime before editing and retrying.
+  Success requires a matching persisted snapshot. Extraction failures return
+  `422`; a changed capture or owner, or another active import of the same item,
+  returns `409`. A structured `reason` identifies the terminal workflow results
+  `manual_capture_state_changed` and `capture_replay_mismatch`, or
+  `manual_capture_in_progress` when another attempt still owns the item.
+  Other conflicts may have no reason and remain unconfirmed. Database and model failures
+  leave the pending draft available when its initial storage succeeded. A `503`
+  with `reason: manual_capture_provider_failed` identifies a completed provider
+  failure, and a `500` with `reason: manual_capture_database_failed` identifies a
+  completed database activity failure. Other `500` and `503` responses do not
+  confirm whether the write completed.
+  Queue items include an opaque `lifecycleId` for the reviewed capture lifetime;
+  it is a change detector, not an authorization credential. Import and dismissal
+  requests must send it as `expectedLifecycleId`; missing or stale values return
+  `409` without writing, so older clients must refresh and update. The current
+  UI also disables changes if an older server omits the identity. An unreadable
+  lifecycle is returned as `null` and cannot be submitted or dismissed. The
+  worker separately fences publication against the internal generation observed
+  by the API. The extension binds its generation while seeding its own capture.
+  Page identity, access and source-field selection are cited model decisions;
+  listing, unknown-identity and login/challenge verdicts cannot create a Job.
+  An unverified historical receipt requires explicit resubmission of page content;
+  it reuses the original live Job and observation, preserves older accepted
+  snapshots, and never recreates a deleted owner. Temporal history can retain
+  the submitted workflow input.
 - `POST /v1/discovery/manual-capture/:itemId/dismiss` dismisses a pending
-  manual-capture item.
+  manual-capture item, including an unverified historical import.
+- `POST /v1/discovery/manual-capture/:itemId/supersede` takes the reviewed
+  `expectedLifecycleId` and atomically advances the capture generation, keeping
+  its retained draft and historical owner. This prevents earlier imports for
+  that capture from saving. It returns `{ ok, itemId, lifecycleId }` for the new
+  review lifetime, or `409` if the item changed or was already accepted. The
+  action also rejects delayed replays of the superseded extension capture ID
+  with `409 extension_capture_superseded`; the extension retains that local entry
+  and continues syncing newer captures. A new capture ID remains eligible. A still-running workflow can reject a new
+  import as in progress, leaving its submitted text available for review.
 - `POST /v1/discovery/feedback` records `DiscoveryFeedbackRecorded` with IDs,
   source, kind, and timestamp only; free-form notes stay out of the domain event
   payload.
@@ -1571,16 +1642,38 @@ verification-code MCP server:
   same job. The link is nullable and invalid generations are rejected.
 - `POST /v1/outcome-suggestions/:suggestionId/decision` accepts, corrects, or
   ignores a pending suggestion and writes a reviewed outcome for accepted or
-  corrected suggestions.
+  corrected suggestions. It returns `200` with `disposition: "applied"` for a
+  new decision or `"replayed"` for an identical recorded request. A different
+  decision or correction returns `409 outcome_suggestion_conflict`; a historical
+  request whose identity cannot be proved returns `409
+  outcome_suggestion_replay_unverifiable`. Both responses contain the saved
+  `suggestion` and nullable `outcome` and make no new decision. `outcomeKind` is
+  required for `correct` and rejected for other decisions; `ignore` rejects `note` and `occurredAt` because
+  it has no outcome in which to retain them. The decision, optional outcome and
+  private receipt commit together under one SQLite writer reservation. The receipt
+  binds the request, canonical facts and safe event; its digest stays in SQLite's
+  internal index and is never sent in an event or stream. Missing or inconsistent
+  receipt evidence, including earlier decisions without a receipt, is unverifiable.
 - `POST /v1/outcomes/gmail/scan` runs a bounded Gmail feedback scan over known
   application anchors. The request accepts optional `recipientEmail`, `limit`,
   `maxResultsPerAnchor`, and `windowDays` values. The response returns counts
   plus evidence/suggestion IDs, canonical `jobId` values, kinds, and confidence
-  values only; it never returns raw Gmail body text. Worker failures return
-  `ok: false`, a safe `failureCode` and message, and an HTTP status: 400 for
-  invalid scan input, 503 for Gmail/model unavailability, and 500 for blocked
-  determinations or worker failures. Existing evidence remains stored; a
-  bounded scan is not an exhaustive mailbox search.
+  values only; it never returns raw Gmail body text. A bounded scan is not an
+  exhaustive mailbox search. On failure, the response has `ok: false`, `error`,
+  `status` (`invalid`, `blocked` or `unavailable`), a safe `failureCode`, a fixed
+  guidance `message`, and `progress`. A recognized worker status is preserved.
+  Progress contains the successful response's
+  counts and summary arrays without `ok`. `scannedAnchorCount` counts completed
+  Gmail searches; evidence and suggestion counts include only committed writes
+  from this attempt. Progress is `null` when the worker did not return a complete
+  trustworthy summary, including transport loss.
+  Existing status mappings remain: 400 for invalid scan input, 503 for Gmail/model
+  unavailability or budget denial, and 500 for blocked determinations or RPC/scan
+  failures. Workspace mismatch returns 409, spend denial returns 429, and an
+  invalid worker result returns 502. `GmailOutcomeScanFailureCodeSchema` defines
+  the allowed codes. Request parsing and database readiness retain their existing
+  error contracts. Deliberate retry deduplicates provider messages and preserves
+  earlier committed evidence and suggestions.
 
 The web review queue records approval facts only. `approve_submit` is bound to
 the material, profile, URL, and dry-run evidence shown in Apply Review; stale
@@ -1629,7 +1722,7 @@ or prep checks, and cannot overwrite later thread/review/reminder state. Fresh
 actions retain those checks. Reflections accept only stored accepted or
 superseded prep generations for the same job. Private note/reflection text stays
 in canonical private history, outside receipt events and conflict errors.
-Suggestion-decision semantics and external delivery authority are unchanged.
+External delivery authority is unchanged.
 
 These routes create `application_review_decisions`,
 `application_repeat_overrides`, `application_repeat_override_consumptions`,
@@ -1951,6 +2044,12 @@ user can stop the in-flight run without resolving a fake `pipeline` job row.
 to `default`, which omits `--model` and lets the local Claude Code
 configuration choose the active model.
 
+Discover does not support a dry run. A request containing `discover` and
+`dryRun: true`, including when the field is omitted, returns HTTP `400` with
+`error: "discover_preview_unsupported"` before worker dispatch. Send
+`dryRun: false` to start an ordinary Discover search. Mixed-stage requests are
+rejected as a whole; other stages' dry-run behavior is unchanged.
+
 `POST /v1/jobs/:jobKey/actions/run-stage` starts one job-scoped preparation
 pickup without resetting stage state. It accepts the internal preparation
 stages `enrich`, `score`, `tailor`, and `cover`, rejects product-stage starts
@@ -2045,15 +2144,24 @@ Current-version preparation maintenance actions are separate endpoints:
   `503 { ok: false, error: "worker_runtime_unavailable", worker }`; the prior
   stage row, attempt/error metadata, and event history remain unchanged and no
   dispatcher call occurs. With `runAfter: false`, the route is an intentional
-  local-only reset and does not require a Temporal activity worker. Enrichment
-  resets require the local Python RPC runtime and return `200` only after the
-  reset commits. They preserve accepted enrichment content and attempt history,
+  local-only reset and does not require a Temporal activity worker. All stage
+  resets bind the selected stage and job lifecycle before the writer runs; if
+  either changes, the route returns `409 retry_selection_changed` before any
+  reset or dispatch. The bound identity is the state observed by the API for
+  this request; the command does not identify a previously displayed attempt.
+  An unchanged missing stage can still be reset deliberately.
+  Stage resets require the local Python RPC runtime and return `200` only after the
+  reset commits. They preserve accepted enrichment and materials, provenance, and attempt history,
   clear terminal stage fields and execution ownership, and retain the stage
   attempt count unless `resetAttempts` is true or the stage was exhausted.
   An RPC or persistence failure returns an error rather than a successful reset;
   a rejected persistence transaction leaves the previous state and events intact.
-  Mixed bulk cohorts containing Enrich commit through the same service; if a
-  selected row is no longer failed/exhausted, the complete cohort is rejected.
+  All bulk cohorts commit through the same service; if a selected row is no
+  longer failed/exhausted or is no longer eligible for retry, the complete
+  cohort is rejected.
+  If an approved resume or cover means a replacement requires explicit re-tailor,
+  the reset returns `200` with that guidance in `message` and does not dispatch
+  it, even when `runAfter` was requested.
   For an already enriched LinkedIn job with no application URL, send
   `{ "stage": "enrich", "runAfter": true, "refreshApplyUrl": true }` to
   inspect only that posting through the live extension. This bounded action
@@ -2068,11 +2176,15 @@ Current-version preparation maintenance actions are separate endpoints:
   controls cannot supply a target.
 - `POST /v1/jobs/bulk-retry-failed` accepts selected jobs or all matching jobs.
   With the default `runAfter: false` it only resets each retryable failed stage
-  to `pending`. Attempt-budget failures are included even when their legacy
+  to `pending`. Optional `resetAttempts: true` also clears non-exhausted attempt
+  counts. Attempt-budget failures are included even when their legacy
   stored marker is non-retryable; the same transaction resets the attempt count
   to zero. With `runAfter: true`, the API groups reset preparation stages
   (`enrich`, `score`, `tailor`, `cover`) and dispatches bounded batch
   `run_stage` workflows with the selected job URLs and requested worker count.
+  Targets requiring an explicit re-tailor are excluded from dispatch, listed in
+  `retailorRequiredJobKeys`, and described in `message`; their accepted materials
+  remain available.
   The route records pipeline workflow metadata plus per-job `StageQueued`
   events with `source: "bulk_retry_failed"` so later debugging can tell which
   action picked up the reset rows. Enrich cohorts can reset and dispatch while
@@ -2197,11 +2309,16 @@ writes `worker_runtime_heartbeats` into the same database; `GET /v1/health`
 returns the API app/database identity plus the latest Python worker
 heartbeat status (`healthy`, `missing`, `stale` after 45 s, or `mismatched`
 when the worker points at a different app dir/database) and an `llmSpend`
-block (`status: ok | over_budget`, today's `estimatedUsd` from the local
+block (`status: ok | over_budget | incomplete`, today's `estimatedUsd` from the local
 `llm_spend` metering table, and configured `dailyBudgetUsd` from
 `config.json` — default `25`, `0` = unlimited). Its `lanes` object reports every
 known product lane with input, output, total, limit, remaining, unlimited, and
-`ok | over_budget` status. Lane limits are read from `laneTokenLimits`; unknown
+`ok | over_budget | incomplete` status. While a provider receipt is pending or
+unresolved, health returns null spend and token totals and null remaining
+amounts, and the digest budget returns `incomplete` with null estimated and
+remaining amounts. Incomplete accounting gives pipeline ETA an unavailable
+`accounting_incomplete` reason, not a budget-exceeded reason. Lane limits are
+read from `laneTokenLimits`; unknown
 keys and non-integral or negative values are rejected by `PATCH /v1/settings`.
 The top-level spend status continues to represent the global USD ceiling so an
 exhausted lane does not make unrelated lanes unavailable. The response also
@@ -2452,7 +2569,9 @@ run link to its exact activity stream.
   `manual_capture:extension`, then delegates to the existing manual-capture
   worker importer. Re-sending the same `captureId` while import is still pending
   updates the same queue row instead of creating a duplicate; replays of an
-  imported row return the original `ManualCaptureImportResponse`; replays of a
+  imported row return the original `ManualCaptureImportResponse` only when the
+  submitted content and metadata match its live owner and recorded snapshot;
+  replays of a
   dismissed row return a terminal 2xx no-op so the extension can clear local
   retry state without reopening the dismissed capture.
 - `GET /v1/extension/autofill/profile` returns the explicitly saved, whitelisted

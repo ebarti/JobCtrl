@@ -239,6 +239,7 @@ func TestDevelopmentEntryAutomaticallyMigratesOwnedWorkspace(t *testing.T) {
 	if err := os.WriteFile(dev, scriptBytes, 0700); err != nil {
 		t.Fatal(err)
 	}
+	stageSourceProcessOwnerFixture(t, root, moduleRoot)
 	if err := os.Symlink(moduleRoot, filepath.Join(root, "launcher")); err != nil {
 		t.Fatal(err)
 	}
@@ -729,6 +730,7 @@ func TestDevelopmentEntryPointUsesNativeWorkspaceScope(t *testing.T) {
 	if err := os.WriteFile(dev, scriptBytes, 0700); err != nil {
 		t.Fatal(err)
 	}
+	stageSourceProcessOwnerFixture(t, root, moduleRoot)
 	if err := os.Symlink(moduleRoot, filepath.Join(root, "launcher")); err != nil {
 		t.Fatal(err)
 	}
@@ -763,40 +765,78 @@ func TestDevelopmentEntryPointUsesNativeWorkspaceScope(t *testing.T) {
 	if _, err := os.Stat(ready); !os.IsNotExist(err) {
 		t.Fatal("unowned source API started")
 	}
-	command := exec.Command(dev, "run", "api")
-	command.Env = env
-	command.Stdout, command.Stderr = os.Stdout, os.Stderr
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- command.Wait() }()
-	t.Cleanup(func() { _ = stop(ctx); _ = command.Process.Kill() })
-	deadline := time.Now().Add(25 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(ready); err == nil {
-			break
+	for cycle := 0; cycle < 2; cycle++ {
+		if err := os.Remove(ready); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		command := exec.Command(dev, "run", "api")
+		command.Env = env
+		command.Stdout, command.Stderr = os.Stdout, os.Stderr
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- command.Wait() }()
+		t.Cleanup(func() { _ = stop(ctx); _ = command.Process.Kill() })
+		deadline := time.Now().Add(25 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(ready); err == nil {
+				break
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("development entry exited before readiness: %v", err)
+			default:
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if _, err := os.Stat(ready); err != nil {
+			t.Fatal("development entry did not become ready")
+		}
+		if lock, err := acquireLock(inst.LockPath, true); err == nil {
+			releaseLock(lock)
+			t.Fatal("development entry did not claim the shared instance lock")
+		}
+		if err := stop(ctx); err != nil {
+			t.Fatalf("native stop did not drain development entry: %v", err)
 		}
 		select {
-		case err := <-done:
-			t.Fatalf("development entry exited before readiness: %v", err)
-		default:
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Fatal("development entry remained alive after native stop")
 		}
-		time.Sleep(50 * time.Millisecond)
+		status := exec.Command(dev, "status", "api")
+		status.Env = env
+		output, statusErr := status.CombinedOutput()
+		foundDown := false
+		for _, line := range strings.Split(string(output), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 && fields[0] == "api" {
+				foundDown = fields[1] == "down" && fields[2] == "-"
+			}
+		}
+		if statusErr != nil || !foundDown {
+			t.Fatalf("native stop left source cleanup unresolved: %v %s", statusErr, output)
+		}
 	}
-	if _, err := os.Stat(ready); err != nil {
-		t.Fatal("development entry did not become ready")
-	}
-	if lock, err := acquireLock(inst.LockPath, true); err == nil {
-		releaseLock(lock)
-		t.Fatal("development entry did not claim the shared instance lock")
-	}
-	if err := stop(ctx); err != nil {
-		t.Fatalf("native stop did not drain development entry: %v", err)
-	}
-	select {
-	case <-done:
-	case <-time.After(15 * time.Second):
-		t.Fatal("development entry remained alive after native stop")
+}
+
+func stageSourceProcessOwnerFixture(t *testing.T, root, moduleRoot string) {
+	t.Helper()
+	for _, relative := range []string{
+		filepath.Join("scripts", "dev-process-owner.py"),
+		filepath.Join("workers", "automation", "src", "jobctrl", "infrastructure", "process_ownership.py"),
+	} {
+		contents, err := os.ReadFile(filepath.Join(moduleRoot, "..", relative))
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(root, relative)
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, contents, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

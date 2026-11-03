@@ -10,7 +10,7 @@ import type { ProfileConfigResponse } from "@jobctrl/contracts";
 import { patchProfileResponse } from "../lib/profile-patches.js";
 import { profileKeys } from "../queryKeys.js";
 
-export function useUpdateProfileMutation(): UseMutationResult<
+export function useUpdateProfileMutation(options: { optimistic?: boolean } = {}): UseMutationResult<
   ProfileConfigResponse,
   Error,
   ProfileUpdateRequest
@@ -22,12 +22,14 @@ export function useUpdateProfileMutation(): UseMutationResult<
     createOptimisticMutation<ProfileConfigResponse, ProfileUpdateRequest>(queryClient, {
       mutationKey: profileKeys.profile(tenantId),
       mutationFn: (body) => api.updateProfile(body),
-      optimisticUpdates: (body) => [
-        {
-          queryKey: profileKeys.profile(tenantId),
-          patch: (current) => patchProfileResponse(current, body),
-        },
-      ],
+      ...(options.optimistic === false ? {} : {
+        optimisticUpdates: (body: ProfileUpdateRequest) => [
+          {
+            queryKey: profileKeys.profile(tenantId),
+            patch: (current: unknown) => patchProfileResponse(current, body),
+          },
+        ],
+      }),
       // Profile changes affect downstream scoring (job lists) and dashboard counts.
       settle: () => [
         profileKeys.profile(tenantId),

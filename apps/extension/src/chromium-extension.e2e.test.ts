@@ -29,14 +29,46 @@ interface FakeDiscoverySource {
 }
 
 describe("Chromium loaded extension privacy boundary", () => {
+  it("rejects an untrusted posting host before opening a page or requesting it", async () => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-untrusted-e2e-"));
+    let api: FakeLoopbackApi | null = null;
+    let context: BrowserContext | null = null;
+    const jobUrl = "https://careers.jobctrl.test/rejected-job";
+    let sourceRequests = 0;
+    let createdPages = 0;
+    try {
+      context = await launchExtensionContext(userDataDir);
+      await context.route("https://careers.jobctrl.test/**", (route) => {
+        sourceRequests += 1;
+        return route.fulfill({ status: 200, contentType: "text/html", body: "<main>Synthetic rejected host</main>" });
+      });
+      api = await installFakeLoopbackApi(context, jobUrl, 15_000, "rendered_page");
+      const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
+      const controller = await context.newPage();
+      await controller.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+      context.on("page", () => { createdPages += 1; });
+      await sendExtensionMessage(controller, { type: "saveToken", token: "untrusted-fixture-token" });
+      await waitFor(() => api?.discoveryCompletions.length === 1, 20_000);
+      expect(api.discoveryCompletions[0]).toMatchObject({ result: {
+        status: "failed", errorCode: "unsupported_page", retryable: false,
+      } });
+      expect(createdPages).toBe(0);
+      expect(sourceRequests).toBe(0);
+    } finally {
+      await api?.close();
+      await context?.close();
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it.each([404, 410])("reports HTTP %s from a rendered posting's navigation", async (status) => {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-status-e2e-"));
     let api: FakeLoopbackApi | null = null;
     let context: BrowserContext | null = null;
-    const jobUrl = "https://careers.jobctrl.test/removed-job";
+    const jobUrl = "https://careers.example.test/removed-job";
     try {
       context = await launchExtensionContext(userDataDir);
-      await context.route("https://careers.jobctrl.test/**", (route) => route.fulfill({
+      await context.route("https://careers.example.test/**", (route) => route.fulfill({
         status, contentType: "text/html", body: "<!doctype html><title>Unavailable role</title><main>Job not found</main>",
       }));
       api = await installFakeLoopbackApi(context, jobUrl, 15_000, "rendered_page");
@@ -130,7 +162,7 @@ describe("Chromium loaded extension privacy boundary", () => {
     try {
       source = await startFakeDiscoverySource();
       context = await launchExtensionContext(userDataDir);
-      const jobUrl = `${source.baseUrl.replace("careers.jobctrl.test", "www.linkedin.com")}/jobs/view/cross-origin-fixture`;
+      const jobUrl = `${source.baseUrl.replace("careers.example.test", "www.linkedin.com")}/jobs/view/cross-origin-fixture`;
       api = await installFakeLoopbackApi(context, jobUrl, 15_000, "rendered_page");
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const controller = await context.newPage();
@@ -172,7 +204,7 @@ describe("Chromium loaded extension privacy boundary", () => {
         {
           name: "jobctrl_session_probe",
           value: "live-profile",
-          domain: "careers.jobctrl.test",
+          domain: "careers.example.test",
           path: "/",
           secure: false,
           sameSite: "Lax",
@@ -190,7 +222,7 @@ describe("Chromium loaded extension privacy boundary", () => {
       expect(await sendExtensionMessage(controller, { type: "getStatus" })).toMatchObject({
         ok: true,
         status: "ready",
-        protocolVersion: 3,
+        protocolVersion: 4,
         paired: true,
         apiReady: true,
         discoverySelected: true,
@@ -528,7 +560,7 @@ async function startFakeDiscoverySource(): Promise<FakeDiscoverySource> {
       response.end(`<!doctype html><title>Fixture role</title>
         <main><div id="JobDetails_AboutTheJob_123"><h2>About the job</h2></div></main>
         <script>
-          fetch('http://careers.jobctrl.test:${privateAddress.port}/listings')
+          fetch('http://careers.example.test:${privateAddress.port}/listings')
             .then(response => response.json())
             .then(data => document.querySelector('#JobDetails_AboutTheJob_123').append(data.description));
         </script>`);
@@ -564,7 +596,7 @@ async function startFakeDiscoverySource(): Promise<FakeDiscoverySource> {
     throw new Error("Synthetic Discovery source did not expose a TCP port.");
   }
   return {
-    baseUrl: `http://careers.jobctrl.test:${address.port}`,
+    baseUrl: `http://careers.example.test:${address.port}`,
     liveProfileCookieSeen: () => cookieSeen,
     privateRedirectTargetSeen: () => privateRedirectSeen,
     close: async () => {

@@ -690,6 +690,23 @@ observed product-path evidence; fixture coverage is not independent runtime QA.
 
 ## Auditability Checks
 
+For source-supervisor process identity (#1297), run
+`node --test scripts/dev-lifecycle.test.mjs` with synthetic homes, state and
+processes only. Exercise the actual `scripts/dev` status, stop, start, restart
+and foreground paths. PID-only, malformed, changed-identity and unreachable
+records must remain unverified, preserve exact metadata and a separately owned
+peer, and refuse automatic replacement. Verify metadata-only recovery without
+signals, successful stop followed by ordinary restart, TERM-ignoring owned
+descendants, and cancellation. An actual cleanup refusal must remain a visible
+failure with retained ownership, never a successful stop or reboot instruction.
+Keep signal authority in the original unreaped child handle/session; a kernel
+birth check followed by numeric `kill` is not an atomic identity guarantee.
+Hold a component's real publication lock beyond the leaf-process grace while
+the synthetic controller drains its inner supervisor; every owner must still
+publish and retire verified completion, preserving an independent peer. Gate
+one Stop request and overlap another original client: the second operation
+waits without blocking the owner's publication lock, then reads fresh state.
+
 For Skip during Apply custody, run `test_apply_stopped_owner_recovery.py` and
 `test_apply_crash_custody.py`, with the existing Apply claim, workflow, reset
 and projection selections. A real owned source process and retained child must
@@ -771,6 +788,23 @@ and a refused reset. Exercise CLI/registered RPC mixed-cohort rollback and calle
 transactions. API HTTP Skip/reload/reset and focused UI mutation/rollback tests
 must preserve visible active-run and verification evidence. These regressions
 do not establish live-provider or installed-runtime behavior.
+
+For Gmail feedback scan recovery (#1193), run locked
+`pytest tests/test_gmail_feedback.py tests/test_gmail_feedback_scan_handler.py`
+and API `vitest run test/application-feedback.test.ts test/gmail-feedback-progress.test.ts`.
+Use only owned exact-schema SQLite and fake Gmail/model ports. Through the real
+registered RPC and HTTP route, commit one message, fail the next read, inspect
+the safe cause, committed counts and previously accessible suggestion, then
+retry and prove one record per provider message. Cover provider, spend and
+source-binding failures, post-commit notification failure, and failure between
+anchor searches (excluding failed and untouched anchors). Fail a second message
+after its suggestion, binding or event write and before commit: only the earlier
+message may remain in progress, evidence, suggestions, bindings and safe events;
+retry preserves that earlier record and commits the remaining message once.
+Drain the registered RPC subprocess through observed exit before removing its
+owned workspace; retain the workspace if cleanup cannot prove completion. Check success,
+failure, progress and events for private-content canaries; a lost response must
+not claim zero progress. The fake provider does not verify live Gmail search.
 
 For stale score reset and replacement (#1189), run the focused score
 staleness, score atomic-publication and repository tests with the API reset and
@@ -928,6 +962,26 @@ and [`_email_application_context`](../../../workers/automation/src/jobctrl/domai
 Browser final submit remains manual; Gmail verification, provider receipt
 validation and manual Skip semantics retain their separate contracts.
 
+For outcome-suggestion decision conflicts, run the API application-feedback
+and web ApplicationOutcomes, suggestion-retention, mutation and demo suites, plus the isolated
+`outcome-decision-conflict.spec.ts` browser flow. In owned SQLite, overlap two
+independent connections for opposite and identical decisions, verify one
+terminal event/outcome, and retry with changed correction kind, time, note and
+reason. Alter the saved outcome, note, reason, decision event, receipt and pending
+status independently; a request matching a damaged fact must remain unverifiable.
+Replace a valid `unknown` kind with an unsupported raw value and ensure display
+normalization cannot certify it as the original fact. Corrupt or remove nested
+demo receipt objects; retry must return an unverifiable conflict and preserve
+the damaged record until a job-scoped purge can identify its owner.
+Inject an event-write failure, check historical replay uncertainty, and confirm
+that persisted and streamed events contain no private text or receipt digest.
+Check equivalent demo receipts and their job-scoped permanent deletion. In the rendered flow, retain a
+correction across another review and query refresh, show the saved decision,
+and require an explicit dismissal without resubmitting the attempted input.
+Switch tenant and job with colliding suggestion IDs and navigate away while a
+decision is pending; verify drafts and late acknowledgements stay with their
+initiating owner and do not clear or expose another owner's input.
+
 For interview-history and Apply Review comment recovery, run the focused
 Interviews view, note-form, interview-query and Apply Review session/view tests.
 In an owned synthetic workspace, fail preparation and note history reads,
@@ -971,6 +1025,13 @@ one publication when only lower-priority or another tenant's data changes.
 Exercise both discovery producers and the per-job refresh core, and confirm
 the writer can commit while inference is active. These are source and
 transaction checks, not semantic evaluation or live-provider tests.
+
+For Manual Capture extraction recovery, use the synthetic recipe in
+[Discovery Transaction Recovery](../../local-reliability-qa.md#discovery-transaction-recovery).
+Join the successful snapshot and model determinations to the same tenant,
+source and captured page; a failed refresh preserves accepted evidence and a
+pending draft. Historical imports without a matching snapshot remain unverified;
+an exact original observation and new user submission are required for recapture.
 
 For contact research acquisition, run locked
 `pytest tests/test_contact_research_workflow.py tests/test_company_briefings.py`
@@ -1017,6 +1078,26 @@ both completion orders with independent writers. No raw prompts, page text or
 candidate values enter events or determination receipts. Exercise the actual
 activity with Temporal heartbeats, dispatch and replay, including old-format
 activity output and both preflight histories, then inspect the API and UI.
+
+For stage reset parity, run locked
+`pytest tests/test_stage_retry_consistency.py tests/test_enrichment_retry.py tests/test_exact_v7_state_reset.py tests/test_materials_queue_selectors.py`
+and the API enrichment-retry, write-model-state and write-model-cancel suites.
+Use owned synthetic SQLite, files, and the actual local RPC and CLI. Compare
+default and explicit attempt resets across Tailor and Cover aliases; verify
+exhaustion, metadata/version fences, accepted file and provenance preservation,
+newer incomplete and approved generations, and full-cohort rollback when a
+selected member changes state or retryability. A plain
+retry of already approved materials must report the explicit re-tailor action
+and not dispatch a replacement. Preserve the prior Enrich and mixed-cohort checks.
+Include `test_retry_material_predecessor.py` in both completion orders and the
+direct, activity and batch material-attempt suites. Combine material cleanup
+with a refused Apply cohort member and verify complete rollback. Through the
+actual reset RPC, retain Apply intent, unsettled-owner and policy refusals and
+their HTTP 409 classification; safe reset must preserve the precise Skip release
+frontier, reject earlier dispatches and admit a newly reviewed dispatch. API
+fixtures use the registered RPC handlers with credential bootstrap, network and
+child providers denied. Their synthetic evidence does not certify independently
+running older source processes.
 
 For legacy evidence preservation (#1281), run locked
 `pytest tests/test_legacy_evidence_preservation.py tests/test_legacy_evidence_recovery.py tests/test_semantic_storage.py tests/test_v12_activation.py`

@@ -18,6 +18,8 @@ export const discoveryKeys = {
     ["tenant", tenantId, "discovery", "quarantine"] as const,
   manualCapture: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "manual-capture"] as const,
+  manualCaptureImports: (tenantId: TenantId) =>
+    ["tenant", tenantId, "discovery", "manual-capture-imports"] as const,
   feedback: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "feedback"] as const,
   roleMatchFeedback: (tenantId: TenantId) =>
