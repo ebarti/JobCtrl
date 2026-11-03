@@ -27,6 +27,13 @@ export class LocalApiError extends Error {
   }
 }
 
+export class ExtensionCaptureSupersededError extends LocalApiError {
+  constructor() {
+    super("A superseded capture remains saved locally.", 409);
+    this.name = "ExtensionCaptureSupersededError";
+  }
+}
+
 export interface LocalApiOptions {
   baseUrl?: string;
   fetchImpl?: typeof fetch;
@@ -129,6 +136,14 @@ async function fetchCaptureBodyWithTimeout(
       throw timeoutError;
     }
     if (!response.ok) {
+      if (response.status === 409) {
+        let body: unknown;
+        try { body = await response.json(); } catch { /* Preserve the generic conflict. */ }
+        if (body && typeof body === "object" && !Array.isArray(body)
+            && "ok" in body && body.ok === false && "error" in body && body.error === "extension_capture_superseded") {
+          throw new ExtensionCaptureSupersededError();
+        }
+      }
       throw new LocalApiError(`Local JobCtrl API rejected capture: ${response.status}.`, response.status);
     }
     try {

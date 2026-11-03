@@ -2,6 +2,7 @@ import "./popup.css";
 
 import { getBrowserApi } from "./browser";
 import { EXTENSION_MESSAGE_PROTOCOL_VERSION } from "./message-protocol";
+import type { ExtensionCaptureIngestRequest } from "@jobctrl/contracts";
 
 const browserApi = getBrowserApi();
 
@@ -10,6 +11,16 @@ const autofillButton = requiredButton("autofill");
 const captureButton = requiredButton("capture");
 const clearQueueButton = requiredButton("clear-queue");
 const retryQueueButton = requiredButton("retry-queue");
+const reviewQueueButton = requiredButton("review-queue");
+const discardQueuedButton = requiredButton("discard-queued");
+const queueReview = requiredElement("queue-review");
+const queueSelection = requiredElement("queue-selection") as HTMLSelectElement;
+const queueContent = requiredElement("queue-content") as HTMLTextAreaElement;
+const queueUrl = requiredElement("queue-url");
+const queueNote = requiredElement("queue-note");
+const queueState = requiredElement("queue-state");
+let queueReviewRequest = 0;
+let queueDetailRequest = 0;
 const saveTokenButton = requiredButton("save-token");
 const selectDiscoveryButton = requiredButton("select-discovery");
 const statusText = requiredElement("status");
@@ -83,10 +94,82 @@ autofillButton.addEventListener("click", () => {
 
 clearQueueButton.addEventListener("click", () => {
   void sendMessage({ type: "clearQueue" }).then((response) => {
+    if (response.ok) { queueReviewRequest += 1; queueDetailRequest += 1; queueReview.hidden = true; clearQueuePreview(); }
     setStatus(response.ok ? "Local capture queue cleared." : response.message);
     return refreshStatus({ preserveStatus: true });
   });
 });
+
+reviewQueueButton.addEventListener("click", () => { void refreshQueueReview(); });
+
+queueSelection.addEventListener("change", () => {
+  void loadQueuedCapture(queueSelection.value);
+});
+
+async function loadQueuedCapture(id: string): Promise<void> {
+  const request = ++queueDetailRequest;
+  clearQueuePreview();
+  if (!id) return;
+  const response = await sendMessage({ type: "getQueuedCapture", id });
+  if (request !== queueDetailRequest || queueSelection.value !== id) return;
+  if (response.ok && response.status === "queue_item" && response.item) {
+    queueUrl.textContent = response.item.capturedUrl ?? response.item.originatingUrl;
+    queueState.textContent = response.reviewStatus === "superseded" ? "Superseded: this capture cannot sync. Review it before discarding." : "Queued or syncing.";
+    queueContent.value = savedCaptureContent(response.item);
+    queueNote.textContent = response.item.note ?? "";
+    discardQueuedButton.disabled = false;
+  } else {
+    setStatus(response.ok ? "That capture is no longer queued." : response.message);
+  }
+}
+
+discardQueuedButton.addEventListener("click", () => {
+  const id = queueSelection.value;
+  if (!id) return;
+  queueSelection.disabled = true;
+  discardQueuedButton.disabled = true;
+  void sendMessage({ type: "discardQueuedCapture", id }).then(async (response) => {
+    setStatus(response.ok && response.status === "queue_item_discarded"
+      ? response.removed ? "Selected capture discarded locally." : "That capture is no longer queued."
+      : response.ok ? "The extension returned an unexpected queue response." : response.message);
+    await refreshStatus({ preserveStatus: true });
+  }).finally(() => { queueSelection.disabled = false; });
+});
+
+async function refreshQueueReview(): Promise<void> {
+  const request = ++queueReviewRequest;
+  const response = await sendMessage({ type: "reviewQueue" });
+  if (request !== queueReviewRequest) return;
+  if (!response.ok || response.status !== "queue_items") {
+    setStatus(response.ok ? "The extension returned an unexpected queue response." : response.message);
+    return;
+  }
+  const selection = queueSelection.value;
+  queueReview.hidden = false;
+  queueSelection.replaceChildren(new Option("Select a capture", ""));
+  for (const item of response.items) {
+    const option = new Option(`${item.originatingUrl} · ${item.queuedAt} · ${item.reviewStatus === "superseded" ? "Superseded" : "Queued or syncing"}`, item.id);
+    queueSelection.add(option);
+  }
+  queueSelection.value = response.items.some((item) => item.id === selection) ? selection : "";
+  await loadQueuedCapture(queueSelection.value);
+}
+
+function clearQueuePreview(): void {
+  queueContent.value = "";
+  queueUrl.textContent = "";
+  queueNote.textContent = "";
+  queueState.textContent = "";
+  discardQueuedButton.disabled = true;
+}
+
+function savedCaptureContent(capture: ExtensionCaptureIngestRequest): string {
+  if (capture.contentText) return capture.contentText;
+  if (!capture.contentHtmlBase64) return "";
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(capture.contentHtmlBase64), (character) => character.charCodeAt(0)));
+  } catch { return capture.contentHtmlBase64; }
+}
 
 retryQueueButton.addEventListener("click", () => {
   retryQueueButton.disabled = true;
@@ -110,6 +193,7 @@ async function refreshStatus(options: { preserveStatus?: boolean } = {}): Promis
       captureButton.disabled = true;
       autofillButton.disabled = true;
       retryQueueButton.disabled = true;
+      reviewQueueButton.disabled = true;
       clearQueueButton.disabled = false;
       apiState.textContent = "Local capture queue unavailable";
     } else {
@@ -133,8 +217,10 @@ async function refreshStatus(options: { preserveStatus?: boolean } = {}): Promis
   captureButton.disabled = !response.paired;
   clearQueueButton.disabled = response.queueSize === 0;
   retryQueueButton.disabled = !response.paired || response.queueSize === 0;
+  reviewQueueButton.disabled = response.queueSize === 0;
   selectDiscoveryButton.hidden = !response.paired || !response.apiReady || response.discoverySelected;
   selectDiscoveryButton.disabled = selectDiscoveryButton.hidden;
+  if (!queueReview.hidden) await refreshQueueReview();
   if (options.preserveStatus) {
     return;
   }
@@ -166,6 +252,8 @@ function setProtocolControlsEnabled(enabled: boolean): void {
   captureButton.disabled = !enabled;
   clearQueueButton.disabled = !enabled;
   retryQueueButton.disabled = !enabled;
+  reviewQueueButton.disabled = !enabled;
+  discardQueuedButton.disabled = true;
   selectDiscoveryButton.hidden = true;
   selectDiscoveryButton.disabled = true;
 }
@@ -220,6 +308,9 @@ type PopupResponse =
   | { ok: true; status: "captured"; jobKey: string | null; queueSize: number }
   | { ok: true; status: "queued"; queueSize: number; message: string }
   | { ok: true; status: "queue_flushed"; flushed: number; queueSize: number; message: string | null }
+  | { ok: true; status: "queue_items"; items: Array<{ id: string; queuedAt: string; originatingUrl: string; reviewStatus: "pending" | "superseded" }> }
+  | { ok: true; status: "queue_item"; item: ExtensionCaptureIngestRequest | null; reviewStatus: "pending" | "superseded" | null }
+  | { ok: true; status: "queue_item_discarded"; removed: boolean }
   | {
       ok: true;
       status: "ready";

@@ -187,7 +187,7 @@ func runSourceInsideScope(ctx launchContext, script string, targets []string, st
 		}
 	}()
 	arguments := append([]string{script, "run"}, targets...)
-	child := exec.Command("/bin/bash", arguments...)
+	child := payloadCommand(ctx.Environment, "/bin/bash", arguments...)
 	child.Dir = filepath.Dir(filepath.Dir(script))
 	child.Env = make([]string, 0, len(ctx.Environment)+2)
 	for _, pair := range ctx.Environment {

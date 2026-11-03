@@ -69,7 +69,7 @@ func verifiedReleaseContext(base launchContext, verified verifiedRelease) launch
 
 func jobCtrlSchemaVersion(ctx launchContext) (int64, error) {
 	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
-	return sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
+	return sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"), ctx.Environment)
 }
 
 // A retained staging hard link marks an unresolved initial publication. Do not
@@ -111,7 +111,7 @@ func checkDatabasePublication(database string) error {
 	return refuseUnresolvedInitialization(database, info)
 }
 
-func sqliteUserVersion(python, database string) (int64, error) {
+func sqliteUserVersion(python, database string, environment ...[]string) (int64, error) {
 	info, err := os.Lstat(database)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return 0, errors.New("database is not a regular file")
@@ -124,7 +124,11 @@ p=pathlib.Path(sys.argv[1]).resolve().as_uri()+"?mode=ro"
 c=sqlite3.connect(p,uri=True)
 try: print(c.execute("PRAGMA user_version").fetchone()[0])
 finally: c.close()`
-	command := exec.Command(python, "-I", "-B", "-c", code, database)
+	var env []string
+	if len(environment) > 0 && environmentMap(environment[0])[executionQASandboxVariable] != "" {
+		env = environment[0]
+	}
+	command := payloadCommand(env, python, "-I", "-B", "-c", code, database)
 	output, err := command.Output()
 	if err != nil || len(output) > 32 {
 		return 0, errors.New("read SQLite schema version failed")
@@ -252,7 +256,7 @@ func startGatedTemporal(ctx launchContext) (*gatedTemporalProcess, error) {
 	}
 	argv := []string{"-c", gatedTemporalScript, "jobctrl-temporal-quiescence", executable}
 	argv = append(argv, arguments...)
-	command := exec.Command("/bin/bash", argv...)
+	command := payloadCommand(ctx.Environment, "/bin/bash", argv...)
 	command.Env, command.Dir, command.Stdout, command.Stderr = temporalGateEnvironment(ctx.Environment), ctx.Instance.StateDir, logFile, logFile
 	command.ExtraFiles = []*os.File{gateRead}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -352,8 +356,8 @@ func temporalProofState(ctx launchContext) (instanceState, error) {
 
 func runTemporalQuiescenceModule(candidate launchContext) error {
 	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
-	command := exec.Command(
-		python,
+	command := payloadCommand(
+		candidate.Environment, python,
 		"-I",
 		"-B",
 		"-m",
@@ -419,7 +423,7 @@ func installSealedV7Candidate(candidate launchContext, candidatePath string) err
 		return err
 	}
 	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
-	if version, err := sqliteUserVersion(python, live); err != nil || version != exactJobCtrlSchemaVersion {
+	if version, err := sqliteUserVersion(python, live, candidate.Environment); err != nil || version != exactJobCtrlSchemaVersion {
 		return errors.New("installed v7 database did not reopen at the exact schema version")
 	}
 	return nil

@@ -11,7 +11,7 @@ import {
   getExtensionFormMapping,
   LocalApiError,
 } from "./local-api";
-import { CaptureQueueUnavailableError, clearCaptureQueue, enqueueCapture, flushCaptureQueue, loadCaptureQueue } from "./queue";
+import { CaptureQueueUnavailableError, clearCaptureQueue, discardQueuedCapture, enqueueCapture, flushCaptureQueue, loadCaptureQueue } from "./queue";
 
 const TOKEN_STORAGE_KEY = "jobctrlExtensionCapabilityToken";
 const INSTALLATION_STORAGE_KEY = "jobctrlDiscoveryInstallationId";
@@ -22,6 +22,9 @@ type BackgroundMessage =
   | { type: "captureCurrentTab" }
   | { type: "clearQueue" }
   | { type: "retryQueue" }
+  | { type: "reviewQueue" }
+  | { type: "getQueuedCapture"; id: string }
+  | { type: "discardQueuedCapture"; id: string }
   | { type: "getStatus" }
   | { type: "reviewAutofill" }
   | { type: "selectDiscoveryProfile" }
@@ -31,6 +34,9 @@ type BackgroundResponse =
   | { ok: true; status: "captured"; jobKey: string | null; queueSize: number }
   | { ok: true; status: "queued"; queueSize: number; message: string }
   | { ok: true; status: "queue_flushed"; flushed: number; queueSize: number; message: string | null }
+  | { ok: true; status: "queue_items"; items: Array<{ id: string; queuedAt: string; originatingUrl: string; reviewStatus: "pending" | "superseded" }> }
+  | { ok: true; status: "queue_item"; item: ExtensionCaptureIngestRequest | null; reviewStatus: "pending" | "superseded" | null }
+  | { ok: true; status: "queue_item_discarded"; removed: boolean }
   | {
       ok: true;
       status: "ready";
@@ -93,6 +99,19 @@ async function handleMessage(browser: BrowserApi, message: unknown): Promise<Bac
       const flush = await flushCaptureQueue(captureQueueStorage, token);
       return { ok: true, status: "queue_flushed", flushed: flush.flushed, queueSize: flush.remaining, message: flush.failure };
     }
+    case "reviewQueue": {
+      const queue = await loadCaptureQueue(captureQueueStorage);
+      return { ok: true, status: "queue_items", items: queue.map(({ id, queuedAt, capture, reviewStatus }) => ({
+        id, queuedAt, originatingUrl: capture.originatingUrl, reviewStatus: reviewStatus ?? "pending",
+      })) };
+    }
+    case "getQueuedCapture": {
+      const queue = await loadCaptureQueue(captureQueueStorage);
+      const item = queue.find((entry) => entry.id === message.id);
+      return { ok: true, status: "queue_item", item: item?.capture ?? null, reviewStatus: item ? item.reviewStatus ?? "pending" : null };
+    }
+    case "discardQueuedCapture":
+      return { ok: true, status: "queue_item_discarded", removed: await discardQueuedCapture(captureQueueStorage, message.id) };
     case "getStatus":
       return getReadyStatus(browser);
     case "reviewAutofill":
@@ -400,6 +419,9 @@ function isBackgroundMessage(value: unknown): value is BackgroundMessage {
     candidate.type === "captureCurrentTab" ||
     candidate.type === "clearQueue" ||
     candidate.type === "retryQueue" ||
+    candidate.type === "reviewQueue" ||
+    ((candidate.type === "getQueuedCapture" || candidate.type === "discardQueuedCapture") &&
+      typeof candidate.id === "string" && candidate.id.length > 0 && candidate.id.length <= 128) ||
     candidate.type === "getStatus" ||
     candidate.type === "reviewAutofill" ||
     candidate.type === "selectDiscoveryProfile" ||

@@ -1310,8 +1310,11 @@ Native launcher tests use temporary same-user launchd jobs and private ownership
 receipts. They need access to the per-user launchd domain and native process
 inspection; an outer tool sandbox can deny those probes without proving a
 service is absent. Keep HOME, JOBCTRL_DIR and runtime paths synthetic. The
-bundled smoke applies its fixed loopback restriction inside the job helper via
-`JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1`; unknown selector values fail.
+bundled smoke keeps native launchd control outside Seatbelt and applies its
+fixed network and Keychain restriction at each authenticated payload dispatch
+via `JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1`; unknown selectors fail.
+Components, source shells, Python CLI/Apply, probes and migration/backup Python
+all use that boundary. A caller already inside a sandbox cannot remove it.
 The actual native CPython network test and independent direct-runtime sandbox
 checks must both execute. No arbitrary sandbox profile or ownership bypass is
 accepted from the environment.

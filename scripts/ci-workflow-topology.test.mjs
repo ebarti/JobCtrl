@@ -241,18 +241,25 @@ test("manual TypeScript diagnostics cannot duplicate automatic required check na
   for (const name of manual) assert.equal(automatic.has(name), false, name);
 });
 
-test("both E2E modes publish distinct JUnit evidence and retain first-open screenshots", () => {
+test("all E2E modes publish distinct JUnit evidence and retain product screenshots", () => {
   const job=frontend;
   const isolated=frontendRecipes.e2e.find(step=>step.name==="Test web end-to-end");
+  const capture=frontendRecipes.e2e.find(step=>step.name==="Test isolated manual-capture recovery");
+  assert.equal(capture.env.JOBCTRL_E2E_ISOLATED,"1");
+  assert.equal(capture.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE,expression("runner.temp")+"/e2e-manual-capture.xml");
+  assert.match(capture.run,/manual-capture-recovery-guard\.test\.cjs/);
+  assert.match(capture.run,/manual-capture-recovery\.playwright\.config\.ts/);
   const rpc=frontendRecipes.e2e.find(step=>step.name==="Test real API and worker RPC boundaries");
   assert.equal(isolated.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE,expression("runner.temp")+"/e2e-isolated.xml");
   assert.equal(rpc.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE,expression("runner.temp")+"/e2e-real-rpc.xml");
   assert.match(rpc.run,/accepted-material-exports\.spec\.ts/);
   assert.match(rpc.run,/offer-outcomes\.spec\.ts/);
-  const screenshots=job.steps.find(step=>step.name==="Upload synthetic first-connection screenshots");
+  const screenshots=job.steps.find(step=>step.with?.name==="synthetic-first-connection-screenshots");
   assert.match(screenshots.with.path,/e2e-isolated\.xml\.artifacts\/\*\*\/first-open-/);
   assert.match(screenshots.with.path,/e2e-real-rpc\.xml\.artifacts\/\*\*\/first-open-/);
+  assert.match(screenshots.with.path,/e2e-manual-capture\.xml\.artifacts\/\*\*\/manual-capture-recovery-/);
   assert.match(screenshots.if,/always\(\).*inputs.e2e/);
+  assert.match(job.steps.find(step=>step.name==="Upload synthetic E2E JUnit reports").with.path,/e2e-manual-capture\.xml/);
   assert.match(job.steps.find(step=>step.name==="Upload synthetic E2E JUnit reports").if,/always\(\).*inputs.e2e/);
 });
 

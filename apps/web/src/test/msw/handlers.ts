@@ -485,6 +485,7 @@ export const handlers = [
       items: [
         {
           itemId: "manual-1",
+          lifecycleId: "0".repeat(64),
           originatingUrl: "https://example.com/protected/job",
           sourceId: "greenhouse-example",
           reason: "login_required",
@@ -494,6 +495,9 @@ export const handlers = [
         },
       ],
     }),
+  ),
+  http.post("*/v1/discovery/manual-capture/:itemId/prepare", ({ params }) =>
+    HttpResponse.json({ ok: true, itemId: String(params["itemId"]), lifecycleId: "1".repeat(64) }),
   ),
   http.post("*/v1/discovery/manual-capture/:itemId/import", ({ params }) =>
     HttpResponse.json({

@@ -38,6 +38,7 @@ import { isDemoArtifactUrl } from "./artifacts.js";
 import type { ApiClientResponse, DemoReadModel } from "./contracts.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import { filterDemoJob } from "./job-filter.js";
+import { withDemoCaptureLifecycle } from "./manual-capture.js";
 import {
   DemoLocalCommandExecutor,
   type DemoBrowserLocalCommand,
@@ -223,9 +224,13 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return this.read((model) => model.discovery.quarantine);
   }
 
-  manualCaptureQueue() {
-    return this.read((model) => model.discovery.manualCapture);
+  async manualCaptureQueue() {
+    const queue = await this.read((model) => model.discovery.manualCapture);
+    return { ...queue, items: queue.items.map(withDemoCaptureLifecycle) };
   }
+
+  supersedeManualCapture = this.unsupported("supersedeManualCapture");
+  prepareManualCapture = this.unsupported("prepareManualCapture");
 
   roleMatchFeedbackSuggestions() {
     return this.read((model) => model.discovery.roleMatchFeedback);

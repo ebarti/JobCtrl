@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -53,7 +52,7 @@ func buildSealedV14Candidate(candidate launchContext, pair databasePair, journal
 	if sourceVersion == legacyJobCtrlSchemaVersion {
 		arguments = append(arguments, "--migration-at", time.Now().UTC().Format(time.RFC3339Nano))
 	}
-	command := exec.Command(python, arguments...)
+	command := payloadCommand(candidate.Environment, python, arguments...)
 	command.Env = candidate.Environment
 	command.Dir = candidate.Instance.StateDir
 	output, err := command.Output()
@@ -80,7 +79,7 @@ func buildSealedV14Candidate(candidate launchContext, pair databasePair, journal
 		cleanupV14Candidate(candidate.Instance.StateDir, journalID)
 		return "", errors.New("sealed v14 candidate digest verification failed")
 	}
-	version, versionErr := sqliteUserVersion(python, path)
+	version, versionErr := sqliteUserVersion(python, path, candidate.Environment)
 	if versionErr != nil || version != v14JobCtrlSchemaVersion {
 		cleanupV14Candidate(candidate.Instance.StateDir, journalID)
 		return "", errors.New("sealed v14 candidate schema verification failed")
@@ -125,7 +124,7 @@ func installSealedV14Candidate(candidate launchContext, candidatePath string) er
 		return errors.New("live database is not a regular file")
 	}
 	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
-	command := exec.Command(python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v14_activation",
+	command := payloadCommand(candidate.Environment, python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v14_activation",
 		"--mode", "activate", "--live", live, "--candidate", candidatePath, "--receipt", candidatePath+".source-binding.json")
 	command.Env = candidate.Environment
 	output, activationErr := command.CombinedOutput()
@@ -135,7 +134,7 @@ func installSealedV14Candidate(candidate launchContext, candidatePath string) er
 		}
 		return errors.New("locked exact-v14 activation failed")
 	}
-	if version, err := sqliteUserVersion(python, live); err != nil || version != v14JobCtrlSchemaVersion {
+	if version, err := sqliteUserVersion(python, live, candidate.Environment); err != nil || version != v14JobCtrlSchemaVersion {
 		return errors.New("installed v14 database did not reopen at the exact schema version")
 	}
 	return nil
@@ -176,7 +175,7 @@ func bindV14Source(candidate launchContext, source, path string) error {
 		return err
 	}
 	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
-	command := exec.Command(python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v14_activation",
+	command := payloadCommand(candidate.Environment, python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v14_activation",
 		"--mode", "bind", "--source", source, "--live", filepath.Join(candidate.Instance.StateDir, "jobctrl.db"),
 		"--candidate", path, "--receipt", path+".source-binding.json")
 	command.Env = candidate.Environment

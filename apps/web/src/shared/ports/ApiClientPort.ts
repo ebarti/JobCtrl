@@ -115,6 +115,8 @@ import type {
   ManualCaptureDismissRequest,
   ManualCaptureDismissResponse,
   ManualCaptureImportRequest,
+  ManualCaptureSupersedeResponse,
+  ManualCapturePrepareResponse,
   ManualCaptureImportResponse,
   ManualCaptureListResponse,
   ManualApplicationOutcomeRequest,
@@ -270,6 +272,8 @@ export interface ApiClientPort extends EndpointClientMethods {
     body: QuarantineDecision,
   ): Promise<QuarantineDecisionResponse>;
   manualCaptureQueue(): Promise<ManualCaptureListResponse>;
+  supersedeManualCapture(itemId: string, expectedLifecycleId: string): Promise<ManualCaptureSupersedeResponse>;
+  prepareManualCapture(itemId: string, body: ManualCaptureImportRequest): Promise<ManualCapturePrepareResponse>;
   importJobUrl(body: JobUrlImportRequest): Promise<JobUrlImportResponse>;
   jobUrlImportStatus(execution: JobUrlImportExecution): Promise<JobUrlImportStatusResponse>;
   importManualCapture(

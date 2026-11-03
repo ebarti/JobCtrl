@@ -15,7 +15,14 @@ describe("extension popup", () => {
         <button id="capture" type="button">Save job</button>
         <button id="autofill" type="button">Review autofill</button>
         <button id="retry-queue" type="button">Sync queued captures</button>
+        <button id="review-queue" type="button">Review queued captures</button>
         <button id="clear-queue" type="button">Clear queue</button>
+        <section id="queue-review" hidden>
+          <select id="queue-selection"></select>
+          <p id="queue-state"></p><p id="queue-url"></p><textarea id="queue-content"></textarea><p id="queue-note"></p>
+          <p>Discarding removes only the local copy and cannot recall a send in progress.</p>
+          <button id="discard-queued" type="button" disabled>Discard selected capture</button>
+        </section>
         <p id="status" role="status"></p>
       </main>
     `;
@@ -115,6 +122,95 @@ describe("extension popup", () => {
     expect(retry.disabled).toBe(false);
   });
 
+  it("lets the user inspect and discard one retained capture without clearing the queue", async () => {
+    const ready = { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION,
+      paired: true, apiReady: true, discoverySelected: true, queueSize: 2, installationIdSuffix: "00000099" };
+    const old = { id: "old", queuedAt: "2020-01-01T00:00:00Z", originatingUrl: "https://example.test/old", reviewStatus: "superseded" };
+    const other = { id: "other", queuedAt: "2020-01-02T00:00:00Z", originatingUrl: "https://example.test/other", reviewStatus: "pending" };
+    const sendMessage = stubRuntimeMessages([
+      ready, { ok: true, status: "queue_items", items: [old, other] },
+      { ok: true, status: "queue_item", reviewStatus: "superseded", item: { originatingUrl: old.originatingUrl, captureMode: "current_page",
+        contentText: "Saved private synthetic page", note: "Synthetic note", futureManualActionRequired: false,
+        captureClient: "browser_extension", extensionVersion: "1" } },
+      { ok: true, status: "queue_item_discarded", removed: true }, { ...ready, queueSize: 1 },
+      { ok: true, status: "queue_items", items: [other] },
+    ]);
+    await import("./popup");
+    await flushMicrotasks();
+    document.getElementById("review-queue")?.click();
+    await flushMicrotasks();
+    const select = document.getElementById("queue-selection") as HTMLSelectElement;
+    select.value = "old";
+    select.dispatchEvent(new Event("change"));
+    await flushMicrotasks();
+    expect((document.getElementById("queue-content") as HTMLTextAreaElement).value).toBe("Saved private synthetic page");
+    expect(document.getElementById("queue-note")?.textContent).toBe("Synthetic note");
+    expect(document.getElementById("queue-state")?.textContent).toContain("Superseded");
+    document.getElementById("discard-queued")?.click();
+    await flushMicrotasks();
+    expect(sendMessage.mock.calls.map(([message]) => message)).toContainEqual({ type: "discardQueuedCapture", id: "old" });
+    await vi.waitFor(() => expect([...select.options].map((option) => option.value)).toEqual(["", "other"]));
+    expect(document.getElementById("status")?.textContent).toBe("Selected capture discarded locally.");
+  });
+
+  it("explains that a queued capture may be syncing and a discard cannot recall it", async () => {
+    stubRuntimeMessages([
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 1, installationIdSuffix: "00000099" },
+      { ok: true, status: "queue_items", items: [{ id: "pending", queuedAt: "2020-01-01T00:00:00Z", originatingUrl: "https://example.test/job", reviewStatus: "pending" }] },
+      { ok: true, status: "queue_item", reviewStatus: "pending", item: { originatingUrl: "https://example.test/job", captureMode: "current_page", contentText: "Saved page", futureManualActionRequired: false, captureClient: "browser_extension", extensionVersion: "1" } },
+    ]);
+    await import("./popup");
+    await flushMicrotasks();
+    document.getElementById("review-queue")?.click();
+    await flushMicrotasks();
+    const select = document.getElementById("queue-selection") as HTMLSelectElement;
+    expect(select.options[1]?.textContent).toContain("Queued or syncing");
+    select.value = "pending";
+    select.dispatchEvent(new Event("change"));
+    await flushMicrotasks();
+    expect(document.getElementById("queue-state")?.textContent).toBe("Queued or syncing.");
+    expect(document.getElementById("queue-review")?.textContent).toContain("cannot recall a send in progress");
+    expect((document.getElementById("discard-queued") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it.each([true, false])("refreshes an open queue review after a delayed sync (still queued: %s)", async (stillQueued) => {
+    const ready = { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION,
+      paired: true, apiReady: true, discoverySelected: true, queueSize: 1, installationIdSuffix: "00000099" };
+    const item = { id: "old", queuedAt: "2020-01-01T00:00:00Z", originatingUrl: "https://example.test/job", reviewStatus: "pending" };
+    const capture = { originatingUrl: item.originatingUrl, captureMode: "current_page", contentText: "Saved page",
+      futureManualActionRequired: false, captureClient: "browser_extension", extensionVersion: "1" };
+    let finish!: (value: unknown) => void;
+    const pending = new Promise<unknown>((resolve) => { finish = resolve; });
+    stubRuntimeMessages([
+      ready, { ok: true, status: "queue_items", items: [item] },
+      { ok: true, status: "queue_item", item: capture, reviewStatus: "pending" }, pending,
+      { ...ready, queueSize: stillQueued ? 1 : 0 },
+      { ok: true, status: "queue_items", items: stillQueued ? [{ ...item, reviewStatus: "superseded" }] : [] },
+      ...(stillQueued ? [{ ok: true, status: "queue_item", item: capture, reviewStatus: "superseded" }] : []),
+    ]);
+    await import("./popup");
+    await flushMicrotasks();
+    document.getElementById("review-queue")?.click();
+    await flushMicrotasks();
+    const select = document.getElementById("queue-selection") as HTMLSelectElement;
+    select.value = "old";
+    select.dispatchEvent(new Event("change"));
+    await flushMicrotasks();
+    document.getElementById("retry-queue")?.click();
+    await flushMicrotasks();
+    expect(document.getElementById("queue-state")?.textContent).toBe("Queued or syncing.");
+    finish({ ok: true, status: "queue_flushed", flushed: stillQueued ? 0 : 1, queueSize: stillQueued ? 1 : 0, message: null });
+    if (stillQueued) {
+      await vi.waitFor(() => expect(document.getElementById("queue-state")?.textContent).toContain("Superseded"));
+      expect(select.value).toBe("old");
+      expect((document.getElementById("queue-content") as HTMLTextAreaElement).value).toBe("Saved page");
+    } else {
+      await vi.waitFor(() => expect(select.value).toBe(""));
+      expect((document.getElementById("queue-content") as HTMLTextAreaElement).value).toBe("");
+      expect((document.getElementById("discard-queued") as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+
   it("does not report fake readiness when a new popup is talking to an older background worker", async () => {
     stubRuntimeMessages([
       { ok: true, status: "ready", paired: true, apiReady: true, queueSize: 0 },
@@ -132,7 +228,7 @@ describe("extension popup", () => {
 
   it("does not enable queue retry against the prior background protocol", async () => {
     stubRuntimeMessages([
-      { ok: true, status: "ready", protocolVersion: 2, paired: true, apiReady: true, discoverySelected: true, queueSize: 1, installationIdSuffix: "00000099" },
+      { ok: true, status: "ready", protocolVersion: 3, paired: true, apiReady: true, discoverySelected: true, queueSize: 1, installationIdSuffix: "00000099" },
     ]);
     await import("./popup");
     await flushMicrotasks();
