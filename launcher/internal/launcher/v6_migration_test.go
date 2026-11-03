@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -270,9 +271,13 @@ func preserveMigrationSeams(t *testing.T) {
 func TestV6ToV7ActivationBlocksRunningOldIdentityWorkBeforeBackupOrMutation(t *testing.T) {
 	preserveMigrationSeams(t)
 	fixture := newV6ActivationFixture(t)
+	fixture.ctx.Executable = filepath.Join(fixture.runtime, "bin", "jobctrl")
 	before := lifecycleDatabaseDigests(t, fixture.state)
 	proofs, builds, starts := 0, 0, 0
-	temporalQuiescenceProof = func(_, _ launchContext) error {
+	temporalQuiescenceProof = func(old, candidate, controller launchContext) error {
+		if controller.Executable != fixture.ctx.Executable || old.Executable == controller.Executable || candidate.Executable == controller.Executable {
+			t.Fatal("v6 proof did not retain the original controller separately from both payloads")
+		}
 		proofs++
 		return errors.New("Temporal quiescence preflight failed")
 	}
@@ -312,7 +317,7 @@ func TestV6ToV7ActivationBlocksRunningOldIdentityWorkBeforeBackupOrMutation(t *t
 func TestV6ToV7ActivationMigratesAndExplicitRollbackReopensV6Pair(t *testing.T) {
 	preserveMigrationSeams(t)
 	fixture := newV6ActivationFixture(t)
-	temporalQuiescenceProof = func(_, _ launchContext) error { return nil }
+	temporalQuiescenceProof = func(_, _, _ launchContext) error { return nil }
 	sealedV7CandidateBuilder = syntheticV7CandidateBuilder(t, fixture.python)
 	sealedV7CandidateInstaller = installSealedV7Candidate
 	oldStarts, candidateStarts := 0, 0
@@ -395,7 +400,7 @@ func TestV6ToV12NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T
 	// test keeps that network boundary closed while crossing the production Go
 	// v12 candidate builder, private Python module, atomic install, runtime reopen,
 	// retained-pair rollback, and prior-runtime reopen in one transaction.
-	temporalQuiescenceProof = func(_, _ launchContext) error { return nil }
+	temporalQuiescenceProof = func(_, _, _ launchContext) error { return nil }
 	migrationBuilds := 0
 	sealedV7CandidateBuilder = func(candidate launchContext, pair databasePair, journalID string) (string, error) {
 		migrationBuilds++
@@ -488,7 +493,7 @@ func TestV6ToV12NativeVerificationFailureRetainsSourceAndJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	temporalQuiescenceProof = func(_, _ launchContext) error { return nil }
+	temporalQuiescenceProof = func(_, _, _ launchContext) error { return nil }
 	sealedV7CandidateBuilder = postStampFailureCandidateBuilder()
 	sealedV7CandidateInstaller = installSealedV15Candidate
 	candidateStarts, oldStarts := 0, 0
@@ -553,7 +558,7 @@ func TestV6ToV7ActivationFailuresPreserveLivePair(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			preserveMigrationSeams(t)
 			fixture := newV6ActivationFixture(t)
-			temporalQuiescenceProof = func(_, _ launchContext) error { return nil }
+			temporalQuiescenceProof = func(_, _, _ launchContext) error { return nil }
 			builder := syntheticV7CandidateBuilder(t, fixture.python)
 			if stage == "before swap" {
 				sealedV7CandidateBuilder = func(launchContext, databasePair, string) (string, error) {
@@ -690,7 +695,7 @@ func TestV6ToV7InterruptedCandidateBoundariesPreserveLivePair(t *testing.T) {
 func TestV6ToV7PostSwapFailurePreservesLivePairAndSidecar(t *testing.T) {
 	preserveMigrationSeams(t)
 	fixture := newV6ActivationFixture(t)
-	temporalQuiescenceProof = func(_, _ launchContext) error { return nil }
+	temporalQuiescenceProof = func(_, _, _ launchContext) error { return nil }
 	sealedV7CandidateBuilder = syntheticV7CandidateBuilder(t, fixture.python)
 	postSwapCleanupCalls := 0
 	installed := false
@@ -845,7 +850,7 @@ func TestV6MigrationTemporalProofRunsWithoutWorkerOrAPIAdmission(t *testing.T) {
 	candidate := active
 	oldProbe := temporalHealthProbe
 	t.Cleanup(func() { temporalHealthProbe = oldProbe })
-	temporalHealthProbe = func(launchContext) error {
+	temporalHealthProbe = func(context.Context, launchContext, launchContext) error {
 		if _, err := os.Lstat(marker); err != nil {
 			return err
 		}
@@ -867,7 +872,7 @@ func TestV6MigrationTemporalProofRunsWithoutWorkerOrAPIAdmission(t *testing.T) {
 		t.Fatalf("BASH_ENV executed before the durable Temporal gate: %v", err)
 	}
 
-	if err := proveStoppedTemporalQuiescence(active, candidate); err != nil {
+	if err := proveStoppedTemporalQuiescence(active, candidate, active); err != nil {
 		t.Fatalf("stopped-runtime Temporal proof: %v", err)
 	}
 	if contents, err := os.ReadFile(marker); err != nil || string(contents) != "opened" {

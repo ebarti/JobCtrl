@@ -131,6 +131,9 @@ else
   exit 64
 fi
 
+if [[ -n "\${JOBCTRL_TEST_SERVICE_LIFETIME_SECONDS:-}" ]]; then
+  exec sleep "$JOBCTRL_TEST_SERVICE_LIFETIME_SECONDS"
+fi
 exec sleep 300
 `,
   );
@@ -138,22 +141,38 @@ exec sleep 300
   for (const name of ["pnpm", "temporal", "uv"]) {
     await copyFile(fakeCorepack, path.join(binDir, name));
   }
-  await writeFile(path.join(temporaryRoot, "scripts/fixture-controller-owner.py"), `import importlib.util,os,pathlib,sys
+  await writeFile(path.join(temporaryRoot, "scripts/fixture-controller-owner.py"), `import importlib.util,json,os,pathlib,sys
 script = sys.argv.pop(1)
 spec = importlib.util.spec_from_file_location('fixture_source_owner', script)
 owner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(owner)
 from jobctrl.infrastructure import process_ownership
-# Only this synthetic supervisor process selects a different cooperative grace.
-# The original handle, session census, cleanup budget and receipts stay intact.
-# The controller coordinates six owners; leaf owners retain their two-second grace.
-# Keep headroom within the existing 16-second cleanup and 20-second client bounds.
-process_ownership._PROCESS_TERMINATION_GRACE_SECONDS = 8.0
+# This fake controller owns the supervisor session; its leaf services have
+# separate sessions. It must not KILL their original launch owners mid-drain.
+# Share the existing cleanup deadline as cooperative grace. Deadline expiry
+# retains custody before group KILL; the 20-second Stop reply bound is unchanged.
+original_cleanup_budget = owner.cleanup_budget
+@owner.contextmanager
+def controller_cleanup_budget(seconds):
+ original_grace = process_ownership._PROCESS_TERMINATION_GRACE_SECONDS
+ try:
+  with original_cleanup_budget(seconds):
+   process_ownership._PROCESS_TERMINATION_GRACE_SECONDS = seconds
+   yield
+ finally:
+  process_ownership._PROCESS_TERMINATION_GRACE_SECONDS = original_grace
+owner.cleanup_budget = controller_cleanup_budget
 original_terminate = owner.terminate_owned_process
 def terminate(child, *, launched_pid):
  marker = os.environ.get('JOBCTRL_TEST_CONTROLLER_STOP_STARTED')
  if marker: pathlib.Path(marker).write_text('started')
- return original_terminate(child, launched_pid=launched_pid)
+ try:
+  return original_terminate(child, launched_pid=launched_pid)
+ finally:
+  report = os.environ.get('JOBCTRL_TEST_SUPERVISOR_CUSTODY_PROOF')
+  if report:
+   event = owner._waitid_nowait(child.pid) if child.returncode is None else None
+   owner.atomic_write(pathlib.Path(report), json.dumps({'originalPid':child.pid, 'returncode':child.returncode, 'eventCode':None if event is None else event.si_code}).encode())
 owner.terminate_owned_process = terminate
 raise SystemExit(owner.main())
 `);
@@ -321,7 +340,7 @@ wait "$controller_child"
         run("stop", "temporal", "api", "web", "worker", "docs", "demo-api", "demo-web");
       } catch (error) {
         recordCleanupFailure("managed-stop", error);
-        for (const name of ["temporal", "api", "web", "worker", "docs", "demo-api", "demo-web"]) {
+        for (const name of ["source-supervisor", "temporal", "api", "web", "worker", "docs", "demo-api", "demo-web"]) {
           try {
             const file = path.join(devDir, "logs", `${name}.log`);
             const info = await lstat(file);
@@ -496,16 +515,32 @@ test("fixture cleanup retains unverified state and closes its original peer", as
   }
 });
 
-test("a fake source controller lets its inner supervisor finish a blocked drain", { skip: process.platform !== "darwin", timeout: 30_000 }, async () => {
+async function verifyFakeControllerBlockedDrain(holdMs, expires) {
   const harness = await createHarness();
   const ready = path.join(harness.temporaryRoot, "receipt-lock-held");
   const release = path.join(harness.temporaryRoot, "release-receipt-lock");
   const stopping = path.join(harness.temporaryRoot, "controller-cleanup-started");
+  const custodyProof = path.join(harness.temporaryRoot, "supervisor-custody-proof");
   harness.env.JOBCTRL_TEST_CONTROLLER_STOP_STARTED = stopping;
+  harness.env.JOBCTRL_TEST_SUPERVISOR_CUSTODY_PROOF = custodyProof;
+  // Bound service lifetime even if a regression destroys a leaf's custodian.
+  harness.env.JOBCTRL_TEST_SERVICE_LIFETIME_SECONDS = "40";
   try {
     const targets = ["temporal", "api", "worker", "docs", "demo-api", "demo-web"];
-    harness.run("start", ...targets);
+    const foreground = harness.trackChild(spawn(path.join(harness.temporaryRoot, "scripts/dev"), ["run", ...targets], {
+      cwd: harness.temporaryRoot, env: harness.env, stdio: ["ignore", "pipe", "pipe"],
+    }));
+    let foregroundOutput = "";
+    foreground.stdout.on("data", (chunk) => { foregroundOutput += chunk; });
+    foreground.stderr.on("data", (chunk) => { foregroundOutput += chunk; });
     await harness.waitForLaunches(targets.length);
+    for (let attempt = 0; attempt < 250 && !foregroundOutput.includes("dev: foreground run active;"); attempt++) await delay(20);
+    assert.ok(foregroundOutput.includes("dev: foreground run active;"), foregroundOutput);
+    const receiptPaths = [
+      ...targets.map((name) => path.join(harness.devDir, "pids", name)),
+      path.join(harness.devDir, "source-controller/api"),
+    ].flatMap((base) => [`${base}.pid`, `${base}.identity.json`]);
+    const originalReceipts = await Promise.all(receiptPaths.map((file) => readFile(file)));
     const peer = harness.spawnPeer();
     const holder = harness.trackChild(spawn("python3", ["-I", "-S", "-B", "-c", `
 import fcntl,os,pathlib,sys,time
@@ -526,20 +561,67 @@ finally: os.close(fd)
     stop.stdout.on("data", (chunk) => { output += chunk; });
     stop.stderr.on("data", (chunk) => { output += chunk; });
     assert.equal(await waitForFixtureFile(stopping), "started");
-    // Outlast the old two-second leaf grace and its one-second census retry.
-    // The original holder releases the real publication lock cooperatively.
-    await delay(3_500);
+    // Preserve the old control, exceed its former eight-second controller
+    // grace, and separately exceed the existing sixteen-second cleanup budget.
+    await delay(holdMs);
+    if (expires) {
+      await harness.waitForChildClose(stop, 2_000);
+      assert.equal(stop.exitCode, 1, output);
+      assert.match(output, /process ownership or cleanup could not be verified/);
+      const proof = JSON.parse(await waitForFixtureFile(custodyProof));
+      assert.ok(Number.isInteger(proof.originalPid) && proof.originalPid > 1);
+      assert.equal(proof.returncode, null, JSON.stringify(proof));
+      assert.equal(proof.eventCode, null, JSON.stringify(proof));
+      // Authenticate the still-live owners without waiting on the held
+      // publication lock. These requests never signal discovered PIDs.
+      const custody = spawnSync("python3", ["-I", "-S", "-B", "-c", `
+import importlib.util,json,pathlib,sys
+script,directory = sys.argv[1:]
+spec = importlib.util.spec_from_file_location('fixture_custody_probe', script)
+owner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(owner)
+directory = pathlib.Path(directory)
+result = {}
+for name in ['temporal','api','worker','docs','demo-api','demo-web']:
+ record = owner.receipt(directory / 'pids', name)
+ result[name] = owner.request(record, 'state')
+result['controller'] = owner.request(owner.receipt(directory / 'source-controller', 'api'), 'state')
+print(json.dumps(result))
+`, path.join(harness.temporaryRoot, "scripts/dev-process-owner.py"), harness.devDir], {
+        cwd: harness.temporaryRoot, env: harness.env, encoding: "utf8", timeout: 5_000,
+      });
+      assert.equal(custody.error, undefined);
+      assert.equal(custody.status, 0, custody.stderr);
+      const authenticated = JSON.parse(custody.stdout);
+      for (const name of targets) assert.deepEqual(authenticated[name], { state: "running" });
+      assert.deepEqual(authenticated.controller, { state: "cleanup_failed" });
+      assert.deepEqual(await Promise.all(receiptPaths.map((file) => readFile(file))), originalReceipts);
+      process.kill(peer.pid, 0);
+    }
     await writeFile(release, "release");
     await harness.waitForChildClose(holder);
-    await harness.waitForChildClose(stop, 10_000);
     assert.equal(holder.exitCode, 0);
-    assert.equal(stop.exitCode, 0, output);
+    if (expires) {
+      const retry = harness.trackChild(spawn(path.join(harness.temporaryRoot, "scripts/dev"), ["stop", ...targets], {
+        cwd: harness.temporaryRoot, env: harness.env, stdio: ["ignore", "pipe", "pipe"],
+      }));
+      let retryOutput = "";
+      retry.stdout.on("data", (chunk) => { retryOutput += chunk; });
+      retry.stderr.on("data", (chunk) => { retryOutput += chunk; });
+      await harness.waitForChildClose(retry, 10_000);
+      assert.equal(retry.exitCode, 0, retryOutput);
+    } else {
+      await harness.waitForChildClose(stop, 10_000);
+      assert.equal(stop.exitCode, 0, output);
+    }
+    await harness.waitForChildClose(foreground, 10_000);
+    assert.equal(foreground.exitCode, 0, foregroundOutput);
     assert.equal(peer.exitCode, null);
     assert.equal(peer.signalCode, null);
-    for (const name of targets) {
-      await assert.rejects(readFile(path.join(harness.devDir, `pids/${name}.identity.json`)), { code: "ENOENT" });
+    process.kill(peer.pid, 0);
+    for (const file of receiptPaths) {
+      await assert.rejects(readFile(file), { code: "ENOENT" });
     }
-    await assert.rejects(readFile(path.join(harness.devDir, "source-controller/api.identity.json")), { code: "ENOENT" });
   } catch (error) {
     harness.recordFailure(error);
     throw error;
@@ -548,7 +630,19 @@ finally: os.close(fd)
     try { await writeFile(release, "release"); } catch (error) { releaseFailure = error; }
     await harness.cleanup(releaseFailure);
   }
-});
+}
+
+for (const { holdMs, expires } of [
+  { holdMs: 3_500, expires: false },
+  { holdMs: 9_000, expires: false },
+  { holdMs: 17_500, expires: true },
+]) {
+  test(`a fake source controller ${expires ? "retains custody after" : "finishes"} a ${holdMs / 1000}s blocked drain`, {
+    skip: process.platform !== "darwin", timeout: fixtureCaseTimeout,
+  }, async () => {
+    await verifyFakeControllerBlockedDrain(holdMs, expires);
+  });
+}
 
 test("concurrent Stop clients serialize receipt retirement and preserve a peer", { timeout: 30_000 }, async () => {
   const harness = await createHarness();

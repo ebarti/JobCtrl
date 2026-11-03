@@ -113,6 +113,12 @@ Use `jobctrl start --no-open` when you do not want a browser window, or
 Your workspace is stored under `~/.jobctrl/` by default and survives stops,
 updates, and rollbacks.
 
+If the local workflow engine's health check does not answer, startup reports a
+deadline failure and status can show the engine as unhealthy even when its
+process is still running. Status includes the bounded health diagnostic. If
+probe cleanup cannot be verified, status exits with an error and keeps the
+unverified ownership receipt; preserve it and use `jobctrl stop` to retry cleanup.
+
 `jobctrl stop` requests a clean shutdown, terminates verified leftovers that
 exceed the timeout, and waits for exit. It tracks the instance's children even
 if they detach or their parent crashes. Successful cleanup permits normal
