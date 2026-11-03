@@ -142,6 +142,26 @@ describe("BrowserPdfExportAdapter", () => {
     ).toBe(false);
   });
 
+  it("continues past whitespace inside a paragraph instead of falling back onto clipped glyphs", () => {
+    const paragraphs = [
+      { topPx: 40, bottomPx: 110 },
+      { topPx: 120, bottomPx: 180 },
+      { topPx: 180, bottomPx: 230 },
+    ];
+    // The bitmap bleeds across the DOM boundary at 180. The nearby gap at
+    // 160 is between lines of the preceding paragraph, not a valid page cut.
+    const isBlankRow = (row: number) => (row >= 111 && row <= 119) || (row >= 160 && row <= 168);
+    const slices = pdfPageSlices(230, 200, paragraphs,
+      (candidate, minimum, maximum, isAllowedCut) => safeBlankRasterCut(
+        candidate, minimum, maximum, 200, 4, isBlankRow, isAllowedCut,
+      ),
+    );
+    expect(slices[0]!.endPx).toBeGreaterThanOrEqual(111);
+    expect(slices[0]!.endPx).toBeLessThanOrEqual(119);
+    expect(isBlankRow(slices[0]!.endPx)).toBe(true);
+    expect(paragraphs.some(interval => interval.topPx < slices[0]!.endPx && interval.bottomPx > slices[0]!.endPx)).toBe(false);
+  });
+
   it("maps rendered word boxes through shifted PDF page slices", () => {
     const source = document.createElement("div");
     source.className = "resume-plate-document";

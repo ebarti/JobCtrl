@@ -2797,6 +2797,8 @@ input[type="radio"] {
   font-size: var(--resume-template-entry-meta-font-size, var(--resume-template-default-entry-meta-font-size));
   font-style: italic;
   text-align: end;
+  /* Italic glyph ink can extend beyond its advance box in the PDF raster. */
+  padding-inline-end: 0.25em;
   white-space: nowrap;
 }
 

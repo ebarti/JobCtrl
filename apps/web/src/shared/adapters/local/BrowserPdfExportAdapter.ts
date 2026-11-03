@@ -8,8 +8,9 @@ import type {
 const PDF_EXPORT_SOURCE_ATTRIBUTE = "data-resume-pdf-export-source";
 const PDF_BITMAP_SCALE = 2;
 const PDF_PAGE_SLICE_EPSILON_PX = 1;
-const PDF_PAGE_SLICE_RASTER_MINIMUM_BLANK_BAND_CSS_PX = 4;
-const PDF_PAGE_SLICE_RASTER_SEARCH_RADIUS_CSS_PX = 96;
+// The DOM guard already excludes gaps inside paragraphs and disconnected
+// glyphs. One CSS pixel of actual whitespace is enough between those blocks.
+const PDF_PAGE_SLICE_RASTER_MINIMUM_BLANK_BAND_CSS_PX = 1;
 const PDF_PAGE_SLICE_RASTER_SCAN_CHUNK_ROWS = 128;
 const PDF_PAGE_SLICE_RASTER_WHITE_CHANNEL = 255;
 const PDF_SEARCH_TEXT_FALLBACK_FONT_SIZE_PT = 6;
@@ -453,6 +454,7 @@ export function pdfPageSlices(
     candidatePx: number,
     minimumPx: number,
     maximumPx: number,
+    isAllowedCut: (positionPx: number) => boolean,
   ) => number,
   insets: PdfPageInsets = { topPx: 0, bottomPx: 0 },
 ): readonly PdfPageSlice[] {
@@ -480,9 +482,9 @@ export function pdfPageSlices(
       }
       if (candidatePx > startPx + PDF_PAGE_SLICE_EPSILON_PX) {
         let resolvedEndPx =
-          resolveSafeCut?.(candidatePx, startPx, endPx) ?? candidatePx;
+          resolveSafeCut?.(candidatePx, startPx, endPx, position => crosses(position).length === 0) ?? candidatePx;
         if (crosses(resolvedEndPx).length > 0) {
-          resolvedEndPx = resolveSafeCut?.(candidatePx, startPx, candidatePx) ?? candidatePx;
+          resolvedEndPx = resolveSafeCut?.(candidatePx, startPx, candidatePx, position => crosses(position).length === 0) ?? candidatePx;
         }
         if (crosses(resolvedEndPx).length > 0) resolvedEndPx = candidatePx;
         endPx =
@@ -510,6 +512,7 @@ export function safeBlankRasterCut(
   searchRadiusPx: number,
   minimumBlankRows: number,
   isBlankRow: (rowPx: number) => boolean,
+  isAllowedCut: (positionPx: number) => boolean = () => true,
 ): number {
   const centerPx = Math.round(candidatePx);
   const requiredBlankRows = Math.max(2, Math.ceil(minimumBlankRows));
@@ -529,7 +532,8 @@ export function safeBlankRasterCut(
     }
     forwardRunStartPx ??= rowPx;
     if (rowPx - forwardRunStartPx + 1 >= requiredBlankRows) {
-      return forwardRunStartPx + Math.floor(requiredBlankRows / 2);
+      const cutPx = rowPx - Math.ceil(requiredBlankRows / 2) + 1;
+      if (isAllowedCut(cutPx)) return cutPx;
     }
   }
 
@@ -545,7 +549,8 @@ export function safeBlankRasterCut(
     }
     backwardRunEndPx ??= rowPx;
     if (backwardRunEndPx - rowPx + 1 >= requiredBlankRows) {
-      return rowPx + Math.ceil(requiredBlankRows / 2);
+      const cutPx = rowPx + Math.ceil(requiredBlankRows / 2);
+      if (isAllowedCut(cutPx)) return cutPx;
     }
   }
   return candidatePx;
@@ -676,14 +681,18 @@ async function rasterizePdfPages(
     pageHeightCanvasPx,
     scaledLineIntervals,
     isBlankRow
-      ? (candidatePx, minimumPx, maximumPx) =>
+      ? (candidatePx, minimumPx, maximumPx, isAllowedCut) =>
           safeBlankRasterCut(
             candidatePx,
             minimumPx,
             maximumPx,
-            PDF_PAGE_SLICE_RASTER_SEARCH_RADIUS_CSS_PX * canvasScale,
+            // Search back through this page if nearby whitespace belongs to
+            // a protected paragraph. Falling back to the DOM boundary there
+            // can cut through glyphs whose bitmap extends beyond that box.
+            pageHeightCanvasPx,
             PDF_PAGE_SLICE_RASTER_MINIMUM_BLANK_BAND_CSS_PX * canvasScale,
             isBlankRow,
+            isAllowedCut,
           )
       : undefined,
     {
