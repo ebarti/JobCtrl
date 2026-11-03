@@ -3730,6 +3730,7 @@ export const PipelineEtaSchema = z.discriminatedUnion("status", [
         "unsupported",
         "unknown_scope",
         "contention_unbounded",
+        "accounting_incomplete",
       ]),
       asOf: z.string(),
     })
@@ -4159,8 +4160,8 @@ export interface DigestState {
 }
 
 export interface DailyDigestBudget {
-  status: "ok" | "over_budget";
-  estimatedUsd: number;
+  status: "ok" | "over_budget" | "incomplete";
+  estimatedUsd: number | null;
   dailyBudgetUsd: number;
   remainingUsd: number | null;
   unlimited: boolean;

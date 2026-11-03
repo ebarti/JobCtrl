@@ -49,7 +49,9 @@ export function ConnectionStatusPill() {
           aria-live="polite"
           data-typography="metadata"
         >
-          {formatSpendLine(spend.estimatedUsd, spend.dailyBudgetUsd, spend.unlimited)}
+          {spend.status === "incomplete" || spend.estimatedUsd === null
+            ? "LLM spend pending or unresolved"
+            : formatSpendLine(spend.estimatedUsd, spend.dailyBudgetUsd, spend.unlimited)}
         </span>
       ) : null}
       {databaseProblem ? (

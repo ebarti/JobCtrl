@@ -494,8 +494,8 @@ export function buildOutcomeAnalyticsSummary(db: SqliteDatabase): OutcomeAnalyti
 }
 
 export interface DigestBudgetSnapshot {
-  status: "ok" | "over_budget";
-  estimatedUsd: number;
+  status: "ok" | "over_budget" | "incomplete";
+  estimatedUsd: number | null;
   dailyBudgetUsd: number;
   remainingUsd: number | null;
   unlimited: boolean;
@@ -673,7 +673,7 @@ function digestBudget(budget: DigestBudgetSnapshot | undefined): DailyDigest["bu
   }
   return {
     status: budget.status,
-    estimatedUsd: Number(budget.estimatedUsd),
+    estimatedUsd: budget.estimatedUsd === null ? null : Number(budget.estimatedUsd),
     dailyBudgetUsd: Number(budget.dailyBudgetUsd),
     remainingUsd: budget.remainingUsd === null ? null : Number(budget.remainingUsd),
     unlimited: Boolean(budget.unlimited),

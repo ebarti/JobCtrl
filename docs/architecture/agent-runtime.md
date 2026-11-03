@@ -112,6 +112,10 @@ If the caller cancels after a receipt is observed, SDK cleanup is joined and
 the terminal usage is recorded once on the caller's lane before cancellation
 propagates; the cancelled result is never accepted. A cleanup failure during
 that cancellation is reported without its contents.
+If the SDK exposed usage on an assistant message before a terminal receipt,
+unambiguous message identities retain those counts on failure or cancellation.
+Multiple reports with ambiguous identities remain unresolved rather than being
+added as though they were distinct model calls.
 
 ### Antigravity
 
@@ -121,6 +125,16 @@ configuration and owned runtime directories. Kit-selected capabilities,
 policies and workspace restrictions are applied to that configuration. Only
 `FINISH` is available and subagent delegation is disabled. The native chunk
 stream is drained before reading final structured output or text.
+The adapter also reads the SDK's accumulated turn usage after a failed or
+cancelled stream and records available counts on the caller's lane before
+propagating the original failure. Earlier reported counts survive a later
+partial snapshot; a missing required input or output count leaves accounting
+unresolved rather than being filled with zero or combined into a guessed total.
+The pinned Google SDK's aggregate turns absent step fields into zero, so the
+adapter verifies the aggregate against each native step's reported fields.
+An unavailable or replaced step source, a missing field on any usage-bearing
+step, or a disagreement with the SDK aggregate remains unresolved. An explicit
+step value of zero remains a known zero. Only token metadata is retained.
 
 The kit's task-isolated process key prevents implicit conversation reuse for
 Antigravity tasks. Its metadata records the actual reuse behavior; reusable
