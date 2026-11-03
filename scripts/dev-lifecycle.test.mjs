@@ -595,16 +595,18 @@ async function verifyFakeControllerBlockedDrain({ holdMs, expires, retryAtDeadli
   const release = path.join(harness.temporaryRoot, "release-receipt-lock");
   const stopping = path.join(harness.temporaryRoot, "controller-cleanup-started");
   const custodyProof = path.join(harness.temporaryRoot, "supervisor-custody-proof");
+  const releaseCensusDelay = path.join(harness.temporaryRoot, "release-census-delay");
   harness.env.JOBCTRL_TEST_CONTROLLER_STOP_STARTED = stopping;
   harness.env.JOBCTRL_TEST_SUPERVISOR_CUSTODY_PROOF = custodyProof;
   // Bound service lifetime even if a regression destroys a leaf's custodian.
   harness.env.JOBCTRL_TEST_SERVICE_LIFETIME_SECONDS = "40";
   if (censusDelaySeconds > 0) {
-    // Delay real inventory reads; never fabricate processes or completion.
+    // Delay real inventory reads until explicit recovery clears this injected
+    // impairment. Never fabricate processes or completion.
     await extendFixtureOwner(path.join(harness.temporaryRoot, "scripts/dev-process-owner.py"), `
 _grace_control_inventory = _fixture_process._read_process_inventory
 def _delayed_grace_inventory(*args, **kwargs):
- time.sleep(${censusDelaySeconds})
+ if not Path(${JSON.stringify(releaseCensusDelay)}).exists(): time.sleep(${censusDelaySeconds})
  return _grace_control_inventory(*args, **kwargs)
 _fixture_process._read_process_inventory = _delayed_grace_inventory
 `);
@@ -714,6 +716,7 @@ print(json.dumps(owner.request(owner.receipt(pathlib.Path(sys.argv[2]), 'api'), 
       }
     }
     if (expires || stop.exitCode !== 0) {
+      await writeFile(releaseCensusDelay, "release");
       const retry = harness.trackChild(spawn(path.join(harness.temporaryRoot, "scripts/dev"), ["stop", ...targets], {
         cwd: harness.temporaryRoot, env: harness.env, stdio: ["ignore", "pipe", "pipe"],
       }));
@@ -721,7 +724,7 @@ print(json.dumps(owner.request(owner.receipt(pathlib.Path(sys.argv[2]), 'api'), 
       retry.stdout.on("data", (chunk) => { retryOutput += chunk; });
       retry.stderr.on("data", (chunk) => { retryOutput += chunk; });
       await harness.waitForChildClose(retry, fixtureCommandTimeout);
-      assert.equal(retry.exitCode, 0, retryOutput);
+      assert.equal(retry.exitCode, 0, boundedFixtureDiagnostic(`${retryOutput}\nowned supervisor:\n${foregroundOutput}\nretry custody:\n${await readFile(custodyProof, "utf8")}`, cleanupDiagnosticLimit));
     }
     await harness.waitForChildClose(foreground, 10_000);
     assert.equal(foreground.exitCode, 0, foregroundOutput);
@@ -739,7 +742,10 @@ print(json.dumps(owner.request(owner.receipt(pathlib.Path(sys.argv[2]), 'api'), 
     throw error;
   } finally {
     let releaseFailure;
-    try { await writeFile(release, "release"); } catch (error) { releaseFailure = error; }
+    try {
+      await writeFile(releaseCensusDelay, "release");
+      await writeFile(release, "release");
+    } catch (error) { releaseFailure = error; }
     await harness.cleanup(releaseFailure);
   }
 }
