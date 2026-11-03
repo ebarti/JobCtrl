@@ -1086,7 +1086,7 @@ function ResumeLineReview({ item, session, selectedLine, onSelectLine }: {
         replyError={session.errors.reply ?? null}
         replyPending={session.replying}
         selectedLine={selectedLine}
-        title="Tailored resume preview"
+        title="Resume"
         onRenderDraft={() => { void session.render(); }}
         onReplyToThread={session.reply}
         onSaveDraft={() => { void session.save(); }}
@@ -1564,6 +1564,10 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
                 Tailored resume and cover
               </h2>
             </CardTitle>
+            <CardDescription>
+              Edit the resume text below for this position. Edits save to this job's draft;
+              your profile stays unchanged. Render a replacement when you are ready.
+            </CardDescription>
           </CardHeader>
           <CardContent className="apply-review-pane-scroll apply-review-materials-scroll">
             <div className="apply-review-resume-template-control">

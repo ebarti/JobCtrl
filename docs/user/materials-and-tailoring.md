@@ -234,7 +234,9 @@ The user-visible surfaces divide the work:
   and excerpts with links back to the owning entry. An unresolved legacy key is
   labeled unavailable and stays accessible under **Technical details** rather
   than being presented as user-facing evidence.
-- `/apply-review` consumes the accepted generation. The editor, revision,
+- **Edit resume** in Job Detail opens that job's editor directly in
+  `/apply-review`. Text edits belong to the position's draft and leave the
+  Candidate Profile unchanged. The editor, revision,
   replacement-render, submission-approval lifecycle, and distinction between a
   local editor export and an approved artifact are owned by
   [Apply](apply.md#materials-and-resume-rendering). Its Plate toolbar can export

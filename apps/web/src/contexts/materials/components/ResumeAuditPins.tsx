@@ -498,7 +498,7 @@ export function ResumeStandalonePlateEditor({
       <div className="resume-plate-toolbar" data-resume-editor-chrome="true">
         <b>{title}</b>
         <span className="toolbar-status" data-typography="metadata">
-          Plate HTML/CSS editor
+          Editable resume
         </span>
         <ResumeEditorToolbarControls
           disabled={!canFormat}
@@ -730,7 +730,7 @@ export function ResumePlateEditor({
       <div className="resume-plate-toolbar" data-resume-editor-chrome="true">
         <b>{title}</b>
         <span className="toolbar-status" data-typography="metadata">
-          Plate HTML/CSS editor
+          Editable resume
         </span>
         <ResumeEditorToolbarControls
           disabled={!canFormat}

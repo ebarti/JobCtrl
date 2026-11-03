@@ -255,6 +255,21 @@ describe("<JobDetailDrawer>", () => {
     });
   });
 
+  it.each(["active", "accepted"])("opens an existing %s resume for editing", async (status) => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(makeJobDetail(
+          { ...sampleJob, jobKey: String(params["jobKey"]) },
+          { artifacts: [{ ...sampleArtifact, type: "resume_pdf", status }] },
+        )),
+      ),
+    );
+
+    renderJobDetailDrawer("job-with-resume");
+    const link = await screen.findByRole("link", { name: `Edit resume for ${sampleJob.title}` });
+    expect(link).toHaveAttribute("href", "/apply-review?jobKey=job-with-resume#apply-review-materials-heading");
+  });
+
   it("keeps every approved generation visible ahead of newer candidates and failed materials", async () => {
     const artifacts = [
       { ...sampleArtifact, artifactId: "draft-4", type: "cover_letter", generation: 4, status: "candidate" },
@@ -284,6 +299,11 @@ describe("<JobDetailDrawer>", () => {
     expect(section).not.toBeNull();
     const foregroundRows = [...section!.querySelectorAll(":scope > .job-artifact-row")];
     expect(foregroundRows).toHaveLength(7);
+    const editLink = screen.getByRole("link", { name: `Edit resume for ${sampleJob.title}` });
+    const editorUrl = new URL(editLink.getAttribute("href")!, "http://localhost");
+    expect(editorUrl.pathname).toBe("/apply-review");
+    expect(editorUrl.searchParams.get("jobKey")).toBe("https://example.com/jobs/1");
+    expect(editorUrl.hash).toBe("#apply-review-materials-heading");
     expect(foregroundRows.map((row) => row.textContent)).toEqual([
       expect.stringContaining("resume_pdf · Generation 3"),
       expect.stringContaining("tailored_resume · Generation 3"),

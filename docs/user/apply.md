@@ -59,6 +59,11 @@ minimum score. These non-secret desired values are stored in `config.json` and
 apply to newly started workflows. Provider credentials remain on the secret
 boundary described in [Configuration](configuration.md#llm-providers).
 
+From Job Detail, choose **Edit resume** to jump directly to that position's
+resume editor in Apply Review. It remains available when the job has an accepted
+resume PDF, even if its score is stale or a newer scoring attempt failed. Edits
+belong to that job's draft and do not change the Candidate Profile.
+
 The default resume renderer is HTML/CSS printed through Playwright. Apply Review
 loads the generated HTML source into a rich-text editor so text, formatting, and
 hyperlink edits, comments, validation, final PDF rendering, and layout boxes stay
