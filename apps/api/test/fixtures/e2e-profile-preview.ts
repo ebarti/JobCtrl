@@ -38,8 +38,10 @@ export const e2eProfilePreviewRenderer: ProfilePreviewRenderer = async ({ profil
     <section class="resume-section">${education.map((value) => {
       const entry = record(value);
       const id = String(entry["id"] ?? "");
-      const subtitle = [entry["institution"], entry["location"]].filter(Boolean).join(" | ");
-      return `<article class="resume-entry compact">${line("div", `education:${id}:subtitle`, subtitle, "resume-entry-heading", `<span class="resume-entry-row resume-entry-education-row"><span class="resume-entry-main resume-entry-institution">${escapeHtml(subtitle)}</span><span class="resume-entry-date">${escapeHtml(entry["date"])}</span></span>`)}
+      const institution = line("span", `education:${id}:institution`, entry["institution"], "resume-entry-institution");
+      const location = entry["location"] ? ` | ${line("span", `education:${id}:location`, entry["location"], "resume-entry-location")}` : "";
+      const date = line("span", `education:${id}:date`, entry["date"], "resume-entry-date");
+      return `<article class="resume-entry compact">${line("div", `education:${id}:subtitle`, "", "resume-entry-heading", `<span class="resume-entry-row resume-entry-education-row"><span class="resume-entry-main">${institution}${location}</span>${date}</span>`)}
       ${line("p", `education:${id}:degree`, entry["degree"], "resume-entry-title resume-education-degree")}</article>`;
     }).join("")}</section>
     <ul class="resume-skills-list">${skills.map((value) => {

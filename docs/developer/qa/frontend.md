@@ -52,6 +52,13 @@ browser behavior, and visual consistency catch different failures.
   and keeps historical judge-claimed coverage visibly separate from grounded
   coverage. Its fixture restores the original metadata after each case.
 - Resume review uses complementary session, browser and persistence checks.
+  `resume-export-layout.spec.ts` exports multi-page A4 and Letter resumes from
+  the real Plate toolbar with controlled synthetic profile/preview inputs.
+  Independent Poppler rasters measure all four margins on every downloaded
+  page; PDF text extraction checks that every unique fixture line survives once.
+  It also checks education institution/location alignment and retains the PDF,
+  page images and measurements. The inputs are structural layout fixtures, not
+  model-evaluation examples.
   `useApplyReviewSession.test.ts` owns tenant/job/material fences, independent
   comment/revision ordering, overlapping saves, stale cache publications,
   normalized acknowledgements and approval preparation.

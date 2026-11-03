@@ -14,6 +14,21 @@ import {
 } from "./resume-document.js";
 
 describe("resume document transforms", () => {
+  it("keeps the education location inline with its institution through import and saved-value normalization", () => {
+    const value = resumePlateValueFromHtml(`<main class="resume-page"><div class="resume-entry-row resume-entry-education-row"><span class="resume-entry-main"><span class="resume-entry-institution">Example University</span> | <span class="resume-entry-location" data-resume-layout-target="education:one:location">Example City</span></span><span class="resume-entry-date">2020</span></div></main>`);
+    const row = value[0]!.children[0] as { children: Value };
+    const main = row.children[0]!;
+    expect(main.children[2]).toMatchObject({ type: "resume_inline", tagName: "span", semanticId: "education:one:location" });
+    expect(row.children[1]).toMatchObject({ type: "resume_block", tagName: "div", className: "resume-entry-date" });
+    expect(resumeTextFromPlateValue(value)).toContain("Example University | Example City");
+    const restored = structuredClone(value);
+    const legacyLocation = (restored[0]!.children[0] as { children: Value }).children[0]!.children[2];
+    if (!legacyLocation || "text" in legacyLocation) throw new Error("Expected an education location element");
+    legacyLocation.type = "resume_block";
+    legacyLocation.tagName = "div";
+    expect(normalizeResumePlateValue(restored)).toEqual(value);
+  });
+
   it("includes new unnumbered paragraphs beside anchored lines without splitting inline text", () => {
     const value = resumePlateValueFromHtml('<main class="resume-page"><p>First <strong>pasted</strong> paragraph</p><p data-resume-line-number="1">Existing <a href="https://example.test">source</a> line</p><p>Last pasted paragraph</p></main>');
     expect(resumeTextFromPlateValue(value)).toBe("First pasted paragraph\nExisting source line\nLast pasted paragraph");

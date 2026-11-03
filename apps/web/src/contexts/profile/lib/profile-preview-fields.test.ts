@@ -28,6 +28,19 @@ const html = `<main class="resume-page">
 </main>`;
 
 describe("baseline preview field ownership", () => {
+  it("binds the renderer's separate education fields without treating the institution as a composite", () => {
+    const source = `<main class="resume-page"><div data-resume-layout-target="education:edu:1:subtitle"><span class="resume-entry-row resume-entry-education-row"><span class="resume-entry-main"><span class="resume-entry-institution" data-resume-layout-target="education:edu:1:institution">Fixture | University</span> | <span class="resume-entry-location" data-resume-layout-target="education:edu:1:location">London</span></span><span class="resume-entry-date" data-resume-layout-target="education:edu:1:date">2020</span></span></div></main>`;
+    const doc = new DOMParser().parseFromString(bindProfilePreviewFields(source, profile()), "text/html");
+    expect(doc.querySelector('.resume-entry-institution')?.getAttribute("data-resume-profile-source")).toBe("Fixture | University");
+    expect(doc.querySelector('.resume-entry-location')?.getAttribute("data-resume-profile-source")).toBe("London");
+    expect(doc.querySelector('.resume-entry-date')?.getAttribute("data-resume-profile-source")).toBe("2020");
+    expect(doc.querySelector('[data-resume-profile-field^="unmapped:"]')).toBeNull();
+    const newer = profile();
+    newer.resume.education_entries[0]!.location = "Newer City";
+    const stale = new DOMParser().parseFromString(bindProfilePreviewFields(source, newer), "text/html");
+    expect(stale.querySelector('.resume-entry-location')?.getAttribute("data-resume-profile-field")).toBe("unmapped:education:edu:1:location");
+  });
+
   it("binds individual fields without parsing separators that occur inside their values", () => {
     const doc = new DOMParser().parseFromString(bindProfilePreviewFields(html, profile()), "text/html");
     const values = Object.fromEntries(Array.from(doc.querySelectorAll("[data-resume-profile-field]")).map((node) =>

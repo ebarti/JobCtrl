@@ -243,7 +243,7 @@ test("apply review compares accepted artifact with rendered draft artifact", asy
   await expect(renderButton).toBeDisabled();
   await expect(page.getByText("replacement rendered", { exact: true })).toHaveCount(0);
   await expect(
-    page.getByRole("region", { name: "Resume" }),
+    page.getByRole("region", { name: "Resume", exact: true }),
   ).toBeVisible();
   await injectAxe(page);
   await checkA11y(page, ".apply-review-resume-review", { includedImpacts: ["critical", "serious"] });

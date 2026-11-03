@@ -26,6 +26,22 @@ function pdfDocumentDouble() {
 }
 
 describe("BrowserPdfExportAdapter", () => {
+  it("reserves the configured top and bottom margins on every continuation page", () => {
+    const slices = pdfPageSlices(300, 100, [], undefined, { topPx: 10, bottomPx: 15 });
+    expect(slices).toEqual([
+      { startPx: 0, endPx: 85 },
+      { startPx: 85, endPx: 160 },
+      { startPx: 160, endPx: 235 },
+      { startPx: 235, endPx: 300 },
+    ]);
+    const crossingLine = { topPx: 78, bottomPx: 91 };
+    const guarded = pdfPageSlices(300, 100, [crossingLine], undefined, { topPx: 10, bottomPx: 15 });
+    expect(guarded[0]?.endPx).toBe(78);
+    expect(guarded.every((page, index) => page.endPx - page.startPx + (index ? 10 : 0) <= 85)).toBe(true);
+    expect(guarded.at(-1)?.endPx).toBe(300);
+    expect(() => pdfPageSlices(300, 100, [], undefined, { topPx: 60, bottomPx: 40 })).toThrow("no printable content area");
+  });
+
   it("uses top-anchored invisible PDF text scaled to each measured word", () => {
     expect(pdfInvisibleTextOptions(20, 10)).toEqual({
       baseline: "top",
@@ -186,6 +202,7 @@ describe("BrowserPdfExportAdapter", () => {
           },
           {
             canvas: document.createElement("canvas"),
+            contentOffsetTopPx: 20,
             slice: { endPx: 200, startPx: 25 },
           },
         ],
@@ -212,7 +229,7 @@ describe("BrowserPdfExportAdapter", () => {
         text: "second",
         widthMm: 20,
         xMm: 5,
-        yMm: 0.1,
+        yMm: 10,
       });
     } finally {
       if (originalDescriptor) {

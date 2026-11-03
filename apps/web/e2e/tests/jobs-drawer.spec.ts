@@ -721,6 +721,10 @@ test("keeps the job detail header Tab order aligned with its visual order", asyn
   await drawer.getByRole("button", { name: "Back to jobs" }).focus();
   await page.keyboard.press("Tab");
   await expect(
+    drawer.getByRole("link", { name: /^Edit resume for/ }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
     drawer.getByRole("link", { name: /^Open Apply Review for/ }),
   ).toBeFocused();
   await page.keyboard.press("Tab");

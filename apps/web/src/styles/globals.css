@@ -2800,6 +2800,11 @@ input[type="radio"] {
   white-space: nowrap;
 }
 
+.resume-plate-document .resume-entry-main .resume-entry-location {
+  text-align: inherit;
+  white-space: normal;
+}
+
 /* Preserve native caret offsets while typing spaces in unwrapped grid cells. */
 .resume-plate-document[contenteditable="true"] .resume-entry-date,
 .resume-plate-document[contenteditable="true"] .resume-entry-location {

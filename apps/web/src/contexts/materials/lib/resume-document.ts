@@ -145,7 +145,9 @@ function hasAnyResumeClass(
 function shouldRenderResumeElementAsBlock(
   tagName: string,
   className: string | null | undefined,
+  parentClassName?: string | null,
 ): boolean {
+  if (inlineEntryLocation(className, parentClassName)) return false;
   return (
     RESUME_PLATE_BLOCK_TAGS.has(tagName) ||
     hasAnyResumeClass(className, RESUME_PLATE_BLOCK_CLASS_TOKENS)
@@ -157,7 +159,7 @@ function normalizeResumePlateChildren(
   parentClassName: string | null | undefined,
 ): Descendant[] {
   const normalized = children
-    .map(normalizeResumePlateDescendant)
+    .map((node) => normalizeResumePlateDescendant(node, parentClassName))
     .filter((node): node is Descendant => Boolean(node));
   if (
     !hasAnyResumeClass(
@@ -177,17 +179,23 @@ function normalizeResumePlateChildren(
     : [{ text: "" }];
 }
 
-function normalizeResumePlateDescendant(node: Descendant): Descendant | null {
+function inlineEntryLocation(className: string | null | undefined, parentClassName: string | null | undefined): boolean {
+  return (className ?? "").split(/\s+/u).includes("resume-entry-location") &&
+    (parentClassName ?? "").split(/\s+/u).includes("resume-entry-main");
+}
+
+function normalizeResumePlateDescendant(node: Descendant, parentClassName?: string | null): Descendant | null {
   if ("text" in node) {
     return node;
   }
   const className =
     typeof node.className === "string" ? node.className : undefined;
   const tagName = typeof node.tagName === "string" ? node.tagName : "div";
-  const normalizedType = shouldRenderResumeElementAsBlock(tagName, className)
+  const inlineLocation = inlineEntryLocation(className, parentClassName);
+  const normalizedType = !inlineLocation && shouldRenderResumeElementAsBlock(tagName, className)
     ? "resume_block"
     : "resume_inline";
-  const normalizedTagName = hasAnyResumeClass(
+  const normalizedTagName = inlineLocation ? "span" : hasAnyResumeClass(
     className,
     RESUME_PLATE_BLOCK_CLASS_TOKENS,
   )
@@ -203,7 +211,7 @@ function normalizeResumePlateDescendant(node: Descendant): Descendant | null {
 
 export function normalizeResumePlateValue(value: Value): Value {
   const normalized = value
-    .map(normalizeResumePlateDescendant)
+    .map((node) => normalizeResumePlateDescendant(node))
     .filter((node): node is Descendant & { children: Descendant[] } =>
       Boolean(node && "children" in node),
     );
@@ -516,6 +524,7 @@ function resumeLineTextsFromPlateNode(node: Descendant): string[] {
     if (!("text" in child) && (typeof child.lineNumber === "number" || shouldRenderResumeElementAsBlock(
       typeof child.tagName === "string" ? child.tagName : "div",
       typeof child.className === "string" ? child.className : undefined,
+      typeof node.className === "string" ? node.className : undefined,
     ))) {
       flush();
       lines.push(...resumeLineTextsFromPlateNode(child));

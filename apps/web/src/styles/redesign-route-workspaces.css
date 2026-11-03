@@ -188,6 +188,7 @@
 
 .job-detail-top-actions {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   align-self: start;
   align-items: flex-start;
@@ -223,7 +224,7 @@
 }
 
 .job-detail-handoff-actions {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
 }
 
 .job-detail-workspace > .route-workspace__grid,

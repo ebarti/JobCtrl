@@ -83,7 +83,14 @@ export interface PdfVerticalInterval {
 
 export interface PdfRasterizedPage {
   readonly canvas: HTMLCanvasElement;
+  /** Space inserted above a continuation slice, in source CSS pixels. */
+  readonly contentOffsetTopPx?: number;
   readonly slice: PdfPageSlice;
+}
+
+interface PdfPageInsets {
+  readonly topPx: number;
+  readonly bottomPx: number;
 }
 
 export interface PdfRasterizationOptions {
@@ -91,6 +98,7 @@ export interface PdfRasterizationOptions {
   readonly lineIntervals: readonly PdfVerticalInterval[];
   readonly onclone: (clonedDocument: Document) => void;
   readonly pageHeightPx: number;
+  readonly pageInsets: PdfPageInsets;
   readonly windowWidth: number;
 }
 
@@ -266,6 +274,15 @@ function pdfPageHeight(
   );
 }
 
+function pdfPageInsets(source: HTMLElement): PdfPageInsets {
+  const page = source.querySelector<HTMLElement>(".resume-page") ?? source;
+  const style = getComputedStyle(page);
+  return {
+    topPx: Math.max(0, Number.parseFloat(style.paddingTop) || 0),
+    bottomPx: Math.max(0, Number.parseFloat(style.paddingBottom) || 0),
+  };
+}
+
 function inheritedTemplateValue(
   source: HTMLElement,
   computedStyle: CSSStyleDeclaration,
@@ -406,11 +423,19 @@ export function pdfPageSlices(
     minimumPx: number,
     maximumPx: number,
   ) => number,
+  insets: PdfPageInsets = { topPx: 0, bottomPx: 0 },
 ): readonly PdfPageSlice[] {
+  if (pageHeightPx <= insets.topPx + insets.bottomPx) {
+    throw new Error("The resume page margins leave no printable content area.");
+  }
   const slices: PdfPageSlice[] = [];
   let startPx = 0;
   while (startPx < totalHeightPx - PDF_PAGE_SLICE_EPSILON_PX) {
-    let endPx = Math.min(startPx + pageHeightPx, totalHeightPx);
+    // The continuous source already contains the first page's top padding.
+    // Every later slice receives that same inset when drawn onto its page.
+    const contentHeightPx = pageHeightPx - insets.bottomPx -
+      (slices.length === 0 ? 0 : insets.topPx);
+    let endPx = Math.min(startPx + contentHeightPx, totalHeightPx);
     if (endPx < totalHeightPx - PDF_PAGE_SLICE_EPSILON_PX) {
       const crossingLines = lineIntervals.filter(
         (interval) => interval.topPx < endPx && interval.bottomPx > endPx,
@@ -432,7 +457,7 @@ export function pdfPageSlices(
       }
     }
     if (endPx <= startPx + PDF_PAGE_SLICE_EPSILON_PX) {
-      endPx = Math.min(startPx + pageHeightPx, totalHeightPx);
+      endPx = Math.min(startPx + contentHeightPx, totalHeightPx);
     }
     slices.push({ endPx, startPx });
     startPx = endPx;
@@ -613,9 +638,13 @@ async function rasterizePdfPages(
             isBlankRow,
           )
       : undefined,
+    {
+      topPx: options.pageInsets.topPx * canvasScale,
+      bottomPx: options.pageInsets.bottomPx * canvasScale,
+    },
   );
 
-  return slices.map((slice) => {
+  return slices.map((slice, index) => {
     const pageCanvas = source.ownerDocument.createElement("canvas");
     pageCanvas.width = continuousCanvas.width;
     pageCanvas.height = pageHeightCanvasPx;
@@ -626,6 +655,7 @@ async function rasterizePdfPages(
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
     const sliceHeightPx = Math.max(1, slice.endPx - slice.startPx);
+    const contentOffsetTopPx = index === 0 ? 0 : options.pageInsets.topPx;
     context.drawImage(
       continuousCanvas,
       0,
@@ -633,12 +663,13 @@ async function rasterizePdfPages(
       continuousCanvas.width,
       sliceHeightPx,
       0,
-      0,
+      contentOffsetTopPx * canvasScale,
       continuousCanvas.width,
       sliceHeightPx,
     );
     return {
       canvas: pageCanvas,
+      contentOffsetTopPx,
       slice: {
         endPx: slice.endPx / canvasScale,
         startPx: slice.startPx / canvasScale,
@@ -901,7 +932,8 @@ export function searchableTextLayer(
         : Math.max(0, pages.length - 1);
     const page = pages[pageIndex] ?? pages[0];
     if (!page) continue;
-    const relativeTopPx = Math.max(0, topPx - page.slice.startPx);
+    const relativeTopPx = Math.max(0, topPx - page.slice.startPx) +
+      (page.contentOffsetTopPx ?? 0);
     const xMm = Math.min(
       geometry.widthMm - 0.1,
       Math.max(
@@ -968,6 +1000,7 @@ export class BrowserPdfExportAdapter implements PdfExportPort {
         lineIntervals,
         onclone: preparePdfClone,
         pageHeightPx,
+        pageInsets: pdfPageInsets(source),
         windowWidth,
       });
       if (pages.length === 0) {

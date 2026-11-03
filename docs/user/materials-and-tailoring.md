@@ -241,6 +241,8 @@ The user-visible surfaces divide the work:
   local editor export and an approved artifact are owned by
   [Apply](apply.md#materials-and-resume-rendering). Its Plate toolbar can export
   the current document, including unsaved edits, directly to a PDF download.
+  The selected template's margins apply to every exported page, including
+  continuation pages; the download keeps searchable text aligned with the page.
 - `/preferences` owns tailoring permissions, writing style, resume templates,
   and the default template; Apply Review can override the template for one job.
   Template payloads hold style/layout only, not candidate or job facts. An

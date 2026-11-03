@@ -181,7 +181,12 @@ with an expected-version check. A delayed or stale result cannot overwrite later
 profile edits, and manual Target Search entry continues to work.
 
 The Plate toolbars on `/profile` and `/preferences` include **Export PDF**. On
-`/profile`, edits to names, address parts, email, phone, executive profile,
+export, the browser downloads `baseline-resume.pdf` to its configured download
+location. Export can take several seconds. Every PDF page uses the selected
+template's margins, including pages continuing a long resume. Education keeps
+the institution and location together beside the date, with the degree below.
+
+On `/profile`, edits to names, address parts, email, phone, executive profile,
 experience titles, companies, locations, dates, summaries and bullets, education,
 and individual skills update the same draft shown by **Profile data**. Each
 field is bound to its saved entry identity, including fields sharing a display

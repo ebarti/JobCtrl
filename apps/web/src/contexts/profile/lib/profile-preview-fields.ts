@@ -82,11 +82,19 @@ export function bindProfilePreviewFields(html: string, source: unknown): string 
   for (const entry of profile.resume.education_entries) {
     const prefix = `education:${entry.id}`;
     const heading = owner(`${prefix}:subtitle`);
-    const institution = [["institution", entry.institution], ["location", entry.location]] as const;
-    const present = institution.filter(([, value]) => value.trim());
-    replaceComposite(heading?.querySelector(".resume-entry-institution"), present.map(([, value]) => value).join(" | "),
-      join(present.map(([key, value]) => field(`${prefix}:${key}`, value)), " | "), `${prefix}:institution`);
-    bind(heading?.querySelector(".resume-entry-date"), `${prefix}:date`, entry.date);
+    const institutionNode = owner(`${prefix}:institution`);
+    const locationNode = owner(`${prefix}:location`);
+    if (institutionNode || locationNode) {
+      bind(institutionNode, `${prefix}:institution`, entry.institution);
+      bind(locationNode, `${prefix}:location`, entry.location);
+    } else {
+      // Older previews stored both fields in one composite institution span.
+      const institution = [["institution", entry.institution], ["location", entry.location]] as const;
+      const present = institution.filter(([, value]) => value.trim());
+      replaceComposite(heading?.querySelector(".resume-entry-institution"), present.map(([, value]) => value).join(" | "),
+        join(present.map(([key, value]) => field(`${prefix}:${key}`, value)), " | "), `${prefix}:institution`);
+    }
+    bind(owner(`${prefix}:date`) ?? heading?.querySelector(".resume-entry-date"), `${prefix}:date`, entry.date);
     bind(owner(`${prefix}:degree`), `${prefix}:degree`, entry.degree);
     owner(`${prefix}:details`)?.setAttribute("data-resume-profile-field", `unmapped:${prefix}:details`);
   }
