@@ -1,6 +1,6 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
-import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema } from "@jobctrl/contracts";
-import type { ApplyReviewApprovalGateReason, ContactDetail } from "@jobctrl/contracts";
+import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, OutcomeSuggestionDecisionRequestSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema, compareOutcomeSuggestionDecision } from "@jobctrl/contracts";
+import type { ApplicationOutcome, ApplyReviewApprovalGateReason, ContactDetail, OutcomeSuggestion } from "@jobctrl/contracts";
 import { demoContactFingerprint } from "./contact-fingerprint.js";
 import {
   LOCAL_TENANT,
@@ -59,6 +59,7 @@ import {
   type DemoWorkspaceSnapshot,
 } from "./workspace/index.js";
 import { captureLifecycleRevisions, changedLifecycleJobs } from "./workspace/lifecycleRevisions.js";
+import type { DemoSuggestionDecisionReceipt } from "./workspace/contracts.js";
 
 export interface DemoCommandClock {
   now(): Date;
@@ -89,6 +90,42 @@ interface DemoPermanentDeleteObservation {
 }
 
 const systemClock: DemoCommandClock = { now: () => new Date() };
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isDemoSuggestionDecisionReceipt(value: unknown): value is DemoSuggestionDecisionReceipt {
+  if (!isObjectRecord(value) || !isObjectRecord(value["event"])) return false;
+  const fact = value["fact"];
+  if (!isObjectRecord(fact)) return false;
+  return isObjectRecord(fact["suggestion"]) && (fact["outcome"] === null || isObjectRecord(fact["outcome"]));
+}
+
+function samePrivateValue(left: unknown, right: unknown): boolean {
+  try {
+    const encoded = JSON.stringify(left);
+    return typeof encoded === "string" && encoded === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
+function demoSuggestionDecisionFact(suggestion: OutcomeSuggestion, outcome: ApplicationOutcome | null): DemoSuggestionDecisionReceipt["fact"] {
+  return {
+    suggestion: {
+      suggestionId: suggestion.suggestionId, jobKey: suggestion.jobKey, evidenceId: suggestion.evidenceId,
+      suggestedKind: suggestion.suggestedKind, status: suggestion.status, decidedAt: suggestion.decidedAt,
+      decisionReason: suggestion.decisionReason, decidedOutcomeId: suggestion.decidedOutcomeId,
+    },
+    outcome: outcome ? {
+      outcomeId: outcome.outcomeId, jobKey: outcome.jobKey, kind: outcome.kind, source: outcome.source,
+      note: outcome.note, occurredAt: outcome.occurredAt, recordedAt: outcome.recordedAt,
+      suggestionId: outcome.suggestionId, evidenceId: outcome.evidenceId,
+      interviewPrepGeneration: outcome.interviewPrepGeneration,
+    } : null,
+  };
+}
 
 const BROWSER_LOCAL_COMMANDS = [
   "acknowledgeDigest",
@@ -1050,28 +1087,78 @@ export class DemoLocalCommandExecutor {
       }
       case "decideOutcomeSuggestion": {
         const suggestionId = requiredString(args[0], "suggestionId");
-        const body = record(args[1]);
-        const decision: OutcomeSuggestionDecisionValue = requiredOneOf(
-          body.decision,
-          ["accept", "correct", "ignore"] as const,
-          "decision",
-        );
+        const body = OutcomeSuggestionDecisionRequestSchema.parse(args[1]);
+        const decision: OutcomeSuggestionDecisionValue = body.decision;
         const suggestion = requireById(draft.state.readModel.analytics.outcomes.suggestions, "suggestionId", suggestionId);
         const perJob = requireMapValue(draft.state.readModel.analytics.jobOutcomes, suggestion.jobKey);
         const perJobSuggestion = requireById(perJob.suggestions, "suggestionId", suggestionId);
+        const receiptKey = JSON.stringify([LOCAL_TENANT, suggestion.jobKey, suggestionId]);
+        const rawReceipts: unknown = draft.state.suggestionDecisionReceipts;
+        const receipts = isObjectRecord(rawReceipts) ? rawReceipts : null;
+        const invalidReceipts = rawReceipts !== undefined && receipts === null;
+        const receiptPresent = receipts !== null && Object.hasOwn(receipts, receiptKey);
+        const rawReceipt = receipts?.[receiptKey];
+        const receipt = isDemoSuggestionDecisionReceipt(rawReceipt) ? rawReceipt : null;
+        const refuse = (error: "outcome_suggestion_conflict" | "outcome_suggestion_replay_unverifiable", outcome: ApplicationOutcome | null): never => {
+          throw new JobCtrlApiError(409, "Conflict", undefined, { ok: false, error, suggestion, outcome });
+        };
         if (suggestion.status !== "pending") {
           const replayOutcome = suggestion.decidedOutcomeId
             ? draft.state.readModel.analytics.outcomes.outcomes.find((outcome) => outcome.outcomeId === suggestion.decidedOutcomeId) ?? null
             : null;
-          return { ok: true, suggestion, outcome: replayOutcome };
+          if (!receipt || !Number.isSafeInteger(receipt.eventSequence) || receipt.eventSequence < 1 ||
+              receipt.eventSequence > draft.lastEventSequence || receipt.event.decisionRequestVersion !== 2 ||
+              typeof receipt.event.occurredAtProvided !== "boolean") {
+            return refuse("outcome_suggestion_replay_unverifiable", replayOutcome);
+          }
+          const retainedEvent = draft.eventLog.find((entry) => entry.sequence === receipt.eventSequence);
+          const firstEventSequence = draft.eventLog[0]?.sequence;
+          const retainedEventValue = retainedEvent ? record(retainedEvent.event) : null;
+          if ((!retainedEvent && (firstEventSequence === undefined || receipt.eventSequence >= firstEventSequence)) ||
+              (retainedEventValue && (retainedEventValue["eventType"] !== "OutcomeSuggestionDecided" ||
+                !samePrivateValue(retainedEventValue["payload"], receipt.event)))) {
+            return refuse("outcome_suggestion_replay_unverifiable", replayOutcome);
+          }
+          const perJobOutcome = suggestion.decidedOutcomeId
+            ? perJob.outcomes.find((item) => item.outcomeId === suggestion.decidedOutcomeId) ?? null : null;
+          const savedRequest = OutcomeSuggestionDecisionRequestSchema.safeParse(receipt.request);
+          const provided = receipt.event.occurredAtProvided;
+          if (!samePrivateValue(receipt.fact, demoSuggestionDecisionFact(suggestion, replayOutcome)) ||
+              !samePrivateValue(receipt.fact, demoSuggestionDecisionFact(perJobSuggestion, perJobOutcome)) ||
+              !savedRequest.success || receipt.event.jobKey !== suggestion.jobKey || receipt.event.suggestionId !== suggestionId ||
+              receipt.event.evidenceId !== suggestion.evidenceId || receipt.event.decision !== savedRequest.data.decision ||
+              receipt.event.outcomeId !== suggestion.decidedOutcomeId || receipt.event.outcomeKind !== (replayOutcome?.kind ?? null) ||
+              receipt.event.notePresent !== Boolean(replayOutcome?.note) || receipt.event.reasonPresent !== Boolean(suggestion.decisionReason) ||
+              compareOutcomeSuggestionDecision(savedRequest.data, suggestion, replayOutcome, provided) !== "replayed") {
+            return refuse("outcome_suggestion_replay_unverifiable", replayOutcome);
+          }
+          const comparison = compareOutcomeSuggestionDecision(body, suggestion, replayOutcome, provided);
+          if (comparison === "replayed") return { ok: true, disposition: "replayed", suggestion, outcome: replayOutcome };
+          return refuse(comparison === "conflict" ? "outcome_suggestion_conflict" : "outcome_suggestion_replay_unverifiable", replayOutcome);
         }
+        if (invalidReceipts || receiptPresent || draft.eventLog.some((entry) => {
+          const event = record(entry.event);
+          const payload = record(event["payload"]);
+          return event["eventType"] === "OutcomeSuggestionDecided" && payload["suggestionId"] === suggestionId && payload["jobKey"] === suggestion.jobKey;
+        }) ||
+            suggestion.decidedAt !== null || suggestion.decisionReason !== null || suggestion.decidedOutcomeId !== null) {
+          return refuse("outcome_suggestion_replay_unverifiable", null);
+        }
+        const saveReceipt = (event: ReturnType<typeof createOutcomeSuggestionDecided>, outcome: ApplicationOutcome | null) => {
+          const receipts = draft.state.suggestionDecisionReceipts ??= {};
+          receipts[receiptKey] = {
+            request: structuredClone(body), fact: demoSuggestionDecisionFact(suggestion, outcome),
+            event: structuredClone(event.payload), eventSequence: draft.lastEventSequence + (outcome ? 2 : 1),
+          };
+          context.appendDomainEvent(atTime(event, now));
+        };
         suggestion.status = decision === "ignore" ? "ignored" : decision === "correct" ? "corrected" : "accepted";
         suggestion.decidedAt = now;
-        suggestion.decisionReason = stringValue(body.reason);
+        suggestion.decisionReason = body.reason ?? null;
         Object.assign(perJobSuggestion, suggestion);
         if (decision === "ignore") {
           recomputeDemoOutcomeProjections(draft);
-          context.appendDomainEvent(atTime(createOutcomeSuggestionDecided(LOCAL_TENANT, {
+          saveReceipt(createOutcomeSuggestionDecided(LOCAL_TENANT, {
             jobKey: suggestion.jobKey,
             suggestionId,
             evidenceId: suggestion.evidenceId,
@@ -1079,9 +1166,11 @@ export class DemoLocalCommandExecutor {
             outcomeId: null,
             outcomeKind: null,
             notePresent: stringValue(body.note) !== null,
-            reasonPresent: stringValue(body.reason) !== null,
-          }), now));
-          return { ok: true, suggestion, outcome: null };
+            reasonPresent: Boolean(body.reason),
+            decisionRequestVersion: 2,
+            occurredAtProvided: body.occurredAt !== undefined,
+          }), null);
+          return { ok: true, disposition: "applied", suggestion, outcome: null };
         }
         const outcome = {
           outcomeId: this.createId("outcome"),
@@ -1097,8 +1186,8 @@ export class DemoLocalCommandExecutor {
               )
             : suggestion.suggestedKind,
           source: "email_suggestion",
-          note: stringValue(body.note),
-          occurredAt: stringValue(body.occurredAt) ?? now,
+          note: body.note ?? null,
+          occurredAt: body.occurredAt ?? now,
           recordedAt: now,
           suggestionId,
           evidenceId: suggestion.evidenceId,
@@ -1118,19 +1207,21 @@ export class DemoLocalCommandExecutor {
           suggestionId: outcome.suggestionId,
           evidenceId: outcome.evidenceId,
           interviewPrepGeneration: outcome.interviewPrepGeneration,
-          notePresent: outcome.note !== null,
+          notePresent: Boolean(outcome.note),
         }), now));
-        context.appendDomainEvent(atTime(createOutcomeSuggestionDecided(LOCAL_TENANT, {
+        saveReceipt(createOutcomeSuggestionDecided(LOCAL_TENANT, {
           jobKey: suggestion.jobKey,
           suggestionId,
           evidenceId: suggestion.evidenceId,
           decision,
           outcomeId: outcome.outcomeId,
           outcomeKind: outcome.kind,
-          notePresent: outcome.note !== null,
-          reasonPresent: suggestion.decisionReason !== null,
-        }), now));
-        return { ok: true, suggestion, outcome };
+          notePresent: Boolean(outcome.note),
+          reasonPresent: Boolean(suggestion.decisionReason),
+          decisionRequestVersion: 2,
+          occurredAtProvided: body.occurredAt !== undefined,
+        }), outcome);
+        return { ok: true, disposition: "applied", suggestion, outcome };
       }
       case "deleteJob":
       case "restoreJob":

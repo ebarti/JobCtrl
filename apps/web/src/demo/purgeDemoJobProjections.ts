@@ -133,6 +133,25 @@ export function purgeDemoJobProjections(
       (suggestion) => suggestion.jobKey !== jobKey,
     );
   delete model.analytics.jobOutcomes[jobKey];
+  const rawReceipts: unknown = draft.state.suggestionDecisionReceipts;
+  if (rawReceipts && typeof rawReceipts === "object" && !Array.isArray(rawReceipts)) {
+    const receipts = rawReceipts as Record<string, unknown>;
+    for (const [key, receipt] of Object.entries(receipts)) {
+      let keyJob: unknown;
+      try {
+        const parts: unknown = JSON.parse(key);
+        if (Array.isArray(parts) && parts.length === 3 && parts[0] === "local" &&
+            typeof parts[1] === "string" && typeof parts[2] === "string") keyJob = parts[1];
+      } catch { /* Keep an unowned malformed receipt unless its fact identifies the job. */ }
+      const fact = receipt && typeof receipt === "object" && !Array.isArray(receipt)
+        ? (receipt as Record<string, unknown>)["fact"] : undefined;
+      const suggestion = fact && typeof fact === "object" && !Array.isArray(fact)
+        ? (fact as Record<string, unknown>)["suggestion"] : undefined;
+      const factJob = suggestion && typeof suggestion === "object" && !Array.isArray(suggestion)
+        ? (suggestion as Record<string, unknown>)["jobKey"] : undefined;
+      if (keyJob === jobKey || factJob === jobKey) delete receipts[key];
+    }
+  }
   const remainingJobKeys = new Set(
     model.jobs.list.items.map((item) => item.jobKey),
   );
