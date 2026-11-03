@@ -320,7 +320,17 @@ describe("BrowserPdfExportAdapter", () => {
         const clonedDocument =
           document.implementation.createHTMLDocument("PDF clone");
         clonedDocument.body.innerHTML = exportSource.outerHTML;
+        const annotated = clonedDocument.querySelector(".has-jobctrl-comment")!;
+        annotated.classList.add("___html2canvas___pseudoelement_before");
+        const copiedMarker = clonedDocument.createElement("html2canvaspseudoelement");
+        copiedMarker.setAttribute("data-test-comment-bar", "true");
+        annotated.prepend(copiedMarker);
+        const preservedDecoration = clonedDocument.createElement("html2canvaspseudoelement");
+        preservedDecoration.setAttribute("data-test-decoration", "true");
+        annotated.append(preservedDecoration);
         options.onclone(clonedDocument);
+        expect(clonedDocument.querySelector("[data-test-comment-bar]")).toBeNull();
+        expect(clonedDocument.querySelector("[data-test-decoration]")).not.toBeNull();
         expect(
           clonedDocument.documentElement.style.getPropertyValue(
             "background-color",

@@ -61,6 +61,8 @@ browser behavior, and visual consistency catch different failures.
   and retains the PDF,
   page images and measurements. The inputs are structural layout fixtures, not
   model-evaluation examples.
+  A review annotation on the heading must remain visible in the editor while
+  its copied pseudo-element is absent from the exported page's margin.
   `useApplyReviewSession.test.ts` owns tenant/job/material fences, independent
   comment/revision ordering, overlapping saves, stale cache publications,
   normalized acknowledgements and approval preparation.

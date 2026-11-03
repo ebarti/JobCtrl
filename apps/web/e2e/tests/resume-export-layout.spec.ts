@@ -46,7 +46,7 @@ for (const pageSize of ["a4", "letter"] as const) {
       company: `SyntheticCompany${index + 1}`, role: `SyntheticRole${index + 1}`,
       lines: markers.slice(index * 10, (index + 1) * 10),
     }));
-    const html = `<main class="resume-page"><h1 class="resume-name">Synthetic Layout Candidate</h1>
+    const html = `<main class="resume-page"><h1 class="resume-name has-jobctrl-comment" data-resume-line-number="1">Synthetic Layout Candidate</h1>
       <section class="resume-section"><h2 class="resume-section-title">Experience</h2>
       ${entries.map(entry => `<article class="resume-entry"><div class="resume-entry-heading"><span class="resume-entry-row resume-entry-company-row"><span class="resume-entry-company">${entry.company}</span><span class="resume-entry-location">Example City</span></span><span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">${entry.role}</span><span class="resume-entry-date">2020</span></span></div><ul class="resume-bullets">${entry.lines.map(marker => `<li>${marker}: Maintained an invented service and documented its operational improvements.</li>`).join("")}</ul></article>`).join("")}
       </section><section class="resume-section"><h2 class="resume-section-title">Education</h2>
@@ -58,6 +58,7 @@ for (const pageSize of ["a4", "letter"] as const) {
     await page.getByRole("button", { name: "Resume editor", exact: true }).click();
     const editor = page.getByRole("textbox", { name: "Baseline resume editor editor" });
     await expect(editor.getByText("Example University", { exact: true })).toBeVisible();
+    await expect(editor.locator(".resume-name")).toHaveClass(/has-jobctrl-comment/u);
     const education = await editor.locator(".resume-entry-education-row").evaluate(element => {
       const box = (selector: string) => {
         const target = element.querySelector(selector)!;

@@ -382,6 +382,13 @@ function preparePdfClone(clonedDocument: Document): void {
     source
       .querySelectorAll<HTMLElement>(`.${EDITOR_STATE_CLASSES.join(", .")}`)
       .forEach((element) => {
+        // html2canvas materializes ::before before invoking onclone. Removing
+        // the review class alone leaves its copied annotation bar in the PDF.
+        if (element.classList.contains("has-jobctrl-comment") &&
+            element.classList.contains("___html2canvas___pseudoelement_before") &&
+            element.firstElementChild?.tagName.toLowerCase() === "html2canvaspseudoelement") {
+          element.firstElementChild.remove();
+        }
         element.classList.remove(...EDITOR_STATE_CLASSES);
       });
   }
