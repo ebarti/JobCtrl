@@ -631,6 +631,10 @@ def _resolve_manual_capture_after_import(
          WHERE tenant_id = 'local'
            AND source_id = 'manual_url_import'
            AND status = 'pending'
+           AND CASE WHEN json_valid(retry_context_json) THEN
+                 json_type(retry_context_json, '$.manual_capture_draft') IS NULL
+                 AND json_type(retry_context_json, '$.manual_capture_legacy_owner') IS NULL
+               ELSE 0 END
            AND originating_url IN ({placeholders})
         """,
         (datetime.now(timezone.utc).isoformat(), job_id, *urls),

@@ -524,8 +524,9 @@ class CodexSdkBackend:
                     factory=factory, approval=approval, model=self.model, effort=effort,
                     prompt=combined, operation=operation,
                     output_schema=output_schema,
-                    record_usage=lambda input_tokens, output_tokens: record(
+                    record_usage=lambda input_tokens, output_tokens, unresolved_usage=None: record(
                         "", input_tokens=input_tokens, output_tokens=output_tokens,
+                        usage_observed=True, unresolved_usage=unresolved_usage,
                     ),
                     record_usage_details=lambda cached, reasoning: record(
                         "", cached_input_tokens=cached, reasoning_output_tokens=reasoning,
@@ -681,7 +682,9 @@ class GoogleSdkBackend:
             outcome = await call_antigravity_runtime(
                 factory=agent_factory, config=config_factory(**config_kwargs), types=types_module,
                 model=self.model, prompt=prompt, output_schema=response_schema,
-                record_usage=lambda i, o: record("", input_tokens=i, output_tokens=o),
+                record_usage=lambda i, o, unresolved_usage=None: record(
+                    "", input_tokens=i, output_tokens=o, unresolved_usage=unresolved_usage,
+                ),
             )
             input_tokens, output_tokens = _usage_from_metadata(outcome.usage)
             record("", input_tokens=input_tokens, output_tokens=output_tokens)

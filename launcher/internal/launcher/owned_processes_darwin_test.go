@@ -49,25 +49,51 @@ func registerVerifiedScopeChildCleanup(t *testing.T, ctx launchContext, pid int)
 func TestNativeOwnedProcessCensusIsInstanceBound(t *testing.T) {
 	ctx, _ := issue1275State(t, componentRecord{})
 	python := migrationIntegrationPython(t)
-	own := exec.Command(python, "-I", "-B", "-c", "import time; time.sleep(60)")
-	own.Env = ownedProcessEnvironment(ctx)
-	own.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := own.Start(); err != nil {
-		t.Fatal(err)
+	startChild := func(environment []string, separateGroup bool) *exec.Cmd {
+		t.Helper()
+		child := exec.Command(python, "-I", "-B", "-c", "import os,time; os.write(1,b'ready\\n'); time.sleep(60)")
+		child.Env = environment
+		child.SysProcAttr = &syscall.SysProcAttr{Setpgid: separateGroup}
+		stdout, err := child.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := child.Start(); err != nil {
+			_ = stdout.Close()
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait(); _ = stdout.Close() })
+		// Start returning does not establish that the interpreter reached its
+		// steady state. Census both live fixtures only after their explicit ack.
+		ready := make(chan error, 1)
+		go func() {
+			var marker [6]byte
+			_, err := io.ReadFull(stdout, marker[:])
+			if err == nil && string(marker[:]) != "ready\n" {
+				err = errors.New("unexpected synthetic child readiness marker")
+			}
+			ready <- err
+		}()
+		select {
+		case err := <-ready:
+			if err != nil {
+				t.Fatalf("synthetic child did not become ready: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("synthetic child readiness timed out")
+		}
+		return child
 	}
-	defer func() { _ = own.Process.Kill(); _ = own.Wait() }()
-	foreign := exec.Command(python, "-I", "-B", "-c", "import time; time.sleep(60)")
-	foreign.Env = []string{processOwnerVariable + "=another-instance"}
-	if err := foreign.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = foreign.Process.Kill(); _ = foreign.Wait() }()
+	own := startChild(ownedProcessEnvironment(ctx), true)
+	foreign := startChild([]string{processOwnerVariable + "=another-instance"}, false)
 	found, err := discoverOwnedProcesses(ctx, instanceState{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(found) != 1 || found[0].PID != own.Process.Pid {
-		t.Fatalf("wrong owned process census: %v", found)
+		direct, inspectionErr := readProcessOwnership(own.Process.Pid)
+		t.Fatalf("wrong owned process census: %v (original child live=%t, owner matches=%t, direct inspection=%v)",
+			found, processPIDAlive(own.Process.Pid), direct.owner == processOwner(ctx), inspectionErr)
 	}
 	if err := terminateOwnedProcesses(ctx, instanceState{}); err != nil {
 		t.Fatal(err)

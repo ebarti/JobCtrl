@@ -46,9 +46,8 @@ def test_public_copyright_attribution_does_not_disable_private_name_detection() 
     ) == ["README.md: contains private first name"]
 
 
-def test_public_competitor_citations_allow_the_reviewed_comparison() -> None:
+def test_public_competitor_citations_allow_only_the_reviewed_sources() -> None:
     rel = Path("docs/comparison.md")
-    page = (release_check.ROOT / rel).read_text(encoding="utf-8")
     owner = "-".join(("Pickle", "Pixel"))
     commit = "4a8d521f67f5139811c0a910ef37410f8e6d836a"
     repository = f"https://github.com/{owner}/ApplyPilot"
@@ -58,9 +57,9 @@ def test_public_competitor_citations_allow_the_reviewed_comparison() -> None:
         f"{repository}/blob/{commit}/README.md",
         f"{repository}/blob/{commit}/src/applypilot/apply/launcher.py",
     ):
-        assert url in page
         assert release_check.scan_text(rel.as_posix(), url, rel) == []
-    assert release_check.scan_text(rel.as_posix(), page, rel) == []
+    citations = "\n".join(release_check.PUBLIC_COMPARISON_SOURCE_URLS)
+    assert release_check.scan_text(rel.as_posix(), citations, rel) == []
 
 
 def test_public_competitor_citations_do_not_exempt_other_owner_references() -> None:

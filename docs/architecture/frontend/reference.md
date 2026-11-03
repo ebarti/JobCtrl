@@ -38,15 +38,15 @@ and roll back in `onError`. A patch that does not symmetrically reverse
 leaves the cache in an invalid state.
 
 **Mitigations:**
-- The `onMutate` patcher is a **pure function**; the rollback simply
-  restores the snapshot, never re-derives.
-- Mutation hooks have unit tests (§10.3) that assert: (a) the optimistic
-  shape after `onMutate`, (b) the rolled-back shape after `onError`,
-  (c) the reconciled shape after `onSettled` invalidates and refetches.
-- The standard pattern (snapshot → patch → rollback → invalidate) is
-  encoded in a small helper (`createOptimisticMutation` in
-  `shared/lib/`); per-mutation code provides only the patcher and the
-  affected key set, not the full ceremony.
+- Each `onMutate` patcher is a **pure function**. The shared helper removes a
+  failed operation and reapplies other overlapping mutation and partial cache
+  patches in order, while an independent canonical publication fences out older
+  rollback authority. A settlement defers refetching queries with pending writes
+  until they settle, because the read cannot identify which writes it includes.
+- Mutation tests assert the optimistic shape, ordinary rollback, concurrent
+  edits, newer publications and failed reconciliation, and targeted invalidation.
+- The helper (`createOptimisticMutation` in `shared/lib/`) owns the operation
+  ledger; each mutation supplies its patcher and affected key set.
 
 ### R3. SSE delivery gaps under reverse-proxy / CDN buffering
 
@@ -185,18 +185,17 @@ column renderers from every context) can dwarf others.
 
 ### R11. Wizard-store persistence corruption
 
-The resume-import wizard stores draft state in Zustand+persist
-(`localStorage`). A schema change to the draft shape between deploys
-can leave a half-completed wizard in an unparseable state.
+The resume-import wizard and review store use versioned transactional browser
+records. A schema change can leave an older record unreadable or allow a stale
+tab to act on an obsolete selection.
 
 **Mitigations:**
-- The Zustand `persist` middleware uses a `version` field; the version handler
-  discards the persisted state on schema change rather than attempting to
-  transform it (single-user app, the wizard is restartable).
-- The wizard's first step (`/profile/import/upload`) clears the store
-  on entry if `version` is stale.
-- The store's read path narrows the parsed shape with a Zod schema;
-  parse failures discard.
+- Transactional read/compare/write fences stale tabs and preserves prior bytes
+  on parse or write failure. Upload and review records use independent keys.
+- The older upload record remains separately recoverable. A review-envelope
+  version unknown to an older tab causes it to refuse the write.
+- A legacy review is retained for user-visible JSON recovery after resolution;
+  extraction changes are rebound to the original saved base before re-review.
 
 ### R12. JSON-RPC `runId` correlation gaps
 
@@ -293,7 +292,7 @@ first's reconciliation.
 | **Projection** | Operations | A denormalized read shape (e.g., `JobListProjection`) returned by the backend's projection-backed query layer. The frontend's Query cache stores projections; components consume them as `readonly` data. |
 | **QueryKeyFactory** | Frontend (Operations) | A per-context object (e.g., `jobsKeys`) whose methods produce hierarchical, tenant-prefixed query keys. Enables type-safe and surgical invalidation. |
 | **QueryKeyRegistry** | Frontend (Operations) | The `contexts/operations/queryKeys.ts` module that re-exports every context's factory, providing a single import surface for cross-context invalidation. |
-| **ResumeImportWizard** | Frontend (Profile) | The multi-step nested-route flow for importing a profile from a resume PDF. Step state persists in a Zustand+persist store. |
+| **ResumeImportWizard** | Frontend (Profile) | The multi-step nested-route flow for importing a profile from a resume PDF. Selection and review use separate transactional browser records. |
 | **RouteGuard** | Frontend (Routing, Future) | A wrapper (e.g., `<RequireAuth />`) applied to a route group to enforce session presence. Named-not-built; surfaces when `JwtSessionAdapter` ships. |
 | **SearchParamSchema** | Frontend (Routing) | The Zod schema declared on a route that types its URL search params. Inferred type drives `useSearch()`. |
 | **SessionPort** | Frontend (Hexagonal) | Port resolving `TenantId` and `UserId`. Local adapter returns `LOCAL_TENANT`; hosted adapter parses JWT. |
@@ -334,7 +333,7 @@ called out in the briefing (§6) with the resolution location:
 | 5 | Mutation invalidation strategy | **Hybrid:** optimistic for sync mutations, SSE-driven for async (202) | §8.3 |
 | 6 | Theme/density: context vs Zustand+persist | **Zustand+persist** as source of truth, context as ergonomic surface | §4.10 |
 | 7 | Profile preview pattern | **Plate editor fed by `/v1/profile/preview.html` keyed on a `cacheKey` derived from the profile mutation count** | §4.4.4 |
-| 8 | Resume import wizard: TanStack Form / Zustand wizard / nested route | **Nested route** for steps; **Zustand+persist** for draft state | §4.4.4 |
+| 8 | Resume import wizard: TanStack Form / Zustand wizard / nested route | **Nested route** for steps; **Zustand with transactional browser storage** for selection and review | §4.4.4 |
 | 9 | SSE consumer: `setQueryData` vs `invalidateQueries` | **Hybrid:** `invalidateQueries` by default; `setQueryData` only for high-frequency `ApplyRunEventRecorded` | §7.5 |
 | 10 | Tenant-scoping in query keys | **Always tenant-first** (`["tenant", tenantId, ...]`); use `LOCAL_TENANT` from `@jobctrl/domain-types` in local mode | §4.1 |
 | 11 | Error handling: global vs per-query | **Three layers:** global `QueryCache.onError` → toast; per-mutation `onError`; route error boundaries | §4.11 |

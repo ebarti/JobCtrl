@@ -115,6 +115,8 @@ import type {
   ManualCaptureDismissRequest,
   ManualCaptureDismissResponse,
   ManualCaptureImportRequest,
+  ManualCaptureSupersedeResponse,
+  ManualCapturePrepareResponse,
   ManualCaptureImportResponse,
   ManualCaptureListResponse,
   ManualApplicationOutcomeRequest,
@@ -185,19 +187,19 @@ export interface ApiHealthResponse {
   dbExists: boolean;
   dbIdentity: string | null;
   llmSpend: {
-    status: "ok" | "over_budget";
+    status: "ok" | "over_budget" | "incomplete";
     day: string;
-    inputTokens: number;
-    outputTokens: number;
-    estimatedUsd: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    estimatedUsd: number | null;
     dailyBudgetUsd: number;
     remainingUsd: number | null;
     unlimited: boolean;
     lanes: Record<LlmLane, {
-      status: "ok" | "over_budget";
-      inputTokens: number;
-      outputTokens: number;
-      totalTokens: number;
+      status: "ok" | "over_budget" | "incomplete";
+      inputTokens: number | null;
+      outputTokens: number | null;
+      totalTokens: number | null;
       tokenLimit: number;
       remainingTokens: number | null;
       unlimited: boolean;
@@ -270,6 +272,8 @@ export interface ApiClientPort extends EndpointClientMethods {
     body: QuarantineDecision,
   ): Promise<QuarantineDecisionResponse>;
   manualCaptureQueue(): Promise<ManualCaptureListResponse>;
+  supersedeManualCapture(itemId: string, expectedLifecycleId: string): Promise<ManualCaptureSupersedeResponse>;
+  prepareManualCapture(itemId: string, body: ManualCaptureImportRequest): Promise<ManualCapturePrepareResponse>;
   importJobUrl(body: JobUrlImportRequest): Promise<JobUrlImportResponse>;
   jobUrlImportStatus(execution: JobUrlImportExecution): Promise<JobUrlImportStatusResponse>;
   importManualCapture(

@@ -11,6 +11,7 @@ from typing import Any
 from jobctrl.database import close_connection, init_db
 from jobctrl.infrastructure.discovery.production_wiring import (
     ManualCaptureImport,
+    ManualCaptureStateChanged,
     import_manual_capture_item,
 )
 
@@ -67,6 +68,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         finally:
             close_connection(db_path)
+    except ManualCaptureStateChanged:
+        print("This capture changed or is owned by a supervised attempt. Review and retry it in Discovery's Manual Capture queue.", file=sys.stderr)
+        return 2
     except Exception as exc:
         print(str(exc), file=sys.stderr)
         return 2

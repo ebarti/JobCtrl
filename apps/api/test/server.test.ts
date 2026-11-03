@@ -3,10 +3,12 @@ import { workflowRpcFixture } from "./rpc-workflow-fixture.js";
 import { createActionDispatcher } from "../src/local-actions.js";
 import { recordArtifactAuthority, recordCompensationAuthority, recordRoleFeedback } from "./semantic-fixtures.js";
 import { recordCoachingDecision, recordCandidateProposal } from "./semantic-fixtures.js";
+import { recordImportAttempt, recordResumeExtraction } from "./profile-import-fixtures.js";
 import { seedApplicationUrl } from "./seed-enrichment.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createRetryFixturePythonRuntime } from "./retry-rpc-runtime.js";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -132,6 +134,15 @@ function profileWithTargetSearch(fullName: string, location: string, workModel: 
   };
 }
 
+async function selectRemoteCompatibleSearch(app: ReturnType<typeof buildApp>): Promise<void> {
+  // These tests exercise Profile/suggestion behavior after a supported save.
+  // First-use Indeed/lookback defaults deliberately reject a new Remote target.
+  const response = await app.inject({
+    method: "PATCH", url: "/v1/discovery/settings", payload: { boards: ["linkedin"] },
+  });
+  expect(response.statusCode, response.body).toBe(200);
+}
+
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -159,14 +170,14 @@ beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-"));
   enrichmentRetryRpc = new SubprocessJsonRpcAdapter({
     appDir: tempDir,
-    pythonRuntime: createSourcePythonRuntime({ environment: { ...process.env, LANGFUSE_DISABLE: "1" } }),
+    pythonRuntime: createRetryFixturePythonRuntime(),
   });
   options = {
     dbPath: path.join(tempDir, "jobctrl.db"),
     configPath: path.join(tempDir, "config.json"),
     providerDispatcher: {
       call: vi.fn(async (method, params) => {
-        if (method === RpcMethods.ResetEnrichment) return enrichmentRetryRpc.call(method, params);
+        if (method === RpcMethods.ResetEnrichment || method === RpcMethods.ResetStages) return enrichmentRetryRpc.call(method, params);
         if (method !== "browser_capabilities_list") throw new Error(`Unexpected provider RPC in API fixture: ${method}`);
         return { jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } };
       }),
@@ -8288,7 +8299,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       count: 1,
-      jobKeys: ["https://example.com/jobs/failed-score"],
+      jobKeys: [jobIdFor("https://example.com/jobs/failed-score")],
     });
 
     const db = new Database(options.dbPath);
@@ -8353,7 +8364,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       count: 2,
-      jobKeys: ["https://example.com/jobs/failed-score", secondFailedUrl],
+      jobKeys: [jobIdFor("https://example.com/jobs/failed-score"), jobIdFor(secondFailedUrl)],
       stageCounts: { score: 2 },
       runAfter: true,
       status: "queued",
@@ -8757,7 +8768,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       count: 1,
-      jobKeys: [jobUrl],
+      jobKeys: [jobIdFor(jobUrl)],
     });
 
     const db = new Database(options.dbPath);
@@ -9040,7 +9051,7 @@ describe("local TypeScript API", () => {
     const response = await app.inject({
       method: "POST",
       url: stage === "discover" ? "/v1/pipeline/actions/run-stage" : `/v1/jobs/${jobIdFor(jobUrl)}/actions/run-stage`,
-      payload: stage === "discover" ? { stages: ["discover"], dryRun: true } : { stage: "enrich" },
+      payload: stage === "discover" ? { stages: ["discover"], dryRun: false } : { stage: "enrich" },
     });
     expect(response.statusCode, response.body).toBe(202);
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ stage }), expect.anything());
@@ -9051,7 +9062,7 @@ describe("local TypeScript API", () => {
     const dispatch = vi.fn(async () => ({ status: "queued" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch, requireHealthyWorkerForActions: true });
     const response = await app.inject({
-      method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], dryRun: true },
+      method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], dryRun: false },
     });
     expect(response.statusCode, response.body).toBe(503);
     expect(response.json()).toMatchObject({ error: "worker_runtime_unavailable" });
@@ -10763,6 +10774,7 @@ describe("local TypeScript API", () => {
       placeValidator: async (place) => place === "Barcelona",
       providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
     });
+    await selectRemoteCompatibleSearch(app);
     const initial = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
@@ -10814,6 +10826,7 @@ describe("local TypeScript API", () => {
     async () => {
       const placeValidator = vi.fn(async (place: string) => place === "Barcelona");
       const seedApp = buildApp({ ...options, placeValidator });
+      await selectRemoteCompatibleSearch(seedApp);
       const seeded = await seedApp.inject({
         method: "PATCH",
         url: "/v1/profile",
@@ -10884,12 +10897,14 @@ describe("local TypeScript API", () => {
   );
 
   it("atomically rejects stale suggestion saves without a profile event", async () => {
-    const app = buildApp(options);
+    const app = buildApp({ ...options, placeValidator: async (place) => place === "Barcelona" });
+    await selectRemoteCompatibleSearch(app);
     const initial = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
       payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
     });
+    expect(initial.statusCode, initial.body).toBe(200);
     const version = initial.json().profileVersion as number;
     const beforeDb = new Database(options.dbPath, { readonly: true });
     const beforeEvents = beforeDb.prepare(
@@ -10936,13 +10951,16 @@ describe("local TypeScript API", () => {
     const providerCall = vi.fn(() => pending.promise);
     const app = buildApp({
       ...options,
+      placeValidator: async (place) => place === "Barcelona",
       providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
     });
+    await selectRemoteCompatibleSearch(app);
     const initial = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
       payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
     });
+    expect(initial.statusCode, initial.body).toBe(200);
     const version = initial.json().profileVersion as number;
     expect(providerCall).not.toHaveBeenCalled();
     const suggestionResponse = app.inject({
@@ -11243,6 +11261,7 @@ describe("local TypeScript API", () => {
   it("validates target-search locations before saving profile preferences", async () => {
     const placeValidator = vi.fn(async (place: string) => place === "Austin, TX");
     const app = buildApp({ ...options, placeValidator });
+    await selectRemoteCompatibleSearch(app);
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
@@ -11498,12 +11517,17 @@ describe("local TypeScript API", () => {
   });
 
   it("imports resume PDFs through an injected profile importer without running Python in tests", async () => {
-    const importer = vi.fn(async (input) => ({
-      profile: { personal: { full_name: "Imported Candidate" } },
-      style: { font_family: "imported" },
-      templateText: INERT_RESUME_TEMPLATE,
-      source: { filename: input.filename, bytes: input.pdfBytes.length },
-    }));
+    const fixtureDb = new Database(options.dbPath);
+    const determinationId = recordResumeExtraction(fixtureDb, { full_name: "Imported Candidate" });
+    fixtureDb.close();
+    const importer = vi.fn(async (input) => {
+      const db = new Database(options.dbPath);
+      try { return {
+        profile: { personal: { full_name: "Imported Candidate" } },
+        style: { font_family: "roman" }, templateText: INERT_RESUME_TEMPLATE,
+        source: recordImportAttempt(db, input, determinationId, { font_family: "roman" }),
+      }; } finally { db.close(); }
+    });
     const app = buildApp({ ...options, profileImporter: importer });
     const response = await app.inject({
       method: "POST",
@@ -11520,7 +11544,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       profile: { personal: { full_name: "Imported Candidate" } },
-      style: { font_family: "imported" },
+      style: { font_family: "roman" },
       source: { filename: "resume.pdf", bytes: 9 },
     });
     expect(importer).toHaveBeenCalledWith(
@@ -14464,7 +14488,7 @@ describe("enforcing route to registered worker handoffs", () => {
     const observations: unknown[] = [];
     try {
       const sourceIds = ["jobspy:linkedin", "jobspy:indeed"];
-      const response = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds, workers: 2, limit: 25 } });
+      const response = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds, workers: 2, limit: 25, dryRun: false } });
       observations.push({ status: response.statusCode, body: response.json() });
       expect(response.statusCode, response.body).toBe(202);
       expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params: { sourceIds } } });
@@ -14486,7 +14510,7 @@ describe("enforcing route to registered worker handoffs", () => {
       observations.push({ transmittedBeforeInvalidInputs: transmittedRequests, transmittedAfterInvalidInputs: fixture.rows().filter(row => row.kind === "request").length });
       expect(fixture.rows().filter(row => row.kind === "start")).toHaveLength(1);
       fixture.mode("invalid_ack");
-      const malformed = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds } });
+      const malformed = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds, dryRun: false } });
       observations.push({ malformedAckStatus: malformed.statusCode, body: malformed.json() });
       expect(malformed.statusCode).toBeGreaterThanOrEqual(500);
     } finally { fixture.retain("discover", observations); await app.close(); await fixture.adapter.close(); }

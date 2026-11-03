@@ -210,6 +210,17 @@ API worker-heartbeat health. Each canonical `JOBCTRL_DIR` has one locked runtime
 registry. Records bind its instance, payload, manifest, PID/start identities,
 process groups and execution scope.
 
+Each Temporal health command runs in its own receipt-bound native execution
+scope, with a three-second host deadline and a bounded diagnostic buffer. The
+startup phase's remaining deadline and shutdown signals also cancel the probe.
+The helper verifies and drains that scope's descendants even if they detach;
+the running Temporal service and other instances remain outside its authority.
+Status marks a live Temporal process unhealthy when its probe fails or times
+out and reports the bounded diagnostic. Unverified probe cleanup fails the
+status command and retains any unverified ownership receipt for inspection and stop. A
+legacy v6 quiescence proof probes the verified old Temporal payload through
+the separately authenticated current controller.
+
 Runtime starts and Python CLI commands execute inside uniquely labeled,
 ephemeral per-user launchd jobs. The launcher records the kernel resource and
 jetsam coalition IDs in a private instance receipt **before authorizing work**.
@@ -265,10 +276,14 @@ ownership. The [QA matrix](../local-reliability-qa.md) requires detached platfor
 and writer cases, other-instance preservation, ordered cancellation, actual
 process interruption, paired readback and restart.
 
-The distribution smoke runs native controllers outside Seatbelt so launchd can
-establish the jobs, while the exact internal QA selector applies the compiled
-loopback-only sandbox to the authenticated helper and all payload descendants.
-Actual native Python dispatch proves loopback access and non-loopback `EPERM`.
+The distribution smoke keeps authenticated native helpers, launchers and
+supervisors outside Seatbelt so they can establish launchd jobs, including each
+health probe's fresh owned scope. The exact internal QA selector applies the
+compiled loopback-only and Keychain-denying profile at every payload dispatch:
+components, source shells, Python CLI/Apply, probes and migration/backup Python.
+Payload descendants inherit that restriction; a nested native caller cannot
+escape an inherited sandbox. Actual compiled startup/status/restart and native
+Python dispatch prove loopback access, non-loopback `EPERM` and credential denial.
 Direct extracted Python/Node/Temporal/MCP smoke subprocesses keep their existing
 sandbox. Signed/notarized artifact and clean-machine qualification remain
 release/first-use gates, separately from synthetic source proof.
@@ -333,6 +348,20 @@ candidate, and activates it in place. A source journal fences installed writers
 until recovery finishes; retries take a fresh stopped-pair backup instead of
 restoring old data. A locally trusted checkout does not impersonate a signed
 release. Unverified older source processes are not migration authority.
+
+The source shell's component records also bind a private per-launch control
+endpoint. A small launch owner retains the original `Popen` and unreaped child
+identity; status and stop authenticate that owner before requesting cleanup.
+Stop clients serialize each component's initial read, request and receipt
+retirement under a separate operation lock. The owner's publication lock stays
+available while that operation waits for verified cleanup.
+The existing original-child/session ownership helper performs termination. No
+recovered PID is signalled, so a birth check followed by a numeric signal is not
+used as cross-process authority. Legacy, changed or unreachable records remain
+unverified and block automatic replacement. An explicit `scripts/dev forget`
+retires only reviewed metadata, without signalling or certifying earlier exit.
+Lost ownership or unverified descendant cleanup remains a visible source-mode
+failure; it does not require a reboot or weaken the native workspace scope.
 
 The current runtime admits only exact schema v15. A stopped v6 database retains
 the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8

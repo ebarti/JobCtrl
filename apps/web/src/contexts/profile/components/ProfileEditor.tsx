@@ -11,6 +11,7 @@ import {
   type ResumePlateSemanticTextChange,
 } from "../../materials/components/ResumeAuditPins.js";
 import { ProfileForm, type ProfilePlateTextController } from "../forms/profile-form.js";
+import { ProfileImportReview } from "./ProfileImportReview.js";
 import type { ProfileConfigResponse } from "@jobctrl/contracts";
 import { useProfileHtmlPreviewUrl } from "../hooks/useProfileHtmlPreviewUrl.js";
 import { useProfileQuery } from "../hooks/useProfileQuery.js";
@@ -194,6 +195,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
 
   return (
     <div className="profile-workspace">
+      <ProfileImportReview />
       <p className="muted" role="note">
         Profile edits are saved without rescoring jobs or regenerating materials. Jobs show when your profile changed since scoring. Request a score update to check whether those edits affect that job.
       </p>

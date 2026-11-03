@@ -34,7 +34,7 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import nullcontext
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -86,6 +86,7 @@ from jobctrl.infrastructure.discovery.live_browser import (
     LiveBrowserResult,
     LiveBrowserTaskError,
     LiveChromeDiscoveryClient,
+    trusted_live_browser_url,
     prefer_live_browser,
 )
 from jobctrl.infrastructure.enrichment.sqlite_repository import (
@@ -1606,7 +1607,8 @@ def scrape_site_batch(
         live_browser = prefer_live_browser(live_browser, cancel_event=cancel_event)
 
     try:
-        with nullcontext(None) if live_browser is not None else sync_playwright() as p:
+        with ExitStack() as browser_contexts:
+            p = browser_contexts.enter_context(sync_playwright()) if live_browser is None else None
             browser = None
             resolver: LinkedInApplyUrlResolver | None = None
             authenticated_page = None
@@ -1630,9 +1632,11 @@ def scrape_site_batch(
             )
 
             def _ensure_anonymous_page():
-                nonlocal browser, anonymous_page
+                nonlocal browser, anonymous_page, p
                 if anonymous_page is not None:
                     return anonymous_page
+                if p is None:
+                    p = browser_contexts.enter_context(sync_playwright())
                 launch_opts: dict = {"headless": True}
                 if _PROXY_CONFIG is not None:
                     launch_opts["proxy"] = _PROXY_CONFIG.playwright
@@ -1644,10 +1648,11 @@ def scrape_site_batch(
             def _page_and_session_for(url: str) -> tuple[object, PolitenessSession, object | None]:
                 nonlocal resolver, authenticated_page, owner_authenticated_session
                 if live_browser is not None:
-                    if _is_linkedin_job(site, url):
+                    if trusted_live_browser_url(url) and _is_linkedin_job(site, url):
                         assert owner_authenticated_session is not None
                         return None, owner_authenticated_session, None
-                    return None, anonymous_session, None
+                    if trusted_live_browser_url(url):
+                        return None, anonymous_session, None
                 if (
                     discovery_execution is None
                     and resolver is None
@@ -1812,7 +1817,7 @@ def scrape_site_batch(
                         started_at=started_at,
                     )
 
-                    if live_browser is None:
+                    if live_browser is None or not trusted_live_browser_url(url):
                         scraped = scrape_detail_page(
                             page,
                             url,

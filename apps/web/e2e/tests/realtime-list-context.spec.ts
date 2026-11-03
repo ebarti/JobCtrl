@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
-import { loadE2eDbPath } from "../fixtures/e2e-state.js";
+import { loadE2eDbPath, refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
 
 const PREFIX = "qa-cache-890-";
 const COMPANY = "Cache Context Labs";
@@ -10,6 +10,7 @@ test("JobUpdated patches a filtered second page without losing selection, order 
   page,
   request,
 }, testInfo) => {
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") refreshE2eWorkerHeartbeat();
   const db = new Database(loadE2eDbPath());
   db.pragma("foreign_keys = ON");
   const seededJobIds: string[] = [];
@@ -167,6 +168,11 @@ test("JobUpdated patches a filtered second page without losing selection, order 
     await expect(updated).toBeChecked();
     expect(page.url()).toBe(urlBefore);
     expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+  } catch (error) {
+    // A cleanup request can also fail when Playwright exhausts the test budget.
+    // Retain the original assertion or request error in the CI log.
+    console.error("Realtime assertions failed before fixture cleanup:", error);
+    throw error;
   } finally {
     try {
       // Other specs share this disposable workspace. Remove our canonical rows

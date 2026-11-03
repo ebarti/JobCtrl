@@ -607,8 +607,8 @@ changes geometry, not typography.
 - **Toast queue** — `useToastStore()` exposes `toast({ ... })` callable
   from anywhere (mutation `onError` handlers, hook callbacks); the
   `<Toaster />` (shadcn) subscribes.
-- **Resume-import wizard draft** — see §4.4.4 (Profile context); persisted
-  to `jh:profile-import`.
+- **Resume-import wizard selection and review** — see §4.4.4 (Profile context);
+  separate versioned records use transactional browser storage.
 - **Pipeline stage-trigger config** — per-stage run parameters for the
   dashboard / Pipelines `<StageTriggerPanel>` (limit, workers, minScore,
   validationMode, `dryRun` defaulting to **true**, model, …); persisted to

@@ -73,7 +73,7 @@ func compatibleForwardRollbackPair(ctx launchContext, journal release.Journal, a
 		return refuse()
 	}
 	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
-	if version, err := sqliteUserVersion(python, filepath.Join(dir, "jobctrl.db")); err != nil || version != 15 {
+	if version, err := sqliteUserVersion(python, filepath.Join(dir, "jobctrl.db"), ctx.Environment); err != nil || version != 15 {
 		return refuse()
 	}
 	return pair, nil

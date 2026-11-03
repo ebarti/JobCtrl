@@ -271,11 +271,36 @@ corepack pnpm dev:logs worker
 scripts/dev list
 ```
 
-`corepack pnpm dev:status` reports tracked PID liveness separately from health.
+`corepack pnpm dev:status` reports authenticated source-launch ownership separately
+from health. Each component's launch owner retains its original child handle;
+status and stop authenticate that same launch through a private local endpoint.
+A PID file alone never grants signal authority. `unverified` means a legacy,
+malformed, changed or unreachable launch record could not establish ownership.
+Stop and replacement then fail visibly and preserve the records and processes.
 The API row can show `migration`, `incompatible`, `healthy`, or `unknown` when
 its watcher is alive. `unknown` means the health probe did not establish a
 result; it does not prove the process is down. When the worker process is alive
 but its heartbeat is stale, the worker row reports `stale`.
+
+After reviewing an unverifiable earlier process, retire only its local metadata
+with an explicit component name, for example:
+
+```bash
+scripts/dev forget docs
+```
+
+This command never signals a process or removes logs or workspace data. It
+refuses an authenticated live owner, which must be stopped normally first.
+Forgetting an unreachable record does not prove its earlier processes exited;
+review those processes and any occupied bindings before starting a replacement.
+No reboot is required. Successful managed stop and ordinary start/restart keep
+their existing commands.
+
+Source cleanup uses the existing original-child/session ownership helper. If
+the original owner is lost, a child changes ownership, or descendant exit cannot
+be verified, cleanup remains a reported failure rather than recovering signal
+authority from a PID or process-group number. This source-only recovery is best
+effort; the macOS workspace scope remains the stronger database-writer boundary.
 
 For a detached background stack in a normal shell, use the explicit daemon mode:
 
@@ -575,8 +600,13 @@ combined runners caused contention and timeouts in hosted trials:
 - **Browser / UI checks** calls the same frontend recipe with only E2E enabled,
   retaining isolated and real-RPC modes on a separate VM.
 
-Missing policy at first adoption, unknown paths, shared dependencies, CI or
-privacy inputs, and uncertain scope select full coverage or block verification.
+Missing policy at first adoption, unknown paths, shared contracts and toolchains,
+central CI/privacy inputs, and uncertain scope select full coverage or block verification.
+Exact owned Python dependencies, native Go implementation files, and individual
+platform/frontend/backend recipes select all their consumers. New scripts and
+workflows remain full until their ownership is explicitly reviewed. Root Markdown
+guides select documentation checks; the accepted whole-candidate privacy scan
+still runs before any candidate code.
 Forks, stacked bases outside the default branch and moving policy bases use
 full coverage. A suite runs unless trusted admission explicitly excludes it;
 missing outputs cannot silently omit one. The scope notice records the source,
@@ -590,7 +620,11 @@ jobs, including literal skipped platform jobs; there is no final summary runner.
 | Web source | Web lint/types/unit/build, Storybook/browser controls and both web E2E modes |
 | API source | API checks/tests and web E2E, including real worker RPC |
 | Worker source | API/RPC integration, the full worker suite on Python 3.12 and two native launcher shards |
-| Shared contracts, locks, toolchains, CI, privacy or unknown inputs | Full validation, including platform-specific proof |
+| Python manifest/lock | API/RPC, full worker, native shards, three credential platforms, Windows Gmail ACL and distribution contracts; no unrelated web/Storybook/site/extension checks |
+| Native Go implementation | API/RPC, full worker, both native shards and distribution contracts |
+| Native credential recipe/harness | API, full worker and all three native credential platforms |
+| Individual shared backend/frontend recipe | Every consumer profile of that recipe |
+| Shared contracts, Node/Go locks and toolchains, central CI/privacy or unknown inputs | Full validation, including platform-specific proof |
 
 Each frontend worker runs one profile at a time. Web checks, supporting UI
 checks and E2E have separate VMs; compiler, accessibility and browser-heavy
@@ -600,6 +634,21 @@ diagnostics after a failure. The role-named `frontend-lanes` artifacts retain
 logs and per-command outcomes. Both E2E modes retain separate JUnit and
 screenshot evidence. Resource logs record available CPUs and memory for timing
 comparisons.
+
+`corepack pnpm scripts:test` runs regular repository tests in parallel, then
+runs the source-supervisor lifecycle suite after those test processes exit.
+Lifecycle cleanup requires a stable process census; separating the phases keeps
+other fixtures' process churn from invalidating that verification. Every test
+and the existing cleanup deadlines remain in effect.
+
+`corepack pnpm api:test` likewise finishes the other API files before running
+`dev-launcher-contract.test.ts`. Those launcher fixtures use the actual
+authenticated source owner and preserve failed cleanup records; they do not
+derive signal authority from recorded numeric PIDs.
+
+Native shard 0 also runs the complete source-supervisor lifecycle in an owned
+offline macOS workspace with Python 3.14.4. The manual repository-scripts
+workflow uses the same ordered Linux entry point.
 
 The web profile keeps the original lint, types, unit, public-type and production
 build sequence. Browser installation is selected only for profiles that need it
@@ -663,12 +712,13 @@ change until they are 30 days old; see the
 
 Python CI syncs `workers/automation/uv.lock` with `--locked --all-extras`; it
 must never resolve the floating ranges in `pyproject.toml` in place of the
-locked candidate graph. The full worker suite runs with two pytest-xdist
-processes and `--dist=loadfile`, keeping a file's fixtures in one process while
+locked candidate graph. Hosted worker verification uses four pytest-xdist
+processes on the observed four-CPU, 16-GiB Ubuntu runner; local aggregate commands
+keep two processes. Both use `--dist=loadfile`, keeping a file's fixtures in one process while
 independent files overlap. Each process owns its temporary JobCtrl workspace.
 `--max-worker-restart=0` makes a crashed or timed-out worker fail the run without
-an automatic restart. `corepack pnpm python:test` and the full worker recipe use
-the same settings and pass `workers/automation/tests` explicitly so pytest loads
+an automatic restart. `corepack pnpm python:test` and the full worker recipe
+pass `workers/automation/tests` explicitly so pytest loads
 the worker's configuration. Focused pytest commands stay serial unless the
 caller requests workers; do not pay process startup for a single small file.
 Ephemeral Temporal test environments must start and
@@ -798,7 +848,9 @@ The extracted-payload smoke runs the real API, JSON-RPC, Temporal workflow,
 worker activities and SQLite persistence without provider credentials. Its
 private worker bootstrap supplies explicit page-interpretation and description
 quality model choices through `LlmPort`; normal spend preflight, source/citation
-validation and determination persistence still execute. The bootstrap is passed
+validation and determination persistence still execute. Smoke processes run
+inside a loopback-only QA sandbox that also denies macOS Keychain files,
+security-service lookups and native credential-command execution. The bootstrap is passed
 as test code outside the immutable payload and is never installed or selected
 by product configuration. The resulting `semanticModel` evidence identifies
 the synthetic boundary. This proves capture plumbing and restart preservation,
@@ -1258,8 +1310,11 @@ Native launcher tests use temporary same-user launchd jobs and private ownership
 receipts. They need access to the per-user launchd domain and native process
 inspection; an outer tool sandbox can deny those probes without proving a
 service is absent. Keep HOME, JOBCTRL_DIR and runtime paths synthetic. The
-bundled smoke applies its fixed loopback restriction inside the job helper via
-`JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1`; unknown selector values fail.
+bundled smoke keeps native launchd control outside Seatbelt and applies its
+fixed network and Keychain restriction at each authenticated payload dispatch
+via `JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1`; unknown selectors fail.
+Components, source shells, Python CLI/Apply, probes and migration/backup Python
+all use that boundary. A caller already inside a sandbox cannot remove it.
 The actual native CPython network test and independent direct-runtime sandbox
 checks must both execute. No arbitrary sandbox profile or ownership bypass is
 accepted from the environment.

@@ -46,7 +46,7 @@ def build_profile_repository(
         conn,
         publisher=publisher or get_default_publisher(),
         candidate_interpreter=PersistedCandidateInterpreter(conn, tenant_id="local"),
-        pdf_parser=PyPdfProfileParser(dependencies=determination_dependencies(conn, tenant_id="local", lane="profile")),
+        pdf_parser=PyPdfProfileParser(connection=conn, dependencies=determination_dependencies(conn, tenant_id="local", lane="profile")),
     )
 
 

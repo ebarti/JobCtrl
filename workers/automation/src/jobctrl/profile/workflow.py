@@ -31,6 +31,7 @@ class ProfileImportWorkflowInput:
     expected_db_path: str | None = None
     import_profile: bool = True
     import_style: bool = True
+    attempt_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,7 @@ class ProfileImportWorkflow:
                     expected_db_path=payload.expected_db_path,
                     import_profile=payload.import_profile,
                     import_style=payload.import_style,
+                    attempt_id=payload.attempt_id,
                 ),
                 start_to_close_timeout=_DEFAULT_TIMEOUT,
                 retry_policy=_PROFILE_IMPORT_RETRY,

@@ -352,7 +352,11 @@ async def test_cancellation_before_terminal_does_not_invent_usage(isolated_sdk):
 
 
 @pytest.mark.asyncio
-async def test_cancellation_survives_usage_ledger_failure(monkeypatch, caplog, isolated_sdk):
+async def test_cancellation_survives_usage_ledger_failure(monkeypatch, caplog, isolated_sdk, tmp_path):
+    import jobctrl.database as database
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved, require_resolved_spend
+
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "jobctrl.db")
     observed, cleaning, release = Event(), Event(), Event()
     query = _query_blocked_after_terminal(_result(subtype="error_max_budget_usd"), observed, cleaning, release)
     def failed_ledger(**_values):
@@ -375,8 +379,82 @@ async def test_cancellation_survives_usage_ledger_failure(monkeypatch, caplog, i
             if not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-    assert "Could not record observed Claude usage after cancellation" in caplog.text
+    with pytest.raises(SpendAccountingUnresolved):
+        require_resolved_spend()
     assert CANARY not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_preterminal_assistant_usage_survives_stream_failure(cancel, isolated_sdk):
+    from claude_agent_sdk import AssistantMessage
+
+    error = asyncio.CancelledError("synthetic-cancel") if cancel else OSError("synthetic stream failure")
+
+    def query(*, prompt, options):
+        async def stream():
+            yield AssistantMessage(content=[], model=MODEL, message_id="synthetic-message",
+                                   usage={"input_tokens": 11, "output_tokens": 7})
+            raise error
+        return stream()
+
+    backend = ClaudeSdkBackend(model=MODEL, query_fn=query, options_factory=_options)
+    with bind_llm_lane("tailoring"), pytest.raises(asyncio.CancelledError if cancel else ProviderCallError) as raised:
+        await backend._call([{"role": "user", "content": "synthetic"}], response_schema=None,
+                            temperature=None, max_tokens=None, thinking_budget=None)
+    if cancel:
+        assert raised.value is error
+    assert len(isolated_sdk) == 1
+    assert (isolated_sdk[0]["input_tokens"], isolated_sdk[0]["output_tokens"]) == (11, 7)
+    assert isolated_sdk[0]["lane"] == "tailoring"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message_id", [None, "same-message"])
+async def test_ambiguous_assistant_receipts_remain_unresolved_without_inventing_a_total(
+    monkeypatch, tmp_path, isolated_sdk, message_id,
+):
+    import json
+    import jobctrl.database as database
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved, require_resolved_spend
+
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "jobctrl.db")
+
+    def query(*, prompt, options):
+        async def stream():
+            for count in (11, 17):
+                yield AssistantMessage(content=[], model=MODEL, message_id=message_id,
+                                       usage={"input_tokens": count, "output_tokens": 7})
+            raise OSError("synthetic stream failure")
+        return stream()
+
+    backend = ClaudeSdkBackend(model=MODEL, query_fn=query, options_factory=_options)
+    with bind_llm_lane("tailoring"), pytest.raises(ProviderCallError):
+        await backend._call([{"role": "user", "content": "synthetic"}], response_schema=None,
+                            temperature=None, max_tokens=None, thinking_budget=None)
+    assert isolated_sdk == []
+    with pytest.raises(SpendAccountingUnresolved):
+        require_resolved_spend()
+    files = list((tmp_path / ".jobctrl.db.llm-spend-pending").glob("*.jsonl"))
+    reports = json.loads(files[0].read_text().splitlines()[1])["ambiguous_reports"]
+    assert [report["input_tokens"] for report in reports] == [11, 17]
+
+
+@pytest.mark.asyncio
+async def test_claude_empty_usage_report_stays_unresolved(monkeypatch, tmp_path, isolated_sdk):
+    import jobctrl.database as database
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved, require_resolved_spend
+
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "jobctrl.db")
+    message = _result(subtype="success", is_error=False)
+    message.usage = {}
+    backend = ClaudeSdkBackend(model=MODEL, query_fn=_query(message), options_factory=_options)
+    with bind_llm_lane("tailoring"), pytest.raises(SpendAccountingUnresolved):
+        await backend._call([{"role": "user", "content": "synthetic"}], response_schema=None,
+                            temperature=None, max_tokens=None, thinking_budget=None)
+    assert isolated_sdk == []
+    with pytest.raises(SpendAccountingUnresolved):
+        require_resolved_spend()
 
 
 @pytest.mark.asyncio
@@ -386,6 +464,7 @@ async def test_cancelled_terminal_usage_commits_once_to_synthetic_spend_ledger(t
     db_path = tmp_path / "spend.sqlite"
     original_init, original_get = database.init_db, database.get_connection
     original_init(db_path)
+    monkeypatch.setattr(database, "DB_PATH", db_path)
     monkeypatch.setattr(database, "init_db", lambda: None)
     monkeypatch.setattr(database, "get_connection", lambda: original_get(db_path))
     monkeypatch.setattr(accounting, "record_llm_spend", _REAL_RECORD_LLM_SPEND)
@@ -416,12 +495,19 @@ async def test_cancelled_terminal_usage_commits_once_to_synthetic_spend_ledger(t
 
 
 @pytest.mark.asyncio
-async def test_cancelled_voice_refresh_keeps_previously_accepted_material(tmp_path, isolated_sdk):
+@pytest.mark.parametrize("sink_failure", [False, True])
+async def test_cancelled_voice_refresh_keeps_previously_accepted_material(tmp_path, isolated_sdk, monkeypatch, sink_failure):
     from pathlib import Path
 
     from jobctrl.domain.tenant import LOCAL_TENANT
     from jobctrl.infrastructure.materials.sqlite_repository import SqliteMaterialsRepository
     from tests.test_materials_use_cases import JOB_ID, ResumeModel, connection, request, resume_case
+
+    if sink_failure:
+        import jobctrl.database as database
+
+        monkeypatch.setattr(database, "DB_PATH", tmp_path / "jobctrl.db")
+        monkeypatch.setattr(accounting, "record_llm_spend", lambda **kwargs: (_ for _ in ()).throw(OSError("sink")))
 
     observed, cleaning, release = Event(), Event(), Event()
     owner: Queue = Queue()
@@ -472,8 +558,14 @@ async def test_cancelled_voice_refresh_keeps_previously_accepted_material(tmp_pa
         args, accepted_id, current_id, before, after = outcome
         assert args == ("synthetic-cancel",)
         assert current_id == accepted_id and before == after
-        assert len(isolated_sdk) == 1
-        assert (isolated_sdk[0]["input_tokens"], isolated_sdk[0]["output_tokens"]) == (11, 7)
+        if sink_failure:
+            from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved, require_resolved_spend
+
+            with pytest.raises(SpendAccountingUnresolved):
+                require_resolved_spend()
+        else:
+            assert len(isolated_sdk) == 1
+            assert (isolated_sdk[0]["input_tokens"], isolated_sdk[0]["output_tokens"]) == (11, 7)
     finally:
         release.set()
         await asyncio.to_thread(worker.join, 10)

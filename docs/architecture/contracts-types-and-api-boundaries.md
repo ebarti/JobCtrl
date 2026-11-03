@@ -29,6 +29,15 @@ client call and need to know which layer owns the contract.
 Gmail feedback scan summaries and `ApplicationEmailFeedbackIngested` payloads
 use canonical `jobId` across Python, REST contracts, domain events, and web
 invalidation. Posting and application URLs are search hints, never identity.
+Scan failures carry allow-listed causes and a sanitized committed-progress
+summary across JSON-RPC and HTTP. Transport loss reports unknown progress;
+neither boundary forwards exception prose or message citations.
+
+Outcome-suggestion decision requests and their applied/replayed or conflict
+results are shared contracts. API and demo verify their local receipt against the
+recorded decision, private canonical outcome fields and safe event before comparing
+a retry. Missing or inconsistent receipts fail as unverifiable. Events contain
+presence metadata, never the private note, reason or private binding digest.
 
 Reviewed permanent deletion uses a process-local observation and a single-use
 selection receipt. The API retains the observed lifecycle revisions with the
@@ -77,25 +86,65 @@ the editor keeps the newer draft and requires a fresh read and reconciliation;
 it never resubmits automatically. A completion from a closed editor cannot
 change a subsequently opened editor session.
 
-## Enrichment Retry Ownership
+<a id="enrichment-retry-ownership"></a>
+## Stage Retry Ownership
 
-`pipeline/retry.py::reset_retry_stages` owns explicit enrichment resets. The
+`pipeline/retry.py::reset_retry_stages` owns every explicit stage reset. The
 CLI reaches it through `state.reset_job_stage`; HTTP uses the synchronous
-`reset_enrichment` RPC. The TypeScript adapter validates both the request and
-the returned target cohort. Other single-stage commands retain their owners.
-When bulk retry contains Enrich, companion stage-row resets join that same
-Python transaction to preserve the existing all-or-nothing cohort; their
-aggregate-specific commands are not migrated.
+`reset_stages` RPC. The older `reset_enrichment` method remains available for
+cohorts containing Enrich. The TypeScript adapter binds acknowledgement and
+continuation to the captured canonical job ID and stage; a posting URL is
+selection-time display data and is not re-resolved after the reset commits.
+Bulk result keys are canonical IDs so a reused URL cannot identify another job. A
+bulk retry commits the whole cohort through the same service, including its
+Enrich and material aggregate changes.
 
 The service acquires SQLite's writer before resolving identities and loading
-the aggregate. It retains accepted descriptions, application URLs, extraction
-history, saved scores, approved materials and approval bindings. It resets the
-aggregate lifecycle to `pending`, clears stage timing/errors/blockers and old
-execution metadata, advances the stage version fence, and writes `StageReset`
-in the same transaction. Existing attempt counts and limits survive unless
-reset was explicitly requested or the stage was exhausted. A missing stage
-uses the Python stage defaults. Bulk targets are rechecked under the writer;
-a target that is no longer failed/exhausted aborts the complete reset cohort.
+aggregates. It retains accepted descriptions, application URLs, extraction
+history, saved scores, approved material files and their provenance and approval
+bindings. It resets Enrich to `pending`; Tailor cleanup is limited to the latest
+generation containing only candidate or rejected artifacts, and Cover cleanup
+to the latest approved resume generation without a protected cover or cover PDF.
+Approved, suppressed and superseded artifacts are retained. Stage timing, errors,
+blockers and old execution metadata are cleared, the version fence advances,
+and `StageReset` is written in the same transaction. Existing attempt counts and
+limits survive unless reset was explicitly requested or the stage was exhausted.
+A missing stage uses the Python defaults. For current single and bulk HTTP retry,
+the API captures each selected stage, including an absent-stage marker, and its
+latest event plus the job's trigger-maintained lifecycle revision, hide/delete
+state, posting availability snapshot and lifecycle event frontier in one
+read snapshot. The
+`reset_stages` RPC requires their fingerprints for every request. Under the
+writer, Python checks those identities before resetting each target. Bulk retry
+also recomputes the first retryable failed stage across the job's complete stage
+order and checks the job is active. Hidden, deleted, closed, expired, removed and
+location-incompatible jobs are ineligible; active and unknown posting states
+remain eligible. A changed target, lifecycle, posting snapshot or selection
+aborts the complete cohort. Snapshot persistence records a private lifecycle
+receipt under the same SQLite writer whenever the stored active state changes,
+including an insert. Retry binds its event frontier, so a reopen cannot recreate
+the original selection even if the state, timestamp, version and saved snapshot
+bytes return to their previous values. The receipt is not an availability
+determination. Exhausted and Enrich
+failures keep their existing exceptions. The current RPC identifies a changed
+selection with a structured `INVALID_PARAMS` reason, which the API maps to a
+`409 retry_selection_changed` response. The compatibility `reset_enrichment`
+method retains its response shape and requires the same fingerprints for
+`onlyFailed` cohorts, while still accepting explicit multi-stage selections.
+An older HTTP adapter's Enrich-containing bulk request reaches this RPC without
+fingerprints and receives an `INVALID_PARAMS` error explaining that its
+selection lacks an ownership snapshot; single Enrich reset remains available.
+Older APIs can also perform non-Enrich single resets and non-Enrich-only bulk
+resets directly in TypeScript, bypassing this RPC entirely. Its rejection does
+not fence those older writers. Mixed-version safety requires verified old-writer
+quiescence or a separate write boundary that old code cannot bypass.
+
+When an approved resume already exists, a plain Tailor retry retains it and
+reports that explicit re-tailoring is required for a replacement, even if a
+newer incomplete generation was cleaned up. The same applies to a retry of an
+already approved cover. Those targets are not dispatched by retry-and-run.
+Python's URL-compatible result carries `retailor_required`; RPC and bulk HTTP
+report the corresponding flag or job keys.
 
 Owned transactions commit before event publication and HTTP acknowledgement.
 An inherited transaction uses a savepoint and remains under its caller's
@@ -309,6 +358,13 @@ and `error_code`, without `status`; Discover has its own family, enrichment,
 and compensation fields. Awaited profile import retains `status`, `draft`,
 `error`, and `error_code`. URL and manual-capture imports require their nested
 workflow result because their current callers always await it. An awaited
+manual-capture import also carries the internal generation resolved from the
+reviewed HTTP lifecycle; the worker checks it at admission and publication.
+The RPC handler rejects callers that omit that observed generation.
+The explicit recovery route advances that generation under a reviewed-lifecycle
+transaction, fencing old activity threads even after workflow termination. The
+public lifecycle ID is an opaque change detector, not a
+write authority. An awaited
 `run_stage` or `profile_import` call requires completion, rather than accepting
 a start-only acknowledgment. Stage completion must match Discover or pipeline
 input, using the worker's deduplicated effective stages; an explicit `stages`

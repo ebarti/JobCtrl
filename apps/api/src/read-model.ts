@@ -494,8 +494,8 @@ export function buildOutcomeAnalyticsSummary(db: SqliteDatabase): OutcomeAnalyti
 }
 
 export interface DigestBudgetSnapshot {
-  status: "ok" | "over_budget";
-  estimatedUsd: number;
+  status: "ok" | "over_budget" | "incomplete";
+  estimatedUsd: number | null;
   dailyBudgetUsd: number;
   remainingUsd: number | null;
   unlimited: boolean;
@@ -673,7 +673,7 @@ function digestBudget(budget: DigestBudgetSnapshot | undefined): DailyDigest["bu
   }
   return {
     status: budget.status,
-    estimatedUsd: Number(budget.estimatedUsd),
+    estimatedUsd: budget.estimatedUsd === null ? null : Number(budget.estimatedUsd),
     dailyBudgetUsd: Number(budget.dailyBudgetUsd),
     remainingUsd: budget.remainingUsd === null ? null : Number(budget.remainingUsd),
     unlimited: Boolean(budget.unlimited),
@@ -5185,6 +5185,7 @@ function listActivityFromEvents(
   const eventTypePredicate = "COALESCE(e.event_type, '')";
   const activityClauses = [
     "e.tenant_id = ?",
+    "COALESCE(e.event_type, '') <> 'PostingSnapshotStatePersisted'",
     "(e.job_id IS NULL OR jp.job_id IS NOT NULL)",
     "d.job_id IS NULL",
     "h.job_id IS NULL",
@@ -5292,6 +5293,7 @@ function getActivityEventFromEvents(db: SqliteDatabase, eventId: string): Activi
   const activityClauses = [
     "e.event_id = ?",
     "e.tenant_id = ?",
+    "COALESCE(e.event_type, '') <> 'PostingSnapshotStatePersisted'",
     "(e.job_id IS NULL OR jp.job_id IS NOT NULL)",
     "d.job_id IS NULL",
     "h.job_id IS NULL",

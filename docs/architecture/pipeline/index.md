@@ -76,7 +76,7 @@ which workflow is selected.
 | Jobs URL import | `POST /v1/jobs/import-url` | Starts `JobUrlImportWorkflow`; an active, policy-admitted posting records completed intake/enrichment and starts a root `JobPreparationWorkflow` for score → tailor → cover → PDF. It never starts Apply. |
 | Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Starts a job-scoped `JobPipelineWorkflow` for one visible `pending` internal substage (`enrich`/`score`/`tailor`/`cover`), gated by the API on observable eligibility. |
 | Jobs bulk pending prep | `POST /v1/jobs/bulk-run-pending-preparation` | Groups selected job URLs by their first eligible pending substage and dispatches bounded `run_stage` workflows. |
-| Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | Resets retryable failed stages and, with `runAfter: true`, dispatches batch `run_stage` workflows for the reset job URLs. |
+| Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | Resets retryable failed stages and, with `runAfter: true`, dispatches batch `run_stage` workflows for the reset canonical job IDs. |
 | CLI | `jobctrl <command>` | Builds the same spec, starts Temporal, waits for the handle, and exits non-zero on workflow failure. `jobctrl discover` / `run discover` is the normal path; `score`/`tailor`/`cover` are maintenance commands. |
 | Temporal schedule | `jobctrl-discovery-local` | Optional cron schedule that starts `DiscoverWorkflow`. Off by default (see [Discovery Schedule](operations.md#discovery-schedule)). |
 
@@ -138,7 +138,18 @@ The distinction matters for anyone reading the API or the UI:
   `awaitResult`; JSON-RPC starts the registered workflow, waits for its result,
   and the HTTP route answers **200 OK** only after the worker-owned activity
   completes. Manual-capture retries reconstruct that response from the
-  canonical imported queue row after validating capture identity and content.
+  canonical imported queue row after validating capture identity, content and
+  its matching successful snapshot. Manual capture retains the submitted draft
+  before acquisition; discovery, snapshot, enrichment and acknowledgement then
+  commit together under a short writer lock after ownership and cancellation
+  checks. The cited page decision must identify one posting and not a login or
+  challenge; a source-bound model selection supplies the posting fields.
+  Failed acquisition or publication leaves the draft actionable. An unverified
+  historical receipt with an exact original observation is reopened only by an
+  explicit content submission, without attributing an ambiguous old failure.
+  Imports and dismissals bind to the reviewed capture lifetime. A conflicting
+  start never acknowledges the other execution's input; its exact run and any
+  running successor are checked before the retained submission is released.
 - **Sync-mode methods block for their result** and answer **200 OK** with the
   payload inline. `analyze_job`, `generate_outreach_draft`, and `cancel_run`
   are synchronous.

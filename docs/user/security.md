@@ -150,17 +150,18 @@ select anonymous access if the bounded status probe reports unavailable.
 
 Capture requires a click. Before sending the active page URL/visible text to the
 local API, the extension stores it in its local queue. The queue holds up to 25
-pending captures. Pending captures remain until JobCtrl acknowledges
-each one or you choose **Clear queue**; saving a pairing token and the passage
-of time do not remove them. If synchronization times out or JobCtrl has not
-confirmed an import or dismissal, the capture stays queued. A retry after
-re-pairing waits for any in-flight sync, then uses the new token. A full queue
-refuses a new capture and
-reports that the current page was not saved. Reconnect and choose **Sync queued
-captures** to retry pending captures, then save the current page again, or
-explicitly clear them. An unreadable queue is preserved
-and reported; **Clear queue** discards its stored contents. A capture already
-being sent when you clear the queue cannot be recalled from JobCtrl. Autofill
+pending captures. Pending captures remain until JobCtrl acknowledges each one
+or you explicitly discard them; saving a pairing token and the passage of time
+do not remove them. If synchronization times out or JobCtrl has not confirmed an
+import or dismissal, the capture stays queued. A retry after re-pairing waits
+for any in-flight sync, then uses the new token. A full queue refuses a new
+capture and reports that the current page was not saved. Choose **Sync queued
+captures** to retry, or use **Review queued captures** to inspect the locally
+saved content and discard one selected capture while keeping the others.
+Superseded captures are labelled in that review and do not block later syncs.
+**Clear queue** discards all queued captures. An unreadable queue is preserved
+and reported; clearing it discards its stored contents. A capture already being
+sent cannot be recalled by discarding it. Autofill
 has page access on ordinary HTTP(S) sites so it is not coupled to a fixed ATS
 host list, but its content script stays passive until **Review autofill** is
 clicked. Only then does it read the current form and receive whitelisted profile
@@ -173,8 +174,13 @@ JobCtrl treats URLs from postings, redirects, captured pages, and model output
 as untrusted. Its shared public-destination guard resolves the target and accepts
 only public HTTP(S). It blocks loopback, private-network, link-local, reserved,
 unspecified, multicast, cloud-metadata, `file:`, and other non-web targets.
-For connected-extension acquisition, the API validates each task's initial URL
-before leasing it and revalidates DNS immediately before returning the lease. The extension's
+Integrated Discovery allows live-profile tasks only for supported,
+provider-owned DNS zones, validates each task's initial URL before leasing it,
+and revalidates DNS immediately before returning the lease. The extension
+checks the provider-host boundary again before requesting or navigating.
+Arbitrary posting hosts use the worker's address-pinned public transport, so a
+host controlled by posting content cannot exploit Chrome's independent DNS
+resolution. The extension's
 wildcard HTTP(S) host permission exists only to execute those brokered tasks in
 the installed profile. Direct HTTP/API tasks run in the service worker with
 redirect following disabled. Rendered-page navigation uses a tab-scoped

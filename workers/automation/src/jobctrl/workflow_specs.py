@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 from dataclasses import asdict, dataclass, is_dataclass
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
-from temporalio.common import WorkflowIDReusePolicy
+from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
 from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 from jobctrl.contact.activities import ResearchSourceInput
@@ -40,6 +41,20 @@ _APPLY_SELECTOR_KEYS = ("jobId", "jobIds", "jobUrl", "jobUrls")
 logger = logging.getLogger(__name__)
 
 
+def reject_discover_preview(stages: Sequence[str], *, dry_run: bool) -> None:
+    """Reject preview requests before Discover's effects can be scheduled."""
+    if dry_run and ("discover" in stages or "all" in stages):
+        raise ValueError("Discover does not support dry runs. Turn off dry run to start a search.")
+
+
+def _reject_requested_discover_preview(params: dict[str, Any], stages: Sequence[str]) -> None:
+    requested = list(stages)
+    if isinstance(params.get("stages"), list):
+        requested.extend(str(stage) for stage in params["stages"])
+    requested.append(str(params.get("stage") or ""))
+    reject_discover_preview(requested, dry_run=bool(params.get("dryRun", False)))
+
+
 @dataclass(frozen=True)
 class StartedWorkflowResult:
     run_id: str
@@ -59,6 +74,7 @@ class StartedWorkflowResult:
 def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = _tenant_id(params)
     stages = _stage_list(params)
+    _reject_requested_discover_preview(params, stages)
     apply_selector = _apply_selector(params) if "apply" in stages else None
     if "apply" in stages:
         _require_auto_apply_browser_capability()
@@ -214,6 +230,7 @@ def build_pipeline_workflow_spec(
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
+    _reject_requested_discover_preview(params, stages)
     apply_selector = _apply_selector(params, job_id=job_id, job_ids=job_ids) if "apply" in stages else None
     if "apply" in stages:
         _require_auto_apply_browser_capability()
@@ -467,6 +484,7 @@ def build_profile_import_workflow_spec(params: dict[str, Any]) -> WorkflowStartS
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
         pdf_path=str(_require(params, "pdfPath")),
+        attempt_id=params.get("attemptId"),
         import_profile=bool(params.get("importProfile", True)),
         import_style=bool(params.get("importStyle", True)),
     )
@@ -501,22 +519,52 @@ def build_manual_capture_import_workflow_spec(
     future_manual_action_required = params.get("futureManualActionRequired", False)
     if not isinstance(future_manual_action_required, bool):
         raise ValueError("futureManualActionRequired must be a boolean")
+    expected_app_dir = _optional_string(params, "expectedAppDir")
+    expected_db_path = _optional_string(params, "expectedDbPath")
+    generation = None
+    from jobctrl.database import get_connection
+    from jobctrl.infrastructure.runtime_identity import assert_expected_runtime
+
+    assert_expected_runtime(expected_app_dir=expected_app_dir, expected_db_path=expected_db_path)
+    row = get_connection(require_existing=True).execute(
+        "SELECT retry_context_json FROM manual_capture_queue WHERE tenant_id=? AND item_id=?",
+        (tenant_id, item_id),
+    ).fetchone()
+    if row is not None:
+        try:
+            context = json.loads(row[0])
+            if not isinstance(context, dict):
+                raise ValueError
+            generation = context.get("manual_capture_generation")
+            if generation is not None and (not isinstance(generation, str) or not generation):
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValueError("manual capture generation is unavailable") from None
+    if "expectedCaptureGeneration" in params:
+        expected_generation = params["expectedCaptureGeneration"]
+        if expected_generation is not None and (not isinstance(expected_generation, str) or not expected_generation):
+            raise ValueError("invalid expected manual capture generation")
+        # Admission and publication compare this observed generation under the
+        # database write lock, including if the capture reopened after dispatch.
+        generation = expected_generation
     payload = ManualCaptureImportWorkflowInput(
         tenant_id=tenant_id,
         item_id=item_id,
         capture_mode=capture_mode,
-        expected_app_dir=_optional_string(params, "expectedAppDir"),
-        expected_db_path=_optional_string(params, "expectedDbPath"),
+        expected_app_dir=expected_app_dir,
+        expected_db_path=expected_db_path,
         content_text=content_text,
         content_html_base64=content_html_base64,
         captured_url=captured_url,
         note=_optional_string(params, "note", allow_empty=True),
         future_manual_action_required=future_manual_action_required,
+        capture_generation=generation,
     )
     return WorkflowStartSpec(
         workflow=ManualCaptureImportWorkflow,
         args=(payload,),
         workflow_id=manual_capture_import_workflow_id(tenant_id, item_id),
+        id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
     )
 
 

@@ -38,13 +38,39 @@ No required case may pass by fabricating an ownership flag or a real user's
 coalition ID. Kernel boot identity binds receipt lifetime and is not a reboot
 admission requirement. Use no real user workspace or process.
 
+For Temporal health probe changes, exercise the real helper and public startup
+and status commands with a synthetic health executable that ignores its own
+timeout and creates an environment-empty, new-session child. Verify the startup
+deadline, prompt signal cancellation, bounded status and diagnostic output,
+healthy and error responses, complete probe-scope cleanup, an unrelated live
+peer and the running Temporal component surviving probe cancellation, and an
+ordinary restart after cleanup. Hold the stop control lock before its first
+census and let a probe finish: its exact same-boot completion must remain usable
+after the coalition is reaped, while missing, malformed, mismatched and
+wrong-boot proof still refuses cleanup. Retire a listed receipt between the
+probe's enumeration and open: only its exact durable completion may resolve
+that missing-file race; missing or invalid proof and inspection errors still
+fail. The fixture is not evidence of a real Temporal freeze.
+
 The bundled native smoke must preserve network isolation across launchd: run its
 native control process outside Seatbelt and select the fixed internal
-`JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1` restriction at the authenticated
-job helper. Verify the actual compiled native-to-CPython dispatch can connect to
+`JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1` restriction at every payload
+dispatch from authenticated native control. Keep the native helper, launcher and
+supervisor outside Seatbelt so startup can establish each health probe's fresh
+owned scope. Cover component and source-shell launch, both Python dispatches,
+probe payloads and migration/backup Python commands. Unknown selectors must
+refuse execution. A native controller invoked from an already-sandboxed payload
+cannot escape that restriction; nested launchd admission still fails closed.
+Verify the actual compiled native startup, status, stop and restart under this
+selector, with each component and health payload proving isolation. Verify the
+actual compiled native-to-CPython dispatch can connect to
 loopback and receives `EPERM` on a reserved non-loopback TCP permission probe,
 with no application bytes sent. Keep direct extracted-runtime sandbox probes
 and signed/notarized first-use qualification distinct.
+The same fixed QA profile denies Keychain file reads and writes, security-service
+lookups and execution of the native credential command. Verify denial through
+the actual native helper and CPython dispatch using an owned synthetic Keychain-path file and the
+credential command's harmless help operation; preserve the synthetic bytes.
 
 For the job-data purge gate, the disposable workspace must contain a Candidate
 Profile, Discovery settings, source registry, resume template/default, at least
@@ -182,6 +208,60 @@ cleanup or permission to signal a real process.
 | Bundled capture smoke | Script suite; locked pytest for `workers/automation/tests/test_distribution_smoke_model.py`; then the real bundled-payload build through [Local Development](local-development.md#build-the-bundled-payload). Keep actual API/RPC/Temporal/worker/persistence and restart checks; only the model port uses explicit synthetic choices, recorded in smoke evidence. This does not prove semantic accuracy or provider authentication |
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
+
+For resume import review, use synthetic PDF and profile fixtures through the
+registered extraction and Profile save paths. Verify visible selected sections,
+explicit acceptance/rejection, initial and stale version fences, recoverable
+extraction/save failures, browser reload after extraction and stale save, draft
+storage failure and retry before upload cleanup, preserved newer edits and
+existing achievement evidence, and no confirmed achievement created from an
+extracted bullet. Read Profile A, save B before the worker loads its base, extract
+an email without a name, then save C and rebase: the review must show only the
+receipt's email and accepting it must preserve C. Repeat for a PDF style import:
+change an unobserved color from A to B to C, rebase, and verify accepting observed
+style fields preserves C. Missing or invalid extraction receipts must retain the
+upload; forged selected fields must be refused within the version-fenced write.
+Check the submitted and parsed PDF digests agree. Use two synthetic PDFs with the
+same extracted text but different observed styles; swap complete worker responses
+and determination IDs, and reject missing, foreign or ambiguous attempt bindings.
+Substitute a complete valid second import tuple under the first draft's retained
+identity, and refuse Profile-only, style-only and combined acceptance. Exercise
+an idempotent worker retry and
+binding-write rollback without changing saved Profile or earlier bindings.
+Inspect the owned stored draft before and after rebase: the
+profile password, unrelated profile sections, evidence and extraction text
+preview must not be copied into browser storage. Reload an older full draft with
+an uncertain attempt and preserve its original data even if the canonical profile
+has changed or is unavailable. Rebase a legacy draft with a value present only in
+its old base; retain the complete prior record atomically, including across reload
+and subsequent rebases, and leave its bytes untouched when the transaction fails.
+After acceptance and rejection, expose complete legacy recovery JSON across reload
+and keep it out of profile-save requests. Exercise a legacy personal draft
+without extraction provenance: preserve its complete recovery data and require a
+fresh import before applying personal values. Old review-envelope readers must
+refuse to write after the version changes.
+Hydrate a v1 projected draft with verified source fields whose reviewed value matches an intermediate saved
+base, then rebase after that canonical value changes. Preserve the original
+proposal, accepted evidence and recovery record through failed writes, reload and
+selected acceptance; ambiguous or unsupported projections must leave the stored
+bytes intact. Attempt same-version acceptance of an unsupported projection and
+of projected records with unexpected style fields: neither may dispatch a profile
+save or create an attempt marker, and each remains available for recovery. Valid
+v1, v2 and supported older unprojected style selections must still work.
+Corrupt a stored review base and verify selective acceptance
+uses the complete canonical profile. Lose a save response or fail draft removal,
+reload, and prove that later profile edits and deletions cannot be overwritten
+or imported twice; verify an unchanged-version retry uses the original selection.
+Corrupt a draft base so it hides an imported field and prove acceptance waits
+for a verified refresh, visible re-review, and a new selection.
+
+For the cross-stack synthetic import proof, set `JOBCTRL_PROOF_PYTHON` to an
+existing locked Python interpreter, ensure the Temporal CLI and `lsof` are
+available, then run `scripts/qa/profile-import-product-path/run.sh` from the
+checkout. It creates and retains its own temporary root, disables credential
+lookups and external providers, and runs the registered API, RPC and workflow
+with a synthetic model adapter and web controls. The default web suite skips this
+opt-in proof; the focused API and web attribution tests run normally.
 
 For event-stream reconciliation, use an owned synthetic workspace with the
 actual API and a Linux-isolated browser. Read before a delayed or failed first
@@ -377,7 +457,69 @@ job aliases before bulk reset. Measure cold and warm HTTP acknowledgement latenc
 when changing the transport boundary. Existing retry UI and event-invalidation
 tests cover immediate optimistic feedback and rollback on failure.
 
+For contact update and delete ownership, use synthetic contacts and controlled
+API responses. Check an unrelated list still refreshes while another contact's
+write is pending. Exercise an external move with both recently read and
+age-stale caches, including reads before and after a delayed write commits. When
+the order cannot be established and readback fails, preserve the accepted list
+and show the retryable out-of-date notice. Also check detail rollback, newer
+detail edits, confirmed moves and deletes, independent newer publications, and
+successful retry in the Contacts, Contact Detail, Job Detail, and offer-recipient
+surfaces. Resolve two independent updates around both a pending and a failed
+readback; both confirmed changes must remain. Fail an older write and its read
+before an independent successful response arrives; the response must still
+merge without clearing the failed-refresh notice. Hold a first contact-list read
+across update and delete settlement;
+verify joined loaders resolve, one later read occurs without delaying writes,
+and a failed follow-up remains visible and retryable. Replace the query and
+start a newer read in separate controls to verify the follow-up does not act on
+their ownership. Publish newer data while that first GET is in flight, then
+complete it successfully; retain the newer publication and resolve the joined
+loader. A discarded read must preserve an earlier failed-refresh notice until
+an unsuperseded read succeeds.
+
 ## Discovery Transaction Recovery
+
+For Manual Capture recovery, run `tests/test_manual_capture_recovery.py` with
+the manual-capture workflow and discovery wiring tests. Use owned synthetic
+workspaces and controlled model/provider ports. Exercise failed extraction,
+model and database failures, cancellation, concurrent attempts, older accepted
+content and deletion; require no duplicate capture observation and a successful
+snapshot before acknowledgement. Run and replay the real Temporal failure and retry,
+and verify local API and rendered retry controls. Opposing cited page-kind and
+access verdicts must control admission; source selection must exclude an unrelated
+posting without a lexical fallback. Historical review requires the exact original
+tenant/source observation and explicit page resubmission; unmatched old failure
+events remain unverified, and deleted owners must remain untouched.
+Exercise two different submissions against the same active Temporal workflow,
+and a timed-out older attempt that resumes before and after its first queue read.
+Neither may acknowledge the wrong input or replace a newer retained draft, even
+after dismissal and explicit reopening. A retry of the same historical recovery
+workflow must retain its own admission after a retryable provider failure.
+Verify delayed import and dismissal from a stale client cannot change a
+reopened same-ID capture, including the case where the old client never saw the
+row absent. Preserve the legitimate historical recovery's review lifetime and
+fail closed on malformed lifecycle data. Completed provider and database failures
+and unconfirmed outcomes remain fenced until the user explicitly advances the
+reviewed lifecycle. Verify that a late page-decision receipt cannot modify the
+recovered draft or interrupt a fresh attempt. Verify that a timed-out old thread released after that action
+and before a new claim cannot publish. A concurrent writer that committed first
+must remain intact, and historical owner and retained draft must survive recovery.
+Reload after a lost preparation or import acknowledgement. The queue must retain
+the submitted draft and restore the unresolved fence before editing. Delay an
+old preparation before API admission and an old import after preparation but
+before worker admission; a newer reviewed lifetime must reject both old requests.
+Exercise identical extension replay and changed-content conflicts while the
+extension's first worker admission is delayed.
+When an earlier preparation arrives after reload while the user has unsent
+edits, change and remove the reviewed lifetime separately. Keep those edits as
+a labelled local copy without automatically superseding or importing them.
+If the item leaves the queue, unadmitted or unconfirmed input remains available
+as a labelled in-memory copy. Exercise both HTTP import routes, the recovery action,
+and a delayed extension replay plus a new extension capture ID using synthetic data.
+Verify that a superseded extension entry stays labelled across a restart, does
+not block newer captures, and can be inspected and discarded individually from
+a full queue without changing the other entries.
 
 Run the `discovery-transactions` recipe for preparation or enrichment transaction
 changes. Seed failed and exhausted Tailor rows whose downstream stages are already
@@ -422,6 +564,20 @@ enrichment handoff, retaining its completion order and checking for no error
 logs. For an SDK upgrade, also replay a history generated by the previous
 locked SDK, then run the full worker suite. Do not suppress exception handlers
 or logger levels to pass these checks.
+
+For Discover preview rejection, exercise direct and mixed-stage HTTP and
+registered JSON-RPC requests with synthetic workflow starters. An explicit
+preview or the HTTP default must reject before dispatch or workspace writes;
+the CLI and structured action must reject before bootstrap and events. Confirm
+that an explicitly ordinary search carries its selected sources. A fresh
+Discover panel selects ordinary search without dispatching; saved true/false
+choices and older partial records survive rehydration, and a selected preview
+stays blocked with an explanation. Missing storage selects ordinary Discover;
+malformed or unavailable saved storage completes hydration with preview blocked
+and does not overwrite saved controls during automatic synchronization. Restore
+canonical concurrency before recovery and verify an explicit ordinary run uses
+that value without replacing a saved setting with the fallback. Apply retains its
+dry-run default.
 
 ## Accepted Low-Fit Material Retention
 
@@ -477,6 +633,45 @@ cleanup failure; require cancellation to propagate, terminal usage to reach the
 owned spend ledger once, and previously accepted material to remain intact.
 Also cover a receipt observed during cancellation cleanup and cancellation
 before any receipt.
+
+For observed-spend recovery, use fake Claude and Google SDK streams and an owned
+synthetic database. Fail and cancel after provider usage appears, including
+Claude assistant usage before a terminal message. In the Apply JSON stream,
+preserve assistant usage
+when the terminal total is missing, and count a complete terminal total only once.
+Inject insert, pre-commit and
+post-commit failures and reopen the workspace in a fresh process. Known usage
+must be recorded once or remain explicitly unresolved without automatic replay;
+check the lane and provider/model receipt, original error or cancellation,
+repeated callbacks, concurrently active calls, health/digest null totals and
+the unchanged accepted artifact. Retain known counts across a later partial
+snapshot, and refuse zero-filling when either required count is unknown. Race
+both span and Apply admission against peer abandonment between preflight and
+receipt creation, including release of the peer lock under the shared gate.
+Read the real Python digest CLI with an active and an abandoned receipt in an
+exact-schema synthetic workspace. Require the other digest sections to remain
+available, budget amounts to stay null, receipts to remain unchanged, and a
+genuinely empty ledger to retain known zero. Fence a complete budget snapshot
+against concurrent receipt creation while leaving normal active-peer admission
+available. Preserve the API's database-upgrade diagnostic precedence.
+In owned synthetic native rollback and interrupted-recovery fixtures, stop the
+controlled runtime first and verify that an abandoned or shutdown-created
+receipt, malformed or linked authority, unreadable directory, or busy gate
+preserves the current pair, pre-rollback backup, journal, and receipt and prevents
+older startup. Exercise a receipt produced before the recovery milestone,
+simulate reconciliation by archiving only the owned synthetic receipt, and
+verify retry; interrupt immediately before and after the milestone and verify
+the selector gate and existing
+uncertainty fence. A late refusal may follow pair replacement. Missing, empty and
+safe lock-only authorities must allow clean rollback and recovery. A test-only
+stop or file-handle seam does not prove host process cleanup or that unrelated
+processes have closed their database handles.
+Exercise the pinned Google SDK's actual Conversation and ChatResponse with a
+synthetic step connection: distinguish a missing output count from an explicit
+zero, retain earlier known steps, reject an unavailable or replaced step source
+and inconsistent aggregate, preserve failures/cancellation, and keep concurrent
+lanes isolated. SDK-internal aggregate zero-filling is not proof of a zero.
+Never use provider credentials or real calls.
 
 Use a configured provider only in an owned synthetic workspace. Repeat calls
 through the production LlmPort and inspect actual kit process-start/reuse
@@ -700,7 +895,39 @@ Then use the actual Discovery path with saved targets and no interpretation
 receipt: board planning is literal and makes no provider call. Fetched results ingest without an additional model pre-filter. Full-posting interpretation/scoring retain model authority and distinct failure handling. Verify the rendered settings have one checkbox per work model, no intake queue and no second approval step.
 Load the profile editor's actual serialized location rows and comma-separated
 work-model codes, including a location-less Remote row. Inspect their paired
-board parameters. Invalid work-model controls must produce a typed planning
+board parameters and the persisted plan on replay. Verify supported boards run
+with no place restriction, and mixed selections containing an unsupported
+Indeed Remote/lookback or Glassdoor Remote/place combination report a partial
+failure after compatible boards finish, without dispatching the incompatible
+unit. Verify the unchanged first-use defaults plan and behave the same way,
+including retry and per-source outcomes. Exercise the actual first-use wizard
+with Remote and a synthetic title: it must save compatible boards, preserve
+the 72-hour lookback, and dispatch only exact synthetic requests. On a wizard
+rerun, verify saved board/lookback choices and other controls are retained,
+incompatible choices preserve the original bytes, and a compatible board edit
+permits a retry. With saved tier or location-label filters that exclude the
+wizard's effective targets, verify the CLI shows the exact filter, declining
+preserves the saved bytes, and explicitly clearing only that filter permits the
+synthetic source and retry to run. Cover filters, boards or Profile targets
+changing during confirmation, and a profile target override. Check that non-day-aligned Remote lookbacks are
+rejected for Glassdoor and ZipRecruiter while day-aligned and non-Remote
+requests keep their existing behavior. Run the full synthetic CLI wizard with
+an existing Profile and both confirmation outcomes: root and child Profile
+rows must remain exact, declined Discovery settings must remain byte-identical,
+and accepted source requests must use the retained Profile targets. Change the
+Profile during setup and create one during first-use prompts to verify neither
+the newer Profile nor the Discovery row is overwritten. Confirm new incompatible profile and Discovery-settings edits are
+rejected before save, with unchanged saved bytes and usable unrelated edits.
+An unsupported fake adapter must fail before its scrape method is called,
+with the typed failure reported after compatible units finish; check that an
+unrelated provider error retains its existing handling.
+Numeric-string lookbacks retain their saved bytes and are normalized for
+execution. Cover separate location-free non-Remote rows and legacy-location
+fallback, and mutate tier and location-label settings after planning to verify
+the source and retry use the frozen values, including frozen absence. Plan
+with queries or locations absent, save a new synthetic Profile target, and
+verify the source and retry still make no search and retain the saved bytes.
+Invalid work-model controls must produce a typed planning
 failure while fetching, scoring and raw source reads remain available. Native
 interruption checks capture stage names from the actual composite executors.
 Verify cleanup of owned intermediate candidates and sidecars after successful

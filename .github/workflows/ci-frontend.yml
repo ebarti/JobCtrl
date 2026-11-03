@@ -54,12 +54,12 @@ jobs:
         console.log(JSON.stringify({profile: process.env.CI_PROFILE, cpuCount: os.availableParallelism(), totalMemoryMiB: Math.round(os.totalmem() / 1024 / 1024)}));
         NODE
     - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
       with:
         python-version: '3.12'
       if: "${{ inputs.e2e }}"
     - name: Set up pinned uv
-      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
       with:
         version: 0.11.7
         enable-cache: true
@@ -102,7 +102,7 @@ jobs:
         CI_DOCS: "${{ inputs.docs }}"
         CI_DEMO: "${{ inputs.demo }}"
       run: node scripts/ci-frontend.mjs
-    - name: Upload synthetic first-connection screenshots
+    - name: Upload synthetic browser product screenshots
       if: "${{ always() && inputs.e2e }}"
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
@@ -110,6 +110,7 @@ jobs:
         path: |
           ${{ runner.temp }}/e2e-isolated.xml.artifacts/**/first-open-*.png
           ${{ runner.temp }}/e2e-real-rpc.xml.artifacts/**/first-open-*.png
+          ${{ runner.temp }}/e2e-manual-capture.xml.artifacts/**/manual-capture-recovery-*.png
         if-no-files-found: ignore
     - name: Upload synthetic E2E JUnit reports
       if: "${{ always() && inputs.e2e }}"
@@ -119,6 +120,7 @@ jobs:
         path: |
           ${{ runner.temp }}/e2e-isolated.xml
           ${{ runner.temp }}/e2e-real-rpc.xml
+          ${{ runner.temp }}/e2e-manual-capture.xml
         retention-days: 7
         if-no-files-found: warn
     - name: Upload site artifact
