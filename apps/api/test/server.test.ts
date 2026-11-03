@@ -10897,7 +10897,7 @@ describe("local TypeScript API", () => {
   );
 
   it("atomically rejects stale suggestion saves without a profile event", async () => {
-    const app = buildApp(options);
+    const app = buildApp({ ...options, placeValidator: async (place) => place === "Barcelona" });
     await selectRemoteCompatibleSearch(app);
     const initial = await app.inject({
       method: "PATCH",
@@ -10951,6 +10951,7 @@ describe("local TypeScript API", () => {
     const providerCall = vi.fn(() => pending.promise);
     const app = buildApp({
       ...options,
+      placeValidator: async (place) => place === "Barcelona",
       providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
     });
     await selectRemoteCompatibleSearch(app);
