@@ -70,7 +70,9 @@ func init() {
 const temporalProbeFixtureSource = `package main
 import (
  "encoding/json"
+ "errors"
  "fmt"
+ "net"
  "net/http"
  "os"
  "os/exec"
@@ -81,8 +83,32 @@ import (
  "syscall"
  "time"
 )
+func proveQASandbox(data, role string) {
+ address := os.Getenv("JOBCTRL_TEST_QA_LOOPBACK")
+ if address == "" { return }
+ connection,err := net.DialTimeout("tcp",address,time.Second)
+ if err != nil { panic("QA loopback connection failed") }
+ connection.Close()
+ fd,err := syscall.Socket(syscall.AF_INET,syscall.SOCK_STREAM,0)
+ if err != nil { panic(err) }
+ _ = syscall.SetNonblock(fd,true)
+ err = syscall.Connect(fd,&syscall.SockaddrInet4{Port:9,Addr:[4]byte{192,0,2,1}})
+ syscall.Close(fd)
+ if !errors.Is(err,syscall.EPERM) { panic("QA non-loopback connection was not denied") }
+ keychain := os.Getenv("JOBCTRL_TEST_QA_KEYCHAIN")
+ if _,err := os.ReadFile(keychain); !errors.Is(err,syscall.EPERM) { panic("QA Keychain read was not denied") }
+ file,err := os.OpenFile(keychain,os.O_WRONLY|os.O_TRUNC,0)
+ if file != nil { file.Close() }
+ if !errors.Is(err,syscall.EPERM) { panic("QA Keychain write was not denied") }
+ if err := exec.Command("/usr/bin/security","help").Run(); !errors.Is(err,syscall.EPERM) { panic("QA credential command was not denied") }
+ proof := []byte("loopback;EPERM;Keychain;"+os.Getenv("JOBCTRL_EXECUTION_SCOPE"))
+ if err := os.WriteFile(filepath.Join(data,"qa-proof-"+role),proof,0600); err != nil { panic(err) }
+}
 func main() {
  data := os.Getenv("JOBCTRL_DIR")
+ role := filepath.Base(os.Args[0])
+ if role == "temporal" && len(os.Args)>1 && os.Args[1] == "operator" { role = "temporal-probe" }
+ proveQASandbox(data,role)
  switch filepath.Base(os.Args[0]) {
  case "temporal":
   if len(os.Args) < 2 || os.Args[1] != "operator" { _ = os.WriteFile(filepath.Join(data,"server-ready"),[]byte("ready"),0600); for { time.Sleep(time.Hour) } }
@@ -364,6 +390,88 @@ func TestTemporalProbeBoundsOutputAndOwnedDescendants(t *testing.T) {
 				t.Fatalf("probe receipt was not safely retired: %v, %v", scopes, err)
 			}
 		})
+	}
+}
+
+func TestTemporalProbeActualStartupAndRestartUnderQASandbox(t *testing.T) {
+	assertFixturePortsFree(t)
+	f := buildTemporalProbeFixture(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan struct{}, 64)
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			connection.Close()
+			select {
+			case accepted <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	keychain := filepath.Join(f.home, "Library", "Keychains", "synthetic.keychain")
+	if err := os.MkdirAll(filepath.Dir(keychain), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("owned synthetic component credential canary")
+	if err := os.WriteFile(keychain, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.env = append(f.env, executionQASandboxVariable+"="+executionQASandboxSelector,
+		"JOBCTRL_TEST_QA_LOOPBACK="+listener.Addr().String(), "JOBCTRL_TEST_QA_KEYCHAIN="+keychain)
+	t.Cleanup(func() { f.stop(t) })
+	for cycle := 0; cycle < 2; cycle++ {
+		if output, err := f.command("start", "--no-open").CombinedOutput(); err != nil {
+			t.Fatalf("sandboxed startup cycle %d: %v: %s", cycle, err, output)
+		}
+		if output, err := f.command("status", "--json").CombinedOutput(); err != nil || !bytes.Contains(output, []byte(`"status":"running"`)) {
+			t.Fatalf("sandboxed status cycle %d: %v: %s", cycle, err, output)
+		}
+		ctx, err := prepare(f.launcher, f.env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, stateErr := readState(ctx.Instance.StatePath)
+		scopes, scopeErr := readOwnedExecutionScopes(ctx)
+		ctx.selection.Close()
+		if stateErr != nil || scopeErr != nil || state.ExecutionScopeID == "" {
+			t.Fatalf("sandboxed startup omitted native ownership: %v, %v", stateErr, scopeErr)
+		}
+		for _, role := range []string{"temporal", "python3", "node", "temporal-probe"} {
+			proofPath := filepath.Join(f.data, "qa-proof-"+role)
+			proof, err := os.ReadFile(proofPath)
+			const prefix = "loopback;EPERM;Keychain;"
+			if err != nil || !strings.HasPrefix(string(proof), prefix) {
+				t.Fatalf("%s payload omitted sandbox proof: %v, %s", role, err, proof)
+			}
+			id := strings.TrimPrefix(string(proof), prefix)
+			if !executionIDValid(id) || (role == "temporal-probe") == (id == state.ExecutionScopeID) {
+				t.Fatalf("%s did not use its expected owned scope: %s", role, id)
+			}
+			if role == "temporal-probe" {
+				for _, scope := range scopes {
+					if scope.ID == id {
+						t.Fatal("completed sandboxed probe scope was not retired")
+					}
+				}
+			}
+			if err := os.Remove(proofPath); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if actual, err := os.ReadFile(keychain); err != nil || !bytes.Equal(actual, original) {
+			t.Fatal("payload changed owned synthetic Keychain bytes")
+		}
+		f.stop(t)
+	}
+	if len(accepted) < 8 {
+		t.Fatal("loopback payload connections were not observed across restart")
 	}
 }
 

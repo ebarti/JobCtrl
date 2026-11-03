@@ -150,17 +150,18 @@ select anonymous access if the bounded status probe reports unavailable.
 
 Capture requires a click. Before sending the active page URL/visible text to the
 local API, the extension stores it in its local queue. The queue holds up to 25
-pending captures. Pending captures remain until JobCtrl acknowledges
-each one or you choose **Clear queue**; saving a pairing token and the passage
-of time do not remove them. If synchronization times out or JobCtrl has not
-confirmed an import or dismissal, the capture stays queued. A retry after
-re-pairing waits for any in-flight sync, then uses the new token. A full queue
-refuses a new capture and
-reports that the current page was not saved. Reconnect and choose **Sync queued
-captures** to retry pending captures, then save the current page again, or
-explicitly clear them. An unreadable queue is preserved
-and reported; **Clear queue** discards its stored contents. A capture already
-being sent when you clear the queue cannot be recalled from JobCtrl. Autofill
+pending captures. Pending captures remain until JobCtrl acknowledges each one
+or you explicitly discard them; saving a pairing token and the passage of time
+do not remove them. If synchronization times out or JobCtrl has not confirmed an
+import or dismissal, the capture stays queued. A retry after re-pairing waits
+for any in-flight sync, then uses the new token. A full queue refuses a new
+capture and reports that the current page was not saved. Choose **Sync queued
+captures** to retry, or use **Review queued captures** to inspect the locally
+saved content and discard one selected capture while keeping the others.
+Superseded captures are labelled in that review and do not block later syncs.
+**Clear queue** discards all queued captures. An unreadable queue is preserved
+and reported; clearing it discards its stored contents. A capture already being
+sent cannot be recalled by discarding it. Autofill
 has page access on ordinary HTTP(S) sites so it is not coupled to a fixed ATS
 host list, but its content script stays passive until **Review autofill** is
 clicked. Only then does it read the current form and receive whitelisted profile

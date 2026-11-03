@@ -73,7 +73,7 @@ func runNativePythonScopeNetworkFixture(t *testing.T, python string, aliased boo
 	if err = os.WriteFile(filepath.Join(module, "__init__.py"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	probe := `import errno,json,socket,sys
+	probe := `import errno,json,socket,subprocess,sys
 assert sys.argv[1] == "network-permission-probe"
 host,port=sys.argv[2].rsplit(":",1)
 with socket.create_connection((host,int(port)),timeout=2): pass
@@ -81,7 +81,15 @@ with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as remote:
  remote.setblocking(False)
  denied=remote.connect_ex(("192.0.2.1",9))
 assert denied == errno.EPERM, denied
-print(json.dumps({"loopback":True,"nonloopbackErrno":denied,"interpreter":sys.implementation.name,"command":sys.argv[1]}))
+for mode in ("rb","wb"):
+ try:
+  with open(sys.argv[3],mode): pass
+ except PermissionError as error: assert error.errno == errno.EPERM, error
+ else: raise AssertionError("synthetic Keychain file access was allowed")
+try: subprocess.run(["/usr/bin/security","help"],check=True)
+except PermissionError as error: assert error.errno == errno.EPERM, error
+else: raise AssertionError("credential command was allowed")
+print(json.dumps({"loopback":True,"nonloopbackErrno":denied,"keychainDenied":True,"interpreter":sys.implementation.name,"command":sys.argv[1]}))
 `
 	if err = os.WriteFile(filepath.Join(module, "__main__.py"), []byte(probe), 0600); err != nil {
 		t.Fatal(err)
@@ -125,7 +133,15 @@ print(json.dumps({"loopback":True,"nonloopbackErrno":denied,"interpreter":sys.im
 		}
 		accepted <- err
 	}()
-	command := exec.Command(launcher, "network-permission-probe", listener.Addr().String())
+	keychain := filepath.Join(home, "Library", "Keychains", "synthetic.keychain")
+	if err := os.MkdirAll(filepath.Dir(keychain), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("owned synthetic CPython credential canary")
+	if err := os.WriteFile(keychain, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(launcher, "network-permission-probe", listener.Addr().String(), keychain)
 	command.Env = environment
 	command.Dir = home
 	var stdout, stderr bytes.Buffer
@@ -137,14 +153,18 @@ print(json.dumps({"loopback":True,"nonloopbackErrno":denied,"interpreter":sys.im
 	var result struct {
 		Loopback         bool   `json:"loopback"`
 		NonloopbackErrno int    `json:"nonloopbackErrno"`
+		KeychainDenied   bool   `json:"keychainDenied"`
 		Interpreter      string `json:"interpreter"`
 		Command          string `json:"command"`
 	}
 	if err = json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("CPython result: %v %s", err, stdout.String())
 	}
-	if !result.Loopback || result.NonloopbackErrno != int(syscall.EPERM) || result.Interpreter != "cpython" || result.Command != "network-permission-probe" {
+	if !result.Loopback || result.NonloopbackErrno != int(syscall.EPERM) || !result.KeychainDenied || result.Interpreter != "cpython" || result.Command != "network-permission-probe" {
 		t.Fatalf("unexpected CPython socket proof: %+v", result)
+	}
+	if actual, err := os.ReadFile(keychain); err != nil || !bytes.Equal(actual, original) {
+		t.Fatal("CPython changed the owned synthetic Keychain bytes")
 	}
 	select {
 	case err := <-accepted:

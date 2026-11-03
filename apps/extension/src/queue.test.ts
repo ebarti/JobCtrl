@@ -196,6 +196,53 @@ describe("extension capture queue", () => {
     }
   }, 1_000);
 
+  it("retains a superseded capture locally when its delayed replay is rejected", async () => {
+    const { storage } = memoryStorage();
+    const queued = await enqueueCapture(storage, capture("superseded"));
+    const send = vi.fn(async () => { throw new LocalApiError("Capture was superseded", 409); });
+    expect(await flushCaptureQueue(storage, "token", send)).toMatchObject({ flushed: 0, remaining: 1 });
+    expect(await loadCaptureQueue(storage)).toEqual([queued.item]);
+  });
+
+  it("keeps a superseded entry while syncing a newer capture through the real API adapter", async () => {
+    const { storage } = memoryStorage();
+    const old = await enqueueCapture(storage, capture("old"), new Date("2020-01-01T00:00:00Z"));
+    const fresh = await enqueueCapture(storage, capture("new"), new Date("2020-01-02T00:00:00Z"));
+    const sent: string[] = [];
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as ExtensionCaptureIngestRequest;
+      sent.push(body.captureId!);
+      if (body.captureId === old.item.capture.captureId) {
+        return Response.json({ ok: false, error: "extension_capture_superseded" }, { status: 409 });
+      }
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body.captureId));
+      const itemId = `extension:${Array.from(new Uint8Array(digest).slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+      return Response.json({ ...acknowledged(body), itemId });
+    };
+    const result = await flushCaptureQueue(storage, "token", (token, item) =>
+      postExtensionCapture(token, item, { fetchImpl }));
+    expect(result).toMatchObject({ flushed: 1, remaining: 1,
+      failure: "A superseded capture remains saved locally; review it or discard it individually.",
+      acknowledgements: [{ id: fresh.item.id, jobKey: null }] });
+    expect(sent).toEqual([old.item.capture.captureId, fresh.item.capture.captureId]);
+    expect(await loadCaptureQueue(storage)).toEqual([{ ...old.item, reviewStatus: "superseded" }]);
+    expect(await flushCaptureQueue(storage, "token", (token, item) => postExtensionCapture(token, item, { fetchImpl })))
+      .toMatchObject({ flushed: 0, remaining: 1 });
+    expect(sent).toHaveLength(2);
+  });
+
+  it("does not skip an unrelated 409 conflict", async () => {
+    const { storage } = memoryStorage();
+    const old = await enqueueCapture(storage, capture("old"), new Date("2020-01-01T00:00:00Z"));
+    const fresh = await enqueueCapture(storage, capture("new"), new Date("2020-01-02T00:00:00Z"));
+    const fetchImpl = vi.fn(async () => Response.json({ ok: false, error: "manual_capture_state_changed" }, { status: 409 }));
+    const result = await flushCaptureQueue(storage, "token", (token, item) =>
+      postExtensionCapture(token, item, { fetchImpl }));
+    expect(result).toMatchObject({ flushed: 0, remaining: 2 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(await loadCaptureQueue(storage)).toEqual([old.item, fresh.item]);
+  });
+
   it("honors a clear during a send without sending later discarded entries", async () => {
     const { storage } = memoryStorage();
     await enqueueCapture(storage, capture("one"));

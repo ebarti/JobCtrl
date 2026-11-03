@@ -1086,7 +1086,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		preactivation := journal.State == release.PairBackedUp || journal.State == release.PolicyPending || journal.State == release.MigrationCandidateReady
 		if sourceErr == nil && (preactivation || intent != nil) {
 			python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
-			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
+			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"), ctx.Environment)
 			if errors.Is(liveErr, errUnresolvedDatabasePublication) {
 				return false, liveErr
 			}
@@ -1666,7 +1666,7 @@ func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (
 			source = temporal
 		}
 		destination := filepath.Join(dir, name)
-		version, err := sqliteOnlineBackup(filepath.Join(ctx.PayloadRoot, "python", "bin", "python3"), source, destination)
+		version, err := sqliteOnlineBackup(filepath.Join(ctx.PayloadRoot, "python", "bin", "python3"), source, destination, ctx.Environment)
 		if err != nil {
 			return databasePair{}, fmt.Errorf("snapshot %s: %w", name, err)
 		}
@@ -1691,7 +1691,7 @@ func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (
 	return pair, nil
 }
 
-func sqliteOnlineBackup(python, source, destination string) (int64, error) {
+func sqliteOnlineBackup(python, source, destination string, environment ...[]string) (int64, error) {
 	info, err := os.Lstat(source)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return 0, errors.New("source database is not a regular file")
@@ -1716,7 +1716,11 @@ try:
  if not r or r[0] != "ok": raise RuntimeError("backup integrity_check failed")
  print(d.execute("PRAGMA user_version").fetchone()[0])
 finally: d.close()`
-	out, err := exec.Command(python, "-I", "-B", "-c", code, source, destination).CombinedOutput()
+	var env []string
+	if len(environment) > 0 && environmentMap(environment[0])[executionQASandboxVariable] != "" {
+		env = environment[0]
+	}
+	out, err := payloadCommand(env, python, "-I", "-B", "-c", code, source, destination).CombinedOutput()
 	if err != nil {
 		return 0, fmt.Errorf("SQLite online backup: %w: %s", err, strings.TrimSpace(string(out)))
 	}

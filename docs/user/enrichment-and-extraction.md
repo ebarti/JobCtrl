@@ -280,6 +280,42 @@ the user's current Chrome profile, so an existing same-site session may be used.
 Without it, acquisition uses anonymous access. Neither mode consults robots.txt;
 a page that remains inaccessible stays on the manual path.
 
+While an import is being checked, its capture remains read-only. If its outcome
+cannot be confirmed, refresh the queue before editing or retrying that capture;
+other captures remain available for review.
+Submitted content is retained before the import starts. If you reload while an
+earlier attempt may still finish, the capture remains read-only until you choose
+the recovery action below.
+To review and retry a failed, conflicting, or unconfirmed submission, choose
+**Prevent earlier imports from saving**. This prevents earlier imports for that
+capture from saving, including any that are still running. A running workflow
+may still prevent a new import from starting until it finishes.
+If another import prevents your submission from starting and the capture leaves
+the queue, JobCtrl keeps an in-memory copy of your unsubmitted text for review.
+It is not retained across a full reload.
+If a request's outcome is unconfirmed and the reviewed capture disappears or is
+reopened, the local copy is labelled unconfirmed; the queue change alone does
+not prove that the request started or succeeded.
+If the capture changes or disappears while you have unsent edits, those edits
+remain available as a labelled local copy while this page stays open.
+
+If a submitted capture cannot be extracted or saved, it stays in Manual Capture
+with its submitted content and details available for review and retry. Correct
+the content and import again; a failed attempt does not report an imported job.
+The pending draft is stored locally and removed from the queue when imported or
+dismissed. A local database failure can prevent saving the draft, so keep the
+form open until the retry data is available. Older imported captures with no
+matching saved snapshot and an identifiable original observation appear as
+**unverified**. JobCtrl cannot attribute every historical failure to a particular
+capture, so review requires the user to provide the page again; it does not
+invent missing content or replace older accepted evidence.
+
+Manual capture uses the cited page interpretation to check that the content is
+an individual posting and does not report a login or challenge. A cited model
+selection then chooses the requested posting's fields and description from the
+captured sources. An unverified page or invalid selection stays available for
+review; JobCtrl does not substitute a neighboring posting or a word-list guess.
+
 The Jobs page's **Import job** action applies the same boundary to one explicit
 public URL. It acknowledges the import promptly and follows its progress without
 holding one browser request open until all interpretation work finishes. Once

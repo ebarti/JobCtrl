@@ -2715,6 +2715,20 @@ The owning context supplies minimized canonical IDs and texts to `LlmPort.chat_j
 
 An accepted envelope persists its kind, schema and prompt versions, provider/model, input fingerprint and typed result. Identical inputs and versions reuse the stored determination without another call. The lane and BR-050 spend preflight run before a new call. Provider unavailability, spend denial, malformed JSON, schema violations, foreign IDs and invalid quotes/numbers have distinct safe failure codes. A failed refresh preserves the last accepted artifact and records the blocked attempt. There is no lexical fallback; affected offline-demo capabilities report unavailable.
 
+Manual Capture applies the cited page-identity and access verdict before intake,
+and selects the requested posting's fields and description from bound captured
+sources. An unavailable, ambiguous or invalid determination retains the draft;
+structured field order, CSS selectors and prose length do not select meaning.
+Historical receipts lacking a matching snapshot are labelled unverified rather
+than attributing an old source-level failure to a particular capture.
+Manual Capture binds review, import and dismissal to one capture lifetime;
+reopening a dismissed item invalidates stale requests and local edits even when
+the deterministic item ID is reused. An in-progress conflict does not
+acknowledge the losing submission. A workflow's terminal status does not prove
+that a timed-out activity thread has stopped. An explicit, reviewed-lifecycle
+recovery action advances the capture generation atomically before allowing a
+retry, preventing earlier attempts from publishing while retaining the draft.
+
 Gmail feedback scans report those safe failure codes and the progress observed
 after each committed message. A failed later determination or provider call
 does not erase accepted evidence, and retry uses message deduplication. Source
