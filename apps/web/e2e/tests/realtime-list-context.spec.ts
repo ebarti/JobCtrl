@@ -167,6 +167,11 @@ test("JobUpdated patches a filtered second page without losing selection, order 
     await expect(updated).toBeChecked();
     expect(page.url()).toBe(urlBefore);
     expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+  } catch (error) {
+    // A cleanup request can also fail when Playwright exhausts the test budget.
+    // Retain the original assertion or request error in the CI log.
+    console.error("Realtime assertions failed before fixture cleanup:", error);
+    throw error;
   } finally {
     try {
       // Other specs share this disposable workspace. Remove our canonical rows

@@ -97,7 +97,7 @@ async function createHarness() {
       await Promise.race([
         record.close,
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`Owned child did not close; retain ${temporaryRoot}`)), milliseconds);
+          timer = setTimeout(() => reject(new Error(`Owned child did not close (pid ${child.pid}, exit ${child.exitCode}, signal ${child.signalCode}); retain ${temporaryRoot}`)), milliseconds);
         }),
       ]);
     } finally {
@@ -312,18 +312,39 @@ wait "$controller_child"
       let stdout = "";
       let stderr = "";
       let stopping = false;
+      let lastStdoutChunk = "";
+      let exitEvent = null;
+      const signals = [];
+      const started = performance.now();
+      const foregroundState = () => JSON.stringify({
+        stopping,
+        ready: targets.filter((name) => stdout.includes(readiness[name])),
+        exitCode: child.exitCode,
+        signalCode: child.signalCode,
+        exitEvent,
+        signals,
+      });
       const signalChild = (signal) => {
-        try { child.kill(signal); }
-        catch (error) { reject(error); }
+        const observation = {
+          signal, elapsedMs: Math.round(performance.now() - started),
+          stdoutChunk: boundedFixtureDiagnostic(lastStdoutChunk, 160),
+        };
+        try {
+          signals.push({ ...observation, accepted: child.kill(signal) });
+        } catch (error) {
+          signals.push({ ...observation, error: fixtureErrorSummary(error) });
+          reject(error);
+        }
       };
       const deadline = setTimeout(() => {
         signalChild("SIGTERM");
-        reject(new Error(`Foreground fixture did not start and stop within ${fixtureCommandTimeout / 1000}s:\n${stdout}\n${stderr}`));
+        reject(new Error(`Foreground fixture did not start and stop within ${fixtureCommandTimeout / 1000}s:\nstate: ${foregroundState()}\n${stdout}\n${stderr}`));
       }, fixtureCommandTimeout);
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
       child.stdout.on("data", (chunk) => {
         stdout += chunk;
+        lastStdoutChunk = chunk;
         if (!stopping && stdout.includes("dev: foreground run active;") &&
             targets.every((name) => stdout.includes(readiness[name]))) {
           stopping = true;
@@ -336,10 +357,11 @@ wait "$controller_child"
         clearTimeout(deadline);
         reject(error);
       });
+      child.once("exit", (status, signal) => { exitEvent = { status, signal }; });
       child.once("close", (status, signal) => {
         clearTimeout(deadline);
         if (!stopping) {
-          reject(new Error(`Foreground fixture exited before readiness:\n${stdout}\n${stderr}`));
+          reject(new Error(`Foreground fixture exited before readiness:\nstate: ${foregroundState()}\n${stdout}\n${stderr}`));
           return;
         }
         resolve({ status, signal, stdout, stderr });
