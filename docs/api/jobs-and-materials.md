@@ -349,6 +349,11 @@ invalid scan input returns 400, and Gmail/model unavailability returns 503.
 Unknown progress is `null`. Retry skips already ingested messages without
 removing earlier evidence or suggestions.
 
+Outcome-suggestion decisions serialize against the canonical row. A matching
+retry returns the original outcome; a different or unprovable request returns a
+`409` with the saved decision so the reviewer can reconcile it. See the
+[decision fields and conflict codes](complete-contract.md#apply-review-and-outcomes).
+
 The latest accepted artifact remains reviewable while a replacement is being
 generated. Failed or rejected attempts stay in the audit history.
 
