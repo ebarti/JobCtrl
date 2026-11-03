@@ -7454,6 +7454,11 @@ describe("local TypeScript API", () => {
       expect(body.errorCode).not.toBe("reconciled_not_found");
       // The timeline preserves the full history of both executions.
       expect(body.events).toHaveLength(5);
+      expect(body.temporalRunId).toBe(DISCOVER_NEW_TEMPORAL_RUN);
+      expect(body.events.map((event: { temporalRunId: string }) => event.temporalRunId)).toEqual([
+        DISCOVER_OLD_TEMPORAL_RUN, DISCOVER_OLD_TEMPORAL_RUN,
+        DISCOVER_NEW_TEMPORAL_RUN, DISCOVER_NEW_TEMPORAL_RUN, DISCOVER_NEW_TEMPORAL_RUN,
+      ]);
     } finally {
       await app.close();
     }
@@ -9609,7 +9614,6 @@ describe("local TypeScript API", () => {
       url: `/v1/jobs/${jobKey}/actions/retailor-current-policy`,
       payload: {
         dryRun: true,
-        suppressExistingArtifacts: false,
         tailorModels: ["gemini:test"],
         tailorJudgeModel: "judge:test",
         reason: "policy refresh",

@@ -3378,7 +3378,7 @@ def llm_budget_doctor_notices() -> list[tuple[str, str, str]]:
     from jobctrl.llm_lanes import LLM_LANES
 
     rows: list[tuple[str, str, str]] = []
-    first = read_spend_budget_status(lane=LLM_LANES[0])
+    first = read_spend_budget_status(lane=LLM_LANES[0], require_complete=True)
     global_limit = "unlimited" if first.daily_budget_usd <= 0 else f"${first.daily_budget_usd:.2f}"
     rows.append(
         (
@@ -3388,7 +3388,7 @@ def llm_budget_doctor_notices() -> list[tuple[str, str, str]]:
         )
     )
     for lane in LLM_LANES:
-        status = first if lane == first.lane else read_spend_budget_status(lane=lane)
+        status = first if lane == first.lane else read_spend_budget_status(lane=lane, require_complete=True)
         total = status.lane_input_tokens + status.lane_output_tokens
         limit = "unlimited" if status.lane_token_limit <= 0 else f"{status.lane_token_limit} tokens"
         rows.append(

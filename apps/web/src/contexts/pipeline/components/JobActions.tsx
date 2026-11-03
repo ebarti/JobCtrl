@@ -84,7 +84,7 @@ export function JobActions({
           <RetailorJobButton
             className={buttonVariants({ size: "sm", variant: "secondary" })}
             jobId={jobId}
-            label="Re-tailor current policy"
+            label="Re-tailor"
           />
         ) : null}
       </div>

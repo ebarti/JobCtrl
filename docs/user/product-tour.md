@@ -230,7 +230,9 @@ identifies the pipeline stages that actually ran.
 
 Run Detail shows workflow and Temporal identities, job relationship, mode,
 selected stage scope, status, timestamps, retryability, failure code/message,
-and lifecycle events.
+and lifecycle events. Events are grouped by recorded attempt, with the current
+attempt labeled and its failure details attached there. Events without an
+execution identity stay in a separate history group.
 
 ### Debug
 

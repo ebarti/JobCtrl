@@ -553,7 +553,8 @@ def test_tailor_job_by_url_allows_low_fit_manual_override(tmp_path, monkeypatch)
         close_connection(db_path)
 
 
-def test_tailor_job_by_url_surfaces_blocked_score_eligibility(tmp_path, monkeypatch):
+@pytest.mark.parametrize("retailor", [False, True])
+def test_tailor_job_by_url_only_applies_score_eligibility_to_automatic_tailoring(tmp_path, monkeypatch, retailor):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
     target_url = "https://example.com/blocked"
@@ -562,20 +563,42 @@ def test_tailor_job_by_url_surfaces_blocked_score_eligibility(tmp_path, monkeypa
         target_job_id = _insert_job(conn, url=target_url, fit_score=10)
         _insert_blocked_score(conn, url=target_url)
 
-        def fail_tailor_one_job(*_args, **_kwargs):
-            raise AssertionError("blocked score must not tailor")
+        before_scores = conn.execute("SELECT * FROM job_scores").fetchall()
+        calls: list[str] = []
+
+        def generate(job, *_args, **_kwargs):
+            assert retailor, "automatic tailoring must respect blocked score eligibility"
+            calls.append(job["url"])
+            return {
+                "url": job["url"],
+                "title": job["title"],
+                "site": job.get("site"),
+                "status": "approved",
+                "attempts": 1,
+                "path": "/tmp/explicit-retailor.txt",
+                "pdf_path": None,
+                "materials": SimpleNamespace(generation=1),
+            }
 
         monkeypatch.setattr("jobctrl.scoring.tailor.get_connection", lambda: conn)
-        monkeypatch.setattr("jobctrl.scoring.tailor._tailor_one_job", fail_tailor_one_job)
+        monkeypatch.setattr("jobctrl.scoring.tailor._build_pdf_renderer", lambda: object())
+        monkeypatch.setattr("jobctrl.scoring.tailor._tailor_one_job", generate)
 
         result = tailor_job_by_url(
             target_url,
             min_score=7,
-            retailor=True,
+            retailor=retailor,
             snapshot=SimpleNamespace(),
             llm_model=None,
         )
 
+        assert conn.execute("SELECT * FROM job_scores").fetchall() == before_scores
+        if retailor:
+            assert result["status"] == "approved"
+            assert calls == [target_url]
+            return
+
+        assert calls == []
         assert result == {
             "url": target_url,
             "job_id": str(target_job_id),

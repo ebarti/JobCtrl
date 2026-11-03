@@ -40,17 +40,18 @@ class SpendBudgetInput:
 @dataclass(frozen=True)
 class SpendBudgetStatus:
     day: str
-    input_tokens: int
-    output_tokens: int
-    estimated_usd: float
+    input_tokens: int | None
+    output_tokens: int | None
+    estimated_usd: float | None
     daily_budget_usd: float
     lane: LlmLane
-    lane_input_tokens: int
-    lane_output_tokens: int
+    lane_input_tokens: int | None
+    lane_output_tokens: int | None
     lane_token_limit: int
     lane_exceeded: bool
     global_exceeded: bool
     exceeded: bool
+    accounting_complete: bool = True
 
 
 def record_llm_spend(
@@ -171,7 +172,13 @@ def read_spend_budget_status(
     lane_token_limits: dict[LlmLane, int] | None = None,
     require_complete: bool = False,
 ) -> SpendBudgetStatus:
-    """Read today's spend; reporting can also require no in-flight receipts."""
+    """Read budget admission; incomplete usage cannot impose a disabled limit.
+
+    Reporting callers require a complete snapshot. Admission may proceed with
+    explicitly unknown totals only when both limits for this lane are disabled.
+    """
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved
+
     if daily_budget_usd is None:
         from jobctrl.infrastructure.scoring.criteria_provider import read_daily_budget_usd
 
@@ -181,20 +188,30 @@ def read_spend_budget_status(
         from jobctrl.infrastructure.scoring.criteria_provider import read_lane_token_limits
 
         lane_token_limits = read_lane_token_limits()
-    if require_complete:
-        from jobctrl.infrastructure.llm.spend_observation import complete_spend_snapshot
-
-        with complete_spend_snapshot():
-            row = _read_llm_spend()
-            lane_row = _read_llm_spend_by_lane(str(row["day"]))[spend_lane]
-    else:
-        row = read_llm_spend()
-        lane_row = read_llm_spend_by_lane(str(row["day"]))[spend_lane]
     budget = max(0.0, float(daily_budget_usd or 0.0))
+    lane_limit = int(lane_token_limits[spend_lane])
+    try:
+        if require_complete:
+            from jobctrl.infrastructure.llm.spend_observation import complete_spend_snapshot
+
+            with complete_spend_snapshot():
+                row = _read_llm_spend()
+                lane_row = _read_llm_spend_by_lane(str(row["day"]))[spend_lane]
+        else:
+            row = read_llm_spend()
+            lane_row = read_llm_spend_by_lane(str(row["day"]))[spend_lane]
+    except SpendAccountingUnresolved:
+        if require_complete or budget != 0 or lane_limit != 0:
+            raise
+        return SpendBudgetStatus(
+            day=_utc_spend_day(), input_tokens=None, output_tokens=None,
+            estimated_usd=None, daily_budget_usd=budget, lane=spend_lane,
+            lane_input_tokens=None, lane_output_tokens=None, lane_token_limit=lane_limit,
+            lane_exceeded=False, global_exceeded=False, exceeded=False, accounting_complete=False,
+        )
     estimated = float(row["estimated_usd"])
     lane_input = int(lane_row["input_tokens"])
     lane_output = int(lane_row["output_tokens"])
-    lane_limit = int(lane_token_limits[spend_lane])
     lane_exceeded = lane_limit > 0 and lane_input + lane_output >= lane_limit
     global_exceeded = budget > 0 and estimated >= budget
     return SpendBudgetStatus(
@@ -221,12 +238,14 @@ def enforce_spend_budget(lane: LlmLane | str | None = None) -> SpendBudgetStatus
     if not status.exceeded:
         return status
     if status.lane_exceeded:
+        assert status.lane_input_tokens is not None and status.lane_output_tokens is not None
         total = status.lane_input_tokens + status.lane_output_tokens
         detail = (
             f"LLM {status.lane} lane token threshold reached: {total} observed of "
             f"{status.lane_token_limit} for {status.day}."
         )
     else:
+        assert status.estimated_usd is not None
         detail = (
             f"LLM daily spend budget exceeded: ${status.estimated_usd:.4f} "
             f"spent of ${status.daily_budget_usd:.2f} for {status.day}."

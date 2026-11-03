@@ -67,7 +67,7 @@ export function TailorJobButton({
 export function RetailorJobButton({
   jobId,
   className = "tab",
-  label = "Re-tailor current policy",
+  label = "Re-tailor",
   disabled = false,
 }: RetailorJobButtonProps): JSX.Element {
   const mutation = useRetailorJobMutation();
@@ -82,7 +82,7 @@ export function RetailorJobButton({
       onClick={() => {
         if (
           blocked ||
-          !window.confirm("Re-tailor this job with the current tailoring policy? Existing active artifacts will be suppressed.")
+          !window.confirm("Re-tailor this resume using your latest profile and settings? Your accepted resume stays available until a replacement is approved.")
         ) {
           return;
         }
@@ -142,7 +142,7 @@ export function RetailorCurrentPolicyButton({
       : `up to ${limit} eligible jobs not on the current tailoring policy`;
     if (
       !window.confirm(
-        `Re-tailor ${scope}? Existing active artifacts will be suppressed and retained for audit.`,
+        `Re-tailor ${scope} using your latest profile and settings? Accepted materials stay available until replacements are approved.`,
       )
     ) {
       return;

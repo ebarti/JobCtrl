@@ -742,7 +742,7 @@ describe("<JobBulkActions>", () => {
         jobKeys: selectedJobKeys,
         limit: selectedJobKeys.length,
         dryRun: false,
-        suppressExistingArtifacts: true,
+        suppressExistingArtifacts: false,
         tailorModels: [],
       }),
     );

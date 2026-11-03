@@ -773,7 +773,12 @@ def tailor_job_by_id(
     # and strand the preparation workflow until another external trigger.
     with admission_write_boundary():
         attempt_start_guard()
-        score_skip_reason = _reconcile_score_eligibility_skip(
+        if retailor:
+            # Repair corrections saved before evidence was carried forward.
+            score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
+            if score is not None:
+                SqliteRequirementFitReportRepository(conn).carry_forward_correction(score)
+        score_skip_reason = None if retailor else _reconcile_score_eligibility_skip(
             conn,
             job_id=stable_job_id,
             tenant_id=tenant_id,
@@ -1581,6 +1586,9 @@ def _load_tailor_eligible_job_by_id(
     stable_job_id = canonical_job_id(str(job_id))
     if not str(job.get("full_description") or "").strip():
         return None
+    score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
+    if score is None and not retailor:
+        return None
     score_stage = conn.execute(
         """
         SELECT state
@@ -1589,9 +1597,9 @@ def _load_tailor_eligible_job_by_id(
         """,
         (str(tenant_id), str(stable_job_id)),
     ).fetchone()
-    if score_stage is not None and str(score_stage["state"]) != "succeeded":
+    if not retailor and score_stage is not None and str(score_stage["state"]) != "succeeded":
         return None
-    if (
+    if not retailor and (
         conn.execute(
             """
         SELECT 1
@@ -1657,14 +1665,13 @@ def _load_tailor_eligible_job_by_id(
             }
         ):
             return None
-    score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
-    if score is None:
-        return None
-    if eligibility_blocks_downstream(score.breakdown.eligibility):
-        return None
-    effective_min_score = 0 if allow_low_fit_override else db_module.effective_tailoring_min_score(min_score)
-    if score.fit_score.value < effective_min_score:
-        return None
+    if not retailor:
+        assert score is not None
+        if eligibility_blocks_downstream(score.breakdown.eligibility):
+            return None
+        effective_min_score = 0 if allow_low_fit_override else db_module.effective_tailoring_min_score(min_score)
+        if score.fit_score.value < effective_min_score:
+            return None
     if not retailor and SqliteMaterialsRepository(conn).load_current_approved(tenant_id, stable_job_id) is not None:
         return None
     return job

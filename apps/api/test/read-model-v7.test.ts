@@ -237,7 +237,7 @@ describe("exact-v7 read model job ids", () => {
     expect(getJobDetail(db, JOB_ID)?.requirementFitReport?.scoreVersion).toBe(2);
   });
 
-  it("withholds a prior fit report after score correction without attributing it to analysis drift", () => {
+  it("carries requirement evidence forward atomically when a score is manually corrected", () => {
     const db = seededDatabase();
     db.prepare(`INSERT INTO job_employer_analysis (
       tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
@@ -249,33 +249,61 @@ describe("exact-v7 read model job ids", () => {
       profile_snapshot_version, scoring_policy_version, formula_version,
       resolved_fit_score, fit_band, confidence, summary_json, created_at
     ) VALUES ('local', ?, 1, 1, 1, 1, 'requirement-fit-v1', 8, 'strong', 'high', '{}', ?)`).run(JOB_ID, NOW);
+    db.prepare(`INSERT INTO job_requirement_fit_items (
+      tenant_id, job_id, score_version, requirement_id, requirement_text, tier,
+      weight, job_evidence_span, fit_json, contribution_json, tailoring_json, position
+    ) VALUES ('local', ?, 1, 'r1', 'Synthetic requirement', 'must_have', 1,
+      'Synthetic requirement', '{"kind":"matched","evidence_ids":["e1"]}',
+      '{"scope":"capability"}', '{"action":"double_down"}', 0)`).run(JOB_ID);
     expect(getJobDetail(db, JOB_ID)?.job.scoreAnalysisFreshness?.status).toBe("current");
+    const earlierFitReport = getJobDetail(db, JOB_ID)?.requirementFitReport;
     const earlierReport = db.prepare(`SELECT requirement_fit_report_json FROM job_detail_projections
       WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID) as { requirement_fit_report_json: string };
 
     correctScore(db, "local", JOB_ID, { correctedScore: 6, reason: "Synthetic correction" });
 
+    const copiedItems = db.prepare(`SELECT score_version, fit_json, contribution_json, tailoring_json
+      FROM job_requirement_fit_items WHERE tenant_id='local' AND job_id=? ORDER BY score_version`).all(JOB_ID);
+    expect(copiedItems).toHaveLength(2);
+    expect(copiedItems[1]).toEqual({ ...(copiedItems[0] as Record<string, unknown>), score_version: 2 });
+
     const detail = getJobDetail(db, JOB_ID);
     expect(detail?.job.scoreVersion).toBe(2);
     expect(detail?.job.scoreAnalysisFreshness).toMatchObject({
-      status: "outdated", currentAnalysisGeneration: 1,
-      assessedAnalysisGeneration: 1, assessedScoreVersion: 1,
+      status: "current", currentAnalysisGeneration: 1,
+      assessedAnalysisGeneration: 1, assessedScoreVersion: 2,
     });
-    expect(detail?.requirementFitReport).toBeNull();
-    expect(db.prepare(`SELECT requirement_fit_report_json FROM job_detail_projections
-      WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID)).toEqual({ requirement_fit_report_json: null });
-    expect(db.prepare(`SELECT fit_band FROM job_list_projections
-      WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID)).toEqual({ fit_band: "unreported" });
+    expect(detail?.job.fitScore).toBe(6);
+    expect(detail?.requirementFitReport).toEqual({
+      ...earlierFitReport, scoreVersion: 2,
+    });
+    const currentProjection = db.prepare(`SELECT requirement_fit_report_json FROM job_detail_projections
+      WHERE tenant_id='local' AND job_id=?`).get(JOB_ID) as { requirement_fit_report_json: string };
+    expect(JSON.parse(currentProjection.requirement_fit_report_json)).toEqual({
+      ...JSON.parse(earlierReport.requirement_fit_report_json), scoreVersion: 2,
+    });
     expect(db.prepare(`SELECT score_version FROM job_requirement_fit_reports
-      WHERE tenant_id = 'local' AND job_id = ?`).all(JOB_ID)).toEqual([{ score_version: 1 }]);
+      WHERE tenant_id = 'local' AND job_id = ? ORDER BY score_version`).all(JOB_ID))
+      .toEqual([{ score_version: 1 }, { score_version: 2 }]);
+    const items = db.prepare(`SELECT score_version, fit_json, contribution_json, tailoring_json
+      FROM job_requirement_fit_items WHERE tenant_id='local' AND job_id=? ORDER BY score_version`).all(JOB_ID);
+    expect(items).toHaveLength(2);
+    expect(items[1]).toEqual({ ...(items[0] as Record<string, unknown>), score_version: 2 });
 
     // An older installation can already have materialized the wrong report.
     // A read must repair it even when no newer event arrives.
     db.prepare(`UPDATE job_detail_projections SET requirement_fit_report_json = ?
       WHERE tenant_id = 'local' AND job_id = ?`).run(earlierReport.requirement_fit_report_json, JOB_ID);
-    expect(getJobDetail(db, JOB_ID)?.requirementFitReport).toBeNull();
-    expect(db.prepare(`SELECT requirement_fit_report_json FROM job_detail_projections
-      WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID)).toEqual({ requirement_fit_report_json: null });
+    expect(getJobDetail(db, JOB_ID)?.requirementFitReport?.scoreVersion).toBe(2);
+
+    db.exec(`CREATE TEMP TRIGGER fail_evidence_copy BEFORE INSERT ON job_requirement_fit_items
+      WHEN NEW.score_version = 3 BEGIN SELECT RAISE(ABORT, 'synthetic copy failure'); END`);
+    expect(() => correctScore(db, "local", JOB_ID, { correctedScore: 9, reason: "Second correction" }))
+      .toThrow("synthetic copy failure");
+    expect(db.prepare("SELECT MAX(version) AS version FROM job_scores WHERE tenant_id='local' AND job_id=?")
+      .get(JOB_ID)).toEqual({ version: 2 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM job_requirement_fit_reports WHERE score_version=3")
+      .get()).toEqual({ count: 0 });
   });
 
   it.each(["waiting", "stopped", "checks_exhausted"])("projects canonical %s fetch recovery without raw request URLs or invented retryability", (status) => {

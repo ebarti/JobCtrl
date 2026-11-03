@@ -562,7 +562,7 @@ scenarioTest(
     const actions = await openJobActions(page);
     acceptNextConfirmation(page);
     await actions
-      .getByRole("button", { name: "Re-tailor current policy", exact: true })
+      .getByRole("button", { name: "Re-tailor", exact: true })
       .click();
     await expect(drawer.getByText("failed", { exact: true })).toBeVisible({
       timeout: 3_000,

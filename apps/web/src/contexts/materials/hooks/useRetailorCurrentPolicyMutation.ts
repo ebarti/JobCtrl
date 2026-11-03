@@ -117,7 +117,7 @@ function toTailorJobRequest(variables: TailorJobVariables): Partial<TailorJobReq
 function toJobRequest(variables: RetailorJobVariables): Partial<RetailorJobRequest> {
   const request: Partial<RetailorJobRequest> = {
     dryRun: variables.dryRun ?? false,
-    suppressExistingArtifacts: variables.suppressExistingArtifacts ?? true,
+    suppressExistingArtifacts: variables.suppressExistingArtifacts ?? false,
     tailorModels: [],
   };
   if (variables.reason) {
@@ -133,7 +133,7 @@ function toBulkRequest(variables: RetailorCurrentPolicyVariables): BulkRetailorC
     jobKeys,
     limit: jobKeys.length ? Math.max(requestedLimit, jobKeys.length) : requestedLimit,
     dryRun: variables.dryRun ?? false,
-    suppressExistingArtifacts: variables.suppressExistingArtifacts ?? true,
+    suppressExistingArtifacts: variables.suppressExistingArtifacts ?? false,
     tailorModels: [],
   };
   if (variables.reason) {

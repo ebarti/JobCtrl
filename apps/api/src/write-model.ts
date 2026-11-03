@@ -423,6 +423,27 @@ export function correctScore(
       String(latest.criteria_json ?? "{}"),
       JSON.stringify(trace),
     );
+    // A correction changes the user's score, not the underlying requirement
+    // assessment. Carry that evidence forward in the same transaction while
+    // retaining its original profile, analysis and policy provenance.
+    db.prepare(`INSERT INTO job_requirement_fit_reports (
+      tenant_id, job_id, score_version, employer_analysis_generation,
+      profile_snapshot_version, scoring_policy_version, formula_version,
+      resolved_fit_score, fit_band, confidence, summary_json, created_at
+    ) SELECT tenant_id, job_id, ?, employer_analysis_generation,
+      profile_snapshot_version, scoring_policy_version, formula_version,
+      resolved_fit_score, fit_band, confidence, summary_json, created_at
+      FROM job_requirement_fit_reports WHERE tenant_id = ? AND job_id = ? AND score_version = ?`)
+      .run(nextVersion, tenantId, jobId, latest.version);
+    db.prepare(`INSERT INTO job_requirement_fit_items (
+      tenant_id, job_id, score_version, requirement_id, requirement_text, tier,
+      weight, job_evidence_span, fit_json, contribution_json, tailoring_json,
+      artifact_coverage_json, position
+    ) SELECT tenant_id, job_id, ?, requirement_id, requirement_text, tier,
+      weight, job_evidence_span, fit_json, contribution_json, tailoring_json,
+      artifact_coverage_json, position FROM job_requirement_fit_items
+      WHERE tenant_id = ? AND job_id = ? AND score_version = ?`)
+      .run(nextVersion, tenantId, jobId, latest.version);
     const policyChange = persistScoringPolicyCorrection(db, {
       tenantId,
       jobId,

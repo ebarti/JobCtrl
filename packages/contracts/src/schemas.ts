@@ -341,7 +341,7 @@ export type BulkRescoreJobsNotOnCurrentScoringPolicyRequest = z.infer<
 export const RetailorJobRequestSchema = z
   .object({
     dryRun: z.boolean().default(false),
-    suppressExistingArtifacts: z.boolean().default(true),
+    suppressExistingArtifacts: z.boolean().default(false),
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
@@ -364,7 +364,7 @@ export const BulkRetailorCurrentPolicyRequestSchema = z
     limit: z.coerce.number().int().min(1).max(1000).default(100),
     jobKeys: z.array(z.string().trim().min(1)).max(5000).default([]),
     dryRun: z.boolean().default(false),
-    suppressExistingArtifacts: z.boolean().default(true),
+    suppressExistingArtifacts: z.boolean().default(false),
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
@@ -2816,6 +2816,8 @@ export interface WorkflowRunSummary {
 }
 
 export interface WorkflowRunTimelineEvent {
+  /** Recorded execution identity; absent only for legacy events. */
+  readonly temporalRunId?: string | null;
   readonly eventType: string;
   readonly occurredAt: string | null;
   readonly status: string | null;

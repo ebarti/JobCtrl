@@ -61,12 +61,12 @@ describe("re-tailor current-policy buttons", () => {
       ports: buildTestPorts({ api: { retailorJob } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "Re-tailor current policy" }));
+    await user.click(screen.getByRole("button", { name: "Re-tailor" }));
 
     await waitFor(() =>
       expect(retailorJob).toHaveBeenCalledWith("job-1", {
         dryRun: false,
-        suppressExistingArtifacts: true,
+        suppressExistingArtifacts: false,
         tailorModels: [],
       }),
     );
@@ -91,7 +91,7 @@ describe("re-tailor current-policy buttons", () => {
         jobKeys: ["job-1"],
         limit: 100,
         dryRun: false,
-        suppressExistingArtifacts: true,
+        suppressExistingArtifacts: false,
         tailorModels: [],
       }),
     );

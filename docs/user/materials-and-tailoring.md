@@ -204,8 +204,20 @@ it restores the earlier per-call settings; accepted material and its recorded
 effort history remain unchanged.
 
 Eligible jobs receive materials during Discover preparation. You can also
-generate first-time materials for one job, re-tailor a job with the current
-policy, or run bounded re-tailoring from the Jobs toolbar.
+generate first-time materials for one job, use **Re-tailor** to regenerate its
+resume with your latest saved profile and settings, or run bounded re-tailoring
+from the Jobs toolbar. Use **Re-tailor** after updating your profile even when
+your tailoring settings have not changed. Your accepted materials stay available
+until a replacement is approved, including when a refresh fails.
+Explicit re-tailoring does not require a fresh score and does not re-score the
+job. It uses the current profile and saved requirement evidence. Automatic
+preparation continues to apply scoring readiness and fit thresholds.
+
+When you manually correct a score, the existing requirement evidence is carried
+forward to that score version. Its original profile and employer-analysis
+provenance remains visible; changing the score does not claim that the evidence
+was reassessed. Re-tailoring also repairs older corrections whose evidence was
+left behind, only when the recorded scoring determination identifies its source.
 
 The user-visible surfaces divide the work:
 

@@ -1056,7 +1056,7 @@ describe("preparation RPC contracts", () => {
       tenantId: "local",
       jobId: CANONICAL_JOB_ID,
       dryRun: false,
-      suppressExistingArtifacts: true,
+      suppressExistingArtifacts: false,
       tailorModels: [],
     });
   });
@@ -1103,7 +1103,7 @@ describe("preparation RPC contracts", () => {
       limit: 100,
       jobIds: [],
       dryRun: false,
-      suppressExistingArtifacts: true,
+      suppressExistingArtifacts: false,
       tailorModels: [],
     });
   });
