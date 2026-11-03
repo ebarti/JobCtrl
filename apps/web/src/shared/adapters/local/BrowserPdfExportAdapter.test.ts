@@ -35,6 +35,7 @@ describe("BrowserPdfExportAdapter", () => {
     ];
     const slices = pdfPageSlices(180, 100, intervals);
     expect(slices[0]).toEqual({ startPx: 0, endPx: 70 });
+    expect(pdfPageSlices(180, 100, intervals, candidate => candidate + 8)[0]?.endPx).toBe(70);
     expect(slices.at(-1)?.endPx).toBe(180);
     for (const slice of slices) {
       expect(intervals.some(interval => interval.topPx < slice.endPx && interval.bottomPx > slice.endPx)).toBe(false);

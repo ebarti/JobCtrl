@@ -469,6 +469,7 @@ export function pdfPageSlices(
         if (crosses(resolvedEndPx).length > 0) {
           resolvedEndPx = resolveSafeCut?.(candidatePx, startPx, candidatePx) ?? candidatePx;
         }
+        if (crosses(resolvedEndPx).length > 0) resolvedEndPx = candidatePx;
         endPx =
           resolvedEndPx > startPx + PDF_PAGE_SLICE_EPSILON_PX &&
           resolvedEndPx <= endPx
