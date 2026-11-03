@@ -38,6 +38,16 @@ No required case may pass by fabricating an ownership flag or a real user's
 coalition ID. Kernel boot identity binds receipt lifetime and is not a reboot
 admission requirement. Use no real user workspace or process.
 
+The source-shell fixture's 3.5-second blocked drain covers the complete fleet,
+and its 17.5-second control verifies full-fleet custody retention and retry after
+the sixteen-second cleanup budget expires.
+The nine-second control delays real inventory reads and catches the former
+eight-second controller grace. A deadline refusal requires unchanged controller
+receipts, authenticated retained custody, no supervisor KILL, a surviving peer
+and a successful explicit cleanup retry after releasing the lock and the injected
+census delay. Recovery still uses the real kernel inventory. Every control uses
+all six services. The original handles, deadlines and exit checks remain.
+
 For Temporal health probe changes, exercise the real helper and public startup
 and status commands with a synthetic health executable that ignores its own
 timeout and creates an environment-empty, new-session child. Verify the startup
