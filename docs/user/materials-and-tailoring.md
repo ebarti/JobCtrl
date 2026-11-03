@@ -245,6 +245,8 @@ The user-visible surfaces divide the work:
   continuation pages; the download keeps searchable text aligned with the page.
   Section and entry headings stay with their first content line at page breaks.
   Bullets and short paragraphs stay together when they fit on one page.
+  Review comments remain available on long resumes too. If saving comments
+  fails, retrying saves the existing findings without running another review.
 - `/preferences` owns tailoring permissions, writing style, resume templates,
   and the default template; Apply Review can override the template for one job.
   Template payloads hold style/layout only, not candidate or job facts. An

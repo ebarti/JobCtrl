@@ -20,6 +20,7 @@ import type {
   ResumeReviewDraftRevisionSaveRequest,
 } from "@jobctrl/contracts";
 import type { TenantId } from "@jobctrl/domain-types";
+import { RESUME_REVIEW_COMMENT_SEED_BATCH_LIMIT } from "@jobctrl/contracts";
 import {
   useMutation,
   useQueryClient,
@@ -254,7 +255,24 @@ export function useSeedResumeReviewCommentThreadsMutation(): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation({
     onMutate: () => ({ tenantId }),
-    mutationFn: ({ draftId, body }) => api.seedResumeReviewCommentThreads(draftId, body),
+    mutationFn: async ({ draftId, body }) => {
+      // Long resumes can have more findings than one API request permits.
+      // Seeding uses stable thread IDs, so a partial failure can safely retry
+      // the complete set without discarding or duplicating earlier findings.
+      let response = await api.seedResumeReviewCommentThreads(draftId, {
+        threads: body.threads.slice(0, RESUME_REVIEW_COMMENT_SEED_BATCH_LIMIT),
+      });
+      let seededCount = response.seededCount;
+      let updatedCount = response.updatedCount;
+      for (let offset = RESUME_REVIEW_COMMENT_SEED_BATCH_LIMIT; offset < body.threads.length; offset += RESUME_REVIEW_COMMENT_SEED_BATCH_LIMIT) {
+        response = await api.seedResumeReviewCommentThreads(draftId, {
+          threads: body.threads.slice(offset, offset + RESUME_REVIEW_COMMENT_SEED_BATCH_LIMIT),
+        });
+        seededCount += response.seededCount;
+        updatedCount += response.updatedCount;
+      }
+      return { ...response, seededCount, updatedCount };
+    },
     onSuccess: (data, variables, context) => {
       const tenantId = context!.tenantId;
       publishDraft(queryClient, tenantId, variables.jobId, data.draft);

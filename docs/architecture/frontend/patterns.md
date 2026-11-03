@@ -299,7 +299,10 @@ View composition (Dashboard, Jobs, Artifacts) is treated separately in §4.5.
 `useApplyReviewSession` coordinates the review lifecycle through the public Apply
 contract. The view composes its state with Materials' controlled document and
 comparison components. Document saves and renders are ordered; comments reconcile
-independently by recorded IDs. Each acknowledgement belongs to its initiating
+independently by recorded IDs. Comment seeding sends sequential batches bounded
+by the shared API request limit; a partial failure retains the complete payload
+for an idempotent retry, including findings already saved by an earlier batch.
+Each acknowledgement belongs to its initiating
 tenant/job, draft/base generation, revision and submitted document. Failed loads,
 saves and renders expose retry actions while retaining the accepted artifact and
 evidence snapshot. Rejected render attempts are separate from the last successful

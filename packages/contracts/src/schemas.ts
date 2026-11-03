@@ -1304,9 +1304,11 @@ export type ResumeReviewCommentThreadSeedInput = z.infer<
   typeof ResumeReviewCommentThreadSeedInputSchema
 >;
 
+export const RESUME_REVIEW_COMMENT_SEED_BATCH_LIMIT = 100;
+
 export const ResumeReviewCommentThreadSeedRequestSchema = z
   .object({
-    threads: z.array(ResumeReviewCommentThreadSeedInputSchema).max(100).default([]),
+    threads: z.array(ResumeReviewCommentThreadSeedInputSchema).max(RESUME_REVIEW_COMMENT_SEED_BATCH_LIMIT).default([]),
   })
   .strict();
 export type ResumeReviewCommentThreadSeedRequest = z.infer<
