@@ -210,6 +210,8 @@ def test_canonical_cascade_binds_tier_3_usage_to_enrichment_lane(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spend: list[dict[str, Any]] = []
+    utc_day = "2042-06-09"
+    monkeypatch.setattr(legacy_llm, "_utc_spend_day", lambda: utc_day)
     monkeypatch.setattr(legacy_llm, "enforce_spend_budget", lambda _lane=None: None)
     monkeypatch.setattr(legacy_llm, "record_llm_spend", lambda **kwargs: spend.append(kwargs))
     backend = _SpanBackedEnrichmentLlm()
@@ -240,6 +242,7 @@ def test_canonical_cascade_binds_tier_3_usage_to_enrichment_lane(
             "input_tokens": 11,
             "output_tokens": 7,
             "model": "gemini-synthetic",
+            "day": utc_day,
             "lane": "enrichment",
         }
     ]

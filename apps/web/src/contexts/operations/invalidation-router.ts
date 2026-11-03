@@ -1,3 +1,4 @@
+import { applyPartialQueryPatch } from "../../shared/lib/createOptimisticMutation.js";
 import { outreachKeys } from "../outreach/queryKeys.js";
 import { jobsKeys } from "./jobsKeys.js";
 import { outcomesKeys } from "./outcomesKeys.js";
@@ -6,7 +7,7 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
 import type { ApplyRunEventRecorded, TenantId } from "@jobctrl/domain-types";
 
-import { appendApplyRunEvent } from "../apply/selectors/applyRunSelectors.js";
+import { appendApplyRunEvent, normalizeApplyRunEventEntry } from "../apply/selectors/applyRunSelectors.js";
 import {
   applicationEmailFeedbackIngestedHandler,
   applicationFailedHandler,
@@ -345,25 +346,19 @@ export const invalidationRouter: InvalidationRouter = {
         continue;
       }
       if (item.kind === "patch-query") {
-        queryClient.setQueriesData(
-          { queryKey: item.queryKey, exact: item.exact },
-          item.updater,
-        );
+        for (const query of queryClient.getQueryCache().findAll({ queryKey: item.queryKey, exact: item.exact })) {
+          applyPartialQueryPatch(queryClient, query, item.updater);
+        }
         continue;
       }
       if (item.kind === "reconcile-query") {
         for (const query of queryClient.getQueryCache().findAll({ queryKey: item.queryKey })) {
-          const current = query.state.data;
           // Reconcile explicit invalidation and responses in flight on the server.
           const next = query.state.isInvalidated || query.state.fetchStatus === "fetching"
             ? undefined
-            : item.updater(current, query.queryKey);
-          if (next !== undefined && next !== current) {
-            // A partial event patch does not refresh unrelated fields.
-            queryClient.setQueryData(query.queryKey, next, {
-              updatedAt: query.state.dataUpdatedAt,
-            });
-          }
+            : applyPartialQueryPatch(queryClient, query,
+              (current) => item.updater(current, query.queryKey),
+              { updatedAt: query.state.dataUpdatedAt, skipUnchanged: true });
           if (next === undefined || item.invalidateAfterPatch) {
             void queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true });
           }
@@ -373,12 +368,17 @@ export const invalidationRouter: InvalidationRouter = {
       // High-frequency `ApplyRunEventRecorded` events patch the apply-run
       // cache surgically per target §7.5; refetching per per-second event
       // would saturate the API.
-      queryClient.setQueryData(applyRunsKeys.detail(item.tenantId, item.runId), (current) => {
-        const observed = queryClient.getQueryCache().findAll({ queryKey: workflowRunsKeys.detail(item.tenantId, item.runId) })
-          .some((query) => query.isActive());
+      const key = applyRunsKeys.detail(item.tenantId, item.runId);
+      const observed = queryClient.getQueryCache().findAll({ queryKey: workflowRunsKeys.detail(item.tenantId, item.runId) })
+        .some((query) => query.isActive());
+      const normalizedEvent = normalizeApplyRunEventEntry(item.event.payload.event);
+      const append = (current: unknown) => {
         const timeline = current ?? (observed ? { events: [] } : undefined);
-        return appendApplyRunEvent(timeline as never, item.event);
-      });
+        return appendApplyRunEvent(timeline as never, item.event, normalizedEvent);
+      };
+      const query = queryClient.getQueryCache().find({ queryKey: key, exact: true });
+      if (query) applyPartialQueryPatch(queryClient, query, append);
+      else queryClient.setQueryData(key, append);
     }
   },
 };

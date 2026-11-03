@@ -99,12 +99,16 @@ default API handlers and interview fixtures. Teardown unmounts React before
 resetting handlers and fixture state. The upstream axe assertion remains
 synchronous and loads its implementation when used.
 
-The boundary regression suite runs two files through Node's test runner with
-`--test-concurrency=2`: module ownership/generated-route controls and capability
-handoff/flow controls. Each process uses independent in-memory fixtures and
-fresh TypeScript programs; every real-program case still requests semantic
-diagnostics for the complete graph. The standalone production boundary check
-remains an independent cold run.
+The boundary regression suite runs module/generated-route, capability-flow and
+compiler-invalidation controls through Node's test runner with
+`--test-concurrency=2`. Each process owns its fixture compiler state; source-byte
+versions and resolution invalidation keep reused syntax bound to the current
+inputs. Every real-program case still requests semantic diagnostics for the
+complete graph. The positive generated-route control checks the actual Dashboard
+and Activity detail loaders against the real configuration rather than repeating
+the whole production scan. `corepack pnpm web:lint` remains the independent full
+production boundary gate in the Frontend job, alongside the Support job's
+regression controls.
 
 ## 10.3 Component & Hook Tests (Vitest + React Testing Library + MSW)
 
@@ -201,8 +205,16 @@ three audiences:
 - **Developers** — visual playground while building.
 - **Designers** — review surface without booting the full app.
 - **Accessibility + interaction** — the Storybook test runner
-  (`pnpm web:storybook:test`) drives the a11y addon (zero critical/serious
+  (`corepack pnpm web:storybook:test`) drives the a11y addon (zero critical/serious
   axe violations, §10.7) and play functions.
+
+Runner-scoped dependency overrides retain the verified Jest 30.3.0 runtime.
+Storybook's configuration loader registers a Node TypeScript loader,
+which [Jest 30.5 rejects inside its test sandbox](https://github.com/jestjs/jest/releases/tag/v30.5.0).
+Advance those overrides when the actual project configuration and both
+accessibility hooks load successfully with the newer runtime, then verify the
+full Chromium Storybook suite. The axe thresholds and play functions remain
+required.
 
 Stories live next to components (`<Component>.stories.tsx`).
 Domain-component stories use the **MSW addon** to mock API responses, so a

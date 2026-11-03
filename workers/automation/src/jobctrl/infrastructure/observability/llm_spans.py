@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
@@ -135,7 +136,12 @@ def llm_generation_span(
                 span.set_attribute("langfuse.observation.input", encoded)
                 span.set_attribute("jobctrl.llm.content_capture", "enabled")
 
+        from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved, SpendObservation
+        from jobctrl.llm import _utc_spend_day
+
+        observation = SpendObservation(day=_utc_spend_day(), lane=lane, provider=provider, model=model)
         usage_recorded = False
+        usage_failure: BaseException | None = None
         response_recorded = False
 
         def record(
@@ -146,8 +152,13 @@ def llm_generation_span(
             cached_input_tokens: int | None = None,
             reasoning_output_tokens: int | None = None,
             runtime_metadata: dict | None = None,
+            unresolved_usage: list[dict] | None = None,
+            usage_observed: bool = False,
         ) -> None:
-            nonlocal usage_recorded, response_recorded
+            nonlocal usage_recorded, usage_failure, response_recorded
+            counts_supplied = usage_observed or input_tokens is not None or output_tokens is not None
+            input_tokens = input_tokens if type(input_tokens) is int and input_tokens >= 0 else None
+            output_tokens = output_tokens if type(output_tokens) is int and output_tokens >= 0 else None
             span.set_attribute("gen_ai.response.model", model)
             if text or not response_recorded:
                 span.set_attribute("jobctrl.llm.output.character_count", len(text))
@@ -187,25 +198,50 @@ def llm_generation_span(
                     value = runtime_metadata.get(name)
                     if type(value) is int and value >= 0:
                         span.set_attribute("jobctrl.llm.runtime." + name, value)
-            if usage_recorded or (input_tokens is None and output_tokens is None):
+            if usage_recorded:
+                return
+            if usage_failure is not None:
+                return
+            if unresolved_usage is None and not counts_supplied:
                 return
             from jobctrl.llm import record_llm_spend
 
-            record_llm_spend(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                model=model,
-                lane=lane,
-            )
+            try:
+                if unresolved_usage is not None:
+                    observation.ambiguous(unresolved_usage, day=_utc_spend_day())
+                    raise SpendAccountingUnresolved("Provider usage reports are incomplete or ambiguous.")
+                day = _utc_spend_day()
+                observation.observed(day=day, input_tokens=input_tokens, output_tokens=output_tokens)
+                if input_tokens is None or output_tokens is None:
+                    raise SpendAccountingUnresolved("Provider usage has unknown token counts.")
+                record_llm_spend(
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    model=model,
+                    day=day,
+                    lane=lane,
+                )
+            except BaseException as error:
+                usage_failure = error
+                # Defer this until the owner has classified any provider error;
+                # a normal return is still rejected when the span exits.
+                return
             usage_recorded = True
 
         try:
             yield record
+            if usage_failure is not None:
+                raise usage_failure
         except Exception as exc:
             from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
 
             error_type = type(exc).__name__
-            if isinstance(exc, ProviderCallError):
+            if exc is usage_failure:
+                span.set_attribute("error.type", error_type)
+                span.set_attribute("jobctrl.llm.failure.category", "accounting")
+                span.set_attribute("jobctrl.llm.failure.code", "spend_unresolved")
+                status_description = "LLM spend accounting is unresolved"
+            elif isinstance(exc, ProviderCallError):
                 context = span.get_span_context()
                 trace_id = f"{context.trace_id:032x}" if context.is_valid else None
                 span_id = f"{context.span_id:016x}" if context.is_valid else None
@@ -239,3 +275,15 @@ def llm_generation_span(
         else:
             span.set_attribute("jobctrl.llm.success", True)
             span.set_status(Status(StatusCode.OK))
+        finally:
+            primary = sys.exception()
+            if usage_failure is not None:
+                span.set_attribute("jobctrl.llm.accounting.unresolved", True)
+            if primary is not None and usage_failure is not None and primary is not usage_failure:
+                primary.add_note("Persisting observed LLM usage also failed; accounting is unresolved.")
+            try:
+                observation.close(unresolved=usage_failure is not None)
+            except BaseException:
+                if primary is None:
+                    raise
+                primary.add_note("Finishing the LLM spend receipt also failed.")

@@ -54,11 +54,12 @@ export function normalizeApplyRunEventEntry(event: unknown): ApplyRunEventEntry 
 export function appendApplyRunEvent<T extends ApplyRunWithEvents>(
   current: T | undefined,
   event: ApplyRunEventRecorded,
+  normalizedEvent?: ApplyRunEventEntry,
 ): T | undefined {
   if (!current) {
     return undefined;
   }
-  const entry = normalizeApplyRunEventEntry(event.payload.event);
+  const entry = normalizedEvent ?? normalizeApplyRunEventEntry(event.payload.event);
   const jobId = (event.payload as unknown as Record<string, unknown>)["jobId"];
   const scoped = typeof jobId === "string" && jobId ? { ...entry, jobId } : entry;
   return { ...current, events: [...current.events, scoped] };

@@ -407,6 +407,7 @@ function canonicalSseEnvelope(row: EventRow): Record<string, unknown> | null {
     row.event_type === "CompanyBriefingRecorded" ||
     row.event_type === "CareerLearningRecorded" ||
     row.event_type === "ArchivedSmartPostingPrepared" ||
+    row.event_type === "PostingSnapshotStatePersisted" ||
     row.event_type === "LegacyEvidenceReviewRecorded"
   ) return null;
   if (row.event_type === "ScreeningAnswerRecorded") {

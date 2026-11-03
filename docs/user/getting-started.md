@@ -113,6 +113,12 @@ Use `jobctrl start --no-open` when you do not want a browser window, or
 Your workspace is stored under `~/.jobctrl/` by default and survives stops,
 updates, and rollbacks.
 
+If the local workflow engine's health check does not answer, startup reports a
+deadline failure and status can show the engine as unhealthy even when its
+process is still running. Status includes the bounded health diagnostic. If
+probe cleanup cannot be verified, status exits with an error and keeps the
+unverified ownership receipt; preserve it and use `jobctrl stop` to retry cleanup.
+
 `jobctrl stop` requests a clean shutdown, terminates verified leftovers that
 exceed the timeout, and waits for exit. It tracks the instance's children even
 if they detach or their parent crashes. Successful cleanup permits normal
@@ -187,6 +193,24 @@ files for terminal-driven workflows:
 ```bash
 jobctrl init
 ```
+
+For a new workspace, the wizard's Remote choice starts with LinkedIn and
+ZipRecruiter because Indeed cannot combine Remote with the 72-hour lookback.
+On a rerun, the wizard retains the existing Profile. Edit it in the web app if
+you want to change it. Saved Profile target roles and location/work-model rows
+take precedence over the corresponding Discovery rows entered in the wizard.
+Existing resume files, AI settings, and Apply automation settings are also kept
+unless you choose to change them. A selected resume replacement is saved only
+after Discovery is accepted. Adding an AI credential retains other `.env`
+settings. Turning off the standing Apply loop does not change your separate
+approval choice.
+The wizard keeps saved boards, lookback and other controls while
+replacing the location and title rows it asks you to enter. If a saved board
+cannot support the new target, change that board or target and retry; the
+rejected settings stay unchanged.
+If a saved tier or location-label filter would exclude every resulting search,
+the wizard shows the conflicting filter and asks whether to clear it. Declining
+leaves the Discovery settings unchanged; confirming clears only that filter.
 
 ## 4. Run Your First Workflow
 
@@ -307,7 +331,13 @@ Rollback keeps a compatible launcher for recovery while restoring the older
 application. Homebrew commands preserve that selection until you explicitly run
 `jobctrl update` again. If an older updater reports a failed candidate and cannot
 restart its previous release, recovery depends on the transition state and the
-available compatible controller. The installer and formula also handle an
+available compatible controller. If rollback or recovery reports unresolved
+provider-usage accounting, preserve the current database pair, pre-rollback and
+other backups, journal and spend receipts, and inspect the accounting. A late
+refusal may follow a pair replacement, and retry depends on the transition
+state. See
+[Data, Privacy & Safety](data-and-safety.md#back-up-and-restore) for details.
+The installer and formula also handle an
 installation you have never started. If an existing database/history pair is
 incomplete, updating refuses
 to replace it; preserve those files and recover the pair before retrying.

@@ -30,7 +30,8 @@ checkout-prefixed commands in [Local Development](../local-development.md).
 
 Your active Candidate Profile is stored in the `jobctrl.db` SQLite database;
 there is no second JSON-backed runtime profile. Values entered through the
-Profile screen or `jobctrl init` are validated and saved to SQLite.
+Profile screen or a first-time `jobctrl init` are validated and saved to SQLite.
+Later wizard runs retain the existing Profile; use the Profile screen to edit it.
 
 The Candidate Profile includes these `application_attestations` fields for
 legal or screening questions that Apply automation is not allowed to infer:
@@ -225,6 +226,10 @@ This setting caps AI-agent spend for one newly started Apply job. `0` is a
 zero-dollar cap, not an unlimited budget. The per-application cap works inside
 the shared [daily LLM budget](configuration.md#runtime-setting-daily-llm-budget);
 neither setting authorizes submission.
+When the provider reports token counts without a per-run cost, the result omits
+the per-run usage summary and the daily ledger uses its token-based estimate.
+Partial token counts leave accounting unresolved as described in the shared
+budget guide.
 
 ### Apply agent timeout {#runtime-setting-apply-agent-timeout}
 

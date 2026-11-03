@@ -270,7 +270,12 @@ The paired extension and local worker share a bounded task protocol under
 Task schemas allow public HTTP(S) `GET`/`POST` or rendered-page acquisition,
 cap request bodies at 2 MB of UTF-8 data and response text/HTML at 4 MB of
 UTF-8 data each, cap timeouts at 120 seconds, and forbid browser-owned
-cookie/user-agent/origin plus `Sec-*`/`Proxy-*` headers. The broker is
+cookie/user-agent/origin plus `Sec-*`/`Proxy-*` headers. Task creation also
+requires a supported provider-owned hostname; other hosts receive `400
+untrusted_discovery_browser_host` and stay on the worker's address-pinned
+public transport. The extension repeats this hostname check before network
+access so API-side DNS approval cannot be raced through an attacker-controlled
+hostname. The broker is
 process-memory-only, idempotently binds a task ID to its workflow/run request
 fingerprint, separates a 30-second pending/admission window from the execution
 timeout that starts on lease, and admits at most four active/pending tasks for
@@ -291,8 +296,11 @@ routes do not require an extension heartbeat: worker-ready, eligible requests
 dispatch with the extension offline and return the normal `202`
 queued/accepted response, while worker readiness
 (`503 worker_runtime_unavailable`), stage eligibility, and authorization gates
-still apply. Each acquisition setup then prefers the connected extension after
-a bounded status probe and otherwise selects guarded public HTTP or anonymous
+still apply. Discover requests with `dryRun: true` (including the HTTP default)
+are rejected with `400 discover_preview_unsupported` before dispatch; explicitly
+send `dryRun: false` to start an ordinary search. Each acquisition setup then
+prefers the connected extension after a bounded status probe and otherwise
+selects guarded public HTTP or anonymous
 Playwright; a fetch failure never switches transport. Top-level `enrich`,
 including mixed-stage requests containing it, is rejected with `400` by the
 request schema; Discovery owns the pipeline enrichment drain.
@@ -340,10 +348,13 @@ routes described in [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-r
 Apply review is a user decision boundary, not a background side effect. The
 review queue, editable resume-review drafts, approval decisions, outcomes, and
 bounded Gmail suggestion flow are summarized in
-[Jobs & Materials](api/jobs-and-materials.md#apply-review-and-outcomes). Gmail scan summaries
+[Jobs & Materials](api/jobs-and-materials.md#apply-review-and-outcomes). Conflicting
+or unverifiable outcome-suggestion retries return `409` with the saved decision;
+matching retries return their original outcome. Gmail scan summaries
 and feedback events carry canonical `jobId` values; the wire fields are defined
 in the [complete contract](api/complete-contract.md). Gmail scan worker failures
-carry a safe `failureCode` through the HTTP route without returning mail text.
+carry safe `failureCode` values and known committed progress through HTTP without
+returning mail text. A lost worker response leaves progress unknown.
 
 Manual outcomes, interview reflections and user-attested send logs use a
 client-provided request identity to return the original result after a retry.
@@ -402,21 +413,40 @@ user-provided reason in the event payload is not interpreted as a marker.
 Historical score-policy skips are recognized from the producer's structured
 score fields and exact generated event message, not a user-provided reason.
 
-Enrichment resets use the synchronous Python application service through
-`reset_enrichment`; its transaction and preservation rules are defined in
-[Enrichment Retry Ownership](architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
+Stage resets use the synchronous Python application service through
+`reset_stages`; the `reset_enrichment` compatibility method still requires an
+Enrich target and retains its original response shape. Every `reset_stages`
+target requires a captured stage fingerprint; `reset_enrichment` requires one
+for failed-stage cohorts but retains unbound single Enrich reset. Older APIs also have
+direct non-Enrich writes that do not reach the RPC. A changed current bulk
+selection returns a `409 retry_selection_changed` conflict; refresh and review
+the jobs selection before retrying. Bulk response keys are canonical job IDs,
+including when URLs were supplied for selection. Transaction and preservation rules are defined in
+[Stage Retry Ownership](architecture/contracts-types-and-api-boundaries.md#stage-retry-ownership).
+The same Python writer validates Apply reset authority before any cohort member
+commits and records its exact Skip release frontier. Its typed refusal retains
+the `409 apply_reset_refused` response; an earlier API precheck is not authority.
 
 ## Discovery Target Search
 
 Discovery reads the saved profile target, location, and work-model preferences.
 The precedence and filter details remain in the
 [complete contract](api/complete-contract.md#discovery-target-search).
+`PATCH /v1/profile` and `PATCH /v1/discovery/settings` reject newly unsupported
+Remote, board, location and lookback combinations, and active location-free
+Hybrid or On-site rows, with HTTP 400 `unsupported_remote_search`. Clearing a
+Profile target checks the legacy locations it would expose. Legacy combinations
+are refused before their broad-board dispatch; supported boards may finish and
+the workflow reports the incompatibility. Saved values and unrelated edits are
+preserved.
 
 ## Worker Runtime And Health
 
 Use `GET /v1/health` before starting work that needs Temporal and the Python
 worker. See [Operations & Events](api/operations-and-events.md#health-and-json-rpc)
 for the readiness boundary.
+Health and digest return an `incomplete` spend status while model usage is
+pending or unresolved; their numeric spend totals are null in that state.
 
 ## Settings And Credentials
 

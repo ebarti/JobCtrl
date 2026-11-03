@@ -19,8 +19,11 @@ class CodexTurnOutcome:
 
 
 def _optional_int(value: object) -> int | None:
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, str)):
+        return None
     try:
-        return int(value) if value is not None else None
+        count = int(value)
+        return count if count >= 0 else None
     except (TypeError, ValueError):
         return None
 
@@ -40,16 +43,19 @@ def _usage_details_from(value: object) -> tuple[int | None, int | None]:
     return count("cached_input_tokens"), count("reasoning_output_tokens")
 
 
-def _record_observed_usage(value, record_usage, record_usage_details):
+def _record_observed_usage(value, record_usage, record_usage_details, *, counts=None, unresolved_reports=None):
     # Diagnostics must not prevent accounting, including on cancellation.
     errors = []
-    for callback, counts in (
-        (record_usage, _usage_from(value)),
-        (record_usage_details, _usage_details_from(value)),
+    for is_usage, callback, values in (
+        (True, record_usage if value is not None else None, counts if counts is not None else _usage_from(value)),
+        (False, record_usage_details, _usage_details_from(value)),
     ):
         if callback is not None:
             try:
-                callback(*counts)
+                if is_usage and unresolved_reports is not None:
+                    callback(*values, unresolved_usage=unresolved_reports)
+                else:
+                    callback(*values)
             except BaseException as exc:
                 errors.append(exc)
     if errors:
@@ -138,6 +144,8 @@ async def run_codex_turn(
     completed_turn: object | None = None
     items: list[object] = []
     usage: object | None = None
+    latest_counts: tuple[int | None, int | None] | None = None
+    last_observed: list[tuple[int | None, int | None] | None] = [None, None]
     stream_error: BaseException | None = None
     try:
         async for event in stream:
@@ -150,6 +158,10 @@ async def run_codex_turn(
                 token_usage = getattr(payload, "token_usage", None)
                 if token_usage is not None:
                     usage = token_usage
+                    latest_counts = _usage_from(token_usage)
+                    for index, value in enumerate(latest_counts):
+                        if value is not None:
+                            last_observed[index] = latest_counts
             turn = getattr(payload, "turn", None)
             if turn is not None and getattr(turn, "id", None) == getattr(handle, "id", None):
                 completed_turn = turn
@@ -162,11 +174,19 @@ async def run_codex_turn(
     except BaseException as exc:
         close_error = exc
 
-    input_tokens, output_tokens = _usage_from(usage)
+    input_tokens, output_tokens = latest_counts if latest_counts is not None else _usage_from(usage)
     usage_error: BaseException | None = None
     if usage is not None:
         try:
-            _record_observed_usage(usage, record_usage, record_usage_details)
+            reports = None
+            if input_tokens is None or output_tokens is None:
+                snapshots = []
+                for values in (*last_observed, (input_tokens, output_tokens)):
+                    if values is not None and values not in snapshots:
+                        snapshots.append(values)
+                reports = [{"input_tokens": values[0], "output_tokens": values[1]} for values in snapshots]
+            _record_observed_usage(usage, record_usage, record_usage_details,
+                                   counts=(input_tokens, output_tokens), unresolved_reports=reports)
         except BaseException as exc:
             usage_error = exc
 

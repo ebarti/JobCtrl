@@ -29,6 +29,7 @@ interface StageTriggerState {
   activeStage: PipelineRunStage;
   configs: StageTriggerConfigs;
   internalConcurrency: string;
+  storageRecoveryRequired: boolean;
   setActiveStage: (stage: PipelineRunStage) => void;
   setInternalConcurrency: (value: string) => void;
   patchStageConfig: (stage: PipelineRunStage, patch: Partial<StageTriggerConfig>) => void;
@@ -51,11 +52,21 @@ const defaultConfig: StageTriggerConfig = {
   continuous: false,
 };
 
-function createDefaultConfigs(): StageTriggerConfigs {
-  return Object.fromEntries(PIPELINE_RUN_STAGES.map((stage) => [stage, { ...defaultConfig }])) as StageTriggerConfigs;
+function defaultConfigForStage(stage: PipelineRunStage): StageTriggerConfig {
+  return { ...defaultConfig, dryRun: stage !== "discover" };
 }
 
-function createMemoryStorage(): StateStorage {
+function createDefaultConfigs(): StageTriggerConfigs {
+  return Object.fromEntries(PIPELINE_RUN_STAGES.map((stage) => [stage, defaultConfigForStage(stage)])) as StageTriggerConfigs;
+}
+
+interface SyncStorage {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+}
+
+function createMemoryStorage(): SyncStorage {
   const values = new Map<string, string>();
   return {
     getItem: (key) => values.get(key) ?? null,
@@ -70,21 +81,82 @@ function createMemoryStorage(): StateStorage {
 
 const fallbackStorage = createMemoryStorage();
 
-function getStorage(): StateStorage {
+function getStorage(): SyncStorage {
   if (typeof window === "undefined") {
-    return fallbackStorage;
+    throw new Error("Pipeline control storage unavailable");
   }
-  const storage = window.localStorage as Partial<StateStorage> | undefined;
+  const storage = window.localStorage as Partial<SyncStorage> | undefined;
   if (
     storage &&
     typeof storage.getItem === "function" &&
     typeof storage.setItem === "function" &&
     typeof storage.removeItem === "function"
   ) {
-    return storage as StateStorage;
+    return storage as SyncStorage;
   }
-  return fallbackStorage;
+  throw new Error("Pipeline control storage unavailable");
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// A damaged value is distinct from an absent key. Keep the original value
+// until the user explicitly chooses a Discover mode, including during the
+// panel's automatic synchronization of internal concurrency.
+let storageRecoveryRequired = false;
+const recoveryValue = JSON.stringify({ state: {}, version: 3 });
+const recoverableStorage: StateStorage = {
+  getItem: (key) => {
+    let serialized: string | null;
+    try {
+      serialized = getStorage().getItem(key);
+    } catch {
+      serialized = fallbackStorage.getItem(key);
+      if (serialized === null) {
+        storageRecoveryRequired = true;
+        return recoveryValue;
+      }
+    }
+    if (serialized === null) {
+      storageRecoveryRequired = false;
+      return null;
+    }
+    try {
+      const value: unknown = JSON.parse(serialized);
+      if (!isRecord(value) || !isRecord(value.state)) {
+        storageRecoveryRequired = true;
+        return recoveryValue;
+      }
+      const configs = value.state.configs;
+      const discover = isRecord(configs) ? configs.discover : undefined;
+      storageRecoveryRequired =
+        !isRecord(configs) ||
+        !isRecord(discover) ||
+        (discover.dryRun !== undefined && typeof discover.dryRun !== "boolean");
+      return serialized;
+    } catch {
+      storageRecoveryRequired = true;
+      return recoveryValue;
+    }
+  },
+  setItem: (key, value) => {
+    if (storageRecoveryRequired) return;
+    try {
+      getStorage().setItem(key, value);
+    } catch {
+      fallbackStorage.setItem(key, value);
+    }
+  },
+  removeItem: (key) => {
+    storageRecoveryRequired = false;
+    try {
+      getStorage().removeItem(key);
+    } catch {
+      fallbackStorage.removeItem(key);
+    }
+  },
+};
 
 function isStage(value: unknown): value is PipelineRunStage {
   return typeof value === "string" && PIPELINE_RUN_STAGES.includes(value as PipelineRunStage);
@@ -118,6 +190,7 @@ function mergeConfig(value: unknown): StageTriggerConfig {
     ...defaultConfig,
     ...currentSource,
     discoverySourceIds,
+    dryRun: typeof source.dryRun === "boolean" ? source.dryRun : defaultConfig.dryRun,
     validationMode: isValidationMode(source.validationMode) ? source.validationMode : defaultConfig.validationMode,
   };
 }
@@ -132,6 +205,7 @@ const initialState = {
   activeStage: PIPELINE_RUN_STAGES[0],
   configs: createDefaultConfigs(),
   internalConcurrency: defaultConfig.workers,
+  storageRecoveryRequired: false,
 };
 
 function normalizeInternalConcurrency(value: unknown): string {
@@ -148,23 +222,30 @@ export const useStageTriggerStore = create<StageTriggerState>()(
       ...initialState,
       setActiveStage: (stage) => set({ activeStage: stage }),
       setInternalConcurrency: (value) => set({ internalConcurrency: value }),
-      patchStageConfig: (stage, patch) =>
+      patchStageConfig: (stage, patch) => {
+        const recoversStorage = stage === "discover" && typeof patch.dryRun === "boolean";
+        if (recoversStorage) storageRecoveryRequired = false;
         set((state) => ({
           configs: {
             ...state.configs,
             [stage]: { ...state.configs[stage], ...patch },
           },
-        })),
-      reset: () =>
+          storageRecoveryRequired: recoversStorage ? false : state.storageRecoveryRequired,
+        }));
+      },
+      reset: () => {
+        storageRecoveryRequired = false;
         set({
           activeStage: initialState.activeStage,
           configs: createDefaultConfigs(),
           internalConcurrency: initialState.internalConcurrency,
-        }),
+          storageRecoveryRequired: false,
+        });
+      },
     }),
     {
       name: "jh:stage-trigger-config",
-      storage: createJSONStorage(getStorage),
+      storage: createJSONStorage(() => recoverableStorage),
       version: 3,
       migrate: (persisted) => persisted,
       partialize: ({ activeStage, configs, internalConcurrency }) => ({
@@ -173,6 +254,9 @@ export const useStageTriggerStore = create<StageTriggerState>()(
         internalConcurrency,
       }),
       merge: (persisted, current) => {
+        if (persisted === undefined && !storageRecoveryRequired) {
+          return { ...current, ...initialState, configs: createDefaultConfigs() };
+        }
         const source =
           typeof persisted === "object" && persisted !== null
             ? (persisted as Partial<
@@ -191,6 +275,7 @@ export const useStageTriggerStore = create<StageTriggerState>()(
           ...current,
           activeStage,
           configs,
+          storageRecoveryRequired,
           internalConcurrency: normalizeInternalConcurrency(
             source.internalConcurrency ?? legacyConcurrency,
           ),

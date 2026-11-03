@@ -1,6 +1,6 @@
 {
   "name": "@jobctrl/api",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,7 @@
     "data:purge-jobs": "tsx src/purge-job-data.ts",
     "credentials:native-qa": "tsx src/native-credential-qa.ts",
     "check": "tsc --noEmit --project tsconfig.json",
-    "test": "vitest run test",
+    "test": "vitest run test --exclude test/dev-launcher-contract.test.ts && vitest run test/dev-launcher-contract.test.ts",
     "qa:seed": "tsx test/qa-seed.ts",
     "qa:test": "vitest run test/qa-workflow.test.ts"
   },
