@@ -38,6 +38,14 @@ No required case may pass by fabricating an ownership flag or a real user's
 coalition ID. Kernel boot identity binds receipt lifetime and is not a reboot
 admission requirement. Use no real user workspace or process.
 
+The source-shell fixture's 3.5-second blocked drain covers the complete fleet,
+and its 17.5-second control verifies full-fleet custody retention and retry after
+the sixteen-second cleanup budget expires.
+The nine-second control isolates one leaf with delayed real inventory reads to
+catch the former eight-second controller grace. A nine-second lock hold alone
+cannot promise six serial drains and their proof fit the remaining budget.
+These controls preserve the original handles, peer, deadlines and exit checks.
+
 For Temporal health probe changes, exercise the real helper and public startup
 and status commands with a synthetic health executable that ignores its own
 timeout and creates an environment-empty, new-session child. Verify the startup

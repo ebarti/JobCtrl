@@ -585,7 +585,7 @@ test("fixture cleanup retains unverified state and closes its original peer", as
   }
 });
 
-async function verifyFakeControllerBlockedDrain(holdMs, expires) {
+async function verifyFakeControllerBlockedDrain({ holdMs, expires, targets: selectedTargets, censusDelaySeconds = 0 }) {
   const harness = await createHarness();
   const ready = path.join(harness.temporaryRoot, "receipt-lock-held");
   const release = path.join(harness.temporaryRoot, "release-receipt-lock");
@@ -595,8 +595,18 @@ async function verifyFakeControllerBlockedDrain(holdMs, expires) {
   harness.env.JOBCTRL_TEST_SUPERVISOR_CUSTODY_PROOF = custodyProof;
   // Bound service lifetime even if a regression destroys a leaf's custodian.
   harness.env.JOBCTRL_TEST_SERVICE_LIFETIME_SECONDS = "40";
+  if (censusDelaySeconds > 0) {
+    // Delay real inventory reads; never fabricate processes or completion.
+    await extendFixtureOwner(path.join(harness.temporaryRoot, "scripts/dev-process-owner.py"), `
+_grace_control_inventory = _fixture_process._read_process_inventory
+def _delayed_grace_inventory(*args, **kwargs):
+ time.sleep(${censusDelaySeconds})
+ return _grace_control_inventory(*args, **kwargs)
+_fixture_process._read_process_inventory = _delayed_grace_inventory
+`);
+  }
   try {
-    const targets = ["temporal", "api", "worker", "docs", "demo-api", "demo-web"];
+    const targets = selectedTargets ?? ["temporal", "api", "worker", "docs", "demo-api", "demo-web"];
     const foreground = harness.trackChild(spawn(path.join(harness.temporaryRoot, "scripts/dev"), ["run", ...targets], {
       cwd: harness.temporaryRoot, env: harness.env, stdio: ["ignore", "pipe", "pipe"],
     }));
@@ -682,7 +692,9 @@ print(json.dumps(result))
       assert.equal(retry.exitCode, 0, retryOutput);
     } else {
       await harness.waitForChildClose(stop, 10_000);
-      assert.equal(stop.exitCode, 0, output);
+      const custody = await readFile(custodyProof, "utf8").catch((error) => fixtureErrorSummary(error));
+      const diagnostic = `${output}\nowned supervisor:\n${foregroundOutput}\noriginal custody:\n${custody}`;
+      assert.equal(stop.exitCode, 0, boundedFixtureDiagnostic(diagnostic, cleanupDiagnosticLimit));
     }
     await harness.waitForChildClose(foreground, 10_000);
     assert.equal(foreground.exitCode, 0, foregroundOutput);
@@ -702,15 +714,19 @@ print(json.dumps(result))
   }
 }
 
-for (const { holdMs, expires } of [
+for (const scenario of [
   { holdMs: 3_500, expires: false },
-  { holdMs: 9_000, expires: false },
+  // Isolate the old eight-second grace regression. Nine seconds of lock hold
+  // does not promise that six serial drains fit the remaining seven seconds.
+  // The other controls retain the complete fleet; this one slows real proof.
+  { holdMs: 9_000, expires: false, targets: ["temporal"], censusDelaySeconds: 0.2 },
   { holdMs: 17_500, expires: true },
 ]) {
+  const { holdMs, expires } = scenario;
   test(`a fake source controller ${expires ? "retains custody after" : "finishes"} a ${holdMs / 1000}s blocked drain`, {
     skip: process.platform !== "darwin", timeout: fixtureCaseTimeout,
   }, async () => {
-    await verifyFakeControllerBlockedDrain(holdMs, expires);
+    await verifyFakeControllerBlockedDrain(scenario);
   });
 }
 
