@@ -186,6 +186,7 @@ location. Export can take several seconds. Every PDF page uses the selected
 template's margins, including pages continuing a long resume. Education keeps
 the institution and location together beside the date, with the degree below.
 Section and entry headings stay with their first content line at page breaks.
+Bullets and short paragraphs stay together when they fit on one page.
 
 On `/profile`, edits to names, address parts, email, phone, executive profile,
 experience titles, companies, locations, dates, summaries and bullets, education,

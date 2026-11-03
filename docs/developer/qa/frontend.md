@@ -57,7 +57,8 @@ browser behavior, and visual consistency catch different failures.
   Independent Poppler rasters measure all four margins on every downloaded
   page; PDF text extraction checks that every unique fixture line survives once.
   It also checks education institution/location alignment, entry headings staying
-  on the same PDF page as their role and first content line, and retains the PDF,
+  on the same PDF page as their role and first content line, intact short bullets,
+  and retains the PDF,
   page images and measurements. The inputs are structural layout fixtures, not
   model-evaluation examples.
   `useApplyReviewSession.test.ts` owns tenant/job/material fences, independent

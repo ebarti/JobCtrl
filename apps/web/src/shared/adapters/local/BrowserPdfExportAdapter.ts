@@ -412,20 +412,22 @@ function collectTextLineIntervals(
     }
   }
   intervals.sort((left, right) => left.topPx - right.topPx);
-  // Keep structural headings with their first content line. An experience
-  // heading includes both company/location and role/date rows.
-  const headingIntervals: PdfVerticalInterval[] = [];
-  for (const heading of page.querySelectorAll(".resume-entry-heading, .resume-section-title")) {
-    const rect = heading.getBoundingClientRect();
+  // Keep headings with their first content line, and ordinary paragraphs and
+  // bullets intact. Blocks taller than a printable page remain splittable.
+  const blockIntervals: PdfVerticalInterval[] = [];
+  for (const block of page.querySelectorAll(".resume-entry-heading, .resume-section-title, .resume-bullets > li, .resume-entry-summary, .resume-summary, .resume-education-degree, .resume-skills-list > li")) {
+    const rect = block.getBoundingClientRect();
     if (rect.height <= 0 || rect.width <= 0) continue;
     const bottomPx = rect.bottom - sourceRect.top;
-    const followingLine = intervals.find((interval) => interval.topPx >= bottomPx - PDF_PAGE_SLICE_EPSILON_PX);
-    headingIntervals.push({
+    const followingLine = block.matches(".resume-entry-heading, .resume-section-title")
+      ? intervals.find((interval) => interval.topPx >= bottomPx - PDF_PAGE_SLICE_EPSILON_PX)
+      : undefined;
+    blockIntervals.push({
       topPx: rect.top - sourceRect.top,
       bottomPx: followingLine?.bottomPx ?? bottomPx,
     });
   }
-  return [...intervals, ...headingIntervals].sort((left, right) => left.topPx - right.topPx);
+  return [...intervals, ...blockIntervals].sort((left, right) => left.topPx - right.topPx);
 }
 
 export function pdfPageSlices(

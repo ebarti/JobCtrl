@@ -88,6 +88,10 @@ for (const pageSize of ["a4", "letter"] as const) {
       }
       const text = texts.join(" ");
       for (const marker of markers) expect(text.split(marker)).toHaveLength(2);
+      for (const marker of markers) {
+        const bulletPage = texts.find(pageText => pageText.includes(marker));
+        expect(bulletPage?.replace(/\s+/gu, " ")).toContain(`${marker}: Maintained an invented service and documented its operational improvements.`);
+      }
       expect(text).toContain("Example University");
       expect(text).toContain("Example City");
       for (const entry of entries) {
