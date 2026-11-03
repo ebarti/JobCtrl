@@ -41,10 +41,11 @@ admission requirement. Use no real user workspace or process.
 The source-shell fixture's 3.5-second blocked drain covers the complete fleet,
 and its 17.5-second control verifies full-fleet custody retention and retry after
 the sixteen-second cleanup budget expires.
-The nine-second control isolates one leaf with delayed real inventory reads to
-catch the former eight-second controller grace. A nine-second lock hold alone
-cannot promise six serial drains and their proof fit the remaining budget.
-These controls preserve the original handles, peer, deadlines and exit checks.
+The nine-second control delays real inventory reads and catches the former
+eight-second controller grace. A deadline refusal requires unchanged controller
+receipts, authenticated retained custody, no supervisor KILL, a surviving peer
+and a successful explicit cleanup retry after releasing the lock. Every control
+uses all six services. The original handles, deadlines and exit checks remain.
 
 For Temporal health probe changes, exercise the real helper and public startup
 and status commands with a synthetic health executable that ignores its own

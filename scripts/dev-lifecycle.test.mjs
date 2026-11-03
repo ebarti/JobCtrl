@@ -214,13 +214,17 @@ original_terminate = owner.terminate_owned_process
 def terminate(child, *, launched_pid):
  marker = os.environ.get('JOBCTRL_TEST_CONTROLLER_STOP_STARTED')
  if marker: pathlib.Path(marker).write_text('started')
+ failure = None
  try:
   return original_terminate(child, launched_pid=launched_pid)
+ except Exception as error:
+  failure = (type(error).__name__ + ': ' + str(error))[:1024]
+  raise
  finally:
   report = os.environ.get('JOBCTRL_TEST_SUPERVISOR_CUSTODY_PROOF')
   if report:
    event = owner._waitid_nowait(child.pid) if child.returncode is None else None
-   owner.atomic_write(pathlib.Path(report), json.dumps({'originalPid':child.pid, 'returncode':child.returncode, 'eventCode':None if event is None else event.si_code}).encode())
+   owner.atomic_write(pathlib.Path(report), json.dumps({'originalPid':child.pid, 'returncode':child.returncode, 'eventCode':None if event is None else event.si_code, 'failure':failure}).encode())
 owner.terminate_owned_process = terminate
 raise SystemExit(owner.main())
 `);
@@ -585,7 +589,7 @@ test("fixture cleanup retains unverified state and closes its original peer", as
   }
 });
 
-async function verifyFakeControllerBlockedDrain({ holdMs, expires, targets: selectedTargets, censusDelaySeconds = 0 }) {
+async function verifyFakeControllerBlockedDrain({ holdMs, expires, retryAtDeadline = false, censusDelaySeconds = 0 }) {
   const harness = await createHarness();
   const ready = path.join(harness.temporaryRoot, "receipt-lock-held");
   const release = path.join(harness.temporaryRoot, "release-receipt-lock");
@@ -606,7 +610,7 @@ _fixture_process._read_process_inventory = _delayed_grace_inventory
 `);
   }
   try {
-    const targets = selectedTargets ?? ["temporal", "api", "worker", "docs", "demo-api", "demo-web"];
+    const targets = ["temporal", "api", "worker", "docs", "demo-api", "demo-web"];
     const foreground = harness.trackChild(spawn(path.join(harness.temporaryRoot, "scripts/dev"), ["run", ...targets], {
       cwd: harness.temporaryRoot, env: harness.env, stdio: ["ignore", "pipe", "pipe"],
     }));
@@ -681,20 +685,43 @@ print(json.dumps(result))
     await writeFile(release, "release");
     await harness.waitForChildClose(holder);
     assert.equal(holder.exitCode, 0);
-    if (expires) {
+    if (!expires) {
+      await harness.waitForChildClose(stop, fixtureCommandTimeout);
+      const custody = JSON.parse(await waitForFixtureFile(custodyProof));
+      const diagnostic = `${output}\nowned supervisor:\n${foregroundOutput}\noriginal custody:\n${JSON.stringify(custody)}`;
+      assert.notEqual(custody.returncode, -9, boundedFixtureDiagnostic(diagnostic, cleanupDiagnosticLimit));
+      if (stop.exitCode !== 0) {
+        assert.ok(retryAtDeadline, boundedFixtureDiagnostic(diagnostic, cleanupDiagnosticLimit));
+        assert.equal(stop.exitCode, 1, boundedFixtureDiagnostic(diagnostic, cleanupDiagnosticLimit));
+        assert.match(custody.failure, /Apply cleanup deadline expired/);
+        const controllerFiles = receiptPaths.slice(-2);
+        assert.deepEqual(await Promise.all(controllerFiles.map((file) => readFile(file))), originalReceipts.slice(-2));
+        const inspection = spawnSync("python3", ["-I", "-S", "-B", "-c", `
+import importlib.util,json,pathlib,sys
+spec = importlib.util.spec_from_file_location('grace_retry_custody', sys.argv[1])
+owner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(owner)
+print(json.dumps(owner.request(owner.receipt(pathlib.Path(sys.argv[2]), 'api'), 'state')))
+`, path.join(harness.temporaryRoot, "scripts/dev-process-owner.py"), path.join(harness.devDir, "source-controller")], {
+          cwd: harness.temporaryRoot, env: harness.env, encoding: "utf8", timeout: 5_000,
+        });
+        assert.equal(inspection.error, undefined);
+        assert.equal(inspection.status, 0, inspection.stderr);
+        assert.deepEqual(JSON.parse(inspection.stdout), { state: "cleanup_failed" });
+        process.kill(peer.pid, 0);
+      } else {
+        assert.equal(custody.failure, null, boundedFixtureDiagnostic(diagnostic, cleanupDiagnosticLimit));
+      }
+    }
+    if (expires || stop.exitCode !== 0) {
       const retry = harness.trackChild(spawn(path.join(harness.temporaryRoot, "scripts/dev"), ["stop", ...targets], {
         cwd: harness.temporaryRoot, env: harness.env, stdio: ["ignore", "pipe", "pipe"],
       }));
       let retryOutput = "";
       retry.stdout.on("data", (chunk) => { retryOutput += chunk; });
       retry.stderr.on("data", (chunk) => { retryOutput += chunk; });
-      await harness.waitForChildClose(retry, 10_000);
+      await harness.waitForChildClose(retry, fixtureCommandTimeout);
       assert.equal(retry.exitCode, 0, retryOutput);
-    } else {
-      await harness.waitForChildClose(stop, 10_000);
-      const custody = await readFile(custodyProof, "utf8").catch((error) => fixtureErrorSummary(error));
-      const diagnostic = `${output}\nowned supervisor:\n${foregroundOutput}\noriginal custody:\n${custody}`;
-      assert.equal(stop.exitCode, 0, boundedFixtureDiagnostic(diagnostic, cleanupDiagnosticLimit));
     }
     await harness.waitForChildClose(foreground, 10_000);
     assert.equal(foreground.exitCode, 0, foregroundOutput);
@@ -703,6 +730,9 @@ print(json.dumps(result))
     process.kill(peer.pid, 0);
     for (const file of receiptPaths) {
       await assert.rejects(readFile(file), { code: "ENOENT" });
+    }
+    if (retryAtDeadline) {
+      console.log(`grace control: first stop ${stop.exitCode}; verified cleanup retry ${stop.exitCode !== 0}`);
     }
   } catch (error) {
     harness.recordFailure(error);
@@ -716,10 +746,9 @@ print(json.dumps(result))
 
 for (const scenario of [
   { holdMs: 3_500, expires: false },
-  // Isolate the old eight-second grace regression. Nine seconds of lock hold
-  // does not promise that six serial drains fit the remaining seven seconds.
-  // The other controls retain the complete fleet; this one slows real proof.
-  { holdMs: 9_000, expires: false, targets: ["temporal"], censusDelaySeconds: 0.2 },
+  // Retain custody past the old eight-second grace. A real deadline refusal
+  // requires preserved authority and verified retry after the lock clears.
+  { holdMs: 9_000, expires: false, retryAtDeadline: true, censusDelaySeconds: 0.2 },
   { holdMs: 17_500, expires: true },
 ]) {
   const { holdMs, expires } = scenario;
