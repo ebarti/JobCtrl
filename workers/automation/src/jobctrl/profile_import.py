@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from hashlib import sha256
 from io import BytesIO
 from statistics import median
 from typing import Any
@@ -49,6 +50,8 @@ def import_resume_pdf(
         "source": {
             "filename": filename,
             "determinationId": envelope.determination_id,
+            "pdfSha256": sha256(pdf_bytes).hexdigest(),
+            "inferredStyle": inferred_style_fields(result, style),
             "status": "pending_confirmation",
             "pages": result.page_count,
             "text_preview": preview[:6000],
@@ -175,6 +178,37 @@ def profile_from_extraction(extracted, *, base_profile=None):
     rules.setdefault("revision_gates", {"min_fit_score": 8, "must_have_coverage": 0.85, "max_revision_attempts": 1})
     rules.setdefault("custom_tailoring_prompt", "")
     return profile
+
+
+def inferred_style_fields(result: PdfTextResult, normalized_style: dict[str, Any]) -> dict[str, Any]:
+    """Return only fields supported by this PDF's observed format metadata."""
+    inferred: dict[str, Any] = {}
+    if result.page_sizes:
+        width, height = result.page_sizes[0]
+        letter_distance = abs(width - 612) + abs(height - 792)
+        a4_distance = abs(width - 595.28) + abs(height - 841.89)
+        observed = "letterpaper" if letter_distance < a4_distance else "a4paper"
+        if min(letter_distance, a4_distance) <= 30 and normalized_style.get("paper_size") == observed:
+            inferred["paper_size"] = observed
+    if any(6 <= size <= 24 for size in result.font_sizes):
+        inferred["document_font_size"] = normalized_style["document_font_size"]
+    # Font-name parsing is a format check. Unknown or mixed families stay absent.
+    serif = ("times", "garamond", "georgia", "cambria", "liberationserif", "cmr")
+    sans = ("helvetica", "arial", "calibri", "liberationsans", "dejavusans", "notosans")
+    families = set()
+    for name in result.font_names:
+        name = name.lower().replace(" ", "")
+        if any(token in name for token in serif):
+            families.add("roman")
+        elif any(token in name for token in sans):
+            families.add("sans")
+        else:
+            families.add("unknown")
+    if len(families) == 1 and "unknown" not in families:
+        family = next(iter(families))
+        if normalized_style.get("font_family") == family:
+            inferred["font_family"] = family
+    return inferred
 
 
 def style_from_pdf_metadata(

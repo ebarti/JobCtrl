@@ -380,11 +380,9 @@ test("an option round trip cannot duplicate an in-flight import, while different
   await page.route("**/v1/profile/import-resume", async (route) => {
     const index = requests.length;
     requests.push(route.request().postDataJSON() as { importProfile: boolean });
+    const response = await route.fetch();
     await (index === 0 ? firstGate : secondGate);
-    await route.fulfill({
-      status: 200,
-      json: { ok: true, profile: { synthetic: "draft" } },
-    });
+    await route.fulfill({ response });
   });
   try {
     await page.goto("/profile/import/upload");
@@ -462,10 +460,7 @@ test("successful import is not repeated when removing the stored PDF fails", asy
   let importCalls = 0;
   await page.route("**/v1/profile/import-resume", async (route) => {
     importCalls += 1;
-    await route.fulfill({
-      status: 200,
-      json: { ok: true, profile: { synthetic: "draft" } },
-    });
+    await route.fulfill({ response: await route.fetch() });
   });
   await page.goto("/profile/import/upload");
   await selectPdf(page, "synthetic.pdf");
@@ -507,10 +502,7 @@ test("the same PDF can be deliberately imported again after successful cleanup",
   let importCalls = 0;
   await page.route("**/v1/profile/import-resume", async (route) => {
     importCalls += 1;
-    await route.fulfill({
-      status: 200,
-      json: { ok: true, profile: { synthetic: "draft" } },
-    });
+    await route.fulfill({ response: await route.fetch() });
   });
   await page.goto("/profile/import/upload");
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -539,11 +531,9 @@ test("a late import response cannot remove a newer selection or pull the user ba
   let importCalls = 0;
   await page.route("**/v1/profile/import-resume", async (route) => {
     importCalls += 1;
+    const response = await route.fetch();
     await gate;
-    await route.fulfill({
-      status: 200,
-      json: { ok: true, profile: { synthetic: "previous draft" } },
-    });
+    await route.fulfill({ response });
   });
   await page.goto("/profile/import/upload");
   await selectPdf(page, "previous.pdf");
@@ -578,11 +568,9 @@ test("another tab's later selection survives an earlier import completion", asyn
   let requests = 0;
   await page.route("**/v1/profile/import-resume", async (route) => {
     requests += 1;
+    const response = await route.fetch();
     await gate;
-    await route.fulfill({
-      status: 200,
-      json: { ok: true, profile: { synthetic: "first draft" } },
-    });
+    await route.fulfill({ response });
   });
   try {
     await page.goto("/profile/import/upload");
@@ -701,6 +689,7 @@ test("legacy data stays intact while old-tab writes cannot erase the current rec
   await expect(
     page.getByRole("button", { name: "Continue to options" }),
   ).toBeDisabled();
+  await expect.poll(async () => JSON.parse((await readCurrent(page))!).state.filename).toBe("");
   expect(
     await page.evaluate(() => localStorage.getItem("jh:profile-import")),
   ).toBe(laterLegacy);
@@ -825,7 +814,6 @@ test("a pending transaction is cancelled by replacement or leaving the upload st
 
 test("leaving confirmation aborts a queued post-import cleanup", async ({
   page,
-  context,
 }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -836,11 +824,9 @@ test("leaving confirmation aborts a queued post-import cleanup", async ({
   });
   await page.route("**/v1/profile/import-resume", async (route) => {
     calls += 1;
+    const response = await route.fetch();
     await responseGate;
-    await route.fulfill({
-      status: 200,
-      json: { ok: true, profile: { synthetic: "draft" } },
-    });
+    await route.fulfill({ response });
   });
   try {
     await page.goto("/profile/import/upload");
@@ -851,15 +837,45 @@ test("leaving confirmation aborts a queued post-import cleanup", async ({
       .click();
     await page.getByRole("button", { name: "Confirm import" }).click();
     await expect.poll(() => calls).toBe(1);
-    const holder = await context.newPage();
-    await holder.goto("/profile/import/upload");
-    await holdTransaction(holder);
     await trackTransactions(page);
+    await page.evaluate(async () => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("jobctrl-profile-import", 1);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const transaction = IDBDatabase.prototype.transaction;
+      let gateNext = true;
+      IDBDatabase.prototype.transaction = function (...args) {
+        const current = transaction.apply(this, args);
+        if (gateNext && this.name === "jobctrl-profile-import" && args[1] === "readwrite") {
+          gateNext = false;
+          current.addEventListener("complete", () => {
+            const held = database.transaction("records", "readwrite");
+            const store = held.objectStore("records");
+            let active = true;
+            (window as unknown as { releasePostDraft: () => void }).releasePostDraft = () => { active = false; };
+            held.oncomplete = () => database.close();
+            const pump = () => {
+              if (!active) return;
+              const read = store.get("jh:profile-import-v2");
+              read.onsuccess = pump;
+            };
+            pump();
+          }, { once: true });
+        }
+        return current;
+      };
+    });
     releaseResponse();
-    await waitForTransaction(page);
+    // Draft commit, the test holder, then the queued cleanup transaction.
+    await expect.poll(() => page.evaluate(() =>
+      (window as unknown as { transactionCount: number }).transactionCount,
+    )).toBeGreaterThanOrEqual(3);
     await page.getByRole("link", { name: "Return to profile" }).click();
-    await releaseTransaction(holder);
+    await page.evaluate(() => (window as unknown as { releasePostDraft: () => void }).releasePostDraft());
     await expect(page).toHaveURL(/\/profile$/);
+    await expect(page.getByRole("heading", { name: "Review imported resume" })).toBeVisible();
     expect(JSON.parse((await readCurrent(page))!).state.filename).toBe(
       "accepted.pdf",
     );
@@ -867,6 +883,7 @@ test("leaving confirmation aborts a queued post-import cleanup", async ({
     expect(pageErrors).toEqual([]);
   } finally {
     releaseResponse();
+    await page.evaluate(() => (window as unknown as { releasePostDraft?: () => void }).releasePostDraft?.()).catch(() => undefined);
   }
 });
 

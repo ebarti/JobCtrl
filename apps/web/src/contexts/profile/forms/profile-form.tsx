@@ -85,7 +85,7 @@ function validateProfileDateRanges(profile: ProfileShape): string | undefined {
 
 function toUpdateRequest(
   values: ProfileFormValues,
-  expectedProfileVersion?: number,
+  expectedProfileVersion?: number | null,
 ): ProfileUpdateRequest {
   return {
     profileText: JSON.stringify(values.profile, null, 2),
@@ -894,8 +894,8 @@ export function ProfileForm({
         try {
           profileResponse = await updateProfile.mutateAsync(
             // Every full-profile edit is conditional on the snapshot that
-            // actually supplied this form. A new profile has no version yet.
-            { ...toUpdateRequest(value, formBaseVersion ?? undefined),
+            // actually supplied this form, including an empty profile.
+            { ...toUpdateRequest(value, formBaseVersion),
               ...((submittedSuggestions.roles.length > 0 || submittedSuggestions.preferences.length > 0) && acceptedCandidateInterpretationRef.current ? {acceptedCandidateInterpretationId: acceptedCandidateInterpretationRef.current} : {}) },
           );
         } catch {

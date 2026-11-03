@@ -38,6 +38,38 @@ async function waitForFixtureFile(file) {
   assert.fail(`Owned fixture marker did not appear: ${file}`);
 }
 
+async function extendFixtureOwner(file, extension) {
+  const source = await readFile(file, "utf8");
+  const entry = '\nif __name__ == "__main__":';
+  assert.ok(source.includes(entry), "The copied owner must retain its entry point");
+  await writeFile(file, source.replace(entry, `\n${extension}\n${entry}`));
+}
+
+function waitForFixtureCleanupFailure(harness, name) {
+  const observed = spawnSync("python3", ["-I", "-S", "-B", "-c", `
+import importlib.util,json,pathlib,sys,time
+script,directory,name = sys.argv[1:]
+spec = importlib.util.spec_from_file_location('fixture_failed_owner', script)
+owner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(owner)
+deadline = time.monotonic() + 20
+while True:
+ try: answer = owner.request(owner.receipt(pathlib.Path(directory), name), 'state')
+ except (OSError, ValueError, owner.Unverified): pass
+ else:
+  if answer == {'state':'cleanup_failed'}:
+   print(json.dumps(answer))
+   break
+ if time.monotonic() >= deadline: raise SystemExit('No authenticated cleanup failure observed')
+ time.sleep(0.02)
+`, path.join(harness.temporaryRoot, "scripts/dev-process-owner.py"), path.join(harness.devDir, "pids"), name], {
+    cwd: harness.temporaryRoot, env: harness.env, encoding: "utf8", timeout: fixtureCommandTimeout,
+  });
+  assert.equal(observed.error, undefined);
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.deepEqual(JSON.parse(observed.stdout), { state: "cleanup_failed" });
+}
+
 async function createHarness() {
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "jobctrl-dev-lifecycle-"));
   const binDir = path.join(temporaryRoot, "bin");
@@ -65,7 +97,7 @@ async function createHarness() {
       await Promise.race([
         record.close,
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`Owned child did not close; retain ${temporaryRoot}`)), milliseconds);
+          timer = setTimeout(() => reject(new Error(`Owned child did not close (pid ${child.pid}, exit ${child.exitCode}, signal ${child.signalCode}); retain ${temporaryRoot}`)), milliseconds);
         }),
       ]);
     } finally {
@@ -78,6 +110,22 @@ async function createHarness() {
   await mkdir(path.dirname(fixtureLauncher), { recursive: true });
   await copyFile(launcher, fixtureLauncher);
   await copyFile(path.join(root, "scripts/dev-process-owner.py"), path.join(temporaryRoot, "scripts/dev-process-owner.py"));
+  await extendFixtureOwner(path.join(temporaryRoot, "scripts/dev-process-owner.py"), `
+from jobctrl.infrastructure import process_ownership as _fixture_process
+# Spend this copied shell owner's existing budget on real read-only proof.
+# Leaf TERM grace and every original-handle/signal rule stay unchanged.
+_fixture_budget = cleanup_budget
+@contextmanager
+def cleanup_budget(seconds):
+ previous = (_fixture_process._SESSION_EXIT_TIMEOUT_SECONDS, _fixture_process._UNSCOPED_CENSUS_RETRY_SECONDS)
+ try:
+  with _fixture_budget(seconds):
+   _fixture_process._SESSION_EXIT_TIMEOUT_SECONDS = seconds
+   _fixture_process._UNSCOPED_CENSUS_RETRY_SECONDS = seconds
+   yield
+ finally:
+  (_fixture_process._SESSION_EXIT_TIMEOUT_SECONDS, _fixture_process._UNSCOPED_CENSUS_RETRY_SECONDS) = previous
+`);
   await copyFile(path.join(root, "scripts/dev-schema-check.py"), path.join(temporaryRoot, "scripts/dev-schema-check.py"));
   await mkdir(path.join(temporaryRoot, "workers/automation/src"), { recursive: true });
   await symlink(path.join(root, "workers/automation/src/jobctrl"), path.join(temporaryRoot, "workers/automation/src/jobctrl"));
@@ -264,18 +312,39 @@ wait "$controller_child"
       let stdout = "";
       let stderr = "";
       let stopping = false;
+      let lastStdoutChunk = "";
+      let exitEvent = null;
+      const signals = [];
+      const started = performance.now();
+      const foregroundState = () => JSON.stringify({
+        stopping,
+        ready: targets.filter((name) => stdout.includes(readiness[name])),
+        exitCode: child.exitCode,
+        signalCode: child.signalCode,
+        exitEvent,
+        signals,
+      });
       const signalChild = (signal) => {
-        try { child.kill(signal); }
-        catch (error) { reject(error); }
+        const observation = {
+          signal, elapsedMs: Math.round(performance.now() - started),
+          stdoutChunk: boundedFixtureDiagnostic(lastStdoutChunk, 160),
+        };
+        try {
+          signals.push({ ...observation, accepted: child.kill(signal) });
+        } catch (error) {
+          signals.push({ ...observation, error: fixtureErrorSummary(error) });
+          reject(error);
+        }
       };
       const deadline = setTimeout(() => {
         signalChild("SIGTERM");
-        reject(new Error(`Foreground fixture did not start and stop within ${fixtureCommandTimeout / 1000}s:\n${stdout}\n${stderr}`));
+        reject(new Error(`Foreground fixture did not start and stop within ${fixtureCommandTimeout / 1000}s:\nstate: ${foregroundState()}\n${stdout}\n${stderr}`));
       }, fixtureCommandTimeout);
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
       child.stdout.on("data", (chunk) => {
         stdout += chunk;
+        lastStdoutChunk = chunk;
         if (!stopping && stdout.includes("dev: foreground run active;") &&
             targets.every((name) => stdout.includes(readiness[name]))) {
           stopping = true;
@@ -288,10 +357,11 @@ wait "$controller_child"
         clearTimeout(deadline);
         reject(error);
       });
+      child.once("exit", (status, signal) => { exitEvent = { status, signal }; });
       child.once("close", (status, signal) => {
         clearTimeout(deadline);
         if (!stopping) {
-          reject(new Error(`Foreground fixture exited before readiness:\n${stdout}\n${stderr}`));
+          reject(new Error(`Foreground fixture exited before readiness:\nstate: ${foregroundState()}\n${stdout}\n${stderr}`));
           return;
         }
         resolve({ status, signal, stdout, stderr });
@@ -644,6 +714,140 @@ for (const { holdMs, expires } of [
   });
 }
 
+async function verifyFixtureCensusRecovery(naturalExit, expires) {
+  const harness = await createHarness();
+  const release = path.join(harness.temporaryRoot, "census-release");
+  const ready = path.join(harness.temporaryRoot, "census-ready");
+  const report = path.join(harness.temporaryRoot, "census-report");
+  harness.env.JOBCTRL_TEST_CENSUS_RELEASE = release;
+  harness.env.JOBCTRL_TEST_CENSUS_READY = ready;
+  harness.env.JOBCTRL_TEST_CENSUS_REPORT = report;
+  const peer = harness.spawnPeer();
+  try {
+    const script = path.join(harness.temporaryRoot, "scripts/dev-process-owner.py");
+    await extendFixtureOwner(script, `
+if len(sys.argv) > 3 and sys.argv[1] == 'launch' and sys.argv[3] == 'docs':
+ _release = Path(os.environ['JOBCTRL_TEST_CENSUS_RELEASE'])
+ _ready = Path(os.environ['JOBCTRL_TEST_CENSUS_READY'])
+ _report = Path(os.environ['JOBCTRL_TEST_CENSUS_REPORT'])
+ _real_inventory = _fixture_process._read_process_inventory
+ _real_terminate = terminate_owned_process
+ _incomplete_reads = 0
+ def inventory(**kwargs):
+  global _incomplete_reads
+  if _release.exists(): return _real_inventory(**kwargs)
+  original_ids = _fixture_process._darwin_process_ids
+  child = None
+  initial = None
+  def ids(library):
+   nonlocal child, initial
+   observed = original_ids(library)
+   if child is None:
+    initial = observed
+    child = subprocess.Popen(['/bin/sleep', '60'], start_new_session=True)
+   elif child.pid in initial or child.pid not in observed:
+    raise ProcessOwnershipError('Controlled census birth was not observable')
+   return observed
+  _fixture_process._darwin_process_ids = ids
+  try:
+   observed, complete = _real_inventory(**kwargs)
+   if complete: raise ProcessOwnershipError('Controlled census was unexpectedly complete')
+   _incomplete_reads += 1
+   if not _ready.exists(): atomic_write(_ready, b'actual-incomplete-kernel-inventory')
+   return observed, complete
+  finally:
+   _fixture_process._darwin_process_ids = original_ids
+   if child is not None:
+    child.terminate()
+    child.wait(timeout=2)
+ def terminate_owned_process(child, *, launched_pid):
+  error = None
+  try: return _real_terminate(child, launched_pid=launched_pid)
+  except ProcessOwnershipError as failure:
+   error = str(failure)
+   raise
+  finally:
+   event = _waitid_nowait(child.pid) if child.returncode is None else None
+   atomic_write(_report, json.dumps({'error':error, 'incompleteReads':_incomplete_reads, 'pid':child.pid, 'returncode':child.returncode, 'eventPid':None if event is None else event.si_pid}).encode())
+ _fixture_process._read_process_inventory = inventory
+`);
+    const directory = path.join(harness.devDir, "pids");
+    await mkdir(directory, { recursive: true });
+    const owner = harness.trackChild(spawn("python3", ["-I", "-S", "-B", script, "launch", directory, "docs", "d".repeat(64),
+      naturalExit ? "exit 0" : "exec /bin/sleep 40"], {
+      cwd: harness.temporaryRoot, env: harness.env, stdio: ["ignore", "pipe", "pipe"],
+    }));
+    let ownerOutput = "";
+    owner.stdout.on("data", (chunk) => { ownerOutput += chunk; });
+    owner.stderr.on("data", (chunk) => { ownerOutput += chunk; });
+    const files = ["docs.pid", "docs.identity.json"].map((name) => path.join(directory, name));
+    await waitForFixtureFile(files[0]);
+    const before = await Promise.all(files.map((file) => readFile(file)));
+    let stop;
+    let stopOutput = "";
+    if (!naturalExit) {
+      stop = harness.trackChild(spawn("python3", ["-I", "-S", "-B", script, "stop", directory, "docs"], {
+        cwd: harness.temporaryRoot, env: harness.env, stdio: ["ignore", "pipe", "pipe"],
+      }));
+      stop.stdout.on("data", (chunk) => { stopOutput += chunk; });
+      stop.stderr.on("data", (chunk) => { stopOutput += chunk; });
+    }
+    // Each negative read retains an actual new child between the original
+    // kernel enumerations. Clearing the fault restores only unchanged reads.
+    assert.equal(await waitForFixtureFile(ready), "actual-incomplete-kernel-inventory");
+    await delay(expires ? 17_500 : 4_000);
+    if (expires) {
+      await harness.waitForChildClose(stop, 2_000);
+      assert.equal(stop.exitCode, 1, stopOutput);
+      const first = JSON.parse(await waitForFixtureFile(report));
+      assert.match(first.error, /cleanup deadline expired/);
+      assert.ok(first.incompleteReads > 0);
+      assert.equal(first.returncode, null);
+      assert.equal(first.eventPid, first.pid);
+      waitForFixtureCleanupFailure(harness, "docs");
+      assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+      process.kill(peer.pid, 0);
+    } else {
+      await assert.rejects(readFile(report), { code: "ENOENT" });
+    }
+    await writeFile(release, "clear");
+    if (expires) {
+      assert.match(harness.run("stop", "docs"), /docs: stopped/);
+    } else if (stop) {
+      await harness.waitForChildClose(stop, 10_000);
+      assert.equal(stop.exitCode, 0, stopOutput);
+    }
+    await harness.waitForChildClose(owner, 10_000);
+    assert.equal(owner.exitCode, 0, ownerOutput);
+    if (naturalExit) assert.match(harness.run("stop", "docs"), /docs: not running/);
+    const final = JSON.parse(await readFile(report, "utf8"));
+    assert.equal(final.error, null, JSON.stringify(final));
+    assert.ok(final.incompleteReads > 0);
+    process.kill(peer.pid, 0);
+    for (const file of files) await assert.rejects(readFile(file), { code: "ENOENT" });
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
+  } finally {
+    await writeFile(release, "clear");
+    await harness.cleanup();
+  }
+}
+
+for (const naturalExit of [false, true]) {
+  test(`fixture census waits for real proof after temporary uncertainty with ${naturalExit ? "an exited" : "a live"} original root`, {
+    skip: process.platform !== "darwin", timeout: fixtureCaseTimeout,
+  }, async () => {
+    await verifyFixtureCensusRecovery(naturalExit, false);
+  });
+}
+
+test("fixture census retains custody at its deadline and retries after uncertainty clears", {
+  skip: process.platform !== "darwin", timeout: fixtureCaseTimeout,
+}, async () => {
+  await verifyFixtureCensusRecovery(false, true);
+});
+
 test("concurrent Stop clients serialize receipt retirement and preserve a peer", { timeout: 30_000 }, async () => {
   const harness = await createHarness();
   const release = path.join(harness.temporaryRoot, "release-first-stop");
@@ -907,7 +1111,7 @@ test("owned TERM-ignoring descendants stop while an independent peer survives", 
   }
 });
 
-test("a departed root with a live child reports cleanup failure and can retry after child exit", { timeout: 30_000 }, async () => {
+test("a departed root with a live child reports cleanup failure and can retry after child exit", { timeout: fixtureCaseTimeout }, async () => {
   const harness = await createHarness();
   const peer = harness.spawnPeer();
   const fifo = path.join(harness.temporaryRoot, "owned-child-control");
@@ -922,18 +1126,16 @@ test("a departed root with a live child reports cleanup failure and can retry af
     // The root exits before its child. The owner must not manufacture new
     // group authority after reaping that original root.
     harness.runResult("start", "docs");
-    let failedStatus;
-    for (let attempt = 0; attempt < 30; attempt++) {
-      failedStatus = harness.run("status", "docs");
-      if (/^docs\s+unverified\s+-/m.test(failedStatus)) break;
-      await delay(50);
-    }
-    assert.match(failedStatus, /^docs\s+unverified\s+-/m);
+    // A busy listener is not proof of failed cleanup. Authenticate the
+    // terminal failure after the unchanged owner budget has expired.
+    waitForFixtureCleanupFailure(harness, "docs");
+    assert.match(harness.run("status", "docs"), /^docs\s+unverified\s+-/m);
     const identity = path.join(harness.devDir, "pids", "docs.identity.json");
     const before = await readFile(identity);
     const failed = harness.runResult("stop", "docs");
     assert.notEqual(failed.status, 0);
     assert.match(failed.stderr, /records retained/);
+    waitForFixtureCleanupFailure(harness, "docs");
     assert.deepEqual(await readFile(identity), before);
     assert.match(harness.run("status", "docs"), /^docs\s+unverified\s+-/m);
     process.kill(peer.pid, 0);

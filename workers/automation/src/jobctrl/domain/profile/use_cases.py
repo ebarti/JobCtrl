@@ -68,9 +68,12 @@ class ImportProfileUseCase:
         *,
         filename: str = "resume.pdf",
         tenant_id: TenantId = LOCAL_TENANT,
+        attempt_id: str | None = None,
     ) -> ProfileImportResult:
+        options = {"attempt_id": attempt_id} if attempt_id is not None else {}
         return self.repository.import_from_pdf(
             tenant_id,
             pdf_bytes,
             filename=filename,
+            **options,
         )

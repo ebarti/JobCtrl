@@ -3,6 +3,7 @@ import { workflowRpcFixture } from "./rpc-workflow-fixture.js";
 import { createActionDispatcher } from "../src/local-actions.js";
 import { recordArtifactAuthority, recordCompensationAuthority, recordRoleFeedback } from "./semantic-fixtures.js";
 import { recordCoachingDecision, recordCandidateProposal } from "./semantic-fixtures.js";
+import { recordImportAttempt, recordResumeExtraction } from "./profile-import-fixtures.js";
 import { seedApplicationUrl } from "./seed-enrichment.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -10896,7 +10897,7 @@ describe("local TypeScript API", () => {
   );
 
   it("atomically rejects stale suggestion saves without a profile event", async () => {
-    const app = buildApp(options);
+    const app = buildApp({ ...options, placeValidator: async (place) => place === "Barcelona" });
     await selectRemoteCompatibleSearch(app);
     const initial = await app.inject({
       method: "PATCH",
@@ -10950,6 +10951,7 @@ describe("local TypeScript API", () => {
     const providerCall = vi.fn(() => pending.promise);
     const app = buildApp({
       ...options,
+      placeValidator: async (place) => place === "Barcelona",
       providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
     });
     await selectRemoteCompatibleSearch(app);
@@ -11515,12 +11517,17 @@ describe("local TypeScript API", () => {
   });
 
   it("imports resume PDFs through an injected profile importer without running Python in tests", async () => {
-    const importer = vi.fn(async (input) => ({
-      profile: { personal: { full_name: "Imported Candidate" } },
-      style: { font_family: "imported" },
-      templateText: INERT_RESUME_TEMPLATE,
-      source: { filename: input.filename, bytes: input.pdfBytes.length },
-    }));
+    const fixtureDb = new Database(options.dbPath);
+    const determinationId = recordResumeExtraction(fixtureDb, { full_name: "Imported Candidate" });
+    fixtureDb.close();
+    const importer = vi.fn(async (input) => {
+      const db = new Database(options.dbPath);
+      try { return {
+        profile: { personal: { full_name: "Imported Candidate" } },
+        style: { font_family: "roman" }, templateText: INERT_RESUME_TEMPLATE,
+        source: recordImportAttempt(db, input, determinationId, { font_family: "roman" }),
+      }; } finally { db.close(); }
+    });
     const app = buildApp({ ...options, profileImporter: importer });
     const response = await app.inject({
       method: "POST",
@@ -11537,7 +11544,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       profile: { personal: { full_name: "Imported Candidate" } },
-      style: { font_family: "imported" },
+      style: { font_family: "roman" },
       source: { filename: "resume.pdf", bytes: 9 },
     });
     expect(importer).toHaveBeenCalledWith(

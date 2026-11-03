@@ -59,8 +59,22 @@ need:
 `GET /v1/profile` and `PATCH /v1/profile` use the normalized Candidate
 Profile tables in `jobctrl.db` as the source of truth. When the profile
 tables are empty, `GET /v1/profile` returns an empty profile with default
-rendering settings. Explicit profile saves and resume-PDF imports create or
-update the SQLite rows.
+rendering settings. Explicit profile saves create or update the SQLite rows;
+resume-PDF extraction returns a draft without saving it. For a Profile import,
+`POST /v1/profile/import-resume` validates the returned determination ID against
+the local persisted `resume_extraction` receipt and returns only its personal
+fields in `profile.personal` and `source.extractedPersonal`. A missing, malformed,
+foreign or incompatible receipt returns `502 resume_extraction_receipt_unavailable`;
+the request writes no Profile data. Style-only imports do not require a personal
+projection. `source.inferredStyle` contains only PDF-observed page size, font size,
+and font family; `source.attemptId` identifies the worker-owned database binding
+between the API-issued attempt, parsed PDF digest, extraction and observed
+style. The API checks the submitted bytes and returned source against this binding.
+The browser uses that same attempt ID as the review draft ID. Every import
+acceptance, including style-only, sends `importReview` with both IDs and, when
+style is selected, `importStyleReceiptId` with that ID. The version-fenced
+transaction rejoins the attempt and extraction and rejects identity mismatches;
+ordinary Profile and style edits omit these fields.
 Profile reads optionally include `legacyEvidenceReview: { status:
 "review_required", count: number }`. Each affected achievement retains all saved
 fields, including `user_confirmed`, and adds read-computed
@@ -74,12 +88,13 @@ not a new HTTP write route. `LegacyEvidenceReviewRecorded` private event payload
 are excluded from generic SSE.
 
 Profile reads include `profileVersion: number | null`. `PATCH /v1/profile`
-accepts optional `expectedProfileVersion`; when supplied, a mismatch returns
+accepts optional `expectedProfileVersion` (a positive integer or `null` for an
+absent profile); when supplied, a mismatch returns
 `409 stale_profile_version` and the same transaction writes neither canonical
 rows nor `ProfileUpdated`.
 The web form sends its actual saved base version on every full-profile manual
-or autosave write. It omits the field only for the first save when
-`profileVersion` is `null`; a conflict keeps the draft for explicit rebase.
+or autosave write, including `null` for the first save; a conflict keeps the
+draft for explicit rebase.
 
 `POST /v1/profile/required-bullet-suggestions` accepts only
 `expectedProfileVersion` (positive integer) and optional `maximumSuggestions`
