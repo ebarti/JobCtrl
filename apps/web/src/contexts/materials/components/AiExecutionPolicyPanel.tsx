@@ -76,6 +76,7 @@ export function AiExecutionPolicyPanel() {
       generatorPrimary: generators[0] ?? "",
       generatorFallback: generators[1] ?? "",
       tailoringJudgeModel: response?.settings.tailoringJudgeModel ?? "",
+      resumeTailoringEnabled: response?.settings.resumeTailoringEnabled ?? true,
       resumeVoicePolish: response?.settings.resumeVoicePolish ?? false,
       coverLetterGeneration: response?.settings.coverLetterGeneration ?? false,
     },
@@ -112,6 +113,10 @@ export function AiExecutionPolicyPanel() {
           (value.tailoringJudgeModel || null) !== response.settings.tailoringJudgeModel
           ? { tailoringJudgeModel: value.tailoringJudgeModel || null }
           : {}),
+        ...(response.effectiveSettings.resumeTailoringEnabled.editable &&
+          value.resumeTailoringEnabled !== response.settings.resumeTailoringEnabled
+          ? { resumeTailoringEnabled: value.resumeTailoringEnabled }
+          : {}),
         ...(response.effectiveSettings.resumeVoicePolish.editable &&
           value.resumeVoicePolish !== response.settings.resumeVoicePolish
           ? { resumeVoicePolish: value.resumeVoicePolish }
@@ -140,6 +145,7 @@ export function AiExecutionPolicyPanel() {
           generatorPrimary: savedGenerators[0] ?? "",
           generatorFallback: savedGenerators[1] ?? "",
           tailoringJudgeModel: saved.settings.tailoringJudgeModel ?? "",
+          resumeTailoringEnabled: saved.settings.resumeTailoringEnabled,
           resumeVoicePolish: saved.settings.resumeVoicePolish,
           coverLetterGeneration: saved.settings.coverLetterGeneration,
         });
@@ -168,6 +174,7 @@ export function AiExecutionPolicyPanel() {
       generatorPrimary: savedGenerators[0] ?? "",
       generatorFallback: savedGenerators[1] ?? "",
       tailoringJudgeModel: response.settings.tailoringJudgeModel ?? "",
+      resumeTailoringEnabled: response.settings.resumeTailoringEnabled,
       resumeVoicePolish: response.settings.resumeVoicePolish,
       coverLetterGeneration: response.settings.coverLetterGeneration,
     });
@@ -200,6 +207,7 @@ export function AiExecutionPolicyPanel() {
     generatorPrimary: generators[0] ?? "",
     generatorFallback: generators[1] ?? "",
     tailoringJudgeModel: response.settings.tailoringJudgeModel ?? "",
+    resumeTailoringEnabled: response.settings.resumeTailoringEnabled,
     resumeVoicePolish: response.settings.resumeVoicePolish,
     coverLetterGeneration: response.settings.coverLetterGeneration,
   };
@@ -208,6 +216,7 @@ export function AiExecutionPolicyPanel() {
     !effective.analysisLegs.editable &&
     !effective.tailoringGeneratorModels.editable &&
     !effective.tailoringJudgeModel.editable &&
+    !effective.resumeTailoringEnabled.editable &&
     !effective.resumeVoicePolish.editable &&
     !effective.coverLetterGeneration.editable;
 
@@ -366,6 +375,34 @@ export function AiExecutionPolicyPanel() {
             />
           )}
         </form.Field>
+        <form.Field name="resumeTailoringEnabled">
+          {(field) => (
+            <FieldSet>
+              <FieldLegend>Resume preparation</FieldLegend>
+              <Field className="choice target-choice" orientation="horizontal" data-disabled={!effective.resumeTailoringEnabled.editable}>
+                <Checkbox
+                  id="resume-tailoring-enabled"
+                  name="resumeTailoringEnabled"
+                  aria-describedby="resume-tailoring-enabled-help"
+                  disabled={saving || !effective.resumeTailoringEnabled.editable}
+                  checked={field.state.value}
+                  onCheckedChange={(checked) => {
+                    clearSaveStatus();
+                    field.handleChange(checked === true);
+                  }}
+                />
+                <FieldLabel htmlFor="resume-tailoring-enabled">Tailor resumes</FieldLabel>
+              </Field>
+              <FieldDescription id="resume-tailoring-enabled-help">
+                On by default. Turn off to prepare an editable base profile copy for each job.
+                Scoring continues as usual. Existing resumes and drafts stay available.
+              </FieldDescription>
+              <FieldDescription>
+                {context(effective.resumeTailoringEnabled.source, "next resume preparation")}
+              </FieldDescription>
+            </FieldSet>
+          )}
+        </form.Field>
         <form.Field name="coverLetterGeneration">
           {(field) => (
             <FieldSet>
@@ -415,7 +452,7 @@ export function AiExecutionPolicyPanel() {
                 <FieldLabel htmlFor="resume-voice-polish">Extra résumé polish</FieldLabel>
               </Field>
               <FieldDescription id="resume-voice-polish-help">
-                Off by default. Required reviews always run. An extra writing pass can refine wording
+                Off by default. AI-tailored resumes keep their required reviews. An extra writing pass can refine wording
                 and takes longer; any changes are reviewed again.
               </FieldDescription>
               <FieldDescription>

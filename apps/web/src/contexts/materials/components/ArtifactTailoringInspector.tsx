@@ -2,6 +2,7 @@ import type { JSX } from "react";
 
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { BaseProfileCopyAudit } from "./BaseProfileCopyAudit.js";
 import { TailoringExplanationSection } from "./TailoringExplanationSection.js";
 
 export interface ArtifactTailoringInspectorProps {
@@ -23,6 +24,11 @@ export function ArtifactTailoringInspector({
 }: ArtifactTailoringInspectorProps): JSX.Element {
   const detail = useArtifactDetailQuery(artifactId);
   const errorMessage = detail.error instanceof Error ? detail.error.message : null;
+
+  const origin = detail.data?.artifact.resumePreparation;
+  if (origin && !origin.modified) {
+    return <BaseProfileCopyAudit origin={origin} provenance={detail.data?.baselineProvenance ?? []} />;
+  }
 
   if (detail.data?.tailoringExplanation) {
     return (

@@ -213,6 +213,12 @@ body {
   margin-block-end: 3.2mm;
   break-inside: avoid;
 }
+.resume-page--baseline .resume-entry {
+  break-inside: auto;
+}
+.resume-page--baseline .resume-entry-heading {
+  break-after: avoid;
+}
 .resume-entry.compact {
   margin-block-end: 2.2mm;
 }
@@ -494,6 +500,8 @@ def build_resume_html_document(body: str, resume_theme: dict[str, Any] | None = 
 def build_resume_html(
     document: ResumeDocument,
     resume_theme: dict[str, Any] | None = None,
+    *,
+    baseline: bool = False,
 ) -> str:
     """Render a trusted resume document to print-oriented HTML."""
 
@@ -537,7 +545,7 @@ def build_resume_html(
 
     personal = document.get("personal", {})
     body: list[str] = [
-        '<main class="resume-page" data-resume-page="1">',
+        f'<main class="resume-page{" resume-page--baseline" if baseline else ""}" data-resume-page="1">',
         '<header class="resume-header">',
         target("personal:full_name", str(personal.get("full_name", "")), tag="h1", class_name="resume-name"),
     ]
@@ -815,14 +823,16 @@ class HtmlResumePdfAdapter:
         created_at: str,
         resume_theme: dict | None = None,
         resume_template: dict | None = None,
+        baseline: bool = False,
     ) -> Artifact:
-        document = build_resume_document(tailored_payload, profile_dict)
-        html_content = build_resume_html(document, resume_theme=resume_theme)
+        document = build_resume_document(tailored_payload, profile_dict, baseline=baseline)
+        html_content = build_resume_html(document, resume_theme=resume_theme, baseline=baseline)
         html_path = Path(output_path).with_suffix(".html")
         layout_boxes = _render_resume_pdf_playwright(html_content, output_path)
         fit_metadata: dict[str, Any] = {}
         if (
-            isinstance(resume_template, dict)
+            not baseline
+            and isinstance(resume_template, dict)
             and resume_template.get("templateId") == "built_in:modern-html"
             and resume_template.get("assignmentSource") in (None, "built_in")
             and (resume_theme is None or resume_template.get("assignmentSource") == "built_in")

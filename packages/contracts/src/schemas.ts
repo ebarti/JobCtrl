@@ -2209,6 +2209,7 @@ export const SettingsUpdateRequestSchema = z
     codexReasoningEfforts: z.record(z.string().trim().min(1).max(160), z.string().trim().min(1).max(40).nullable()).refine((value) => Object.keys(value).length <= 512).optional(),
     tailoringGeneratorModels: z.array(z.string().trim().min(1).max(160)).min(1).nullable().optional(),
     tailoringJudgeModel: z.string().trim().min(1).max(160).nullable().optional(),
+    resumeTailoringEnabled: z.boolean().optional(),
     resumeVoicePolish: z.boolean().optional(),
     coverLetterGeneration: z.boolean().optional(),
     applyMaxBudgetUsd: z.coerce.number().min(0).optional(),
@@ -3396,6 +3397,13 @@ export interface ArtifactSummary {
   sizeBytes: number | null;
   size: string;
   resumeTemplate?: ResumeTemplateState | null;
+  resumePreparation?: {
+    mode: "baseline_copy";
+    profileId: string;
+    profileVersion: number;
+    modified: boolean;
+    sourceIds: string[];
+  } | null;
 }
 
 export interface PaginatedResponse<T> {
@@ -4380,8 +4388,10 @@ export interface JobDetail {
 export interface ArtifactDetail {
   ok: true;
   artifact: ArtifactSummary;
+  resumeTheme?: ResumeTemplateTheme | null;
   layoutBoxes: ResumeLayoutBox[];
   determinations: DeterminationEnvelope[];
+  baselineProvenance?: ArtifactTailoringExplanation["bulletProvenance"];
   tailoringExplanation: ArtifactTailoringExplanation | null;
 }
 
@@ -4841,6 +4851,7 @@ export interface JobCtrlSettings {
   codexReasoningEfforts: Record<string, string>;
   tailoringGeneratorModels: string[] | null;
   tailoringJudgeModel: string | null;
+  resumeTailoringEnabled: boolean;
   resumeVoicePolish: boolean;
   coverLetterGeneration: boolean;
   applyMaxBudgetUsd: number;
@@ -4890,6 +4901,7 @@ export interface EffectiveJobCtrlSettings {
   codexReasoningEfforts: EffectiveSetting<Record<string, string>>;
   tailoringGeneratorModels: EffectiveSetting<string[] | null>;
   tailoringJudgeModel: EffectiveSetting<string | null>;
+  resumeTailoringEnabled: EffectiveSetting<boolean>;
   resumeVoicePolish: EffectiveSetting<boolean>;
   coverLetterGeneration: EffectiveSetting<boolean>;
   applyMaxBudgetUsd: EffectiveSetting<number>;
@@ -4913,6 +4925,7 @@ export const SettingsResponseSchema = z
         codexReasoningEfforts: z.record(z.string(), z.string()),
         tailoringGeneratorModels: z.array(z.string()).nullable(),
         tailoringJudgeModel: z.string().nullable(),
+        resumeTailoringEnabled: z.boolean(),
         resumeVoicePolish: z.boolean(),
         coverLetterGeneration: z.boolean(),
         applyMaxBudgetUsd: z.number(),
@@ -4940,6 +4953,7 @@ export const SettingsResponseSchema = z
         codexReasoningEfforts: effectiveSettingSchema(z.record(z.string(), z.string())),
         tailoringGeneratorModels: effectiveSettingSchema(z.array(z.string()).nullable()),
         tailoringJudgeModel: effectiveSettingSchema(z.string().nullable()),
+        resumeTailoringEnabled: effectiveSettingSchema(z.boolean()),
         resumeVoicePolish: effectiveSettingSchema(z.boolean()),
         coverLetterGeneration: effectiveSettingSchema(z.boolean()),
         applyMaxBudgetUsd: effectiveSettingSchema(z.number()),

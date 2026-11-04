@@ -317,6 +317,25 @@ def _build_use_case(
     )
 
 
+def _build_baseline_use_case(*, pdf_renderer=None):
+    from jobctrl.domain.materials.baseline import PrepareBaselineResumeUseCase
+    from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+    from jobctrl.infrastructure.profile.sqlite_repository import SqliteProfileRepository
+
+    conn = get_connection()
+    unit = SqliteUnitOfWork(conn)
+    repository = SqliteMaterialsRepository(conn, unit_of_work=unit)
+    profile_reader = SqliteProfileRepository(conn, publisher=InProcessEventBus())
+    return PrepareBaselineResumeUseCase(
+        repository=repository,
+        provenance_repository=SqliteBulletProvenanceRepository(conn, unit_of_work=unit),
+        profile_reader=profile_reader.load_snapshot,
+        template_reader=repository.resolve_effective_resume_template,
+        pdf_renderer=pdf_renderer if pdf_renderer is not None else _build_pdf_renderer(),
+        artifact_writer=LocalArtifactTextWriter(), unit_of_work=unit,
+    )
+
+
 def _build_pdf_renderer() -> PdfRendererPort:
     return HtmlResumePdfAdapter()
 
@@ -426,11 +445,14 @@ def _tailor_one_job(
     """
     _ = resume_text  # legacy parameter — ignored
     if use_case is None:
-        use_case = _build_use_case(tenant_id=tenant_id, llm_policy=llm_policy, pdf_renderer=pdf_renderer)
-        requirement_fit_report = _load_requirement_fit_report_for_job(
-            tenant_id=tenant_id,
-            job=job,
-        )
+        # Capture the saved mode once at resume admission, before acquiring any
+        # model/review dependency. A running attempt retains this chosen path.
+        if config.get_resume_tailoring_enabled():
+            use_case = _build_use_case(tenant_id=tenant_id, llm_policy=llm_policy, pdf_renderer=pdf_renderer)
+            requirement_fit_report = _load_requirement_fit_report_for_job(tenant_id=tenant_id, job=job)
+        else:
+            use_case = _build_baseline_use_case(pdf_renderer=pdf_renderer)
+            requirement_fit_report = None
     else:
         requirement_fit_report = None
 
@@ -489,10 +511,14 @@ def tailor_resume(
     repository.
     """
     _ = resume_text  # unused — use case reads from the snapshot
-    use_case = _build_use_case()
-    use_case._max_retries = max_retries  # noqa: SLF001 — DI seam
+    if config.get_resume_tailoring_enabled():
+        use_case = _build_use_case()
+        use_case._max_retries = max_retries  # noqa: SLF001 — DI seam
+    else:
+        use_case = _build_baseline_use_case()
     outcome = use_case.execute(
         job=job,
+        job_id=canonical_job_id(str(job["job_id"])),
         profile_snapshot=snapshot,
         tailored_dir=TAILORED_DIR,
         validation_mode=validation_mode,
@@ -974,7 +1000,7 @@ def tailor_job_by_id(
             "tailor",
             "StageStarted",
             tenant_id=tenant_id,
-            message="Tailoring started",
+            message="Resume preparation started",
             payload={
                 "materialAttemptId": material_attempt_id,
                 **({
@@ -1114,7 +1140,7 @@ def tailor_job_by_id(
                 "tailor",
                 "StageCompleted",
                 tenant_id=tenant_id,
-                message="Tailoring approved",
+                message="Resume prepared",
                 payload={
                     "attempts": current_attempt,
                     "generationAttempts": generation_attempts,

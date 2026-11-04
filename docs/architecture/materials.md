@@ -8,6 +8,13 @@ model.
 **Read this if** you are changing employer analysis, provenance, fabrication
 checks, voice, coverage, interview prep, or the artifact inspector.
 
+Baseline copies are the explicit non-model preparation mode described in the
+[Tailoring Contract](tailoring.md#baseline-resume-preparation). Their normal
+material generations retain profile-version/field-copy provenance with empty
+requirement links and no model receipts. The API and editor distinguish those
+records from AI-reviewed output; initial base copies are not reported as
+incomplete AI tailoring audits.
+
 ## At A Glance
 
 ```mermaid

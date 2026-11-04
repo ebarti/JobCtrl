@@ -13,6 +13,7 @@ import {
 
 afterEach(() => {
   document.body.replaceChildren();
+  document.head.querySelectorAll("[data-test-pdf-image-reset]").forEach(node => node.remove());
 });
 
 function pdfDocumentDouble() {
@@ -338,8 +339,21 @@ describe("BrowserPdfExportAdapter", () => {
     document.body.append(exportRoot);
 
     const pageCanvas = document.createElement("canvas");
+    const imageReset = document.createElement("style");
+    imageReset.setAttribute("data-test-pdf-image-reset", "true");
+    imageReset.textContent = "img { display: block; }";
+    document.head.append(imageReset);
+    const fontProbe = document.createElement("div");
+    fontProbe.style.visibility = "hidden";
+    const probeImage = document.createElement("img");
+    fontProbe.append(probeImage);
+    document.body.append(fontProbe);
+    const visibleImage = document.createElement("img");
+    exportRoot.append(visibleImage);
     const rasterizer: PdfPageRasterizer = vi.fn(
       async (exportSource, options) => {
+        expect(getComputedStyle(probeImage).display).toBe("inline-block");
+        expect(getComputedStyle(visibleImage).display).toBe("block");
         expect(exportSource).toHaveAttribute(
           "data-resume-pdf-export-source",
           "true",
@@ -446,6 +460,8 @@ describe("BrowserPdfExportAdapter", () => {
       }),
     );
     expect(pdf.save).toHaveBeenCalledWith("Resume-live.pdf");
+    expect(getComputedStyle(probeImage).display).toBe("block");
+    expect(document.head.querySelector("[data-resume-pdf-font-metrics]")).toBeNull();
     expect(source).not.toHaveAttribute("data-resume-pdf-export-source");
     expect(source.getAttribute("style")).toBe(originalSourceStyle);
     expect(exportRoot).not.toHaveAttribute("data-resume-pdf-export-source");

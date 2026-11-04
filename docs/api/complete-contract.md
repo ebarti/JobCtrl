@@ -2215,6 +2215,29 @@ Current-version preparation maintenance actions are separate endpoints:
   can dispatch with an offline extension; worker readiness and stage eligibility
   remain required. Accepted work returns the normal queued/accepted response.
 
+`GET/PATCH /v1/settings` expose `resumeTailoringEnabled` as a strict boolean,
+default true, persisted as `resume_tailoring_enabled` in `config.json`.
+It has effective source/editability and next-workflow activation metadata; resume
+admission reads the latest saved value. A boolean-only update needs no provider
+catalog. With false, existing Tailor/generate/re-tailor entry points prepare a
+base-profile copy while retaining eligibility, ownership and explicit replacement
+semantics. The setting alone dispatches no work.
+
+Artifact summaries optionally expose `resumePreparation` with mode
+`baseline_copy`, `profileId`, `profileVersion`, `sourceIds`, and `modified`.
+Artifact detail adds canonical `baselineProvenance`. An unedited copy has null
+`tailoringExplanation` and no invented determination receipts; edited replacements
+retain their recorded semantic reviews and original profile-copy origin. Raw draft
+saves for a baseline-origin resume skip automatic edit interpretation and omit
+`editIntent`; explicit replacement review still performs intent, factual and
+quality determinations before acceptance.
+
+Resume artifact detail also exposes `resumeTheme` from the artifact's recorded
+template ID, version ID and content hash. Plate applies that immutable theme for
+local editing/export; changing today's template assignment cannot silently
+change the accepted copy's paper size. Missing or mismatched snapshots return
+null rather than substituting the latest theme.
+
 First-time manual tailoring is not a re-tailor action. The job detail stage
 timeline exposes `POST /v1/jobs/:jobKey/actions/tailor` on the internal
 `tailor` stage, dispatching JSON-RPC `tailor_job` for the selected job only.

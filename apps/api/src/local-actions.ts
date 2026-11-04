@@ -987,6 +987,7 @@ HtmlResumePdfAdapter().render_resume_to_pdf(
     output_path=str(output_path),
     created_at=datetime.now(timezone.utc).isoformat(),
     resume_theme=resume_theme,
+    baseline=True,
 )
 `;
 

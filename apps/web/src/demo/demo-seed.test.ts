@@ -139,7 +139,7 @@ describe("canonical public demo seed", () => {
 
   it("is deterministic, immutable by type, and covers the required lifecycle arms", () => {
     expect(() => assertDemoSeedInvariants(DEMO_SEED)).not.toThrow();
-    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-b4a1e1a2");
+    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-f70acae8");
     expect(DEMO_SEED.readModel.discovery.manualCapture.items[0]).toMatchObject({
       itemId: "capture-demo-browser",
       lifecycleId: "0".repeat(64),

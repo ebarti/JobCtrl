@@ -26,6 +26,17 @@ const entry: BulletProvenanceEntry = {
 };
 
 describe("recorded provenance joins", () => {
+  it("joins a base copy's recorded sources without inventing a tailoring review", () => {
+    const baseline = { ...entry, control: "base_profile_copy", transformType: "verbatim", requirementIds: [] };
+    const pins = pinsFromResumeLines([
+      { kind: "bullet", semanticId: baseline.bulletId, text: "Job-local wording" },
+      { kind: "bullet", semanticId: "foreign:claim", text: baseline.generatedText },
+    ], null, [], [baseline]);
+    expect(pins[0]).toMatchObject({ provenanceState: "recorded", evidenceIds: baseline.evidenceIds, requirementIds: [] });
+    expect(pinStatus(pins[0]!, emptyRiskSignals())).toBe("base profile source");
+    expect(pinTone(pins[0]!, emptyRiskSignals())).toBe("info");
+    expect(pins[1]?.provenanceState).toBe("missing");
+  });
   it("joins the recorded bullet ID regardless of rendered wording and refuses matching prose without that ID", () => {
     const explanation = makeArtifactTailoringExplanation(null, {
       bulletProvenance: [entry],

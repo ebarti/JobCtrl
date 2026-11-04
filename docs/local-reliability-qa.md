@@ -1166,3 +1166,26 @@ earlier deletes. Capture and validate the closed custom log fields on success,
 failure and limited-denial paths. Source configuration declares an hourly cron
 and disables invocation logs and traces; local tests do not establish deployed
 schedule timing, account logging settings, physical retention or backup behavior.
+
+## Optional Resume Tailoring
+
+Run the baseline-resume, exact-v7 Tailor runtime, material publication/ownership,
+per-job preparation and automatic-preparation Temporal suites. New and legacy
+histories must replay with material spend deferred to actual model admission;
+scoring admission remains active. Exercise both saved modes, foreign/stale
+profile snapshots, concurrent attempts, render/write failure, preserved accepted
+files, direct-copy source IDs and normal score eligibility. No baseline copy may
+acquire a resume model, fabricate a review receipt or claim requirement coverage.
+
+Run Settings API/form, retained demo Settings, artifact-origin and resume-draft
+checks. Raw base-copy draft saves must make zero model calls; explicit
+replacement still performs the existing bound intent, factual and quality review.
+
+`corepack pnpm web:e2e:baseline` owns a fresh synthetic browser workspace because
+it saves a long canonical profile and new material generations. It exercises
+the real worker/material writer with forbidden model factories, all 40 authored
+bullets under a saved one-bullet tailoring cap, A4/Letter multi-page PDFs, local
+Plate save/reload/export and unchanged profile/score after job-only editing.
+Retain downloaded PDFs, page proof and desktop/mobile captures outside Git.
+Inspect every physical page and confirm the authored markers and current edit
+remain present; browser-local export still grants no submission approval.

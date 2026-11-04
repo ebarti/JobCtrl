@@ -2,6 +2,7 @@ import { IconSparkles } from "@tabler/icons-react";
 import type { JSX } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
+import { useSettingsPolicyQuery } from "../../operations/hooks/useSettingsPolicyQueries.js";
 import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
 import {
   useRetailorCurrentPolicyMutation,
@@ -39,19 +40,21 @@ export function TailorJobButton({
   label = "Tailor this job",
   disabled = false,
 }: TailorJobButtonProps): JSX.Element {
+  const baseline = useSettingsPolicyQuery().data?.settings.resumeTailoringEnabled === false;
+  const buttonLabel = baseline ? "Prepare base profile copy" : label;
   const mutation = useTailorJobMutation();
   const blocked = disabled || mutation.isPending;
 
   return (
     <Button
-      aria-label={label}
+      aria-label={buttonLabel}
       className={className}
       disabled={blocked}
       type="button"
       onClick={() => {
         if (
           blocked ||
-          !window.confirm("Tailor this job now? This manually overrides the default low-fit auto-tailoring gate.")
+          !window.confirm(baseline ? "Prepare a base profile copy for this job? This manually overrides the default low-fit material gate." : "Tailor this job now? This manually overrides the default low-fit auto-tailoring gate.")
         ) {
           return;
         }
@@ -59,7 +62,7 @@ export function TailorJobButton({
       }}
     >
       <IconSparkles aria-hidden="true" size={14} />
-      <span>{mutation.isPending ? "Tailoring" : label}</span>
+      <span>{mutation.isPending ? "Preparing" : buttonLabel}</span>
     </Button>
   );
 }
@@ -70,19 +73,21 @@ export function RetailorJobButton({
   label = "Re-tailor",
   disabled = false,
 }: RetailorJobButtonProps): JSX.Element {
+  const baseline = useSettingsPolicyQuery().data?.settings.resumeTailoringEnabled === false;
+  const buttonLabel = baseline ? "Regenerate base copy" : label;
   const mutation = useRetailorJobMutation();
   const blocked = disabled || mutation.isPending;
 
   return (
     <Button
-      aria-label={label}
+      aria-label={buttonLabel}
       className={className}
       disabled={blocked}
       type="button"
       onClick={() => {
         if (
           blocked ||
-          !window.confirm("Re-tailor this resume using your latest profile and settings? Your accepted resume stays available until a replacement is approved.")
+          !window.confirm(baseline ? "Regenerate this job’s base profile copy? This explicitly replaces job-specific edits after the new copy is prepared. Your accepted resume stays available if preparation fails." : "Re-tailor this resume using your latest profile and settings? Your accepted resume stays available until a replacement is approved.")
         ) {
           return;
         }
@@ -90,7 +95,7 @@ export function RetailorJobButton({
       }}
     >
       <IconSparkles aria-hidden="true" size={14} />
-      <span>{mutation.isPending ? "Re-tailoring" : label}</span>
+      <span>{mutation.isPending ? "Preparing" : buttonLabel}</span>
     </Button>
   );
 }
@@ -122,17 +127,20 @@ export function RetailorCurrentPolicyButton({
   onSuccess,
   render,
 }: RetailorCurrentPolicyButtonProps): JSX.Element {
+  const baseline = useSettingsPolicyQuery().data?.settings.resumeTailoringEnabled === false;
   const mutation = useRetailorCurrentPolicyMutation();
   const dashboard = useDashboardSummaryQuery();
   const outdatedJobs = outdatedCount ?? dashboard.data?.preparation?.outdatedTailoredArtifactCount ?? 0;
   const count = jobKeys.length || outdatedJobs;
   const requestLimit = jobKeys.length ? Math.max(limit, jobKeys.length) : limit;
-  const buttonLabel = label ?? (jobKeys.length ? "Re-tailor selected" : "Re-tailor outdated materials");
+  const buttonLabel = baseline
+    ? (jobKeys.length ? "Regenerate selected base copies" : "Prepare base copies for outdated materials")
+    : label ?? (jobKeys.length ? "Re-tailor selected" : "Re-tailor outdated materials");
   const blocked = disabled || mutation.isPending || count <= 0;
   const buttonContent = (
     <>
       <IconSparkles aria-hidden="true" size={14} />
-      <span>{mutation.isPending ? "Re-tailoring" : buttonLabel}</span>
+      <span>{mutation.isPending ? "Preparing" : buttonLabel}</span>
     </>
   );
   const handleClick = () => {
@@ -142,7 +150,9 @@ export function RetailorCurrentPolicyButton({
       : `up to ${limit} eligible jobs not on the current tailoring policy`;
     if (
       !window.confirm(
-        `Re-tailor ${scope} using your latest profile and settings? Accepted materials stay available until replacements are approved.`,
+        baseline
+          ? `Prepare base profile copies for ${scope}? This explicitly replaces job-specific edits after preparation. Accepted materials stay available if preparation fails.`
+          : `Re-tailor ${scope} using your latest profile and settings? Accepted materials stay available until replacements are approved.`,
       )
     ) {
       return;

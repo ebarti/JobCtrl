@@ -385,6 +385,22 @@ export function templateMetadataForMaterial(db: SqliteDatabase, jobId: string): 
   return resolveEffectiveResumeTemplateForJob(db, requireJobId(jobId)).metadata;
 }
 
+/** Use the artifact's immutable template snapshot, never today's assignment. */
+export function resumeTemplateThemeForArtifact(
+  db: SqliteDatabase,
+  artifactMetadataJson: string | null,
+): ResumeTemplateTheme | null {
+  const snapshot = snapshotFromMetadata(parseJsonRecord(artifactMetadataJson));
+  if (!snapshot) return null;
+  const version = getRow<TemplateVersionRow>(db,
+    `SELECT * FROM resume_template_versions
+       WHERE tenant_id = ? AND template_id = ? AND version_id = ? AND content_hash = ?`,
+    [DEFAULT_TENANT, snapshot.templateId, snapshot.templateVersionId, snapshot.templateHash]);
+  if (!version) return null;
+  const theme = ResumeTemplateThemeSchema.safeParse(parseJsonRecord(version.theme_json));
+  return theme.success ? theme.data : null;
+}
+
 export function templateMetadataPayload(metadata: ResumeTemplateMetadata): Record<string, unknown> {
   return {
     templateId: metadata.templateId,

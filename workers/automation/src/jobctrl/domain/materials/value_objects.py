@@ -125,6 +125,7 @@ class ControlRule(str, Enum):
     """
 
     REPHRASE_ALLOWED = "rephrase_allowed"
+    BASE_PROFILE_COPY = "base_profile_copy"
     CLAIM_VERIFICATION = "claim_verification"
     INVENT_CLOSELY_RELATED = "invent_closely_related"
     NEVER_FABRICATE_METRICS = "never_fabricate_metrics"

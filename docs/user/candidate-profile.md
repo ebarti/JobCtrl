@@ -154,6 +154,9 @@ Saving your edits does not call a model. Choose **Get suggestions for target
 roles** in Discovery when you want evidence-backed suggestions.
 
 Experience inclusion defaults to every role, matching the tailoring backend.
+The baseline preview and base-profile job copies retain every authored role and
+bullet. Inclusion minimums and the per-role bullet cap govern AI tailoring;
+turning off **Tailor resumes** does not change those saved controls.
 The checkboxes show that effective default, and newly added experiences start
 included. You can explicitly uncheck optional roles while keeping at least one
 role required. Existing saved subsets remain intact. This controls whether a

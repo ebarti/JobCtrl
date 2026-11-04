@@ -1102,7 +1102,12 @@ async def run_auto(client, world, queue, job_id, stage):
         result = await asyncio.wait_for(client.get_workflow_handle(workflow_id).result(), 25)
     assert result["stages_completed"] == [stage], result
     kinds = await history_types(client, workflow_id)
-    assert kinds == ["record_workflow_started", "check_spend_budget", stage, "record_workflow_outcome"]
+    # Material spend is admitted by actual model calls, so a non-model base
+    # copy uses the same workflow without an eager tailoring-budget activity.
+    expected = ["record_workflow_started"]
+    if stage not in {"tailor", "cover"}:
+        expected.append("check_spend_budget")
+    assert kinds == [*expected, stage, "record_workflow_outcome"]
     return workflow_id
 
 
@@ -1232,7 +1237,6 @@ async def test_exact_normal_rescore_repairs_historical_missing_report(evidence_w
             assert result.stages_completed == ["tailor"], result
             assert await history_types(env.client, tailor_id) == [
                 "record_workflow_started",
-                "check_spend_budget",
                 "tailor",
                 "record_workflow_outcome",
             ]

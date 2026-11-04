@@ -364,6 +364,7 @@ import {
   replyToResumeReviewComment,
   renderResumeReviewDraft,
   saveResumeReviewDraftRevision,
+  resumeDraftNeedsAutomaticEditIntent,
   persistResumeEditIntent,
   seedResumeReviewCommentThreads,
   TailoringFeedbackReviewInputError,
@@ -1911,6 +1912,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const draftId=decodeRouteParam(request.params.draftId);
       const saved=await withWritableDb(reply,options.dbPath,db=>saveResumeReviewDraftRevision(db,draftId,body));
       if(!saved || !("revision" in saved))return saved;
+      const policy = withDb(reply, options.dbPath, db => ({ needsInterpretation: resumeDraftNeedsAutomaticEditIntent(db, draftId) }));
+      if (!policy || !("needsInterpretation" in policy)) return policy;
+      if (!policy.needsInterpretation) return saved;
       try {
         const response=await callRpc(providerDispatcher, RpcMethods.ReviewResumeEdit,{tenantId:"local",expectedAppDir:actionContext.appDir,expectedDbPath:options.dbPath,draftId,revisionId:saved.revision.revisionId,operation:"intent"});
         if(response.error)return {...saved,editIntent:{status:"unavailable",failureCode:safeDeterminationFailureCode(response.error.message)}};

@@ -27,6 +27,7 @@ export const DEFAULT_JOBCTRL_SETTINGS: JobCtrlSettings = {
   codexReasoningEfforts: {},
   tailoringGeneratorModels: null,
   tailoringJudgeModel: null,
+  resumeTailoringEnabled: true,
   resumeVoicePolish: false,
   coverLetterGeneration: false,
   applyMaxBudgetUsd: 5,
@@ -81,6 +82,9 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
   const codexReasoningEfforts = persistedCodexReasoningEfforts(raw);
   const tailoringGeneratorModels = persistedModels(raw, "tailoring_generator_models");
   const tailoringJudgeModel = persistedNullableModel(raw, "tailoring_judge_model");
+  const resumeTailoringEnabled = typeof raw.resume_tailoring_enabled === "boolean"
+    ? persistedSetting(raw.resume_tailoring_enabled, "next_workflow")
+    : defaultSetting(true, "next_workflow");
   const resumeVoicePolish = typeof raw.resume_voice_polish === "boolean"
     ? persistedSetting(raw.resume_voice_polish, "next_workflow")
     : defaultSetting(false, "next_workflow");
@@ -118,6 +122,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       codexReasoningEfforts: codexReasoningEfforts.value,
       tailoringGeneratorModels: tailoringGeneratorModels.value,
       tailoringJudgeModel: tailoringJudgeModel.value,
+      resumeTailoringEnabled: resumeTailoringEnabled.value,
       resumeVoicePolish: resumeVoicePolish.value,
       coverLetterGeneration: coverLetterGeneration.value,
       applyMaxBudgetUsd: applyMaxBudgetUsd.value,
@@ -137,6 +142,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       codexReasoningEfforts,
       tailoringGeneratorModels,
       tailoringJudgeModel,
+      resumeTailoringEnabled,
       resumeVoicePolish,
       coverLetterGeneration,
       applyMaxBudgetUsd,

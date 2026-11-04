@@ -461,6 +461,7 @@ class PdfRendererPort(Protocol):
         created_at: str,
         resume_theme: dict | None = None,
         resume_template: dict | None = None,
+        baseline: bool = False,
     ) -> Artifact:
         """Compile a tailored-resume payload to PDF at ``output_path``.
 

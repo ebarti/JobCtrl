@@ -2032,6 +2032,14 @@ function insertJob(db: Database.Database, job: QaJobSeed): void {
     null,
   );
   seedApplicationUrl(db, "local", qaJobId(job.url), job.applicationUrl ?? job.url);
+  if (job.fullDescription) {
+    // Real preparation reads the normalized enrichment authority. A visual
+    // fixture's legacy jobs.full_description cell cannot establish readiness.
+    db.prepare(`UPDATE job_enrichments SET current_status = 'enriched',
+      full_description = ?, enriched_at = ?, extraction_tier = 'full', updated_at = ?
+      WHERE tenant_id = 'local' AND job_id = ?`)
+      .run(job.fullDescription, QA_NOW, QA_NOW, qaJobId(job.url));
+  }
 }
 
 function qaJobId(jobUrl: string): string {

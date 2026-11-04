@@ -1052,7 +1052,14 @@ export class BrowserPdfExportAdapter implements PdfExportPort {
     await document.fonts?.ready;
     const originalMarker = source.getAttribute(PDF_EXPORT_SOURCE_ATTRIBUTE);
     const originalStyle = source.getAttribute("style");
+    // html2canvas measures fonts in the original document with a hidden,
+    // body-level inline image. The global block-image reset corrupts its
+    // baseline, shifting painted glyphs away from our measured DOM boxes.
+    const fontProbeStyle = source.ownerDocument.createElement("style");
+    fontProbeStyle.setAttribute("data-resume-pdf-font-metrics", "true");
+    fontProbeStyle.textContent = 'body > div[style*="visibility: hidden"] > img { display: inline-block; }';
     try {
+      source.ownerDocument.head.appendChild(fontProbeStyle);
       applyTemplateContext(source);
       const pageGeometry = pdfPageGeometry(source);
       const windowWidth = pdfWindowWidth(source, pageGeometry);
@@ -1082,6 +1089,7 @@ export class BrowserPdfExportAdapter implements PdfExportPort {
       }
       pdf.save(pdfFilename(filename));
     } finally {
+      fontProbeStyle.remove();
       restoreAttribute(source, PDF_EXPORT_SOURCE_ATTRIBUTE, originalMarker);
       restoreAttribute(source, "style", originalStyle);
     }

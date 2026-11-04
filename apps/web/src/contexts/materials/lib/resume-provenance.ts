@@ -143,6 +143,7 @@ export function pinFromResumeLine(
   line: ResumeLineEntry,
   explanation: ArtifactTailoringExplanation | null,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
+  baselineProvenance: readonly BulletProvenanceEntry[] = [],
 ): ResumeAuditPin {
   const isResumeStructure =
     line.kind === "section" || /^\d+\/\d+$/.test(line.text);
@@ -183,9 +184,7 @@ export function pinFromResumeLine(
       sourceText: [`${field.label}: ${field.value}`],
     });
 
-  const bullet = explanation
-    ? bulletForLine(line, explanation.bulletProvenance)
-    : undefined;
+  const bullet = bulletForLine(line, explanation?.bulletProvenance ?? baselineProvenance);
   if (bullet) {
     const change = explanation
       ? changeFor(bullet, explanation.annotatedChanges)
@@ -248,9 +247,10 @@ export function pinsFromResumeLines(
   lines: readonly ResumeLineEntry[],
   explanation: ArtifactTailoringExplanation | null,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
+  baselineProvenance: readonly BulletProvenanceEntry[] = [],
 ): ResumeAuditPin[] {
   return lines.map((line) =>
-    pinFromResumeLine(line, explanation, profileSourceFields),
+    pinFromResumeLine(line, explanation, profileSourceFields, baselineProvenance),
   );
 }
 
@@ -385,6 +385,7 @@ export function pinTone(
   if (pinHasClaimRisk(pin, risk)) {
     return "warn";
   }
+  if (pin.controls.includes("base_profile_copy")) return "info";
   if (pin.sourceGranularity === "bullet" && pin.evidenceIds.length) return "ok";
   if (
     pin.sourceGranularity === "bullet" ||
@@ -409,6 +410,7 @@ export function pinStatus(pin: ResumeAuditPin, risk: RiskSignals): string {
   if (pinHasClaimRisk(pin, risk)) {
     return "claim risk";
   }
+  if (pin.controls.includes("base_profile_copy")) return "base profile source";
   if (pin.provenanceState === "not_applicable") return "structure";
   if (pin.sourceGranularity === "profile_field") return "profile source";
   if (pin.sourceGranularity === "bullet") {

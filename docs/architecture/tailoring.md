@@ -2,6 +2,30 @@
 
 Tailoring generates a resume that keeps as many applicable baseline accomplishments as possible within saved per-role limits from saved profile sources and the current employer analysis/requirement-fit ledger. [Semantic Judgments Are LLM Determinations](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) defines model authority. [Materials Audit](materials.md) owns shared truthfulness and line provenance.
 
+## Baseline Resume Preparation
+
+`resume_tailoring_enabled` defaults to true. The local runner captures the saved
+boolean at resume admission, before constructing model dependencies. False
+selects `PrepareBaselineResumeUseCase`, which accepts no model/review ports.
+The shared document builder's explicit baseline mode copies every authored
+resume entry without tailoring selection/caps; text, HTML and PDF use that
+complete document. The Profile preview uses this same baseline rendering mode.
+
+Copies use normal tenant/job material generations and versioned provenance,
+with `preparation_mode: baseline_copy`, source profile ID/version, direct field
+source IDs and `base_profile_copy` control. They record no semantic review or
+requirement coverage determination. Structural copying is not a semantic
+support/fit judgment. Explicit edited replacements still require the existing
+model reviews and retain the baseline origin with `modified: true`.
+
+Rendering precedes the atomic generation flip. Profile version/content, template,
+previous materials, source bytes and the normal attempt owner are rechecked under
+the writer. Failed/stale refreshes preserve accepted material and provenance.
+A mode change does not start replacement work or revoke an admitted attempt.
+New Temporal histories defer material spend admission to actual model calls,
+using `material-spend-at-admission-v1` to preserve older history replay. Score
+keeps its normal budget admission; a baseline copy requires no tailoring budget.
+
 ## The Contract At A Glance
 
 | Work | Authority |

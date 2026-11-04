@@ -11870,6 +11870,32 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("saves resume-tailoring generation without probing unavailable model providers", async () => {
+    const call = vi.fn(async () => { throw new Error("Synthetic unavailable provider"); });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const original = JSON.parse(fs.readFileSync(options.configPath, "utf8"));
+    for (const enabled of [true, false]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { resumeTailoringEnabled: enabled } });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({
+        settings: { resumeTailoringEnabled: enabled },
+        effectiveSettings: { resumeTailoringEnabled: { value: enabled, source: "persisted", activation: "next_workflow", editable: true } },
+      });
+      expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).toEqual({ ...original, resume_tailoring_enabled: enabled });
+    }
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([null, "true", 1])("rejects a non-boolean resume-tailoring update %s without writing", async (value) => {
+    const app = buildApp(options);
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { resumeTailoringEnabled: value } });
+    expect(response.statusCode).toBe(400);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
   it("falls back to defaults when settings are missing", async () => {
     fs.rmSync(options.configPath);
     const app = buildApp(options);
@@ -11896,6 +11922,7 @@ describe("local TypeScript API", () => {
         analysisLegs: ["claude", "codex", "google"],
         tailoringGeneratorModels: null,
         tailoringJudgeModel: null,
+        resumeTailoringEnabled: true,
         resumeVoicePolish: false,
         applyMaxBudgetUsd: 5,
         applyTimeoutSeconds: 900,

@@ -1232,7 +1232,7 @@ describe("<ApplyReviewView>", () => {
       name: "Requirements and original post",
     });
     const materialsCard = within(reviewWorkspace).getByRole("region", {
-      name: "Tailored resume and cover",
+      name: "Resume and cover",
     });
     expect(positionCard).toHaveAttribute("data-slot", "card");
     expect(materialsCard).toHaveAttribute("data-slot", "card");
@@ -1795,7 +1795,7 @@ describe("<ApplyReviewView>", () => {
     const alertTitle = await screen.findByText("Resume template could not be updated");
     const alert = alertTitle.closest('[role="alert"]');
     const icon = alert?.querySelector("svg.tabler-icon-alert-triangle");
-    const materialsCard = screen.getByRole("region", { name: "Tailored resume and cover" });
+    const materialsCard = screen.getByRole("region", { name: "Resume and cover" });
     const decisionCard = document.querySelector(".apply-review-decision-card");
 
     expect(alert).toBeInstanceOf(HTMLElement);

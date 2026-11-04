@@ -565,7 +565,11 @@ async def _check_spend(payload: JobPipelineWorkflowInput) -> None:
         "cover": "tailoring",
         "apply": "apply",
     }
-    lanes = tuple(dict.fromkeys(lane_by_stage[stage] for stage in payload.stages if stage in lane_by_stage))
+    material_admission_budget = workflow.patched("material-spend-at-admission-v1")
+    lanes = tuple(dict.fromkeys(
+        lane_by_stage[stage] for stage in payload.stages if stage in lane_by_stage
+        and not (material_admission_budget and stage in {"tailor", "cover"})
+    ))
     for lane in lanes:
         await execute_control_activity(
             check_spend_budget,

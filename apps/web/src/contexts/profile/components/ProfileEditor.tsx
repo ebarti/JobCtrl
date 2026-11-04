@@ -1,3 +1,4 @@
+import { resumeTemplatePreviewStyle } from "../../../shared/lib/resume-template-style.js";
 import { useCallback, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { Link } from "@tanstack/react-router";
 
@@ -19,7 +20,6 @@ import { useResumeTemplatesQuery } from "../hooks/useResumeTemplatesQuery.js";
 import { bindProfilePreviewFields } from "../lib/profile-preview-fields.js";
 import {
   resolveEffectiveResumeTemplateVersion,
-  resumeTemplatePreviewStyle,
   ResumeTemplatePanel,
 } from "./ResumeTemplatePanel.js";
 

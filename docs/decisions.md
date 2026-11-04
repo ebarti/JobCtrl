@@ -3140,3 +3140,23 @@ unverified migrations leave the default source diagnostic API and web interface
 available without the worker or Temporal. Older application versions do not
 automatically downgrade the workspace. See
 [Local Development](local-development.md#schema-migrations-and-source-updates).
+
+## 2026-11-04 — Baseline Resume Copies Are An Explicit Preparation Mode
+
+**Decision:** `resume_tailoring_enabled` is a Settings execution choice, default
+true. False selects a non-model use case that publishes a complete, job-owned
+base resume through the existing Materials generation/ownership boundary. It
+records direct field/source IDs and the immutable profile version, rather than
+creating model determinations or requirement-coverage claims. Initial copies
+make no semantic judgment. Explicit edited replacements retain current reviews.
+
+**Reason:** Skipping Tailor leaves the existing Plate editor without registered
+materials; disabling individual rewrite permissions still performs model work
+and can select/truncate baseline content. Shared baseline document rendering
+preserves authored content without changing profile policy. Writer-time source,
+template, generation and owner checks preserve accepted artifacts on failure.
+
+**Activation:** Capture mode at resume admission. New queued work observes the
+saved value; running attempts keep their choice. Material spend is checked at
+actual model admission, with a Temporal patch preserving historical commands.
+Scoring remains independent. Saving the setting never initiates a conversion.

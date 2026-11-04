@@ -1,3 +1,4 @@
+import { baseProfileCopyOrigin } from "./base-profile-copy.js";
 import { isPrivateApplyEvent } from "@jobctrl/domain-types";
 import { readApplyAuditControls } from "./apply-controls.js";
 import { companyBriefingSummaries } from "./company-briefings.js";
@@ -106,6 +107,7 @@ import type { JobQueryScalars } from "./contracts.js";
 import {
   resumeTemplateStateForArtifact,
   resumeTemplateStateForJob,
+  resumeTemplateThemeForArtifact,
 } from "./resume-templates.js";
 import { readWorkerHealth } from "./worker-health.js";
 import { readJobCtrlSettings } from "./settings-config.js";
@@ -2578,8 +2580,11 @@ export function getArtifactDetail(db: SqliteDatabase, artifactId: string): Artif
   return {
     ok: true,
     artifact: rowToArtifactSummary(row, db),
+    resumeTheme: TAILORING_ARTIFACT_TYPES.has(row.artifact_type)
+      ? resumeTemplateThemeForArtifact(db, row.metadata_json) : null,
     layoutBoxes: parseResumeLayoutBoxes(row.layout_boxes_json),
     determinations: artifactDeterminations(db, row),
+    ...(baseProfileCopyOrigin(row.metadata_json) ? { baselineProvenance: bulletProvenanceForArtifact(db, row) } : {}),
     tailoringExplanation: tailoringExplanationForArtifact(db, row),
   };
 }
@@ -2946,6 +2951,8 @@ function tailoringExplanationForArtifact(
   // miss) and the TypeScript-side keyword recompute are removed — every audited
   // claim now has a single canonical source: the projection rows the projection
   // builder owns. Where a canonical row is absent we serve an honest null/empty.
+  const origin = baseProfileCopyOrigin(row.metadata_json);
+  if (origin && !origin.modified) return null; // This generation made no tailoring determinations.
   const explanation = parseTailoringExplanation(row.metadata_json);
   if (explanation === null) return null;
   // Phase 2: canonical per-bullet provenance from the ``bullet_provenance_json``
@@ -3773,6 +3780,7 @@ function rowToArtifactSummary(row: ArtifactProjectionRow, db?: SqliteDatabase): 
   }
   return {
     artifactId: row.artifact_id,
+    resumePreparation: baseProfileCopyOrigin(row.metadata_json),
     jobKey: row.job_id,
     title: row.job_title || "Untitled",
     company: row.job_employer || "Unknown company",

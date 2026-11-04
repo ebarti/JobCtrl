@@ -56,6 +56,29 @@ async function legacyWorkspace() {
 const defaultPolish = { value: false, source: "default", activation: "next_workflow", editable: true };
 
 describe("retained demo settings compatibility", () => {
+  it.each([undefined, true, false])("retains the default-on tailoring choice %s without rewriting old state", async (enabled) => {
+    const saved = await retainedSnapshot();
+    const response = saved.state.readModel.settings;
+    delete (response.settings as Partial<SettingsResponse["settings"]>).resumeTailoringEnabled;
+    delete (response.effectiveSettings as Partial<SettingsResponse["effectiveSettings"]>).resumeTailoringEnabled;
+    if (enabled !== undefined) response.settings.resumeTailoringEnabled = enabled;
+    const store = new InMemoryDemoWorkspaceStore(saved);
+    const reopened = repository(store);
+    await reopened.initialize();
+    const adapter = new DemoApiClientAdapter(reopened);
+    const current = SettingsResponseSchema.parse(await adapter.settings());
+    expect(current.settings.resumeTailoringEnabled).toBe(enabled ?? true);
+    expect(current.effectiveSettings.resumeTailoringEnabled).toEqual({
+      value: enabled ?? true, source: enabled === undefined ? "default" : "persisted", activation: "next_workflow", editable: true,
+    });
+    expect(await store.readSnapshot()).toEqual(saved);
+    await adapter.updateSettings({ resumeTailoringEnabled: false });
+    expect((await adapter.settings()).settings.resumeTailoringEnabled).toBe(false);
+    await adapter.updateSettings({ resumeTailoringEnabled: true });
+    expect((await adapter.settings()).settings.resumeTailoringEnabled).toBe(true);
+    reopened.dispose();
+  });
+
   it.each([undefined, false, true])("retains cover-letter opt-in %s across reopening older saved settings", async (enabled) => {
     const saved = await retainedSnapshot();
     const response = saved.state.readModel.settings;

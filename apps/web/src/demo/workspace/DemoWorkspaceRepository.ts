@@ -955,14 +955,15 @@ function withCurrentSettingsDefaults(
     return snapshot;
   }
   let response = snapshot.state.readModel.settings;
-  for (const key of ["resumeVoicePolish", "coverLetterGeneration"] as const) {
+  const defaults = { resumeTailoringEnabled: true, resumeVoicePolish: false, coverLetterGeneration: false };
+  for (const key of ["resumeTailoringEnabled", "resumeVoicePolish", "coverLetterGeneration"] as const) {
     const hasValue = Object.hasOwn(response.settings, key);
     const hasMetadata = Object.hasOwn(response.effectiveSettings, key);
     if (hasValue && hasMetadata) continue;
     // Preserve an existing value, including malformed values for schema validation.
     const value = hasValue
       ? response.settings[key]
-      : hasMetadata ? response.effectiveSettings[key]?.value : false;
+      : hasMetadata ? response.effectiveSettings[key]?.value : defaults[key];
     response = {
       ...response,
       settings: hasValue ? response.settings : { ...response.settings, [key]: value },

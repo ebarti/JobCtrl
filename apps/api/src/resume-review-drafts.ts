@@ -1,3 +1,4 @@
+import { baseProfileCopyOrigin } from "./base-profile-copy.js";
 import { copyMaterialSlots } from "./cover-letter-review.js";
 import { EditIntentResultSchema } from "@jobctrl/contracts";
 import crypto from "node:crypto";
@@ -389,6 +390,17 @@ export function saveResumeReviewDraftRevision(
     };
   });
   return tx();
+}
+
+/** Raw base-copy drafts save locally; explicit replacement still requests review. */
+export function resumeDraftNeedsAutomaticEditIntent(db: SqliteDatabase, draftId: string): boolean {
+  const draft = getDraftRow(db, draftId);
+  if (!draft) throw new InputError(`Resume review draft not found: ${draftId}`);
+  const source = getRow<{ metadata_json: string | null }>(db,
+    `SELECT metadata_json FROM job_materials_artifacts
+       WHERE tenant_id = ? AND job_id = ? AND generation = ? AND artifact_id IN (?, ?) LIMIT 1`,
+    [DEFAULT_TENANT, draft.job_id, draft.base_generation, draft.base_resume_text_artifact_id, draft.base_resume_pdf_artifact_id]);
+  return !baseProfileCopyOrigin(source?.metadata_json ?? null);
 }
 
 export function seedResumeReviewCommentThreads(
@@ -1212,6 +1224,15 @@ function insertRenderedDraftArtifacts(
   const { generation, resumeTextArtifactId, resumePdfArtifactId, textPath, htmlPath, pdfPath, layoutBoxes } =
     rendered;
   const now = new Date().toISOString();
+  const source = getRow<{ metadata_json: string | null }>(db,
+    `SELECT metadata_json FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ?
+       AND generation = ? AND artifact_id IN (?, ?) LIMIT 1`,
+    [DEFAULT_TENANT, draft.job_id, draft.base_generation, draft.base_resume_text_artifact_id, draft.base_resume_pdf_artifact_id]);
+  const origin = baseProfileCopyOrigin(source?.metadata_json ?? null);
+  const baselineMetadata = origin ? {
+    preparation_mode: "baseline_copy",
+    base_profile_copy: { profile_id: origin.profileId, profile_version: origin.profileVersion, source_ids: origin.sourceIds, modified: true },
+  } : {};
 
   db.prepare(
     `INSERT INTO job_materials (
@@ -1227,6 +1248,7 @@ function insertRenderedDraftArtifacts(
     JSON.stringify(validation),
     JSON.stringify({ approved: true, source: DRAFT_RENDERER_METADATA_SOURCE }),
     JSON.stringify({
+      ...baselineMetadata,
       source: DRAFT_RENDERER_METADATA_SOURCE,
       claim_verification_id: semanticReview.claimVerificationId,
       quality_determination_id: semanticReview.qualityDeterminationId,
@@ -1251,6 +1273,7 @@ function insertRenderedDraftArtifacts(
     "text",
     fs.statSync(textPath).size,
     JSON.stringify({
+      ...baselineMetadata,
       source: DRAFT_RENDERER_METADATA_SOURCE,
       claim_verification_id: semanticReview.claimVerificationId,
       quality_determination_id: semanticReview.qualityDeterminationId,
@@ -1270,6 +1293,7 @@ function insertRenderedDraftArtifacts(
     "html_pdf",
     fs.statSync(pdfPath).size,
     JSON.stringify({
+      ...baselineMetadata,
       source: DRAFT_RENDERER_METADATA_SOURCE,
       claim_verification_id: semanticReview.claimVerificationId,
       quality_determination_id: semanticReview.qualityDeterminationId,

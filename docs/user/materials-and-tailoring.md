@@ -11,6 +11,31 @@ without turning the job description into evidence about you.
 For a plain-language walkthrough of that boundary, read
 [Resume Tailoring Without Fabrication](../guides/resume-tailoring-without-fabrication.md).
 
+## Use Your Base Resume For Each Job
+
+Turn off **Tailor resumes** in Settings → Model selection → AI execution policy
+to prepare a job-owned copy of the saved base resume. The default is on. With it
+off, new resume preparation copies the summary, all roles and authored bullets,
+education and skills in their saved order, with the selected template. It makes
+no resume model calls and applies no tailoring bullet cap or job-based selection.
+Scoring, eligibility and the separate cover-letter setting keep their usual roles.
+
+**Base profile copy** identifies the saved source profile version in Job Detail,
+the artifact inspector and the job's Plate editor. These copies record direct
+source IDs; AI tailoring, quality/persona reviews and requirement coverage were
+not assessed. They do not inherit coverage claims from the job's fit score.
+Use **Edit resume**, save the draft locally without a model call, and export PDF as usual. Job-specific edits
+do not change the Profile or other jobs. Explicit replacement review and
+submission approval still have their own requirements.
+
+The switch affects new preparation, including queued work before it starts.
+Running preparation retains its captured mode. Later profile edits or switching
+the option do not rewrite accepted copies or drafts. **Regenerate base copy**
+explicitly creates a replacement from the latest saved profile; a failed refresh
+keeps the accepted version. The CLI's existing Tailor actions honor this setting.
+
+## AI Tailoring
+
 Cover-letter generation is off by default. Enable **Generate cover letters** in
 Settings → Model selection to include letters in new material preparation. With
 it off, eligible jobs still receive a reviewed résumé and its PDF. Cover is

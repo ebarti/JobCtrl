@@ -55,6 +55,41 @@ afterEach(() => {
 });
 
 describe("resume review draft API", () => {
+  it("saves base-copy drafts without model work and reviews an explicit replacement", async () => {
+    const db = new Database(options.dbPath);
+    const rows = db.prepare("SELECT artifact_id, metadata_json FROM job_materials_artifacts WHERE job_id = ? AND artifact_type IN ('tailored_resume','resume_pdf')").all(JOB_ID) as Array<{ artifact_id: string; metadata_json: string | null }>;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      db.prepare("UPDATE job_materials_artifacts SET metadata_json = ? WHERE artifact_id = ?").run(JSON.stringify({
+        ...JSON.parse(row.metadata_json ?? "{}"), preparation_mode: "baseline_copy",
+        base_profile_copy: { profile_id: "default", profile_version: 1, source_ids: ["executive_profile:baseline"], modified: false },
+      }), row.artifact_id);
+    }
+    db.close();
+    const call = vi.fn(options.providerDispatcher!.call);
+    const app = buildApp({ ...options, providerDispatcher: { ...options.providerDispatcher!, call } });
+    const created = await app.inject({ method: "POST", url: `/v1/jobs/${JOB_ID}/resume-review/draft`, payload: {} });
+    expect(created.statusCode, created.body).toBe(200);
+    const draftId = created.json().draft.draftId;
+    const saved = await app.inject({ method: "POST", url: `/v1/resume-review/drafts/${draftId}/revisions`, payload: {
+      editedText: "Synthetic Candidate\nEXPERIENCE\n- Owned job-specific draft text.", editDeltas: [],
+    } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json().revision.editedText).toBe("Synthetic Candidate\nEXPERIENCE\n- Owned job-specific draft text.");
+    expect(saved.json()).not.toHaveProperty("editIntent");
+    expect(call).not.toHaveBeenCalled();
+    const rendered = await app.inject({ method: "POST", url: `/v1/resume-review/drafts/${draftId}/render`, payload: {
+      draftRevisionId: saved.json().revision.revisionId,
+    } });
+    expect(rendered.statusCode, rendered.body).toBe(200);
+    expect(rendered.json().ok, rendered.body).toBe(true);
+    expect(call).toHaveBeenCalled();
+    const detail = await app.inject({ method: "GET", url: `/v1/artifacts/${rendered.json().artifacts.resumeText.artifactId}` });
+    expect(detail.json().artifact.resumePreparation).toMatchObject({ mode: "baseline_copy", modified: true, profileVersion: 1 });
+    expect(detail.json().determinations.length).toBeGreaterThan(0);
+    await app.close();
+  });
+
   it("requires a version precondition for template updates and rejects a stale update without writing", async () => {
     const app = buildApp(options);
     const request = { displayName: "Synthetic template", theme: BUILT_IN_RESUME_TEMPLATE_THEME, layout: {} };

@@ -34,6 +34,60 @@ _ROUTED_CHAT_JSON = llm_client.LlmAdapter.chat_json
 _JOB_ID = JobId("10000000-0000-4000-8000-000000000001")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_material_budget_admission_preserves_scoring_and_replays_old_histories(monkeypatch, legacy):
+    """Baseline work cannot fail an eager tailoring-budget check before dispatch."""
+    lanes, steps = [], []
+    original_patched = prep_workflow_mod.workflow.patched
+    monkeypatch.setattr(prep_workflow_mod.workflow, "patched", lambda marker:
+        False if legacy and marker == "material-spend-at-admission-v1" else original_patched(marker))
+
+    @activity.defn(name="record_workflow_started")
+    async def started(_payload):
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def finished(_payload):
+        return None
+
+    @activity.defn(name="check_spend_budget")
+    async def budget(payload):
+        lanes.append(payload["lane"] if isinstance(payload, dict) else payload.lane)
+        return await _check_spend_budget(payload)
+
+    @activity.defn(name="score_job")
+    async def score(_payload):
+        steps.append("score")
+        return {"status": "ok"}
+
+    @activity.defn(name="tailor_job")
+    async def baseline(_payload):
+        steps.append("baseline")
+        return {"status": "approved", "materials_generation": 1}
+
+    @activity.defn(name="render_pdf")
+    async def pdf(_payload):
+        steps.append("pdf")
+        return {"status": "ok"}
+
+    queue = "baseline-budget-" + uuid.uuid4().hex
+    async with time_skipping_env() as env:
+        async with Worker(env.client, task_queue=queue, workflows=[JobPreparationWorkflow],
+                          activities=[started, finished, budget, score, baseline, pdf],
+                          workflow_runner=UnsandboxedWorkflowRunner()):
+            handle = await env.client.start_workflow(JobPreparationWorkflow.run,
+                JobPreparationInput(tenant_id="local", job_id=_JOB_ID, steps=["score", "tailor", "pdf"],
+                                    target_version="1", idempotency_key=queue), id=queue, task_queue=queue)
+            result = await asyncio.wait_for(handle.result(), timeout=30)
+            history = await handle.fetch_history()
+        monkeypatch.setattr(prep_workflow_mod.workflow, "patched", original_patched)
+        await Replayer(workflows=[JobPreparationWorkflow], workflow_runner=UnsandboxedWorkflowRunner()).replay_workflow(history)
+    assert result.steps_completed == ["score", "tailor", "pdf"]
+    assert steps == ["score", "baseline", "pdf"]
+    assert lanes == (["scoring", "tailoring"] if legacy else ["scoring"])
+
+
 @activity.defn(name="check_spend_budget")
 async def _check_spend_budget(_payload) -> SpendBudgetStatus:
     return SpendBudgetStatus(

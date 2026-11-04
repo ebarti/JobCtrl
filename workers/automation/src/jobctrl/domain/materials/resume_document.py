@@ -152,7 +152,7 @@ def normalize_resume_date_range(value: str) -> str:
     return DATE_RANGE_SEPARATOR_RE.sub(" - ", value.strip()).strip()
 
 
-def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocument:
+def build_resume_document(tailored_payload: dict, profile: dict, *, baseline: bool = False) -> ResumeDocument:
     """Build the semantic resume document consumed by the HTML renderer."""
 
     personal = profile.get("personal", {})
@@ -161,13 +161,13 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
     required_education_ids = get_required_education_entry_ids(profile)
     all_education_entries = get_education_entries(profile)
 
-    experience_entries = get_selected_experience_entries(profile, tailored_payload)
+    experience_entries = resume.get("experience_entries", []) if baseline else get_selected_experience_entries(profile, tailored_payload)
     education_entries = [
         entry
         for entry in all_education_entries
-        if not required_education_ids or entry.get("id") in required_education_ids
+        if baseline or not required_education_ids or entry.get("id") in required_education_ids
     ] or all_education_entries
-    skill_categories = get_selected_skill_categories(profile, tailored_payload)
+    skill_categories = resume.get("skill_categories", []) if baseline else get_selected_skill_categories(profile, tailored_payload)
 
     experience_updates = experience_updates_by_id(tailored_payload)
     skill_updates = {
@@ -179,7 +179,7 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
     contact_items = contact_items_from_personal(personal)
     summary_source = (
         tailored_payload.get("executive_profile", "")
-        if tailoring_policy["allow_summary_rewrite"]
+        if not baseline and tailoring_policy["allow_summary_rewrite"]
         else resume.get("executive_profile", {}).get("baseline_text", "")
     )
 
@@ -193,7 +193,7 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
         experiences.append(
             {
                 "id": entry_id,
-                "title": sanitize_text(tailored_experience_title(entry, update, profile)),
+                "title": sanitize_text(str(entry.get("title", "")) if baseline else tailored_experience_title(entry, update, profile)),
                 "company": sanitize_text(str(entry.get("company", ""))),
                 "location": location,
                 "date_range": date_range,
@@ -204,7 +204,7 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
                         "id": f"experience:{entry_id}#{index}",
                         "text": sanitize_text(str(bullet)),
                     }
-                    for index, bullet in enumerate(tailored_experience_bullets(entry, update, profile))
+                    for index, bullet in enumerate(entry.get("bullets", []) if baseline else tailored_experience_bullets(entry, update, profile))
                 ],
             }
         )
@@ -235,7 +235,7 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
                 "label": sanitize_text(str(category.get("label", "Skills"))),
                 "items": [
                     sanitize_text(str(item))
-                    for item in tailored_skill_items(category, update, profile)
+                    for item in (category.get("items", []) if baseline else tailored_skill_items(category, update, profile))
                     if str(item).strip()
                 ],
             }

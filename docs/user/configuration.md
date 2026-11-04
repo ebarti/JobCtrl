@@ -216,6 +216,14 @@ settings, API/Vite proxy targets, or isolated stacks should use
 
 ## LLM Providers
 
+**Tailor resumes** is on by default in Settings → Model selection → AI execution policy.
+Turn it off to prepare an independent base-profile resume for each eligible job.
+Scoring and its eligibility rules continue as usual. The saved choice applies
+before each new resume preparation starts, including previously queued work;
+already-started preparation keeps its choice. Saving the switch does not rescore
+jobs or rewrite existing resumes/drafts. Each copy opens in the job's Plate
+editor and exports to PDF. See [Materials & Tailoring](materials-and-tailoring.md).
+
 **Generate cover letters** in Settings → Model selection is off by default.
 Enable it to include new letters in material preparation. With it off, JobCtrl
 prepares the reviewed résumé and PDF; accepted letters remain available.

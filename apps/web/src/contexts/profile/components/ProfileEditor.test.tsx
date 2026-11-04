@@ -12,7 +12,7 @@ import { renderWithProviders } from "../../../test/render.js";
 import { FakePdfExportPort, buildTestPorts } from "../../../test/testPorts.js";
 import { ResumeStandalonePlateEditor, resumeSemanticTextChangesFromPlateValues } from "../../materials/components/ResumeAuditPins.js";
 import { ProfileEditor } from "./ProfileEditor.js";
-import { resumeTemplatePreviewStyle } from "./ResumeTemplatePanel.js";
+import { resumeTemplatePreviewStyle } from "../../../shared/lib/resume-template-style.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();

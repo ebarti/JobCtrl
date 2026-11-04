@@ -127,6 +127,12 @@ function JobArtifactRow({ artifact }: { readonly artifact: ArtifactSummary }) {
       <ArtifactStatusBadge status={artifact.status} />
       <span>
         {artifact.type}
+        {artifact.resumePreparation ? (
+          <StatusBadge tone="info">
+            {artifact.resumePreparation.modified ? "Edited base profile copy" : "Base profile copy"}
+            {` · Profile v${artifact.resumePreparation.profileVersion}`}
+          </StatusBadge>
+        ) : null}
         {artifact.generation != null ? ` · Generation ${artifact.generation}` : null}
         <ContextHelp label={`${artifact.type} artifact`} description={`This saved material is ${artifact.status}${artifact.generation == null ? "" : ` in generation ${artifact.generation}`}. Its status comes from the artifact lifecycle record. ${artifact.status === "missing" ? "No file is available to open." : "Open it to inspect the material."} Superseded versions remain available in the history disclosure.`} />
       </span>

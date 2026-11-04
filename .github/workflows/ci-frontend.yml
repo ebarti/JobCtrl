@@ -121,6 +121,15 @@ jobs:
           ${{ runner.temp }}/e2e-isolated.xml
           ${{ runner.temp }}/e2e-real-rpc.xml
           ${{ runner.temp }}/e2e-manual-capture.xml
+          ${{ runner.temp }}/e2e-baseline.xml
+        retention-days: 7
+        if-no-files-found: warn
+    - name: Upload synthetic baseline resume proof
+      if: "${{ always() && inputs.e2e }}"
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: synthetic-baseline-resume-proof
+        path: "${{ runner.temp }}/e2e-baseline.xml.artifacts"
         retention-days: 7
         if-no-files-found: warn
     - name: Upload site artifact

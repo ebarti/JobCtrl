@@ -214,3 +214,9 @@ unavailable checks never become an insignificant verdict. See [Scoring](architec
 ## Reviewed Screening Answers
 
 Reusable reviewed answers must retain exact selected profile facts and profile/posting/material versions, distinct application attempts, question/context revisions, model authority, human review and actual manually used text. Changed sources or question meaning require current verification and human review before reuse. Failed or competing refreshes preserve accepted material bytes, answers and history. Sensitive facts require deliberate selection; no screening operation grants form-entry/submission authority or records a submitted outcome.
+
+## Optional Resume Tailoring
+
+| ID | Added | Requirement | Users | Purpose | Related docs |
+| --- | --- | --- | --- | --- | --- |
+| BR-076 | 2026-11-04 | Users can disable resume tailoring through a persisted boolean that defaults to enabled. Eligible jobs then receive independent, editable copies of the complete saved base resume with versioned source provenance and the selected template. No resume model work or tailoring-only selection/caps run in this mode. Scoring, eligibility and submission approval retain their existing contracts. Profile/setting changes alone never rewrite accepted copies or drafts, and failed replacement preserves accepted artifacts. | Job seekers | Use a base resume and edit each job's copy independently. | [Materials](user/materials-and-tailoring.md#use-your-base-resume-for-each-job), [tailoring](architecture/tailoring.md#baseline-resume-preparation) |

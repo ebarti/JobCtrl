@@ -1630,6 +1630,11 @@ def get_cover_letter_generation_enabled() -> bool:
     return _config_setting("cover_letter_generation") is True
 
 
+def get_resume_tailoring_enabled() -> bool:
+    """Preserve existing tailoring unless the saved setting explicitly disables it."""
+    return _config_setting("resume_tailoring_enabled") is not False
+
+
 def get_resume_voice_polish_enabled() -> bool:
     """Extra post-approval rewriting is opt-in; required reviews always run."""
     return _config_setting("resume_voice_polish") is True

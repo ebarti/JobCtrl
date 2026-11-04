@@ -11,9 +11,9 @@ class ProvenanceBindingError(ValueError):
         super().__init__(f"invalid_provenance_{kind}_binding")
 
 
-def rendered_lines(profile, payload):
+def rendered_lines(profile, payload, *, baseline=False):
     """Project every factual rendered surface from the renderer's canonical document."""
-    document = build_resume_document(payload, profile)
+    document = build_resume_document(payload, profile, baseline=baseline)
     lines = []
 
     def add(ident, section, source_id, text):

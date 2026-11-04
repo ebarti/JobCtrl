@@ -1,3 +1,5 @@
+import { BaseProfileCopyAudit } from "./BaseProfileCopyAudit.js";
+import { resumeTemplatePreviewStyle } from "../../../shared/lib/resume-template-style.js";
 import {
   type ApplyReviewProfileSourceField,
   type ResumeCommentThread,
@@ -598,6 +600,8 @@ export function ResumePlateEditor({
 }: ResumePlateEditorProps): JSX.Element {
   const detail = useArtifactDetailQuery(artifactId);
   const explanation = detail.data?.tailoringExplanation ?? null;
+  const previewStyle = useMemo(() => detail.data?.resumeTheme
+    ? resumeTemplatePreviewStyle(detail.data.resumeTheme) : undefined, [detail.data?.resumeTheme]);
   const risk = useMemo(() => (explanation ? riskSignals(explanation) : emptyRiskSignals()), [explanation]);
   const provenanceReady = detail.isSuccess || detail.isError;
   const htmlState = useResumeHtmlState(htmlUrl);
@@ -608,8 +612,8 @@ export function ResumePlateEditor({
   );
   const plateLines = htmlLines;
   const linePins = useMemo(
-    () => (provenanceReady && plateLines.length ? pinsFromResumeLines(plateLines, explanation, profileSourceFields) : []),
-    [explanation, plateLines, profileSourceFields, provenanceReady],
+    () => (provenanceReady && plateLines.length ? pinsFromResumeLines(plateLines, explanation, profileSourceFields, detail.data?.baselineProvenance) : []),
+    [explanation, plateLines, profileSourceFields, provenanceReady, detail.data?.baselineProvenance],
   );
   const threadPlacement = useMemo(
     () => placeResumeCommentThreads(plateLines, linePins, draft?.commentThreads ?? []),
@@ -726,7 +730,10 @@ export function ResumePlateEditor({
       : null;
 
   return (
-    <section className="resume-plate-editor" aria-label={title} data-layout-box-count={layoutBoxes.length}>
+    <section className="resume-plate-editor" aria-label={title} data-layout-box-count={layoutBoxes.length} style={previewStyle}>
+      {detail.data?.artifact.resumePreparation ? (
+        <BaseProfileCopyAudit origin={detail.data.artifact.resumePreparation} provenance={detail.data.baselineProvenance ?? []} />
+      ) : null}
       <div className="resume-plate-toolbar" data-resume-editor-chrome="true">
         <b>{title}</b>
         <span className="toolbar-status" data-typography="metadata">
@@ -1057,16 +1064,16 @@ export function ResumeAuditPins({
     resumeLines.length && (explanation || detail.data || detail.error),
   );
   const linePins = useMemo(
-    () => (canUseResumeLines ? pinsFromResumeLines(resumeLines, explanation, profileSourceFields) : []),
-    [canUseResumeLines, explanation, profileSourceFields, resumeLines],
+    () => (canUseResumeLines ? pinsFromResumeLines(resumeLines, explanation, profileSourceFields, detail.data?.baselineProvenance) : []),
+    [canUseResumeLines, explanation, profileSourceFields, resumeLines, detail.data?.baselineProvenance],
   );
   const selectedRenderedLinePin = useMemo(() => {
     if (!selectedLine) return null;
     if (selectedLine.lineNumber !== null && linePins.some((pin) => pin.lineNumber === selectedLine.lineNumber)) {
       return null;
     }
-    return pinFromResumeLine(resumeLineFromPdfSelection(selectedLine), explanation, profileSourceFields);
-  }, [explanation, linePins, profileSourceFields, selectedLine]);
+    return pinFromResumeLine(resumeLineFromPdfSelection(selectedLine), explanation, profileSourceFields, detail.data?.baselineProvenance);
+  }, [explanation, linePins, profileSourceFields, selectedLine, detail.data?.baselineProvenance]);
   const pins = useMemo(
     () => (linePins.length ? linePins : explanationPins),
     [explanationPins, linePins],

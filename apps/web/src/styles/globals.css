@@ -2745,6 +2745,10 @@ input[type="radio"] {
   break-inside: avoid;
 }
 
+.resume-plate-document .resume-page--baseline .resume-entry {
+  break-inside: auto;
+}
+
 .resume-plate-document .resume-entry.compact {
   margin-block-end: 2.2mm;
 }

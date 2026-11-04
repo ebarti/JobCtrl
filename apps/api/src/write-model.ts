@@ -779,6 +779,7 @@ export function writeSettingsConfig(
     }
     if (request.tailoringGeneratorModels !== undefined) assign("tailoring_generator_models", request.tailoringGeneratorModels);
     if (request.tailoringJudgeModel !== undefined) assign("tailoring_judge_model", request.tailoringJudgeModel);
+    if (request.resumeTailoringEnabled !== undefined) assign("resume_tailoring_enabled", request.resumeTailoringEnabled);
     if (request.resumeVoicePolish !== undefined) assign("resume_voice_polish", request.resumeVoicePolish);
     if (request.coverLetterGeneration !== undefined) assign("cover_letter_generation", request.coverLetterGeneration);
     if (request.applyMaxBudgetUsd !== undefined) assign("apply_max_budget_usd", request.applyMaxBudgetUsd);

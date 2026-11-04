@@ -59,6 +59,12 @@ minimum score. These non-secret desired values are stored in `config.json` and
 apply to newly started workflows. Provider credentials remain on the secret
 boundary described in [Configuration](configuration.md#llm-providers).
 
+With **Tailor resumes** off, the same editor loads a job-owned **Base profile copy**
+and identifies its source Profile version. Saving and exporting job-specific
+edits does not alter the base profile or other jobs. Draft saves for base copies are local and skip automatic model edit interpretation.
+Initial copies have no AI tailoring/coverage receipts; an explicit edited replacement retains the existing
+source-bound review and application-approval requirements.
+
 From Job Detail, choose **Edit resume** to jump directly to that position's
 resume editor in Apply Review. It remains available when the job has an accepted
 resume PDF, even if its score is stale or a newer scoring attempt failed. Edits

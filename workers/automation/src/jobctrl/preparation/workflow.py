@@ -362,11 +362,16 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
 
 
 async def _check_spend(payload: JobPreparationInput) -> None:
+    # Material models enforce their own lane/spend admission when acquired.
+    # A baseline copy must not be blocked by a tailoring budget or by the mode
+    # that happened to be saved while its earlier Score step was queued.
+    material_admission_budget = workflow.patched("material-spend-at-admission-v1")
     lanes = tuple(
         dict.fromkeys(
             "scoring" if step == "score" else "tailoring"
             for step in _ordered_steps(payload.steps)
             if step in {"score", "tailor", "cover"}
+            and not (material_admission_budget and step in {"tailor", "cover"})
         )
     )
     for lane in lanes:

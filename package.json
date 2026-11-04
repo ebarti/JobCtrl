@@ -33,6 +33,7 @@
     "web:test:coverage": "corepack pnpm --filter @jobctrl/web test:coverage",
     "web:test-d": "corepack pnpm --filter @jobctrl/web test-d",
     "web:e2e": "corepack pnpm --filter @jobctrl/web e2e",
+    "web:e2e:baseline": "corepack pnpm --filter @jobctrl/web e2e:baseline",
     "web:e2e:headed": "corepack pnpm --filter @jobctrl/web e2e:headed",
     "web:e2e:live-worker:test": "node --test apps/web/e2e/live-worker/*.test.mjs",
     "web:storybook": "corepack pnpm --filter @jobctrl/web storybook",

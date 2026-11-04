@@ -1561,7 +1561,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
                 data-typography="component-title"
                 id="apply-review-materials-heading"
               >
-                Tailored resume and cover
+                Resume and cover
               </h2>
             </CardTitle>
             <CardDescription>

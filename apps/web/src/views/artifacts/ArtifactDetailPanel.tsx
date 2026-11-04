@@ -1,3 +1,4 @@
+import { BaseProfileCopyAudit } from "../../contexts/materials/components/BaseProfileCopyAudit.js";
 import type { ArtifactSummary } from "@jobctrl/contracts";
 import {
   IconAlertTriangle,
@@ -486,6 +487,9 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                     </details>
                   )) : <p>No recorded verification sources.</p>}
                 </details>
+                {detail.artifact.resumePreparation ? (
+                  <BaseProfileCopyAudit origin={detail.artifact.resumePreparation} provenance={detail.baselineProvenance ?? []} />
+                ) : null}
                 {detail.tailoringExplanation ? (
                   <Collapsible
                     className="artifact-rationale-disclosure"

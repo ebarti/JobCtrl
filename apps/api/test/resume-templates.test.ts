@@ -16,6 +16,7 @@ import {
   ResumeTemplateInputError,
   ResumeTemplateVersionConflictError,
   resumeTemplateStateForJob,
+  resumeTemplateThemeForArtifact,
   setDefaultResumeTemplate,
   setJobResumeTemplateAssignment,
 } from "../src/resume-templates.js";
@@ -49,6 +50,27 @@ afterEach(() => {
 });
 
 describe("resume template service", () => {
+  it("keeps a job editor on its recorded template after the active version changes", () => {
+    const first = createResumeTemplateVersion(db, {
+      displayName: "Synthetic Letter", theme: { ...BUILT_IN_RESUME_TEMPLATE_THEME, pageSize: "letter" }, layout: {},
+    }).template;
+    const selected = setJobResumeTemplateAssignment(db, JOB_ID, {
+      templateId: first.templateId, versionId: first.activeVersion.versionId,
+    });
+    const metadata = { resume_template: selected.effectiveTemplate };
+    const current = createResumeTemplateVersion(db, {
+      templateId: first.templateId, expectedVersionId: first.activeVersion.versionId,
+      displayName: "Synthetic A4", theme: { ...BUILT_IN_RESUME_TEMPLATE_THEME, pageSize: "a4" }, layout: {},
+    }).template;
+    setJobResumeTemplateAssignment(db, JOB_ID, {
+      templateId: current.templateId, versionId: current.activeVersion.versionId,
+    });
+    expect(resumeTemplateThemeForArtifact(db, JSON.stringify(metadata))).toMatchObject({ pageSize: "letter" });
+    expect(resumeTemplateThemeForArtifact(db, JSON.stringify({ resume_template: {
+      ...metadata.resume_template, templateHash: "unrelated-version-hash",
+    } }))).toBeNull();
+    expect(resumeTemplateThemeForArtifact(db, "{}")).toBeNull();
+  });
   it("refuses a stale version after an independent writer commits while the save waits for the lock", async () => {
     const first = createResumeTemplateVersion(db, {
       displayName: "Synthetic template", theme: BUILT_IN_RESUME_TEMPLATE_THEME, layout: {},

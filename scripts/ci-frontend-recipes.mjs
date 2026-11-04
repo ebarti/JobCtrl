@@ -65,6 +65,15 @@ export const frontendRecipes = {
         "JOBCTRL_E2E_WEB_SERVER": "dev",
         "JOBCTRL_E2E_APP_DIR": "/tmp/jobctrl-real-rpc-e2e"
       }
+    },
+    {
+      "name": "Test base-profile resume preparation and editing",
+      "run": "corepack pnpm web:e2e:baseline",
+      "env": {
+        "PLAYWRIGHT_JUNIT_OUTPUT_FILE": "${{ runner.temp }}/e2e-baseline.xml",
+        "JOBCTRL_E2E_ISOLATED": "0",
+        "JOBCTRL_E2E_PROFILE_SUGGESTIONS": "0"
+      }
     }
   ],
   "extension": [
