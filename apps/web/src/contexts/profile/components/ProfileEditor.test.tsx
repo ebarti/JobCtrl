@@ -218,7 +218,7 @@ describe("<ProfileEditor>", () => {
     expect(screen.getByRole("navigation", { name: "Profile sections" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Resume editor" }));
     expect(await screen.findByText("Baseline resume editor")).toBeInTheDocument();
-    expect(await screen.findByText("Plate HTML/CSS editor")).toBeInTheDocument();
+    expect(await screen.findByText("Editable resume")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();
     const plateEditor = await screen.findByRole("textbox", { name: "Baseline resume editor editor" });
     await user.click(plateEditor);

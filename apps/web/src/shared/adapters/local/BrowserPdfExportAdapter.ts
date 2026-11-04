@@ -8,8 +8,9 @@ import type {
 const PDF_EXPORT_SOURCE_ATTRIBUTE = "data-resume-pdf-export-source";
 const PDF_BITMAP_SCALE = 2;
 const PDF_PAGE_SLICE_EPSILON_PX = 1;
-const PDF_PAGE_SLICE_RASTER_MINIMUM_BLANK_BAND_CSS_PX = 4;
-const PDF_PAGE_SLICE_RASTER_SEARCH_RADIUS_CSS_PX = 96;
+// The DOM guard already excludes gaps inside paragraphs and disconnected
+// glyphs. One CSS pixel of actual whitespace is enough between those blocks.
+const PDF_PAGE_SLICE_RASTER_MINIMUM_BLANK_BAND_CSS_PX = 1;
 const PDF_PAGE_SLICE_RASTER_SCAN_CHUNK_ROWS = 128;
 const PDF_PAGE_SLICE_RASTER_WHITE_CHANNEL = 255;
 const PDF_SEARCH_TEXT_FALLBACK_FONT_SIZE_PT = 6;
@@ -83,7 +84,22 @@ export interface PdfVerticalInterval {
 
 export interface PdfRasterizedPage {
   readonly canvas: HTMLCanvasElement;
+  /** Space inserted above a continuation slice, in source CSS pixels. */
+  readonly contentOffsetTopPx?: number;
   readonly slice: PdfPageSlice;
+  /** Captured from the same cleaned clone that produced the bitmap. */
+  readonly textLayout?: PdfTextLayout;
+}
+
+interface PdfTextLayout {
+  readonly pageLeftPx: number;
+  readonly pageWidthPx: number;
+  readonly fragments: readonly PdfMeasuredTextFragment[];
+}
+
+interface PdfPageInsets {
+  readonly topPx: number;
+  readonly bottomPx: number;
 }
 
 export interface PdfRasterizationOptions {
@@ -91,6 +107,7 @@ export interface PdfRasterizationOptions {
   readonly lineIntervals: readonly PdfVerticalInterval[];
   readonly onclone: (clonedDocument: Document) => void;
   readonly pageHeightPx: number;
+  readonly pageInsets: PdfPageInsets;
   readonly windowWidth: number;
 }
 
@@ -266,6 +283,15 @@ function pdfPageHeight(
   );
 }
 
+function pdfPageInsets(source: HTMLElement): PdfPageInsets {
+  const page = source.querySelector<HTMLElement>(".resume-page") ?? source;
+  const style = getComputedStyle(page);
+  return {
+    topPx: Math.max(0, Number.parseFloat(style.paddingTop) || 0),
+    bottomPx: Math.max(0, Number.parseFloat(style.paddingBottom) || 0),
+  };
+}
+
 function inheritedTemplateValue(
   source: HTMLElement,
   computedStyle: CSSStyleDeclaration,
@@ -365,6 +391,13 @@ function preparePdfClone(clonedDocument: Document): void {
     source
       .querySelectorAll<HTMLElement>(`.${EDITOR_STATE_CLASSES.join(", .")}`)
       .forEach((element) => {
+        // html2canvas materializes ::before before invoking onclone. Removing
+        // the review class alone leaves its copied annotation bar in the PDF.
+        if (element.classList.contains("has-jobctrl-comment") &&
+            element.classList.contains("___html2canvas___pseudoelement_before") &&
+            element.firstElementChild?.tagName.toLowerCase() === "html2canvaspseudoelement") {
+          element.firstElementChild.remove();
+        }
         element.classList.remove(...EDITOR_STATE_CLASSES);
       });
   }
@@ -382,7 +415,7 @@ function collectTextLineIntervals(
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     if (!node.textContent?.trim()) continue;
     const parent = node.parentElement;
-    if (!parent || parent.closest(EDITOR_CHROME_SELECTOR)) continue;
+    if (!parent || parent.closest(`${EDITOR_CHROME_SELECTOR}, html2canvaspseudoelement`)) continue;
     const range = ownerDocument.createRange();
     range.selectNodeContents(node);
     if (typeof range.getClientRects !== "function") continue;
@@ -394,7 +427,23 @@ function collectTextLineIntervals(
       });
     }
   }
-  return intervals.sort((left, right) => left.topPx - right.topPx);
+  intervals.sort((left, right) => left.topPx - right.topPx);
+  // Keep headings with their first content line, and ordinary paragraphs and
+  // bullets intact. Blocks taller than a printable page remain splittable.
+  const blockIntervals: PdfVerticalInterval[] = [];
+  for (const block of page.querySelectorAll(".resume-entry-heading, .resume-section-title, .resume-bullets > li, .resume-entry-summary, .resume-summary, .resume-education-degree, .resume-skills-list > li")) {
+    const rect = block.getBoundingClientRect();
+    if (rect.height <= 0 || rect.width <= 0) continue;
+    const bottomPx = rect.bottom - sourceRect.top;
+    const followingLine = block.matches(".resume-entry-heading, .resume-section-title")
+      ? intervals.find((interval) => interval.topPx >= bottomPx - PDF_PAGE_SLICE_EPSILON_PX)
+      : undefined;
+    blockIntervals.push({
+      topPx: rect.top - sourceRect.top,
+      bottomPx: followingLine?.bottomPx ?? bottomPx,
+    });
+  }
+  return [...intervals, ...blockIntervals].sort((left, right) => left.topPx - right.topPx);
 }
 
 export function pdfPageSlices(
@@ -405,25 +454,39 @@ export function pdfPageSlices(
     candidatePx: number,
     minimumPx: number,
     maximumPx: number,
+    isAllowedCut: (positionPx: number) => boolean,
   ) => number,
+  insets: PdfPageInsets = { topPx: 0, bottomPx: 0 },
 ): readonly PdfPageSlice[] {
+  if (pageHeightPx <= insets.topPx + insets.bottomPx) {
+    throw new Error("The resume page margins leave no printable content area.");
+  }
   const slices: PdfPageSlice[] = [];
   let startPx = 0;
   while (startPx < totalHeightPx - PDF_PAGE_SLICE_EPSILON_PX) {
-    let endPx = Math.min(startPx + pageHeightPx, totalHeightPx);
+    // The continuous source already contains the first page's top padding.
+    // Every later slice receives that same inset when drawn onto its page.
+    const contentHeightPx = pageHeightPx - insets.bottomPx -
+      (slices.length === 0 ? 0 : insets.topPx);
+    let endPx = Math.min(startPx + contentHeightPx, totalHeightPx);
     if (endPx < totalHeightPx - PDF_PAGE_SLICE_EPSILON_PX) {
-      const crossingLines = lineIntervals.filter(
-        (interval) => interval.topPx < endPx && interval.bottomPx > endPx,
-      );
-      const candidatePx =
-        crossingLines.length > 0
-          ? Math.floor(
-              Math.min(...crossingLines.map((interval) => interval.topPx)),
-            )
-          : endPx;
+      // Overlapping section/entry headings can require more than one move.
+      // An element taller than a printable page must remain splittable.
+      const protectedIntervals = lineIntervals.filter((interval) => interval.bottomPx - interval.topPx <= contentHeightPx);
+      const crosses = (position: number) => protectedIntervals.filter((interval) => interval.topPx < position && interval.bottomPx > position);
+      let candidatePx = endPx;
+      for (let crossing = crosses(candidatePx); crossing.length > 0; crossing = crosses(candidatePx)) {
+        const previousPx = candidatePx;
+        candidatePx = Math.floor(Math.min(...crossing.map((interval) => interval.topPx)));
+        if (candidatePx <= startPx + PDF_PAGE_SLICE_EPSILON_PX || candidatePx >= previousPx) break;
+      }
       if (candidatePx > startPx + PDF_PAGE_SLICE_EPSILON_PX) {
-        const resolvedEndPx =
-          resolveSafeCut?.(candidatePx, startPx, endPx) ?? candidatePx;
+        let resolvedEndPx =
+          resolveSafeCut?.(candidatePx, startPx, endPx, position => crosses(position).length === 0) ?? candidatePx;
+        if (crosses(resolvedEndPx).length > 0) {
+          resolvedEndPx = resolveSafeCut?.(candidatePx, startPx, candidatePx, position => crosses(position).length === 0) ?? candidatePx;
+        }
+        if (crosses(resolvedEndPx).length > 0) resolvedEndPx = candidatePx;
         endPx =
           resolvedEndPx > startPx + PDF_PAGE_SLICE_EPSILON_PX &&
           resolvedEndPx <= endPx
@@ -432,7 +495,7 @@ export function pdfPageSlices(
       }
     }
     if (endPx <= startPx + PDF_PAGE_SLICE_EPSILON_PX) {
-      endPx = Math.min(startPx + pageHeightPx, totalHeightPx);
+      endPx = Math.min(startPx + contentHeightPx, totalHeightPx);
     }
     slices.push({ endPx, startPx });
     startPx = endPx;
@@ -449,6 +512,7 @@ export function safeBlankRasterCut(
   searchRadiusPx: number,
   minimumBlankRows: number,
   isBlankRow: (rowPx: number) => boolean,
+  isAllowedCut: (positionPx: number) => boolean = () => true,
 ): number {
   const centerPx = Math.round(candidatePx);
   const requiredBlankRows = Math.max(2, Math.ceil(minimumBlankRows));
@@ -468,7 +532,8 @@ export function safeBlankRasterCut(
     }
     forwardRunStartPx ??= rowPx;
     if (rowPx - forwardRunStartPx + 1 >= requiredBlankRows) {
-      return forwardRunStartPx + Math.floor(requiredBlankRows / 2);
+      const cutPx = rowPx - Math.ceil(requiredBlankRows / 2) + 1;
+      if (isAllowedCut(cutPx)) return cutPx;
     }
   }
 
@@ -484,7 +549,8 @@ export function safeBlankRasterCut(
     }
     backwardRunEndPx ??= rowPx;
     if (backwardRunEndPx - rowPx + 1 >= requiredBlankRows) {
-      return rowPx + Math.ceil(requiredBlankRows / 2);
+      const cutPx = rowPx + Math.ceil(requiredBlankRows / 2);
+      if (isAllowedCut(cutPx)) return cutPx;
     }
   }
   return candidatePx;
@@ -575,11 +641,23 @@ async function rasterizePdfPages(
     element: HTMLElement,
     options?: Partial<Html2CanvasOptions>,
   ) => Promise<HTMLCanvasElement>;
+  let renderedLineIntervals = options.lineIntervals;
+  let renderedInsets = options.pageInsets;
+  let renderedTextLayout: PdfTextLayout | undefined;
   const continuousCanvas = await html2canvas(source, {
     backgroundColor: "#ffffff",
     ignoreElements: options.ignoreElements,
     logging: false,
-    onclone: options.onclone,
+    onclone: (clonedDocument) => {
+      options.onclone(clonedDocument);
+      const clone = clonedDocument.querySelector<HTMLElement>(`[${PDF_EXPORT_SOURCE_ATTRIBUTE}="true"]`);
+      if (!clone) throw new Error("The browser could not measure the resume export layout.");
+      // The clone has the export viewport and cleaned editor styles. Measuring
+      // the live editor instead can paginate and select different text lines.
+      renderedLineIntervals = collectTextLineIntervals(clone);
+      renderedInsets = pdfPageInsets(clone);
+      renderedTextLayout = measurePdfTextLayout(clone);
+    },
     scale: PDF_BITMAP_SCALE,
     useCORS: true,
     width: options.windowWidth,
@@ -593,7 +671,7 @@ async function rasterizePdfPages(
     1,
     Math.round(options.pageHeightPx * canvasScale),
   );
-  const scaledLineIntervals = options.lineIntervals.map((interval) => ({
+  const scaledLineIntervals = renderedLineIntervals.map((interval) => ({
     bottomPx: interval.bottomPx * canvasScale,
     topPx: interval.topPx * canvasScale,
   }));
@@ -603,19 +681,27 @@ async function rasterizePdfPages(
     pageHeightCanvasPx,
     scaledLineIntervals,
     isBlankRow
-      ? (candidatePx, minimumPx, maximumPx) =>
+      ? (candidatePx, minimumPx, maximumPx, isAllowedCut) =>
           safeBlankRasterCut(
             candidatePx,
             minimumPx,
             maximumPx,
-            PDF_PAGE_SLICE_RASTER_SEARCH_RADIUS_CSS_PX * canvasScale,
+            // Search back through this page if nearby whitespace belongs to
+            // a protected paragraph. Falling back to the DOM boundary there
+            // can cut through glyphs whose bitmap extends beyond that box.
+            pageHeightCanvasPx,
             PDF_PAGE_SLICE_RASTER_MINIMUM_BLANK_BAND_CSS_PX * canvasScale,
             isBlankRow,
+            isAllowedCut,
           )
       : undefined,
+    {
+      topPx: renderedInsets.topPx * canvasScale,
+      bottomPx: renderedInsets.bottomPx * canvasScale,
+    },
   );
 
-  return slices.map((slice) => {
+  return slices.map((slice, index) => {
     const pageCanvas = source.ownerDocument.createElement("canvas");
     pageCanvas.width = continuousCanvas.width;
     pageCanvas.height = pageHeightCanvasPx;
@@ -626,6 +712,7 @@ async function rasterizePdfPages(
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
     const sliceHeightPx = Math.max(1, slice.endPx - slice.startPx);
+    const contentOffsetTopPx = index === 0 ? 0 : renderedInsets.topPx;
     context.drawImage(
       continuousCanvas,
       0,
@@ -633,12 +720,14 @@ async function rasterizePdfPages(
       continuousCanvas.width,
       sliceHeightPx,
       0,
-      0,
+      contentOffsetTopPx * canvasScale,
       continuousCanvas.width,
       sliceHeightPx,
     );
     return {
       canvas: pageCanvas,
+      contentOffsetTopPx,
+      ...(index === 0 && renderedTextLayout ? { textLayout: renderedTextLayout } : {}),
       slice: {
         endPx: slice.endPx / canvasScale,
         startPx: slice.startPx / canvasScale,
@@ -816,7 +905,7 @@ export function collectSearchableTextFragments(
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const parent = node.parentElement;
     const nodeText = node.textContent ?? "";
-    if (!parent || parent.closest(EDITOR_CHROME_SELECTOR) || !nodeText.trim()) {
+    if (!parent || parent.closest(`${EDITOR_CHROME_SELECTOR}, html2canvaspseudoelement`) || !nodeText.trim()) {
       continue;
     }
     for (const match of nodeText.matchAll(/\S+/gu)) {
@@ -869,25 +958,32 @@ function fallbackSearchableTextFragments(
   });
 }
 
-export function searchableTextLayer(
-  source: HTMLElement,
-  pages: readonly PdfRasterizedPage[],
-  geometry: PdfPageGeometry,
-): readonly PdfSearchableTextFragment[] {
+function measurePdfTextLayout(source: HTMLElement): PdfTextLayout {
   const sourceRect = source.getBoundingClientRect();
   const pageRect =
     source
       .querySelector<HTMLElement>(".resume-page")
       ?.getBoundingClientRect() ?? sourceRect;
-  const pageWidthPx = pageRect.width > 0 ? pageRect.width : geometry.widthPx;
-  const pageLeftPx = pageRect.left - sourceRect.left;
   const measuredFragments = collectSearchableTextFragments(source);
-  const textFragments =
-    measuredFragments.length > 0
+  return {
+    pageWidthPx: pageRect.width,
+    pageLeftPx: pageRect.left - sourceRect.left,
+    fragments: measuredFragments.length > 0
       ? measuredFragments
-      : fallbackSearchableTextFragments(source);
+      : fallbackSearchableTextFragments(source),
+  };
+}
+
+export function searchableTextLayer(
+  source: HTMLElement,
+  pages: readonly PdfRasterizedPage[],
+  geometry: PdfPageGeometry,
+): readonly PdfSearchableTextFragment[] {
+  const layout = pages[0]?.textLayout ?? measurePdfTextLayout(source);
+  const pageWidthPx = layout.pageWidthPx > 0 ? layout.pageWidthPx : geometry.widthPx;
+  const pageLeftPx = layout.pageLeftPx;
   const fragments: PdfSearchableTextFragment[] = [];
-  for (const fragment of textFragments) {
+  for (const fragment of layout.fragments) {
     const topPx = fragment.topPx;
     const centerPx = topPx + fragment.heightPx / 2;
     const matchingPageIndex = pages.findIndex(
@@ -901,7 +997,8 @@ export function searchableTextLayer(
         : Math.max(0, pages.length - 1);
     const page = pages[pageIndex] ?? pages[0];
     if (!page) continue;
-    const relativeTopPx = Math.max(0, topPx - page.slice.startPx);
+    const relativeTopPx = Math.max(0, topPx - page.slice.startPx) +
+      (page.contentOffsetTopPx ?? 0);
     const xMm = Math.min(
       geometry.widthMm - 0.1,
       Math.max(
@@ -968,6 +1065,7 @@ export class BrowserPdfExportAdapter implements PdfExportPort {
         lineIntervals,
         onclone: preparePdfClone,
         pageHeightPx,
+        pageInsets: pdfPageInsets(source),
         windowWidth,
       });
       if (pages.length === 0) {

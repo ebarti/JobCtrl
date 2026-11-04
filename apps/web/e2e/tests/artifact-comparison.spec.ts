@@ -243,7 +243,7 @@ test("apply review compares accepted artifact with rendered draft artifact", asy
   await expect(renderButton).toBeDisabled();
   await expect(page.getByText("replacement rendered", { exact: true })).toHaveCount(0);
   await expect(
-    page.getByRole("region", { name: "Tailored resume preview" }),
+    page.getByRole("region", { name: "Resume", exact: true }),
   ).toBeVisible();
   await injectAxe(page);
   await checkA11y(page, ".apply-review-resume-review", { includedImpacts: ["critical", "serious"] });
@@ -313,7 +313,7 @@ test("switching identical cached drafts does not carry unsaved text to another j
     commentThreads: [], seededCount: 0, updatedCount: 0,
   } }));
   await page.goto("/apply-review");
-  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  const editor = page.getByRole("textbox", { name: "Resume editor" });
   const queue = page.getByLabel("Application review queue");
   await expect(editor).toContainText("Shared saved resume content.");
   await expect.poll(() => loadedJobs.has(first.jobKey)).toBe(true);
@@ -349,7 +349,7 @@ test("initial revision-zero draft arrival preserves text typed while loading", a
     } });
   });
   await page.goto("/apply-review");
-  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  const editor = page.getByRole("textbox", { name: "Resume editor" });
   await expect(editor).toBeVisible();
   await expect(page.getByText("loading draft", { exact: true })).toBeVisible();
   await editor.click();
@@ -385,7 +385,7 @@ test("late saved snapshot preserves newer typing and keeps rendering gated", asy
     await route.fulfill({ json: { ok: true, draft: savedDraft, revision: savedDraft.latestRevision } });
   });
   await page.goto("/apply-review");
-  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  const editor = page.getByRole("textbox", { name: "Resume editor" });
   await expect(editor).toBeVisible();
   await editor.click();
   await editor.press("ControlOrMeta+End");
@@ -424,7 +424,7 @@ test("late save acknowledgement preserves an undo to the prior baseline", async 
     await route.fulfill({ json: { ok: true, draft: savedDraft, revision: savedDraft.latestRevision } });
   });
   await page.goto("/apply-review");
-  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  const editor = page.getByRole("textbox", { name: "Resume editor" });
   await expect(editor).toBeVisible();
   await editor.click();
   await editor.press("ControlOrMeta+End");
@@ -506,7 +506,7 @@ test("multiline HTML paste acknowledges one autosave and survives reload", async
   });
   await page.goto("/apply-review");
   await expect(page).toHaveTitle(/JobCtrl/);
-  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  const editor = page.getByRole("textbox", { name: "Resume editor" });
   const paper = page.getByLabel("Editable resume page");
   await expect(editor).toContainText("Saved baseline.");
   await editor.locator('[data-resume-line-number="3"] [data-slate-string]').first().click();
@@ -616,7 +616,7 @@ test("save conflict and render failure recover before dry-run authorization", as
     await route.fulfill({ json: { ok: true, decision: { decisionId: "synthetic-session-decision", jobKey, decision: "approve_dry_run", reason: "Synthetic review", decidedBy: "user", decidedAt: "2026-10-18T00:00:00Z" } } });
   });
   await page.goto("/apply-review");
-  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  const editor = page.getByRole("textbox", { name: "Resume editor" });
   const save = page.getByRole("button", { name: "Save draft" });
   const render = page.getByRole("button", { name: "Render replacement" });
   const authorize = page.getByRole("button", { name: /^Authorize dry run for/ });
@@ -686,7 +686,7 @@ test("preserves the resume caret across native selection and a pending save", as
     await route.fulfill({ json: { ok: true, draft: current, revision: current.latestRevision } });
   });
   await page.goto("/apply-review");
-  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  const editor = page.getByRole("textbox", { name: "Resume editor" });
   await expect(editor).toContainText("Saved baseline.");
   await editor.locator('[data-resume-line-number="3"] [data-slate-string]').first().click();
   await page.keyboard.press("Home");

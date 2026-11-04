@@ -55,7 +55,7 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   await resumeEditorView.click();
   await expect(resumeEditorView).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("Baseline resume editor", { exact: true })).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText("Plate HTML/CSS editor", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Editable resume", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "Bold" })).toBeVisible({ timeout: 30_000 });
   await expect.poll(() => successfulPreviewUrls.length, {
     timeout: 30_000,

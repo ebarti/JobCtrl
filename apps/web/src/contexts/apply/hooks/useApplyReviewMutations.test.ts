@@ -1,4 +1,5 @@
 import type { ResumeReviewDraft, ResumeReviewDraftResponse } from "@jobctrl/contracts";
+import { ResumeReviewCommentThreadSeedRequestSchema } from "@jobctrl/contracts";
 import { buildTestPorts, FakeSessionPort } from "../../../test/testPorts.js";
 import { LOCAL_TENANT, type TenantId } from "@jobctrl/domain-types";
 import { http, HttpResponse } from "msw";
@@ -21,6 +22,47 @@ import {
 } from "./useApplyReviewMutations.js";
 
 describe("apply review mutations", () => {
+  it("saves every finding in contract-sized batches and retries after a partial failure", async () => {
+    const draft: ResumeReviewDraft = {
+      draftId: "draft-long-review", jobKey: "job-long-review", baseGeneration: 1,
+      baseResumeTextArtifactId: null, baseResumePdfArtifactId: null, rendererFormat: "html_css",
+      state: "active", currentRevisionId: null, latestRevisionNumber: 0,
+      createdAt: "2026-09-06T10:00:00.000Z", updatedAt: "2026-09-06T10:00:00.000Z",
+      latestRevision: null, commentThreads: [], feedbackSignals: [],
+    };
+    const stored = new Set<string>();
+    let failLastBatch = true;
+    const seed = vi.fn<ReturnType<typeof buildTestPorts>["api"]["seedResumeReviewCommentThreads"]>(async (_draftId, body) => {
+      const validated = ResumeReviewCommentThreadSeedRequestSchema.parse(body);
+      if (validated.threads.some(thread => thread.sourcePinId === "pin-101") && failLastBatch) {
+        throw new Error("Synthetic interrupted final batch");
+      }
+      let seededCount = 0;
+      let updatedCount = 0;
+      for (const thread of validated.threads) {
+        if (stored.has(thread.sourcePinId!)) updatedCount += 1;
+        else seededCount += 1;
+        stored.add(thread.sourcePinId!);
+      }
+      return { ok: true, draft, commentThreads: [], seededCount, updatedCount };
+    });
+    const { result } = renderHookWithProviders(() => useSeedResumeReviewCommentThreadsMutation(), {
+      ports: buildTestPorts({ api: { seedResumeReviewCommentThreads: seed } }),
+    });
+    const variables = { jobId: draft.jobKey, draftId: draft.draftId, body: {
+      threads: Array.from({ length: 102 }, (_, index) => ({ sourcePinId: `pin-${index}`, commentBody: `Synthetic finding ${index}` })),
+    } };
+    await act(async () => { result.current.mutate(variables); });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(stored.size).toBe(100);
+    failLastBatch = false;
+    await act(async () => { result.current.mutate(variables); });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(seed.mock.calls.map(([, body]) => body.threads.length)).toEqual([100, 2, 100, 2]);
+    expect(stored).toEqual(new Set(variables.body.threads.map(thread => thread.sourcePinId)));
+    expect(result.current.data).toMatchObject({ seededCount: 2, updatedCount: 100 });
+  });
+
   it("invalidates the initiating tenant when a decision settles after a tenant switch", async () => {
     let finish!: () => void;
     const ports = buildTestPorts({ api: { decideApplyReview: vi.fn(async (jobId, body) => {

@@ -234,11 +234,19 @@ The user-visible surfaces divide the work:
   and excerpts with links back to the owning entry. An unresolved legacy key is
   labeled unavailable and stays accessible under **Technical details** rather
   than being presented as user-facing evidence.
-- `/apply-review` consumes the accepted generation. The editor, revision,
+- **Edit resume** in Job Detail opens that job's editor directly in
+  `/apply-review`. Text edits belong to the position's draft and leave the
+  Candidate Profile unchanged. The editor, revision,
   replacement-render, submission-approval lifecycle, and distinction between a
   local editor export and an approved artifact are owned by
   [Apply](apply.md#materials-and-resume-rendering). Its Plate toolbar can export
   the current document, including unsaved edits, directly to a PDF download.
+  The selected template's margins apply to every exported page, including
+  continuation pages; the download keeps searchable text aligned with the page.
+  Section and entry headings stay with their first content line at page breaks.
+  Bullets and short paragraphs stay together when they fit on one page.
+  Review comments remain available on long resumes too. If saving comments
+  fails, retrying saves the existing findings without running another review.
 - `/preferences` owns tailoring permissions, writing style, resume templates,
   and the default template; Apply Review can override the template for one job.
   Template payloads hold style/layout only, not candidate or job facts. An

@@ -1350,8 +1350,8 @@ describe("<ApplyReviewView>", () => {
       "href",
       `/jobs/${encodeURIComponent(sampleApplyReviewQueue.items[0]!.jobKey)}`,
     );
-    expect(screen.queryByRole("img", { name: "Tailored resume preview" })).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Resume" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Resume editor" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Italic" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Underline" })).toBeInTheDocument();
@@ -1415,7 +1415,7 @@ describe("<ApplyReviewView>", () => {
       ports: buildTestPorts({ pdfExport }),
     });
 
-    const plateEditor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    const plateEditor = await screen.findByRole("textbox", { name: "Resume editor" });
     await userEvent.click(plateEditor);
     await userEvent.type(plateEditor, " unsaved tailored export");
     const resumePage = plateEditor.querySelector<HTMLElement>(".resume-page");
@@ -1938,11 +1938,11 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    const editor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    const editor = await screen.findByRole("textbox", { name: "Resume editor" });
     await userEvent.click(editor);
     await userEvent.type(editor, "xy");
 
-    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Resume editor" })).toBe(editor);
     expect(editor).toBeInTheDocument();
     expect(editor).toHaveFocus();
   });
@@ -2051,7 +2051,7 @@ describe("<ApplyReviewView>", () => {
       saveResumeReviewDraftRevision: save, renderResumeReviewDraft: render, applyJob,
       seedResumeReviewCommentThreads: vi.fn(async () => ({ ok: true as const, draft, commentThreads: [], seededCount: 0, updatedCount: 0 })),
     } }) });
-    const editor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    const editor = await screen.findByRole("textbox", { name: "Resume editor" });
     // JSDOM omits contenteditable inheritance; Slate uses it to admit paste and
     // map DOM selection. Keep this DOM capability shim local to these nodes.
     Object.defineProperty(editor, "isContentEditable", { value: true });
@@ -2100,7 +2100,7 @@ describe("<ApplyReviewView>", () => {
     expect(offset).toBe(2);
     await act(async () => acknowledge());
     await waitFor(() => expect(screen.getByRole("button", { name: "Render replacement" })).toBeEnabled());
-    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Resume editor" })).toBe(editor);
     expect(editor).toHaveFocus();
     expect(window.getSelection()?.anchorNode).toBe(anchor);
     expect(window.getSelection()?.anchorOffset).toBe(offset);
@@ -2134,7 +2134,7 @@ describe("<ApplyReviewView>", () => {
         }),
       } }),
     });
-    const editor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    const editor = await screen.findByRole("textbox", { name: "Resume editor" });
     await chooseSelectOption("Font", "Garamond");
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
     await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
@@ -2146,7 +2146,7 @@ describe("<ApplyReviewView>", () => {
     await waitFor(() => expect(screen.getByText("unsaved changes")).toBeInTheDocument());
     seed?.();
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
-    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Resume editor" })).toBe(editor);
     expect(editor).toHaveFocus();
     const shadow = await findResumeShadowRoot();
     expect(shadowElementWithText(shadow, "Principal Platform Engineer").style.fontFamily).toContain("Helvetica");
@@ -2174,7 +2174,7 @@ describe("<ApplyReviewView>", () => {
         })),
       } }),
     });
-    const editor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    const editor = await screen.findByRole("textbox", { name: "Resume editor" });
     await chooseSelectOption("Font", "Garamond");
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
     await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
@@ -2184,7 +2184,7 @@ describe("<ApplyReviewView>", () => {
     await userEvent.click(editor);
     acknowledge!();
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
-    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Resume editor" })).toBe(editor);
     expect(editor).toHaveFocus();
     expect(screen.getByLabelText("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
     expect(shadowElementWithText(await findResumeShadowRoot(), "Principal Platform Engineer").style.fontFamily).not.toContain("Garamond");
@@ -2239,7 +2239,7 @@ describe("<ApplyReviewView>", () => {
       } }),
     });
 
-    await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    await screen.findByRole("textbox", { name: "Resume editor" });
     expect(screen.getByText("loading draft")).toBeInTheDocument();
     await chooseSelectOption("Font", "Garamond");
     const shadow = await findResumeShadowRoot();
@@ -2532,7 +2532,7 @@ describe("<ApplyReviewView>", () => {
     expect(comparison.getByText("declared lost")).toBeInTheDocument();
     expect(comparison.getByText("gcp")).toBeInTheDocument();
     expect(comparison.getByText("claim risk")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Tailored resume preview" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Resume" })).toBeInTheDocument();
 
     if (loadNewActiveDraft) {
       // Promotion belongs to the mounted session. A replacement may still
@@ -2913,7 +2913,7 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    await screen.findByRole("region", { name: "Tailored resume preview" });
+    await screen.findByRole("region", { name: "Resume" });
     const shadow = await findResumeShadowRoot();
     expect(screen.queryByRole("region", { name: "Line-by-line resume audit" })).not.toBeInTheDocument();
     expect(shadow.querySelectorAll('[aria-label="JobCtrl resume comment"]').length).toBeGreaterThan(0);
@@ -2926,7 +2926,7 @@ describe("<ApplyReviewView>", () => {
     const artifactRisk = screen.getByRole("region", { name: "Artifact-level grounding and claim risk" });
     const resumeAudit = screen.getByRole("region", { name: "Resume audit" });
     expect(resumeAudit.compareDocumentPosition(artifactRisk) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Tailored resume preview" })).not.toContainElement(artifactRisk);
+    expect(screen.getByRole("region", { name: "Resume" })).not.toContainElement(artifactRisk);
     expect(screen.queryByText("Annotated resume changes")).not.toBeInTheDocument();
     expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();
     expect(screen.queryByText("join")).not.toBeInTheDocument();
@@ -3062,10 +3062,10 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    const resumeEditor = await screen.findByRole("region", { name: "Tailored resume preview" });
+    const resumeEditor = await screen.findByRole("region", { name: "Resume" });
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
-    expect(screen.queryByRole("img", { name: "Tailored resume preview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Resume" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Line-by-line resume audit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Resume audit line list" })).not.toBeInTheDocument();
     const shadow = await findResumeShadowRoot();
@@ -3487,7 +3487,7 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByRole("region", { name: "Tailored resume preview" })).toHaveAttribute(
+    expect(await screen.findByRole("region", { name: "Resume" })).toHaveAttribute(
       "data-layout-box-count",
       "1",
     );

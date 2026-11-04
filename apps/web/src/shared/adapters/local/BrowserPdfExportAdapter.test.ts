@@ -26,6 +26,41 @@ function pdfDocumentDouble() {
 }
 
 describe("BrowserPdfExportAdapter", () => {
+  it("keeps an entry heading and its first line together, including an overlapping section heading", () => {
+    const intervals = [
+      { topPx: 70, bottomPx: 90 },
+      { topPx: 85, bottomPx: 115 },
+      { topPx: 90, bottomPx: 98 },
+      { topPx: 102, bottomPx: 110 },
+    ];
+    const slices = pdfPageSlices(180, 100, intervals);
+    expect(slices[0]).toEqual({ startPx: 0, endPx: 70 });
+    expect(pdfPageSlices(180, 100, intervals, candidate => candidate + 8)[0]?.endPx).toBe(70);
+    expect(slices.at(-1)?.endPx).toBe(180);
+    for (const slice of slices) {
+      expect(intervals.some(interval => interval.topPx < slice.endPx && interval.bottomPx > slice.endPx)).toBe(false);
+    }
+    expect(pdfPageSlices(220, 100, [{ topPx: 10, bottomPx: 210 }])).toEqual([
+      { startPx: 0, endPx: 100 }, { startPx: 100, endPx: 200 }, { startPx: 200, endPx: 220 },
+    ]);
+  });
+
+  it("reserves the configured top and bottom margins on every continuation page", () => {
+    const slices = pdfPageSlices(300, 100, [], undefined, { topPx: 10, bottomPx: 15 });
+    expect(slices).toEqual([
+      { startPx: 0, endPx: 85 },
+      { startPx: 85, endPx: 160 },
+      { startPx: 160, endPx: 235 },
+      { startPx: 235, endPx: 300 },
+    ]);
+    const crossingLine = { topPx: 78, bottomPx: 91 };
+    const guarded = pdfPageSlices(300, 100, [crossingLine], undefined, { topPx: 10, bottomPx: 15 });
+    expect(guarded[0]?.endPx).toBe(78);
+    expect(guarded.every((page, index) => page.endPx - page.startPx + (index ? 10 : 0) <= 85)).toBe(true);
+    expect(guarded.at(-1)?.endPx).toBe(300);
+    expect(() => pdfPageSlices(300, 100, [], undefined, { topPx: 60, bottomPx: 40 })).toThrow("no printable content area");
+  });
+
   it("uses top-anchored invisible PDF text scaled to each measured word", () => {
     expect(pdfInvisibleTextOptions(20, 10)).toEqual({
       baseline: "top",
@@ -107,6 +142,26 @@ describe("BrowserPdfExportAdapter", () => {
     ).toBe(false);
   });
 
+  it("continues past whitespace inside a paragraph instead of falling back onto clipped glyphs", () => {
+    const paragraphs = [
+      { topPx: 40, bottomPx: 110 },
+      { topPx: 120, bottomPx: 180 },
+      { topPx: 180, bottomPx: 230 },
+    ];
+    // The bitmap bleeds across the DOM boundary at 180. The nearby gap at
+    // 160 is between lines of the preceding paragraph, not a valid page cut.
+    const isBlankRow = (row: number) => (row >= 111 && row <= 119) || (row >= 160 && row <= 168);
+    const slices = pdfPageSlices(230, 200, paragraphs,
+      (candidate, minimum, maximum, isAllowedCut) => safeBlankRasterCut(
+        candidate, minimum, maximum, 200, 4, isBlankRow, isAllowedCut,
+      ),
+    );
+    expect(slices[0]!.endPx).toBeGreaterThanOrEqual(111);
+    expect(slices[0]!.endPx).toBeLessThanOrEqual(119);
+    expect(isBlankRow(slices[0]!.endPx)).toBe(true);
+    expect(paragraphs.some(interval => interval.topPx < slices[0]!.endPx && interval.bottomPx > slices[0]!.endPx)).toBe(false);
+  });
+
   it("maps rendered word boxes through shifted PDF page slices", () => {
     const source = document.createElement("div");
     source.className = "resume-plate-document";
@@ -186,6 +241,7 @@ describe("BrowserPdfExportAdapter", () => {
           },
           {
             canvas: document.createElement("canvas"),
+            contentOffsetTopPx: 20,
             slice: { endPx: 200, startPx: 25 },
           },
         ],
@@ -212,8 +268,27 @@ describe("BrowserPdfExportAdapter", () => {
         text: "second",
         widthMm: 20,
         xMm: 5,
-        yMm: 0.1,
+        yMm: 10,
       });
+      const clonePositioned = searchableTextLayer(source, [
+        {
+          canvas: document.createElement("canvas"),
+          slice: { startPx: 0, endPx: 25 },
+          textLayout: {
+            pageWidthPx: 200,
+            pageLeftPx: 0,
+            fragments: measured.map(fragment => ({ ...fragment, topPx: fragment.topPx + 20 })),
+          },
+        },
+        {
+          canvas: document.createElement("canvas"),
+          contentOffsetTopPx: 20,
+          slice: { startPx: 25, endPx: 200 },
+        },
+      ], { format: "a4", heightMm: 100, heightPx: 200, widthMm: 100, widthPx: 200 });
+      // The export clone wraps differently from the live editor. Both the PDF
+      // page and selectable text must follow that rendered layout.
+      expect(clonePositioned[0]).toMatchObject({ text: "First", pageNumber: 2, yMm: 12.5 });
     } finally {
       if (originalDescriptor) {
         Object.defineProperty(
@@ -284,7 +359,17 @@ describe("BrowserPdfExportAdapter", () => {
         const clonedDocument =
           document.implementation.createHTMLDocument("PDF clone");
         clonedDocument.body.innerHTML = exportSource.outerHTML;
+        const annotated = clonedDocument.querySelector(".has-jobctrl-comment")!;
+        annotated.classList.add("___html2canvas___pseudoelement_before");
+        const copiedMarker = clonedDocument.createElement("html2canvaspseudoelement");
+        copiedMarker.setAttribute("data-test-comment-bar", "true");
+        annotated.prepend(copiedMarker);
+        const preservedDecoration = clonedDocument.createElement("html2canvaspseudoelement");
+        preservedDecoration.setAttribute("data-test-decoration", "true");
+        annotated.append(preservedDecoration);
         options.onclone(clonedDocument);
+        expect(clonedDocument.querySelector("[data-test-comment-bar]")).toBeNull();
+        expect(clonedDocument.querySelector("[data-test-decoration]")).not.toBeNull();
         expect(
           clonedDocument.documentElement.style.getPropertyValue(
             "background-color",

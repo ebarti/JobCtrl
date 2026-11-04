@@ -695,6 +695,7 @@
 }
 
 .apply-review-pane-heading h2 {
+  scroll-margin-top: 4rem;
   margin: 0;
   font-size: var(--jh-type-section-title-size);
   font-weight: var(--jh-type-section-title-weight);

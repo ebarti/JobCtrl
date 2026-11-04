@@ -413,6 +413,17 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   className="job-detail-handoff-actions"
                   aria-label="Related job workspaces"
                 >
+                  {detail.artifacts.some((artifact) => artifact.type === "resume_pdf" && ["approved", "active", "accepted"].includes(artifact.status)) ? (
+                    <Link
+                      aria-label={`Edit resume for ${detail.job.title}`}
+                      className={buttonVariants({ size: "sm", variant: "outline" })}
+                      hash="apply-review-materials-heading"
+                      search={{ jobKey: detail.job.jobKey }}
+                      to="/apply-review"
+                    >
+                      Edit resume
+                    </Link>
+                  ) : null}
                   <Link
                     aria-label={`Open Apply Review for ${detail.job.title}`}
                     className={buttonVariants({

@@ -390,7 +390,7 @@
   .job-detail-handoff-actions {
     display: flex;
     flex: 1 1 auto;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
   }
 
   .job-detail-handoff-actions > a:first-child {
