@@ -797,6 +797,12 @@ def _version_parity_findings(root: Path, *, release_tag: str | None = None) -> l
 
     for rel in PACKAGE_VERSION_PATHS:
         manifest = root / rel
+        if rel == Path("apps/api/package.json"):
+            # A retired API has no tree; a retained tree still requires its
+            # manifest. A dangling directory symlink is not retirement.
+            api_tree = manifest.parent
+            if not api_tree.exists() and not api_tree.is_symlink():
+                continue
         version = None
         if manifest.is_file():
             try:
