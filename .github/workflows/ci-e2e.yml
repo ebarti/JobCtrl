@@ -13,10 +13,11 @@ jobs:
       UV_PYTHON: '3.12'
       UV_EXCLUDE_NEWER: 'false'
       UV_LOCKED: '1'
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright
     steps:
-      - name: Start total preparation timing
-        run: date +%s > "$RUNNER_TEMP/jobctrl-e2e-start"
+      - name: Start total preparation timing and runtime paths
+        run: |
+          date +%s > "$RUNNER_TEMP/jobctrl-e2e-start"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/playwright" >> "$GITHUB_ENV"
       - name: Checkout the exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
