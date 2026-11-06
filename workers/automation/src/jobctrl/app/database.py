@@ -151,7 +151,8 @@ class Database:
                 connection.executescript(CORE_SCHEMA)
                 connection.execute(f"PRAGMA application_id={APPLICATION_ID}")
                 connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-            with stage.open("rb") as stream:
+            # Windows file flushing requires write access; r+b preserves the stage.
+            with stage.open("r+b") as stream:
                 os.fsync(stream.fileno())
             try:
                 os.link(stage, self.path)
