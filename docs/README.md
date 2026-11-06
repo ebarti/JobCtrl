@@ -5,9 +5,9 @@ identifies the latest published version; source versions and pending release
 work do not establish what installed users receive. For installation and
 upgrade instructions, see [Getting Started](user/getting-started.md).
 Historical launch plans and incomplete verification gates do not mean the
-product is unpublished. The source documentation also describes the accepted
-Python transformation in progress; its target contracts and unfinished
-verification do not establish what an installed release already includes.
+product is unpublished. The source documentation describes the Python application
+and its feature contracts. Source changes and their verification do not establish
+what an installed release already includes.
 
 ## Public Project Docs
 
@@ -164,7 +164,6 @@ has one defining page; other pages summarize it briefly and link to that owner.
   source-bound translation authority, registry persistence and export fences.
 - [Leadership Practice — future architecture (not implemented)](architecture/leadership-practice.md):
   bounded management reflection and experiments.
-- [Material Variant Comparison](architecture/material-variant-comparison.md): future proposal (not implemented).
 - [`architecture/tailoring.md`](architecture/tailoring.md): complete approved
   baseline composition, coverage, advisory review and acceptance.
 - [`architecture/contracts-types-and-api-boundaries.md`](architecture/contracts-types-and-api-boundaries.md):
