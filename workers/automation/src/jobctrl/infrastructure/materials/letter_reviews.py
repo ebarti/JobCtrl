@@ -55,6 +55,10 @@ class LetterReviewPool:
         self._drained = False
 
     def review(self, claims, quality, execution_guard):
+        return LetterReviewResults(*self.run_pair(claims, quality, execution_guard))
+
+    def run_pair(self, first, second, execution_guard=None):
+        """Share the same leaf bound with independent analysis checks."""
         if execution_guard is not None:
             execution_guard()
         stop = _ReviewStop()
@@ -68,7 +72,7 @@ class LetterReviewPool:
                 # pairs whose admitted sibling is still settling.
                 if len(self._groups) < self.capacity:
                     self._groups.add(stop)
-                    futures = [self._executor.submit(contextvars.copy_context().run, fn, stop) for fn in (claims, quality)]
+                    futures = [self._executor.submit(contextvars.copy_context().run, fn, stop) for fn in (first, second)]
                     break
                 self._lock.wait(timeout=0.1)
         try:
@@ -81,7 +85,7 @@ class LetterReviewPool:
             if execution_guard is not None:
                 execution_guard()
             stop.check()
-            return LetterReviewResults(*(future.result() for future in futures))
+            return tuple(future.result() for future in futures)
         except BaseException as failure:
             error = stop.error or failure
             stop.abort(error)
