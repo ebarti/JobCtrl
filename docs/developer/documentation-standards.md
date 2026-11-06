@@ -167,8 +167,9 @@ carry the hierarchy; preserve semantic warnings and visible focus.
 
 The homepage retains its existing entry points and feature order. Numbered
 feature markers are visual wayfinding, not a new workflow. Refresh product
-imagery through the [owned synthetic capture workflow](../local-development.md#documentation-screenshots)
-after shared branding or typography changes. Diagram palettes are curated for
+imagery using the [current documentation-image guidance](../local-development.md#documentation-screenshots)
+after shared branding or typography changes; the retired fixture capture command
+does not qualify the Python application. Diagram palettes are curated for
 both themes; their system font also works inside serialized zoom images.
 
 ## Diagrams

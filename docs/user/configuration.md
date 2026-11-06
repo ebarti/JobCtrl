@@ -179,9 +179,13 @@ interrupted and leaves its lock behind, confirm that it has stopped and inspect
 the recovery state before removing only that stale migration lock; elapsed
 time alone does not establish that a migration is inactive.
 
-Contributors should use the [source-development migration
-command](../local-development.md#native-credential-migration), which selects
-the same persistent files as the development launcher.
+From a source checkout, use `uv --project workers/automation run --locked
+--all-extras jobctrl credentials migrate` with the same workspace selection as
+the development stack. Without explicit `--env-file` arguments, it considers the
+workspace-owned environment file, the checkout's `.env`, and the configured
+user environment file. Select the complete intended set explicitly when those
+defaults differ from your launch configuration. The [source guide](../local-development.md#native-credential-migration)
+describes the credential context and QA isolation boundary.
 
 Only the guided secret allowlist moves: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 `GEMINI_API_KEY`, and `CAPSOLVER_API_KEY`. Other settings and secret families,

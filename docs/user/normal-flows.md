@@ -862,12 +862,16 @@ In a source checkout, run the Python commands with
 `uv --project workers/automation run jobctrl <command>`; the lifecycle commands
 exist only in the installed launcher.
 
-For the schema-15 protocol change, the new authenticated installer upgrades the
-original installation after normal cleanup. Interrupted upgrades preserve live
-data. Before the new command replaces the old one, rerun the trusted new
-installer; the old binary cannot read the new recovery journal. After command
-replacement, resume with `jobctrl stop` followed by `jobctrl update`.
-Cross-protocol rollback is refused. See
+The Python application refuses legacy databases and workflow history; it does
+not run the older schema-14-to-15 migration. Preserve the old workspace and use
+the explicit `profile-transfer` command with `--source`, a nonexistent `--target`
+outside the source, a complete `--browser-sources` export and
+`--confirm-profile-only-reset`. This preserves the full Profile and supporting
+sources while other application data starts fresh. Verify the transfer receipt
+before deliberately selecting the new workspace; the command does not switch it.
+Do not perform a real-user cutover during development or QA. Compatible later
+Python updates preserve target state; after a failed candidate startup, stop
+the owned runtime and resume forward with `jobctrl update`. See
 [Getting Started](getting-started.md#update-roll-back-or-remove-jobctrl).
 
 | Lifecycle command | What it does |
@@ -881,27 +885,26 @@ Cross-protocol rollback is refused. See
 
 | Domain command | What it does |
 | --- | --- |
-| `init` | Run the terminal setup wizard for a starter profile, resume, and search configuration. The web app does not need it. |
-| `setup` | Detect provider auth, save the enabled employer-analysis legs, and finish with a `doctor` report. In a source checkout it also syncs pnpm/uv dependencies and Playwright Chromium. |
-| `doctor` | Report setup checks for the database, LLM providers, Temporal, browser, Gmail, and telemetry. Read every row: it exits zero even when a check prints `MISSING`. |
-| `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
-| `legacy-evidence list` / `recover` / `decide` | Inspect unknown legacy confirmation provenance; inventory a validated pre-cutover paired backup or explicitly missing authority, then make one current-state-bound human decision with the runtime stopped. Preserves source cells and history; see [Review legacy confirmations](candidate-profile.md#review-legacy-confirmations). |
+| `init` | Initialize an admitted fresh workspace and show the Profile/import, Discovery and provider setup paths; existing authored state is retained. |
+| `setup` | Guide explicit provider/model selection, hidden native credential entry and optional managed Codex login, then report readiness. Source dependency/browser provisioning uses `corepack pnpm dev:setup`; setup supports noninteractive and mutation-free dry-run modes. |
+| `doctor` | Read the structured canonical setup/readiness report for Profile, providers, browser, worker, Temporal and budget. A successful read does not mean every capability is ready. |
+| `run [stages]` | Submit an explicit preparation recipe. The default `discover` recipe discovers and prepares new/pending work through the canonical worker; it does not implicitly submit applications. |
+| `legacy-evidence list` / `recover` / `decide` | Read retained originals/current cells; `recover --payload FILE` inventories a Profile recovery bundle or explicitly unavailable authority, and `decide --payload FILE` records the exact source/version-bound human decision. Neither command restores a database or overwrites current source text. |
 | `source-proposals from-history` / `list` / `reset CANDIDATE_ID` | Explicitly propose sources from saved canonical posting/application URLs, read retained evidence and review history, or reset one rejected coordinate. Review and promotion use the existing Source locator; see [Discovery](discovery.md#propose-sources-from-saved-posting-history). |
-| `discover` / `enrich` / `score` / `tailor` | Start one stage; `score --rescore` includes eligible jobs that already have a score, across the scoring queue. |
-| `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
-| `apply` | Start apply automation (`--dry-run`, `--url`, `--limit` for a maximum number of claimed jobs, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
-| `retry <stage> <url>` | Reset one stage for one job (`--reset-attempts`, `--run`). An exhausted budget renews automatically; other counts are retained unless reset explicitly. Accepted materials remain available, and the command reports when a replacement requires explicit re-tailoring. |
-| `action <stage>` | Low-level single-action dispatch with JSON output, for scripts. |
-| `compensation-refresh` | Re-parse posted salaries and refresh market estimates for all jobs or one (`--job-id`, `--observations-json`, `--no-eurotoptech`). |
-| `pipeline-status` / `runs` | Show pipeline stats, or recent apply runs and one run's event timeline (`runs --failed-only`, `--run-id`). |
+| `discover` / `enrich` / `analyze` / `score` / `tailor` / `prepare` | Submit the corresponding durable recipe. Preparation commands accept explicit `--job-id` selection, `--force` and `--wait`; inspect `--help` for each command's supported selectors. |
+| `job <JobId-or-saved-url>` | Read one saved job or explicitly request `--prepare`, `--score`, `--tailor` or a current approved `--apply`. It does not import a new URL or create submission approval. |
+| `apply` | Inspect with `--review-only` or `--recover`; rehearse with `--dry-run`; execute an exact current payload/approval or an approved batch. `--control` records an explicit version-fenced control decision. Standing polling consumes only eligible current approvals and never grants generic submit authority. |
+| `retry RUN_ID` | Retry a recorded preparation outcome, optionally restricted by `--job-id`, while preserving its durable identity and accepted artifacts; it does not invent a new application approval. |
+| `actions` / `action FEATURE.ACTION` | List registered actions or execute one explicit action with a JSON payload through the same application as HTTP and the worker. |
+| `compensation-refresh` | Refresh one job, `--all` or `--stale` through Compensation; optional inputs include `--observations-json` and `--no-eurotoptech`. |
+| `pipeline-status` / `runs` | Read application/worker readiness or list canonical durable action runs. Use `run-status RUN_ID` for one durable run. |
 | `digest` | Print the local daily digest; it sends no notifications. Incomplete spend is shown as unknown. Only `--acknowledge` marks it reviewed (`--json`, `--min-fit-score`). |
 | `capability list` / `enable` / `disable` | Inspect or change optional browser capabilities, for example `capability enable auto-apply-browser --browser-path <path>`. |
 | `credentials migrate` | Move allowlisted provider secrets from legacy `.env` files into the native credential store. |
 | `gmail-auth` | Connect Gmail for verification codes, outcome lookup, and approved email applications. |
-| `migrate-resume-html` | Convert or refresh approved resume PDFs onto the HTML/CSS renderer. |
-| `material-export JOB_ID --source-artifact-id ID --generation N` | Create an editable DOCX from an accepted resume text artifact; see [Editable DOCX Export](materials-and-tailoring.md#editable-docx-export) for formatting and locale limits. |
-| `backup` | Source checkout only: write a `VACUUM INTO` copy of `jobctrl.db` (`--output`). |
-| `worker` | Run the long-lived Temporal worker. |
+| `material-export RESUME_ID --output FILE --format docx --accepted` | Export the actual accepted Resumes document; an optional `--revision-id` pins a saved revision. The old generated-material migration command is retired with the explicit fresh-state cutover. |
+| `backup` | Source checkout only: write an integrity-checked SQLite backup of `jobctrl.db` without replacing an existing destination (`--output`). It is not an application/Temporal pair. |
+| `corepack pnpm worker:start` (source checkout) | Run the actual Python Temporal worker. Installed startup manages its worker; there is no current `jobctrl worker` command. |
 
 The digest counts new matches, stale scores and review items by their saved job
 identity. Hidden, closed and deleted jobs are excluded from those counts. New

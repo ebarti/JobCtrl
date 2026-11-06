@@ -14,7 +14,6 @@ jobs:
     timeout-minutes: 15
     env:
       UV_PYTHON: '3.12'
-      UV_LOCKED: '1'
     steps:
       - name: Checkout the exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

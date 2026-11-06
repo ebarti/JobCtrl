@@ -224,6 +224,22 @@ def file_security(path: Path):
     return buffer.raw
 
 
+def error_metadata(error: Exception) -> dict:
+    """Report code locations and OS numbers without exception data or locals."""
+    metadata = {"errorType": type(error).__name__}
+    for name in ("errno", "winerror"):
+        value = getattr(error, name, None)
+        if type(value) is int:
+            metadata[name] = value
+    frames = []
+    current = error.__traceback__
+    while current is not None:
+        frames.append({"file": Path(current.tb_frame.f_code.co_filename).name, "line": current.tb_lineno})
+        current = current.tb_next
+    metadata["frames"] = frames[-20:]
+    return metadata
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform-native", action="store_true")
@@ -451,14 +467,14 @@ def main() -> int:
         success = True
     except Exception as error:
         # Never print request bodies, command outputs, paths or exception text.
-        print(json.dumps({"status": "failed", "phase": phase, "errorType": type(error).__name__, "passed": checks}), file=sys.stderr)
+        print(json.dumps({"status": "failed", "phase": phase, **error_metadata(error), "passed": checks}), file=sys.stderr)
     finally:
         if cleanup_owned and service is not None:
             try:
                 service.apply_batch([{"operation": "delete", "key": key} for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "CAPSOLVER_API_KEY")])
-            except Exception:
+            except Exception as error:
                 cleanup_ok = False
-                print(json.dumps({"status": "cleanup_failed", "phase": "native_namespace"}), file=sys.stderr)
+                print(json.dumps({"status": "cleanup_failed", "phase": "native_namespace", **error_metadata(error)}), file=sys.stderr)
         if server is not None:
             server.should_exit = True
         if thread is not None:

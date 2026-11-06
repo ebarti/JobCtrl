@@ -153,7 +153,7 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state, including CAPTCHA usage metadata when applicable. |
 | `browser-profiles/` | Consented copied profiles retained for separate compatibility capabilities. Integrated `DiscoverWorkflow` never reads or launches them. Non-secret adoption metadata lives in `config.json`. |
 | `extension-capability-token`, `extension-discovery-installation-id` | Private local browser-extension pairing secret and the extension installation selected for Discovery. Discovery bridge task bodies and results are memory-only and are not stored beside them. |
-| `backups/` | Database snapshots: `pair-<id>/` from installed operations; `source-pair-<id>/` from automatic source upgrades; application-only `jobctrl-<timestamp>.db` snapshots; and job-data purge recovery bundles. See [Back Up And Restore](#back-up-and-restore). |
+| `backups/` | Current installed `pair-<id>/` database snapshots and application-only `jobctrl-<timestamp>.db` snapshots. Older source-upgrade or purge bundles may remain from earlier releases; the Python application does not create automatic legacy-migration backups. See [Back Up And Restore](#back-up-and-restore). |
 | `gmail/` | Gmail OAuth client and token files. |
 | Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
 
@@ -183,22 +183,33 @@ directory; treat those logs as sensitive too.
 
 ### Back Up And Restore
 
-Legacy achievement recovery uses only a trustworthy pre-cutover native paired
-backup with `pair.json` and both database files. Independently captured app,
-Temporal and file copies do not establish a stopped pair. The local
-[legacy confirmation review](candidate-profile.md#review-legacy-confirmations)
-command validates backup bytes, inventories original/current evidence for
-explicit review and never restores databases or overwrites newer edits. If a
-trustworthy pair is unavailable, record that uncertainty explicitly and review
-current cells; no record is automatically reconfirmed.
+The Python target does not upgrade or restore a legacy database into place.
+The explicit `profile-transfer` command reads the old workspace and requires a
+complete browser Profile source/attachment export through `--browser-sources`,
+a nonexistent target outside the source, and `--confirm-profile-only-reset`.
+It retains the full Profile and supporting sources, starts other application
+data fresh, and writes a transfer receipt without selecting the new workspace.
+Verify the receipt and source inventory before deliberately selecting the target;
+never perform a real-user reset during development or QA. See the current
+[cutover boundary](getting-started.md#update-roll-back-or-remove-jobctrl).
+
+In the target, `legacy-evidence list` shows retained original/current evidence.
+`recover --payload FILE` inventories a Profile recovery bundle or records
+explicitly unavailable authority with an expected Profile version; `decide
+--payload FILE` records a human decision against the exact displayed source and
+review token. These commands do not restore databases, overwrite newer cells,
+or automatically reconfirm uncertain history. Preserve historical paired
+backups as evidence; independently captured files do not establish a stopped
+application/Temporal pair or human confirmation authority.
 
 
 ```bash
 jobctrl backup
 ```
 
-The installed command snapshots `jobctrl.db` and `temporal.db` together into a
-new `backups/pair-<id>/` directory. If JobCtrl is running, it stops for the
+For an admitted Python workspace, the installed command snapshots `jobctrl.db`
+and `temporal.db` together into a new `backups/pair-<id>/` directory. A legacy
+workspace is refused and preserved for explicit Profile transfer. If JobCtrl is running, it stops for the
 snapshot and starts again afterward. If a source development fleet is running,
 stop it first; the installed backup command does not replace it with the
 installed app. `--output` takes an absolute directory.
@@ -248,16 +259,21 @@ its safety policy and the paired files must pass verification.
 
 In a source checkout, `uv --project workers/automation run jobctrl backup`
 writes one consistent copy of `jobctrl.db` to `backups/jobctrl-<timestamp>.db`
-with SQLite `VACUUM INTO`. It is safe while the app runs and never deletes
-anything; `--output` takes a file or directory. This is an application-database
+through SQLite's backup API, checks its integrity and refuses to overwrite an
+existing destination. It is safe while the app runs and never deletes source
+data; `--output` takes a file or directory. This is an application-database
 snapshot, not a stopped and verified application/Temporal backup pair. It is
 not sufficient to restore a workspace with workflow history. Preserve the live
 databases and their WAL/SHM companions; do not delete companions or replace one
 database in isolation. The snapshot does not include pending or unresolved
 spend receipts; preserve those separately and reconcile accounting when
 restoring a different database version. The source checkout does not currently
-offer a paired restore command. See [Local Development](../local-development.md#schema-migrations-and-source-updates)
-for automatic source upgrades and recovery limitations.
+offer a paired restore command. Neither database-only backup is a complete
+archive of renderer artifacts or other workspace files; preserve those files
+alongside the database evidence. See
+[Local Development](../local-development.md#schema-migrations-and-source-updates)
+for fresh-target admission and recovery limitations. Source startup never
+silently migrates an old application database.
 
 After restoring or replacing a database, restart JobCtrl (or rerun
 `corepack pnpm dev` in a source checkout) and reload any open JobCtrl browser
@@ -269,23 +285,20 @@ substitute for a verified workspace recovery.
 
 #### Interrupted first database creation
 
-If startup reports an unresolved database publication, do not delete or open
-`jobctrl.db` or its `-wal`, `-shm`, or `-journal` companions while JobCtrl is
-running. Stop every JobCtrl process and independently confirm that no process
-has the workspace database open. Keep a private copy of the database, all
-companions, and the `.jobctrl-init-*` staging directories before changing any
-of them. The workspace defaults to `~/.jobctrl/`; use the configured
-`JOBCTRL_DIR` instead when it is set.
+If startup refuses an unsafe database, unknown companions or an incompatible
+identity, preserve `jobctrl.db`, its `-wal`, `-shm` and `-journal` companions,
+and any staging files. Do not delete or open them while JobCtrl is running.
+Stop owned processes and independently confirm the workspace has no open
+database handles before inspecting recovery evidence. The workspace defaults
+to `~/.jobctrl/`; use its configured location when different.
 
-If no companions exist, identify the retained staging directory whose regular
-`candidate.db` is the **same device and inode** as the regular `jobctrl.db`.
-Only when that directory contains exactly that one file, and the database has
-been independently verified as a readable exact-schema database, removing the
-staged hard link and its now-empty directory permits startup to retry. Do not
-remove `jobctrl.db`. If any companion exists, the files are not the same inode,
-the directory has other contents, or process ownership or database integrity is
-uncertain, preserve everything and seek help or use a verified backup. Native
-backups restore the JobCtrl and Temporal databases as a pair.
+The current initializer uses private `.jobctrl-python-*.sqlite3` staging files
+and admits only the exact Python application identity. The older
+`.jobctrl-init-*/candidate.db` hard-link cleanup procedure is not a recovery
+procedure for this application. Do not remove links or rewrite schema markers
+to bypass admission. Preserve uncertain state and seek help or use a verified
+compatible backup. Legacy databases require the explicit read-only Profile
+transfer into a fresh target, not manual repair in place.
 
 #### Runtime cleanup failures
 
@@ -333,8 +346,9 @@ scope; migration does not erase old backups or vendor-managed auth files.
 
 ::: tip Protected by default
 The normal workspace is outside the repository. `.gitignore` and the release
-privacy scan add safeguards. From a source checkout, use `corepack pnpm
-qa:seed` for anything you intend to share.
+privacy scan add safeguards. For shareable QA evidence, use the current
+`corepack pnpm e2e` harness and inspect its synthetic output before sharing.
+The former `qa:seed` command is retired; it is not a privacy or isolation control.
 :::
 
 ### Contacts And Outreach
@@ -500,8 +514,9 @@ logs, databases and exception messages are not added by this opt-in.
 Use synthetic data. Never attach real profiles/resumes, databases, secrets,
 OAuth tokens, generated artifacts, local paths, raw logs, or prompt traces.
 
-From a source checkout, `corepack pnpm qa:seed` creates a disposable workspace.
-The release privacy
+From a source checkout, `corepack pnpm e2e` creates owned disposable synthetic
+workspaces and records bounded evidence. It does not sanitize unrelated private
+files. The release privacy
 check scans for secret/profile needles, blocked file types, and unsafe
 distribution paths before publication, but it cannot protect a private file you
 manually copy into a new tracked path.

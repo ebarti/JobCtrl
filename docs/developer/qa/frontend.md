@@ -1,82 +1,44 @@
 # Frontend QA
 
-Frontend QA is layered because type correctness, accessible components,
-browser behavior, and visual consistency catch different failures.
+Frontend QA combines static checks, real application journeys and rendered
+accessibility/visual inspection. The target has no isolated unit, hook, type-test
+or mocked internal API suite; see [Python application journeys](python-journeys.md).
 
 ## Command Map
 
-| Layer | Command |
+| Check | Command |
 | --- | --- |
 | TypeScript | `corepack pnpm web:check` |
 | Frontend boundaries | `corepack pnpm web:lint` |
-| Boundary regression controls | `corepack pnpm web:lint:test` |
-| Unit, hook, component, a11y | `corepack pnpm --filter @jobctrl/web test` |
-| Type-level contracts | `corepack pnpm --filter @jobctrl/web test-d` |
 | Production bundle | `corepack pnpm web:build` |
-| End-to-end | `corepack pnpm --filter @jobctrl/web e2e -- tests/<flow>.spec.ts` |
-| Storybook bundle and runner | `corepack pnpm web:storybook:build` then `corepack pnpm web:storybook:test` |
+| Real application E2E | `corepack pnpm e2e` |
+| Focused existing journey | `corepack pnpm e2e -- --grep 'approved baseline'` |
+| Storybook inspection bundle | `corepack pnpm web:storybook:build` |
 
-## What Each Layer Proves
+## What Each Check Proves
 
-- Colocated Vitest/RTL/MSW tests prove selectors, query keys, hooks, mutations,
-  forms, components, rollback, and critical/serious axe checks.
-- For a bounded API request and retained Outreach revision, run
-  `apps/api/test/api-client-timeout.test.ts` and the Outreach revision form and
-  hook tests. Use synthetic stalled header, success-body and error-body streams;
-  also exercise missing or mismatched publication identity, a matching historical
-  draft, and a server error after a committed revision using
-  `apps/api/test/outreach-postcommit-failure.test.ts`. Verify an
-  unconfirmed write retains both submitted and later text, settles pending state,
-  requires deliberate review and never automatically resubmits. Explicit 4xx
-  conflicts retain their conflict handling.
-- Type-level tests prove the public inferred shapes of read hooks and contracts.
-- The boundary lint proves the documented context/view dependency direction,
-  Operations read-kernel access, browser-capability ports, and context-owned
-  API/query/store usage from TypeScript syntax, resolved symbols and capability
-  provenance. Weak/missing generated declarations and casts cannot authorize
-  direct route/view API or QueryClient access. The
-  TypeScript CI web job blocks on it; see
+- TypeScript checks contract shapes and the boundary lint checks dependency
+  direction. Neither proves runtime behavior. See
   [automated boundary checks](../../architecture/frontend/state-and-ports.md#automated-boundary-checks).
-- Boundary regressions allow canonical DTO/schema/constant imports without
-  exemptions while rejecting independent API-client, Query/Zustand, browser-port,
-  dependency and barrel violations. Real generated-route controls require
-  actionable boundary diagnostics independently of compiler diagnostics. Capability/dependency exemptions still need
-  reasons and stale-entry controls. Canonical-import changes retain the full web
-  suite: inspect Jobs paging, saved-view inputs, optimistic rollback, SSE,
-  event/stage parity and list/detail route composition coverage.
-- Playwright uses a real API plus seeded SQLite fixtures to prove route and
-  realtime behavior without a live worker or model.
-- `shipped-fit-lifecycle.spec.ts` reads canonical final-fit metadata through the
-  real review-queue API. It distinguishes post-voice gate findings from audits
-  recorded after acceptance, retains the original gate and provenance coverage,
-  and keeps historical judge-claimed coverage visibly separate from grounded
-  coverage. Its fixture restores the original metadata after each case.
-- Resume review uses complementary session, browser and persistence checks.
-  `resume-export-layout.spec.ts` exports multi-page A4 and Letter resumes from
-  the real Plate toolbar with controlled synthetic profile/preview inputs.
-  Independent Poppler rasters measure all four margins on every downloaded
-  page; PDF text extraction checks that every unique fixture line survives once.
-  It also checks education institution/location alignment, entry headings staying
-  on the same PDF page as their role and first content line, intact short bullets,
-  and retains the PDF,
-  page images and measurements. The inputs are structural layout fixtures, not
-  model-evaluation examples.
-  A review annotation on the heading must remain visible in the editor while
-  its copied pseudo-element is absent from the exported page's margin.
-  `useApplyReviewSession.test.ts` owns tenant/job/material fences, independent
-  comment/revision ordering, overlapping saves, stale cache publications,
-  normalized acknowledgements and approval preparation.
-  `artifact-comparison.spec.ts` drives the real Plate editor and Apply session
-  through multiline paste, autosave/reload, delayed acknowledgements, conflicts,
-  failed render and recovery before dry-run authorization. Its save/render/model
-  HTTP responses are controlled, and its attachments retain the submitted
-  documents and observed transition order.
-  `apps/api/test/resume-review-drafts.test.ts`, `resume-templates.test.ts`,
-  `apply-audit.test.ts` and the application-feedback suites own canonical SQLite,
-  accepted-artifact bytes, revision conflicts and approval/audit preservation.
-  Browser response controls do not establish those persistence guarantees or
-  live provider behavior.
-- Storybook proves state/variant rendering and shared accessibility behavior.
+- The actual browser suite reaches Python HTTP, SQLite, Temporal, the worker and
+  renderer. Only external services are controlled. It creates synthetic records
+  through public entry points; it does not seed private tables, fake dispatch
+  or replace internal API responses.
+- For uncertain writes, retain submitted and later text, settle pending state,
+  require deliberate review and never automatically resubmit. Exercise real
+  delayed/lost acknowledgement, stale revisions and post-commit failure rather
+  than returning a fabricated first-party response. Explicit 4xx conflicts keep
+  their conflict handling.
+- Resume review must retain tenant/job/document fences, independent comments and
+  revisions, exact edit approval and accepted-artifact bytes. Drive real Plate
+  edits, reload, conflicts, failed render and recovery. Inspect downloaded PDF
+  text and page images for complete authored content, margins, heading/bullet
+  continuity and annotation leakage. The old isolated export/session/API tests
+  are retired; retain these outcomes in actual affected journeys.
+- Current core journeys cover source-bound Fit/wording authority, full baseline,
+  advisory review/override and accepted-PDF preservation. They do not grade live
+  model quality. Storybook supplies rendering states for inspection, not a
+  replacement internal test runner or persistence proof.
 
 ## Visual And Base UI Contracts
 
@@ -91,35 +53,33 @@ those outcomes; route code should consume semantic tokens instead of
 introducing local substitutes.
 
 Interactive behavior belongs to wrappers under `apps/web/src/shared/ui/`.
-`base-ui-migration-boundary.test.ts` must find no direct `@radix-ui/*`
-imports and no raw native `<select>` elements. Focus containment and return,
-Escape/outside dismissal, portal stacking, accessible naming, and controlled
-state must be proven through the wrapper's focused tests and a real route—not
-only by inspecting its classes.
+Use the current boundary lint and inspect the affected real route for focus
+containment/return, Escape/outside dismissal, portal stacking, accessible naming
+and controlled state. A retired Vitest filename is not a current gate, and
+class-name inspection alone does not establish these behaviors.
 
-Use this focused starting point:
+A focused starting point is:
 
 ```bash
-corepack pnpm --filter @jobctrl/web exec vitest run \
-  src/styles/token-contrast.test.ts \
-  src/shared/ui/base-ui-migration-boundary.test.ts \
-  src/shared/ui/button.test.tsx \
-  src/shared/ui/input.test.tsx \
-  src/shared/ui/select.test.tsx \
-  src/shared/ui/tabs.test.tsx
+corepack pnpm web:check
+corepack pnpm web:lint
+corepack pnpm e2e -- --grep 'approved baseline'
 ```
+
+Select the existing journey that actually exercises the changed path; do not
+claim the example baseline journey covers unrelated primitive behavior.
 
 ## Token And Primitive Changes
 
 Token changes need light/dark contrast and density proof. Shared primitive
-changes need scoped primitive tests, Storybook, boundary scans, and a generated
+changes need rendered route/Storybook inspection, boundary scans, and a generated
 CSS check. Use the exact commands in the
 [token foundation](complete-checklist.md#token-foundation-qa-gate) and
 [shared primitive](complete-checklist.md#shared-primitive-qa-gate) sections.
 
 ## Route-Level Changes
 
-Run the relevant flow spec plus the seeded
+Run the relevant actual journey plus the synthetic
 [route visual QA](complete-checklist.md#route-visual-qa-gate) when a change
 affects layout, overlays, theme, density, forms, filters, focus, or destructive
 controls. Review the path manually using the
@@ -127,24 +87,24 @@ controls. Review the path manually using the
 
 ## Parity And Accessibility
 
-Two parity tests are non-negotiable runtime backstops:
+Two runtime parity invariants remain required:
 
 - every domain event type has a real invalidation handler;
 - every stage-state kind has a non-default badge rendering.
 
-The Base UI migration boundary is the third structural backstop. For Pipelines,
+The frontend boundary lint is the structural backstop. For Pipelines,
 lifecycle events must invalidate the operations query while bounded polling
-covers worker heartbeat/task-queue telemetry that has no domain event. Use the
-production-shaped seed to keep three source families distinct from Enrichment
-pass and Preparation fanout, and verify ETA, freshness, capacity, queue, active
+covers worker heartbeat/task-queue telemetry that has no domain event. Use synthetic records created through public entry points to distinguish
+provider acquisition from Preparation fanout, and verify ETA, freshness, capacity, queue, active
 inventory, privacy masking, and unavailable reasons without invented certainty.
 
-Critical and serious axe violations fail the component/Storybook bar. Contrast
-is checked from resolved tokens because jsdom cannot evaluate rendered colors.
-Any future Storybook a11y escape hatch needs a matching backlog entry.
+Treat critical and serious accessibility violations as failures in the rendered
+route/Storybook inspection. Check contrast from resolved tokens and actual
+rendered colors; do not claim a deleted component runner supplied that evidence.
 
 ## Test Data Boundary
 
-Frontend QA uses synthetic stories, seeded databases, stub dispatchers, and
-disposable browser fixtures. It does not need real profile data, real contacts,
-mailbox access, model spend, or application submission.
+Frontend QA uses synthetic stories and owned disposable application/browser
+workspaces. The current E2E harness controls external boundaries only. It does
+not need real Profile data, contacts, mailbox access, model spend or employer
+submissions. Retired stub-dispatch flags are not a safety control.

@@ -1,9 +1,9 @@
 # Local Development
 
-JobCtrl is a pnpm TypeScript workspace plus a uv-managed Python worker (a
-Temporal worker process that executes workflows). This page is the local loop
-end to end: install dependencies, run the full stack, verify a change, and the
-frontend, docs-site, and documentation-screenshot workflows.
+JobCtrl uses a Python application and Temporal worker, a TypeScript/React web
+client, and a browser extension. This page covers source setup, running the
+local stack, and verifying changes. The Python transformation is in progress;
+source behavior and synthetic proof do not establish a published release.
 
 **Read this if** you are running or changing a source checkout. These commands
 install contributor dependencies and are deliberately different from the
@@ -61,11 +61,10 @@ Playwright browser binaries. Do not set `UV_EXCLUDE_NEWER` (or a global uv
 so every `--locked` command in this repository fails or, worse, rewrites the
 lockfile. System Chrome/Chromium is optional; contributor
 testing of apply behavior must explicitly enable a browser capability first.
-The full worker suite also exercises guarded anonymous availability in real
-Chromium. Install the locked worker browser revision with
+Install the locked Python browser revision with
 `uv --project workers/automation run --locked --all-extras playwright install chromium`
-before that suite; Python CI installs its browser and Linux prerequisites.
-This fixture uses a disposable anonymous context and synthetic employer transport.
+when it is needed for rendering or browser journeys. Use only owned synthetic
+workspaces and controlled external boundaries for verification.
 
 The source installer downloads separate web/E2E and Python-worker Playwright
 Chromium revisions. The bundled release instead contains exactly one
@@ -92,31 +91,15 @@ explicit pinned Playwright command above, outside provider setup.
 
 ## Run
 
-### Native credential migration
+<a id="native-credential-migration"></a>
 
-Stop the owned development stack, then run:
+### Native credentials
 
-```bash
-scripts/dev migrate-credentials
-```
-
-This invokes `jobctrl credentials migrate` before sourcing any environment
-file. It selects `$JOBCTRL_DIR/.env` (default `~/.jobctrl/.env`), the checkout's
-`.env`, then `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`), in the same order
-as the development launcher. It migrates only the fixed guided secret allowlist
-and writes a secret-free completion marker under `JOBCTRL_DIR`. Inherited shell
-values are never persisted. Restart the stack after success; already-running
-services retain their old inherited values.
-
-For a source CLI invocation, `uv --project workers/automation run jobctrl
-credentials migrate` defaults to the active owned `.env`, the current
-directory's `.env`, and `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`).
-Use repeated `--env-file` arguments when an exact source set is required.
-See [Configuration](user/configuration.md#migrating-legacy-plaintext-secrets)
-for conflict handling, preservation, scope, and the one-time marker.
-
-QA must use uniquely owned temporary files and a synthetic native-store
-namespace. Never run a migration test against these default personal paths.
+Use `jobctrl setup` or **Settings → Credentials** to inspect provider readiness
+and explicitly manage credentials. See [Configuration](user/configuration.md)
+for credential sources and precedence. The launcher may inherit environment
+values, so a separate workspace directory alone does not isolate credentials;
+never use personal credentials for QA.
 
 ### Start the development stack
 
@@ -124,157 +107,76 @@ namespace. Never run a migration test against these default personal paths.
 corepack pnpm dev
 ```
 
-`corepack pnpm dev` is the source-development counterpart of installed
-`jobctrl start`. It first builds the browser extension, then starts the full
-local fleet in dependency order: Temporal dev server, TypeScript API, Vite web
-app, and the Python worker. On macOS, the fleet uses the same workspace lock
-and process ownership as a compatible installed application. Starting a source fleet
-stops the previously owned source or installed fleet for that workspace first.
-Older untracked processes cannot provide this ownership proof merely by stopping.
-The command runs
-in the foreground so supervised terminals keep the child
-processes alive; keep the terminal open and stop the stack with Ctrl-C. The
-launcher tracks PIDs under `.dev/pids/`, writes logs under `.dev/logs/`, and
-defaults to:
+The source launcher builds the browser extension, then starts Temporal, the
+Python HTTP application, the Vite web app and the Python worker. It runs in the
+foreground: keep the terminal open and stop the stack with Ctrl-C. It tracks
+process ownership under `.dev/pids/` and logs under `.dev/logs/`. On macOS,
+the source fleet shares workspace ownership controls with a compatible installed
+application. An unverified process or an unexpected listener is not authority
+to stop or replace it.
 
-- API data dir: `JOBCTRL_DIR=${HOME}/.jobctrl`
-- API bind: `JOBCTRL_API_HOST=127.0.0.1`,
-  `JOBCTRL_API_PORT=8766`
-- Web API base URL: `VITE_JOBCTRL_API_BASE_URL=http://127.0.0.1:8766`
-- Web port: `5173` (`JOBCTRL_WEB_PORT` can override it)
-- Temporal persistence for a new workspace: `$JOBCTRL_DIR/temporal.db`
-  (`JOBCTRL_TEMPORAL_DB` can override it)
+The default workspace is `~/.jobctrl`, the API is loopback-only on
+`127.0.0.1:8766`, and Vite requests port `5173`. Use the printed URL if Vite
+chooses a different port. New workspaces use `$JOBCTRL_DIR/temporal.db`; keep
+application and Temporal state together for recovery. A responding API probe
+alone does not establish that every writer or descendant has stopped. Inspect
+ownership, listener and process state independently before changing the runtime.
 
-`jobctrl.db` and the Temporal history store form one runtime identity. Keeping
-both under `JOBCTRL_DIR` lets an interrupted workflow reconnect to the same
-history when the source stack is restarted from another Git worktree. To run a
-fully isolated stack, give it a separate `JOBCTRL_DIR`; do not point a shared
-`jobctrl.db` at a worktree-local Temporal database.
+For a detached stack, use `corepack pnpm dev:start`; inspect it with
+`corepack pnpm dev:status` and stop its owned processes with
+`corepack pnpm dev:stop`.
 
-If another API responds on the configured port and is not tracked by this
-checkout, source startup refuses before replacing processes or starting a web
-app against that API. Stop the other runtime or choose separate bindings. This
-probe only detects a responding API; it does not establish that all writers or
-detached descendants have stopped and is not migration authority.
+<a id="schema-migrations-and-source-updates"></a>
 
-The current source and compatible installed launchers retain the earlier
-`$JOBCTRL_DIR/temporal/temporal.db` location if that is the only existing
-history. New workspaces use `$JOBCTRL_DIR/temporal.db`. If both locations or
-orphaned SQLite companions exist, startup refuses to choose between them.
-Preserve the application database, both histories and their companions; do
-not copy, replace or delete either history to make startup succeed. On macOS,
-`JOBCTRL_DB_PATH` and `JOBCTRL_TEMPORAL_DB` must identify the database and
-history in `JOBCTRL_DIR`. Set a separate `JOBCTRL_DIR` for an isolated stack.
-A compatible installed launcher only accepts a legacy source history once a
-healthy source fleet has established its shared ownership; an older untracked
-source runtime cannot supply that proof. In particular, v0.3.1 expects the root
-`temporal.db` and does not support the earlier source-only location. The macOS
-source fleet uses the local Temporal server at `localhost:7233` and its `default`
-namespace, as the installed app does.
+### Workspace compatibility and source updates
 
-### Schema migrations and source updates
+The Python application does not upgrade the previous application database in
+place. It refuses a legacy workspace before opening its database with SQLite;
+this applies to source startup across platforms. Preserve the existing workspace
+and its history. Starting a checkout, updating source dependencies or an
+installed release does not authorize a reset.
 
-The source checkout and the installed application are separate versions. To
-update a clean source checkout, first stop its attached stack with Ctrl-C. Then
-fast-forward its intended branch, refresh its dependencies and restart it:
+The deliberate transition uses `jobctrl profile-transfer` with a read-only
+source, a nonexistent target outside the source, a complete browser Profile
+sources and attachment manifest, and explicit `--confirm-profile-only-reset`.
+It preserves the full Profile, supporting sources, confirmations, preferences
+and provenance; other application data starts fresh in the new workspace. The
+command leaves the source and workspace selection unchanged. Review the receipt
+and select the new workspace deliberately after verification. See
+[Getting Started](user/getting-started.md#update-roll-back-or-remove-jobctrl)
+for the release boundary. A one-off Profile transfer integrity proof uses owned
+synthetic data; development and QA never reset a real user's workspace.
 
-```bash
-git status --short --branch
-git pull --ff-only
-corepack pnpm dev:setup
-corepack pnpm dev
-```
-
-Preserve or commit any unrelated local changes before pulling. Pulling source
-does not update the installed application. For an installed release, use
-`jobctrl update` when a compatible release is available; the installed updater
-owns the stopped-runtime migration and paired backup. The schema-14 to 15
-protocol change specifically requires the trusted new installer described in
-[Getting Started](user/getting-started.md#update-roll-back-or-remove-jobctrl),
-not the older installed updater. Updating a database makes it unavailable to
-older builds that require an earlier schema. Source and installed builds use
-the same profile and resume in the shared workspace; they cannot run different
-schema versions against it at the same time.
-
-While the checkout owns the workspace, `jobctrl status` identifies its source
-supervisor. Use `corepack pnpm dev:status` in that checkout for individual
-component health. Stop the source fleet before using the installed `jobctrl
-backup` command; it will not replace a running source fleet with an installed
-one.
-
-On macOS, starting this checkout automatically upgrades an owned schema-14
-workspace to schema 15. It stops the owned runtime, backs up the application
-database and its matching Temporal history under
-`$JOBCTRL_DIR/backups/source-pair-<id>/`, and validates the upgrade before
-starting. No separate migration command is needed. If the upgrade is
-interrupted, restart the same checkout to retry; each attempt backs up the
-current pair and does not restore an older backup over later writes. Keep the
-recovery journal and all databases and SQLite companions in place.
-
-If the earlier runtime's ownership cannot be verified, the automatic upgrade
-does not modify the workspace. With an untracked legacy registry, the source
-command can stop before opening the diagnostic interface and report the
-ownership problem in the terminal instead. If a diagnostic API does start for
-an incompatible schema, it reports that an upgrade is needed without starting
-the worker or Temporal. If a legacy runtime lacks complete ownership records,
-there is currently no documented self-service recovery.
-Preserve the registry, workspace and journal and seek support; a computer
-restart alone does not clear the refusal. Schemas older than 14, newer than this
-build, ambiguous histories, and non-macOS source starts do not take this
-automatic path. Do not invoke the private migration modules directly on a live
-workspace: they do not establish process ownership or a paired backup.
-
-For development that does not need personal data, a new isolated workspace
-uses the checkout's current schema on first start. This isolates the databases,
-not inherited provider credentials or environment files; use the synthetic QA
-rules in [Reliability & QA](local-reliability-qa.md#safe-qa-data) when testing:
-
-```bash
-JOBCTRL_DIR="$(mktemp -d)" corepack pnpm dev
-```
-
-Use a deliberately retained path instead of `mktemp` if the workspace must
-survive the session. Keep the application and Temporal databases together.
-
-Whenever `scripts/dev run`, `start`, or `restart` selects the product `web`
-component (including the default fleet), it runs `corepack pnpm extension:build`
-once before stopping or replacing any tracked process. A build failure aborts
-startup and leaves the existing processes and logs intact. Docs, demo, and
-component sets without `web` skip this build, as do status and stop commands.
-The launcher prints the absolute `dist/extension` path and Chrome load/reload
-instructions; loading or refreshing the extension in Chrome remains manual.
+For source updates, stop the owned stack, preserve unrelated work, update the
+checkout and dependencies, and restart only after checking workspace
+compatibility. Updating a checkout does not publish or update an installed
+release. For ordinary development that does not need personal data, use a
+separate owned synthetic `JOBCTRL_DIR`, with synthetic credentials and sources;
+setting that path alone does not isolate inherited environment credentials.
 
 ### Runtime Overrides
 
-Use these source-development overrides when troubleshooting a component or
-running isolated or multi-worktree stacks. Most contributors can keep the
-launcher defaults above.
+These source-development overrides are useful for separate local stacks. The
+Python HTTP application accepts only loopback binds.
 
-| Variable                        | Default                     | What it does                                                                                                                                                                                                           |
-| ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `JOBCTRL_DIR`                   | `~/.jobctrl`                | Local app directory for database, settings, artifacts, logs, browser worker state, and `.env`.                                                                                                                         |
-| `JOBCTRL_DB_PATH`               | `$JOBCTRL_DIR/jobctrl.db`   | TypeScript API database path. The Python worker ignores it and always uses `$JOBCTRL_DIR/jobctrl.db`, so overriding it desynchronizes the API from the worker — prefer `JOBCTRL_DIR` to move both.                     |
-| `JOBCTRL_CONFIG_PATH`           | `$JOBCTRL_DIR/config.json`  | Non-secret Settings file written by the TypeScript API and read by both API and worker (general controls, provider metadata, browser adoption, and provider-scoped model IDs). Discovery-page values remain in SQLite. |
-| `JOBCTRL_API_HOST`              | `127.0.0.1`                 | Local API bind host. Non-loopback hosts require explicit opt-in.                                                                                                                                                       |
-| `JOBCTRL_API_PORT` / `PORT`     | `8766`                      | Local API port.                                                                                                                                                                                                        |
-| `JOBCTRL_API_ALLOW_REMOTE_BIND` | unset                       | Set to `1`, `true`, or `yes` to allow non-loopback API binding. This can expose private local data.                                                                                                                    |
-| `JOBCTRL_WEB_PORT`              | `5173`                      | Requested Vite development port.                                                                                                                                                                                       |
-| `JOBCTRL_DOCS_PORT`             | `4174`                      | Requested VitePress development port.                                                                                                                                                                                  |
-| `JOBCTRL_DEMO_WEB_PORT`         | `5174`                      | Requested Vite development port for the browser-local demo.                                                                                                                                                            |
-| `JOBCTRL_DEMO_API_PORT`         | `8787`                      | Local Wrangler port for the demo consent and telemetry API.                                                                                                                                                            |
-| `JOBCTRL_DEMO_STATE_DIR`        | `.dev/demo/wrangler`        | Local Wrangler/D1 persistence shared by demo migrations and the demo API process.                                                                                                                                      |
-| `VITE_JOBCTRL_API_BASE_URL`     | proxied `/v1`               | Browser API origin when not using the default Vite proxy.                                                                                                                                                              |
-| `JOBCTRL_TEMPORAL_DB`           | `$JOBCTRL_DIR/temporal.db`, or the sole existing legacy `$JOBCTRL_DIR/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. On macOS this must be the history selected for `JOBCTRL_DIR`; sharing JobCtrl projections while switching histories breaks workflow recovery. |
-| `TEMPORAL_ADDRESS`              | `localhost:7233`            | Temporal server address used by the worker, CLI, and workflow-starting RPC. The macOS shared-workspace fleet requires this local server. |
-| `TEMPORAL_NAMESPACE`            | `default`                   | Temporal namespace. The macOS shared-workspace fleet requires `default`. |
-| `JOBCTRL_API_SSE_POLL_MS`       | `250`                       | API event-stream database poll interval in milliseconds.                                                                                                                                                               |
-| `VITE_DEV_API_PROXY_TARGET`     | `http://127.0.0.1:8766`     | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks.                                                                                                                                 |
-| `VITE_DEMO_API_PROXY_TARGET`    | launcher-managed            | Vite dev-server `/api` proxy target for demo mode. The launcher sets it to the tracked local Wrangler process so consent stays same-origin.                                                                            |
-| `VITE_GOOGLE_MAPS_API_KEY`      | unset                       | Enables Google Maps address search in the Profile form.                                                                                                                                                                |
-| `JOBCTRL_SKIP_BROWSER_PREFLIGHT` | unset                    | Set to `1` to skip the worker's startup Chromium check, for a worker that runs only non-browser activities. |
-| `PLAYWRIGHT_SKIP_BROWSER_GC`    | unset                       | Set to `1` when running `playwright install` from another checkout, so it keeps the browser revisions other worktrees still use in the shared Playwright cache. |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `JOBCTRL_DIR` | `~/.jobctrl` | Workspace for application data and artifacts. Use a separate owned synthetic path for QA. |
+| `JOBCTRL_API_HOST` | `127.0.0.1` | Loopback API bind host. |
+| `JOBCTRL_API_PORT` | `8766` | API port. |
+| `JOBCTRL_WEB_PORT` | `5173` | Requested Vite port. |
+| `JOBCTRL_DOCS_PORT` | `4174` | Requested VitePress port. |
+| `JOBCTRL_DEMO_WEB_PORT` | `5174` | Requested browser-local demo port. |
+| `JOBCTRL_DEMO_API_PORT` | `8787` | Local demo Worker port. |
+| `JOBCTRL_DEMO_STATE_DIR` | `.dev/demo/wrangler` | Local demo Worker persistence. |
+| `VITE_JOBCTRL_API_BASE_URL` | Launcher-selected API URL | Browser API origin for the source stack. |
+| `VITE_DEV_API_PROXY_TARGET` | `http://127.0.0.1:8766` | Vite `/v1` proxy target. |
+| `JOBCTRL_TEMPORAL_DB` | `$JOBCTRL_DIR/temporal.db` for a new workspace | Temporal development-server history. Keep it paired with the application workspace. |
+| `JOBCTRL_TEMPORAL_ADDRESS` | `127.0.0.1:7233` | Temporal address used by the application and worker. |
+| `JOBCTRL_TEMPORAL_NAMESPACE` | `default` | Temporal namespace used by the application and worker. |
+| `VITE_GOOGLE_MAPS_API_KEY` | unset | Enables Google Maps address search in the Profile form. |
 
-Inspect the foreground stack from another terminal:
+Inspect the stack from another terminal:
 
 ```bash
 corepack pnpm dev:status
@@ -282,154 +184,26 @@ corepack pnpm dev:logs worker
 scripts/dev list
 ```
 
-`corepack pnpm dev:status` reports authenticated source-launch ownership separately
-from health. Each component's launch owner retains its original child handle;
-status and stop authenticate that same launch through a private local endpoint.
-A PID file alone never grants signal authority. `unverified` means a legacy,
-malformed, changed or unreachable launch record could not establish ownership.
-Stop and replacement then fail visibly and preserve the records and processes.
-The API row can show `migration`, `incompatible`, `healthy`, or `unknown` when
-its watcher is alive. `unknown` means the health probe did not establish a
-result; it does not prove the process is down. When the worker process is alive
-but its heartbeat is stale, the worker row reports `stale`.
+Ownership and health are distinct: an unknown health result does not prove a
+process is down, and a PID alone does not authorize signaling it. Preserve
+unverified records and inspect listeners and processes independently before
+starting a replacement. `scripts/dev forget` retires only explicitly named,
+unverified source-launch metadata; it does not stop a process or prove it has
+exited.
 
-After reviewing an unverifiable earlier process, retire only its local metadata
-with an explicit component name, for example:
+Run an individual component only when troubleshooting its process:
 
 ```bash
-scripts/dev forget docs
-```
-
-This command never signals a process or removes logs or workspace data. It
-refuses an authenticated live owner, which must be stopped normally first.
-Forgetting an unreachable record does not prove its earlier processes exited;
-review those processes and any occupied bindings before starting a replacement.
-No reboot is required. Successful managed stop and ordinary start/restart keep
-their existing commands.
-
-Source cleanup uses the existing original-child/session ownership helper. If
-the original owner is lost, a child changes ownership, or descendant exit cannot
-be verified, cleanup remains a reported failure rather than recovering signal
-authority from a PID or process-group number. This source-only recovery is best
-effort; the macOS workspace scope remains the stronger database-writer boundary.
-
-For a detached background stack in a normal shell, use the explicit daemon mode:
-
-```bash
-corepack pnpm dev:start
-corepack pnpm dev:stop
-```
-
-`corepack pnpm dev:start` prints the observed API, web, and Temporal bindings after the
-processes launch. Use the printed web URL rather than assuming `5173`, because
-Vite can bind a higher port when another local JobCtrl web server is already
-using the requested port.
-
-### Purge A Source Workspace's Job Data
-
-This internal maintenance command is intended for disposable test workspaces
-and deliberate local reset work. `corepack pnpm data:purge-jobs` is read-only
-unless it receives the exact confirmation phrase. Use it first to resolve and
-count the target workspace:
-
-```bash
-corepack pnpm data:purge-jobs --app-dir /path/to/disposable-jobctrl-dir
-```
-
-Before execution, stop every JobCtrl process using that workspace and verify
-that no API or worker from another worktree still has `jobctrl.db` open (for
-example, `lsof /path/to/disposable-jobctrl-dir/jobctrl.db`). A fresh worker
-heartbeat for this database blocks deletion; wait at least 45 seconds after
-the last heartbeat once the worker is stopped. Heartbeats do not detect every
-API or other writer, so the process check remains required. Any database commit
-by another connection between inventory and the deletion lock aborts the run
-without deleting or moving files. Stop the writer and repeat inventory before
-retrying. Then run:
-
-```bash
-corepack pnpm data:purge-jobs --app-dir /path/to/disposable-jobctrl-dir \
-  --confirm DELETE-ALL-JOB-DATA
-```
-
-The command backs up first, purges the exact-v12 local Job graph, archives live
-generated resume entries and registered job logs, removes the
-job/Discovery execution ledger, source-quality summaries, job-stage operational
-attempts, and projection-rebuilding lifecycle events, compacts SQLite, and
-checks that profile/templates/Discovery settings/Settings fingerprints did not
-change. It preserves unrelated Profile, source-control, contact/outreach,
-maintenance-workflow history, and non-job operational attempts. It is not a
-Temporal-history or secure-erasure command. The owning boundary is documented
-in [Storage](architecture/storage.md).
-
-If post-commit SQLite compaction alone fails, the command still verifies the
-logical purge and preservation boundary, reports that the purge committed, and
-prints the recovery bundle plus free-space and compaction guidance. If those
-post-commit invariants cannot be verified, keep JobCtrl stopped and follow the
-printed recovery-bundle restore guidance.
-
-#### Resolve Provisional Missing-History Executions
-
-The inventory and refusal message list workflow/run IDs for `terminated` +
-`reconciled_not_found` rows. They are provisional: the worker may have reached
-the wrong Temporal server or lost access to the authoritative history. An absent
-execution cannot be canceled. Restore access to the correct history and let the
-reconciler settle it normally whenever that history still exists.
-
-For a deliberate reset after permanent local history loss only:
-
-1. Stop JobCtrl API, workers, launchers, and any other writer. Verify no process
-   has this `jobctrl.db` open. Keep the worker stopped throughout this procedure.
-2. Verify the workspace's configured Temporal address and namespace against the
-   intended history store. Inspect that namespace's complete workflow inventory
-   and each exact workflow/run ID listed by the purge. The namespace must be
-   empty and every listed execution must be absent. An unreachable server, an
-   empty result from a different namespace, or a permissions error is not proof.
-   Do not restore older Temporal history after this clearance.
-3. Open this workspace database in `sqlite3` and create a separate pre-clearance
-   backup with `.backup '/absolute/private/path/jobctrl-before-clearance.db'`.
-   Keep it with the later purge recovery bundle; the purge's own backup is taken
-   after this clearance. Set named parameters `:workflow_id` and
-   `:temporal_run_id` to one exact inventoried pair (SQL NULL for a null run ID),
-   and execute the guarded statement below. Confirm `changes()` is exactly one;
-   zero means the identity or state changed and requires a fresh inventory.
-4. Close SQLite, rerun inventory, and execute the confirmed purge while all
-   writers remain stopped. Repeat the guarded clearance only for other exact
-   pairs independently verified in step 2. Active stages and ordinary active
-   workflows still block the command.
-
-```sql
-UPDATE workflow_run_projections
-SET error_code = 'operator_verified_history_absent',
-    error_message = 'Operator verified the configured Temporal namespace empty before an offline job-data purge.'
-WHERE tenant_id = 'local'
-  AND workflow_id = :workflow_id
-  AND temporal_run_id IS :temporal_run_id
-  AND LOWER(status) = 'terminated'
-  AND LOWER(COALESCE(error_code, '')) = 'reconciled_not_found';
-SELECT changes();
-```
-
-This maintenance-only clearance preserves the terminal status and records why
-the absent execution no longer blocks the reset. It does not assert that an
-unreachable execution finished, and it must not be used during normal operation.
-
-Run individual components only when troubleshooting a specific process:
-
-```bash
-temporal server start-dev --db-filename "$JOBCTRL_TEMPORAL_DB"
 corepack pnpm api:dev
 corepack pnpm web:dev
-uv --project workers/automation run jobctrl worker
-uv --project workers/automation run jobctrl doctor
+corepack pnpm worker:start
+uv --project workers/automation run --no-sync python -m jobctrl doctor
 ```
 
-Set `JOBCTRL_TEMPORAL_DB` to the existing workspace history before starting
-Temporal directly; the source launcher normally selects it for you. The Temporal dev server binds the frontend gRPC service on `127.0.0.1:7233` and
-the Web UI on `http://127.0.0.1:8233`. The launcher passes
-`--db-filename "$JOBCTRL_TEMPORAL_DB"` so workflow history persists across
-launcher and worktree restarts instead of disappearing when the process exits.
-With Temporal running, `jobctrl doctor` reports `Temporal: reachable`. The Vite
-web dev server proxies `/v1/*` to the TypeScript API by default.
+The API and worker need the intended workspace and Temporal configuration; the
+launcher normally supplies them. The web development proxy targets the Python
+HTTP application. Do not run destructive database maintenance or a real-user
+reset for development or QA.
 
 ### Public demo browser workspace
 
@@ -464,14 +238,6 @@ host-OS integrations. Only the exact value `demo` selects this frontend
 composition; the lifecycle command supplies it automatically. A missing or
 invalid `VITE_JOBCTRL_APP_MODE` keeps the normal local composition, so a
 mistyped value cannot produce a partially mounted app.
-
-For the target-role suggestion browser check, start `corepack pnpm demo:dev`,
-accept the local demo gate, open **Discovery → Target search**, and use **Suggest
-roles**. The bundled profile fixture has version `1` and explicit Management /
-Director preferences. Its deterministic result is labeled `model_stub` with a
-`stubbed_model_evidence` warning; it is fixture evidence, not a real provider
-run. Edit, reject, or add the proposal, then save to exercise the same
-version-checked form path without production profile data or a database.
 
 Demo mode now renders the static acceptance gate before creating IndexedDB.
 If the same-origin local Worker is unavailable, acceptance remains fail-closed
@@ -518,11 +284,10 @@ and is not reset.
 
 The public demo uses Cloudflare Pages for the Vite SPA, a same-origin Worker at
 `demo.jobctrl.dev/api/*` for consent and telemetry, and an hourly retention
-Worker. Run the edge checks with:
+Worker. Local demo tooling includes:
 
 ```bash
 corepack pnpm demo-edge:check
-corepack pnpm demo-edge:test
 corepack pnpm demo-edge:migrate:local
 corepack pnpm demo-edge:dry-run
 corepack pnpm demo:build
@@ -533,28 +298,10 @@ The production Wrangler configs bind the EU-scoped
 intentionally ignored—the checked-in environment contract contains only the
 four bindings used by this package.
 
-On pull requests, the shared CI frontend workflow builds the browser-local
-demo for shared web and dependency changes. The shared backend worker
-checks and dry-runs both edge Workers only for
-edge-package, shared TypeScript configuration, dependency or edge-workflow
-changes. The site workflow also verifies the Workers on `main` pushes and manual
-runs before any production deployment. Same-repo
-pull requests publish a static Pages preview only when
-`DEMO_PREVIEW_DEPLOY_ENABLED=true`. Production runs only from `main` when
-`DEMO_DEPLOY_ENABLED=true`, applies D1 migrations, deploys both Workers, and
-then publishes Pages. The workflow uses the existing
-`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` secrets.
-
-Production deployment uses the workflow controls above. Verify the affected
-checks on the deployed revision; repository publication is already complete.
-
-Rollback the static site from the Cloudflare Pages deployment history, then
-redeploy the prior Worker versions if the fault crosses the `/api/*` boundary.
-Do not roll D1 backward destructively; migrations are forward-only and the
-90-day retention worker remains safe to run during a frontend rollback.
-After deployment, `DEMO_BASE_URL=https://demo.jobctrl.dev corepack pnpm
-demo:smoke` checks the security headers, a direct SPA deep link, the anonymous
-consent read, and exact denied/granted cookie boundary.
+The demo's current CI and deployment gates are defined by
+`.github/workflows/demo-edge.yml` and `.github/workflows/demo-site.yml`.
+Deployment and rollback require separate authorization; inspect the exact
+candidate and current workflow state before reporting a result.
 
 ## Verify
 
@@ -587,27 +334,17 @@ Fastify and JSON-RPC test lanes do not establish target behavior.
 
 ## Test And Documentation Workspaces
 
-These contributor-only variables isolate synthetic QA, screenshot generation,
-and CI from a real JobCtrl workspace:
+The recurring journey runner creates a new owned run directory and independent
+synthetic application workspaces. It does not adopt a caller-selected database,
+real Profile, browser profile, credential store or personal environment. It
+uses real application services and controls only external boundaries. See the
+[Python journey ledger](developer/qa/python-journeys.md) for the exact harness,
+evidence and installed-mode requirements.
 
-| Variable                     | What it does                                                                                  |
-| ---------------------------- | --------------------------------------------------------------------------------------------- |
-| `JOBCTRL_E2E_APP_DIR`        | Optional existing temporary parent. Every ordinary, isolated or screenshot run creates and removes only its own marked child; the parent is preserved. |
-| `JOBCTRL_E2E_DB_PATH`        | Contained database path derived from the current owned allocation; not an independent caller override.                                                                            |
-| `JOBCTRL_E2E_CONFIG_PATH`  | Contained settings path derived from the current owned allocation.                                                                            |
-| `JOBCTRL_E2E_API_PORT`       | E2E API port.                                                                                 |
-| `JOBCTRL_E2E_WEB_PORT`       | E2E web port.                                                                                 |
-| `JOBCTRL_DOCS_SCREENSHOTS`   | Opts the Playwright run into rewriting the synthetic documentation screenshots under `docs/`. |
-| `VITE_JOBCTRL_SHOW_DEVTOOLS` | Shows TanStack Router and Query devtools in local Vite dev builds.                            |
-| `VITE_JOBCTRL_HIDE_DEVTOOLS` | Compatibility override that hides TanStack devtools even when the show flag is set.           |
-
-Never point these paths at a real `~/.jobctrl` workspace. The harness retains an
-independent allocation capability in `JOBCTRL_E2E_WORKSPACE` and checks its
-contained database/config/state paths before use or cleanup. State JSON alone
-cannot authorize deletion. All modes start their own servers; a busy configured
-port fails instead of reusing an unidentified listener. The API startup wrapper
-seeds the owned database before API construction, and global setup verifies that
-seed receipt. See [isolated browser setup](developer/qa/browser-smoke.md#isolated-browser-mode).
+For documentation imagery, use only synthetic content in a separately owned
+workspace and review every image for private data. The current state of the
+capture workflow is described below. A workspace path alone does not make
+inherited credentials safe.
 
 ## Publish a release
 
@@ -617,97 +354,30 @@ verification of every public channel.
 
 ## Build the bundled payload
 
-The production-payload builder currently targets Apple-silicon macOS. It is a
-release-engineering path, not an alternative contributor setup: the build
-machine still needs the source toolchain above plus the pinned `go1.26.4`
-launcher compiler, while the resulting payload is self-contained and does not.
-The artifact ships only the statically linked launcher and the Go standard
-library BSD-3-Clause attribution — never the compiler.
+The production-payload builder targets Apple-silicon macOS and is a
+release-engineering path, separate from contributor setup. It requires the
+source toolchain and the locked native launcher compiler.
 
 ```bash
 corepack pnpm distribution:audit
 corepack pnpm distribution:build
 ```
 
-`corepack pnpm distribution:audit` checks the component inventory, redistribution and
-license policy, exact external archive locks, provider-pack wheel locks, source
-dependency baseline, and signing policy. `corepack pnpm distribution:build` writes an
-unsigned local payload and deterministic ZIP archive under
-`dist/distribution-real/`. The build compiles the API and web app, installs the
-core-only Python closure, embeds the pinned Node, Temporal, Python Playwright,
-Playwright MCP, and Chromium runtimes, then emits the manifest, SBOM,
-attributions, provenance, and component-size evidence. It fails if a
-development tool, provider runtime, source path, unowned file, unresolved
-license, or unpinned external input enters the payload.
-
-The local artifact is deliberately marked `unsigned-local` and cannot be
-promoted as a stable release. It includes both native binaries at
-`payload/launcher/jobctrl` and `payload/launcher/jobctrl-installer`, compiled
-with the locked official Go toolchain. Its local descriptor, detached
-unsigned-local envelope, and curl fixture contract bind the ZIP's build ID,
-manifest SHA-256, size, archive SHA-256, an explicit minimum-safe sequence
-(`0` locally), and an explicit empty revocation list; those fixtures are
-file-only and cannot select a network channel. Signed stable/prerelease
-descriptors use the same canonical fields with a positive floor and sorted,
-unique revocation tombstones. The launcher's private runtime manifest starts the fixed
-loopback Temporal (`7233`/`8233`), worker, and API (`8766`) fleet without Vite,
-and records each canonical `JOBCTRL_DIR` under
-`~/Library/Application Support/JobCtrl/instances/<sha256>` (override with
-`JOBCTRL_RUNTIME_HOME`). This is an artifact smoke/development surface only;
-`scripts/dev` remains the source-contributor launcher until the installer and
-signing phases land. Signed protocol-2 upgrades use the authenticated installer
-and signed schema declaration, with normal cleanup and forward recovery. Synthetic local
-artifacts do not qualify the actual signed/notarized installed upgrade; follow
-[the release contract](developer/releasing.md#schema-15-installed-upgrade-qualification).
-Use the much smaller contract fixture while changing the builder itself:
-
-```bash
-corepack pnpm distribution:build:fixture
-corepack pnpm distribution:provider-lock:check
-```
-
-The extracted-payload smoke runs the real API, JSON-RPC, Temporal workflow,
-worker activities and SQLite persistence without provider credentials. Its
-private worker bootstrap supplies explicit page-interpretation and description
-quality model choices through `LlmPort`; normal spend preflight, source/citation
-validation and determination persistence still execute. Smoke processes run
-inside a loopback-only QA sandbox that also denies macOS Keychain files,
-security-service lookups and native credential-command execution. The bootstrap is passed
-as test code outside the immutable payload and is never installed or selected
-by product configuration. The resulting `semanticModel` evidence identifies
-the synthetic boundary. This proves capture plumbing and restart preservation,
-not model accuracy or live-provider readiness.
-
-Provider SDKs and their proprietary companion runtimes are not copied into the
-core archive. Their complete transitive wheel closures are generated from the
-Python lock and acquired later as isolated, hash-verified official-channel
-packs. Ordinary source `uv sync` and `uv run` retain the existing provider
-ensemble through the default `provider-runtime` dependency group; the payload
-builder explicitly selects `--no-default-groups --no-dev`.
+The builder assembles an unsigned local payload and validates its component
+inventory, locked inputs and redistribution policy. A local artifact is not a
+published release. The extracted-payload verification exercises the current
+Python application and its real worker and renderer; see the
+[Python journey ledger](developer/qa/python-journeys.md) for the observed
+candidate and limits. Signed acquisition, platform and release verification
+remain separate; follow [Releasing JobCtrl](developer/releasing.md).
 
 ## First-Run TTFV Measurement
 
-Real-path first-run time-to-value measurement is owner-run only because it uses
-real vendor auth, real discovery from the owner's target search settings, real
-job output, and real LLM spend. The wrapper lives at `scripts/ttfv-real.mjs`
-and is exposed through:
-
-```bash
-corepack pnpm ttfv:real
-corepack pnpm ttfv:probe
-corepack pnpm ttfv:summary -- "$HOME/.jobctrl/measurements/ttfv-real-run-"*.json
-```
-
-Use `node scripts/ttfv-real.mjs run ...` directly on a clean checkout before
-dependencies are installed; the wrapper records T0 immediately before it starts
-`scripts/install`, captures a pre-work `/v1/jobs` baseline,
-across all job visibility states, and starts the real path with
-`jobctrl run discover score tailor --limit 1 --workers 1`. The summary gate
-accepts only full clean-run records with all-state baseline absence,
-`discoveredAt >= T0`, hashed real discovery-source proof, plus same-job
-API/UI/PDF proof; probe-only, seeded, and timing-only records are rejected. See
-[`developer/first-run-ttfv.md`](developer/first-run-ttfv.md) for the clean-run
-protocol, stop conditions, record privacy rules, and three-run summary command.
+Earlier first-run timing procedures predate the current application, and their
+recorder is not a current source command. Any new real-provider measurement
+requires explicit owner authorization, an agreed current procedure and evidence
+for its exact candidate; synthetic journey timings do not establish user
+outcomes.
 
 ## Frontend
 
@@ -734,12 +404,9 @@ corepack pnpm web:check
 corepack pnpm web:build
 ```
 
-`web:lint` checks production imports and browser-capability access using the
-TypeScript syntax tree and capability provenance, including real generated
-loader controls independent of compiler diagnostics. Run
-`corepack pnpm web:lint:test` for the complete positive/negative boundary suite.
-Existing boundary debt has scoped exceptions; new
-imports cannot silently widen them. See the
+`web:lint` checks production imports and browser-capability access. Existing
+boundary debt has scoped exceptions; new imports cannot silently widen them.
+See the
 [frontend boundary checks](architecture/frontend/state-and-ports.md#automated-boundary-checks)
 for the enforced rules, legitimate infrastructure access, and review limits.
 
@@ -762,70 +429,23 @@ types and builds remain separate checks; no passing result is implied here.
 
 ## Browser Extension
 
-The Manifest V3 browser extension lives under `apps/extension`. It is the local
-capture/autofill client and optional integrated-Discovery browser transport for the
-TypeScript API, not a hosted/browser-store package.
+The Manifest V3 extension under `apps/extension` is a local capture/autofill
+client and an optional Discovery transport for the Python application.
 
 ```bash
 corepack pnpm extension:check
-corepack pnpm extension:test
 corepack pnpm extension:build
-corepack pnpm extension:e2e
 ```
 
-The extension E2E suite requires headed Chromium. On Linux without a display,
-run `xvfb-run --auto-servernum corepack pnpm extension:e2e`; the CI browser
-installation uses Playwright's `--with-deps` option to install Xvfb. A missing
-browser or display fails the required tests.
+The build writes `dist/extension/`. In Chrome, enable **Developer mode** at
+`chrome://extensions` and load that directory as an unpacked extension. After a
+rebuild, reload the extension and any existing application tabs. The source
+launcher also builds it before starting or restarting the product web component.
 
-`corepack pnpm extension:build` writes the unpacked extension bundle to
-`dist/extension/`. The source launcher also runs this build before starting or
-restarting the product web component. Open `chrome://extensions`, enable
-**Developer mode**, and choose **Load unpacked** with that directory for manual
-QA, or click **Reload** on its existing unpacked-extension card after rebuilding.
-Reload any application tabs that were already open so Chrome injects the newly
-built content script into them.
-Chrome can otherwise load the rebuilt popup from disk while retaining the old
-background service worker. The popup validates their shared message protocol,
-reports **Extension update incomplete**, and disables pairing/actions instead
-of rendering missing fields or claiming readiness. Reload the unpacked
-extension card to make both halves use the same build.
-The content script matches `http://*/*` and `https://*/*`, which Chrome presents
-as access to all ordinary web sites; browser-internal and extension pages remain
-outside that match. Autofill stays passive until an explicit extension action;
-the background service worker also polls for bounded Discovery tasks and
-executes HTTP/API work in the service worker and rendered-page work in temporary
-tabs in the profile where the extension is loaded. LinkedIn jobs use an active
-tab moved into an unfocused window; other pages use inactive tabs. Saving the token in
-that popup explicitly selects its extension-local installation UUID for
-Discovery; merely retaining an older token does not win a race with another
-Chrome profile. The extension uses `activeTab`, `alarms`,
-`declarativeNetRequest`, `scripting`, and `storage`; HTTP(S) page and network
-access are wildcarded because the broker can lease arbitrary configured public
-job sources. Capture/autofill API traffic remains loopback-only, and remote
-service-worker requests exist only for active Discovery leases.
-`corepack pnpm extension:e2e` builds the bundle and proves wildcard page reach,
-the generic-form review path, loopback-only capture/autofill traffic, and a
-synthetic Discovery API lease completed from a non-HTML source origin with a
-cookie set in that same persistent Chrome context. It also proves a hanging
-request hard-times out without leaving a tab and that a public source redirect
-cannot reach a loopback target. After every rebuild, reload the installed extension before using its
-selected-installation heartbeat as product-path evidence. A current popup with
-an already stored token reports whether this exact installation is selected and
-offers **Use this Chrome profile for Discovery**, so recovery does not require
-copying the token again.
-
-Discovery and Enrich also run without loading the extension. Each acquisition
-setup prefers the selected installation only when its bounded status probe
-reports connected; otherwise it uses the existing public HTTP or anonymous
-Playwright path. Site, DNS, access, and cancellation failures do not
-switch transport. Integrated fallback never enables copied-profile access.
-
-The focused `e2e/tests/optional-extension.spec.ts` browser check uses the owned
-synthetic workspace and real API/UI. Its dispatcher acknowledges launches
-without running a worker or contacting job sites. Persisted production worker
-fixtures in `test_optional_extension.py` and `test_enrichment_politeness_gate.py`
-cover acquisition in both modes separately.
+Pairing, capture and Discovery behavior are exercised through the recurring
+application journeys; see the [coverage ledger](developer/qa/python-journeys.md)
+and use an owned synthetic workspace. A build alone does not establish that the
+extension is paired or that a browser journey passed.
 
 ## Docs Site
 
@@ -894,106 +514,23 @@ deployment checks.
 
 ## Documentation Screenshots
 
-Public screenshots are generated from synthetic data only — never from a real
-`~/.jobctrl` workspace.
-
-```bash
-corepack pnpm docs:screenshots
-```
-
-The command runs `apps/web/e2e/tests/docs-screenshots.spec.ts` through the
-Playwright e2e harness: it seeds a disposable E2E app directory with the local
-QA seed (`apps/api/test/qa-seed.ts` — fake candidate, jobs, stage state,
-scores, materials, requirement-fit evidence, employer analysis, artifacts,
-pipeline-operations lineage/projections/ETA samples, and a current worker
-heartbeat), starts the API and web app on E2E ports, and writes PNGs to
-`docs/assets/screenshots/`. The manifest covers all production primary routes,
-detail workspaces, profile-import steps, Settings routes, and fixed mobile
-companions. The internal capture manifest lives in
-`apps/web/e2e/tests/docs-screenshots.spec.ts`; it is not part of the public
-Product Tour. No real LLM provider, job source, Gmail account, or browser
-submission is involved. After a successful gallery capture,
-`scripts/render-docs-brand-assets.mjs` renders the docs favicon/header marks,
-app icons and social preview from the canonical `apps/web/public/favicon.svg`
-and the freshly captured synthetic dashboard. The header has explicit light
-and dark assets so it follows the reader's selected docs theme independently
-of the operating-system theme.
-
-The spec is opt-in: it only writes when `JOBCTRL_DOCS_SCREENSHOTS=1` is set,
-which `corepack pnpm docs:screenshots` does for you. A bare full e2e run
-(`corepack pnpm --filter @jobctrl/web e2e`) skips it, so QA runs never rewrite the
-committed screenshots.
-
-The wrapper allocates isolated ports and a marker-owned temporary workspace by
-default. To pin them while running multiple worktrees, create a disposable
-temporary parent and override the parent and ports:
-
-```bash
-mkdir -p /tmp/jobctrl-docs-shots
-JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-docs-shots \
-JOBCTRL_E2E_API_PORT=8890 \
-JOBCTRL_E2E_WEB_PORT=5290 \
-corepack pnpm docs:screenshots
-```
-
-Refresh checklist: run the command on a clean checkout, confirm every asset in
-the internal capture manifest was rewritten, review every desktop and mobile
-PNG for private data, broken layout, clipped content, and local-path leaks, and
-inspect Pipelines for the seeded execution, three source families, two
-reconciliation steps, available worker capacity, visual stage flow,
-stop/recovery controls, and active work. Confirm Jobs shows one table with a
-static Active/Deleted/Hidden **Job state** column filter defaulted to Active,
-and that the default view keeps source, compensation detail, warnings, resume
-template, and discovery date available through Columns rather than widening
-the initial table. Check Job Detail's
-labeled metadata, six assessment cells, visible requirement evidence, and
-readable artifact labels/actions. Check Apply Review's left queue, sequential
-review content, and Submit gates table with Gate/State/Detail columns. Inspect
-Profile/Settings for strong input outlines and section rules, then check
-Artifact Detail's preview after its audit details, and the mobile
-Profile/Evidence/record-card reflows without horizontal overflow. Keep raw IDs
-and paths inside technical disclosures. Open the rendered Product Tour and
-confirm it contains only user-facing product explanations and screenshots—not
-the asset manifest, capture commands, or viewport QA criteria. Confirm the
-homepage hero copy at `docs/public/assets/screenshots/dashboard.png` is
-byte-for-byte identical to the gallery dashboard screenshot, update the tour
-if screenshot names changed, and finish with `git diff --check`.
-
-Safety rules: never point generation at `~/.jobctrl` or a shared temporary
-root; an override must name an existing disposable child directory that the
-runner can use only as a parent for its unique marker-owned workspace. Never use real
-resumes, databases, logs, Gmail tokens, or browser profiles; do not run apply
-automation, mailbox scans, real crawling, or real LLM calls for screenshots;
-keep output deterministic (fixed per-surface viewports, synthetic database,
-seeded pipeline operations and heartbeat, no external providers).
-The Profile preview renderer runs with the Python lock held; its fixed dependency
-cutoff is defined in `workers/automation/pyproject.toml`, not inherited from a
-caller-provided `UV_EXCLUDE_NEWER` value. A stale lock must fail rather than
-being rewritten by screenshot generation.
+Documentation imagery must use synthetic data and be inspected for private
+content, clipped layout and misleading product state. The former automated
+capture wrapper targets a retired browser suite and is not a valid capture path
+for the Python application. Until a current capture workflow is implemented and
+verified, do not claim that it regenerates the gallery or run it against a real
+workspace. Images illustrate screens; they do not prove multi-step behavior.
 
 ### Launch Demo Asset Inventory
 
-Documentation images use synthetic data and illustrate individual screens;
-they do not prove that a multi-step operation or recovery invariant works. The
-[Python journey ledger](developer/qa/python-journeys.md) records the required
-real application evidence for source-bound resume acceptance, failed refresh,
-worker restart and application approval. Mark a scenario verified only after
-observing it on the exact candidate, and never regenerate assets from a real
-workspace.
+Use the [Python journey ledger](developer/qa/python-journeys.md) for observed
+application behavior and verification limits. Existing demo and documentation
+images are illustrative and must never be regenerated from personal data.
 
 ## Screening CLI
 
-The installed CLI supports `jobctrl screening read JOB_ID` and `jobctrl screening write JOB_ID command.json`. From source use the prepared locked interpreter with `PYTHONPATH=workers/automation/src workers/automation/.venv/bin/python -m jobctrl.cli screening read JOB_ID`. The [user reference](user/screening-answers.md#cli-and-local-api) defines command fields and source/privacy boundaries.
-
-Native launcher tests use temporary same-user launchd jobs and private ownership
-receipts. They need access to the per-user launchd domain and native process
-inspection; an outer tool sandbox can deny those probes without proving a
-service is absent. Keep HOME, JOBCTRL_DIR and runtime paths synthetic. The
-bundled smoke keeps native launchd control outside Seatbelt and applies its
-fixed network and Keychain restriction at each authenticated payload dispatch
-via `JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1`; unknown selectors fail.
-Components, source shells, Python CLI/Apply, probes and migration/backup Python
-all use that boundary. A caller already inside a sandbox cannot remove it.
-The actual native CPython network test and independent direct-runtime sandbox
-checks must both execute. No arbitrary sandbox profile or ownership bypass is
-accepted from the environment.
+The installed CLI supports `jobctrl screening read JOB_ID` and
+`jobctrl screening write JOB_ID command.json`. From source, use
+`uv --project workers/automation run --no-sync python -m jobctrl screening read JOB_ID`.
+The [user reference](user/screening-answers.md#cli-and-local-api) describes the
+command fields and privacy boundaries.
