@@ -318,6 +318,9 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 	if err := refuseUnfinishedForwardUpdate(runtimeHome, args, inheritedEnv); err != nil {
 		return err
 	}
+	if handled, stopErr := stopUnsafeActiveBeforePrepare(executable, args, inheritedEnv); handled {
+		return stopErr
+	}
 	if handled, uninstallErr := uninstallUnsafeActiveBeforePrepare(args, inheritedEnv, stdout); handled {
 		return uninstallErr
 	}
