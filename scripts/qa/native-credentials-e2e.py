@@ -240,6 +240,39 @@ def error_metadata(error: Exception) -> dict:
     return metadata
 
 
+def native_observation(payload, elapsed_ms: int, *, completed=None, error=None) -> dict:
+    """Allowlist only execution metadata from an unchanged real native call."""
+    from jobctrl.native_credentials import NativeCredentialError, PROVIDER_SECRET_KEYS
+    try:
+        data = json.loads(payload or "{}")
+    except (ValueError, TypeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    result = {"operation": data.get("operation") if data.get("operation") in ("inspect", "read", "set", "delete") else "unknown",
+              "key": data.get("key") if data.get("key") in PROVIDER_SECRET_KEYS else "unknown",
+              "elapsedMs": elapsed_ms}
+    if error is not None:
+        result["errorType"] = type(error).__name__
+        result["outcome"] = ("timeout" if isinstance(error, subprocess.TimeoutExpired) or
+                             (isinstance(error, NativeCredentialError) and error.args == ("native credential command timed out",))
+                             else "exception")
+    elif completed is not None:
+        result["returnCode"] = completed.returncode
+        result["outcome"] = {0: "success", 44: "item_not_found"}.get(completed.returncode, "nonzero_exit")
+    return result
+
+
+def initial_metadata_diagnostic(value: dict) -> dict:
+    from jobctrl.app.credentials import CREDENTIAL_KEYS
+    store = value.get("store", {})
+    reason = store.get("unavailableReason")
+    return {"storeAvailable": store.get("available") is True,
+            "unavailableReason": reason if reason in (None, "inspection_failed", "unsupported_platform") else "unknown",
+            "configured": {item["key"]: item.get("configured") if type(item.get("configured")) is bool or item.get("configured") is None else "invalid"
+                           for item in value.get("credentials", []) if item.get("key") in CREDENTIAL_KEYS}}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform-native", action="store_true")
@@ -270,6 +303,22 @@ def main() -> int:
     from jobctrl.app.bootstrap import create_application
     from jobctrl.app.credentials import CredentialService
     from jobctrl.app.http import create_http_app
+
+    native_observations = []
+    initial_diagnostic = None
+
+    class ObservedCredentialService(CredentialService):
+        def _run_command(self, command, **kwargs):
+            if len(native_observations) >= 4:
+                return super()._run_command(command, **kwargs)
+            started = time.monotonic()
+            try:
+                completed = super()._run_command(command, **kwargs)
+            except Exception as error:
+                native_observations.append(native_observation(kwargs.get("input"), round((time.monotonic() - started) * 1000), error=error))
+                raise
+            native_observations.append(native_observation(kwargs.get("input"), round((time.monotonic() - started) * 1000), completed=completed))
+            return completed
 
     checks: list[str] = []
     daemon = None
@@ -327,7 +376,8 @@ def main() -> int:
                 time.sleep(0.05)
         phase = "application"
         application = create_application(workspace, enabled_features=[])
-        service = CredentialService(application.runtime, native_service=namespace, lock_path=owned / "mutations.sqlite3")
+        service_type = ObservedCredentialService if args.platform_native and platform.system() == "Windows" else CredentialService
+        service = service_type(application.runtime, native_service=namespace, lock_path=owned / "mutations.sqlite3")
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -361,6 +411,7 @@ def main() -> int:
 
             phase = "initial_metadata"
             initial = metadata()
+            initial_diagnostic = initial_metadata_diagnostic(initial)
             check("disposable_namespace_empty", all(item["configured"] is False for item in initial["credentials"]))
             check("native_store_available", initial["store"]["available"] is True)
             cleanup_owned = True
@@ -467,7 +518,8 @@ def main() -> int:
         success = True
     except Exception as error:
         # Never print request bodies, command outputs, paths or exception text.
-        print(json.dumps({"status": "failed", "phase": phase, **error_metadata(error), "passed": checks}), file=sys.stderr)
+        print(json.dumps({"status": "failed", "phase": phase, **error_metadata(error), "passed": checks,
+                          "initialMetadata": initial_diagnostic, "nativeObservations": native_observations[-32:]}), file=sys.stderr)
     finally:
         if cleanup_owned and service is not None:
             try:
@@ -490,7 +542,8 @@ def main() -> int:
             allocated.cleanup()
     if success and cleanup_ok:
         print(json.dumps({"status": "passed", "platform": platform.system(), "boundary": "native_disposable_namespace" if args.platform_native else "owned_external_helper",
-                          "checks": checks, "count": len(checks), "cleanup": True}))
+                          "checks": checks, "count": len(checks), "cleanup": True,
+                          **({"initialMetadata": initial_diagnostic, "nativeObservations": native_observations} if native_observations else {})}))
         return 0
     return 1
 
