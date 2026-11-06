@@ -9,6 +9,7 @@ import {
 
 export interface ComposedJobsGridProps {
   data: ComposedJobsResponse | undefined;
+  filterMetadata: Pick<ComposedJobsResponse, "capabilities" | "facets"> | undefined;
   loading: boolean;
   error: boolean;
   selected: Readonly<Record<string, PostingSnapshot>>;
@@ -100,10 +101,10 @@ function valueFor(row: ComposedJobRow, id: string, data: ComposedJobsResponse | 
 
 export function ComposedJobsGrid(props: ComposedJobsGridProps) {
   const navigate = useNavigate();
-  const { data, selected, onSelectionChange } = props;
+  const { data, filterMetadata, selected, onSelectionChange } = props;
   const columns = useMemo<Array<DataGridColumn<ComposedJobRow>>>(() => {
-    const sortable = new Set(data?.capabilities.sortable_fields ?? []);
-    const filterable = new Set(data?.capabilities.filterable_fields ?? []);
+    const sortable = new Set(filterMetadata?.capabilities.sortable_fields ?? []);
+    const filterable = new Set(filterMetadata?.capabilities.filterable_fields ?? []);
     const selection: DataGridColumn<ComposedJobRow> = {
       id: "select", label: "Select", width: 48, reorderable: false,
       header: ({ pageRows }) => <input type="checkbox" aria-label="Select all visible jobs"
@@ -117,10 +118,10 @@ export function ComposedJobsGrid(props: ComposedJobsGridProps) {
       sortable: sortable.has(id) && savedSortable.has(id),
       getSortValue: (row) => id === "eligibility" ? (row.fit?.score?.eligibility.status ?? "") : raw(row, id),
       ...(filterable.has(id) ? { getFilterValue: (row: ComposedJobRow) => raw(row, id),
-        filterValues: data?.facets[id]?.values ?? [], formatFilterValue: (value: string) => value === "" ? "Unknown (no recorded value)" : value, filterValueLimit: 200 } : {}),
+        filterValues: filterMetadata?.facets[id]?.values ?? [], formatFilterValue: (value: string) => value === "" ? "Unknown (no recorded value)" : value, filterValueLimit: 200 } : {}),
       render: (row) => valueFor(row, id, data),
     }))];
-  }, [data, selected, onSelectionChange]);
+  }, [data, filterMetadata, selected, onSelectionChange]);
   const visibility = useMemo(() => Object.fromEntries(props.hiddenColumnIds.map((id) => [id, false])), [props.hiddenColumnIds]);
   return <FilterableDataGrid<ComposedJobRow>
     title="Jobs table" data={data?.rows ?? []} columns={columns} getRowId={(row) => row.job.job_id}
@@ -134,7 +135,7 @@ export function ComposedJobsGrid(props: ComposedJobsGridProps) {
     rowAriaSelected={(row) => Boolean(selected[row.job.job_id])}
     onRowActivate={(row) => void navigate({ to: "/jobs/$jobId", params: { jobId: row.job.job_id }, search: (previous) => previous })}
     rowActivationLabel={(row) => `Open job ${row.job.title} at ${row.job.company || "unknown company"}`}
-    pagination={{ page: props.page, pageSize: props.pageSize, totalPages: Math.max(1, Math.ceil((data?.total ?? 0) / props.pageSize)),
-      ...(data ? { totalRows: data.total } : {}), onPageChange: props.onPageChange, onPageSizeChange: props.onPageSizeChange }}
+    {...(data ? { pagination: { page: props.page, pageSize: props.pageSize, totalPages: Math.max(1, Math.ceil(data.total / props.pageSize)),
+      totalRows: data.total, onPageChange: props.onPageChange, onPageSizeChange: props.onPageSizeChange } } : {})}
   />;
 }

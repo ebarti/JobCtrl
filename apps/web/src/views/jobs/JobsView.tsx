@@ -112,6 +112,8 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
   const presentation = usePythonJobsTableViewsStore((state) => state.presentationByTable[JOBS_TABLE_ID]) ?? DEFAULT_PRESENTATION;
   const setPresentation = usePythonJobsTableViewsStore((state) => state.setTablePresentation);
   const jobs = useComposedJobs(queryInput);
+  const currentJobs = jobs.isPlaceholderData ? undefined : jobs.data;
+  const filterMetadata = streamStatus === "workspace_changed" ? undefined : jobs.data;
   const { bulk, previewDelete, permanentDelete } = useJobBulkActions();
   useEffect(() => { if (!navigation && onNavigationChange) { const error = onNavigationChange(fallback); if (error) setNavigationError(error); } }, [navigation, onNavigationChange, fallback]);
   useEffect(() => { setDraft(criteria.q); }, [criteria.q]);
@@ -139,11 +141,11 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
     if (changeQuery(gridQuery(next.criteria, next.filters, next.sort, 0, next.pageSize, null))) setFiltersVersion((version) => version + 1);
   };
   const snapshot: SavedTableViewSnapshot = { ...presentation, sort, urlFilters: savedFilters(criteria, pageSize), gridFilters: filters };
-  const hasLimitedFacets = Object.values(jobs.data?.facets ?? {}).some((facet) => !facet.complete);
+  const hasLimitedFacets = Object.values(currentJobs?.facets ?? {}).some((facet) => !facet.complete);
   const errorBody = jobs.error && "responseBody" in jobs.error ? jobs.error.responseBody : undefined;
   const unavailableFields = unavailableFieldsSchema.safeParse(errorBody);
-  const unavailable = jobs.data ? (["fit", "preparation", "compensation", "applications", "resumes"] as const)
-    .flatMap((name) => { const state = jobs.data?.modules[name]; return state && (!state.enabled || !state.available) ? [{ name, state }] : []; }) : [];
+  const unavailable = currentJobs ? (["fit", "preparation", "compensation", "applications", "resumes"] as const)
+    .flatMap((name) => { const state = currentJobs.modules[name]; return state && (!state.enabled || !state.available) ? [{ name, state }] : []; }) : [];
   return <div className="route-page">
     <PageHead eyebrow="Search" title="Jobs" subtitle="Captured postings and their saved source snapshots" />
     <CaptureJob />
@@ -156,6 +158,7 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
       <AdvancedJobFilters key={`${filtersVersion}:${JSON.stringify({ ...criteria, q: "" })}`} criteria={criteria} onApply={updateCriteria} />
       <Button type="button" variant="outline" onClick={() => { if (changeQuery(gridQuery(defaultCriteria, {}, { columnId: "discovered_at", direction: "desc" }, 0, pageSize, null))) setFiltersVersion((version) => version + 1); }}>Clear all filters</Button>
       {navigationError ? <p role="alert">{navigationError}</p> : null}
+      {jobs.isPlaceholderData ? <p role="status">Updating jobs. Filter options reflect the previous results until loading finishes.</p> : null}
       {unavailable.length ? <p role="status">Unavailable features: {unavailable.map(({ name, state }) => `${name} (${state.enabled ? "unavailable" : "disabled"})`).join(", ")}. Their saved criteria remain in effect and can be cleared.</p> : null}
       {hasLimitedFacets ? <p>Some filter value lists are limited; use the text predicate to search the full result set.</p> : null}
       {presentation.grouping ? <p>Groups organize the current page; sorting and filtering apply to all matching jobs.</p> : null}
@@ -177,13 +180,13 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
         <label>Type DELETE to confirm<input value={confirmation} onChange={(event) => setConfirmation(event.currentTarget.value)} /></label>
         <Button type="button" disabled={pending || confirmation !== "DELETE"} onClick={() => { const submittedSelection = selection; permanentDelete.mutate({ selectionId: preview.selectionId, jobIds: preview.jobIds }, { onSuccess: () => { if (useJobGridSelectionStore.getState().current === submittedSelection) clearSelection(); } }); }}>Permanently delete reviewed jobs</Button>
       </section> : null}
-      {jobs.error ? <div role="alert">{jobs.error.message}{unavailableFields.success ? ` Unavailable criteria: ${unavailableFields.data.error.details.fields.join(", ")}.` : ""}{jobs.data ? " Showing the previously loaded page." : ""}{" "}<Button type="button" variant="outline" disabled={jobs.isFetching} onClick={() => void jobs.refetch()}>Retry loading jobs</Button>{offset > 0 ? <Button type="button" variant="outline" onClick={() => { changeQuery(gridQuery(criteria, filters, sort, 0, pageSize, null), false); }}>Reload from first page</Button> : null}</div> : null}
-      <ComposedJobsGrid data={jobs.data} loading={jobs.isPending || jobs.isFetching} error={Boolean(jobs.error)} selected={selected}
+      {jobs.error ? <div role="alert">{jobs.error.message}{unavailableFields.success ? ` Unavailable criteria: ${unavailableFields.data.error.details.fields.join(", ")}.` : ""}{currentJobs ? " Showing the previously loaded page." : ""}{" "}<Button type="button" variant="outline" disabled={jobs.isFetching} onClick={() => void jobs.refetch()}>Retry loading jobs</Button>{offset > 0 ? <Button type="button" variant="outline" onClick={() => { changeQuery(gridQuery(criteria, filters, sort, 0, pageSize, null), false); }}>Reload from first page</Button> : null}</div> : null}
+      <ComposedJobsGrid data={currentJobs} filterMetadata={filterMetadata} loading={jobs.isPending || jobs.isFetching} error={Boolean(jobs.error)} selected={selected}
         onSelectionChange={(rows, checked) => { updateSelection(session, tenant, selectionScope, rows, checked); previewDelete.reset(); setPreviewScope(null); setConfirmation(""); }}
         filters={filters} onFiltersChange={(next) => { changeQuery(gridQuery(criteria, next, sort, 0, pageSize, null)); }}
         sort={sort} onSortChange={(next) => { changeQuery(gridQuery(criteria, filters, next, 0, pageSize, null)); }}
         page={Math.floor(offset / pageSize) + 1} pageSize={pageSize} onPageChange={(page) => {
-          const revision = page === 1 ? null : jobs.data?.query_revision ?? queryInput.query_revision ?? null;
+          const revision = page === 1 ? null : currentJobs?.query_revision ?? queryInput.query_revision ?? null;
           if (page > 1 && !revision) { setNavigationError("Reload the first page before continuing."); return; }
           changeQuery(gridQuery(criteria, filters, sort, (page - 1) * pageSize, pageSize, revision), false);
         }}

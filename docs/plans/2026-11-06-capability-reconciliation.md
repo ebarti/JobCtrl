@@ -19,20 +19,20 @@ latest acceptance readback. The initial inventory was taken during construction;
 its former missing adapters and legacy-retirement blockers must not be treated
 as current defects when the dispositions below close them. Source completion,
 focused public-journey success and complete-candidate acceptance are distinct.
-**Overall acceptance remains open:** the current 21-journey source/web run
-(`rCUXK8`) had reported six failures at the latest coordinator readback, with
-repairs assigned. No GitHub completion, merge or release is established here.
+**Local installed acceptance is complete:** `e2e-Htgt0Q` passed all 22 journeys
+on the pinned installed runtime and final recorded web build. All source
+journeys also have passing observations across the full run and scoped repair
+reruns, and the isolated demo passed. The source-run history is still not one
+uninterrupted 22-journey source pass. Final whole-head hosted CI remains pending;
+no GitHub completion, merge or release is established here.
 
-- `OPEN`: capability/evidence still requires reconciliation.
-- `IN PROGRESS`: owning implementation exists; final integrated acceptance is
-  still pending. It does not mean the old missing implementation remains absent.
 - `SOURCE COMPLETE`: current source and static checks close the stated boundary.
 - `FOCUSED PASS`: named focused public journeys passed; wider acceptance remains
   separate and any platform/payload qualification still applies.
-- `REPAIR`: source-backed regression in the currently written replacement.
-- `FAILING`: the current integrated run has observed failures under repair.
-- `VERIFIED`: reserved for an observed integrated public journey on the final
-  candidate; no row currently has this status.
+- `VERIFIED`: the named boundary was exercised on its recorded candidate; this
+  never implies all candidates, platforms or the entire transformation passed.
+- A source-complete row does not claim every variant of its behavior has a
+  recurring assertion; the named focused proofs state their actual coverage.
 - `SUPERSEDED`: deliberately retired by an accepted product/architecture decision,
   with the retained user value and new authority recorded explicitly below.
 - P0 prevents an honest cutover; P1 prevents feature acceptance; P2 is a retained
@@ -43,11 +43,46 @@ The latest evidence disposition is:
 
 | Boundary | Current result | Remaining qualification |
 | --- | --- | --- |
-| Legacy backend authority | Production source files in old Fastify, Python workflow/business roots, infrastructure, domain and global config/database/LLM roots are physically deleted. The earlier transitive closure was clear; the coordinator reports the current whole static check passed. | Final complete source/web run remains open. No temporary runtime bridge is retained. |
-| CLI setup and onboarding | Current `cli.py:init/setup/doctor/backup` contains owner-flow onboarding, hidden native credential entry, explicit Codex enrollment, dry-run/noninteractive/JSON controls, live catalog/readiness, revision-fenced settings and source backup. Coordinator reports shared-stack CLI E2E passed. | The full shared run is not passing yet; the separate Digest CLI behavior below remains unresolved. |
+| Legacy backend authority | Production source files in old Fastify, Python workflow/business roots, infrastructure, domain and global config/database/LLM roots are physically deleted. The earlier transitive closure was clear; whole static checks and the full installed suite passed. | Whole-head hosted CI remains open. No temporary runtime bridge is retained. |
+| CLI setup, onboarding and Digest | Source and installed CLI onboarding/setup passed. The separate actual Digest proof passes one-read threshold override, generated-at acknowledgement, stale acknowledgement refusal, unchanged settings and zero added model calls. | The earlier Digest parity defect is closed; hosted CI remains separate. |
+| Full Profile and supporting-source transfer | Final one-off synthetic `profile-transfer-umx5un0g` and identity `profile-identity-m8gba6hd` proofs are reported passed in the owning Profile record; full source bytes/raw review data and known versus uncertain authority are covered. | No real-user reset/transfer occurred. This is separate from recurring fresh-workspace E2E. |
 | Native lifecycle and process custody | Frozen native lifecycle partition passed in **47.659 seconds** (eight cases); custody passed in **61.296 seconds** (seven cases), with cleanup and independent no-listener readback. | These use real compiled binaries and an owned unsigned synthetic payload. Signed/notarized published-predecessor qualification and the remaining platform matrix are distinct release gates. |
-| Full source/web acceptance | Current 21-journey run has observed failures; doctor policy-snapshot handling, Plate ID mapping, selectors and header/deadlock failures have assigned repairs. | Repair, rerun and bind the complete result to the final candidate before claiming overall success. |
-| Offline demo | Final composed demo acceptance remains pending. | Prove browser-local lifecycle and truthful external unavailability without live API/credential/provider fallback. |
+| Source/web acceptance | `e2e-w989ac` passed 18/22; `e2e-cOQbyj` passed three repaired journeys; `e2e-kz95to` passed the last Jobs query journey. All 22 have passing observations on the same frozen Python package. | The web build changed for repairs. Do not combine these into a claim that one final full source run passed. The complete installed run below supplies the final one-run local qualification. |
+| Full installed application | `e2e-Htgt0Q` passed **22/22**, zero skipped/flaky/unexpected cases: 202,126 milliseconds of journeys and 204,642 milliseconds total; real bundled import origin, pinned CPython 3.12.12 and Temporal 1.7.3. | Whole-head hosted CI and distinct signed/platform release qualification remain open. |
+| Offline demo | `e2e-tNQ809` and `demo/final-browser-proof.json` passed the actual consent Worker/D1/browser-local edit, wording approval, accepted PDF and cleanup journey, with zero product requests or page/console errors. | This verifies the recorded local demo bundle, not a hosted deployment or live model quality. |
+
+The observed source-run accounting is **18 + 3 + 1 distinct passing journeys**:
+
+| Run | Actual result | Journey / total milliseconds |
+| --- | --- | --- |
+| `e2e-w989ac` | 18 passed, four failed; all original core journeys passed | 179,066 / 188,640 |
+| `e2e-cOQbyj` | Three passed, one failed; Learning, genuine lost Preparation acknowledgement, and negative Jobs/deletion controls passed | 29,921 / 39,849 |
+| `e2e-kz95to` | One passed; complete Jobs pagination/sort/facet/filter/saved-view journey | 9,646 / 19,475 |
+
+All three timing records identify frozen Python
+`e6e860e538926932ecba936c75ffe99e11957147b131c81777b490b821789631`
+and combined Python/policy
+`0c644feb105e9c26c53e7cf8dc77731c0d3014b4d426f8a7a5918b9c6572aacb`.
+The last web build is
+`0b172f2c478f9d690e77aa43a3485b4e977abad3547d8460027a75ca84a1d282`.
+The complete installed run `e2e-Htgt0Q` subsequently passed 22/22 on this web
+hash, with zero build time and 2,402 milliseconds of composition preflight.
+Its recorded import origin is inside the extracted payload's
+`worker/site-packages/jobctrl`, not the checkout. The coordinator's frozen
+payload readback identifies the same 313-file Python hash above, CPython 3.12.12
+and Temporal 1.7.3. Installed `results.json`/`timings.json` record exit zero,
+unchanged web build/lockfile, and all 22 expected results.
+The latest source failure was exact expected-conflict console accounting;
+the completed repair rerun passed, rather than suppressing an unobserved class
+of console errors. Results/timings were read from each run's actual JSON files
+under `/private/tmp/jobctrl-transform-1428/`.
+
+Digest evidence is `digest-cli-proof-rau9vjop/proof.json`. Profile's observed
+proof coverage is recorded in [its owning implementation record](2026-11-06-profile-transformation.md#observed-verification).
+Demo evidence is `demo/final-browser-proof.json`, tied to `e2e-tNQ809`:
+one passed journey, 23,691 milliseconds total, actual PDF text/page validation,
+no authored-text leaks, and owned listener cleanup. None of these controlled
+model boundaries establishes live-provider semantic quality.
 
 Native results were read from
 `/private/tmp/jobctrl-transform-1428/native-lifecycle/native-final-candidate.json`
@@ -62,52 +97,55 @@ equivalent, rather than claiming every final harness byte ran unchanged.
 
 All baseline source references below mean the file at `9f6f318`; current target
 paths are beneath `workers/automation/src/jobctrl/` unless stated otherwise.
+The source-complete entries record retained implementation contracts, not new
+missing-feature claims. Focused passes apply to the named observations below;
+they do not claim a separate recurring assertion for every option of a feature.
 
-| Priority / state | Retained capability and exact baseline entry | New owner / current implementation | Required reachable replacement and missing evidence |
+| Priority / state | Retained capability and exact baseline entry | New owner / current implementation | Current replacement and evidence scope |
 | --- | --- | --- | --- |
-| P0 · SOURCE COMPLETE | One local authority: `apps/api/src/server.ts`; `cli.py`; old RPC/Temporal worker | Foundation: `app/`; Runtime: new `cli.py`, `launcher/internal/launcher/python_application.go` | Legacy authority roots are deleted; conservative imports were clear and the coordinator reports whole static checks passed. Native partitions exercised real Python API/worker/Temporal and canonical CLI. Complete source/web acceptance remains open. |
-| P0 · IN PROGRESS | Profile facts/preferences/attestations/style/template: `GET/PATCH /v1/profile` (`server.ts:3111,3180`), `infrastructure/profile/` | Profile: `features/profile/{models,repository,service}.py` | Browser save/reload and CLI read/write; exact expected-version conflicts; all authored baseline roles/achievements, attachments, confirmations and provenance survive one-off synthetic transfer. Preserve uncertain authority. |
-| P0 · OPEN | Full Profile cutover including retained originals and review decisions: `legacy_evidence_cli.py`; old profile tables/files | Profile transfer + Runtime `profile-transfer --source --target --confirm-profile-only-reset` | Read-only source export; fresh target contains only Profile; every retained file and source/decision identity reconciled; non-profile state empty; failed transfer never reports success. Run outside recurring E2E. |
-| P1 · IN PROGRESS | PDF resume import preview/confirmation: `POST /v1/profile/import-resume` (`server.ts:3463`); `/profile/import/{upload,preview,confirm}` | Profile `service.py:import_resume/accept_import`; core web Profile | Real PDF extraction boundary, review/confirmation and source retention. Invalid model output or stale acceptance preserves prior Profile. |
-| P1 · IN PROGRESS | Profile required-bullet coaching and target-role suggestions: `/v1/profile/required-bullet-suggestions`, `/target-role-suggestions` (`server.ts:3250,3376`) | Profile `coach_required_bullets`, `suggest_target_roles`; core web Profile | Opposing controlled model decisions, exact saved source/version bindings, user acceptance and rejection, failed refresh preserving reviewed output, autosave/accept conflict handling. |
-| P1 · IN PROGRESS | Legacy evidence list/recover/decide: `legacy_evidence_cli.py:31,37,64` | Profile `/v1/profile/legacy-evidence` read/recover/decision routes + Runtime `legacy-evidence` | Reachable owner methods and dedicated CLI now exist. Final evidence must reconcile original/current cells, conflicts, retained uncertainty and exact current-state review fences through the transferred source inventory. |
-| P1 · IN PROGRESS | Manual Jobs, URL import, source snapshots, refresh: `/v1/jobs`, `/v1/jobs/import-url`, job detail; direct CLI `job` | Jobs `features/jobs/{bootstrap,service,repository}.py` | Actual UI capture/refresh/read, duplicate/racing capture, authoritative application URL, import progress and honest acquisition failures. Jobs must function when Discovery and Companies are omitted. |
-| P1 · IN PROGRESS | Posting availability: `endpoint-spec.ts:checkPostingAvailability`; CLI `check-availability` | Jobs acquisition/page interpretation | A named reachable availability check with source/version provenance and `available/unavailable/unknown`; a general refresh needs equivalent visible output and semantics. |
-| P1 · IN PROGRESS | Reviewed permanent deletion, hide/restore, bulk selection: `/v1/jobs/permanent-delete-selection`, `/bulk-delete-permanent` (`server.ts:1968,1974`) | Jobs `bootstrap.py:delete_selection/bulk/visibility`; owned repository and public deletion callbacks | The original raw-ID defect is repaired: current deletion requires an expiring reviewed selection and exact job/state revisions. Owner cleanup uses same-transaction public callbacks; Resumes reports rollback, foreign-file refusal and idempotent retry controls. Complete product selection/concurrency/cleanup acceptance remains open. |
-| P1 · IN PROGRESS | Bulk failed-stage retry and pending preparation: `/bulk-retry-failed`, `/bulk-run-pending-preparation`; per-job retry/run/cancel (`server.ts:2006,2074,2355,2436,2760`) | Jobs UI + `app/preparation*` + CLI recipe/retry commands | Current `preparation.run/retry` actions retain selected/pending scope and per-stage outcomes; CLI submits those actions. Final UI/worker evidence must cover bulk selection, individual failures, cancellation/restart and accepted-artifact preservation. |
-| P1 · IN PROGRESS | Discovery providers, targets, settings, schedules, search controls: `/v1/discovery/settings`, `/sources`, `/sources/:id/state`; CLI `discover/run` | Discovery `features/discovery/`; Jobs ingestion public port | All currently supported provider families including JobStreaming, literal filters, result limits, pause/cancel/restart, per-source policy and schedule changes. Observe controlled external search through real worker and canonical ingestion. |
-| P1 · IN PROGRESS | Discovery source preview, proposals, locator promote/reject/reset: `server.ts:1351,1359,1363,1388`; `source_proposals_cli.py:46,56,64` | Discovery `bootstrap.py` source-proposals/from-history and locator decision routes + Runtime dedicated CLI | The proposal lifecycle is implemented. Final acceptance must retain opt-in generation, origin receipts, rejection/disabled intent and explicit suppression reset. |
-| P1 · IN PROGRESS | Manual capture queue/recovery and quarantine: `/v1/discovery/manual-capture/:id/{prepare,import,supersede,dismiss}`, `/quarantine/:key/decision` | Discovery manual-capture prepare/import/supersede/dismiss routes; Jobs-owned quarantine through public ports | Current queue/review routes are present; final transport evidence must establish exact review lifetime, provenance, retry/ack idempotency and restart behavior. |
-| P1 · IN PROGRESS | Discovery feedback and role-match suggestions: `/v1/discovery/feedback`, `/role-match-feedback/:id/decision` | Discovery `bootstrap.py` feedback/refresh/decision routes + public model/source inputs | Equivalent named paths are implemented. Final evidence must show reviewed source-bound determinations and explicit literal filter changes, without lexical meaning or silent settings edits. |
-| P1 · IN PROGRESS | Company briefing configure/show/refresh: `company_briefing_cli.py:69,92,98`; job/interview/digest reads | Companies `features/companies/` | Source-bound public research, explicit identity links, bounded refresh and failure preservation; Companies removed independently leaves manual Jobs and core usable. |
-| P1 · IN PROGRESS | Requirement extraction, occurrences, qualified meaning and corrections: former score/posting readers | Requirements `features/requirements/{service,repository,http}.py` | Persist source spans/receipts; reuse paraphrases without collapsing qualifications; retrieval miss never proves novelty; concurrent discovery, stale source and corrections through actual API. |
-| P1 · IN PROGRESS | Person qualification, eligibility, scoring/corrections and evidence map: `/v1/jobs/:key/score-correction`, `/v1/scoring/*`, `/v1/evidence-map` | Fit `features/fit/`; public Profile/Requirements snapshots | Separate factual fit from wording coverage; preserve corrections, provenance, policies/visible score semantics and stale refresh. Actual integrated read path must consume recorded IDs. |
-| P1 · IN PROGRESS | Reusable approved wording with explicit decisions and suppression | Profile wording library + Fit authoring port | Approve/reject/defer real proposals; exact source/version fences; unchanged or rejected/deferred origins do not repeatedly spend/regenerate; no automatic approval by Fit or Resumes. |
-| P0 · IN PROGRESS | Full-baseline resume composition and baseline-copy/off: old Tailor + #1426 accepted behavior | Resumes `features/resumes/{domain,service}.py` | Exact component composition and explicit resource refusal are implemented; owner actual-API proofs cover sparse/dense cases, exact IDs, no ready-compose model calls and preservation of accepted PDF bytes. Final product evidence must still bind every authored role/achievement/fixed field and editor acceptance to the final candidate. |
-| P1 · IN PROGRESS | Editable resume drafts, revisions, comments, rendering and manual acceptance: `server.ts:1823–1941`; `endpoint-spec.ts:renderResumeReviewDraft` | Resumes service `edit/approve_edits/review/render/accept/comment`; core web Plate surfaces | Drive real editor; approved edits must become Profile-owned wording without losing the document/role inventory. Keep accepted artifact during failed render/model/recompose. Advisory finding/timeout override records the true review status separately from acceptance. |
-| P1 · IN PROGRESS | Resume template library/default/per-job assignment/current-material refresh: `server.ts:1769–1810` | Resumes repository templates + web materials | Preserve custom template edit/save/default/per-job selection and actual rendering, not only a stored opaque template record. Verify all current Profile/job/artifact Plate export surfaces. |
-| P1 · IN PROGRESS | PDF/HTML preview, DOCX export and OS opening: `/v1/artifacts/:id/{download.docx,preview.pdf,preview.html,open}`, Profile previews (`server.ts:2942–3147`) | Resumes renderer + runtime/browser download/open adapters | Actual file bytes, correct accepted revision, selectable/exported contents and full baseline; blocked path traversal; failures leave last accepted bytes. Profile preview remains reachable. |
-| P1 · IN PROGRESS | Locale translation/review/accepted exports: `endpoint-spec.ts:materialLocaleVariants/acceptedMaterialExports`; CLI `material-locale/material-export` | Resumes locale owner + Runtime named CLI commands | Named translation/export paths are present. Final acceptance must preserve source-linked independent locale revision/review/acceptance and accepted PDF/DOCX bytes; baseline copy and locale model use remain truthfully separated. |
-| P1 · IN PROGRESS | Reviewed material feedback and authored preferences: `server.ts:1857`; old material-feedback readers and Profile preferences | Resumes feedback + Profile | Retain reviewed feedback/history and user-owned preferences. Do not silently equate these with career milestones. Adaptive rules that only tune writing/omission/personas/repair are explicitly superseded by #1255; factual grounding is now invariant, not a learned policy option. See the accepted retirement record below. |
-| P1 · IN PROGRESS | Screening-answer library, proposals/review/history, application-bound answers: `endpoint-spec.ts:screeningAnswers/writeScreeningAnswer`; CLI `screening read/write` | Applications `features/applications/screening.py` | Current typed forms, review, reusable answers, prior bindings/history, semantic provenance and stale-source rejection; never infer protected attestations or submit from library edits. |
-| P0 · IN PROGRESS | Apply payload review, exact approvals, repeat checks/override, manual browser boundary and approved email execution: `/v1/apply/review-queue`, per-job apply-review/repeat/apply; CLI `apply` | Applications + Resumes accepted public snapshot + browser/mail adapters | Baseline live browser submission was already refused before browser/agent launch. Preserve manual final submit, reviewed extension autofill, exact email payload/source/attachment revalidation, at-most-once intent/receipt, cancellation/restart and ambiguous outcome handling; no Cover fields. See source-backed decision below. |
-| P1 · IN PROGRESS | Read-only browser inspection and typed findings: `apply/prompt.py:72`; `domain/apply/terminal_report.py:36`; `domain/apply/process_manager.py:511` | Applications `browser.py`, `inspection.py` and rehearsal service | The initial inspection gap is repaired: current actual page observations feed source-cited ready/expired/CAPTCHA/login/email-only/manual/failed/uncertain determinations. Email candidates require literal observed destination plus accepted-resume citations and a new payload/approval. Final composed proof remains separate; browser execution still requires manual submission. |
-| P1 · IN PROGRESS | Finite/continuous Apply batches and settings-controlled standing loop: `cli.py:1590,2429,2578`; `apply/auto_apply.py:63`; `apply/workflow.py:168` | Applications `batch/run_approved` + Foundation recurring runtime + CLI/pipeline adapter | Owner reports bounded batch and approved polling actions implemented. Still prove recurring registration, enable/disable, current approvals, score/capability/budget policy, skipped/refused job semantics, stable item identities, stop/restart and no duplicate email send. `run all` must not gain an implicit Apply stage. |
-| P1 · IN PROGRESS | Manual outcomes, outcome suggestions, Gmail scan/auth: `/v1/jobs/:key/outcomes`, `/v1/outcome-suggestions/:id/decision`, `/v1/outcomes/gmail/scan`; CLI `gmail-auth` | Applications mail/outcome owner + Runtime native auth | Controlled mailbox capture/provenance, user review and correction, outcome history/analytics; actual auth readiness/status path retained. No live communications or real mailbox in QA. |
-| P1 · IN PROGRESS | Contacts CRUD/import/provenance/research/candidate confirmation: `server.ts:3804–4025` | Contacts `features/contacts/` | Actual import, source policy, research/correction/confirmation, optimistic conflict and cancellation; Contacts works without Outreach. |
-| P1 · IN PROGRESS | Outreach draft/thread review, send logging, follow-ups: `server.ts:4027–4260` | Outreach `features/outreach/` | Reviewed draft/edit/approve/copy/send-log lifecycle, stale source rejection and follow-up schedule/complete/dismiss/due. Baseline does not itself send messages; preserve that explicit manual-send boundary. |
-| P1 · IN PROGRESS | Interview research catalog/guidance, prep/history, notes and session context: `endpoint-spec.ts:interview*`; per-job generate-interview-prep | Interviews `features/interviews/` | Question-scoped selected evidence, independent notes/history and failed replacement preservation; actual catalog/UI reachable without provider; optional Companies/Applications remain optional. |
-| P1 · IN PROGRESS | Career evidence comparison, aspirations/plans/milestones: `endpoint-spec.ts:careerLearning/writeCareerLearning` | Learning `features/learning/` | Real source-bound comparison and stale update checks; milestone activity never writes Profile facts or increases Fit; remove Learning independently. |
-| P1 · REPAIR | Digest creation/read/acknowledgement and score threshold: `GET /v1/digest`, `POST /v1/digest/acknowledge`; CLI `digest` (`cli.py:1866`) | Digest public-summary composition and acknowledgement repository; Runtime `cli.py:digest` | Current API/service are implemented, but baseline CLI `--min-fit-score` supplied a one-read threshold override; the target CLI omits it. Baseline `--acknowledge` returned the generated digest and acknowledged its `generatedAt`; target currently returns only the acknowledgement POST result. This narrow retained behavior is sent to the coordinator/Runtime for reconciliation. No external delivery capability is inferred. |
-| P1 · IN PROGRESS | Posted/market compensation, provider policy, refresh: `/v1/compensation/sources`, `/v1/jobs/:key/compensation/*`, refresh endpoints; CLI `compensation-refresh` | Compensation neutral `core/` plus adapters; composed Jobs grid/filters and feature panels | The formerly missing Jobs compensation columns/filters are present in `ComposedJobsGrid.tsx` and `AdvancedJobFilters.tsx`; current backend includes direct benchmark and geographic lineage validation. Final product acceptance must cover visible sorting/filtering, refresh mounts, provenance/date/currency/unknown semantics and owner independence. |
-| P1 · IN PROGRESS | Actual offer terms/scenarios/history/corrections/decisions: `apps/api/src/offer-routes.ts` | Offers `features/offers/{service,http}.py` | Unset terms stay unknown; concurrent expected-ID conflicts, corrected acceptance/rejection history, no unintended application stage mutation; draft sources bind exact offer revision. |
-| P1 · OPEN | Dashboard, analytics, evidence map, activity details, pipelines, runs: `server.ts:1000–1257,2891`; `apps/web/src/routes/` | Web shell composition + feature public panels/queries; Foundation action runs/events | Preserve retained reads and controls. No hardcoded empty list or generic health payload presented as equivalent analytics/operations. One SSE connection, committed events and feature-owned invalidation. |
-| P1 · IN PROGRESS | Settings, provider model inventory/verify, credentials/batch/delete, browser capability enable/disable/profile-copy: `server.ts:3500–3770`; `endpoint-spec.ts:provider*` | Foundation Settings/credentials/model providers + runtime native capabilities | Every visible control writes the value consumed by the correct new owner; preserve native store/readiness, endpoint selection, lane/spend policy and no secrets in responses/events. |
-| P1 · FOCUSED PASS | CLI setup/init/doctor/backup/run inspection/retry: old `cli.py:1003,1017,2180,3271,3404` | Runtime new `cli.py`, `runtime_commands.py`, native launcher | Setup/onboarding, detailed doctor and source backup are implemented; coordinator reports the shared-stack CLI journey passed. Native partitions prove coherent paired backup/restart and owned-process behavior. Full-run doctor integration repairs remain under the current failing suite; the separate Digest CLI row is not covered by this success. |
-| P0 · IN PROGRESS | Extension token/auth, capture/ack, discovery claim/task/lease/result/cancel, typed autofill/map: `server.ts:658–949`; `apps/extension/src/local-api.ts` | Runtime extension transport + Foundation auth + Jobs/Discovery/Applications | Browser extension actually reaches sole Python port with pair/rotate/revoke, exact capture acknowledgement, lease expiry/cancel/restart and safe fill-only mapping. Do not retain old server solely for extension parity. |
-| P1 · IN PROGRESS | Public offline demo workspace, synthetic edits/history/consent/events/reset/export: `apps/web/src/demo/{portFactory,capabilities,DemoApiClientAdapter}.ts` | Demo owner + web feature transports | Retain explicitly browser-local capabilities and truthful unavailable/rehearsed external behavior; no live local API/credentials/provider fallback. New feature HTTP adapters must be supported by demo composition. |
-| P0 · FOCUSED PASS | Installed/source startup, stop/restart, provider/browser packs, backups/rollback/update, static assets and renderer | Runtime `launcher/`, `scripts/dev`, `packaging/distribution/` | Native lifecycle/custody partitions passed on frozen source/binaries in 47.659/61.296 seconds, with real Python/worker/Temporal, paired backup/update/rollback, legacy refusal and unrelated-process preservation. Current complete source/web evidence and separate signed/platform release qualifications remain open. No release/deployment is implied. |
-| P0 · FAILING | E2E-only fresh target suite and real product coverage | E2E `apps/web/e2e/harness/`, `scripts/run-e2e.mjs`, `docs/developer/qa/python-journeys.md` | Current 21-journey source/web run `rCUXK8` has observed failures, with repairs assigned; no complete pass is claimed. Every retained row still needs final-candidate journey or explicit one-off evidence, including setup-inclusive timings. Controlled external boundaries only; no internal mocks, canned success or replay corpus. |
+| P0 · SOURCE COMPLETE | One local authority: `apps/api/src/server.ts`; `cli.py`; old RPC/Temporal worker | Foundation: `app/`; Runtime: new `cli.py`, `launcher/internal/launcher/python_application.go` | Legacy authority roots are deleted; conservative imports and whole static checks passed. Native partitions and the full installed suite exercised real Python API/worker/Temporal and canonical CLI. Whole-head hosted CI remains open. |
+| P0 · FOCUSED PASS | Profile facts/preferences/attestations/style/template: `GET/PATCH /v1/profile` (`server.ts:3111,3180`), `infrastructure/profile/` | Profile: `features/profile/{models,repository,service}.py` | Full-run form round-trip, competing same-revision saves, stale approval refusal and baseline inventory passed. Owner core/identity proofs additionally preserve independent opaque IDs, nested authored fields, exact source authority and zero-state-change HEAD controls. |
+| P0 · FOCUSED PASS | Full Profile cutover including retained originals and review decisions: `legacy_evidence_cli.py`; old profile tables/files | Profile transfer + Runtime `profile-transfer --source --target --confirm-profile-only-reset` | Final `profile-transfer-umx5un0g` proof passes full baseline/source/attachment/review preservation, exact source digest unchanged, known versus uncertain historic authority, exact target round trip, overwrite refusal and incomplete-browser refusal before mutation. Identity proof `profile-identity-m8gba6hd` preserves independent namespaces. Synthetic one-off only; no real-user reset or migration. |
+| P1 · FOCUSED PASS | PDF resume import preview/confirmation: `POST /v1/profile/import-resume` (`server.ts:3463`); `/profile/import/{upload,preview,confirm}` | Profile `service.py:import_resume/accept_import`; core web Profile | Owner `profile-provider-proof.py` passes real PDF extraction without fact mutation, exact selected-section acceptance, retained original PDF bytes and failed/invalid output preservation through the real HTTP/gateway boundary. |
+| P1 · FOCUSED PASS | Profile required-bullet coaching and target-role suggestions: `/v1/profile/required-bullet-suggestions`, `/target-role-suggestions` (`server.ts:3250,3376`) | Profile `coach_required_bullets`, `suggest_target_roles`; core web Profile | Owner provider/authoring proofs pass receipt-bound role suggestions, stable coaching IDs, invalid foreign-citation preservation, concurrent proposals, explicit rejection/defer reuse without new calls and cancelled-provider refusal. Full-run exact approval/conflict journeys passed. |
+| P1 · FOCUSED PASS | Legacy evidence list/recover/decide: `legacy_evidence_cli.py:31,37,64` | Profile `/v1/profile/legacy-evidence` read/recover/decision routes + Runtime `legacy-evidence` | Owner recovery proof passes exact confirm/reject/defer decisions and retains all decisions/revisions when recovery authority is unavailable. Final transfer proof covers original cells, valid historic confirmations and honest review-required unknowns. |
+| P1 · FOCUSED PASS | Manual Jobs, URL import, source snapshots, refresh: `/v1/jobs`, `/v1/jobs/import-url`, job detail; direct CLI `job` | Jobs `features/jobs/{bootstrap,service,repository}.py` | `e2e-w989ac` passes actual browser manual capture and manual Jobs in a reduced composition. Owner HTTP controls cover source revision/receipt replay and failed acquisition preserving the accepted posting; source snapshots and named refresh paths are implemented. |
+| P1 · FOCUSED PASS | Posting availability: `endpoint-spec.ts:checkPostingAvailability`; CLI `check-availability` | Jobs acquisition/page interpretation | Owner `jobs-discovery/posting-model-proof.json` passes actual HTTP acquisition/interpretation, active revision acceptance, changed-input refusal and invalid-provider preservation. HEAD performs zero acquisition/model work while POST remains the explicit refresh path. |
+| P1 · FOCUSED PASS | Reviewed permanent deletion, hide/restore, bulk selection: `/v1/jobs/permanent-delete-selection`, `/bulk-delete-permanent` (`server.ts:1968,1974`) | Jobs `bootstrap.py:delete_selection/bulk/visibility`; owned repository and public deletion callbacks | Original raw-ID defect is repaired. `e2e-cOQbyj` passes unavailable-criteria and exact reviewed-selection deletion fences. Owner Resumes proofs additionally retain bytes on transaction rollback, refuse foreign file replacement and complete exact retry idempotently. |
+| P1 · FOCUSED PASS | Bulk failed-stage retry and pending preparation: `/bulk-retry-failed`, `/bulk-run-pending-preparation`; per-job retry/run/cancel (`server.ts:2006,2074,2355,2436,2760`) | Jobs UI + `app/preparation*` + CLI recipe/retry commands | Current actions retain selected/pending scope and per-stage outcomes. `e2e-cOQbyj` passes genuine lost admission acknowledgement followed by reload/reconciliation without duplicate admission; full-run cancellation and worker replacement preserve accepted artifacts. |
+| P1 · FOCUSED PASS | Discovery providers, targets, settings, schedules, search controls: `/v1/discovery/settings`, `/sources`, `/sources/:id/state`; CLI `discover/run` | Discovery `features/discovery/`; Jobs ingestion public port | The full run passes controlled external provider ingestion into canonical Jobs. Registered providers, settings/targets, schedules and source controls are implemented; this focused pass does not claim live validation of every external provider family. |
+| P1 · SOURCE COMPLETE | Discovery source preview, proposals, locator promote/reject/reset: `server.ts:1351,1359,1363,1388`; `source_proposals_cli.py:46,56,64` | Discovery `bootstrap.py` source-proposals/from-history and locator decision routes + Runtime dedicated CLI | Current proposal lifecycle preserves opt-in generation, origin receipts, rejection/disabled intent and explicit suppression reset. The initial missing-path finding is closed; this row claims source completion rather than a dedicated recurring proposal journey. |
+| P1 · SOURCE COMPLETE | Manual capture queue/recovery and quarantine: `/v1/discovery/manual-capture/:id/{prepare,import,supersede,dismiss}`, `/quarantine/:key/decision` | Discovery manual-capture prepare/import/supersede/dismiss routes; Jobs-owned quarantine through public ports | Current queue/review paths implement exact review lifetimes, provenance, supersession/dismissal and retry identity. The separate full-run extension journey proves canonical capture replay/restart; it is not represented as an assertion of every manual-review option. |
+| P1 · SOURCE COMPLETE | Discovery feedback and role-match suggestions: `/v1/discovery/feedback`, `/role-match-feedback/:id/decision` | Discovery `bootstrap.py` feedback/refresh/decision routes + public model/source inputs | Equivalent named paths implement reviewed source-bound determinations and explicit literal filter changes, with no lexical meaning or silent settings edit. Initial route omission is closed. |
+| P1 · FOCUSED PASS | Company briefing configure/show/refresh: `company_briefing_cli.py:69,92,98`; job/interview/digest reads | Companies `features/companies/` | The full-run Discovery/Companies journey passes a sourced briefing and retains it after failed refresh. Semantic repository/model/pages/lock ports and public source fences replace old Runtime/SQL coupling; optional composition remains supported. |
+| P1 · FOCUSED PASS | Requirement extraction, occurrences, qualified meaning and corrections: former score/posting readers | Requirements `features/requirements/{service,repository,http}.py` | Full-run meaning-authority controls pass recorded-ID reuse, qualified distinction, invalid/stale refresh refusal and accepted-state preservation. Separate actual HTTP continuation and canonical receipt-join proofs pass the large-catalog and damaged-cache controls described below. |
+| P1 · FOCUSED PASS | Person qualification, eligibility, scoring/corrections and evidence map: `/v1/jobs/:key/score-correction`, `/v1/scoring/*`, `/v1/evidence-map` | Fit `features/fit/`; public Profile/Requirements snapshots | The full approved-wording journey exercises factual Fit separately from document coverage; source-bound requirement/qualification and stale refresh controls pass. Owner qualification/query proofs supplement those focused assertions; no semantic-accuracy score is inferred. |
+| P1 · FOCUSED PASS | Reusable approved wording with explicit decisions and suppression | Profile wording library + Fit authoring port | Full-run pending proposal and exact Profile approval controls pass; Profile owner authoring proofs also pass reject/defer origin reuse with zero calls, exact source fencing and cancelled-provider refusal. Fit/Resumes cannot silently approve wording. |
+| P0 · FOCUSED PASS | Full-baseline resume composition and baseline-copy/off: old Tailor + #1426 accepted behavior | Resumes `features/resumes/{domain,service}.py` | Full-run baseline and approved-tailoring journeys pass complete role/achievement inventory, exact approved wording and accepted PDF preservation. Owner solver proofs cover exact sparse/dense choices, finite refusal, ready-compose zero calls and actual worker cancellation/performance. |
+| P1 · FOCUSED PASS | Editable resume drafts, revisions, comments, rendering and manual acceptance: `server.ts:1823–1941`; `endpoint-spec.ts:renderResumeReviewDraft` | Resumes service `edit/approve_edits/review/render/accept/comment`; core web Plate surfaces | The actual Plate edit/approval journey passes separate draft versus accepted revisions, full inventory and historical PDF bytes. Tailored review/render failures preserve the accepted PDF; explicit advisory override is exercised without falsifying review status. |
+| P1 · FOCUSED PASS | Resume template library/default/per-job assignment/current-material refresh: `server.ts:1769–1810` | Resumes repository templates + web materials | Owner real-API baseline/template-save/render controls passed, and full-run real PDFs use the current renderer. Custom template library/default/per-job selection paths are implemented; this does not claim a separate browser assertion for every template option. |
+| P1 · FOCUSED PASS | PDF/HTML preview, DOCX export and OS opening: `/v1/artifacts/:id/{download.docx,preview.pdf,preview.html,open}`, Profile previews (`server.ts:2942–3147`) | Resumes renderer + runtime/browser download/open adapters | Full-run accepted/historical PDF.js preview, PDF text/page images and browser-download hashes passed. Owner repeated preview/HEAD and DOCX-open/save/reopen controls passed, preserving durable inventory and accepted bytes. Native OS opening remains within installed/platform qualification. |
+| P1 · SOURCE COMPLETE | Locale translation/review/accepted exports: `endpoint-spec.ts:materialLocaleVariants/acceptedMaterialExports`; CLI `material-locale/material-export` | Resumes locale owner + Runtime named CLI commands | Current paths implement source-linked independent locale revision/review/acceptance and accepted PDF/DOCX export; baseline-copy and locale model use remain distinct. This row records source completion, not a claim of live translation quality. |
+| P1 · SOURCE COMPLETE | Reviewed material feedback and authored preferences: `server.ts:1857`; old material-feedback readers and Profile preferences | Resumes feedback + Profile | Retain reviewed feedback/history and user-owned preferences. Do not silently equate these with career milestones. Adaptive rules that only tune writing/omission/personas/repair are explicitly superseded by #1255; factual grounding is now invariant, not a learned policy option. See the accepted retirement record below. |
+| P1 · SOURCE COMPLETE | Screening-answer library, proposals/review/history, application-bound answers: `endpoint-spec.ts:screeningAnswers/writeScreeningAnswer`; CLI `screening read/write` | Applications `features/applications/screening.py` | Current typed forms, review, reusable answers, prior bindings/history, semantic provenance and stale-source rejection; never infer protected attestations or submit from library edits. |
+| P0 · FOCUSED PASS | Apply payload review, exact approvals, repeat checks/override, manual browser boundary and approved email execution: `/v1/apply/review-queue`, per-job apply-review/repeat/apply; CLI `apply` | Applications + Resumes accepted public snapshot + browser/mail adapters | The full uncertain-send journey passes current Fit, exact prepared/rehearsed approval, changed-input invalidation, persisted intent before real controlled mail POST, worker death and no second send. Browser final submission remains manual as at baseline; no Cover authority remains. |
+| P1 · SOURCE COMPLETE | Read-only browser inspection and typed findings: `apply/prompt.py:72`; `domain/apply/terminal_report.py:36`; `domain/apply/process_manager.py:511` | Applications `browser.py`, `inspection.py` and rehearsal service | The initial inspection gap is repaired: current actual page observations feed source-cited ready/expired/CAPTCHA/login/email-only/manual/failed/uncertain determinations. Email candidates require literal observed destination plus accepted-resume citations and a new payload/approval. Final composed proof remains separate; browser execution still requires manual submission. |
+| P1 · SOURCE COMPLETE | Finite/continuous Apply batches and settings-controlled standing loop: `cli.py:1590,2429,2578`; `apply/auto_apply.py:63`; `apply/workflow.py:168` | Applications `batch/run_approved` + Foundation recurring runtime + CLI/pipeline adapter | Bounded batch, approved polling and settings-controlled recurring registration are implemented with stable item identities, eligibility/score/capability/budget guards and explicit enable/disable. No fresh approval is invented on retry; `run all` has no implicit Apply stage. Full-run uncertain-send restart proof covers at-most-once effects without claiming every loop option was separately exercised. |
+| P1 · FOCUSED PASS | Manual outcomes, outcome suggestions, Gmail scan/auth: `/v1/jobs/:key/outcomes`, `/v1/outcome-suggestions/:id/decision`, `/v1/outcomes/gmail/scan`; CLI `gmail-auth` | Applications mail/outcome owner + Runtime native auth | Owner actual HTTP mail/feedback/audit and late-receipt controls passed after repository separation, plus POSIX CLI OAuth interruption/recovery proof. Capture/review/history and analytics paths are implemented; no real mailbox access or live communication is claimed. |
+| P1 · FOCUSED PASS | Contacts CRUD/import/provenance/research/candidate confirmation: `server.ts:3804–4025` | Contacts `features/contacts/` | The full contact-research journey passes explicit confirmation and distinguishes invalid output from an empty result. Owner production/default networking proofs pass canonical settings consumption, private-DNS refusal and honest config failure without legacy fallback. |
+| P1 · FOCUSED PASS | Outreach draft/thread review, send logging, follow-ups: `server.ts:4027–4260` | Outreach `features/outreach/` | The full Outreach journey passes reviewed manual-send recording once and preserves its receipt after sources change. Draft/thread/follow-up controls are implemented; this capability remains a reviewed manual-send workflow. |
+| P1 · FOCUSED PASS | Interview research catalog/guidance, prep/history, notes and session context: `endpoint-spec.ts:interview*`; per-job generate-interview-prep | Interviews `features/interviews/` | Full-run preparation honors explicit empty evidence selection and preserves accepted preparation on failure. The repaired notes/Learning/Digest journey passes source ownership. Catalog/guidance/history/session paths and optional Companies composition are implemented. |
+| P1 · FOCUSED PASS | Career evidence comparison, aspirations/plans/milestones: `endpoint-spec.ts:careerLearning/writeCareerLearning` | Learning `features/learning/` | `e2e-cOQbyj` passes the repaired notes/Learning/Digest journey with a genuine observed-response delivery fault. Learning activity remains independently owned and cannot write Profile evidence or increase Fit; retained cohort provenance survives job deletion. |
+| P1 · FOCUSED PASS | Digest creation/read/acknowledgement and score threshold: `GET /v1/digest`, `POST /v1/digest/acknowledge`; CLI `digest` (`cli.py:1866`) | Digest public-summary composition and acknowledgement repository; Runtime `cli.py:digest` | The CLI defect is repaired. `digest-cli-proof-rau9vjop/proof.json` records threshold counts four/two, invalid input rejection, acknowledgement equal to generatedAt, stale acknowledgement unable to move the watermark backwards, unchanged settings and zero added model calls. `e2e-cOQbyj` also passes UI digest review. No external delivery capability is inferred. |
+| P1 · FOCUSED PASS | Posted/market compensation, provider policy, refresh: `/v1/compensation/sources`, `/v1/jobs/:key/compensation/*`, refresh endpoints; CLI `compensation-refresh` | Compensation neutral `core/` plus adapters; composed Jobs grid/filters and feature panels | The full compensation journey passes source-cited posting/manual-report evidence and accepted-state preservation on failure. Final Jobs query passes composed sorting/filtering/saved views. Direct/geographic lineage, custom source policy and neutral-core ports are implemented; every provider is not claimed live-tested. |
+| P1 · FOCUSED PASS | Actual offer terms/scenarios/history/corrections/decisions: `apps/api/src/offer-routes.ts` | Offers `features/offers/{service,http}.py` | The full Offers journey passes unknown terms, correction history and explicit compensation-source permission. Source-bound offer revisions, decisions and communication drafts remain distinct from application state. |
+| P1 · SOURCE COMPLETE | Dashboard, analytics, evidence map, activity details, pipelines, runs: `server.ts:1000–1257,2891`; `apps/web/src/routes/` | Web shell composition + feature public panels/queries; Foundation action runs/events | Current named routes and owner-read compositions are present; the initial missing-shell claim is closed. Full-run boundary proof observes one event connection and committed browser updates; action/run/recovery controls are exercised by core journeys. This does not claim every analytics view has a separate recurring assertion. |
+| P1 · FOCUSED PASS | Settings, provider model inventory/verify, credentials/batch/delete, browser capability enable/disable/profile-copy: `server.ts:3500–3770`; `endpoint-spec.ts:provider*` | Foundation Settings/credentials/model providers + runtime native capabilities | Actual shared CLI onboarding passes hidden credential entry through the canonical adapter and provider/model settings without changing authored state. Current credential/browser capability and budget controls are implemented; real provider/native-platform authentication remains separately qualified. |
+| P1 · FOCUSED PASS | CLI setup/init/doctor/backup/run inspection/retry: old `cli.py:1003,1017,2180,3271,3404` | Runtime new `cli.py`, `runtime_commands.py`, native launcher | Source and installed journeys pass actual CLI onboarding with authored-state preservation and hidden key saved through canonical setup. Doctor policy capture is repaired; native partitions prove coherent paired backup/restart and owned-process behavior. Separate Digest proof also passes. Hosted CI remains open. |
+| P0 · FOCUSED PASS | Extension token/auth, capture/ack, discovery claim/task/lease/result/cancel, typed autofill/map: `server.ts:658–949`; `apps/extension/src/local-api.ts` | Runtime extension transport + Foundation auth + Jobs/Discovery/Applications | All three full-run Extension journeys pass pairing/rotation/revocation, canonical capture replay across restart and real pending-task HEAD/lease/private-DNS/cancellation fences. Reviewed fill-only mapping is implemented; no automatic final submission is implied. |
+| P1 · VERIFIED | Public offline demo workspace, synthetic edits/history/consent/events/reset/export: `apps/web/src/demo/{portFactory,capabilities,DemoApiClientAdapter}.ts` | Demo owner + web feature transports | Actual isolated `e2e-tNQ809` and final demo proof pass real consent Worker/D1, local exact-wording approval, durable edits and accepted PDF. Zero product requests, authored-text leaks, console errors and page errors; owned cleanup passed. Verified for the recorded demo bundle, not a hosted deployment. |
+| P0 · FOCUSED PASS | Installed/source startup, stop/restart, provider/browser packs, backups/rollback/update, static assets and renderer | Runtime `launcher/`, `scripts/dev`, `packaging/distribution/` | Native lifecycle/custody partitions passed in 47.659/61.296 seconds with coherent backup/update/rollback and unrelated-process preservation. The full installed application then passed 22/22 on pinned runtimes and real bundled imports. Hosted CI and distinct signed/platform release qualifications remain open. No release/deployment is implied. |
+| P0 · VERIFIED | E2E-only fresh target suite and real product coverage | E2E `apps/web/e2e/harness/`, `scripts/run-e2e.mjs`, `docs/developer/qa/python-journeys.md` | Complete installed `e2e-Htgt0Q` passed 22/22, zero skipped/flaky cases, 202,126 ms journeys/204,642 ms total on the recorded final payload/web build. Source history remains the honest 18+3+1 accounting. This verifies the local installed candidate, not still-pending whole-head hosted CI or signed release qualification. |
 
 ## Architectural audit gates
 
@@ -193,12 +231,15 @@ and current eligible Fit for explicit approved execution; it need not recreate
 the old count's substring-URL matching behavior. The coordinator and owners have
 been informed of this distinction.
 
-The current target `features/applications/browser.py:inspect` only performs one
-GET and returns partial coverage/check labels; it does not retain observed page
-content or classify the baseline terminal states. That is the concrete remaining
-inspection gap, rather than a missing automated browser-submit capability.
-Applications reports `applications.batch` and `applications.run_approved` added;
-those declarations still need integrated recurring-runtime and E2E proof.
+The initial target `features/applications/browser.py:inspect` only returned
+partial check labels. That gap is repaired: the current bounded read-only page
+observation feeds `inspection.py` source-cited terminal determinations and
+reviewable email candidates, with no submit authority. Bounded batch and
+`applications.run_approved` plus recurring-runtime integration are implemented.
+The actual full-run application journey proves exact approval, durable intent,
+worker death and no duplicate email send. It does not turn browser inspection
+into automated final submission or imply every standing-loop option was a
+separate browser assertion.
 
 ### Current CLI/pipeline versus parked expansion
 
@@ -242,28 +283,26 @@ rather than configurable or learned rules. This is a deliberate product
 replacement, not a missing feature concealed by documentation, and this audit
 does not reopen or override it.
 
-## Initial owner notifications
+## Historical notifications and current disposition
 
-- Runtime: omitted CLI operations and reduced diagnostic behavior; owner
-  acknowledged backup/setup/doctor work and requested exact feature replacements.
-- Jobs/Discovery: reviewed permanent-delete selection/fencing, deletion cleanup,
-  source proposals, manual capture recovery, feedback and availability inventory.
-  Owner acknowledged and is implementing state revisions, reviewed selection
-  tokens and composition-registered public deletion ports; final candidate audit
-  remains pending.
-- Profile: retained legacy evidence originals/conflicts/review/recovery/decisions
-  and explicit new service/CLI replacement. Owner is adding public legacy-evidence
-  review/recovery/decision actions and `/v1/profile/legacy-evidence` routes, with
-  original/current/conflict/token output and exact Profile/source revision fences.
-  Historic confirmation validation and one-off transfer proof remain pending.
-- Career: material feedback/recommendation/review/history/rollback inventory is
-  distinct from career milestones. The coordinator subsequently resolved the
-  adaptive-policy retirement explicitly; see the accepted record above.
-- Applications/Runtime/pipeline compositor: source-backed browser-manual,
-  email-send, inspection, batch/standing and CLI/pipeline distinctions sent to
-  all owners. Final recurring-runtime and controlled-boundary evidence pending.
-- Coordinator: no final acceptance evidence yet; current services remain under
-  implementation and final composition is still an integration prerequisite.
+- Runtime's missing setup/backup/doctor behavior and the later Digest CLI
+  difference are implemented and have the focused public proofs recorded above.
+- Jobs/Discovery's reviewed deletion, source proposals, capture recovery,
+  feedback and availability replacements are implemented. The repaired negative
+  selection and complete Jobs query journeys both passed their actual reruns.
+- Profile's source/original/review/recovery/decision paths and full supporting
+  source transfer are implemented. Final synthetic transfer, identity and
+  recovery proofs passed; uncertain historical authority remains uncertain.
+- Career's milestone boundary remains distinct from reviewed material feedback
+  and authored preferences. The explicitly accepted adaptive-policy retirement
+  is recorded above; the Learning/Interview/Digest journey passed its repair run.
+- Application inspection, batch/standing integration and the manual-browser/
+  exact-approved-email distinction are implemented. Core uncertain-send and
+  real-worker-restart evidence passed without broadening submit authority.
+- The coordinator now has passing observations for all source journeys, the
+  demo and the complete 22/22 installed run. Whole-head hosted CI remains the
+  unfinished acceptance gate, rather than initial missing composition or
+  feature implementations.
 
 This initial pass performed source inspection only. No production mutation,
 dependency installation, private-data access, runtime reset, external action or
@@ -277,6 +316,12 @@ in 21 target adapters** (including the catch-all route). Every declaration's
 handler was inspected; selected downstream read services were followed to
 distinguish ordinary reads, transient rendering, and operational writes.
 No production code was changed by this auditor.
+
+The findings below are historical repaired paths. Current full-run boundary
+evidence passes valid-body HEAD nonmutation, and the extension journey passes a
+real pending task surviving HEAD, one ordinary lease and cancellation fences.
+Route-specific owner proofs retain their narrower scope; this section is not an
+unresolved request to rerun the initial 98-route inventory.
 
 The first-principles model is caller method → `LocalSecurity` admission →
 Starlette route matching → feature handler → canonical service/effect. The
@@ -293,8 +338,8 @@ must inspect that original method before doing work.
 
 | Priority | Proven path before repair | Owning layer and required control | Current evidence |
 | --- | --- | --- | --- |
-| P1 | `features/jobs/bootstrap.py:analysis/availability`, GET+POST `/v1/jobs/{job_id}/analysis` and `/availability`; exact GET else refresh. **Bodyless HEAD availability** called `JobsService.check_availability`, external acquisition, then canonical capture or failed-attempt write. | Jobs; only POST may acquire/analyze; HEAD reads accepted state. | Owner reports explicit POST dispatch fixed. Whole-HTTP HEAD and POST acquisition control requested. |
-| P1 | `app/http.py:settings`, GET+PATCH `/v1/settings`; HEAD with valid update JSON could validate providers and update settings. | Foundation; exact PATCH only, GET/HEAD read. | Owner reports handler fix plus shared normalization; final whole-app evidence pending. |
+| P1 | `features/jobs/bootstrap.py:analysis/availability`, GET+POST `/v1/jobs/{job_id}/analysis` and `/availability`; exact GET else refresh. **Bodyless HEAD availability** called `JobsService.check_availability`, external acquisition, then canonical capture or failed-attempt write. | Jobs; only POST may acquire/analyze; HEAD reads accepted state. | Owner actual-HTTP proof passed zero HEAD acquisition/model/event/revision effects and positive POST acquisition. |
+| P1 | `app/http.py:settings`, GET+PATCH `/v1/settings`; HEAD with valid update JSON could validate providers and update settings. | Foundation; exact PATCH only, GET/HEAD read. | Handler fix and shared normalization are implemented; current full-run boundary/nonmutation and actual setup controls passed. |
 | P1 | `app/credentials.py:credentials`, GET+PATCH `/v1/credentials`; HEAD JSON could call native `apply_batch(set)`. | Credentials; exact PATCH only. Exercise only the owned synthetic credential adapter. | Owner reports explicit GET/HEAD/PATCH fix and tracked HTTP regression work. |
 | P1 | `features/profile/http.py:profile/wording/sources`, GET+PATCH `/v1/profile`, GET+POST `/v1/profile/wording` and `/sources`; HEAD JSON selected save/create/add. | Profile; exact PATCH/POST only. | Owner reports real listener proof: all three valid-write-body HEAD requests without Origin returned 200, saved DTOs and activity count unchanged; intended writes remained working. |
 | P1 | `features/resumes/http.py:index/templates`, GET+POST `/v1/resumes` and `/v1/resume-templates`; HEAD JSON selected compose/template save. | Resumes; exact POST only. | Owner reports real HTTP proof preserving full resume/template lists and committed event ID, with positive POST controls. |
@@ -475,15 +520,24 @@ an evaluation corpus. The owner checked the prior accepted PDF/hash survived
 refusal and ready composition made no model calls. This audit reviewed the
 algorithm's decomposition and tie arithmetic; it did not rerun that proof.
 
-Requirements has a separate long-lived-catalog ceiling: 12 candidates per page
-and 128 pages per attempt permit at most **1,536 small meanings** in a complete
-novelty sweep. At 1,537, a truly new requirement always fails on the next page
-after 128 model comparisons. Uncommitted negative pages are discarded, so
-retries cannot make progress. At 1,536 meanings, an admitted 100-row extraction
-can need 12,800 comparison calls. Reuse may still succeed early; the refusal is
-correctly fail-closed and does not falsely establish novelty. The existing
-retrieval ranking uses the first extracted requirement's literal phrase for all
-rows and loads/verifies the full catalog/index.
+The owner subsequently reproduced an actual `Application.execute` performance
+regression: the default cancellation predicate read SQLite at every admission
+check. Cancellation is now polled at transition checkpoints and each achievement
+while every resource-bound check remains. The same worker-path case reportedly
+fell from 7.769 to 0.088 seconds, retaining exact selected IDs and accepted hash;
+an actual public cancellation terminated the solve after observed database polls
+without model calls. This focused repair is included in the owner's source
+freeze; the earlier direct-HTTP timing alone was not treated as worker proof.
+
+Requirements originally had a separate long-lived-catalog ceiling: 12 candidates
+per page and 128 pages per attempt permitted at most **1,536 small meanings** in
+a complete novelty sweep. At 1,537, a truly new requirement always failed on the
+next page after 128 model comparisons. Uncommitted negative pages were discarded,
+so retries could not progress. At 1,536 meanings, an admitted 100-row extraction
+could need 12,800 comparison calls. Refusal was correctly fail-closed. The old
+retrieval ranking also used the first extracted requirement's phrase for all
+rows. The continuation and per-incoming retrieval repair below closes these
+specific defects without weakening novelty authority.
 
 Requirements now persists source/qualified-meaning/catalog-revision-bound
 accepted comparison progress, uses per-incoming retrieval, and counts only new
@@ -521,31 +575,32 @@ copies. The original target health-only `init` gap is now closed: current
 next steps into the real owner flows. `setup` implements hidden native key entry,
 explicit managed Codex login/verification, live catalog/readiness checks,
 revision-fenced selection and mutation-free dry-run; source provisioning belongs
-to current install/dev entry points. The coordinator reports the actual shared
-CLI E2E passed. The full source/web run still has doctor integration repairs,
-so this is focused completion rather than an overall pass. Future-only CapSolver
+to current install/dev entry points. The actual shared CLI journey in
+`e2e-w989ac` passed after the doctor policy-snapshot repair. This is focused
+completion supplemented by the 22/22 installed pass; hosted CI remains separate.
+Future-only CapSolver
 storage is not proof of an active CAPTCHA solver, and obsolete framework
 prerequisites need not return.
 
 ### Remaining behavior and acceptance gaps
 
-1. **Digest CLI retention:** reconcile the missing one-read `--min-fit-score`
-   override and generate-then-acknowledge result/watermark behavior recorded in
-   the ledger. This is the remaining concrete CLI parity difference identified
-   during the current status readback, not a request to restore old Digest code.
-2. **Complete final-candidate source/web evidence:** finish the assigned repairs
-   from `rCUXK8`, then record the complete result, candidate identity and timings.
-   Focused owner handoffs and native partitions do not close those observed
-   failures or prove every ledger row.
-3. **Offline demo and one-off cutover evidence:** retain final demo acceptance
-   as pending. Reconcile the dedicated synthetic full-Profile/source transfer
-   evidence separately from recurring E2E; do not infer it from normal CRUD or
-   native legacy-start refusal. Rows without final evidence remain obligations,
-   rather than fresh claims that their implementation is absent.
-4. **Native qualification scope:** the passing local unsigned payload controls
-   establish the recorded lifecycle/custody behavior. Published signed/notarized
-   predecessor and any remaining platform qualification stay separate; no
-   release, deployment or GitHub completion is claimed.
+No concrete unimplemented retained capability is currently identified by this
+audit. The source-backed gaps raised here, including Digest CLI behavior and
+full supporting-source transfer, have an implemented replacement and recorded
+proof. Source-complete rows do not silently become retired features merely
+because their every variant is not a standalone recurring test.
+
+1. **Whole-head hosted acceptance:** retain the actual CI result on the final
+   candidate before claiming full qualification. Native policy PR #1461's
+   trusted release-manifest inventory check precedes main transformation PR
+   #1454 admission. The complete installed 22/22 result is recorded; the earlier
+   source runs remain honest 18+3+1 observations rather than rewritten passes.
+2. **Evidence qualification:** final local demo, synthetic Profile transfer,
+   native lifecycle/custody and the full pinned installed application have
+   passed. No hosted deployment or real-user reset occurred. Published
+   signed/notarized predecessor, remaining native-platform qualification and
+   live-provider semantic quality are not established by controlled external
+   boundaries or unsigned local payloads. No release/deployment is claimed.
 
 No additional capability retirement is authorized by a missing proof. The
 accepted retirements remain Cover and the specified adaptive Tailor policy;

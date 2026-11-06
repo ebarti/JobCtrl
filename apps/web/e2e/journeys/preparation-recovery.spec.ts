@@ -116,7 +116,7 @@ test("a lost preparation admission is reconciled after reload without starting i
   await expect(cohort.getByRole("combobox", { name: "Run" })).toContainText(
     runId!,
   );
-  await expect(cohort.getByText(/Recorded status: running/)).toBeVisible();
+  await expect(cohort.getByText(/^Recorded status: running/)).toBeVisible();
   await expect(
     cohort.getByText(/Recorded target job IDs: none recorded/),
   ).toBeVisible();

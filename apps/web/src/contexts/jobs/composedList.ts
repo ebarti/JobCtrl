@@ -48,6 +48,9 @@ export function useComposedJobs(input: JobGridQuery) {
   const { http } = usePorts();
   return useQuery({
     queryKey: composedJobsKeys.list(tenantId, input),
+    // Preserve only same-tenant metadata for controls while a new query loads.
+    // Consumers must not present placeholder rows as the new result.
+    placeholderData: (previous, query) => query?.queryKey[1] === tenantId ? previous : undefined,
     queryFn: async () => {
       const { column_filters, ...query } = input;
       const result = response.safeParse(await http.json<unknown>("GET", "/v1/jobs/query", { query: {

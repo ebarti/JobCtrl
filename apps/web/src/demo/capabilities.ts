@@ -177,7 +177,9 @@ export const DEMO_CAPABILITY_MANIFEST = {
   researchTasks: local("Reads synthetic research tasks."),
   researchTask: local("Reads a synthetic research task."),
   runContactResearch: unavailable("Contact research is deferred from the public-demo MVP."),
-  confirmContactCandidate: local("Confirms a synthetic candidate locally."),
+  confirmContactCandidate: unavailable(
+    "Research confirmation requires recorded source review in a private local workspace.",
+  ),
   outreachThread: local("Reads a synthetic outreach thread."),
   generateOutreachDraft: unavailable("Outreach generation is deferred from the public-demo MVP."),
   reviseOutreachDraft: unavailable("Outreach revision is deferred from the public-demo MVP."),

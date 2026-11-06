@@ -366,6 +366,7 @@ test("interview notes and learning activity preserve source ownership; the diges
   app,
   api,
   page,
+  allowRequestFailure,
 }) => {
   await createBaseline(api);
   const job = await createPosting(api, "career");
@@ -440,6 +441,16 @@ test("interview notes and learning activity preserve source ownership; the diges
     request.method() === "POST" &&
     new URL(request.url()).pathname === path &&
     request.postDataJSON()?.action === "compare";
+  let deliveredStatus: number | undefined;
+  await page.route(
+    `**${path}`,
+    async (route) => {
+      const response = await route.fetch();
+      deliveredStatus = response.status();
+      await route.abort("failed");
+    },
+    { times: 1 },
+  );
   const sent = page.waitForRequest(isCompare);
   await page.getByRole("button", { name: "Compare reviewed postings" }).click();
   const browserRequest = await sent;
@@ -487,30 +498,11 @@ test("interview notes and learning activity preserve source ownership; the diges
   expect(rawIdentity).not.toContain("Synthetic cohort");
   expect(rawIdentity).not.toContain("Learn how recovery is designed.");
   expect(rawIdentity).not.toContain(job.job_id);
-  // Reload really aborts the browser's in-flight request; the server and model
-  // boundary remain live, so the exact pending request can be reconciled.
+  // Forward the real comparison, then drop only its response at the browser
+  // transport boundary. Navigation alone need not abort an in-flight request.
   const dropped = page.waitForEvent("requestfailed", {
     predicate: (request) => request === browserRequest,
   });
-  await page.reload();
-  const failedRequest = await dropped;
-  expect(failedRequest.headers()["idempotency-key"]).toBe(requestId);
-  expect(failedRequest.failure()?.errorText).toContain("ERR_ABORTED");
-  expect(await readIdentity()).toBe(rawIdentity);
-  await openLearning();
-  await expect(
-    page.getByText("Recorded request status: in progress."),
-  ).toBeVisible();
-  await page
-    .getByLabel("Cohort name")
-    .fill("A different unconfirmed comparison");
-  await chooseJob();
-  await expect(
-    page.getByRole("button", { name: "Review selected cohort" }),
-  ).toBeDisabled();
-  await expect(
-    page.getByRole("button", { name: "Compare reviewed postings" }),
-  ).toBeDisabled();
   call.reply({
     demands: [
       {
@@ -542,6 +534,26 @@ test("interview notes and learning activity preserve source ownership; the diges
     ],
     uncertainty: "This comparison covers one selected posting.",
   });
+  const failedRequest = await dropped;
+  expect(failedRequest.headers()["idempotency-key"]).toBe(requestId);
+  allowRequestFailure(failedRequest, "net::ERR_FAILED");
+  expect(deliveredStatus).toBe(200);
+  await page.reload();
+  expect(await readIdentity()).toBe(rawIdentity);
+  await openLearning();
+  await expect(
+    page.getByText("Recorded request status: complete."),
+  ).toBeVisible();
+  await page
+    .getByLabel("Cohort name")
+    .fill("A different unconfirmed comparison");
+  await chooseJob();
+  await expect(
+    page.getByRole("button", { name: "Review selected cohort" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Compare reviewed postings" }),
+  ).toBeDisabled();
   let savedResult: Learning | undefined;
   await expect
     .poll(
@@ -691,6 +703,16 @@ test("interview notes and learning activity preserve source ownership; the diges
   await expect(
     page.getByText("Review selected cohort before model comparison"),
   ).toBeVisible();
+  let unresolvedStatus: number | undefined;
+  await page.route(
+    `**${path}`,
+    async (route) => {
+      const response = await route.fetch();
+      unresolvedStatus = response.status();
+      await route.abort("failed");
+    },
+    { times: 1 },
+  );
   const sentUnresolved = page.waitForRequest(isCompare);
   await page.getByRole("button", { name: "Compare reviewed postings" }).click();
   const unresolvedRequest = await sentUnresolved;
@@ -714,17 +736,15 @@ test("interview notes and learning activity preserve source ownership; the diges
   const droppedUnresolved = page.waitForEvent("requestfailed", {
     predicate: (request) => request === unresolvedRequest,
   });
-  await page.reload();
+  unresolvedModel.disconnect();
   const failedUnresolvedRequest = await droppedUnresolved;
   expect(failedUnresolvedRequest.headers()["idempotency-key"]).toBe(
     unresolvedId,
   );
-  expect(failedUnresolvedRequest.failure()?.errorText).toContain("ERR_ABORTED");
+  allowRequestFailure(failedUnresolvedRequest, "net::ERR_FAILED");
+  expect(unresolvedStatus).toBe(409);
+  await page.reload();
   await openLearning();
-  await expect(
-    page.getByText("Recorded request status: in progress."),
-  ).toBeVisible();
-  unresolvedModel.disconnect();
   await expect
     .poll(
       async () => {

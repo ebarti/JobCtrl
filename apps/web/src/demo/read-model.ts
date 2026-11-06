@@ -415,7 +415,7 @@ const resumeTemplate = {
       alignment: "left",
       bulletSpacing: "normal",
       accentColor: "#172033",
-      sectionOrder: ["summary", "experience", "skills"],
+      sectionOrder: ["summary", "experience", "education", "skills"],
       hiddenSections: [],
     },
     layout: {},

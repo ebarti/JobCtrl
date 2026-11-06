@@ -10,6 +10,18 @@ const originalBullet = "Coordinated a reliability improvement.";
 const editedBullet =
   "Coordinated a synthetic reliability improvement with a documented review trail.";
 
+// Playwright DOM snapshots inject scripts into the deliberately script-free
+// render sandbox. The owned negative-control probe reproduces those refusals
+// only with snapshots enabled; keep strict console checks and other trace data.
+test.use({
+  trace: {
+    mode: "retain-on-failure",
+    snapshots: false,
+    screenshots: true,
+    sources: true,
+  },
+});
+
 // The Browser plugin is unavailable in this environment. This journey uses the
 // repository Playwright browser against the real demo bundle and consent Worker.
 test("demo tour retains local exact wording approval, durable edits and a real accepted PDF without product network requests", async ({

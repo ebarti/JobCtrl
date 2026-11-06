@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { APIRequestContext } from "@playwright/test";
+import type { APIRequestContext, Response } from "@playwright/test";
 
 import {
   test,
@@ -129,6 +129,7 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
   page,
   api,
   app,
+  allowResponseError,
 }, testInfo) => {
   const { library } = await createBaseline(api);
   // This journey records the existing score stage. Tailored preparation has
@@ -270,6 +271,29 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
     .getByRole("button", { name: "Filter Stage column", exact: true })
     .click();
   await stages.getByRole("checkbox", { name: "fit", exact: true }).check();
+  await expect(stages).toBeVisible();
+  // The modal hides its background from accessibility. Inspect accepted rows
+  // without interacting with that background while keeping this dialog open.
+  const backgroundTable = page.getByRole("table", {
+    name: "Jobs table",
+    exact: true,
+    includeHidden: true,
+  });
+  await expect(backgroundTable.locator("tbody tr")).toHaveCount(1);
+  const unknownStage = stages.getByRole("checkbox", {
+    name: "Unknown (no recorded value)",
+    exact: true,
+  });
+  await unknownStage.check();
+  await expect(
+    stages.getByRole("checkbox", { name: "fit", exact: true }),
+  ).toBeChecked();
+  await expect(backgroundTable.locator("tbody tr")).toHaveCount(50);
+  await unknownStage.uncheck();
+  await expect(
+    stages.getByRole("checkbox", { name: "fit", exact: true }),
+  ).toBeChecked();
+  await expect(backgroundTable.locator("tbody tr")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(table.locator("tbody tr")).toHaveCount(1);
   await page.getByText("Job filters", { exact: true }).click();
@@ -334,6 +358,7 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
     "aria-sort",
     "descending",
   );
+  await page.getByText("Job filters", { exact: true }).click();
   await expect(
     page.getByLabel("Minimum person fit (1–10)", { exact: true }),
   ).toHaveValue("10");
@@ -373,35 +398,55 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
     .getByRole("button", { name: "Clear all filters", exact: true })
     .click();
   await expect(table.locator("tbody tr")).toHaveCount(50);
+  const secondPage = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "GET" &&
+      url.pathname === "/v1/jobs/query" &&
+      url.searchParams.get("offset") === "50" &&
+      response.status() === 200
+    );
+  });
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(
     page.getByText("Page 2 of 2 · 52 rows", { exact: true }),
   ).toBeVisible();
   expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
   expect(new URL(page.url()).searchParams.get("query_revision")).toBeTruthy();
-  const continuation = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return (
-      url.pathname === "/v1/jobs/query" &&
-      url.searchParams.get("offset") === "50" &&
-      response.status() === 409
-    );
-  });
-  await json(api, "post", `/v1/jobs/${fillers[0]!.job_id}/hide`, {});
-  expect((await (await continuation).json()).error.code).toBe(
-    "revision_conflict",
-  );
-  await expect(
-    page.getByRole("alert").filter({ hasText: "sources changed" }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Reload from first page", exact: true })
-    .click();
-  await expect(
-    page.getByText("Page 1 of 2 · 51 rows", { exact: true }),
-  ).toBeVisible();
-  expect(new URL(page.url()).searchParams.get("offset")).toBe("0");
-  expect(new URL(page.url()).searchParams.has("query_revision")).toBe(false);
+  const secondPageUrl = (await secondPage).url();
+  const conflicts: Response[] = [];
+  const observeConflict = (response: Response) => {
+    if (
+      response.request().method() === "GET" &&
+      response.url() === secondPageUrl
+    )
+      conflicts.push(response);
+  };
+  page.on("response", observeConflict);
+  try {
+    await json(api, "post", `/v1/jobs/${fillers[0]!.job_id}/hide`, {});
+    await expect(
+      page.getByRole("alert").filter({ hasText: "sources changed" }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Reload from first page", exact: true })
+      .click();
+    await expect(
+      page.getByText("Page 1 of 2 · 51 rows", { exact: true }),
+    ).toBeVisible();
+    expect(new URL(page.url()).searchParams.get("offset")).toBe("0");
+    expect(new URL(page.url()).searchParams.has("query_revision")).toBe(false);
+  } finally {
+    page.off("response", observeConflict);
+  }
+  expect(conflicts.length).toBeGreaterThan(0);
+  for (const response of conflicts) {
+    await allowResponseError(response, {
+      method: "GET",
+      status: 409,
+      code: "revision_conflict",
+    });
+  }
   expect((await json<Query>(api, "get", "/v1/jobs/query")).total).toBe(51);
 });
 
@@ -412,6 +457,7 @@ test.describe("Jobs without optional read owners", () => {
     page,
     api,
     app,
+    allowResponseError,
   }, testInfo) => {
     const target = await capture(
       api,
@@ -441,24 +487,57 @@ test.describe("Jobs without optional read owners", () => {
     await page
       .getByRole("combobox", { name: "Posted pay", exact: true })
       .selectOption("known");
-    const rejected = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/v1/jobs/query" &&
-        response.status() === 409,
-    );
-    await page
-      .getByRole("button", { name: "Apply filters", exact: true })
-      .click();
-    expect((await (await rejected).json()).error.code).toBe(
-      "query_feature_unavailable",
-    );
-    await expect(
-      page.getByRole("alert").filter({ hasText: "unavailable feature" }),
-    ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Clear all filters", exact: true })
-      .click();
-    await expect(table.locator("tbody tr")).toHaveCount(2);
+    const unavailableQuery = {
+      job_state: "active",
+      sort: "discovered_at",
+      direction: "desc",
+      offset: "0",
+      limit: "50",
+      fit_state: "all",
+      posted_known: "known",
+      market_known: "all",
+      compensation_warnings: "all",
+    };
+    const unavailableResponses: Response[] = [];
+    const observeUnavailable = (response: Response) => {
+      const url = new URL(response.url());
+      if (
+        response.request().method() === "GET" &&
+        url.pathname === "/v1/jobs/query" &&
+        Array.from(url.searchParams).length ===
+          Object.keys(unavailableQuery).length &&
+        Object.entries(unavailableQuery).every(
+          ([key, value]) => url.searchParams.get(key) === value,
+        )
+      )
+        unavailableResponses.push(response);
+    };
+    page.on("response", observeUnavailable);
+    try {
+      await page
+        .getByRole("button", { name: "Apply filters", exact: true })
+        .click();
+      await expect(
+        page.getByRole("alert").filter({ hasText: "unavailable feature" }),
+      ).toBeVisible();
+      await page
+        .getByRole("button", { name: "Clear all filters", exact: true })
+        .click();
+      await expect(table.locator("tbody tr")).toHaveCount(2);
+    } finally {
+      page.off("response", observeUnavailable);
+    }
+    expect(unavailableResponses.length).toBeGreaterThan(0);
+    for (const response of unavailableResponses) {
+      await allowResponseError(response, {
+        method: "GET",
+        status: 409,
+        code: "query_feature_unavailable",
+      });
+      expect((await response.json()).error.details.fields).toEqual([
+        "compensation_min_eur",
+      ]);
+    }
 
     await table
       .getByRole("checkbox", { name: `Select ${target.title}`, exact: true })
@@ -479,7 +558,26 @@ test.describe("Jobs without optional read owners", () => {
     await page
       .getByRole("button", { name: "Move selected to deleted", exact: true })
       .click();
-    expect((await stale).status()).toBe(409);
+    const staleSelection = await stale;
+    expect(staleSelection.request().postDataJSON()).toEqual({
+      jobIds: [target.job_id, peer.job_id],
+      expectedRevisions: {
+        [target.job_id]: target.revision,
+        [peer.job_id]: peer.revision,
+      },
+      expectedStateRevisions: {
+        [target.job_id]: target.state_revision,
+        [peer.job_id]: peer.state_revision,
+      },
+    });
+    await allowResponseError(staleSelection, {
+      method: "POST",
+      status: 409,
+      code: "revision_conflict",
+    });
+    expect((await staleSelection.json()).error.details.job_id).toBe(
+      peer.job_id,
+    );
     await expect(
       page
         .getByRole("alert")

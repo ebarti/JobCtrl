@@ -3,6 +3,7 @@ import {
   expect,
   type APIRequestContext,
   type Request,
+  type Response,
 } from "@playwright/test";
 
 // JavaScript owns native processes. It is used only by the E2E harness.
@@ -67,12 +68,35 @@ type Fixtures = {
     errorText: "net::ERR_FAILED";
   }[];
   allowRequestFailure: (request: Request, errorText: "net::ERR_FAILED") => void;
+  expectedResponseErrors: Response[];
+  allowResponseError: (
+    response: Response,
+    expected: { method: "GET" | "POST"; status: 409; code: string },
+  ) => Promise<void>;
 };
 
 export const test = base.extend<Fixtures, WorkerFixtures>({
   features: [undefined, { option: true }],
   expectedTransportFailures: async ({}, use) => {
     await use([]);
+  },
+  expectedResponseErrors: async ({}, use) => {
+    await use([]);
+  },
+  allowResponseError: async ({ app, expectedResponseErrors }, use) => {
+    await use(async (response, expected) => {
+      expect(expected.status).toBe(409);
+      expect(response.status()).toBe(expected.status);
+      expect(response.request().method()).toBe(expected.method);
+      expect(new URL(response.url()).origin).toBe(app.baseURL);
+      const body = (await response.json()) as { error?: { code?: unknown } };
+      expect(
+        body.error?.code,
+        "Only the explicitly expected domain refusal may allow its native console entry",
+      ).toBe(expected.code);
+      expect(expectedResponseErrors.includes(response)).toBe(false);
+      expectedResponseErrors.push(response);
+    });
   },
   allowRequestFailure: async ({ expectedTransportFailures }, use) => {
     await use((request, errorText) => {
@@ -140,7 +164,10 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     await use(app.baseURL);
   },
   consoleErrors: [
-    async ({ page, expectedTransportFailures }, use) => {
+    async (
+      { page, expectedTransportFailures, expectedResponseErrors },
+      use,
+    ) => {
       const errors: string[] = [];
       const pageErrors: string[] = [];
       page.on("pageerror", (error) => {
@@ -158,6 +185,14 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
         // At most one browser-native resource error for this exact observed
         // aborted Request; no application message or HTTP status is allowed.
         const native = `Failed to load resource: ${errorText} at ${request.url()}`;
+        const index = unexpected.indexOf(native);
+        if (index !== -1) unexpected.splice(index, 1);
+      }
+      for (const response of expectedResponseErrors) {
+        // Intentional conflict controls require a real response, exact method,
+        // status and domain code. Allow one native resource entry for its full
+        // URL, keeping extra requests and application errors visible.
+        const native = `Failed to load resource: the server responded with a status of ${response.status()} (${response.statusText()}) at ${response.url()}`;
         const index = unexpected.indexOf(native);
         if (index !== -1) unexpected.splice(index, 1);
       }
