@@ -19,7 +19,6 @@ jobs:
     timeout-minutes: 15
     env:
       UV_PYTHON: '3.14.4'
-      UV_EXCLUDE_NEWER: 'false'
       UV_LOCKED: '1'
     steps:
       - name: Checkout

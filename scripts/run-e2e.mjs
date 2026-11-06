@@ -75,11 +75,14 @@ const environment = {
   JOBCTRL_E2E_RUN_TOKEN: token,
   JOBCTRL_E2E_INSTALLED: installed ? "1" : "0",
   ...(consoleReporter ? { JOBCTRL_E2E_CONSOLE_REPORTER: consoleReporter } : {}),
-  UV_EXCLUDE_NEWER: "false",
   UV_LOCKED: "1",
   VITE_JOBCTRL_API_BASE_URL: "",
   VITE_JOBCTRL_HIDE_DEVTOOLS: "1",
 };
+// Keep the project's locked cutoffs; do not inherit a caller's global cutoff.
+// Older pinned uv versions do not accept a "false" disabling sentinel.
+delete environment.UV_EXCLUDE_NEWER;
+delete environment.UV_EXCLUDE_NEWER_PACKAGE;
 if (installed) {
   environment.JOBCTRL_E2E_PAYLOAD_DIR = await realpath(
     environment.JOBCTRL_E2E_PAYLOAD_DIR,

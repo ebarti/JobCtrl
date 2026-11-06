@@ -75,7 +75,6 @@ function environment(home) {
     PYTHONUNBUFFERED: "1",
     PYTHONDONTWRITEBYTECODE: "1",
     PYTHONNOUSERSITE: "1",
-    UV_EXCLUDE_NEWER: "false",
     UV_LOCKED: "1",
     LANGFUSE_DISABLE: "1",
     HTTP_PROXY: "http://127.0.0.1:9",
