@@ -65,7 +65,7 @@ jobs:
           corepack pnpm --filter @jobctrl/api-client check
           corepack pnpm python:lint
           corepack pnpm python:build
-          corepack pnpm launcher:check
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 corepack pnpm launcher:check
           corepack pnpm distribution:audit
       - name: Check frontend types and feature boundaries
         if: inputs.surface == 'frontend'
