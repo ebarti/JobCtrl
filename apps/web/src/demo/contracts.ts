@@ -1,4 +1,5 @@
-import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
+import type { DemoApiClientPort } from "./DemoApi.js";
+import type { DemoSettingsSnapshot } from "./settings.js";
 
 export const APP_MODES = ["local", "demo"] as const;
 export type AppMode = (typeof APP_MODES)[number];
@@ -18,9 +19,10 @@ export interface DemoCapability {
 }
 
 /** Compile-time parity contract for the later DemoApiClientAdapter. */
-export type DemoCapabilityManifest = Readonly<Record<keyof ApiClientPort, DemoCapability>>;
+export type DemoCapabilityManifest = Readonly<Record<keyof DemoApiClientPort, DemoCapability>>;
 
-export type ApiClientResponse<TMethod extends keyof ApiClientPort> = ApiClientPort[TMethod] extends (
+export type ApiClientResponse<TMethod extends keyof DemoApiClientPort> =
+  DemoApiClientPort[TMethod] extends (
   ...args: never[]
 ) => Promise<infer TResponse>
   ? TResponse
@@ -30,7 +32,7 @@ export const DEMO_EXTERNAL_REHEARSAL_OPERATIONS = [
   "openArtifact",
   "applyJob",
   "markApplied",
-] as const satisfies readonly (keyof ApiClientPort)[];
+] as const satisfies readonly (keyof DemoApiClientPort)[];
 export type DemoExternalRehearsalOperation = (typeof DEMO_EXTERNAL_REHEARSAL_OPERATIONS)[number];
 
 export interface DemoRelativeTimestamp {
@@ -90,7 +92,6 @@ export interface DemoArtifacts {
   readonly profileResumePdf: DemoArtifactAsset;
   readonly tailoredResumeHtml: DemoArtifactAsset;
   readonly tailoredResumePdf: DemoArtifactAsset;
-  readonly coverLetter: DemoArtifactAsset;
   readonly interviewNotes: DemoArtifactAsset;
 }
 
@@ -122,7 +123,7 @@ export type DemoRouteData = Readonly<Record<DemoRouteName, readonly DemoRouteRec
 
 /**
  * Typed response payloads P2 can serve directly from normalized seed data.
- * These remain current ApiClientPort return types; no demo-only response union
+ * These remain current DemoApiClientPort return types; no demo-only response union
  * is introduced.
  */
 export interface DemoReadModel {
@@ -174,7 +175,7 @@ export interface DemoReadModel {
     /** Values are never present; this supports the read-only explanation route. */
     readonly credentials: ApiClientResponse<"credentials">;
   };
-  readonly settings: ApiClientResponse<"settings">;
+  readonly settings: DemoSettingsSnapshot;
   /**
    * Extension tokens are intentionally absent: their capability-manifest
    * entry is `unavailable`, so P2 must not manufacture a secret-shaped value.
@@ -193,7 +194,7 @@ export interface DemoReadModel {
 
 export interface DemoSeedValue {
   readonly schemaVersion: 1;
-  readonly seedVersion: "2026-07-31.1";
+  readonly seedVersion: "2026-11-06.1";
   readonly title: string;
   readonly artifacts: DemoArtifacts;
   readonly readModel: DemoReadModel;

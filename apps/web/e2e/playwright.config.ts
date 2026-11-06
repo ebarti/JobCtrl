@@ -1,132 +1,39 @@
+import os from "node:os";
 import path from "node:path";
-import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
 
-const here = fileURLToPath(new URL(".", import.meta.url));
-const repoRoot = path.resolve(here, "..", "..", "..");
-
-const { resolveE2eWebServerMode } = createRequire(import.meta.url)(
-  "./fixtures/start-web.cjs",
-) as {
-  resolveE2eWebServerMode(value: string | undefined): "preview" | "dev";
-};
-const E2E_WEB_SERVER = resolveE2eWebServerMode(
-  process.env["JOBCTRL_E2E_WEB_SERVER"],
-);
-const { configureE2eWorkspace } = createRequire(import.meta.url)(
-  "./fixtures/owned-workspace.cjs",
-) as {
-  configureE2eWorkspace(): { appDir: string };
-};
-const E2E_DIR = configureE2eWorkspace().appDir;
-const E2E_DB = process.env["JOBCTRL_E2E_DB_PATH"]!;
-const E2E_CONFIG = process.env["JOBCTRL_E2E_CONFIG_PATH"]!;
-const E2E_SERVICE_HOME = process.env["JOBCTRL_E2E_SERVICE_HOME"]!;
-const E2E_PLAYWRIGHT_BROWSERS_PATH = process.env["PLAYWRIGHT_BROWSERS_PATH"];
-
-process.env["JOBCTRL_E2E_APP_DIR"] = E2E_DIR;
-process.env["JOBCTRL_E2E_DB_PATH"] = E2E_DB;
-process.env["JOBCTRL_E2E_CONFIG_PATH"] = E2E_CONFIG;
-
-// Ports default to 8767/5174 (unchanged) but are overridable so parallel
-// worktrees / local stacks can run E2E without colliding on a busy port.
-const API_PORT = process.env["JOBCTRL_E2E_API_PORT"] ?? "8767";
-const WEB_PORT = process.env["JOBCTRL_E2E_WEB_PORT"] ?? "5174";
-const RUN_KEY = createHash("sha256")
-  .update(path.resolve(E2E_DIR))
-  .digest("hex")
-  .slice(0, 12);
-// Keep successful-run attachments beside the owned JUnit report. A broker
-// collecting that report's directory must retain PDFs and every-page images,
-// not just Playwright's .last-run.json in the checkout.
-const junitOutput = process.env["PLAYWRIGHT_JUNIT_OUTPUT_FILE"];
-// A listener does not prove which database it serves. Every mode owns both servers.
-const DOCS_SERVICE_ENVIRONMENT =
-  process.env["JOBCTRL_DOCS_SCREENSHOTS"] === "1"
-    ? {
-        HOME: E2E_SERVICE_HOME,
-        USERPROFILE: E2E_SERVICE_HOME,
-        XDG_CONFIG_HOME: path.join(E2E_SERVICE_HOME, ".config"),
-        XDG_CACHE_HOME: path.join(E2E_SERVICE_HOME, ".cache"),
-        ...(E2E_PLAYWRIGHT_BROWSERS_PATH
-          ? { PLAYWRIGHT_BROWSERS_PATH: E2E_PLAYWRIGHT_BROWSERS_PATH }
-          : {}),
-        TZ: "UTC",
-        // Profile screenshot capture uses the real profile-preview renderer.
-        // Its source runtime must not rewrite the committed Python lockfile.
-        UV_LOCKED: "1",
-      }
-    : {};
+// `run-e2e.mjs` allocates this directory. Listing tests starts no application
+// and requires no writable application state.
+const evidence =
+  process.env["JOBCTRL_E2E_RUN_DIR"] ??
+  path.join(os.tmpdir(), "jobctrl-e2e-list");
+const consoleReporters = (process.env["JOBCTRL_E2E_CONSOLE_REPORTER"] ?? (process.env["CI"] ? "github" : "list"))
+  .split(",").filter((name) => name !== "json" && name !== "junit");
 
 export default defineConfig({
-  testDir: "./tests",
-  outputDir: junitOutput ? `${path.resolve(junitOutput)}.artifacts` : path.join(repoRoot, "dist", "playwright-report", RUN_KEY),
+  testDir: "./journeys",
+  outputDir: path.join(evidence, "playwright"),
   fullyParallel: false,
-  forbidOnly: Boolean(process.env["CI"]),
-  retries: process.env["CI"] ? 2 : 0,
+  forbidOnly: true,
+  retries: 0,
   workers: 1,
-  reporter: junitOutput ? [[process.env["CI"] ? "github" : "list"], ["junit"]] : process.env["CI"] ? "github" : "list",
-  globalSetup: "./fixtures/global-setup.ts",
-  globalTeardown: "./fixtures/global-teardown.ts",
+  timeout: 90_000,
+  globalTimeout: 480_000,
+  expect: { timeout: 10_000 },
+  reporter: [
+    ...consoleReporters.map((name): [string, Record<string, unknown>] => [name, name === "html" ? { outputFolder: path.join(evidence, "html"), open: "never" } : {}]),
+    ["junit", { outputFile: path.join(evidence, "junit.xml") }],
+    ["json", { outputFile: path.join(evidence, "results.json") }],
+  ],
   use: {
-    baseURL: `http://127.0.0.1:${WEB_PORT}`,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "off",
+    actionTimeout: 10_000,
+    navigationTimeout: 20_000,
   },
   projects: [
-    {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
-      grepInvert: /@mobile/,
-    },
-    {
-      name: "mobile-chromium",
-      grep: /@mobile/,
-      use: {
-        ...devices["Desktop Chrome"],
-        viewport: { width: 390, height: 844 },
-      },
-    },
-  ],
-  webServer: [
-    {
-      command: "node apps/web/e2e/fixtures/start-api.cjs",
-      port: Number(API_PORT),
-      cwd: repoRoot,
-      env: {
-        ...DOCS_SERVICE_ENVIRONMENT,
-        JOBCTRL_API_PORT: API_PORT,
-        JOBCTRL_DIR: E2E_DIR,
-        JOBCTRL_DB_PATH: E2E_DB,
-        JOBCTRL_CONFIG_PATH: E2E_CONFIG,
-        JOBCTRL_E2E_WEB_PORT: WEB_PORT,
-        // INSPECT-01: route material-generation dispatch to the deterministic
-        // E2E stub (no worker subprocess, no LLM) while keeping the
-        // worker-readiness gate live against the seeded heartbeat.
-        JOBCTRL_E2E_STUB_DISPATCH: "1",
-      },
-      reuseExistingServer: false,
-      timeout: 120_000,
-    },
-    {
-      // Build once per owned run: fresh browser contexts load the production
-      // chunks instead of repeatedly fetching Vite's development module graph.
-      command: "node apps/web/e2e/fixtures/start-web.cjs",
-      port: Number(WEB_PORT),
-      cwd: repoRoot,
-      env: {
-        ...DOCS_SERVICE_ENVIRONMENT,
-        JOBCTRL_E2E_WEB_SERVER: E2E_WEB_SERVER,
-        JOBCTRL_E2E_WEB_PORT: WEB_PORT,
-        VITE_JOBCTRL_API_BASE_URL: "",
-        VITE_DEV_API_PROXY_TARGET: `http://127.0.0.1:${API_PORT}`,
-        VITE_JOBCTRL_HIDE_DEVTOOLS: "1",
-      },
-      reuseExistingServer: false,
-      timeout: 120_000,
-    },
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    ...(process.env["JOBCTRL_E2E_INSTALLED"] === "1" ? [] : [{ name: "demo-chromium", testDir: ".", testMatch: "demo-runtime.spec.ts", use: { ...devices["Desktop Chrome"] } }]),
   ],
 });

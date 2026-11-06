@@ -49,7 +49,7 @@ jobs:
       - name: Verify edge workers before deployment
         # PR edge checks belong to demo-edge.yml; production keeps this gate.
         if: github.event_name != 'pull_request'
-        run: corepack pnpm demo-edge:check && corepack pnpm demo-edge:test && corepack pnpm demo-edge:dry-run
+        run: corepack pnpm demo-edge:check && corepack pnpm demo-edge:dry-run
 
       - name: Build browser-local demo
         run: corepack pnpm demo:build

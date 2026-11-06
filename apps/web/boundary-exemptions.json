@@ -25,25 +25,6 @@
         "localStorage"
       ],
       "reason": "Existing navigation-surviving wizard persistence; scoped storage-port migration debt."
-    },
-    "contexts/materials/components/ResumeAuditPins.tsx": {
-      "symbols": [
-        "fetch"
-      ],
-      "reason": "Existing abortable HTML preview resource load; scoped preview-port migration debt."
-    },
-    "views/apply-review/ApplyReviewView.tsx": {
-      "symbols": [
-        "artifactPreviewPdfUrl",
-        "artifactPreviewHtmlUrl"
-      ],
-      "reason": "Pure preview URL construction; queries and mutations remain context-owned."
-    },
-    "views/artifacts/ArtifactDetailPanel.tsx": {
-      "symbols": [
-        "artifactPreviewPdfUrl"
-      ],
-      "reason": "Pure preview URL construction; queries and mutations remain context-owned."
     }
   }
 }

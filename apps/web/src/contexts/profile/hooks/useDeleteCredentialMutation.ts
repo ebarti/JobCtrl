@@ -1,32 +1,12 @@
-import type { CredentialKey } from "@jobctrl/contracts";
-import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
+import type { CredentialKey } from "../../settings/credentials.js";
+import { useCredentialBatchMutation } from "../../settings/credentials.js";
 
-import { useTenantId } from "../../../shared/providers/TenantProvider.js";
-import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
-import type { CredentialsResponse } from "@jobctrl/contracts";
-import { patchCredentialConfigured } from "../lib/profile-patches.js";
-import { profileKeys } from "../queryKeys.js";
-
-export function useDeleteCredentialMutation(): UseMutationResult<
-  CredentialsResponse,
-  Error,
-  CredentialKey
-> {
-  const tenantId = useTenantId();
-  const { api } = usePorts();
-  const queryClient = useQueryClient();
-  return useMutation(
-    createOptimisticMutation<CredentialsResponse, CredentialKey>(queryClient, {
-      mutationKey: profileKeys.credentials(tenantId),
-      mutationFn: (key) => api.deleteCredential(key),
-      optimisticUpdates: (key) => [
-        {
-          queryKey: profileKeys.credentials(tenantId),
-          patch: (current) => patchCredentialConfigured(current, key, false),
-        },
-      ],
-      settle: () => [profileKeys.credentials(tenantId)],
+export function useDeleteCredentialMutation() {
+  const mutation = useCredentialBatchMutation();
+  return {
+    ...mutation,
+    mutateAsync: (key: CredentialKey, expectedRevision?: number) => mutation.mutateAsync({
+      operations: [{ operation: "delete", key }], ...(expectedRevision !== undefined ? { expectedRevision } : {}),
     }),
-  );
+  };
 }

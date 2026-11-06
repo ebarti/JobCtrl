@@ -5,6 +5,7 @@ import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
 import { profileKeys } from "../queryKeys.js";
+import { importResume } from "../client.js";
 
 export function useImportResumeMutation(): UseMutationResult<
   ProfileImportResponse,
@@ -12,12 +13,12 @@ export function useImportResumeMutation(): UseMutationResult<
   ProfileImportRequest
 > {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation(
     createOptimisticMutation<ProfileImportResponse, ProfileImportRequest>(queryClient, {
       mutationKey: profileKeys.profile(tenantId),
-      mutationFn: (body) => api.importResume(body),
+      mutationFn: (body) => importResume(http, body),
       settle: () => [profileKeys.profile(tenantId)],
     }),
   );

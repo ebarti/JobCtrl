@@ -15,9 +15,10 @@ development and the installed product.
   closure for each non-redistributed provider pack.
 - `license-evidence.lock.json` and `node-license-evidence.lock.json` pin the
   immutable upstream evidence used when installed packages omit license text.
-- `playwright-mcp/` and `api-native/` contain isolated production-only pnpm
-  closures for the MCP runtime and the API's native SQLite binding. Install
-  scripts are disabled; the native binary comes only from `components.lock.json`.
+- `playwright-mcp/` contains the isolated production-only pnpm closure for
+  the optional MCP browser runtime. The application API and worker execute the
+  same Python wheel; neither a Node API bundle nor a native Node SQLite binding
+  is shipped. SQLite is owned by the Python application.
 - `capability-policy.json` fixes the required capabilities, their safe defaults,
   and the bundled components each capability may invoke.
 - `platforms.json` defines supported targets, launcher compatibility, signing
@@ -53,31 +54,60 @@ development and the installed product.
   the descriptor Ed25519 signature against `release-keys.json` and requires
   published-asset smoke evidence before the tap workflow can write.
 
+## Python runtime cutover inventory
+
+These are the transformation candidate's entry points. They do not establish
+that an artifact has been released, installed, or qualified on each platform.
+
+| Surface | Target entry point and authority |
+| --- | --- |
+| Attached source fleet | `corepack pnpm dev` / `scripts/dev run` retains the source process owners and starts `jobctrl.app.server` and `jobctrl.app.worker` through the shared Python environment. |
+| Detached source fleet | Explicit `corepack pnpm dev:start`; `dev:status`, `dev:stop`, and `scripts/dev restart` retain identity-checked process ownership. |
+| Source shell launcher | `scripts/jobctrl-launcher` invokes `python -m jobctrl`; dependency synchronization belongs to setup, not a command invocation. |
+| Installed fleet | `launcher/runtime-manifest.json` invokes the bundled `python/bin/python3 -I -B -m jobctrl.app.server` and `.worker`; the Python wheel under `worker/site-packages` owns both. |
+| CLI business actions | `jobctrl action FEATURE.ACTION --payload FILE [--background]`, named feature commands, and explicit preparation recipes call `Application.execute` / `submit`. `run-status`, `runs`, `cancel`, and the durable Apply poll use the same application records. |
+| CLI reads and ordinary writes | `jobctrl request METHOD /v1/PATH --payload FILE` executes the actual registered HTTP route in-process with the local capability and loopback identity. It does not need a second listening server or a second business repository. |
+| Native setup and credentials | `setup`, `doctor`, `credentials migrate`, `capability`, `provider-pack-install`, and `gmail-auth` retain their actual native/provider boundaries. Credentials use the shared OS-user mutation guard and revision fence. |
+| CLI exports and backup | `material-export`, `material-locale`, and `backup` produce real document bytes or a consistent SQLite snapshot. Existing output paths are refused. |
+| Browser extension | `jobctrl.extension_transport` preserves pairing, stable capture receipts, selected-installation browser leases and exact active-action/cancellation guards. Jobs owns captured posting interpretation; Applications owns restricted autofill and mapping. No application submission authority is granted to the extension. |
+| Synthetic public demo | `apps/web/src/demo` retains its IndexedDB workspace and explicit synthetic HTTP adapter; `apps/demo-edge` remains the separate consent/telemetry boundary and never forwards product writes to the local application. |
+| Fresh-state transfer | Explicit `profile-transfer` imports only the complete Profile into a previously nonexistent target. A complete browser-source/attachment manifest is required. Legacy startup cannot trigger this operation. |
+| Application QA | The fresh target journeys run through `scripts/run-e2e.mjs`. `--installed` uses the exact extracted interpreter, frontend assets and Temporal executable and skips the source frontend build. |
+
+Browser capability HTTP requests retain the existing `/v1/browser-capabilities`
+paths. Detected-browser/profile metadata remains local; synthetic QA cannot
+inspect an account holder's browser profiles. Browser copy and credential
+changes remain explicit actions. `HEAD` requests to extension pairing and
+browser lease endpoints preserve the original wire method and cannot claim a
+lease or refresh the selected installation's heartbeat.
+
 The inventory records top-level components; the release SBOM records every
 transitive package, binary, dynamic library, and license. A production builder
 must fail when a payload component is absent from the inventory, marked
 developer-only, not approved for bundling, or missing its required attribution.
 
-The schema-v15 payload requires launcher protocol 2 and includes the exact
-`launcher/schema-transition.json` declaration for source schema 14 and target
-schema 15. The signed inventory binds its mode, size and SHA-256; the builder
-rejects an absent or altered declaration. Historical protocol-1 controllers,
-including v0.3.1, must refuse this target before backup or journaling.
+The transformed payload starts `jobctrl.app.server` and `jobctrl.app.worker`
+from the same installed Python package. Both use the new application SQLite
+identity (`application_id=0x4A435354`, `user_version=1`). Source and installed
+startup refuse legacy databases without modifying them. The manifest covers
+`launcher/application-schema.json`, whose application identity must match both
+the SQLite file and the target release during native lifecycle operations.
+Historical schema transition declarations are not part of this payload and do
+not authorize an automatic transition into the Python application.
 
-A verified new installer performs the forward upgrade from the original
-installation. It authenticates the predecessor as retained evidence, requests
-normal instance cleanup and waits for verified leftovers to exit, then snapshots
-the current app/Temporal pair with SQLite online backup. Exact-v14 migration is
-additive and preserves the app database inode. A pre-selector interruption is
-recovered by rerunning the trusted new installer; the immutable old binary
-cannot read the new journal. After selector replacement, ordinary `jobctrl
-update` can resume. Each retry snapshots the current live pair and continues
-forward; readiness failure never authorizes restoring
-an old pair over newer writes or executing the predecessor. A cross-protocol
-rollback, unknown legacy handoff intent, or unproven cleanup refuses safely.
-There is no bridge-catalog or reboot precondition. The actual signed/notarized
-curl and Homebrew paths still need release qualification before first use; see
-[the release runbook](../../docs/developer/releasing.md#schema-15-installed-upgrade-qualification).
+The breaking cutover is explicit: `jobctrl profile-transfer --source SOURCE
+--target NEW_WORKSPACE --confirm-profile-only-reset --browser-sources COMPLETE_MANIFEST.json` creates a fresh target,
+imports the complete Profile, and leaves the source workspace unchanged. The
+command refuses any existing target directory. Only Profile and its supporting
+sources/provenance transfer; jobs, application records, generated materials,
+Temporal history and all other application data start fresh. Select the new
+workspace through `JOBCTRL_DIR` after inspecting the transfer receipt. Running
+the development launcher never performs this operation.
+
+The distribution builder records the actual source, Python wheel and browser
+closure. Source checks do not establish that a published artifact or installed
+upgrade has been qualified; release and deployed demo verification remain
+separate, authorized steps.
 
 The manifest's `files` array covers every regular file and symbolic link except
 `manifest.json` itself and its detached `manifest.sig`; those two files form the
@@ -196,7 +226,7 @@ The real builder downloads only the locked archives, verifies every
 SHA-256 before extraction, and caches verified inputs under
 `~/Library/Caches/JobCtrl/distribution`. It builds the API and web app, installs
 the Python core closure without provider extras, embeds the pinned browser and
-native SQLite binding, and writes the payload, deterministic `.zip`,
+Python application package, and writes the payload, deterministic `.zip`,
 `build-result.json`, `size-report.json`, and build evidence under `dist/`.
 The Python assembly removes the unreachable Tcl/Tk GUI closure and normalizes
 installer-generated `RECORD` and CycloneDX metadata against
@@ -204,8 +234,7 @@ installer-generated `RECORD` and CycloneDX metadata against
 comparable.
 
 Both size reports keep the signed payload total non-overlapping while listing
-all 16 bundled inventory components. Embedded/shared drill-down rows cover the
-three-package better-sqlite3 closure, emitted font assets, the PDF.js assets
+the bundled inventory components. Embedded/shared drill-down rows cover emitted font assets, the PDF.js assets
 owned by the web build, and the system-browser adapter's exclusive modules.
 The three provider packs remain artifact-excluded and report their exact locked
 wheel download bytes; extracted installed size belongs to state-owned

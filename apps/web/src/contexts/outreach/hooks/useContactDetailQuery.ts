@@ -9,10 +9,10 @@ export function useContactDetailQuery(
   contactId: string,
 ): UseQueryResult<ContactDetailResponse> {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   return useQuery({
     queryKey: outreachKeys.contactDetail(tenantId, contactId),
-    queryFn: () => api.contact(contactId),
+    queryFn: () => http.json<ContactDetailResponse>("GET", `/v1/contacts/${encodeURIComponent(contactId)}`),
     enabled: Boolean(contactId),
   });
 }

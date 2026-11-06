@@ -1,1 +1,0 @@
-"""Pipeline Orchestration infrastructure adapters."""

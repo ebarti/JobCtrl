@@ -1,4 +1,9 @@
 import {
+  createApplyRunEventRecorded,
+  createApplyRunStarted,
+  createStageCompleted,
+} from "./events.js";
+import {
   MarkJobActionRequestSchema,
   type ActionRunResponse,
   type ArtifactOpenResponse,
@@ -7,13 +12,9 @@ import {
   type WorkflowRunSummary,
 } from "@jobctrl/contracts";
 import {
-  LOCAL_TENANT,
-  createApplyRunEventRecorded,
-  createApplyRunStarted,
-  createStageCompleted,
-} from "@jobctrl/domain-types";
+  LOCAL_TENANT } from "@jobctrl/domain-types";
 
-import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
+import type { DemoApiClientPort } from "./DemoApi.js";
 import { isDemoArtifactUrl } from "./artifacts.js";
 import type { ApiClientResponse } from "./contracts.js";
 import { recomputeDemoOperationalProjections, recomputeDemoOutcomeProjections } from "./purgeDemoJobProjections.js";
@@ -29,14 +30,14 @@ import type {
 export const DEMO_INITIAL_EXTERNAL_REHEARSAL_OPERATIONS = [
   "openArtifact",
   "markApplied",
-] as const satisfies readonly (keyof ApiClientPort)[];
+] as const satisfies readonly (keyof DemoApiClientPort)[];
 
 export type DemoInitialExternalRehearsalOperation =
   (typeof DEMO_INITIAL_EXTERNAL_REHEARSAL_OPERATIONS)[number];
 
 type ExternalHandlers = {
   [TOperation in DemoInitialExternalRehearsalOperation]: (
-    ...args: Parameters<ApiClientPort[TOperation]>
+    ...args: Parameters<DemoApiClientPort[TOperation]>
   ) => Promise<ApiClientResponse<TOperation>>;
 };
 
@@ -113,7 +114,7 @@ export class DemoExternalRehearsalExecutor {
 
   execute<TOperation extends DemoInitialExternalRehearsalOperation>(
     operation: TOperation,
-    args: Parameters<ApiClientPort[TOperation]>,
+    args: Parameters<DemoApiClientPort[TOperation]>,
   ): Promise<ApiClientResponse<TOperation>> {
     const handler = this.handlers[operation];
     return handler(...args);
@@ -164,7 +165,7 @@ export class DemoExternalRehearsalExecutor {
 
   private async markApplied(
     jobKey: string,
-    body?: Parameters<ApiClientPort["markApplied"]>[1],
+    body?: Parameters<DemoApiClientPort["markApplied"]>[1],
   ): Promise<ActionRunResponse> {
     MarkJobActionRequestSchema.parse(body ?? {});
     const now = this.clock.now().toISOString();

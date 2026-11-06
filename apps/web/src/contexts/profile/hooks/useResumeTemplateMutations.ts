@@ -1,5 +1,4 @@
 import type {
-  ResumeTemplateDefaultSelectionRequest,
   ResumeTemplateDefaultSelectionResponse,
   ResumeTemplateVersionSaveRequest,
   ResumeTemplateVersionSaveResponse,
@@ -10,10 +9,12 @@ import type { TenantId } from "@jobctrl/domain-types";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { profileKeys } from "../queryKeys.js";
+import { saveResumeTemplate, setDefaultResumeTemplate, type TemplateDefaultRequest } from "../client.js";
 
 interface SaveTemplateVariables {
   readonly body: ResumeTemplateVersionSaveRequest;
   readonly makeDefault: boolean;
+  readonly expectedDefaultRevision?: number;
   readonly maySetDefault?: (saved: ResumeTemplateVersionSaveResponse) => boolean;
 }
 
@@ -77,21 +78,25 @@ export function useSaveResumeTemplateMutation(): UseMutationResult<
   SaveTemplateVariables
 > {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: [...profileKeys.resumeTemplates(tenantId), "save"],
-    mutationFn: async ({ body, makeDefault, maySetDefault }) => {
-      const saved = await api.saveResumeTemplate(body);
+    mutationFn: async ({ body, makeDefault, maySetDefault, expectedDefaultRevision }) => {
+      const saved = await saveResumeTemplate(http, body);
       if (!makeDefault) return { saved, defaultError: null };
+      if (expectedDefaultRevision === undefined) {
+        return { saved, defaultError: new Error("The version was saved, but the default revision was unavailable. Refresh before setting a default.") };
+      }
       if (maySetDefault && !maySetDefault(saved)) {
         return { saved, defaultError: new Error("The version was saved, but the template changed during the save. Review it before setting a default.") };
       }
       try {
-        await api.setDefaultResumeTemplate({
+        await setDefaultResumeTemplate(http, {
           templateId: saved.template.templateId,
           versionId: saved.template.activeVersion.versionId,
           expectedActiveVersionId: saved.template.activeVersion.versionId,
+          expectedRevision: expectedDefaultRevision,
         });
         return { saved, defaultError: null };
       } catch (error) {
@@ -112,17 +117,17 @@ export function useSaveResumeTemplateMutation(): UseMutationResult<
 export function useSetDefaultResumeTemplateMutation(): UseMutationResult<
   ResumeTemplateDefaultSelectionResponse,
   UnconfirmedTemplateDefaultError,
-  ResumeTemplateDefaultSelectionRequest
+  TemplateDefaultRequest
 > {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: [...profileKeys.resumeTemplates(tenantId), "default"],
     meta: { suppressGlobalErrorToast: true },
     mutationFn: async (body) => {
       try {
-        return await api.setDefaultResumeTemplate(body);
+        return await setDefaultResumeTemplate(http, body);
       } catch (error) {
         throw await fenceUnconfirmedDefault(error, queryClient, tenantId);
       }

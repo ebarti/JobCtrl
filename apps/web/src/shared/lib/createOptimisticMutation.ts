@@ -387,14 +387,37 @@ async function cancelQueriesWithOptimisticOwnership(
 // already included by the server. Mark affected queries stale, but wait until
 // their pending operations settle before refetching them. Other queries refetch
 // immediately, and an independent canonical publication still takes ownership.
+// TanStack can reuse an initial in-flight read with no data; its completion
+// may clear an invalidation that occurred after that read started. Reconcile
+// once that specific read settles, deduplicating repeated events in the gap.
+const pendingInitialReadReconciliations = new WeakMap<Query, Promise<unknown>>();
+
 export function invalidateQueriesWithOptimisticOwnership(
   client: QueryClient,
   queryKey: QueryKey,
   exact = false,
+  predicate?: (query: Query) => boolean,
 ): Promise<void> {
-  const filters = exact ? { queryKey, exact: true } : { queryKey };
+  const filters = {
+    queryKey,
+    ...(exact ? { exact: true } : {}),
+    ...(predicate ? { predicate } : {}),
+  };
   const deferredQueries = new Set<Query>();
   for (const query of client.getQueryCache().findAll(filters)) {
+    const pendingRead = query.state.data === undefined && query.state.fetchStatus === "fetching"
+      ? query.promise : undefined;
+    if (pendingRead && pendingInitialReadReconciliations.get(query) !== pendingRead) {
+      pendingInitialReadReconciliations.set(query, pendingRead);
+      const afterRead = () => {
+        if (pendingInitialReadReconciliations.get(query) !== pendingRead) return;
+        pendingInitialReadReconciliations.delete(query);
+        if (client.getQueryCache().get(query.queryHash) === query) {
+          void invalidateQueriesWithOptimisticOwnership(client, query.queryKey, true);
+        }
+      };
+      void pendingRead.then(afterRead, afterRead);
+    }
     const ownership = queryOwnership.get(query);
     if (!ownership || ownership.entries.every((entry) => entry.settled)) continue;
     deferredQueries.add(query);
@@ -402,7 +425,8 @@ export function invalidateQueriesWithOptimisticOwnership(
   }
   if (!deferredQueries.size) return client.invalidateQueries(filters);
   const marked = client.invalidateQueries({ ...filters, refetchType: "none" });
-  const unblocked = client.refetchQueries({ ...filters, type: "active", predicate: (query) => !deferredQueries.has(query) });
+  const unblocked = client.refetchQueries({ ...filters, type: "active", predicate: (query) =>
+    (!predicate || predicate(query)) && !deferredQueries.has(query) });
   return Promise.all([marked, unblocked]).then(() => undefined);
 }
 

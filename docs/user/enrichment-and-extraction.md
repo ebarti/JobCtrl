@@ -212,7 +212,7 @@ refusals without invalidating the status capture.
 Each check permits 12 posting/API requests and 64 browser resources, at most one
 million bytes per response and 12 million bytes in total.
 
-Scoring, tailoring and cover generation reuse a posting observation from the
+Scoring and tailoring reuse a posting observation from the
 preceding six hours. They also reuse a trustworthy canonical posting capture
 from that window when its saved page interpretation and description-quality
 judgments match the current tenant, job, posting URL and exact description.
@@ -332,8 +332,8 @@ ambiguous page creates a pending Manual Capture item and never a fabricated
 non-public destinations are rejected before worker dispatch or browser
 navigation. When the captured posting is active and clears snapshot policy,
 the import records completed intake and enrichment, then starts the same
-durable per-job preparation used by Discover: score, tailor, cover letter, and
-PDF rendering. A missing separate application URL does not block that
+durable per-job preparation used by Discover: score, tailor, and PDF rendering.
+A missing separate application URL does not block that
 preparation. Quarantined or inactive captures do not start it, and URL import
 never starts Apply.
 
@@ -350,7 +350,7 @@ request budget, and audit history remain enforced. Recovery stops before the
 application form and cannot submit an application.
 
 When that live extension connects, JobCtrl immediately continues the
-browser-conditioned Enrich → Score → Tailor → Cover path for affected LinkedIn
+browser-conditioned Enrich → Score → Tailor path for affected LinkedIn
 jobs only; unrelated robots blocks and ordinary pending jobs are not
 retriggered, and another Discover run is not required. Job-scoped and bulk
 Enrich runs/retries remain available offline. Each site batch prefers the live
@@ -417,8 +417,8 @@ event payloads.
 ### The Quality Gate
 
 A low-confidence snapshot that remains quarantined is still visible and may be
-scored for cheap triage, but it is excluded from tailoring, cover-letter, and
-Apply preparation. Confirming an operator override removes that quarantine
+scored for cheap triage, but it is excluded from tailoring and Apply preparation.
+Confirming an operator override removes that quarantine
 block. A snapshot whose only recoverable omission is the application URL is not
 automatically treated as low-confidence.
 

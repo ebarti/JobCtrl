@@ -1,95 +1,73 @@
-import type { RowSelectionState, SortingState } from "@tanstack/react-table";
-import { useMemo } from "react";
-
-import type { ArtifactSummary, PaginatedResponse } from "@jobctrl/contracts";
+import type { ResumeArtifact } from "../../contexts/resumes/index.js";
+import type { ArtifactsSearch } from "../../routes/-artifacts.search.js";
 import { useIsMobile } from "../../shared/hooks/use-mobile.js";
-import {
-  FilterableDataGrid,
-  type DataGridSortState,
-} from "../../shared/ui/filterable-data-grid.js";
-import { ArtifactMobileRow, artifactColumns } from "./columns.js";
+import { FilterableDataGrid } from "../../shared/ui/filterable-data-grid.js";
+import { artifactColumns, ArtifactMobileRow } from "./columns.js";
 
 export interface ArtifactsTableProps {
-  data: PaginatedResponse<ArtifactSummary> | null;
-  loading: boolean;
-  sorting: SortingState;
-  onSortingChange: (next: SortingState) => void;
-  rowSelection: RowSelectionState;
-  onRowSelectionChange: (next: RowSelectionState) => void;
-  page: number;
-  pageSize: number;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (pageSize: number) => void;
-  onOpenArtifact: (artifactId: string) => void;
+  readonly items: readonly ResumeArtifact[];
+  readonly loading: boolean;
+  readonly total: number;
+  readonly page: number;
+  readonly pages: number;
+  readonly pageSize: number;
+  readonly sort: ArtifactsSearch["sort"];
+  readonly direction: "asc" | "desc";
+  readonly onSort: (
+    sort: ArtifactsSearch["sort"],
+    direction: "asc" | "desc",
+  ) => void;
+  readonly onPageChange: (page: number) => void;
+  readonly onPageSizeChange: (pageSize: number) => void;
 }
-
 export function ArtifactsTable({
-  data,
+  items,
   loading,
-  sorting,
-  onSortingChange,
-  rowSelection,
-  onRowSelectionChange,
+  total,
   page,
+  pages,
   pageSize,
+  sort,
+  direction,
+  onSort,
   onPageChange,
   onPageSizeChange,
-  onOpenArtifact,
 }: ArtifactsTableProps) {
-  const isMobile = useIsMobile();
-  const columnOptions = useMemo(
-    () => ({ rowSelection, onRowSelectionChange }),
-    [onRowSelectionChange, rowSelection],
-  );
-  const columns = useMemo(
-    () => artifactColumns(columnOptions),
-    [columnOptions],
-  );
-  const gridSort = useMemo<DataGridSortState>(() => {
-    const head = sorting[0];
-    return {
-      columnId: head?.id ?? "created_at",
-      direction: head?.desc ? "desc" : "asc",
-    };
-  }, [sorting]);
-  const handleSortChange = (next: DataGridSortState) => {
-    onSortingChange([{ id: next.columnId, desc: next.direction === "desc" }]);
-  };
-
+  const mobile = useIsMobile();
   return (
-    <FilterableDataGrid<ArtifactSummary>
+    <FilterableDataGrid<ResumeArtifact>
       title="Artifacts table"
-      data={data?.items ?? []}
-      columns={columns}
+      data={items}
+      columns={artifactColumns}
       getRowId={(row) => row.artifactId}
       loading={loading}
-      loadingMessage="Loading artifacts."
-      emptyMessage="No artifacts match."
+      loadingMessage="Loading saved artifacts."
+      emptyMessage="No recorded PDF files match these filters."
+      sort={{ columnId: sort, direction }}
+      onSortChange={(next) => {
+        if (
+          artifactColumns.some(
+            (column) => column.id === next.columnId && column.sortable,
+          )
+        )
+          onSort(next.columnId as ArtifactsSearch["sort"], next.direction);
+      }}
+      manualSorting
       initialSort={{ columnId: "created_at", direction: "desc" }}
       mobileLayout="cards"
-      {...(isMobile
+      {...(mobile
         ? {
             mobileListLabel: "Artifacts",
-            renderMobileRow: (row) => (
-              <ArtifactMobileRow options={columnOptions} row={row} />
+            renderMobileRow: (row: ResumeArtifact) => (
+              <ArtifactMobileRow row={row} />
             ),
           }
         : {})}
-      sort={gridSort}
-      onSortChange={handleSortChange}
-      manualSorting
-      tableClassName="artifacts-data-grid-table"
-      rowAriaSelected={(row) => Boolean(rowSelection[row.artifactId])}
-      onRowActivate={(row) => onOpenArtifact(row.artifactId)}
-      rowActivationAppearance={isMobile ? "visible" : "focus-only"}
-      rowActivationLabel={(row) => `Open artifact ${row.title || row.type}`}
       pagination={{
         page,
         pageSize,
-        totalPages: data?.pagination.pages ?? 1,
-        ...(typeof data?.pagination.total === "number"
-          ? { totalRows: data.pagination.total }
-          : {}),
+        totalPages: pages,
+        totalRows: total,
         onPageChange,
         onPageSizeChange,
       }}

@@ -14,12 +14,12 @@ export function useCreateContactMutation(): UseMutationResult<
   ContactCreateRequest
 > {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   const listPrefix = outreachKeys.contactLists(tenantId);
   const options = createOptimisticMutation<ContactMutationResponse, ContactCreateRequest>(queryClient, {
     mutationKey: outreachKeys.contacts(tenantId),
-    mutationFn: (body) => api.createContact(body),
+    mutationFn: (body) => http.json<ContactMutationResponse>("POST", "/v1/contacts", { body }),
     settle: () => [listPrefix],
   });
   type CreateContext = OptimisticContext & { readonly provisionalId: string };
@@ -28,7 +28,7 @@ export function useCreateContactMutation(): UseMutationResult<
     onMutate: async (body, mutationContext) => {
       const summary = provisionalContactSummary(body);
       const scoped = createOptimisticMutation<ContactMutationResponse, ContactCreateRequest>(queryClient, {
-        mutationFn: (variables) => api.createContact(variables),
+        mutationFn: (body) => http.json<ContactMutationResponse>("POST", "/v1/contacts", { body }),
         optimisticUpdates: () => [{
           queryKey: outreachKeys.contactLists(tenantId),
           exact: false,

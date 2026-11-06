@@ -1,48 +1,28 @@
-# Local Scale Benchmark
+# Historical Local Scale Benchmark
 
-The local scale benchmark is a reproducible, synthetic baseline for JobCtrl's
-production read paths. It creates a new owned temporary app directory, config,
-SQLite database, and artifact directory for each dataset, initializes the
-database with the exact schema-v15 constructor, and removes the workspace after
-the dataset finishes. It has no flag for an existing app directory or database.
+::: warning Historical measurements, not current qualification
+This page retains measurements from the retired TypeScript/Fastify, schema-v15
+and JSON-RPC application. Its benchmark commands, private-schema seeds and
+`@jobctrl/api` package are no longer available. Do not run these historical
+procedures against a current workspace or treat their timings as evidence for
+the Python application.
+:::
 
-Run it from the repository root with a new output path:
-
-```bash
-corepack pnpm benchmark:local-scale --json-out /tmp/jobctrl-local-scale.json
-```
-
-Use `--background-load-note` to preserve a run-specific concurrency observation.
-A known dirty file can be recorded only by supplying all three
-`--dirty-exclusion-*` arguments: repository-relative path, verified content
-SHA-256, and an explicit reason. The runner rejects partial or mismatched
-exclusions.
-
-The command refuses to overwrite its output. The RPC subprocess receives a
-minimal allowlisted environment plus an isolated home and Codex, Claude, AWS,
-Google, and Azure config paths. AWS metadata and Langfuse export are disabled,
-and unexpected outbound proxy traffic goes to an unreachable loopback port.
-Before the read-only `provider_models` call, the production `provider_status`
-method must prove that all providers are non-ready. The returned model catalog
-must pass the production schema with no ready provider and no models. Any
-failure stops the run before provider model discovery can execute.
-
-The focused harness checks statistics, unsafe arguments, cleanup after failure,
-exact-v15 seed totals, deliberately perturbed correctness oracles, an ambient
-Bedrock/AWS/provider-credential counterfactual, and a
-smallest-dataset integration through the real HTTP, timer SSE, preview,
-projection, and `SubprocessJsonRpcAdapter` paths:
+Current qualification uses the actual application/worker/renderer suite:
 
 ```bash
-corepack pnpm --filter @jobctrl/api benchmark:local-scale:test
+corepack pnpm e2e
 ```
 
-The exact-v15 and production-path integration cases require `uv`. They are
-skipped when `uv` is unavailable so ordinary TypeScript CI can still test the
-runtime-independent harness contracts. Accepted delivery verification requires
-`uv` and execution of every integration case; skipped cases do not establish
-correctness. Prepare the locked worker environment before running the offline
-harness: its provider isolation deliberately blocks dependency downloads too.
+See [Python application journeys](qa/python-journeys.md) for current candidate
+hashes, runner identity, setup-inclusive timings and observed outcomes. The
+current harness creates owned synthetic state through public entry points and
+controls external services only; it does not use old RPC dispatch, private
+schema-v15 constructors or recorded semantic-output fixtures.
+
+The method, tables and implementation names below are preserved as historical
+context. They describe the old measured candidate and are not instructions to
+restore its retired packages, tests or database authority.
 
 ## Method and proposed budgets
 

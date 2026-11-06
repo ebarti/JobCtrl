@@ -1,4 +1,4 @@
-import { type OutreachPublicationConflict, ReviseOutreachDraftRequestSchema } from "@jobctrl/contracts";
+import { type OutreachDraftKind, type OutreachPublicationConflict, ReviseOutreachDraftRequestSchema } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useId, useState, type JSX } from "react";
 
@@ -22,6 +22,10 @@ export interface ReviseDraftFormProps {
   contactId: string;
   jobId?: string;
   initialBodyText: string;
+  initialFingerprint?: string;
+  currentFingerprint?: string;
+  initialKind?: OutreachDraftKind;
+  sourceDraftId?: string;
   onRevised?: () => void;
   onDiscard?: () => void;
 }
@@ -43,6 +47,10 @@ function ReviseDraftSession({
   contactId,
   jobId,
   initialBodyText,
+  initialFingerprint,
+  currentFingerprint,
+  initialKind,
+  sourceDraftId,
   onRevised,
   onDiscard,
 }: ReviseDraftFormProps): JSX.Element {
@@ -53,6 +61,9 @@ function ReviseDraftSession({
   );
   const [retainedConflict, setRetainedConflict] = useState<OutreachPublicationConflict | null>(null);
   const [reconciled, setReconciled] = useState(false);
+  const [reviewedFingerprint, setReviewedFingerprint] = useState<string | undefined>(undefined);
+  const [sourceFingerprint, setSourceFingerprint] = useState(initialFingerprint);
+  const [originDraftId, setOriginDraftId] = useState(sourceDraftId);
   const [unconfirmedSubmissions, setUnconfirmedSubmissions] = useState<string[]>([]);
   const [reviewedUnconfirmed, setReviewedUnconfirmed] = useState(false);
   const [newerEditAfterSuccess, setNewerEditAfterSuccess] = useState(false);
@@ -62,6 +73,10 @@ function ReviseDraftSession({
   const mutationError = mutation.error instanceof Error && !isUnconfirmedWrite(mutation.error)
     ? mutation.error.message : "";
   const awaitingReview = unconfirmedSubmissions.length > 0 && !reviewedUnconfirmed;
+  const sourceChanged = Boolean(currentFingerprint && sourceFingerprint && currentFingerprint !== sourceFingerprint);
+  const missingSource = !sourceFingerprint || !currentFingerprint || !originDraftId;
+  const comparisonCurrent = reconciled && reviewedFingerprint === currentFingerprint;
+  const needsComparison = sourceChanged && !comparisonCurrent;
   const form = useForm({
     defaultValues: { editedBodyText: initialBodyText },
     validators: {
@@ -73,7 +88,7 @@ function ReviseDraftSession({
       },
     },
     onSubmit: async ({ value, formApi }) => {
-      if (!availability.available || awaitingReview || (retainedConflict !== null && !reconciled)) {
+      if (!availability.available || awaitingReview || missingSource || needsComparison || (retainedConflict !== null && !comparisonCurrent)) {
         return;
       }
       const result = ReviseOutreachDraftRequestSchema.safeParse({
@@ -87,7 +102,9 @@ function ReviseDraftSession({
       const submittedText = value.editedBodyText;
       setNewerEditAfterSuccess(false);
       try {
-        await mutation.mutateAsync(result.data);
+        const saved = await mutation.mutateAsync({ ...result.data, ...(initialKind ? { kind: initialKind } : {}), expectedFingerprint: comparisonCurrent ? currentFingerprint! : sourceFingerprint!, sourceDraftId: originDraftId! });
+        setSourceFingerprint(saved.thread.fingerprint);
+        setOriginDraftId(saved.publication.draftId);
       } catch (error) {
         if (isUnconfirmedWrite(error)) {
           setUnconfirmedSubmissions((previous) => [...previous, result.data.editedBodyText]);
@@ -118,7 +135,7 @@ function ReviseDraftSession({
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (!availability.available || awaitingReview || (retainedConflict !== null && !reconciled)) {
+        if (!availability.available || awaitingReview || missingSource || needsComparison || (retainedConflict !== null && !comparisonCurrent)) {
           return;
         }
         void form.handleSubmit();
@@ -168,8 +185,15 @@ function ReviseDraftSession({
         <p role="status">Your submitted revision was saved for review. Your newer edits remain here and have not been verified.</p>
       ) : null}
       {retainedConflict ? (
-        <UnpublishedOutreachProposal conflict={retainedConflict} mode="revision" reconciled={reconciled} onReconciled={setReconciled} disabled={mutation.isPending} />
+        <UnpublishedOutreachProposal conflict={retainedConflict} mode="revision" reconciled={comparisonCurrent} onReconciled={(checked) => { setReconciled(checked); setReviewedFingerprint(checked ? currentFingerprint : undefined); }} disabled={mutation.isPending || !currentFingerprint} />
       ) : null}
+      {sourceChanged && !retainedConflict ? (
+        <label>
+          <input type="checkbox" checked={comparisonCurrent} disabled={mutation.isPending} onChange={(event) => { setReconciled(event.target.checked); setReviewedFingerprint(event.target.checked ? currentFingerprint : undefined); }} />
+          The thread changed while you were editing. I compared the current thread and want to verify this edit against it.
+        </label>
+      ) : null}
+      {missingSource ? <p role="status">Refresh the current thread before submitting this revision.</p> : null}
       <form.Subscribe selector={(state) => state.errors}>
         {(errors) => {
           const message = errors
@@ -185,7 +209,7 @@ function ReviseDraftSession({
             <Button
               aria-describedby={availability.available ? undefined : unavailableReasonId}
               type="submit"
-              disabled={mutation.isPending || isSubmitting || !availability.available || awaitingReview || (retainedConflict !== null && !reconciled)}
+              disabled={mutation.isPending || isSubmitting || !availability.available || awaitingReview || missingSource || needsComparison || (retainedConflict !== null && !comparisonCurrent)}
             >
               {mutation.isPending || isSubmitting ? "Revising…" : "Revise draft"}
             </Button>

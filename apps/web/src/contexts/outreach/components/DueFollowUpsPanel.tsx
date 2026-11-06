@@ -1,6 +1,6 @@
 import type { JSX } from "react";
 
-import { formatDateTime } from "../../../shared/lib/formatters.js";
+import { formatOutreachDate } from "../lib/outreach-date.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { useDueFollowUpsQuery } from "../hooks/useDueFollowUpsQuery.js";
@@ -33,7 +33,7 @@ export function DueFollowUpsPanel(): JSX.Element {
                 <StatusBadge tone={item.isDue ? "warn" : "info"}>
                   {item.isDue ? "Due" : "Scheduled"}
                 </StatusBadge>
-                <span>due {formatDateTime(item.dueAt)}</span>
+                <span>due {formatOutreachDate(item.dueAt)}</span>
                 {item.basis ? <span className="muted">{item.basis}</span> : null}
                 <span className="mono">{item.jobId ?? item.contactId}</span>
               </li>

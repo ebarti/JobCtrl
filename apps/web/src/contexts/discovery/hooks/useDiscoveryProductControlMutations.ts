@@ -1,31 +1,48 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
+import { createUnconfirmedWriteError } from "../../../shared/lib/unconfirmed-write.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
-import { dashboardKeys } from "../../operations/dashboardKeys.js";
 import { discoveryKeys } from "../queryKeys.js";
 import type {
   DiscoveryFeedbackRequest,
+  DiscoveryFeedbackResponse,
+  ManualCaptureDismissResponse,
   ManualCaptureImportRequest,
+  ManualCaptureImportResponse,
   ManualCaptureListResponse,
+  ManualCapturePrepareResponse,
+  ManualCaptureSupersedeResponse,
   QuarantineDecision,
+  QuarantineDecisionResponse,
   RoleMatchFeedbackDecisionRequest,
+  RoleMatchFeedbackDecisionResponse,
   SourceLocatorDecisionRequest,
+  SourceLocatorDecisionResponse,
+  SourceRegistryMutationResponse,
   SourceStatePatch,
   SourceUpsertRequest,
 } from "@jobctrl/contracts";
 
 export function useUpsertDiscoverySourceMutation() {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: SourceUpsertRequest) => api.upsertDiscoverySource(body),
+    mutationFn: async (body: SourceUpsertRequest) => {
+      const response = await http.json<SourceRegistryMutationResponse>("POST", "/v1/discovery/sources", { body: { ...body, createOnly: true } });
+      const source = response?.source as (SourceRegistryMutationResponse["source"] & { seedUrl?: string }) | undefined;
+      if (response?.ok !== true || source?.sourceId !== body.sourceId || source.displayName !== body.displayName
+          || source.kind !== body.kind || source.state !== body.state || source.priority !== body.priority
+          || (body.seedUrl !== undefined && source.seedUrl !== body.seedUrl)) {
+        throw createUnconfirmedWriteError("POST", "/v1/discovery/sources", new Error("The created source was not confirmed."));
+      }
+      return response;
+    },
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
-        queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);
     },
   });
@@ -33,15 +50,21 @@ export function useUpsertDiscoverySourceMutation() {
 
 export function usePatchDiscoverySourceStateMutation() {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ sourceId, body }: { sourceId: string; body: SourceStatePatch }) =>
-      api.patchDiscoverySourceState(sourceId, body),
+    mutationFn: async ({ sourceId, body }: { sourceId: string; body: SourceStatePatch & { expectedRevision: number } }) => {
+      const path = `/v1/discovery/sources/${encodeURIComponent(sourceId)}/state`;
+      const response = await http.json<SourceRegistryMutationResponse>("PATCH", path, { body });
+      const source = response?.source as (SourceRegistryMutationResponse["source"] & { revision?: number }) | undefined;
+      if (response?.ok !== true || source?.sourceId !== sourceId || source.state !== body.state || source.revision !== body.expectedRevision + 1) {
+        throw createUnconfirmedWriteError("PATCH", path, new Error("The source state response did not confirm this revision."));
+      }
+      return response;
+    },
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
-        queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);
     },
   });
@@ -49,16 +72,19 @@ export function usePatchDiscoverySourceStateMutation() {
 
 export function usePromoteSourceLocatorCandidateMutation() {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ candidateId, body = {} }: { candidateId: string; body?: SourceLocatorDecisionRequest }) =>
-      api.promoteSourceLocatorCandidate(candidateId, body),
+    mutationFn: async ({ candidateId, body }: { candidateId: string; body: SourceLocatorDecisionRequest & { expectedRevision: number } }) => {
+      const path = `/v1/discovery/locator-candidates/${encodeURIComponent(candidateId)}/promote`;
+      const result = await http.json<SourceLocatorDecisionResponse>("POST", path, { body });
+      if (result?.ok !== true || result.candidateId !== candidateId || result.decision !== "promote") throw createUnconfirmedWriteError("POST", path, new Error("The source decision was not confirmed."));
+      return result;
+    },
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceLocator(tenantId) }),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
-        queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);
     },
   });
@@ -66,34 +92,47 @@ export function usePromoteSourceLocatorCandidateMutation() {
 
 export function useRejectSourceLocatorCandidateMutation() {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ candidateId, body = {} }: { candidateId: string; body?: SourceLocatorDecisionRequest }) =>
-      api.rejectSourceLocatorCandidate(candidateId, body),
+    mutationFn: async ({ candidateId, body }: { candidateId: string; body: SourceLocatorDecisionRequest & { expectedRevision: number } }) => {
+      const path = `/v1/discovery/locator-candidates/${encodeURIComponent(candidateId)}/reject`;
+      const result = await http.json<SourceLocatorDecisionResponse>("POST", path, { body });
+      if (result?.ok !== true || result.candidateId !== candidateId || result.decision !== "reject") throw createUnconfirmedWriteError("POST", path, new Error("The source decision was not confirmed."));
+      return result;
+    },
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceLocator(tenantId) }),
-        queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);
     },
   });
 }
 
+export function useResetSourceLocatorCandidateMutation() {
+  const tenantId = useTenantId(); const { http } = usePorts(); const queryClient = useQueryClient();
+  return useMutation({ mutationFn: async ({ candidateId, expectedRevision }: { candidateId: string; expectedRevision: number }) => {
+    const path = `/v1/discovery/locator-candidates/${encodeURIComponent(candidateId)}/reset`;
+    const result = await http.json<{ ok: true; candidateId: string; decision: "reset" }>("POST", path, { body: { expectedRevision } });
+    if (result?.ok !== true || result.candidateId !== candidateId || result.decision !== "reset") throw createUnconfirmedWriteError("POST", path, new Error("The source decision was not confirmed."));
+    return result;
+  },
+    onSettled: () => { void queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceLocator(tenantId) }); } });
+}
+
 export function useDiscoveryQuarantineDecisionMutation() {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ jobKey, body }: { jobKey: string; body: QuarantineDecision }) =>
-      api.decideDiscoveryQuarantine(jobKey, body),
+      http.json<QuarantineDecisionResponse>("POST", `/v1/discovery/quarantine/${encodeURIComponent(jobKey)}/decision`, { body }),
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: discoveryKeys.quarantine(tenantId) }),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.feedback(tenantId) }),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceQuality(tenantId) }),
-        queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);
     },
   });
@@ -119,33 +158,31 @@ type CaptureImportStates = ReadonlyMap<string, CaptureImportState>;
 
 function captureImportOutcome(data: unknown, error: unknown): CaptureImportOutcome {
   if (data !== undefined) return "confirmed";
+  const response = typeof error === "object" && error !== null && "responseBody" in error ? error.responseBody : null;
+  const envelope = response && typeof response === "object" && "error" in response ? response.error : null;
+  const details = envelope && typeof envelope === "object" && "details" in envelope ? envelope.details : null;
+  const reason = details && typeof details === "object" && "reason" in details ? details.reason : null;
   // This reason is emitted only from a completed, failed workflow result, not
   // from a transport 503 or a failed attempt to wait for the workflow.
   if (typeof error === "object" && error !== null && "status" in error && error.status === 503
-      && "responseBody" in error && typeof error.responseBody === "object" && error.responseBody !== null
-      && "reason" in error.responseBody && error.responseBody.reason === "manual_capture_provider_failed") return "rejected";
+      && reason === "manual_capture_provider_failed") return "rejected";
   if (typeof error === "object" && error !== null && "status" in error && error.status === 500
-      && "responseBody" in error && typeof error.responseBody === "object" && error.responseBody !== null
-      && "reason" in error.responseBody && error.responseBody.reason === "manual_capture_database_failed") return "rejected";
+      && reason === "manual_capture_database_failed") return "rejected";
   if (typeof error === "object" && error !== null && "writeOutcomeUnknown" in error
       && error.writeOutcomeUnknown === false && "status" in error
       && (error.status === 400 || error.status === 404 || error.status === 422)) return "rejected";
   if (typeof error === "object" && error !== null && "writeOutcomeUnknown" in error
       && error.writeOutcomeUnknown === false && "status" in error && error.status === 409
-      && "responseBody" in error && typeof error.responseBody === "object" && error.responseBody !== null
-      && "reason" in error.responseBody
-      && (error.responseBody.reason === "manual_capture_state_changed"
-        || error.responseBody.reason === "capture_replay_mismatch")) return "rejected";
+      && (reason === "manual_capture_state_changed" || reason === "capture_replay_mismatch")) return "rejected";
   if (typeof error === "object" && error !== null && "writeOutcomeUnknown" in error
       && error.writeOutcomeUnknown === false && "status" in error && error.status === 409
-      && "responseBody" in error && typeof error.responseBody === "object" && error.responseBody !== null
-      && "reason" in error.responseBody && error.responseBody.reason === "manual_capture_in_progress") return "in_progress";
+      && reason === "manual_capture_in_progress") return "in_progress";
   return "unknown";
 }
 
 export function useManualCaptureImportMutation(items: ManualCaptureListResponse["items"]) {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   const stateKey = discoveryKeys.manualCaptureImports(tenantId);
   const states = useQuery({
@@ -205,7 +242,7 @@ export function useManualCaptureImportMutation(items: ManualCaptureListResponse[
       // Do not let a read started before this attempt settle its outcome.
       await queryClient.cancelQueries({ queryKey: queueKey });
       const queue = await queryClient.fetchQuery({
-        queryKey: queueKey, queryFn: () => api.manualCaptureQueue(), staleTime: 0, retry: false,
+        queryKey: queueKey, queryFn: () => http.json<ManualCaptureListResponse>("GET", "/v1/discovery/manual-capture"), staleTime: 0, retry: false,
       });
       if (!stillChecking()) return;
       const item = queue.items.find((candidate) => candidate.itemId === itemId);
@@ -231,8 +268,8 @@ export function useManualCaptureImportMutation(items: ManualCaptureListResponse[
   const mutation = useMutation({
     mutationFn: async ({ itemId, body, lifecycleId, submittedDraft }: { itemId: string; body: ManualCaptureImportRequest; edits?: CaptureDraftEdits; submittedDraft: CaptureDraftEdits; lifecycleId: string | null }) => {
       try {
-        const prepared = await api.prepareManualCapture(itemId, body);
-        if (prepared.itemId !== itemId || !/^[a-f0-9]{64}$/.test(prepared.lifecycleId)
+        const prepared = await http.json<ManualCapturePrepareResponse>("POST", `/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/prepare`, { body });
+        if (prepared?.ok !== true || prepared.itemId !== itemId || !/^[a-f0-9]{64}$/.test(prepared.lifecycleId)
             || !lifecycleId || prepared.lifecycleId === lifecycleId) throw new Error("invalid capture preparation response");
         const current = queryClient.getQueryData<CaptureImportStates>(stateKey)?.get(itemId);
         if (!current || current.lifecycleId !== lifecycleId || current.status !== "submitting") {
@@ -258,7 +295,12 @@ export function useManualCaptureImportMutation(items: ManualCaptureListResponse[
               } } };
           }),
         }));
-        return await api.importManualCapture(itemId, { ...body, expectedLifecycleId: prepared.lifecycleId });
+        const result = await http.json<ManualCaptureImportResponse & { lifecycleId?: unknown }>("POST", `/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/import`, { body: { ...body, expectedLifecycleId: prepared.lifecycleId } });
+        if (result?.ok !== true || result.itemId !== itemId || result.lifecycleId !== prepared.lifecycleId
+            || typeof result.jobKey !== "string" || !result.jobKey) {
+          throw new Error("The capture import response did not confirm this request.");
+        }
+        return result;
       } catch (error) {
         if (["rejected", "in_progress"].includes(captureImportOutcome(undefined, error))) throw error;
         throw new Error("Import outcome is unconfirmed. Check the capture queue before retrying.", { cause: error });
@@ -277,7 +319,6 @@ export function useManualCaptureImportMutation(items: ManualCaptureListResponse[
         reconcile(itemId),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.quarantine(tenantId) }),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
-        queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);
     },
   });
@@ -303,8 +344,8 @@ export function useManualCaptureImportMutation(items: ManualCaptureListResponse[
     if (!current?.lifecycleId || !["editing", "unconfirmed", "in_progress", "needs_fence", "refresh_failed", "recovery_failed"].includes(current.status)) return;
     setState(itemId, { ...current, status: "recovering" });
     try {
-      const result = await api.supersedeManualCapture(itemId, current.lifecycleId);
-      if (result.itemId !== itemId || !/^[a-f0-9]{64}$/.test(result.lifecycleId)
+      const result = await http.json<ManualCaptureSupersedeResponse>("POST", `/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/supersede`, { body: { expectedLifecycleId: current.lifecycleId } });
+      if (result?.ok !== true || result.itemId !== itemId || !/^[a-f0-9]{64}$/.test(result.lifecycleId)
           || result.lifecycleId === current.lifecycleId) throw new Error("invalid capture recovery response");
       if (queryClient.getQueryData<CaptureImportStates>(stateKey)?.get(itemId)?.attempt !== current.attempt) return;
       // Another attempt may have changed the server draft while this request
@@ -315,7 +356,7 @@ export function useManualCaptureImportMutation(items: ManualCaptureListResponse[
       setState(itemId, rebound);
       const queueKey = discoveryKeys.manualCapture(tenantId);
       await queryClient.cancelQueries({ queryKey: queueKey });
-      const queue = await queryClient.fetchQuery({ queryKey: queueKey, queryFn: () => api.manualCaptureQueue(), staleTime: 0, retry: false });
+      const queue = await queryClient.fetchQuery({ queryKey: queueKey, queryFn: () => http.json<ManualCaptureListResponse>("GET", "/v1/discovery/manual-capture"), staleTime: 0, retry: false });
       if (queryClient.getQueryData<CaptureImportStates>(stateKey)?.get(itemId)?.attempt !== current.attempt) return;
       const item = queue.items.find((candidate) => candidate.itemId === itemId);
       setState(itemId, { ...rebound, status: item?.lifecycleId === result.lifecycleId ? "rejected" : "local_copy" });
@@ -329,11 +370,16 @@ export function useManualCaptureImportMutation(items: ManualCaptureListResponse[
 
 export function useManualCaptureDismissMutation(onDismissed?: (itemId: string) => void) {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ itemId, lifecycleId }: { itemId: string; lifecycleId: string | null }) => api.dismissManualCapture(itemId,
-      lifecycleId ? { expectedLifecycleId: lifecycleId } : {}),
+    mutationFn: async ({ itemId, lifecycleId }: { itemId: string; lifecycleId: string | null }) => {
+      const result = await http.json<ManualCaptureDismissResponse>("POST", `/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/dismiss`, { body: lifecycleId ? { expectedLifecycleId: lifecycleId } : {} });
+      if (result?.ok !== true || result.itemId !== itemId || result.status !== "dismissed") {
+        throw new Error("Dismissal could not be confirmed. Refresh the capture queue before retrying.");
+      }
+      return result;
+    },
     onSuccess: async (_result, { itemId, lifecycleId }) => {
       const queueKey = discoveryKeys.manualCapture(tenantId);
       // An earlier queue read must not restore an item after its confirmed dismissal.
@@ -358,16 +404,15 @@ export function useManualCaptureDismissMutation(onDismissed?: (itemId: string) =
 
 export function useDiscoveryFeedbackMutation() {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: DiscoveryFeedbackRequest) => api.recordDiscoveryFeedback(body),
+    mutationFn: (body: DiscoveryFeedbackRequest) => http.json<DiscoveryFeedbackResponse>("POST", "/v1/discovery/feedback", { body }),
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: discoveryKeys.feedback(tenantId) }),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceQuality(tenantId) }),
-        queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);
     },
   });
@@ -375,7 +420,7 @@ export function useDiscoveryFeedbackMutation() {
 
 export function useRoleMatchFeedbackDecisionMutation() {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
@@ -384,7 +429,16 @@ export function useRoleMatchFeedbackDecisionMutation() {
     }: {
       suggestionId: string;
       body: RoleMatchFeedbackDecisionRequest;
-    }) => api.decideRoleMatchFeedbackSuggestion(suggestionId, body),
+    }) => {
+      const path = `/v1/discovery/role-match-feedback/${encodeURIComponent(suggestionId)}/decision`;
+      return http.json<RoleMatchFeedbackDecisionResponse>("POST", path, { body }).then((response) => {
+        const expected = body.decision === "approve" ? "approved" : "declined";
+        if (response?.ok !== true || response.suggestion?.suggestionId !== suggestionId || response.suggestion.status !== expected) {
+          throw createUnconfirmedWriteError("POST", path, new Error("The proposal decision was not confirmed."));
+        }
+        return response;
+      });
+    },
     onSettled: async () => {
       await queryClient.invalidateQueries({
         queryKey: discoveryKeys.roleMatchFeedback(tenantId),

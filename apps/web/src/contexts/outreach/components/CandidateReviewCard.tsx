@@ -9,7 +9,8 @@ import { ContactProvenanceList } from "./ContactProvenanceList.js";
 
 export interface CandidateReviewCardProps {
   taskId: string;
-  candidate: ContactCandidateDto;
+  candidate: ContactCandidateDto & { authorityVerified?: boolean; authorityFailure?: string | null };
+  taskRevision?: number;
 }
 
 function formatConfidence(confidence: number): string {
@@ -26,7 +27,7 @@ function displayName(candidate: ContactCandidateDto): string {
 // INV-2: a proposed candidate renders its candidate-level provenance plus the
 // full provenance of every attribute. INV-4: the Confirm action is the only path
 // to a stored contact fact; a value is never stored until the user confirms.
-export function CandidateReviewCard({ taskId, candidate }: CandidateReviewCardProps): JSX.Element {
+export function CandidateReviewCard({ taskId, candidate, taskRevision }: CandidateReviewCardProps): JSX.Element {
   const { clipboard } = usePorts();
   const email = candidate.attributes.find((attribute) => attribute.kind === "email")?.value;
   const confirmed = candidate.status === "confirmed";
@@ -57,6 +58,7 @@ export function CandidateReviewCard({ taskId, candidate }: CandidateReviewCardPr
         </div>
       </dl>
       <ContactProvenanceList attributes={candidate.attributes} />
+      {candidate.authorityVerified !== true ? <p role="status">The candidate's model authority is unavailable or cannot be verified{candidate.authorityFailure ? `: ${candidate.authorityFailure}` : "."}</p> : null}
       <div className="candidate-review-actions">
         {email ? (
           <Button type="button" size="sm" variant="outline" onClick={() => void clipboard.write(email)}>
@@ -66,7 +68,7 @@ export function CandidateReviewCard({ taskId, candidate }: CandidateReviewCardPr
         {confirmed ? (
           <span className="candidate-confirmed-note">Confirmed into your contacts.</span>
         ) : (
-          <ConfirmCandidateButton taskId={taskId} candidateId={candidate.candidateId} />
+          <ConfirmCandidateButton taskId={taskId} candidateId={candidate.candidateId} disabled={candidate.authorityVerified !== true} {...(taskRevision !== undefined ? { expectedRevision: taskRevision } : {})} />
         )}
       </div>
     </li>

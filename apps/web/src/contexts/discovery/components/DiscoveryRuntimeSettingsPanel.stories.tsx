@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { http, HttpResponse } from "msw";
 
-import { sampleDiscoverySettingsResponse } from "../../../test/fixtures/projections.js";
+import { sampleDiscoverySettingsResponse } from "../../../../.storybook/fixtures/projections.js";
 import { DiscoveryRuntimeSettingsPanel } from "./DiscoveryRuntimeSettingsPanel.js";
 
 const meta = {

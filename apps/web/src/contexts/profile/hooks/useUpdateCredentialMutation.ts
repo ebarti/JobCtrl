@@ -1,32 +1,10 @@
-import type { CredentialUpdateRequest } from "@jobctrl/contracts";
-import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
+import type { CredentialUpdateRequest } from "../../settings/credentials.js";
+import { useCredentialBatchMutation } from "../../settings/credentials.js";
 
-import { useTenantId } from "../../../shared/providers/TenantProvider.js";
-import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
-import type { CredentialsResponse } from "@jobctrl/contracts";
-import { patchCredentialConfigured } from "../lib/profile-patches.js";
-import { profileKeys } from "../queryKeys.js";
-
-export function useUpdateCredentialMutation(): UseMutationResult<
-  CredentialsResponse,
-  Error,
-  CredentialUpdateRequest
-> {
-  const tenantId = useTenantId();
-  const { api } = usePorts();
-  const queryClient = useQueryClient();
-  return useMutation(
-    createOptimisticMutation<CredentialsResponse, CredentialUpdateRequest>(queryClient, {
-      mutationKey: profileKeys.credentials(tenantId),
-      mutationFn: (body) => api.updateCredential(body),
-      optimisticUpdates: (body) => [
-        {
-          queryKey: profileKeys.credentials(tenantId),
-          patch: (current) => patchCredentialConfigured(current, body.key, true),
-        },
-      ],
-      settle: () => [profileKeys.credentials(tenantId)],
-    }),
-  );
+export function useUpdateCredentialMutation() {
+  const mutation = useCredentialBatchMutation();
+  return {
+    ...mutation,
+    mutateAsync: (value: CredentialUpdateRequest & { expectedRevision?: number }) => mutation.mutateAsync({ operations: [{ operation: "set", key: value.key, value: value.value }], ...(value.expectedRevision !== undefined ? { expectedRevision: value.expectedRevision } : {}) }),
+  };
 }

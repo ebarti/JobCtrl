@@ -40,6 +40,7 @@ export function RequiredBulletSuggestions({
   const [generatedVersion, setGeneratedVersion] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<RequiredBulletSuggestion[]>([]);
   const [emptyMessage, setEmptyMessage] = useState("");
+  const [reviewRationale, setReviewRationale] = useState("");
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const isStale = generatedVersion !== null && generatedVersion !== profileVersion;
 
@@ -54,6 +55,7 @@ export function RequiredBulletSuggestions({
     setGeneratedVersion(null);
     setSuggestions([]);
     setEmptyMessage("");
+    setReviewRationale("");
     setAcceptingId(null);
     generation.reset();
   }, [isDraftClean, profileVersion, resetToken]);
@@ -81,6 +83,7 @@ export function RequiredBulletSuggestions({
       ) return;
       setGeneratedVersion(result.profileVersion);
       setSuggestions(result.suggestions);
+      setReviewRationale(result.rationale);
       setEmptyMessage("");
       if (result.truncated && result.suggestions.length === 0) {
         setEmptyMessage("Inspection is incomplete: saved Required sources exceed a safe inspection or response limit. Edit them manually; repeating this request on the same saved version may omit the same sources.");
@@ -180,6 +183,7 @@ export function RequiredBulletSuggestions({
           </Alert>
         </CardContent>
       ) : null}
+      {reviewRationale ? <CardContent><p>{reviewRationale}</p></CardContent> : null}
       {suggestions.map((suggestion) => (
         <CardContent key={suggestion.id} className="border-t">
           <div className="flex flex-col gap-3">
@@ -203,6 +207,7 @@ export function RequiredBulletSuggestions({
             <p data-typography="metadata">
               Source: {suggestion.source.fieldPath} · {suggestion.source.sourceId} · excerpt “{suggestion.source.excerpt}”
             </p>
+            {suggestion.citations.length ? <details><summary>Model source citations</summary>{suggestion.citations.map((citation, index) => <blockquote key={`${citation.source_id}:${index}`}>{citation.quote}<footer>Recorded source {citation.source_id}</footer></blockquote>)}</details> : null}
             <div className="flex flex-wrap gap-2">
               {suggestion.canApply ? (
                 <Button

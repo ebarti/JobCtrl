@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { http, HttpResponse } from "msw";
 
-import { sampleProfileResponse } from "../../../test/fixtures/projections.js";
+import { sampleProfileResponse } from "../../../../.storybook/fixtures/projections.js";
 import { ProfileEditor } from "./ProfileEditor.js";
 
 const meta = {

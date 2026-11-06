@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "reproducibleCounts": {
-    "javascriptPackageFiles": 9,
-    "javascriptUniqueDirect": 77,
-    "javascriptUniqueRuntimeDirect": 33,
-    "javascriptUniqueDevelopmentDirect": 46,
-    "pnpmPackageRecords": 1482,
-    "pythonCoreRuntimeDirect": 22,
+    "javascriptPackageFiles": 8,
+    "javascriptUniqueDirect": 55,
+    "javascriptUniqueRuntimeDirect": 29,
+    "javascriptUniqueDevelopmentDirect": 26,
+    "pnpmPackageRecords": 1052,
+    "pythonCoreRuntimeDirect": 25,
     "pythonProviderRuntimeDirect": 4,
-    "pythonDevelopmentDirect": 11,
-    "uvPackageRecords": 109
+    "pythonDevelopmentDirect": 6,
+    "uvPackageRecords": 103
   },
   "referenceFootprint": {
     "status": "observational",

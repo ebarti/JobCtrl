@@ -67,7 +67,7 @@ export const InterviewEvidenceSelectionSchema = z.object({
   evidenceIds: z.array(EvidenceId).max(MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION)
     .refine((ids) => new Set(ids).size === ids.length, "duplicate evidence IDs"),
 }).strict();
-/** Reused by worker-RPC schemas so derivation from .shape keeps the version fence. */
+/** Shared base for interview schemas that retain the version fence. */
 export function refineInterviewEvidenceSelection(
   request: { evidenceSelections?: { questionId: string; evidenceIds: string[] }[] | undefined; evidenceProfileVersion?: number | undefined; selectedQuestionIds?: string[] | undefined },
   context: z.RefinementCtx,

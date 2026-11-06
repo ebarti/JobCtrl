@@ -3,7 +3,7 @@ import { useEffect } from "react";
 
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { sampleProfileResponse } from "../../../test/fixtures/projections.js";
+import { sampleProfileResponse } from "../../../../.storybook/fixtures/projections.js";
 import { useProfileImportReviewStore, type ProfileImportReviewDraft } from "../stores/profile-import-review-store.js";
 import { ProfileImportReview } from "./ProfileImportReview.js";
 
@@ -41,7 +41,7 @@ function SyntheticDraft() {
           },
         },
         style: { font_family: "sans" },
-        source: { attemptId: "00000000-0000-4000-8000-000000000001", determinationId: "a".repeat(64),
+        source: { attemptId: "00000000-0000-4000-8000-000000000001", determinationId: "00000000-0000-4000-8000-000000000002",
           extractedPersonal: { full_name: "Synthetic candidate" }, styleReceiptId: "00000000-0000-4000-8000-000000000001",
           inferredStyle: { font_family: "sans" } },
       },

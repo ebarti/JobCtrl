@@ -23,15 +23,15 @@ only enough context to orient the reader, then link to the owner.
 | Release preparation, publication, and public-channel verification | [Releasing JobCtrl](releasing.md) |
 | Documentation governance and style | This page |
 | Runtime processes and their responsibilities | [Runtime & Processes](../architecture/runtime.md) |
-| Shared domain types, REST DTOs, JSON-RPC, and API layering | [Contracts, Types & API Boundaries](../architecture/contracts-types-and-api-boundaries.md) |
+| Feature-owned public services, REST DTOs, and API layering | [Contracts, Types & API Boundaries](../architecture/contracts-types-and-api-boundaries.md) |
 | Canonical data, domain events, read projections, SSE invalidation, and telemetry separation | [Data, Events & Projections](../architecture/data-events-and-projections.md) |
 | Physical SQLite/file/config authority | [Storage](../architecture/storage.md) |
-| Browser-facing API route families and SSE overview | [Local TypeScript API](../local-ts-api.md) |
+| Browser-facing API route families and SSE overview | [Local Python API](../local-ts-api.md) |
 | Focused route behavior | The matching page under [`docs/api/`](../api/operations-and-events.md) |
-| Exhaustive route fields, status codes, and precedence | [Complete API Contract](../api/complete-contract.md) |
+| Route-family semantics and verified field/status contracts | [Complete API Contract](../api/complete-contract.md) |
 | Workflow/activity execution, retries, concurrency, and stage operations | [`docs/architecture/pipeline/`](../architecture/pipeline/index.md) |
 | OpenTelemetry and Langfuse export | [Observability](../architecture/observability.md) |
-| Backend and frontend architectural rules | The numbered [backend](../architecture/domain-model/index.md) and [frontend](../architecture/frontend/index.md) references |
+| Backend and frontend architectural rules | The [backend](../architecture/domain-model/index.md) and [frontend](../architecture/frontend/index.md) references |
 | Product and technical invariants | [Requirements](../requirements.md) |
 | Accepted architectural choices | [Decisions](../decisions.md) |
 | Public direction and detailed deferred work | [`ROADMAP.md`](../../ROADMAP.md) and [GitHub Issues](https://github.com/ebarti/JobCtrl/issues), respectively; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) owns historical backlog dispositions |
@@ -47,6 +47,9 @@ Use these categories deliberately:
 
 - **Current implementation** uses present tense and is grounded in current code,
   tests, and supported runtime behavior.
+- **In-progress implementation** distinguishes accepted targets, source-level
+  declarations and observed integrated results. Never present an unverified
+  capability or test as complete.
 - **Future architecture** appears under a heading such as
   `Future architecture (not implemented)` and links to the owning target or
   backlog. Never mix a proposed hosted adapter into a current component table
@@ -70,7 +73,7 @@ Update the existing owner rather than creating a parallel page:
 | User-facing behavior, CLI commands, runtime requirements, generated artifacts, or safety notes | The owning `docs/user/` page; CLI commands also update the [command reference](../user/normal-flows.md#command-reference). Edit the root `README.md` only when its install steps, pipeline summary, safety list, or outbound-data list becomes wrong; never add feature detail to it |
 | Install, run, verify, or frontend-development commands | `docs/local-development.md` |
 | QA expectations, regression matrix, or manually verified product paths | `docs/local-reliability-qa.md` or its focused `docs/developer/qa/` owner |
-| API route family, JSON-RPC dispatch behavior, or SSE contract | `docs/local-ts-api.md` and the owning `docs/api/` page; field-level changes also update `docs/api/complete-contract.md` |
+| API route family, Python action dispatch behavior, or SSE contract | `docs/local-ts-api.md` and the owning `docs/api/` page; field-level changes also update `docs/api/complete-contract.md` |
 | Runtime process ownership or local-first boundary | `docs/architecture/runtime.md` or `docs/architecture/index.md` |
 | Semantic judgments, determination schemas, confirmation, or failure handling | The owning architecture and user page, API contract, `docs/decisions.md`, and Auditability Checks; update `docs/requirements.md` when its contract changes. Validation proves model authority and citation binding without eval corpora |
 | Shared contract/type boundary | `docs/architecture/contracts-types-and-api-boundaries.md` |
@@ -136,18 +139,17 @@ runtime jargon once before using the short form.
 
 | Canonical | Avoid | First use on Tier 1–2 pages |
 | --- | --- | --- |
-| the TypeScript API | TS API, product API | “the local TypeScript API (the process the web app talks to)” |
+| the Python application API | TS API, JSON-RPC bridge | “the local Python API (the process the web app talks to)” |
 | the Python worker | automation worker | “the Python worker (a Temporal worker process that executes workflows)” |
 | the web app | web UI, React app, frontend app | “frontend” remains correct for the architecture layer |
 | Temporal | — | “Temporal (the workflow engine)” |
-| the JSON-RPC bridge | — | the TypeScript-to-Python protocol; bare “JSON-RPC” is fine afterward |
 | Server-Sent Events (SSE) | — | expand on first use per page, then use “SSE” |
 | read model (noun), read-model (adjective) | — | “the read model”; “read-model projection” |
-| Discover, Enrich, Score, Tailor, Cover, Apply | — | internal stage names; the product UI folds Enrich, Score, Tailor, and Cover into the user-facing Discover preparation stage |
-| a dry run (noun), dry-run (adjective) | Dry-Run Apply as a standalone name | “rehearse with a dry run”; it is recommended, not an enforced prerequisite |
+| Discovery, Requirements, Fit, Resumes, Applications | — | feature owners; preparation can coordinate their public actions |
+| a dry run (noun), dry-run (adjective) | Dry-Run Apply as a standalone name | “rehearse with a dry run”; exact-payload rehearsal is required for submission approval in the target |
 | approval gates; approve a submission | consent gates, sign-off | the recorded decision is `approve_submit` |
 | a live submission | live apply as a noun | the real, non-dry-run application submit |
-| the apply agent | apply bot, apply worker | the Claude apply-runtime subprocess that drives the browser; on-disk `apply-workers` remains a path name |
+| browser rehearsal | apply bot | an owned, read-only browser inspection with explicitly partial coverage |
 
 Use domain terms within their bounded context. Do not rename an aggregate,
 event, state, or policy in prose merely to sound friendlier; explain it once
@@ -165,8 +167,9 @@ carry the hierarchy; preserve semantic warnings and visible focus.
 
 The homepage retains its existing entry points and feature order. Numbered
 feature markers are visual wayfinding, not a new workflow. Refresh product
-imagery through the [owned synthetic capture workflow](../local-development.md#documentation-screenshots)
-after shared branding or typography changes. Diagram palettes are curated for
+imagery using the [current documentation-image guidance](../local-development.md#documentation-screenshots)
+after shared branding or typography changes; the retired fixture capture command
+does not qualify the Python application. Diagram palettes are curated for
 both themes; their system font also works inside serialized zoom images.
 
 ## Diagrams
@@ -215,9 +218,8 @@ both themes; their system font also works inside serialized zoom images.
   to avoid one click.
 - Published URLs do not change casually. Improve a title or sidebar label
   before renaming a file.
-- Keep §-numbered headings stable under `architecture/domain-model/**`
-  (§1–§11) and `architecture/frontend/**` (§1–§15); source comments and agent
-  guidance cite them.
+- Preserve referenced heading anchors when updating domain or frontend
+  architecture; use a compatibility anchor when a section is superseded.
 - Historical records under `docs/plans/implemented/**` and `docs/incidents/**`
   retain their original record unless an explicit closeout consolidates or
   annotates them.

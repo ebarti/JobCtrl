@@ -6,64 +6,40 @@ surface; this page is the route-level starting point.
 
 ## Start A Safe Stack
 
+Run the current E2E entry point from the repository root:
+
 ```bash
-corepack pnpm qa:seed /tmp/jobctrl-qa
-JOBCTRL_DIR=/tmp/jobctrl-qa corepack pnpm api:dev
-VITE_JOBCTRL_API_BASE_URL=http://127.0.0.1:8766 corepack pnpm web:dev -- --port 5173
+corepack pnpm e2e
+corepack pnpm e2e -- --headed --grep 'approved baseline'
 ```
 
-Use the E2E stub dispatcher for commands that would otherwise start a worker,
-browser, mailbox, or model. Never submit an application during QA.
+The runner owns fresh synthetic workspaces, actual Python HTTP/CLI/worker
+composition, Temporal, SQLite and the renderer. It freezes the source and
+runtime policy and records candidate hashes and setup-inclusive timings. Only
+external model, job, mail and provider boundaries are controlled; unexpected
+external calls fail the run. Use the observed results in
+[Python application journeys](python-journeys.md), not invented terminal events.
+
+The former `qa:seed`, test-only API, `JOBCTRL_E2E_STUB_DISPATCH` and
+`JOBCTRL_E2E_ISOLATED` paths are retired. Those environment flags do not make
+current manual QA safe. Do not use real Profile data, credentials, mailboxes or
+application destinations, and do not replace internal APIs, repositories or
+worker dispatch with stubs.
 
 ## Live Worker Smoke
 
-The ordinary `web:e2e` suite stays fast and deterministic: it uses the seeded
-worker heartbeat and `JOBCTRL_E2E_STUB_DISPATCH=1`, and it may inject synthetic
-terminal events for focused UI contracts. Those checks do not prove that a
-Temporal worker can execute the production workflow and projection path.
+A real worker is part of the ordinary suite; there is no separate legacy
+JSON-RPC/live-worker command. Cancellation and restart journeys hold a controlled
+external request, act through the real API, kill the actual worker and observe
+its distinct replacement and durable state. The application-effect journey
+uses a controlled external mail endpoint after real persisted intent, never an
+actual employer submission.
 
-Use the separate opt-in live smoke when that proof is required:
-
-```bash
-corepack pnpm web:e2e:live-worker:test
-node scripts/live-worker-browser-smoke.mjs
-```
-
-The live command allocates a marker-owned synthetic workspace, unique API,
-web, Temporal, Temporal UI, and control ports, and a separate Temporal SQLite
-store. It starts the normal API JSON-RPC dispatcher and the standard `jobctrl
-worker` registry. The browser queues the seed's single Cover preparation stage;
-the harness temporarily pauses that real worker so the queued response is
-observable, resumes it to observe worker-emitted running state through the API
-and SSE, then releases one deterministic loopback model response so the browser
-can observe the terminal state and generated synthetic material.
-
-Only that loopback model boundary is a fixture. Stub dispatch, the isolated API,
-an unowned workspace, a missing Temporal executable, mismatched ports or token,
-an unexpected provider call, timeout, or failed cleanup fails the run. Provider
-credentials and credential-home overrides are removed from every spawned role.
-The documented direct Node command applies the canonical scrub before its first
-child process, so Corepack, pnpm, and the initial Playwright runner never inherit
-ambient provider state. There is deliberately no package-manager alias for the
-live run: Corepack and pnpm would start before the launcher could scrub their
-environment. Invoke the direct Node command above from the repository root.
-The worker's capability-validated smoke bootstrap skips checkout and owned
-`.env` loading, persisted provider connection translation, and native credential stores,
-then asserts the credential-free environment before the loopback backend can be
-selected. This guards the provider route even when a library ignores proxy
-variables; the harness does not claim to be a general network sandbox. No
-application stage runs, and the fixture accepts exactly one authenticated
-request.
-
-Evidence and bounded runtime logs are written under
-`dist/live-worker-smoke/<run-id>/`. Each detached service runs below an
-authenticated process-group leader recorded in the owned workspace. Teardown
-uses those persisted identities to terminate and verify every group even if the
-runtime supervisor is already gone; an identity mismatch or unverifiable live
-group preserves the workspace and fails closed. The workspace and its Temporal
-history are removed only after that outer cleanup verification succeeds. A
-persistent pending/verified cleanup guard also blocks the workspace allocator's
-process-exit fallback from deleting state after ambiguous group ownership.
+Owned process groups and state remain the runner's responsibility. Teardown
+verifies cleanup; failed synthetic state is retained for diagnosis rather than
+being treated as successful cleanup. Use the current harness under
+`apps/web/e2e/harness/` and `scripts/run-e2e.mjs`. These controlled boundaries
+are not a claim of a general OS network sandbox or live-provider qualification.
 
 ## Route Checklist
 
@@ -126,11 +102,11 @@ with selection. At 900px and below, walk Jobs, Artifacts, Contacts, Discovery,
 and Settings record data as labelled cards and confirm sort/filter access is
 still reachable; at phone width each record becomes one column.
 
-On `/pipelines`, use the seeded three-source execution and verify exactly two
-separate reconciliation rows, honest scope/freshness/ETA/capacity/queue states,
-two active work items, exact terminal/attention outcome counts, and no
-raw/private identifier leakage. Stop an active Discover execution and confirm
-the pipeline snapshot refreshes. Then exercise a failed-history fixture: a
+On `/pipelines`, create synthetic work through the real public entry points and
+verify its distinct acquisition/preparation steps, honest scope/freshness/ETA/
+capacity/queue states, exact active/terminal/attention counts, and no raw/private
+identifier leakage. Stop an active Discover execution and confirm the pipeline
+snapshot refreshes. For an observed failed-history case, a
 positive or unavailable active-work inventory must block the replacement-run
 shortcut, while an exact zero may expose setup that selects Discover without
 starting it. Keep raw workflow IDs and the reconciler code collapsed. On
@@ -140,7 +116,7 @@ a stale detected ID fails closed; and the advanced manual path plus separate
 profile-copy consent still work.
 
 On Job Detail and Artifact Detail, resolve stored evidence IDs through the
-seeded Evidence map and verify the title/excerpt replaces the raw key. Artifact
+recorded Evidence map and verify the title/excerpt replaces the raw key. Artifact
 references must link back to the owning Evidence entry. A missing key must stay
 visible as unavailable with its identifier only under **Technical details**.
 Confirm Artifact Detail completes the summary/evidence/comparison audit before
@@ -229,13 +205,11 @@ order, required selections, metrics, and historical achievement links still
 refer to the same source text. Cover duplicate and blank draft bullets, mixed
 authored/derived evidence, another save after reordering, and desktop/mobile
 controls without overflow or accessibility regressions.
-Profile object-draft regression tests also verify unknown nested fields and raw
-numeric strings survive in the outgoing request. Backend schema normalization
-is unchanged. The isolated profile browser fixture uses real GET/PATCH and
-SQLite persistence for supported values/order, with deterministic preview HTML
-bound to each current stored profile; it must not start Python or provider work.
-Hold the fifth-title autosave before SQLite commit and, separately, after commit
-but before its response. Continue typing a newer title while the save is pending.
+Verify unknown nested fields and raw numeric strings survive the actual outgoing
+Profile request. Use real Python GET/PATCH, SQLite persistence and the current
+renderer for supported values/order; do not substitute deterministic preview
+HTML or an isolated internal API. During an observed delayed save acknowledgement,
+continue typing a newer title while the save is pending.
 Releasing the older response must preserve the same newer value in Plate and
 Profile data, including after the next autosave and reload. Neither optimistic
 query updates nor successful older responses may refresh an active draft preview.
@@ -249,39 +223,28 @@ order preserve the saved sequence. Apply **Sort newest first** and verify it
 restores current/latest roles first. A role with a summary but no bullets must
 not render an empty list or the full bullet-bearing entry gap.
 
-For saved review-draft reconciliation, run the artifact-comparison browser
-fixture with controlled response ordering: save A, type B, receive A; then
-render a saved revision before releasing an older comment-seed snapshot.
-Verify B remains editable/dirty, focus remains in Plate, rendering stays gated
-until the later edit is saved, and the rendered revision/comparison do not
-regress. Focused mutation fixtures also cover draft replacement with restarted
-revision numbering, independent replies/feedback, and tenant/job switches.
+For saved review-draft reconciliation, preserve the real request and
+acknowledgement ordering: save A, type B, receive A, then render the saved
+revision. Verify B remains editable/dirty, focus remains in Plate, rendering
+stays gated until the later edit is saved, and the rendered revision/comparison
+does not regress. Exercise independent replies/feedback and tenant/job switches
+through the actual application; do not fabricate internal save/render responses.
 
-## Isolated Browser Mode
+<a id="isolated-browser-mode"></a>
 
-Set `JOBCTRL_E2E_ISOLATED=1` to use the test-only API with synthetic
-capability/credential responses and denied provider subprocesses. It retains
-real seeded API/SQLite reads and writes. The ordinary Playwright configuration
-allocates a fresh workspace automatically; use an existing short temporary
-parent on macOS so tsx IPC paths fit the operating-system limit:
+## Owned Browser Workspaces
 
-```sh
-mkdir -p /private/tmp/jobctrl-browser-qa
-JOBCTRL_E2E_APP_DIR=/private/tmp/jobctrl-browser-qa \
-JOBCTRL_E2E_ISOLATED=1 \
-JOBCTRL_E2E_API_PORT=8878 \
-JOBCTRL_E2E_WEB_PORT=5275 \
-corepack pnpm --filter @jobctrl/web e2e -- tests/dashboard.spec.ts
-```
+The current runner allocates the workspace, ports and service homes; do not
+point it at an existing user workspace or revive removed isolated-API/seed
+helpers. Browser requests reach the same Python application used by the CLI
+and worker. Create synthetic records through public product entry points, and
+keep only external services controlled. Existing source or installed entry
+points are selected by the runner's documented mode, not by substituting API
+responses.
 
-Isolated mode does not require or enable documentation screenshot writing.
-For programmatic wrappers, use `createOwnedE2eWorkspace(parent)` and
-`workspaceEnvironment(workspace)` from
-`apps/web/e2e/fixtures/owned-workspace.cjs`; retain that same allocation for
-cleanup. `createDocsScreenshotEnvironment({workspace, apiPort, webPort})` is the
-screenshot wrapper's sanitized environment, not an independent ownership proof.
-The allocation supplies contained app/database/config/state/service-home/temp
-paths. Preserve it across configuration, API startup, setup, workers and teardown.
-The seed runs before the API opens its database. Every mode refuses unowned
-existing servers and validates persisted state against the allocation before
-reading, writing or deleting. Caller parents and unrelated sentinels survive.
+For focused runs, use the existing journey titles with `corepack pnpm e2e --
+--grep '...'`. Keep UI assertions below the real application boundary and
+record actual outcomes, candidate hashes and cleanup. See
+[Python application journeys](python-journeys.md) and
+[Reliability & QA](../../local-reliability-qa.md) for the authoritative runtime,
+installed-mode and evidence contracts.

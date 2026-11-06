@@ -3,6 +3,7 @@ import {
   Fragment,
   useEffect,
   useRef,
+  useState,
   type InputHTMLAttributes,
   type ReactNode,
   type TextareaHTMLAttributes,
@@ -10,13 +11,13 @@ import {
 import {
   IconArrowDown,
   IconArrowUp,
-  IconExternalLink,
   IconPlus,
   IconSortDescending,
   IconTrash,
 } from "@tabler/icons-react";
 
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import {
   AdaptiveFieldGrid,
   AdaptiveFieldSpan,
@@ -51,12 +52,6 @@ import {
   SelectValue,
 } from "../../../shared/ui/select.js";
 import { Separator } from "../../../shared/ui/separator.js";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "../../../shared/ui/tabs.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
 
 import {
@@ -109,28 +104,6 @@ const TARGET_TRACK_GROUPS: readonly TargetSearchOptionGroup[] = [{
 const TARGET_SENIORITY_GROUPS: readonly TargetSearchOptionGroup[] = [{
   label: "Seniority", options: Object.entries(SEMANTIC_TAXONOMY.seniority).map(([value,label]) => ({value,label})),
 }];
-
-const BASELINE_NON_INVENTING_CLAIM_MODE = "adjacent_translation";
-const INVENTED_ADJACENT_CLAIM_MODE = "draft_requires_confirmation";
-const DEFAULT_AUTO_APPROVABLE_CLAIM_MODES = ["verified_only", "evidence_reframing"] as const;
-const CLAIM_MODE_PATH = "resume.tailoring_rules.tailoring_policy.claim_mode";
-const AUTO_APPROVABLE_CLAIM_MODES_PATH =
-  "resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes";
-const ALLOW_MINOR_INFERENCE_PATH = "resume.tailoring_rules.tailoring_policy.allow_minor_inference";
-const ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH =
-  "resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts";
-
-const KEYWORD_EMPHASIS_OPTIONS: Array<[string, string]> = [
-  ["natural", "Natural"],
-  ["moderate", "Moderate"],
-  ["high", "High"],
-];
-
-const BULLET_STANDARD_OPTIONS: Array<[string, string]> = [
-  ["impact", "Impact"],
-  ["technical_depth", "Technical depth"],
-  ["leadership", "Leadership"],
-];
 
 const ROLE_AREA_LABEL = "Role areas";
 const ROLE_AREA_PLACEHOLDER = "Engineering, security, platform";
@@ -191,23 +164,6 @@ function TargetPreferenceCard({
   );
 }
 
-function hasRequiredExperienceBullets(profile: JsonRecord, id: string): boolean {
-  const pins = recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id");
-  return asTextArray(pins[id]).some((bullet) => bullet.trim().length > 0);
-}
-
-function effectiveRequiredExperienceIds(profile: JsonRecord): string[] {
-  const configured = textArrayAt(profile, "resume.tailoring_rules.required_experience_entry_ids");
-  const known = recordArrayAt(profile, "resume.experience_entries")
-    .map((entry) => textFrom(entry["id"]))
-    .filter(Boolean);
-  const included = new Set(configured.length > 0 ? configured : known);
-  for (const id of known) {
-    if (hasRequiredExperienceBullets(profile, id)) included.add(id);
-  }
-  return Array.from(included);
-}
-
 export function StructuredProfileEditor({
   applicationConfigurationFields,
   mode = "profile",
@@ -217,6 +173,8 @@ export function StructuredProfileEditor({
   onProfileChange,
   onStyleChange,
 }: StructuredProfileEditorProps) {
+  const { requestIdentity } = usePorts();
+  const [identityError, setIdentityError] = useState("");
   const focusTargetsRef = useRef(new Map<string, HTMLElement>());
   const pendingFocusKeyRef = useRef<string | null>(null);
   const reservedRepeatIdsRef = useRef(new Set<string>());
@@ -259,27 +217,9 @@ export function StructuredProfileEditor({
     );
   }
 
-  const normalizePreferencesClaimPolicy = (draft: JsonRecord) => {
-    if (mode !== "preferences") {
-      return;
-    }
-    const allowsInventedAdjacent =
-      Boolean(getPathValue(draft, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH)) ||
-      textAt(draft, CLAIM_MODE_PATH) === INVENTED_ADJACENT_CLAIM_MODE;
-    setPathValue(
-      draft,
-      CLAIM_MODE_PATH,
-      allowsInventedAdjacent ? INVENTED_ADJACENT_CLAIM_MODE : BASELINE_NON_INVENTING_CLAIM_MODE,
-    );
-    setPathValue(draft, ALLOW_MINOR_INFERENCE_PATH, true);
-    setPathValue(draft, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH, allowsInventedAdjacent);
-    setPathValue(draft, AUTO_APPROVABLE_CLAIM_MODES_PATH, [...DEFAULT_AUTO_APPROVABLE_CLAIM_MODES]);
-  };
-
   const updateProfileDraft = (updater: (draft: JsonRecord) => void) => {
     const draft = structuredClone(profile);
     updater(draft);
-    normalizePreferencesClaimPolicy(draft);
     onProfileChange(draft);
   };
 
@@ -291,25 +231,6 @@ export function StructuredProfileEditor({
     const draft = structuredClone(style);
     setPathValue(draft, path, value);
     onStyleChange(draft);
-  };
-
-  const setRequiredId = (path: string, id: string, checked: boolean) => {
-    if (!id) {
-      return;
-    }
-    updateProfileDraft((draft) => {
-      const isExperience = path === "resume.tailoring_rules.required_experience_entry_ids";
-      const values = new Set(isExperience ? effectiveRequiredExperienceIds(draft) : textArrayAt(draft, path));
-      if (isExperience && !checked && (
-        hasRequiredExperienceBullets(draft, id) || (values.has(id) && values.size === 1)
-      )) return;
-      if (checked) {
-        values.add(id);
-      } else {
-        values.delete(id);
-      }
-      setPathValue(draft, path, Array.from(values));
-    });
   };
 
   const setRequiredBullet = (entryId: string, bullet: string, checked: boolean) => {
@@ -326,40 +247,6 @@ export function StructuredProfileEditor({
         values.delete(bullet);
       }
       setPathValue(draft, mapPath, { ...existing, [entryId]: Array.from(values) });
-    });
-  };
-
-  const setRequiredSkill = (categoryId: string, skill: string, checked: boolean) => {
-    if (!categoryId || !skill) {
-      return;
-    }
-    updateProfileDraft((draft) => {
-      const mapPath = "resume.tailoring_rules.required_skills_by_category_id";
-      const existing = recordAt(draft, mapPath);
-      const values = new Set(asTextArray(existing[categoryId]));
-      if (checked) {
-        values.add(skill);
-      } else {
-        values.delete(skill);
-      }
-      setPathValue(draft, mapPath, { ...existing, [categoryId]: Array.from(values) });
-    });
-  };
-
-  const allowsInventedAdjacentExperience = () =>
-    Boolean(getPathValue(profile, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH)) ||
-    textAt(profile, CLAIM_MODE_PATH) === INVENTED_ADJACENT_CLAIM_MODE;
-
-  const setInventedAdjacentExperienceAllowed = (checked: boolean) => {
-    updateProfileDraft((draft) => {
-      setPathValue(
-        draft,
-        CLAIM_MODE_PATH,
-        checked ? INVENTED_ADJACENT_CLAIM_MODE : BASELINE_NON_INVENTING_CLAIM_MODE,
-      );
-      setPathValue(draft, ALLOW_MINOR_INFERENCE_PATH, true);
-      setPathValue(draft, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH, checked);
-      setPathValue(draft, AUTO_APPROVABLE_CLAIM_MODES_PATH, [...DEFAULT_AUTO_APPROVABLE_CLAIM_MODES]);
     });
   };
 
@@ -391,18 +278,13 @@ export function StructuredProfileEditor({
         }
       }
       const item = defaultRepeatItem(path, reservedRepeatIdsRef.current);
+      if (path === "resume.experience_entries") {
+        item["bullets"] = [];
+        item["achievement_ids"] = [];
+      }
       const id = textFrom(item["id"]);
       if (id) reservedRepeatIdsRef.current.add(id);
       setPathValue(draft, path, [...items, item]);
-      if (path === "resume.experience_entries" && id) {
-        const requiredPath = "resume.tailoring_rules.required_experience_entry_ids";
-        const configured = textArrayAt(draft, requiredPath);
-        const included = new Set(configured.length > 0 ? configured : items
-          .map((entry) => textFrom(entry["id"]))
-          .filter(Boolean));
-        included.add(id);
-        setPathValue(draft, requiredPath, Array.from(included));
-      }
     });
   };
 
@@ -460,7 +342,15 @@ export function StructuredProfileEditor({
   const addBullet = (entryIndex: number) => {
     updateProfileDraft((draft) => {
       const path = `resume.experience_entries.${entryIndex}.bullets`;
-      setPathValue(draft, path, [...editableTextArrayAt(draft, path), ""]);
+      const idsPath = `resume.experience_entries.${entryIndex}.achievement_ids`;
+      const bullets = editableTextArrayAt(draft, path);
+      const ids = getPathValue(draft, idsPath);
+      if (!Array.isArray(ids) || ids.length !== bullets.length || ids.some((id) => typeof id !== "string" || !id)) {
+        setIdentityError("Achievement identities are unavailable. Reload the saved Profile before changing bullet structure."); return;
+      }
+      setIdentityError("");
+      setPathValue(draft, path, [...bullets, ""]);
+      setPathValue(draft, idsPath, [...ids, requestIdentity.create()]);
     });
   };
 
@@ -470,6 +360,11 @@ export function StructuredProfileEditor({
   const moveBullet = (entryIndex: number, bulletIndex: number, offset: -1 | 1) => {
     const path = `resume.experience_entries.${entryIndex}.bullets`;
     const bullets = editableTextArrayAt(profile, path);
+    const idsPath = `resume.experience_entries.${entryIndex}.achievement_ids`;
+    const ids = getPathValue(profile, idsPath);
+    if (!Array.isArray(ids) || ids.length !== bullets.length || ids.some((id) => typeof id !== "string" || !id)) {
+      setIdentityError("Achievement identities are unavailable. Reload the saved Profile before changing bullet structure."); return;
+    }
     const targetIndex = bulletIndex + offset;
     if (targetIndex < 0 || targetIndex >= bullets.length) {
       return;
@@ -477,17 +372,28 @@ export function StructuredProfileEditor({
     const reachedEnd = offset === -1 ? targetIndex === 0 : targetIndex === bullets.length - 1;
     focusAfterDraftUpdate(bulletFocusKey(entryIndex, targetIndex, reachedEnd ? "text" : offset === -1 ? "up" : "down"));
     [bullets[bulletIndex], bullets[targetIndex]] = [bullets[targetIndex]!, bullets[bulletIndex]!];
-    updateProfilePath(path, bullets);
+    const nextIds = [...ids];
+    [nextIds[bulletIndex], nextIds[targetIndex]] = [nextIds[targetIndex]!, nextIds[bulletIndex]!];
+    setIdentityError("");
+    updateProfileDraft((draft) => { setPathValue(draft, path, bullets); setPathValue(draft, idsPath, nextIds); });
   };
 
   const removeBullet = (entryIndex: number, bulletIndex: number) => {
     updateProfileDraft((draft) => {
       const path = `resume.experience_entries.${entryIndex}.bullets`;
+      const idsPath = `resume.experience_entries.${entryIndex}.achievement_ids`;
+      const bullets = editableTextArrayAt(draft, path);
+      const ids = getPathValue(draft, idsPath);
+      if (!Array.isArray(ids) || ids.length !== bullets.length || ids.some((id) => typeof id !== "string" || !id)) {
+        setIdentityError("Achievement identities are unavailable. Reload the saved Profile before changing bullet structure."); return;
+      }
+      setIdentityError("");
       setPathValue(
         draft,
         path,
-        editableTextArrayAt(draft, path).filter((_, index) => index !== bulletIndex),
+        bullets.filter((_, index) => index !== bulletIndex),
       );
+      setPathValue(draft, idsPath, ids.filter((_, index) => index !== bulletIndex));
     });
   };
 
@@ -757,20 +663,6 @@ export function StructuredProfileEditor({
           </SelectGroup>
         </SelectContent>
       </Select>
-    </Field>
-    );
-  };
-
-  const inventedAdjacentExperienceField = () => {
-    const id = editorControlId("profile", ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH);
-    return (
-    <Field className="field check" orientation="horizontal">
-      <Checkbox
-        id={id}
-        checked={allowsInventedAdjacentExperience()}
-        onCheckedChange={setInventedAdjacentExperienceAllowed}
-      />
-      <FieldLabel htmlFor={id}>Enable profile enhancement</FieldLabel>
     </Field>
     );
   };
@@ -1211,153 +1103,6 @@ export function StructuredProfileEditor({
     );
   };
 
-  const bulletStandardsField = () => (
-    <FieldSet className="field wide checkbox-group-field bullet-standards-group">
-      <FieldLegend>Bullet standards</FieldLegend>
-      <a
-        className="configuration-help-link"
-        data-typography="control"
-        href="https://jobctrl.dev/architecture/tailoring#inputs-to-tailoring"
-        rel="noreferrer"
-        target="_blank"
-      >
-        Guide
-        <IconExternalLink aria-hidden="true" size={12} />
-      </a>
-      <FieldGroup className="checkbox-options">
-        {BULLET_STANDARD_OPTIONS.map(([value, label]) => {
-          const id = editorControlId("profile", "bullet-standard", value);
-          const descriptionId = `${id}-description`;
-          return (
-            <Field
-              className="choice target-choice required-choice locked-choice"
-              data-disabled
-              key={value}
-              orientation="horizontal"
-            >
-              <Checkbox
-                aria-describedby={descriptionId}
-                id={id}
-                checked
-                disabled
-                name="bullet-standard"
-                value={value}
-              />
-              <FieldContent>
-                <FieldLabel htmlFor={id}>{label}</FieldLabel>
-                <FieldDescription id={descriptionId}>
-                  Required for evidence-quality resumes and cannot be disabled.
-                </FieldDescription>
-              </FieldContent>
-            </Field>
-          );
-        })}
-      </FieldGroup>
-      <FieldDescription>
-        Required evidence-quality standards; these cannot be disabled.
-      </FieldDescription>
-    </FieldSet>
-  );
-
-  const adjacentExperienceClaimsGroup = () => (
-    <FieldSet className="field wide checkbox-group-field tailoring-control-group">
-      <FieldLegend>Adjacent experience claims</FieldLegend>
-      <AdaptiveFieldGrid>
-        <AdaptiveFieldSpan span="wide">
-          {inventedAdjacentExperienceField()}
-        </AdaptiveFieldSpan>
-      </AdaptiveFieldGrid>
-    </FieldSet>
-  );
-
-  const generationPermissionsGroup = () => (
-    <FieldSet className="field wide checkbox-group-field tailoring-control-group">
-      <FieldLegend>Generation permissions</FieldLegend>
-      <FieldGroup className="checkbox-options vertical">
-        {checkboxField(
-          "resume.tailoring_rules.tailoring_policy.allow_summary_rewrite",
-          "Rewrite executive summary",
-        )}
-        {checkboxField(
-          "resume.tailoring_rules.tailoring_policy.allow_achievement_rewriting",
-          "Rewrite achievement bullets",
-        )}
-        {checkboxField(
-          "resume.tailoring_rules.tailoring_policy.allow_skill_reordering",
-          "Select and order existing skills",
-        )}
-        {disabledCheckboxField(
-          "Change experience titles",
-          "Experience titles remain fixed to profile evidence during tailoring.",
-        )}
-      </FieldGroup>
-    </FieldSet>
-  );
-
-  const writingStyleGroup = () => (
-    <FieldSet className="field wide checkbox-group-field tailoring-control-group tailoring-writing-style-group">
-      <FieldLegend>Writing style</FieldLegend>
-      <AdaptiveFieldGrid>
-        {selectField("resume.tailoring_rules.writing_style.tone", "Writing tone", [
-          ["direct", "Direct"],
-          ["executive", "Executive"],
-          ["technical", "Technical"],
-          ["confident", "Confident"],
-          ["warm", "Warm"],
-        ])}
-        {selectField("resume.tailoring_rules.writing_style.verbosity", "Verbosity", [
-          ["concise", "Concise"],
-          ["balanced", "Balanced"],
-          ["detailed", "Detailed"],
-        ])}
-        {selectField("resume.tailoring_rules.writing_style.keyword_density", "Keyword emphasis", KEYWORD_EMPHASIS_OPTIONS)}
-        {checkboxField(
-          "resume.tailoring_rules.writing_style.avoid_first_person",
-          "Avoid first-person language",
-        )}
-      </AdaptiveFieldGrid>
-    </FieldSet>
-  );
-
-  const revisionPolicyGroup = () => (
-    <FieldSet className="field wide checkbox-group-field tailoring-control-group revision-policy-group">
-      <FieldLegend>Revision policy</FieldLegend>
-      <AdaptiveFieldGrid>
-        {numberField("resume.tailoring_rules.revision_gates.min_fit_score", "Minimum fit score", {
-          min: 1,
-          max: 10,
-          step: 1,
-          defaultValue: 8,
-        })}
-        {percentField("resume.tailoring_rules.revision_gates.must_have_coverage", "Must-have coverage (%)", {
-          min: 0,
-          max: 100,
-          step: 1,
-          defaultValue: 0.85,
-        })}
-        {numberField("resume.tailoring_rules.revision_gates.max_revision_attempts", "Revision attempts", {
-          min: 0,
-          max: 10,
-          step: 1,
-          defaultValue: 1,
-        })}
-      </AdaptiveFieldGrid>
-    </FieldSet>
-  );
-
-  const additionalGuidanceGroup = () => (
-    <AdaptiveFieldGrid className="tailoring-additional-guidance-group">
-      <AdaptiveFieldSpan span="full">
-        {textareaField(
-          "resume.tailoring_rules.custom_tailoring_prompt",
-          "Additional guidance",
-          "Writing and positioning guidance; evidence rules still apply.",
-          { maxLength: 1200 },
-        )}
-      </AdaptiveFieldSpan>
-    </AdaptiveFieldGrid>
-  );
-
   const targetSearchSection = () => (
     <section
       className={
@@ -1446,13 +1191,6 @@ export function StructuredProfileEditor({
   const experienceEntries = recordArrayAt(profile, "resume.experience_entries");
   const educationEntries = recordArrayAt(profile, "resume.education_entries");
   const skillCategories = recordArrayAt(profile, "resume.skill_categories");
-  const requiredExperienceIds = new Set(effectiveRequiredExperienceIds(profile));
-  const requiredEducationIds = new Set(
-    textArrayAt(profile, "resume.tailoring_rules.required_education_entry_ids"),
-  );
-  const requiredSkillIds = new Set(
-    textArrayAt(profile, "resume.tailoring_rules.required_skill_category_ids"),
-  );
   const showProvinceStateField = isUnitedStatesAddressCountry(textAt(profile, "personal.country"));
 
   return (
@@ -1465,6 +1203,7 @@ export function StructuredProfileEditor({
             : "profile-sections"
       }
     >
+      {identityError ? <p role="alert">{identityError}</p> : null}
       {mode === "profile" ? (
         <>
           <DisclosureSection
@@ -1501,7 +1240,7 @@ export function StructuredProfileEditor({
             className="profile-disclosure profile-disclosure--baseline"
             collapsedSummary="Experience · executive profile · bullet limits"
             defaultOpen
-            description="Default experience summary and tailoring limits"
+            description="Default experience summary and baseline content"
             headingLevel={3}
             id="profile-baseline"
             title="Resume baseline"
@@ -1515,17 +1254,6 @@ export function StructuredProfileEditor({
               {textField("experience.education_level", "Education level")}
               {textField("experience.current_job_title", "Current job title")}
               {textField("experience.current_company", "Current company")}
-              {textField(
-                "resume.tailoring_rules.max_experience_bullets",
-                "Max bullets per role",
-                "number",
-                {
-                  min: 1,
-                  max: 99,
-                  step: 1,
-                  helperText: "Hard maximum per role. Tailoring keeps as many applicable baseline accomplishments as possible within this limit.",
-                },
-              )}
             </AdaptiveFieldGrid>
             <AdaptiveFieldGrid>
               <AdaptiveFieldSpan span="full">
@@ -1551,7 +1279,7 @@ export function StructuredProfileEditor({
               experienceEntries.length === 1 ? "entry" : "entries"
             }`}
             defaultOpen={false}
-            description="Roles, dates, optional position summaries, bullets, and required content"
+            description="Roles, dates, optional position summaries and achievements"
             headingLevel={3}
             id="profile-experience"
             title="Experience entries"
@@ -1562,9 +1290,7 @@ export function StructuredProfileEditor({
                 sequence.
               </FieldDescription>
               <FieldDescription>
-                All roles appear by default. Uncheck a role to let tailoring omit it.
-                Roles with Required bullets stay included. At least one role stays required;
-                new experiences start included.
+                Every role and achievement remains in the composed resume. Mark a bullet for optional coaching without changing its inclusion.
               </FieldDescription>
               {experienceEntries.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
@@ -1578,7 +1304,6 @@ export function StructuredProfileEditor({
                     recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id")[entryId],
                   ),
                 );
-                const requiredEntryId = editorControlId("profile", `experience-${index}`, "required");
                 return (
                   <Fragment key={entryId || `experience-${index}`}>
                     {index > 0 ? <Separator className="repeat-section-separator" /> : null}
@@ -1616,26 +1341,7 @@ export function StructuredProfileEditor({
                             <IconArrowDown aria-hidden="true" size={14} />
                           </Button>
                         </div>
-                        <Field
-                          className="choice"
-                          data-disabled={!entryId || undefined}
-                          orientation="horizontal"
-                        >
-                          <Checkbox
-                            id={requiredEntryId}
-                            checked={requiredExperienceIds.has(entryId)}
-                            disabled={!entryId || hasRequiredExperienceBullets(profile, entryId)
-                              || (requiredExperienceIds.has(entryId) && requiredExperienceIds.size === 1)}
-                            onCheckedChange={(checked) =>
-                              setRequiredId(
-                                "resume.tailoring_rules.required_experience_entry_ids",
-                                entryId,
-                                checked,
-                              )
-                            }
-                          />
-                          <FieldLabel htmlFor={requiredEntryId}>Must appear in final resume</FieldLabel>
-                        </Field>
+                        <span>Included in every resume</span>
                         <Button
                           onClick={() => removeRepeatItem("resume.experience_entries", index)}
                           size="sm"
@@ -1662,8 +1368,7 @@ export function StructuredProfileEditor({
                       <Separator />
                       <FieldGroup className="bullet-list">
                         <FieldDescription>
-                          Keep each achievement and its numbers together. JobCtrl extracts metrics
-                          from the bullet and keeps them bound to that achievement when tailoring.
+                          Keep each achievement and its numbers together. Each bullet keeps its own stable identity.
                         </FieldDescription>
                         {bullets.map((bullet, bulletIndex) => {
                           const requiredBulletId = editorControlId(
@@ -1688,7 +1393,7 @@ export function StructuredProfileEditor({
                                       setRequiredBullet(entryId, bullet, checked)
                                     }
                                   />
-                                  <FieldLabel htmlFor={requiredBulletId}>Required</FieldLabel>
+                                  <FieldLabel htmlFor={requiredBulletId}>Include in coaching</FieldLabel>
                                 </Field>
                               </div>
                               <Textarea
@@ -1772,7 +1477,7 @@ export function StructuredProfileEditor({
               educationEntries.length === 1 ? "entry" : "entries"
             }`}
             defaultOpen={false}
-            description="Degrees, institutions, completion dates, and required content"
+            description="Degrees, institutions and completion dates"
             headingLevel={3}
             id="profile-education"
             title="Education"
@@ -1780,7 +1485,6 @@ export function StructuredProfileEditor({
             <FieldGroup className="repeat-list">
               {educationEntries.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
-                const requiredEntryId = editorControlId("profile", `education-${index}`, "required");
                 return (
                   <Fragment key={`${entryId || "education"}-${index}`}>
                     {index > 0 ? <Separator className="repeat-section-separator" /> : null}
@@ -1789,25 +1493,7 @@ export function StructuredProfileEditor({
                         {textFrom(entry["degree"]) || `Education ${index + 1}`}
                       </FieldLegend>
                       <div className="repeat-controls">
-                        <Field
-                          className="choice"
-                          data-disabled={!entryId || undefined}
-                          orientation="horizontal"
-                        >
-                          <Checkbox
-                            id={requiredEntryId}
-                            checked={requiredEducationIds.has(entryId)}
-                            disabled={!entryId}
-                            onCheckedChange={(checked) =>
-                              setRequiredId(
-                                "resume.tailoring_rules.required_education_entry_ids",
-                                entryId,
-                                checked,
-                              )
-                            }
-                          />
-                          <FieldLabel htmlFor={requiredEntryId}>Must appear in final resume</FieldLabel>
-                        </Field>
+                        <span>Included in every resume</span>
                         <Button
                           onClick={() => removeRepeatItem("resume.education_entries", index)}
                           size="sm"
@@ -1844,7 +1530,7 @@ export function StructuredProfileEditor({
               skillCategories.length === 1 ? "category" : "categories"
             }`}
             defaultOpen={false}
-            description="Skill groups, individual skills, and required content"
+            description="Skill groups and individual skills"
             headingLevel={3}
             id="profile-skills"
             title="Skill categories"
@@ -1853,12 +1539,6 @@ export function StructuredProfileEditor({
               {skillCategories.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
                 const skills = editableTextArrayAt(profile, `resume.skill_categories.${index}.items`);
-                const requiredSkills = new Set(
-                  asTextArray(
-                    recordAt(profile, "resume.tailoring_rules.required_skills_by_category_id")[entryId],
-                  ),
-                );
-                const requiredEntryId = editorControlId("profile", `skills-${index}`, "required");
                 return (
                   <Fragment key={`${entryId || "skills"}-${index}`}>
                     {index > 0 ? <Separator className="repeat-section-separator" /> : null}
@@ -1867,25 +1547,7 @@ export function StructuredProfileEditor({
                         {textFrom(entry["label"]) || `Skill category ${index + 1}`}
                       </FieldLegend>
                       <div className="repeat-controls">
-                        <Field
-                          className="choice"
-                          data-disabled={!entryId || undefined}
-                          orientation="horizontal"
-                        >
-                          <Checkbox
-                            id={requiredEntryId}
-                            checked={requiredSkillIds.has(entryId)}
-                            disabled={!entryId}
-                            onCheckedChange={(checked) =>
-                              setRequiredId(
-                                "resume.tailoring_rules.required_skill_category_ids",
-                                entryId,
-                                checked,
-                              )
-                            }
-                          />
-                          <FieldLabel htmlFor={requiredEntryId}>Must appear in final resume</FieldLabel>
-                        </Field>
+                        <span>Included in every resume</span>
                         <Button
                           onClick={() => removeRepeatItem("resume.skill_categories", index)}
                           size="sm"
@@ -1907,7 +1569,6 @@ export function StructuredProfileEditor({
                             "profile",
                             `skill-category-${index}-skill-${skillIndex}`,
                           );
-                          const requiredSkillId = `${skillId}-required`;
                           return (
                             <Field className="skill-row" key={`${entryId}-${skillIndex}`}>
                               <Field className="skill-input field">
@@ -1922,21 +1583,6 @@ export function StructuredProfileEditor({
                                     )
                                   }
                                 />
-                              </Field>
-                              <Field
-                                className="choice skill-choice"
-                                data-disabled={!entryId || !skill || undefined}
-                                orientation="horizontal"
-                              >
-                                <Checkbox
-                                  id={requiredSkillId}
-                                  checked={requiredSkills.has(skill)}
-                                  disabled={!entryId || !skill}
-                                  onCheckedChange={(checked) =>
-                                    setRequiredSkill(entryId, skill, checked)
-                                  }
-                                />
-                                <FieldLabel htmlFor={requiredSkillId}>Required</FieldLabel>
                               </Field>
                               <Button
                                 className="icon-button"
@@ -2083,53 +1729,14 @@ export function StructuredProfileEditor({
 
           <DisclosureSection
             className="preferences-disclosure preferences-disclosure--tailoring"
-            collapsedSummary="Content rules · writing style · quality gates"
+            collapsedSummary="Full baseline · approved wording · review"
             defaultOpen
-            description="Control what JobCtrl may change and how generated resumes are evaluated"
+            description="How resume composition uses your saved Profile"
             headingLevel={3}
             id="preferences-tailoring"
-            title="Tailoring controls"
+            title="Resume composition"
           >
-            <Tabs className="tailoring-control-tabs" defaultValue="content-rules">
-              <TabsList
-                aria-label="Tailoring control sections"
-                className="tailoring-control-tabs__list"
-              >
-                <TabsTrigger value="content-rules">Content rules</TabsTrigger>
-                <TabsTrigger value="writing-style">Writing style</TabsTrigger>
-                <TabsTrigger value="quality-gates">Quality gates</TabsTrigger>
-              </TabsList>
-              <TabsContent
-                className="tailoring-tab-panel tailoring-tab-panel--content-rules"
-                forceMount
-                value="content-rules"
-              >
-                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--content">
-                  {adjacentExperienceClaimsGroup()}
-                  {generationPermissionsGroup()}
-                  {bulletStandardsField()}
-                </FieldGroup>
-              </TabsContent>
-              <TabsContent
-                className="tailoring-tab-panel tailoring-tab-panel--writing-style"
-                forceMount
-                value="writing-style"
-              >
-                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--writing">
-                  {writingStyleGroup()}
-                  {additionalGuidanceGroup()}
-                </FieldGroup>
-              </TabsContent>
-              <TabsContent
-                className="tailoring-tab-panel tailoring-tab-panel--quality-gates"
-                forceMount
-                value="quality-gates"
-              >
-                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--quality">
-                  {revisionPolicyGroup()}
-                </FieldGroup>
-              </TabsContent>
-            </Tabs>
+            <p>Every authored role and achievement stays in the composed resume. JobCtrl chooses only among wording you have approved and offers one advisory coherence review. Baseline copy is available in Settings and on each job.</p>
           </DisclosureSection>
 
           <DisclosureSection

@@ -4,6 +4,12 @@ description: "Review reusable screening answers with exact saved sources and sep
 
 # Screening Answers
 
+::: info Python transformation in progress
+This page describes the retained target workflow and the in-progress Python
+Applications contract. Integrated web and installed CLI behavior remains to be
+verified; a route declaration does not establish release availability.
+:::
+
 Use **Screening answers** in Job Detail or Apply Review to prepare open-ended
 answers. Choose **Open screening answers** to load the private library. A saved Candidate Profile, captured posting and canonical application
 destination are needed for drafting. This library is local and private; it does
@@ -92,4 +98,5 @@ its payload with that key is refused.
 The corresponding local routes are `GET` and `POST
 /v1/jobs/:jobId/screening-answers`. See the [API reference](../api/jobs-and-materials.md#screening-answers)
 and [owning architecture](../architecture/reviewed-screening-answers.md).
-The public demo reports this private worker-backed capability unavailable.
+Availability in a public demo must be reported honestly; it must not fabricate
+model-backed or private library results.

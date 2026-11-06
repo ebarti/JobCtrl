@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
-import { makeJobDetail, sampleJob, sampleSecondaryJob } from "../../test/fixtures/projections.js";
+import { makeJobDetail, sampleJob, sampleSecondaryJob } from "../../../.storybook/fixtures/projections.js";
 import { JobOverview } from "./JobOverview.js";
 
 const meta = {

@@ -1,9 +1,4 @@
-import { JobCtrlApiError } from "@jobctrl/api-client";
-import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, ManualCaptureDismissSchema, OutcomeSuggestionDecisionRequestSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema, compareOutcomeSuggestionDecision } from "@jobctrl/contracts";
-import type { ApplicationOutcome, ApplyReviewApprovalGateReason, ContactDetail, OutcomeSuggestion } from "@jobctrl/contracts";
-import { demoContactFingerprint } from "./contact-fingerprint.js";
 import {
-  LOCAL_TENANT,
   createContactCreated,
   createContactAttributeRecorded,
   createContactResearchTaskCompleted,
@@ -38,13 +33,24 @@ import {
   createStageCanceled,
   createStageSkipped,
   createWorkflowCanceled,
-  type ApplicationOutcomeKindValue,
-  type ApplyReviewDecisionValue,
-  type DomainEventUnion,
-  type OutcomeSuggestionDecisionValue,
-} from "@jobctrl/domain-types";
+  type DemoEvent as DomainEventUnion,
+} from "./events.js";
+import { JobCtrlApiError } from "@jobctrl/api-client";
+import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, ManualCaptureDismissSchema, OutcomeSuggestionDecisionRequestSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema, compareOutcomeSuggestionDecision } from "@jobctrl/contracts";
+import type { ApplicationOutcome, ApplyReviewApprovalGateReason, ContactDetail, OutcomeSuggestion } from "@jobctrl/contracts";
+import { demoContactFingerprint } from "./contact-fingerprint.js";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
-import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
+import type {
+  ApplicationOutcomeKind as ApplicationOutcomeKindValue,
+  ApplyReviewDecisionValue,
+  OutcomeSuggestionDecisionRequest,
+} from "@jobctrl/contracts";
+
+type OutcomeSuggestionDecisionValue =
+  OutcomeSuggestionDecisionRequest["decision"];
+
+import type { DemoApiClientPort } from "./DemoApi.js";
 import { DEMO_RESCORE_UNAVAILABLE_MESSAGE } from "./capabilities.js";
 import type { ApiClientResponse } from "./contracts.js";
 import { isActiveDemoJob, matchingDemoJobKeys } from "./job-filter.js";
@@ -96,11 +102,13 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function isDemoSuggestionDecisionReceipt(value: unknown): value is DemoSuggestionDecisionReceipt {
+function isDemoSuggestionDecisionReceipt(value: unknown,
+): value is DemoSuggestionDecisionReceipt {
   if (!isObjectRecord(value) || !isObjectRecord(value["event"])) return false;
   const fact = value["fact"];
   if (!isObjectRecord(fact)) return false;
-  return isObjectRecord(fact["suggestion"]) && (fact["outcome"] === null || isObjectRecord(fact["outcome"]));
+  return (
+    isObjectRecord(fact["suggestion"]) && (fact["outcome"] === null || isObjectRecord(fact["outcome"])));
 }
 
 function samePrivateValue(left: unknown, right: unknown): boolean {
@@ -164,7 +172,6 @@ const BROWSER_LOCAL_COMMANDS = [
   "resetStaleScoresForRescore",
   "cancelWorkflowRun",
   "updateProfile",
-  "updateSettings",
   "createContact",
   "updateContact",
   "deleteContact",
@@ -176,7 +183,7 @@ const BROWSER_LOCAL_COMMANDS = [
   "dismissOutreachFollowUp",
   "cancelJobAction",
   "markSkipped",
-] as const satisfies readonly (keyof ApiClientPort)[];
+] as const satisfies readonly (keyof DemoApiClientPort)[];
 
 export type DemoBrowserLocalCommand = (typeof BROWSER_LOCAL_COMMANDS)[number];
 export { BROWSER_LOCAL_COMMANDS as DEMO_BROWSER_LOCAL_COMMANDS };
@@ -191,7 +198,6 @@ export const DEMO_PRODUCTION_NO_EVENT_COMMANDS = [
   "saveResumeReviewDraftRevision",
   "seedResumeReviewCommentThreads",
   "replyToResumeReviewComment",
-  "updateSettings",
 ] as const satisfies readonly DemoBrowserLocalCommand[];
 
 export class DemoCommandPersistenceError extends Error {
@@ -244,8 +250,9 @@ export class DemoLocalCommandExecutor {
   }
 
   async preparePermanentDeleteSelection(
-    request: Parameters<ApiClientPort["preparePermanentDeleteSelection"]>[0],
-  ): ReturnType<ApiClientPort["preparePermanentDeleteSelection"]> {
+    request: Parameters<
+      DemoApiClientPort["preparePermanentDeleteSelection"]>[0],
+  ): ReturnType<DemoApiClientPort["preparePermanentDeleteSelection"]> {
     const observation = this.permanentDeleteObservations.get(request.observationId);
     this.permanentDeleteObservations.delete(request.observationId);
     const snapshot = await this.workspace.snapshot();
@@ -320,7 +327,11 @@ export class DemoLocalCommandExecutor {
 
   async execute<TMethod extends DemoBrowserLocalCommand>(
     method: TMethod,
-    args: Parameters<ApiClientPort[TMethod]>,
+    args: Parameters<DemoApiClientPort[TMethod]>,
+    beforeCommit?: (
+      draft: DemoWorkspaceSnapshot,
+      context: DemoWorkspaceMutationContext,
+    ) => void,
   ): Promise<ApiClientResponse<TMethod>> {
     const selectionId = method === "permanentlyDeleteJobs"
       ? stringValue(record(args[0]).selectionId)
@@ -335,6 +346,7 @@ export class DemoLocalCommandExecutor {
     const now = this.clock.now().toISOString();
     const commit = await this.workspace.mutate(
       (draft, context) => {
+        beforeCommit?.(draft, context);
         if (update && (update.expectedFingerprint !== sourceFingerprint ||
           JSON.stringify(requireMapValue(draft.state.readModel.contacts.details, String(args[0])).contact) !== JSON.stringify(source))) {
           throw new JobCtrlApiError(409, "Conflict", "This contact changed. Review the latest contact before retrying your draft.", { error: "contact_revision_conflict" });
@@ -383,7 +395,7 @@ export class DemoLocalCommandExecutor {
           const metadata = draft.state.readModel.discovery.settings.effectiveSettings[
             field as keyof typeof draft.state.readModel.discovery.settings.effectiveSettings
           ];
-          if (metadata?.editable) Object.assign(metadata, { value, source: "persisted" });
+          if (record(metadata).editable === true) Object.assign(record(metadata), { value, source: "persisted" });
         }
         return draft.state.readModel.discovery.settings;
       }
@@ -504,14 +516,16 @@ export class DemoLocalCommandExecutor {
           (source) => source.sourceId === sourceId,
         );
         if (existing) {
-          const decision = [...draft.eventLog].reverse().find((entry) =>
-            entry.event.eventType === "SourceLocationCandidatePromoted" &&
-            entry.event.payload.candidateId === candidateId &&
-            entry.event.payload.sourceId === sourceId,
-          );
-          const decidedAt = decision?.event.eventType === "SourceLocationCandidatePromoted"
-            ? decision.event.payload.promotedAt
-            : undefined;
+          const decision = [...draft.eventLog].reverse().find(
+              (entry) =>
+                entry.event.type === "SourceLocationCandidatePromoted" &&
+                entry.event.payload.candidateId === candidateId &&
+                entry.event.payload.sourceId === sourceId,
+            );
+          const decidedAt =
+            decision?.event.type === "SourceLocationCandidatePromoted"
+              ? decision.event.payload.promotedAt
+              : undefined;
           const persistedDecisionAt = decidedAt ??
             draft.state.readModel.discovery.sourcePreviews[sourceId]?.generatedAt;
           if (!persistedDecisionAt) {
@@ -712,7 +726,10 @@ export class DemoLocalCommandExecutor {
               : decision === "reset"
                 ? "pending"
                 : "declined";
-        item.review.decision = decision === "reset" ? null : decision as typeof item.review.decision;
+        item.review.decision =
+          decision === "reset"
+            ? null
+            : (decision as typeof item.review.decision);
         item.review.decidedAt = decision === "reset" ? null : now;
         item.review.materialsGeneration = gate.materialsGeneration;
         item.review.profileVersion = gate.profileVersion;
@@ -1027,8 +1044,8 @@ export class DemoLocalCommandExecutor {
         }
         const effective = selected
           ? templateMetadata(selected, "job_override")
-          : draft.state.readModel.materials.resumeTemplates.defaultTemplate ??
-            draft.state.readModel.materials.resumeTemplates.builtInDefault;
+          : (draft.state.readModel.materials.resumeTemplates.defaultTemplate ??
+            draft.state.readModel.materials.resumeTemplates.builtInDefault);
         const templateState = {
           effective,
           snapshot: effective,
@@ -1052,7 +1069,7 @@ export class DemoLocalCommandExecutor {
         requireMapValue(draft.state.readModel.jobs.details, jobKey);
         const body = ManualApplicationOutcomeRequestSchema.parse(args[1]);
         const key = JSON.stringify([jobKey, body.interviewPrepGeneration === undefined ? "manual-outcome" : "interview-reflection", body.requestId]);
-        const receipts = draft.state.actionReceipts ??= {};
+        const receipts = (draft.state.actionReceipts ??= {});
         const receipt = receipts[key];
         if (receipt) {
           const outcome = draft.state.readModel.analytics.outcomes.outcomes.find((outcome) => outcome.outcomeId === receipt.outcomeId && outcome.jobKey === jobKey);
@@ -1060,7 +1077,7 @@ export class DemoLocalCommandExecutor {
             || outcome.kind !== body.kind || outcome.note !== (body.note ?? null)
             || outcome.interviewPrepGeneration !== (body.interviewPrepGeneration ?? null)
             || (body.occurredAt !== undefined && outcome.occurredAt !== body.occurredAt)) throw new Error("This request identity conflicts with a recorded action. Start a new action.");
-          return { ok: true, outcome };
+          return { ok: true, disposition: "replayed", outcome };
         }
         const kind = requiredOneOf(
           body.kind,
@@ -1075,6 +1092,7 @@ export class DemoLocalCommandExecutor {
           jobKey,
           kind,
           source: "manual" as const,
+          recordedBy: "user" as const,
           note: body.note ?? null,
           occurredAt: stringValue(body.occurredAt) ?? now,
           recordedAt: now,
@@ -1097,7 +1115,7 @@ export class DemoLocalCommandExecutor {
           interviewPrepGeneration: outcome.interviewPrepGeneration,
           notePresent: outcome.note !== null,
         }), now));
-        return { ok: true, outcome };
+        return { ok: true, disposition: "applied", outcome };
       }
       case "decideOutcomeSuggestion": {
         const suggestionId = requiredString(args[0], "suggestionId");
@@ -1118,7 +1136,9 @@ export class DemoLocalCommandExecutor {
         };
         if (suggestion.status !== "pending") {
           const replayOutcome = suggestion.decidedOutcomeId
-            ? draft.state.readModel.analytics.outcomes.outcomes.find((outcome) => outcome.outcomeId === suggestion.decidedOutcomeId) ?? null
+            ? (draft.state.readModel.analytics.outcomes.outcomes.find(
+                (outcome) => outcome.outcomeId === suggestion.decidedOutcomeId,
+              ) ?? null)
             : null;
           if (!receipt || !Number.isSafeInteger(receipt.eventSequence) || receipt.eventSequence < 1 ||
               receipt.eventSequence > draft.lastEventSequence || receipt.event.decisionRequestVersion !== 2 ||
@@ -1128,13 +1148,19 @@ export class DemoLocalCommandExecutor {
           const retainedEvent = draft.eventLog.find((entry) => entry.sequence === receipt.eventSequence);
           const firstEventSequence = draft.eventLog[0]?.sequence;
           const retainedEventValue = retainedEvent ? record(retainedEvent.event) : null;
-          if ((!retainedEvent && (firstEventSequence === undefined || receipt.eventSequence >= firstEventSequence)) ||
-              (retainedEventValue && (retainedEventValue["eventType"] !== "OutcomeSuggestionDecided" ||
-                !samePrivateValue(retainedEventValue["payload"], receipt.event)))) {
+          if (
+            (!retainedEvent && (firstEventSequence === undefined || receipt.eventSequence >= firstEventSequence)) ||
+            (retainedEventValue &&
+              (retainedEventValue["type"] !== "OutcomeSuggestionDecided" ||
+                !samePrivateValue(retainedEventValue["payload"], receipt.event)))
+          ) {
             return refuse("outcome_suggestion_replay_unverifiable", replayOutcome);
           }
           const perJobOutcome = suggestion.decidedOutcomeId
-            ? perJob.outcomes.find((item) => item.outcomeId === suggestion.decidedOutcomeId) ?? null : null;
+            ? (perJob.outcomes.find(
+                (item) => item.outcomeId === suggestion.decidedOutcomeId,
+              ) ?? null)
+            : null;
           const savedRequest = OutcomeSuggestionDecisionRequestSchema.safeParse(receipt.request);
           const provided = receipt.event.occurredAtProvided;
           if (!samePrivateValue(receipt.fact, demoSuggestionDecisionFact(suggestion, replayOutcome)) ||
@@ -1150,16 +1176,28 @@ export class DemoLocalCommandExecutor {
           if (comparison === "replayed") return { ok: true, disposition: "replayed", suggestion, outcome: replayOutcome };
           return refuse(comparison === "conflict" ? "outcome_suggestion_conflict" : "outcome_suggestion_replay_unverifiable", replayOutcome);
         }
-        if (invalidReceipts || receiptPresent || draft.eventLog.some((entry) => {
-          const event = record(entry.event);
-          const payload = record(event["payload"]);
-          return event["eventType"] === "OutcomeSuggestionDecided" && payload["suggestionId"] === suggestionId && payload["jobKey"] === suggestion.jobKey;
-        }) ||
-            suggestion.decidedAt !== null || suggestion.decisionReason !== null || suggestion.decidedOutcomeId !== null) {
+        if (
+          invalidReceipts || receiptPresent ||
+          draft.eventLog.some((entry) => {
+            const event = record(entry.event);
+            const payload = record(event["payload"]);
+            return (
+              event["type"] === "OutcomeSuggestionDecided" &&
+              payload["suggestionId"] === suggestionId &&
+              payload["jobKey"] === suggestion.jobKey
+            );
+          }) ||
+          suggestion.decidedAt !== null ||
+          suggestion.decisionReason !== null ||
+          suggestion.decidedOutcomeId !== null
+        ) {
           return refuse("outcome_suggestion_replay_unverifiable", null);
         }
-        const saveReceipt = (event: ReturnType<typeof createOutcomeSuggestionDecided>, outcome: ApplicationOutcome | null) => {
-          const receipts = draft.state.suggestionDecisionReceipts ??= {};
+        const saveReceipt = (
+          event: ReturnType<typeof createOutcomeSuggestionDecided>,
+          outcome: ApplicationOutcome | null,
+        ) => {
+          const receipts = (draft.state.suggestionDecisionReceipts ??= {});
           receipts[receiptKey] = {
             request: structuredClone(body), fact: demoSuggestionDecisionFact(suggestion, outcome),
             event: structuredClone(event.payload), eventSequence: draft.lastEventSequence + (outcome ? 2 : 1),
@@ -1206,7 +1244,7 @@ export class DemoLocalCommandExecutor {
           suggestionId,
           evidenceId: suggestion.evidenceId,
           interviewPrepGeneration: null,
-        } as unknown as typeof draft.state.readModel.analytics.outcomes.outcomes[number];
+        } as unknown as (typeof draft.state.readModel.analytics.outcomes.outcomes)[number];
         suggestion.decidedOutcomeId = outcome.outcomeId;
         Object.assign(perJobSuggestion, suggestion);
         draft.state.readModel.analytics.outcomes.outcomes.push(outcome);
@@ -1462,30 +1500,6 @@ export class DemoLocalCommandExecutor {
         }), now));
         return profile;
       }
-      case "updateSettings": {
-        const body = record(args[0]);
-        Object.assign(draft.state.readModel.settings.settings, body);
-        for (const [field, value] of Object.entries(body)) {
-          const metadata = draft.state.readModel.settings.effectiveSettings[
-            field as keyof typeof draft.state.readModel.settings.effectiveSettings
-          ];
-          if (metadata?.editable) {
-            Object.assign(metadata, { value, source: "persisted" });
-          }
-        }
-        const dailyBudgetUsd = numberValue(body.dailyBudgetUsd);
-        if (dailyBudgetUsd !== null) {
-          const spend = draft.state.readModel.dashboard.health.llmSpend;
-          spend.dailyBudgetUsd = dailyBudgetUsd;
-          spend.remainingUsd = spend.estimatedUsd === null ? null : Math.max(0, dailyBudgetUsd - spend.estimatedUsd);
-          const digestBudget = draft.state.readModel.dashboard.digest.budget;
-          digestBudget.dailyBudgetUsd = dailyBudgetUsd;
-          digestBudget.remainingUsd = digestBudget.estimatedUsd === null
-            ? null : Math.max(0, dailyBudgetUsd - digestBudget.estimatedUsd);
-        }
-        recomputeDemoOperationalProjections(draft);
-        return draft.state.readModel.settings;
-      }
       case "createContact": {
         const body = record(args[0]);
         const contactId = this.createId("contact");
@@ -1582,10 +1596,13 @@ export class DemoLocalCommandExecutor {
             const value = input.value.trim();
             const rawKey = JSON.stringify([kind, input.value]);
             const normalizedKey = JSON.stringify([kind, value]);
-            const kept = input.attributeId !== undefined
-              ? byId.get(input.attributeId)
-              : remaining.get(rawKey)?.shift() ??
-                (rawKey !== normalizedKey ? remaining.get(normalizedKey)?.shift() : undefined);
+            const kept =
+              input.attributeId !== undefined
+                ? byId.get(input.attributeId)
+                : (remaining.get(rawKey)?.shift() ??
+                  (rawKey !== normalizedKey
+                    ? remaining.get(normalizedKey)?.shift()
+                    : undefined));
             if (kept && kept.kind === kind &&
                 (kept.value === input.value || kept.value === value)) return structuredClone(kept);
             const parsed = ContactAttributeInputSchema.safeParse({ kind, value: input.value });
@@ -1604,7 +1621,7 @@ export class DemoLocalCommandExecutor {
                 confidence: 1,
                 userConfirmed: true,
               },
-            } as typeof contact.attributes[number];
+            } as (typeof contact.attributes)[number];
             createdAttributes.push(attribute);
             return attribute;
           });
@@ -1681,7 +1698,7 @@ export class DemoLocalCommandExecutor {
           attributes,
           createdAt: now,
           updatedAt: now,
-        } as typeof draft.state.readModel.contacts.details[string]["contact"];
+        } as (typeof draft.state.readModel.contacts.details)[string]["contact"];
         candidate.status = "confirmed";
         candidate.confirmedContactId = contactId;
         candidate.confirmedAt = now;
@@ -1742,14 +1759,24 @@ export class DemoLocalCommandExecutor {
         if (selected.status !== "candidate") {
           throw new TypeError(`Demo outreach draft ${draftId} is not awaiting review.`);
         }
+        if (approved) {
+          for (const prior of thread.drafts) {
+            if (prior.draftId !== draftId && prior.status === "approved")
+              prior.status = "superseded";
+          }
+        }
         selected.status = approved ? "approved" : "rejected";
         selected.approvedAt = approved ? now : null;
         selected.rejectedAt = approved ? null : now;
-        selected.reason = approved ? "" : stringValue(record(args[2]).reason) ?? "Rejected in the browser-local demo.";
+        selected.reason = approved
+          ? ""
+          : (stringValue(record(args[2]).reason) ??
+            "Rejected in the browser-local demo.");
         thread.approvedDraftId = approved
           ? draftId
           : thread.approvedDraftId === draftId
-            ? thread.drafts.find((item) => item.status === "approved")?.draftId ?? null
+            ? (thread.drafts.find((item) => item.status === "approved")
+                ?.draftId ?? null)
             : thread.approvedDraftId;
         thread.hasApprovedDraft = thread.drafts.some((item) => item.status === "approved");
         thread.latestStatus = selected.status;
@@ -2019,7 +2046,7 @@ function manualCaptureImportResponse(
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : {};
 }
 

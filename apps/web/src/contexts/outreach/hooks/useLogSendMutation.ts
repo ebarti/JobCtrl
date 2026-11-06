@@ -3,6 +3,7 @@ import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/r
 import { useRef } from "react";
 
 import { applyPartialQueryPatch, createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
+import { createUnconfirmedWriteError } from "../../../shared/lib/unconfirmed-write.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { markThreadSentInThread } from "../lib/follow-up-patches.js";
@@ -17,13 +18,21 @@ export function useLogSendMutation(
   jobId?: string,
 ): UseMutationResult<LogOutreachSendResponse, Error, LogSendVariables> {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   const attempted = useRef(new Set<string>());
   const threadForContactKey = outreachKeys.threadForContact(tenantId, contactId, jobId ?? null);
   const options = createOptimisticMutation<LogOutreachSendResponse, LogSendVariables>(queryClient, {
     mutationKey: outreachKeys.thread(tenantId, threadId),
-    mutationFn: (body) => api.logOutreachSend(threadId, body),
+    mutationFn: async (body) => {
+      const path = `/v1/outreach/threads/${encodeURIComponent(threadId)}/send-logs`;
+      const response = await http.json<LogOutreachSendResponse>("POST", path, { body });
+      const log = response?.sendLog;
+      if (response?.ok !== true || !log || !log.sendLogId || log.threadId !== threadId || log.draftId !== body.draftId || log.channel !== body.channel || log.sentAt !== body.sentAt) {
+        throw createUnconfirmedWriteError("POST", path, new TypeError("The send attestation response did not confirm the submitted facts"));
+      }
+      return response;
+    },
     optimisticUpdates: (variables) => {
       // A prior uncertain attempt may already be visible through a current read.
       // Until the receipt returns, only the server can identify that fact.

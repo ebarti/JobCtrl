@@ -88,6 +88,13 @@ yourself. The current cadence policy belongs to
 [Apply → Outreach Follow-Ups](apply.md#outreach-follow-ups) and is not duplicated
 here.
 
+::: info Python transformation in progress
+The target separates Contacts and Outreach while keeping the same manual-send
+boundary. Its in-progress implementation binds thread changes to an expected
+fingerprint and rechecks the approved draft's sources before copying. The
+target paths and UI still require integration verification.
+:::
+
 ## Editing A Contact That Changed Elsewhere
 
 An edit is bound to the saved contact you opened. If another tab or client
@@ -311,6 +318,7 @@ scoring or Apply decisions.
 | HTTP contract | `/v1/contacts`, supervised-research routes, contact/thread draft routes, send logs, and follow-up operations; see [Jobs & Materials API](../api/jobs-and-materials.md#contacts-and-outreach) and the [complete contacts contract](../api/complete-contract.md#contacts). |
 | API implementation | `apps/api/src/contacts.ts` and `apps/api/src/outreach.ts`; shared request/response types live in `packages/contracts`. |
 | Worker implementation | `workers/automation/src/jobctrl/domain/contact/`, `workers/automation/src/jobctrl/contact/`, and `workers/automation/src/jobctrl/infrastructure/contact/`. |
+| Python transformation (in progress) | `workers/automation/src/jobctrl/features/contacts/` and `workers/automation/src/jobctrl/features/outreach/`. |
 | Web implementation | `apps/web/src/contexts/outreach/`, `apps/web/src/views/outreach/`, and the `/outreach` route files. |
 | Deep architecture | [Stage Walkthrough → Contact Research](../architecture/pipeline/stages.md#contact-research-supervised-off-pipeline), [Outreach Draft Gates](../architecture/tailoring.md#outreach-draft-gates-reused-materials-stack), and [Sensitive Projection Families](../architecture/read-model.md#contacts-research-and-outreach). |
 

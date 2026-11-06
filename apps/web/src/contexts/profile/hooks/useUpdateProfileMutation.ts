@@ -4,11 +4,10 @@ import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/r
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
-import { dashboardKeys } from "../../operations/dashboardKeys.js";
-import { jobsKeys } from "../../operations/jobsKeys.js";
 import type { ProfileConfigResponse } from "@jobctrl/contracts";
 import { patchProfileResponse } from "../lib/profile-patches.js";
 import { profileKeys } from "../queryKeys.js";
+import { updateProfile } from "../client.js";
 
 export function useUpdateProfileMutation(options: { optimistic?: boolean } = {}): UseMutationResult<
   ProfileConfigResponse,
@@ -16,12 +15,12 @@ export function useUpdateProfileMutation(options: { optimistic?: boolean } = {})
   ProfileUpdateRequest
 > {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation(
     createOptimisticMutation<ProfileConfigResponse, ProfileUpdateRequest>(queryClient, {
       mutationKey: profileKeys.profile(tenantId),
-      mutationFn: (body) => api.updateProfile(body),
+      mutationFn: (body) => updateProfile(http, body),
       ...(options.optimistic === false ? {} : {
         optimisticUpdates: (body: ProfileUpdateRequest) => [
           {
@@ -30,13 +29,8 @@ export function useUpdateProfileMutation(options: { optimistic?: boolean } = {})
           },
         ],
       }),
-      // Profile changes affect downstream scoring (job lists) and dashboard counts.
-      settle: () => [
-        profileKeys.profile(tenantId),
-        jobsKeys.lists(tenantId),
-        jobsKeys.details(tenantId),
-        dashboardKeys.summary(tenantId),
-      ],
+      // Jobs/Fit own their cross-feature event invalidation; Profile owns its cache.
+      settle: () => [profileKeys.profile(tenantId)],
     }),
   );
 }

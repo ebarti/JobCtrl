@@ -1,175 +1,63 @@
 # Repository & Ownership Map
 
-JobCtrl is a TypeScript workspace beside a separately packaged Python
-automation runtime, plus native distribution and browser surfaces. This page
-maps each production concern to one source owner so contributors can start at
-the deciding boundary instead of following a screen name across the tree.
-
-**Read this if** you know what behavior should change but not which directory
-or layer owns it.
+The accepted Python transformation is in progress. This map identifies the
+target source owners; files in the shared checkout or route declarations alone
+do not prove that a capability has passed the integrated journey gates. See
+[Runtime](../architecture/runtime.md) and the
+[workstream plan](../plans/2026-11-06-transformation-workstreams.md).
 
 ## Source Shape
 
-Solid arrows point from a shared package to the code that imports it. Runtime
-traffic is intentionally absent; it belongs to the
-[System Overview](../architecture/index.md) and
-[Runtime & Processes](../architecture/runtime.md).
-
-```mermaid
-flowchart TB
-    accTitle: JobCtrl repository source dependency map
-    accDescr: Shared TypeScript packages flow into runnable applications. Runtime calls are intentionally excluded and documented in System Overview.
-
-    subgraph Shared["Shared TypeScript packages"]
-      direction LR
-      Domain@{ icon: "tabler:braces", form: "rounded", label: "domain-types", pos: "b", h: 52 }
-      Contracts@{ icon: "tabler:schema", form: "rounded", label: "contracts", pos: "b", h: 52 }
-      Client@{ icon: "tabler:route", form: "rounded", label: "api-client", pos: "b", h: 52 }
-      Domain --> Contracts --> Client
-    end
-
-    subgraph Apps["Runnable applications"]
-      direction LR
-      API@{ icon: "tabler:api", form: "circle", label: "apps/api", pos: "b", h: 52 }
-      Web@{ icon: "tabler:browser", form: "circle", label: "apps/web", pos: "b", h: 52 }
-      Extension@{ icon: "tabler:puzzle", form: "rounded", label: "apps/extension", pos: "b", h: 52 }
-      Demo@{ icon: "tabler:cloud-code", form: "rounded", label: "apps/demo-edge", pos: "b", h: 52 }
-    end
-
-    Client --> Web
-    Domain --> API
-    Contracts --> API
-    Contracts --> Extension
-    Web -->|"demo build input"| Demo
-
-    class Web,Extension ui
-    class Domain,Contracts,Client,API,Demo ts
-```
-
-## Top-Level Owners
-
-| Path | Owns | Does not own |
-| --- | --- | --- |
-| `apps/web/` | React/Vite product UI, routes, view composition, frontend contexts, ports, adapters, cache invalidation, stories, and browser tests | Server truth, SQLite writes, raw `fetch` policy in feature code, or workflow execution |
-| `apps/api/` | Fastify routes, loopback and mutation security, REST semantics, read/write mapping, projection refresh, SSE framing, and the TypeScript side of JSON-RPC | LLM/browser automation or direct Temporal workflow definitions |
-| `apps/extension/` | The Manifest V3 capture and assisted-autofill client, its loopback API client, local queue, and extension-specific privacy tests | Arbitrary remote API access or application submission authority |
-| `apps/demo-edge/` | The deployment-gated demo edge API, consented measurement contract, and retention worker | Local product data, production automation, or the local API contract |
-| `workers/automation/` | The `jobctrl` Python package: CLI, JSON-RPC server, domain model, SQLite adapters, Temporal workflows/activities, provider calls, discovery, materials, and apply execution | Browser-facing HTTP routes or web state |
-| `packages/domain-types/` | Selected TypeScript domain vocabulary: identifiers, shared states, the TypeScript domain-event union, projection shapes consumed across packages, and pure shared TypeScript product policies | Python aggregate behavior and invariants, I/O, REST transport, or SQLite rows |
-| `packages/contracts/` | Shared REST request/response schemas and DTOs, enums used on the wire, and TypeScript JSON-RPC envelopes/method schemas | Fetch behavior, route registration, or domain-event ownership |
-| `packages/api-client/` | Typed HTTP calls, URL/query encoding, request timeouts, and API error behavior | Business validation or server-side routing |
-| `packages/tsconfig/` | Shared TypeScript compiler presets | Product behavior |
-| `launcher/` | Native `jobctrl` supervisor/installer, instance identity, release selection, update, rollback, and installed lifecycle | Source-development supervision or domain commands themselves |
-| `packaging/distribution/` | Machine-readable payload, component, capability, provider-pack, signing, and redistribution contracts | Runtime business behavior |
-| `scripts/` | Source-stack supervision and repository-level build, release, documentation, privacy, and contract checks | A second home for domain logic |
-| `.github/workflows/` | CI, publication, deployment, and protected release orchestration | Locally reproducible product behavior |
-| `docs/` | Canonical user, contributor, architecture, API, requirement, decision, QA, and delivery records | Implementation authority when documentation and current code diverge |
-
-Required-bullet semantic findings are owned by
-`workers/automation/src/jobctrl/domain/profile/required_bullet_coaching.py` through
-`LlmPort`. The RPC handler verifies runtime, canonical sources and profile version,
-admits spend and selects the configured adapter. Shared TypeScript source binding
-and cleanup applicability live in
-`packages/domain-types/src/profile/required-bullet-suggestions.ts`, imported by
-the API and Profile form. Wire schemas/DTOs remain in `packages/contracts`.
-The offline demo marks coaching unavailable. See
-[contract boundaries](../architecture/contracts-types-and-api-boundaries.md#contract-owners).
-
-## Inside The Runnable Boundaries
-
-### The TypeScript API
-
-| Surface | Owner |
+| Surface | Responsibility |
 | --- | --- |
-| Route registration and HTTP status/security behavior | `apps/api/src/server.ts` plus focused route modules |
-| API DTO/schema import surface | `apps/api/src/contracts.ts`, re-exporting `@jobctrl/contracts` |
-| Projection-backed query mapping | `apps/api/src/read-model.ts` |
-| Simple local state transitions and canonical TS writes | `apps/api/src/write-model.ts` and the owning focused modules |
-| TypeScript projection materialization | `apps/api/src/projections.ts` |
-| TS-to-Python dispatch | `apps/api/src/json-rpc-adapter.ts` |
-| Server-Sent Events (SSE) framing and replay | `apps/api/src/event-stream.ts` |
+| `workers/automation/src/jobctrl/app/` | Python composition, HTTP/security, SQLite/event infrastructure, model gateway, durable actions, worker and preparation orchestration. |
+| `workers/automation/src/jobctrl/features/<owner>/` | Feature domain, application actions, public services, owned schema, persistence and HTTP adapters. |
+| `workers/automation/src/jobctrl/cli.py` | CLI entry point to the same Python application actions and public local API. |
+| `apps/web/` | React/Vite navigation, feature views, ports, adapters, client state and query invalidation. |
+| `apps/extension/` | Browser capture and user-reviewed autofill/Discovery transport, without submission authority. |
+| `launcher/`, `packaging/`, `scripts/` | Native launch, source/installed lifecycle, packaging and contributor entry points. |
+| `docs/` | User journeys, architecture, API, safety, QA and historical records. |
 
-The API may host pure, low-latency state transitions. JSON-RPC methods divide
-into synchronous provider-backed calls and workflow-start calls; only the latter
-ask the Python side to start Temporal. Some TypeScript use cases also persist
-canonical queued intent or stage state around that dispatch. Those rows record
-product intent and visibility—they are not a second Temporal queue.
+Legacy source may remain in the shared checkout until final integration. It is
+not a second target authority. At cutover the app has no Fastify business API,
+TypeScript/Python JSON-RPC bridge or duplicate business writer.
 
-### The Web App
+## Feature Owners
 
-| Surface | Owner |
+| Owner | Source and authority |
 | --- | --- |
-| Domain-owned UI behavior | `apps/web/src/contexts/<context>/` |
-| Page composition and view-local ephemeral state | `apps/web/src/views/<view>/` |
-| Routes and URL composition | `apps/web/src/routes/` |
-| Browser capability abstractions | `apps/web/src/shared/ports/` |
-| Local implementations of those ports | `apps/web/src/shared/adapters/local/` |
-| Cross-context event invalidation | `apps/web/src/contexts/operations/invalidation-router.ts` |
-| Deployment-gated demo client behavior | `apps/web/src/demo/` |
+| Profile | Facts, evidence, sources, confirmations, preferences, baseline and approved wording. |
+| Jobs / Discovery / Companies | Job identity and manual capture; optional search/ingestion; independent optional company research. |
+| Requirements / Fit / Resumes | Qualified meanings and occurrences; person qualification and wording coverage; complete approved document composition, review, acceptance and export. |
+| Contacts / Outreach | Contact facts/research; separate reviewed communication lifecycle. |
+| Applications | Screening answers, exact-payload approval, assisted execution, intents, outcomes and Gmail feedback. |
+| Interviews / Learning / Digest | Interview preparation and notes; plans/milestones; summaries and acknowledgements. |
+| Compensation / Offers | Neutral pay evidence/calculations; separate actual offer terms and decisions. |
 
-Views compose contexts. A context does not import a view, and feature code goes
-through ports instead of calling browser globals or the API client directly.
-The full rules live in [Frontend Architecture](../architecture/frontend/index.md).
-
-### The Python Runtime
-
-| Surface | Owner |
-| --- | --- |
-| Aggregates, value objects, use cases, and domain events | `workers/automation/src/jobctrl/domain/<context>/` and `domain/events/` |
-| Driven capability interfaces | `workers/automation/src/jobctrl/domain/ports/` |
-| SQLite, provider, browser, network, projection, and Temporal adapters | `workers/automation/src/jobctrl/infrastructure/` |
-| Registered workflows and activities | `workers/automation/src/jobctrl/infrastructure/temporal/registry.py` plus context workflow/activity modules |
-| Human-facing driving adapter | `workers/automation/src/jobctrl/cli.py` |
-| API-facing driving adapter | `workers/automation/src/jobctrl/infrastructure/rpc/` |
-
-Domain modules do not own database or provider mechanics. Repositories and
-other adapters translate between domain values and physical storage or
-external capabilities.
+Each feature owns its schema and I/O adapters and exposes public service
+snapshots or actions. Composition injects those ports; consumers do not query
+sibling-private tables. Dashboard, Activity and Evidence Map compose public
+feature reads. See the [domain model](../architecture/domain-model/strategic.md).
 
 ## Start A Change At Its Owner
 
-| Change | Start here | Then check |
-| --- | --- | --- |
-| Python aggregate state or invariant | Owning module under `workers/automation/src/jobctrl/domain/` | TypeScript mirror when the concept crosses runtimes, persistence adapters, and every consumer |
-| Shared TypeScript identity, state, projection, event vocabulary, or pure policy | `packages/domain-types/` | Matching Python mirror where applicable, parity coverage, and every consumer |
-| REST request/response shape | `packages/contracts/src/schemas.ts` | API route, API client, web consumer, focused API docs |
-| JSON-RPC method or envelope | `packages/contracts/src/rpc.ts` | Python `domain/rpc/messages.py`, dispatcher, adapter, tests |
-| HTTP status, auth/origin rule, or route behavior | `apps/api/` | Contract schema and API reference |
-| Heavy or durable command | Owning Python use case/workflow | JSON-RPC registration, workflow visibility, projections |
-| Canonical database fact | Owning repository/write module and schema initialization | Event emission, projections, storage docs, migration compatibility |
-| Projection field | Canonical source first, then Python/TS projection owners | DTO, API mapping, parity fixture, web invalidation |
-| UI mutation or rendering | Owning `apps/web/src/contexts/` module | Operations read hook, composing view, story/a11y/product-path QA |
-| Extension capture/autofill | `apps/extension/` | Loopback API capability route and privacy boundary |
-| Installed lifecycle or payload | `launcher/`, `packaging/distribution/`, and matching `scripts/distribution-*` | Release workflow and distribution contract |
-| Documentation | The canonical owner in [Documentation Standards](documentation-standards.md) | Index/sidebar/link consistency and docs verification |
+| Change | Start with |
+| --- | --- |
+| HTTP/security, settings, events, shared action execution | `app/` plus the affected feature adapter and [API](../api/complete-contract.md). |
+| A domain rule or canonical write | The owning `features/<owner>/` package and its public ports. |
+| Preparation recipes, checkpoints or cancellation | `app/preparation.py`, action runtime and [pipeline](../architecture/pipeline/index.md). |
+| Model meaning, source binding or usage | The owning feature and `app/model.py`; see [semantic requirements](../requirements.md#semantic-determination-requirement). |
+| UI interaction or invalidation | `apps/web/` feature context and [frontend architecture](../architecture/frontend/index.md). |
+| Runtime, distribution or Profile transfer | Launcher/packaging and [runtime](../architecture/runtime.md); never test with real user data. |
 
-## Boundary Rules
-
-- Do not copy a domain type into a route, component, or database helper. Import
-  the logical type and translate only at a real boundary.
-- Do not put fetch behavior in `packages/contracts` or business validation in
-  `packages/api-client`.
-- Do not treat a projection row as a write model. Change the canonical owner,
-  emit the event when appropriate, then rebuild the projection.
-- Do not make the TypeScript API enqueue Temporal work directly. The local API
-  dispatches JSON-RPC; the Python runtime owns workflow startup.
-- Keep test ownership next to the surface where practical: API tests under
-  `apps/api/test`, frontend tests colocated or under `apps/web/e2e`, package
-  tests inside the package, and Python tests under `workers/automation/tests`.
+The [reliability guide](../local-reliability-qa.md) and
+[Python journey ledger](qa/python-journeys.md) own verification. The recurring
+target suite drives the real application/API/database/worker/renderer with only
+external provider boundaries controlled; source files, route registration and
+static checks are not a substitute for an integrated result.
 
 ## Future Architecture (Not Implemented)
 
-Hosted Postgres, object storage, queue/outbox, managed Temporal, and hosted API
-adapters are evolution seams documented under the
-[Backend Domain Model](../architecture/domain-model/index.md) and its
-[cloud evolution](../architecture/domain-model/cloud.md). They are not a second
-production tree today. This map describes the current local and bundled source
-owners only.
-
-Reviewed material translations are owned by
-`domain/materials/locale_variants.py` and
-`infrastructure/materials/locale_variants.py`, with the runtime-bound handler in
-`infrastructure/rpc/handlers.py`, HTTP adapter `apps/api/src/locale-variants.ts`,
-Contracts operation/snapshot schemas, and Materials' `MaterialLocaleVariants`
-component in Job Detail. [The locale architecture](../architecture/material-locale-variants.md)
-owns the registry, semantic bindings, review fences and export contract.
+Hosted identity, tenant isolation, distributed storage and a hosted deployment
+need separate product and security decisions. Port names do not establish that
+such adapters or guarantees already exist.

@@ -7,7 +7,7 @@ import {
   makeOutreachThreadDetail,
   makeOutreachThreadResponse,
   makeRejectedCandidateThread,
-} from "../../../test/fixtures/outreach.js";
+} from "../../../../.storybook/fixtures/outreach.js";
 import { OutreachThreadPanel } from "./OutreachThreadPanel.js";
 
 const meta = {

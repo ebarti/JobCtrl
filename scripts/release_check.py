@@ -62,7 +62,6 @@ MINIFIED_BUILD_SUFFIXES = {".cjs", ".js", ".mjs"}
 DEMO_PUBLIC_FIXTURE_FILENAMES = frozenset(
     {
         "application-preview.html",
-        "cover-letter.txt",
         "interview-notes.txt",
         "profile-resume.html",
         "profile-resume.pdf",

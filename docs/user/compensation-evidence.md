@@ -168,7 +168,7 @@ source conflict is a warning to inspect, not a hidden decision rule.
 
 A per-job, all-jobs, or CLI action can also start the independent
 `CompensationRefreshWorkflow`; it does not rerun discovery, scoring, tailoring,
-cover generation, or Apply.
+or Apply.
 
 A later source-policy change affects later refreshes only. Previously persisted
 evidence remains an auditable snapshot of what supported that estimate at the

@@ -31,7 +31,6 @@ const PLATFORM_ID_PATTERN = /^[a-z0-9]+-[a-z0-9_]+$/;
 const OS_VERSION_PATTERN = /^[0-9]+(?:\.[0-9]+){1,2}$/;
 const SAFE_FILE_MODES = new Set(["0644", "0755"]);
 const EXPECTED_LOCK_INPUTS = new Map([
-  ["better-sqlite3-node22-prebuild", "better-sqlite3-native"],
   ["node-runtime-archive", "node-runtime"],
   ["python-runtime-archive", "python-runtime"],
   ["temporal-runtime-archive", "temporal-runtime"],
@@ -51,7 +50,6 @@ const EXPECTED_NODE_LICENSE_EVIDENCE = new Map([
   ["@napi-rs/canvas-darwin-arm64@1.0.9", { license: "MIT", evidenceKind: "license-text" }],
   ["@radix-ui/react-use-escape-keydown@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
   ["@udecode/react-hotkeys@52.0.11", { license: "MIT", evidenceKind: "license-text" }],
-  ["abstract-logging@2.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
   ["jotai-x@2.3.4", { license: "MIT", evidenceKind: "license-text" }],
   ["react-compiler-runtime@1.0.0", { license: "MIT", evidenceKind: "license-text" }],
   ["react-remove-scroll-bar@2.3.8", { license: "MIT", evidenceKind: "license-text" }],
@@ -769,11 +767,10 @@ export async function auditDistributionContracts(root = REPO_ROOT) {
   const locks = validateComponentLocks(componentLocks, inventoryById);
   const capabilitiesById = validateCapabilityPolicy(capabilityPolicy, inventoryById);
   const versions = await resolveInventoryVersions(inventory, root);
-  const [uvLockContents, rootPnpmLockContents, mcpPnpmLockContents, apiNativePnpmLockContents] = await Promise.all([
+  const [uvLockContents, rootPnpmLockContents, mcpPnpmLockContents] = await Promise.all([
     readFile(path.join(root, "workers", "automation", "uv.lock"), "utf8"),
     readFile(path.join(root, "pnpm-lock.yaml"), "utf8"),
     readFile(path.join(root, "packaging", "distribution", "playwright-mcp", "pnpm-lock.yaml"), "utf8"),
-    readFile(path.join(root, "packaging", "distribution", "api-native", "pnpm-lock.yaml"), "utf8"),
   ]);
   const providerLocks = validateProviderPackLocks(
     providerPackLocks,
@@ -785,7 +782,7 @@ export async function auditDistributionContracts(root = REPO_ROOT) {
   const pythonLicenseEvidence = validatePythonLicenseEvidenceLocks(pythonLicenseEvidenceLocks, uvLockContents);
   const nodeLicenseEvidence = validateNodeLicenseEvidenceLocks(
     nodeLicenseEvidenceLocks,
-    [rootPnpmLockContents, mcpPnpmLockContents, apiNativePnpmLockContents].join("\n"),
+    [rootPnpmLockContents, mcpPnpmLockContents].join("\n"),
   );
   invariant(platformsById.has(locks.platform), `component locks target unsupported platform ${locks.platform}`);
   for (const input of locks.inputs) {

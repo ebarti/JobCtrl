@@ -1,7 +1,7 @@
 import type { OutreachFollowUp } from "@jobctrl/contracts";
-import { useId, useState, type JSX } from "react";
+import { useId, useRef, useState, type JSX } from "react";
 
-import { formatDateTime } from "../../../shared/lib/formatters.js";
+import { formatOutreachDate } from "../lib/outreach-date.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Field, FieldLabel } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
@@ -15,6 +15,7 @@ export interface FollowUpPanelProps {
   contactId: string;
   followUp: OutreachFollowUp | null;
   jobId?: string;
+  expectedFingerprint?: string;
 }
 
 // Context-owned surface for a thread's follow-up reminder. A follow-up is a plan,
@@ -27,14 +28,22 @@ export function FollowUpPanel({
   contactId,
   followUp,
   jobId,
+  expectedFingerprint,
 }: FollowUpPanelProps): JSX.Element {
   const schedule = useScheduleFollowUpMutation(threadId, contactId, jobId);
   const complete = useCompleteFollowUpMutation(threadId, contactId, jobId);
   const dismiss = useDismissFollowUpMutation(threadId, contactId, jobId);
   const dueAtId = useId();
   const [dueAt, setDueAt] = useState(followUp?.dueAt?.slice(0, 10) ?? "");
+  const [dirty, setDirty] = useState(false);
+  const [editFingerprint, setEditFingerprint] = useState(expectedFingerprint);
+  const [reviewedFingerprint, setReviewedFingerprint] = useState<string | undefined>();
+  const currentDate = useRef(dueAt);
+  currentDate.current = dueAt;
 
-  const isScheduled = followUp?.state === "scheduled";
+  const isScheduled = followUp?.state === "scheduled" && !dirty;
+  const changedDuringEdit = dirty && editFingerprint !== expectedFingerprint;
+  const currentReviewed = Boolean(expectedFingerprint && reviewedFingerprint === expectedFingerprint);
   const error =
     [schedule.error, complete.error, dismiss.error].find(
       (candidate): candidate is Error => candidate instanceof Error,
@@ -47,26 +56,30 @@ export function FollowUpPanel({
         A follow-up is a reminder surfaced for you. JobCtrl never sends it or acts on it.
       </p>
       {error ? <div className="banner inline">{error}</div> : null}
+      {changedDuringEdit ? <div role="status">
+        <p>The thread changed while you were editing the reminder. Your date is retained. Review the current thread before scheduling it.</p>
+        <label><input type="checkbox" checked={currentReviewed} disabled={!expectedFingerprint || schedule.isPending} onChange={(event) => setReviewedFingerprint(event.target.checked ? expectedFingerprint : undefined)} />I reviewed the current thread and want to use this reminder date</label>
+      </div> : null}
       {isScheduled && followUp ? (
         <div className="outreach-follow-up-scheduled">
           <p>
             <StatusBadge tone="info">Scheduled</StatusBadge> due{" "}
-            {formatDateTime(followUp.dueAt)}
+            {formatOutreachDate(followUp.dueAt)}
             {followUp.basis ? <span className="muted"> · {followUp.basis}</span> : null}
           </p>
           <div className="form-actions">
             <Button
               type="button"
-              disabled={complete.isPending}
-              onClick={() => complete.mutate()}
+              disabled={!expectedFingerprint || complete.isPending || dismiss.isPending || schedule.isPending}
+              onClick={() => { if (expectedFingerprint) complete.mutate({ expectedFingerprint }); }}
             >
               {complete.isPending ? "Updating…" : "Mark done"}
             </Button>
             <Button
               type="button"
               variant="outline"
-              disabled={dismiss.isPending}
-              onClick={() => dismiss.mutate()}
+              disabled={!expectedFingerprint || complete.isPending || dismiss.isPending || schedule.isPending}
+              onClick={() => { if (expectedFingerprint) dismiss.mutate({ expectedFingerprint }); }}
             >
               {dismiss.isPending ? "Updating…" : "Dismiss"}
             </Button>
@@ -83,16 +96,23 @@ export function FollowUpPanel({
               id={dueAtId}
               type="date"
               value={dueAt}
-              onChange={(event) => setDueAt(event.target.value)}
+              onChange={(event) => {
+                if (!dirty) { setEditFingerprint(expectedFingerprint); setReviewedFingerprint(undefined); }
+                setDirty(true);
+                setDueAt(event.target.value);
+              }}
             />
           </Field>
           <div className="form-actions">
             <Button
               type="button"
-              disabled={schedule.isPending}
+              disabled={!expectedFingerprint || (changedDuringEdit && !currentReviewed) || complete.isPending || dismiss.isPending || schedule.isPending}
               onClick={() => {
                 const customDueAt = dueAt.trim();
-                schedule.mutate(customDueAt ? { dueAt: customDueAt } : {});
+                const fingerprint = currentReviewed ? expectedFingerprint : dirty ? editFingerprint : expectedFingerprint;
+                if (fingerprint) schedule.mutate({ expectedFingerprint: fingerprint, ...(customDueAt ? { dueAt: customDueAt } : {}) }, {
+                  onSuccess: () => { if (currentDate.current === dueAt) { setDirty(false); setReviewedFingerprint(undefined); } },
+                });
               }}
             >
               {schedule.isPending ? "Scheduling…" : "Schedule follow-up"}

@@ -278,70 +278,47 @@ users.
 For Homebrew installations, `brew upgrade ebarti/tap/jobctrl` updates the
 formula while retaining the existing workspace.
 
-A compatible source checkout and installed app use the same workspace, profile,
-resume and Temporal history. Older installed releases have limits: v0.3.1 supports
-schema 14 and expects Temporal history at `$JOBCTRL_DIR/temporal.db`, not the
-older source location `$JOBCTRL_DIR/temporal/temporal.db`. Do not move or delete
-history to force compatibility. A newer checkout can upgrade the shared database
-beyond what an older installed release understands; update the installed app when
-a compatible release is published. Source upgrade and recovery details are in
-[Local Development](../local-development.md#schema-migrations-and-source-updates).
+::: warning Python transformation is not yet released
+The accepted Python transformation uses a new workspace and deliberately
+preserves the full Profile and supporting sources only. Existing jobs, generated
+materials, workflow history and other non-Profile data are not migrated. The
+old workspace remains untouched; development and QA must not reset live user
+data. The target database has application ID `1245926228` and user version `1`.
 
-**v0.3.1 upgrade limitation:** v0.4.0 cannot automatically upgrade a normally
-used v0.3.1 workspace because the older runtime did not record enough information
-to verify that all of its child processes stopped. The installer refuses before
-migration and preserves the workspace and installation records. There is no
-documented self-service recovery yet. Stay on v0.3.1 until a compatible upgrade
-is available. Avoid upgrading its Homebrew formula in the meantime: the new
-formula's `jobctrl` command attempts the same blocked transition and cannot
-start that workspace. Preserve the registry and both databases; do not delete
-them to bypass the refusal.
+The source transition uses the explicit `profile-transfer` command with a
+read-only source, a nonexistent new target, a complete browser Profile sources
+manifest and `--confirm-profile-only-reset`. Verify the completed receipt before
+selecting the new workspace.
 
-For supported schema-15 transitions with verified runtime ownership, the new
-authenticated installer upgrades the original installation. It requires an
-initialized schema-14 or schema-15 workspace and its original installation
-metadata. Older schemas must first reach schema 14 through a supported predecessor;
-preserve the workspace and see the [v0.3.1 upgrade notes](https://github.com/ebarti/JobCtrl/releases/tag/v0.3.1).
-The installer stops owned processes, backs up the application and Temporal
-databases together, and applies the additive migration before checking startup
-health. If cleanup fails, preserve the reported evidence.
+An installed cutover also needs a **separate fresh native runtime home** with no
+active release selection. Preserve both the old workspace and its native runtime
+home. The authenticated candidate installer must first stage into the new runtime
+home; its bundled Python performs the transfer, and the same installer then makes
+the first selection with `JOBCTRL_DIR` pointing to the new workspace. This is a
+release-qualified operation, not a command to run with today's published version.
+The native installer supports `--stage-only --home`; the public install shell does
+not forward `--stage-only`.
 
-If startup fails or the upgrade is interrupted, JobCtrl preserves the live
-databases and recovery journal. Rerun the trusted new installer that began the
-upgrade if the old `jobctrl` command remains selected or reports an unreadable
-transition journal. The old binary cannot recover the new journal. After the
-new command has replaced it, run `jobctrl stop`, then `jobctrl update` to continue
-forward. Each attempt backs up the current pair, including later saved changes.
-A revoked candidate can still be stopped through the new command; revocation
-continues to block its startup or update. If a legacy runtime lacks complete
-ownership records, JobCtrl cannot currently verify a safe recovery automatically
-and has no documented self-service procedure for it. Preserve the registry,
-workspace and journal, and seek support. Restarting the computer alone does not
-clear this refusal. Do not remove the journal, reinstall over a schema-14
-workspace without its original metadata, or restore an older snapshot over newer
-data. Rollback across this protocol change is refused. A same-protocol explicit rollback still
-restores the snapshot associated with its previous release, so data added since
-that snapshot is not carried backward. Automatic paired rollback is also
-unavailable while a workspace uses the legacy source Temporal history path;
-the live workspace and backup are preserved. A source merge or synthetic test does
-not publish an upgrade; the signed installer must pass release qualification
-before installed users receive it.
+Only a verified, unused transfer may start without workflow history. First native
+selection consumes that permission once. If interrupted after consumption, keep
+the target for inspection or repeat the explicit transfer into a different
+nonexistent target; do not remove the selection marker to retry. Reusing an old
+runtime home or a used transfer cannot authorize missing-history recovery.
+Do not treat a source checkout or synthetic smoke as a published upgrade; signed
+acquisition, predecessor compatibility and release qualification remain separate
+gates.
 
-Rollback keeps a compatible launcher for recovery while restoring the older
-application. Homebrew commands preserve that selection until you explicitly run
-`jobctrl update` again. If an older updater reports a failed candidate and cannot
-restart its previous release, recovery depends on the transition state and the
-available compatible controller. If rollback or recovery reports unresolved
-provider-usage accounting, preserve the current database pair, pre-rollback and
-other backups, journal and spend receipts, and inspect the accounting. A late
-refusal may follow a pair replacement, and retry depends on the transition
-state. See
-[Data, Privacy & Safety](data-and-safety.md#back-up-and-restore) for details.
-The installer and formula also handle an
-installation you have never started. If an existing database/history pair is
-incomplete, updating refuses
-to replace it; preserve those files and recover the pair before retrying.
+For later target-to-target updates, the new runtime preserves live workspace
+state. If an update is interrupted, stop the owned runtime and resume forward;
+do not automatically restore an old database over newer writes. An explicit
+rollback requires an allowed release and a verified target database/history
+pair. Unresolved model accounting blocks rollback until reconciled. Preserve
+the current data, journal, backups and accounting evidence when recovery is
+uncertain.
+:::
 
+For released versions, use the release-specific installation and recovery
+instructions. A source merge does not publish an installed update.
 
 ## Semantic Determination Authority
 

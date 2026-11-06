@@ -1,4 +1,6 @@
-import type { DomainEventUnion, TenantId } from "@jobctrl/domain-types";
+import { demoEventEnvelope } from "../events.js";
+import type { TenantId } from "@jobctrl/domain-types";
+import type { DemoEvent as DomainEventUnion } from "../events.js";
 
 import type { DemoWorkspaceNotification } from "./contracts.js";
 import { DemoWorkspaceRepository } from "./DemoWorkspaceRepository.js";
@@ -151,7 +153,7 @@ class DemoWorkspaceSubscription implements EventStreamSubscription {
       return;
     }
     for (const handler of this.eventHandlers) {
-      handler(event);
+      handler(demoEventEnvelope(event));
     }
   }
 

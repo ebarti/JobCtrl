@@ -1,22 +1,15 @@
 ---
-description: "Create truthful job-specific resumes, cover letters, and interview preparation with inspectable evidence, accepted history, and separate personal notes."
+description: "Create truthful job-specific resumes and interview preparation with inspectable evidence, accepted history, and separate personal notes."
 ---
 
 # Materials & Tailoring
 
-Materials are the job-specific resumes, cover letters, PDFs, and related review
+Materials are the job-specific resumes, PDFs, and related review
 records JobCtrl creates from canonical profile evidence and the target posting.
 Tailoring is the versioned, gated process that selects and renders those claims
 without turning the job description into evidence about you.
 For a plain-language walkthrough of that boundary, read
 [Resume Tailoring Without Fabrication](../guides/resume-tailoring-without-fabrication.md).
-
-Cover-letter generation is off by default. Enable **Generate cover letters** in
-Settings → Model selection to include letters in new material preparation. With
-it off, eligible jobs still receive a reviewed résumé and its PDF. Cover is
-recorded as skipped because the setting is off; existing accepted letters and
-work already generating are preserved. New direct cover-only requests also
-require the setting to be enabled.
 
 Concurrent preparation attempts keep their files separate. If saved materials
 change before an older attempt finishes, that attempt cannot replace the newer
@@ -26,40 +19,17 @@ uncertain is kept for inspection rather than deleted.
 If another preparation is still running, reusing the earlier approved material
 leaves that work running and able to save its replacement.
 
-Retrying a failed Tailor or Cover stage preserves approved material and its
-review evidence. If an approved resume or cover already exists, a plain retry
+Retrying a failed Tailor stage preserves approved material and its
+review evidence. If an approved resume already exists, a plain retry
 reports that a replacement requires an explicit re-tailor; it does not start a
 replacement automatically. A newer incomplete generation may be cleared for
 recovery while the earlier approved material remains available.
 
-Tailoring keeps as many applicable baseline accomplishments as possible in each
-selected role, up to **Max bullets per role**. The configured maximum is a hard
-cap even when your baseline has more bullets. Tailoring can reorder or rewrite
-kept evidence, while preserving its action, ownership, scope, outcomes, tools
-and metrics. A baseline fact does not need a job-requirement link to be useful.
+Profile facts and approved wording provide the evidence for the resume. A job
+posting supplies employer requirements and context; it does not establish a
+candidate fact. Unconfirmed achievements do not authorize new claims.
 
-Each omitted baseline bullet has a recorded source ID, reason and rationale.
-A bullet can be omitted because it clearly does not apply, or because the role
-already fills its limit with better applicable evidence. A cap explanation is
-invalid when the role is below its limit. The independent quality review judges
-those proposals and rejects unjustified omissions or underfilled roles; it does
-not accept the generator's rationale as fact. Related facts may share a coherent
-bullet only when independent reviews confirm their substance survives. These
-checks use the existing generation and review calls, without an extra model
-stage. The saved setting and profile are unchanged.
-
-A required role without applicable achievement evidence can keep its fixed role
-details without an invented bullet. Unconfirmed achievement records do not
-supply facts for generation.
-
-A skill category marked **Must appear in final resume** is an inclusion minimum.
-Tailoring can also select other relevant categories already in your profile;
-unselected optional categories can be omitted. An individually required skill
-also keeps its containing category required. The same selected categories reach
-the resume text and PDF, and disabling skill reordering preserves their authored
-items. These controls do not authorize new skills.
-
-Before generating a resume or cover letter, JobCtrl reuses a posting observation
+Before generating a resume, JobCtrl reuses a posting observation
 from the preceding six hours, including an uncertain observation. It attempts a
 refresh when no recent observation exists. Usable content can feed preparation
 while availability remains unknown; reusing uncertainty does not mark the posting
@@ -71,7 +41,7 @@ When a posting becomes unavailable after batch selection, that member is skipped
 while the other selected jobs continue. A temporarily unavailable source remains
 a reported item error; it does not prevent its peers from finishing.
 
-Marking a job skipped stops new automatic resume and cover-letter generation
+Marking a job skipped stops new automatic resume generation
 for that job, including preparation chained from URL imports and Discover. The
 current Skip is checked again before each new material stage starts. An explicit
 Tailor or Re-tailor action can request materials while Apply remains skipped;
@@ -81,127 +51,29 @@ allows normal automatic eligibility again. Recorded submit intent cannot be
 cleared by reset; see [Skip and safe reset](apply.md#skip-and-safe-reset). A minimum-score policy skip remains
 a separate decision controlled by the score and materials threshold.
 
-A cover letter's factual and quality reviews can run together because they inspect
-the same unchanged draft. Both must pass before acceptance. Corrections still
-wait for their findings, and revised text receives fresh checks. The generator's
-source selections remain proposals in the audit. The saved letter's evidence and
-requirement links come from the factual review's recorded citations, including
-empty evidence for lines that make no candidate claim. An unused proposed source
-does not require rewriting text that both reviewers have approved. Model reasoning,
-bounded repairs and worker capacity still determine the total duration.
-
-Résumé factual and quality reviews can also run concurrently on an unchanged
-candidate. Both checks and any required high-fit persona review must pass before
-approval. If one check rejects the draft, completed findings from both checks
-can guide the next rewrite together. Those findings do not approve the rejected
-draft or add evidence permissions. Changed text or review inputs receive fresh
-checks; a failed refresh keeps the previous accepted material available.
-
 ## How JobCtrl Chooses A Resume
 
-Tailoring is a candidate-selection pipeline, not one unconstrained prompt:
+Preparation binds the resume to saved profile and job sources. You can inspect
+its evidence, coverage, review findings, and accepted artifact before use. A
+failed refresh preserves the last accepted resume.
 
-```mermaid
-flowchart TB
-    accTitle: How JobCtrl chooses an accepted resume
-    accDescr: A shared plan feeds candidate generators. Rendered checks and review gates reject or repair candidates. The best approved candidate receives an optional voice refinement and a final truthfulness check before JobCtrl persists it as the accepted resume.
-
-    PLAN("1 · Plan<br/>posting + profile + policy")
-    DRAFT("2 · Generate<br/>candidates share constraints")
-    GATES("3 · Validate + review<br/>rendered checks · judge · personas")
-    SAVE[["4 · Select + refine<br/>truth check · persist · preserve"]]
-
-    PLAN -->|shared plan| DRAFT
-    DRAFT -->|candidate set| GATES
-    GATES -->|approved| SAVE
-    GATES -.->|repair + retry| DRAFT
-```
-
-Solid arrows show the path to an accepted resume; dashed arrows return
-repairable failures to the candidate pool. A failed retry never replaces the
-last accepted resume.
-
-1. **Bind canonical inputs.** JobCtrl combines the accepted posting and job
-   interpretation, profile snapshot, requirement-fit ledger, permissions, pins
-   and writing style. Models determine seniority and requirement scope; code
-   checks source IDs, versions and the available artifact budget. When the
-   initial evidence selection exceeds a role's bullet limit, the configured
-   model chooses a smaller supported selection and records any requirements
-   left uncovered. Your explicit pins and configured per-role limit remain
-   authoritative; pins that cannot fit produce an actionable block before
-   drafting. The configured limit remains a hard cap.
-2. **Generate candidates with anchors.** Each candidate records its line IDs,
-   evidence IDs, requirement IDs, transform and reason. A posting provides
-   employer context and cannot establish a candidate fact.
-3. **Verify the final text.** A separate claim-verification call determines
-   factual support, prohibited claims, voice and model self-talk. Code checks
-   verbatim quotations, IDs and exact values against the supplied sources.
-   The independent quality judge returns its own pass/fail verdict.
-   Resumes for jobs in the high-fit band also receive all six persona judgments,
-   with citations and a recorded determination. Their pass/fail verdicts govern
-   acceptance; diagnostic scores do not set a cutoff.
-   Each perspective reviews the full résumé and records concise cited findings
-   and repairs. Diagnostic length limits never permit approval of an unresolved
-   defect. Older accepted review details remain available as originally saved.
-
-   Generation and all reviewers receive the same evidence and role-selection
-   rules. They cannot require a summary quantity that generation was instructed
-   to omit, or assume an omitted role supplies visible context for the summary.
-   Reviewers inspect all criteria together and retain independent decisions.
-
-   The current saved fit score selects this additional review, including when
-   material generation was requested manually.
-4. **Repair bounded failures.** Model findings and recorded fit gaps guide
-   repairs under the configured attempt budget. A failed or unavailable
-   determination blocks acceptance with an actionable failure status.
-   Cover-letter drafts also use that budget to correct malformed structure or
-   source IDs. Corrected drafts still pass factual and quality review before
-   acceptance; provider failures do not become content-repair attempts.
-   Resume corrections receive the rejected candidate and specific structural
-   validation errors, including errors found before paid review. Those details
-   are repair data; current saved facts and permissions remain authoritative.
-   A provider failure classified as non-retryable stops automatic generation;
-   retryable provider failures retain bounded workflow recovery.
-   Exhausted content review stops with its recorded findings instead of
-   restarting the entire generation budget as a temporary provider failure.
-   Later resume and cover reviews receive the earlier recorded decisions and
-   repair instructions, so they can consider previous corrections and explain
-   reversals. Each review still judges the current draft independently against
-   the saved facts; earlier feedback cannot approve unsupported text.
-   Selected achievements and user pins remain required. Dates and other
-   canonical context can support a claim when used, without requiring their
-   repetition in the summary or granting automatic coverage credit.
-5. **Persist accepted output.** Extra résumé polish is off by default in
-   Settings → Model selection. Required factual, quality and applicable persona
-   reviews run in either mode; with the option off, the exact approved candidate
-   is retained. Enabling it requests an additional wording pass for newly
-   generated résumés and may add another complete review chain.
-   Accepted text, PDF lineage, determinations,
-   anchors and coverage are recorded together. Any optional voice rewrite
-   receives fresh claim verification and quality review on the final text.
-   A failed optional voice rewrite retains the candidate already verified by
-   those checks and records the rejected voice attempt.
-   Failed refreshes preserve the last accepted generation.
-
-The artifact inspector exposes the plan, gates, coverage, provenance, judge,
-adversarial result, and lifecycle of warnings so you can inspect why the chosen
-resume was accepted.
+::: info Accepted transformation target
+The [Python transformation plan](../plans/2026-11-06-python-transformation.md)
+specifies a full-baseline resume: retain every approved role and achievement,
+select one approved wording per achievement, and report layout conflicts rather
+than silently dropping content. Person fit remains separate from document
+coverage. The plan specifies mechanical source and approval checks and one
+advisory coherence review, with explicit acceptance available for a mechanically
+valid document despite a review finding or timeout. Baseline-copy mode makes no
+resume model calls. These are accepted target behaviors; implementation and
+integration verification are in progress.
+:::
 
 ## What You Can See And Control
 
-Settings validates the default model and explicit generator and judge choices
-against each ready provider's current model list before saving. The active
-client version, sign-in and account determine that list. Pickers contain only
-current catalog models; an unlisted saved ID is explained outside the options.
-Unsupported choices fail the save without changing the other settings; clear
-the selection or choose `default` to remove an explicit override.
-The default route also controls the optional writing pass; explicit analysis
-perspectives and material roles retain their own choices. See
-[model configuration](configuration.md#llm-providers) for route precedence.
-The same page exposes reasoning effort for the selected Codex models. A saved
-choice applies to drafts, review, analysis and writing refinement alike. Clearing
-it restores the earlier per-call settings; accepted material and its recorded
-effort history remain unchanged.
+Provider and model availability depends on the configured provider and the
+current account. See [model configuration](configuration.md#llm-providers) for
+the available choices.
 
 Eligible jobs receive materials during Discover preparation. You can also
 generate first-time materials for one job, use **Re-tailor** to regenerate its
@@ -259,9 +131,8 @@ The user-visible surfaces divide the work:
   before retrying **set default**. If templates cannot refresh, the panel labels
   the last read default and offers a retry before changing the default. A later
   successful read that shows the requested version clears the unconfirmed notice.
-- `/settings/models` owns the generator/judge execution policy used by newly
-  started work. The current fields and fallback rules belong to
-  [Configuration](configuration.md), not this page.
+- `/settings/models` contains provider and model controls. The current fields
+  and fallback rules belong to [Configuration](configuration.md).
 
 **Materials ready** means the accepted resume text and submission PDF are
 available for review, including while a replacement is queued or running.
@@ -508,11 +379,6 @@ expressed qualitatively if it lacks supporting achievement evidence. Verified
 metrics and required achievement bullets remain subject to their normal
 preservation checks.
 
-Cover letters follow the same evidence boundary. They may describe employer
-priorities from the posting, but posting-only numbers and dates are omitted or
-expressed qualitatively. Only numeric/date facts already grounded in the
-Candidate Profile or tailored resume may appear in the generated letter.
-
 If requirement-fit evidence is missing or belongs to an older posting-analysis
 generation, JobCtrl shows Tailor as blocked by Score and asks you to rescore the
 job. This prerequisite block does not consume a Tailor retry. It prevents an
@@ -525,14 +391,13 @@ worker can then continue automatically after the normal cooldown and eligibility
 checks. This preserves prior attempts, canceled decisions, and approved resumes.
 
 The minimum-fit policy is a different terminal decision. When the current
-score is below the live materials threshold, Tailor, Cover, and Apply are
+score is below the live materials threshold, Tailor and Apply are
 persisted as `skipped` with the `MIN_SCORE` code and the exact score/threshold
 pair. They do not remain `pending`, because no automatic work owns them.
 Lowering the threshold or recording a qualifying current score restores only
 these threshold-owned skips. The per-job **Tailor this job** action is an
-explicit low-fit override for the requested resume, cover letter and their PDF
-exports. The same exception follows the request through Tailor and Cover; it
-does not change the recorded score or global threshold, and does not weaken
+explicit low-fit override for the requested resume and its PDF export. It does
+not change the recorded score or global threshold, and does not weaken
 score hard blockers or material validation and quality review. The accepted
 generation retains this request flag, so later Discover/recovery sweeps do not
 hide those materials solely for being below the automatic threshold. Another
@@ -540,14 +405,11 @@ generation does not inherit the exception; a current hard blocker or missing
 score still follows normal suppression policy.
 
 Tailor failures also own their downstream state. If Tailor is retryably failed
-or has exhausted its durable attempt budget, Cover and Apply show `blocked`
+or has exhausted its durable attempt budget, Apply shows `blocked`
 with the exact Tailor failure/exhaustion reason instead of implying pending
 work. Retry or reset Tailor first. Once Tailor succeeds, JobCtrl restores only
-those Tailor-owned dependency blocks and does not disturb a Cover another
-worker already queued or claimed, or a skipped/canceled decision. When an
-accepted replacement resume supersedes the material input, JobCtrl may reset a
-completed, failed, or exhausted Cover so it can generate against the current
-resume; the older artifact remains in its audit history.
+those Tailor-owned dependency blocks and does not disturb a skipped or canceled
+decision.
 
 Generated files stay under the local JobCtrl workspace and are served only
 through registered artifact rows. An artifact route cannot open an arbitrary
@@ -556,41 +418,15 @@ the local-file boundary.
 
 ## Lifecycle
 
-1. **Check eligibility.** The latest score, blockers, active state, enrichment
-   quality, and live threshold decide whether automatic tailoring may start. A
-   deliberate first-time per-job action can request tailoring without changing
-   the batch threshold.
-2. **Plan evidence coverage.** The accepted requirement-fit determinations
-   connect requirements to confirmed achievements. Code retains their ID links,
-   applies the job interpretation's scope and preserves pinned evidence.
-3. **Generate candidates.** Configured ready models produce structured resume
-   candidates from the same profile and analysis contract.
-4. **Validate and select.** Independent schema, grounding, rendering, quality,
-   claim verification and independent model quality review reject unsupported content and
-   feed bounded repair attempts. The detailed order and mode-dependent behavior
-   are owned by the [Tailoring Contract](../architecture/tailoring.md), rather
-   than duplicated here. The post-generation fit pass may request one truthful
-   coverage revision. If a requirement remains uncovered because the profile
-   contains no supporting evidence, Materials accepts the best otherwise-safe
-   candidate with an inspectable residual gap; Score remains the owner of the
-   job-fit decision.
-5. **Render and persist.** An accepted generation writes resume and cover
-   records, HTML/PDF artifacts, layout boxes, provenance, coverage, policy
-   version, and audit metadata. Operations projects that stored result into
-   Jobs, Artifacts, and Apply Review.
-6. **Preserve accepted history.** A failed generation or re-tailor remains audit
-   history and never hides the last accepted artifact. Apply owns how a reviewed
-   edit is validated and promoted into a replacement generation.
-7. **Supersede or suppress deliberately.** A newly accepted replacement
-   supersedes the prior active generation while preserving history. If a live
-   threshold or blocker makes materials ineligible, JobCtrl soft-suppresses
-   them from active/Apply surfaces rather than deleting the audit record. A
-   generation accepted under the explicit low-fit override retains its
-   threshold exception; the override grants no application submission.
-8. **Review policy changes separately.** Compatible accepted feedback may
-   produce a pending recommendation. Acceptance or restore appends a policy
-   revision, while rejection or a failed restore leaves the current revision
-   and all generated artifacts unchanged.
+1. **Check inputs.** Preparation uses saved profile sources, job requirements,
+   eligibility, and the current request.
+2. **Prepare and review.** The resulting resume has traceable source and review
+   information. Review it before accepting or using it for an application.
+3. **Render and retain.** The accepted text and its document artifacts are
+   registered for review. A failed replacement leaves the prior accepted
+   material available.
+4. **Decide separately.** Generating or editing a resume does not approve an
+   application or authorize submission.
 
 The same preservation rule applies to stored interview prep and outreach draft
 generations: a failed replacement does not destroy the last accepted record.
@@ -601,26 +437,25 @@ generations: a failed replacement does not destroy the last accepted record.
 | --- | --- |
 | User workflow | [Daily Workflow → Generate And Inspect Materials](normal-flows.md) and [Apply → Materials And Resume Rendering](apply.md#materials-and-resume-rendering). |
 | HTTP contract | Artifact list/detail/preview routes, `/v1/resume-templates`, per-job generate/re-tailor actions, and `/v1/learning/recommendations` plus `/v1/learning/policies/materials`; see [Jobs & Materials API](../api/jobs-and-materials.md) and the [complete learning contract](../api/complete-contract.md#feedback-learning-and-policy-history). Apply Review routes are owned by [Apply](apply.md). |
-| Worker implementation | `workers/automation/src/jobctrl/domain/materials/`, the `tailor.py` and `cover_letter.py` paths in `workers/automation/src/jobctrl/scoring/`, and `workers/automation/src/jobctrl/infrastructure/materials/`. |
+| Worker implementation | `workers/automation/src/jobctrl/domain/materials/`, `workers/automation/src/jobctrl/scoring/tailor.py`, and `workers/automation/src/jobctrl/infrastructure/materials/`. |
 | API and web implementation | In `apps/api/src/`: `resume-review-drafts.ts`, `resume-templates.ts`, and `read-model.ts`; in the web app: `apps/web/src/contexts/materials/`, `apps/web/src/views/artifacts/`, and `apps/web/src/views/apply-review/`. |
 | Deep architecture | [Employer Analysis & Materials Audit](../architecture/materials.md), [Tailoring Contract](../architecture/tailoring.md), and [Stage Walkthrough → Tailor](../architecture/pipeline/stages.md#tailor). |
 
 
 ## Semantic Determination Authority
 
-Every generated artifact has a claim-verification determination and recorded line anchors. A separate quality judge remains. Open **Verification sources** on any artifact to inspect its model, prompt version, input fingerprint and structured verdict. Models decide claim support, seniority, voice, prohibited claims and requirement demonstration. Code validates IDs, quotes, exact values and versions. Interview generation isolates each question's selected evidence; explicit empty selection produces gaps. Failed refreshes keep accepted material. Apply Review joins line IDs and says “No recorded source” where an anchor is absent.
-
-Verification can use compact evidence references during the model call. Saved
-verification sources still contain the complete source IDs, exact quotes and
-model decisions, and older accepted materials remain readable. The same factual,
-quality and applicable persona reviews govern acceptance.
+When a model determines semantic support, its decision is source-bound and
+recorded with provenance. Code validates IDs, quotations, exact values and
+versions; a missing source is not inferred from word overlap. Interview
+generation isolates each question's selected evidence, and an explicit empty
+selection produces gaps. Failed refreshes keep accepted material available.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
 ## Editable DOCX Export
 
 In **Job Detail → Artifacts → Editable DOCX**, choose **A4** or **Letter**, then
-select **Export resume DOCX** or **Export cover letter DOCX** for the accepted
+select **Export resume DOCX** for the accepted
 generation you want. The browser downloads the new document. **Retained DOCX
 exports** keeps each successful export available with its paper size, source
 generation, language, creation time and formatting warnings. **Download DOCX**
@@ -648,7 +483,7 @@ superseded materials and PDF/HTML inputs are refused.
 The document preserves the accepted text, dates, contacts, Unicode, line order,
 blank lines and bullet markers. Standard JobCtrl resume section headings become
 Word headings. Other resume layouts remain literal paragraphs, with an explicit
-warning. Cover letters retain their paragraphs and line breaks. The export uses
+warning. The export uses
 a simple single-column layout: it does not reproduce PDF pagination, HTML/CSS
 styling, images, columns, automatic hyperlinks or custom fonts. Bullet markers
 remain editable text with hanging indentation, not automatic Word numbering.
@@ -669,8 +504,8 @@ does not update JobCtrl or make those edits accepted for Apply.
 
 ## Reviewed Translations
 
-Job Detail's **Locale variants** section translates selected accepted resume or
-cover-letter descriptions into an explicitly selected language. Original names,
+Job Detail's **Locale variants** section translates selected accepted resume
+descriptions into an explicitly selected language. Original names,
 titles, credentials, dates and achievements stay unchanged. Independent semantic
 verification and separate terminology/formatting reviews precede locale acceptance;
 unresolved terms, unsupported languages and ambiguous credentials stay explicit.
@@ -680,20 +515,3 @@ original and prior accepted material. See [Reviewed Locale Variants](locale-vari
 ## Screening Answer Library
 
 Materials also owns source-bound [screening-answer drafts and reusable reviewed revisions](screening-answers.md). Application-specific question versions, review and manual-use history remain owned by Apply. Failed refreshes retain accepted answers and material bytes.
-
-## Cover-Letter Formatting And Accepted History
-
-The [Apply Review PDF controls](apply.md#cover-letter-pdf-review) print the full
-accepted letter through the existing Chromium cover-letter renderer. Previewing
-creates a separate render, without replacing accepted materials. An explicit
-save accepts those exact bytes and settings in a new material generation while
-retaining the resume, source provenance and previous PDF history. Stale sources,
-conflicting saves and rendering or persistence failures preserve the accepted
-version. A saved version survives reload; an acknowledgement for an earlier
-snapshot never accepts newer local edits.
-Unchanged resume and cover-letter sources remain available for DOCX export by
-their displayed generation after repeated formatting saves.
-New generated cover PDFs record both the full source-text hash and PDF byte hash,
-along with their source artifact, settings and renderer identity. Historical PDFs
-without a verifiable source binding need an explicit preview/save before Apply
-approval. Files changed outside JobCtrl never silently become accepted materials.

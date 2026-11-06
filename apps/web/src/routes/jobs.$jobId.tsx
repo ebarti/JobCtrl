@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-router";
 import { useCallback } from "react";
 
-import { JobDetailDrawer } from "../views/jobs/JobDetailDrawer.js";
+import { JobDetailComposition } from "../views/jobs/JobDetailComposition.js";
 
 export const Route = createFileRoute("/jobs/$jobId")({
   component: JobDrawerRoute,
@@ -30,5 +30,5 @@ function JobDrawerRoute() {
     return <Outlet />;
   }
 
-  return <JobDetailDrawer key={jobId} jobId={jobId} onClose={close} />;
+  return <JobDetailComposition key={jobId} jobId={jobId} onClose={close} />;
 }

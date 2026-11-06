@@ -1,14 +1,15 @@
 import { replaceEqualDeep, type Query, type QueryClient } from "@tanstack/react-query";
 
 import { retainLaterQueryPublication } from "../../shared/lib/createOptimisticMutation.js";
-import type { ReadContext } from "../../shared/lib/loaderReadContext.js";
+import type { HttpReadContext } from "../../shared/lib/loaderReadContext.js";
+import type { ContactListResponse } from "@jobctrl/contracts";
 import { outreachKeys } from "./queryKeys.js";
 import type { ContactsListFilters } from "./hooks/useContactsListQuery.js";
 
-type ContactReadContext = ReadContext<"listContacts"> & {
+type ContactReadContext = HttpReadContext & {
   readonly queryClient: Pick<QueryClient, "getQueryCache">;
 };
-type ContactLoaderContext = ReadContext<"listContacts"> & {
+type ContactLoaderContext = HttpReadContext & {
   readonly queryClient: Pick<QueryClient, "getQueryCache" | "prefetchQuery">;
 };
 
@@ -23,7 +24,7 @@ export function contactsListQuery(context: ContactReadContext, input: ContactsLi
     queryFn: async () => {
       const query = context.queryClient.getQueryCache().find({ queryKey, exact: true });
       const dataUpdateCount = query?.state.dataUpdateCount;
-      const response = { ...await context.ports.api.listContacts(input) };
+      const response = { ...await context.ports.http.json<ContactListResponse>("GET", "/v1/contacts", { query: input }) };
       if (query && dataUpdateCount !== undefined) listReads.set(response, { query, dataUpdateCount });
       return response;
     },

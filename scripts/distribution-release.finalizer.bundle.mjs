@@ -7543,7 +7543,7 @@ import { fileURLToPath as fileURLToPath3, pathToFileURL as pathToFileURL3 } from
 
 // scripts/distribution-build.mjs
 import { createHash as createHash3 } from "node:crypto";
-import { createReadStream as createReadStream3, createWriteStream, readFileSync } from "node:fs";
+import { createReadStream as createReadStream3, createWriteStream } from "node:fs";
 import {
   chmod as chmod2,
   copyFile,
@@ -7601,7 +7601,6 @@ var PLATFORM_ID_PATTERN = /^[a-z0-9]+-[a-z0-9_]+$/;
 var OS_VERSION_PATTERN = /^[0-9]+(?:\.[0-9]+){1,2}$/;
 var SAFE_FILE_MODES = /* @__PURE__ */ new Set(["0644", "0755"]);
 var EXPECTED_LOCK_INPUTS = /* @__PURE__ */ new Map([
-  ["better-sqlite3-node22-prebuild", "better-sqlite3-native"],
   ["node-runtime-archive", "node-runtime"],
   ["python-runtime-archive", "python-runtime"],
   ["temporal-runtime-archive", "temporal-runtime"],
@@ -7621,7 +7620,6 @@ var EXPECTED_NODE_LICENSE_EVIDENCE = /* @__PURE__ */ new Map([
   ["@napi-rs/canvas-darwin-arm64@1.0.9", { license: "MIT", evidenceKind: "license-text" }],
   ["@radix-ui/react-use-escape-keydown@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
   ["@udecode/react-hotkeys@52.0.11", { license: "MIT", evidenceKind: "license-text" }],
-  ["abstract-logging@2.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
   ["jotai-x@2.3.4", { license: "MIT", evidenceKind: "license-text" }],
   ["react-compiler-runtime@1.0.0", { license: "MIT", evidenceKind: "license-text" }],
   ["react-remove-scroll-bar@2.3.8", { license: "MIT", evidenceKind: "license-text" }],
@@ -8280,11 +8278,10 @@ async function auditDistributionContracts(root = REPO_ROOT) {
   const locks = validateComponentLocks(componentLocks, inventoryById);
   const capabilitiesById = validateCapabilityPolicy(capabilityPolicy, inventoryById);
   const versions = await resolveInventoryVersions(inventory, root);
-  const [uvLockContents, rootPnpmLockContents, mcpPnpmLockContents, apiNativePnpmLockContents] = await Promise.all([
+  const [uvLockContents, rootPnpmLockContents, mcpPnpmLockContents] = await Promise.all([
     readFile(path.join(root, "workers", "automation", "uv.lock"), "utf8"),
     readFile(path.join(root, "pnpm-lock.yaml"), "utf8"),
-    readFile(path.join(root, "packaging", "distribution", "playwright-mcp", "pnpm-lock.yaml"), "utf8"),
-    readFile(path.join(root, "packaging", "distribution", "api-native", "pnpm-lock.yaml"), "utf8")
+    readFile(path.join(root, "packaging", "distribution", "playwright-mcp", "pnpm-lock.yaml"), "utf8")
   ]);
   const providerLocks = validateProviderPackLocks(
     providerPackLocks,
@@ -8296,7 +8293,7 @@ async function auditDistributionContracts(root = REPO_ROOT) {
   const pythonLicenseEvidence = validatePythonLicenseEvidenceLocks(pythonLicenseEvidenceLocks, uvLockContents);
   const nodeLicenseEvidence = validateNodeLicenseEvidenceLocks(
     nodeLicenseEvidenceLocks,
-    [rootPnpmLockContents, mcpPnpmLockContents, apiNativePnpmLockContents].join("\n")
+    [rootPnpmLockContents, mcpPnpmLockContents].join("\n")
   );
   invariant(platformsById.has(locks.platform), `component locks target unsupported platform ${locks.platform}`);
   for (const input of locks.inputs) {
@@ -9552,7 +9549,7 @@ echo fixture:${name}:${contracts.versions[componentId]}
 `, { mode: 493 });
         await chmod2(path3.join(root, name), 493);
       }
-      await copySchemaTransitionContract(sourceRoot, root);
+      await copyApplicationSchemaContract(sourceRoot, root);
       continue;
     }
     const executable = ["jobctrl-launcher", "node-runtime", "python-runtime", "temporal-runtime", "playwright-mcp"].includes(componentId);
@@ -9562,13 +9559,13 @@ echo fixture:${name}:${contracts.versions[componentId]}
     await chmod2(path3.join(root, filename), executable ? 493 : 420);
   }
 }
-async function copySchemaTransitionContract(sourceRoot, launcherRoot) {
-  const source = path3.join(sourceRoot, "launcher", "schema-transition.json");
+async function copyApplicationSchemaContract(sourceRoot, launcherRoot) {
+  const source = path3.join(sourceRoot, "launcher", "application-schema.json");
   const sourceInfo = await lstat3(source);
-  invariant3(sourceInfo.isFile() && !sourceInfo.isSymbolicLink(), "schema transition declaration must be a regular file");
+  invariant3(sourceInfo.isFile() && !sourceInfo.isSymbolicLink(), "application schema declaration must be a regular file");
   const contents = await readFile3(source);
-  invariant3(contents.equals(Buffer.from('{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":15}\n')), "schema transition declaration does not match v14-to-v15 contract");
-  const target = path3.join(launcherRoot, "schema-transition.json");
+  invariant3(contents.equals(Buffer.from('{"schemaVersion":1,"application":"jobctrl-python","applicationId":1245926228,"userVersion":1}\n')), "application schema declaration does not match the Python application identity");
+  const target = path3.join(launcherRoot, "application-schema.json");
   await writeFile2(target, contents, { mode: 420, flag: "wx" });
   await chmod2(target, 420);
 }
@@ -9696,72 +9693,6 @@ async function writePlaywrightRevisionMarkers(revisionRoot) {
     await chmod2(path3.join(revisionRoot, marker), 420);
   }
 }
-async function prepareApiInputs(root, standardInputs, externalInputs) {
-  const apiOutput = path3.join(root, "dist", "api");
-  await rm2(apiOutput, { recursive: true, force: true });
-  await mkdir2(apiOutput, { recursive: true, mode: 493 });
-  await run("corepack", [
-    "pnpm",
-    "exec",
-    "esbuild",
-    "apps/api/src/production.ts",
-    "--bundle",
-    "--platform=node",
-    "--format=esm",
-    "--target=node22",
-    "--external:better-sqlite3",
-    "--banner:js=import { createRequire as __jobctrlCreateRequire } from 'node:module'; const require = __jobctrlCreateRequire(import.meta.url);",
-    `--outfile=${standardInputs.apiBundle}`,
-    `--metafile=${path3.join(apiOutput, "metafile.json")}`,
-    "--log-level=warning"
-  ], { cwd: root, env: { ...process2.env, SOURCE_DATE_EPOCH: process2.env.SOURCE_DATE_EPOCH ?? "0" } });
-  const nativeRuntime = path3.join(root, standardInputs.apiNativeRuntime);
-  await rm2(path3.join(nativeRuntime, "node_modules"), { recursive: true, force: true });
-  await run("corepack", [
-    "pnpm",
-    "--dir",
-    nativeRuntime,
-    "install",
-    "--frozen-lockfile",
-    "--prod",
-    "--ignore-workspace",
-    "--ignore-scripts"
-  ], {
-    cwd: root,
-    env: {
-      ...process2.env,
-      CI: "true",
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-    }
-  });
-  const nativeNodeModules = path3.join(root, standardInputs.apiNativeModules, "node_modules");
-  await mkdir2(nativeNodeModules, { recursive: true, mode: 493 });
-  const runtimeAllowlist = {
-    "better-sqlite3": ["LICENSE", "package.json", "lib", "build"],
-    bindings: ["LICENSE.md", "bindings.js", "package.json"],
-    "file-uri-to-path": ["LICENSE", "index.js", "package.json"]
-  };
-  let betterSqliteSource = await realpath3(path3.join(nativeRuntime, "node_modules", "better-sqlite3"));
-  const packageSources = /* @__PURE__ */ new Map([["better-sqlite3", betterSqliteSource]]);
-  const bindingsSource = await realpath3(path3.join(path3.dirname(betterSqliteSource), "bindings"));
-  packageSources.set("bindings", bindingsSource);
-  packageSources.set("file-uri-to-path", await realpath3(path3.join(path3.dirname(bindingsSource), "file-uri-to-path")));
-  for (const packageName of ["better-sqlite3", "bindings", "file-uri-to-path"]) {
-    const source = packageSources.get(packageName);
-    const allowed = runtimeAllowlist[packageName];
-    await copyTree(source, path3.join(nativeNodeModules, packageName), {
-      exclude: (relativePath) => shouldExcludeSourcePath(relativePath) || !allowed.some((prefix) => relativePath === prefix || relativePath.startsWith(`${prefix}/`))
-    });
-  }
-  const nativeDestination = path3.join(nativeNodeModules, "better-sqlite3", "build", "Release", "better_sqlite3.node");
-  await mkdir2(path3.dirname(nativeDestination), { recursive: true, mode: 493 });
-  await copyFile(path3.join(externalInputs.betterSqlitePrebuildRoot, "build", "Release", "better_sqlite3.node"), nativeDestination);
-  await chmod2(nativeDestination, 493);
-  await requireFile(path3.join(root, standardInputs.apiBundle), "production API bundle");
-  await requireFile(path3.join(apiOutput, "metafile.json"), "production API esbuild metafile");
-  const nativeModule = path3.join(nativeNodeModules, "better-sqlite3", "build", "Release", "better_sqlite3.node");
-  await requireFile(nativeModule, "better-sqlite3 native module");
-}
 function webContributionBuildInvocation() {
   return {
     command: "corepack",
@@ -9777,23 +9708,11 @@ async function prepareWebInputs(root, standardInputs) {
   await requireDirectory(path3.join(root, standardInputs.webAssets), "production web assets");
   await requireFile(path3.join(root, standardInputs.webAssets, "index.html"), "production web index");
 }
-async function prepareStandardProductionInputs(root, contracts, externalInputs) {
-  await Promise.all([
-    prepareApiInputs(root, contracts.layout.standardInputs, externalInputs),
-    prepareWebInputs(root, contracts.layout.standardInputs)
-  ]);
+async function prepareStandardProductionInputs(root, contracts) {
+  await prepareWebInputs(root, contracts.layout.standardInputs);
 }
 async function copyPreparedApplicationInputs(payloadRoot, root, contracts) {
   const inputs = contracts.layout.standardInputs;
-  const apiRoot = componentRoot(payloadRoot, contracts, "jobctrl-api");
-  await mkdir2(apiRoot, { recursive: true, mode: 493 });
-  await copyFile(path3.join(root, inputs.apiBundle), path3.join(apiRoot, "server.mjs"));
-  await chmod2(path3.join(apiRoot, "server.mjs"), 420);
-  await copyTree(
-    path3.join(root, inputs.apiNativeModules, "node_modules"),
-    path3.join(apiRoot, "node_modules"),
-    { exclude: shouldExcludeSourcePath }
-  );
   const webSource = path3.join(root, inputs.webAssets);
   const webPayload = componentRoot(payloadRoot, contracts, "jobctrl-web");
   const excludeWebBuildInput = (relativePath) => shouldExcludeSourcePath(relativePath) || relativePath.endsWith(".map") || path3.posix.basename(relativePath) === "mockServiceWorker.js" || relativePath.includes("spikes.table-filters");
@@ -9813,14 +9732,6 @@ async function assembleExternalRuntimes(payloadRoot, contracts, cacheDirectory, 
   const lockById = new Map(contracts.locks.inputs.map((lock) => [lock.id, lock]));
   const archiveById = /* @__PURE__ */ new Map();
   for (const lock of contracts.locks.inputs) archiveById.set(lock.id, await downloadLockedArchive(lock, cacheDirectory));
-  const betterSqlitePrebuildRoot = path3.join(scratchDirectory, "better-sqlite3-node22");
-  await extractVerifiedArchive({
-    archivePath: archiveById.get("better-sqlite3-node22-prebuild"),
-    lock: lockById.get("better-sqlite3-node22-prebuild"),
-    destination: betterSqlitePrebuildRoot,
-    stripComponents: 0,
-    include: (entryPath, entry) => entry.type === "file" && entryPath === "build/Release/better_sqlite3.node"
-  });
   const extractedNode = path3.join(scratchDirectory, "node");
   const nodeEntries = await extractVerifiedArchive({
     archivePath: archiveById.get("node-runtime-archive"),
@@ -9870,7 +9781,7 @@ async function assembleExternalRuntimes(payloadRoot, contracts, cacheDirectory, 
   });
   await assertSymlinksPreserved(headlessRevisionRoot, headlessEntries);
   await writePlaywrightRevisionMarkers(headlessRevisionRoot);
-  return { lockById, archiveById, betterSqlitePrebuildRoot };
+  return { lockById, archiveById };
 }
 async function prunePythonRuntime(pythonRoot) {
   const originalExecutable = await realpath3(path3.join(pythonRoot, "bin", "python3"));
@@ -10242,7 +10153,7 @@ async function writeGeneratedComponents(payloadRoot, root, contracts, sourceDate
   await chmod2(path3.join(launcherRoot, "runtime-manifest.json"), 420);
   await copyFile(path3.join(root, "launcher", "update-protocol.json"), path3.join(launcherRoot, "update-protocol.json"));
   await chmod2(path3.join(launcherRoot, "update-protocol.json"), 420);
-  await copySchemaTransitionContract(root, launcherRoot);
+  await copyApplicationSchemaContract(root, launcherRoot);
   const pdfjsRoot = componentRoot(payloadRoot, contracts, "pdfjs-renderer");
   await mkdir2(pdfjsRoot, { recursive: true, mode: 493 });
   await writeJson(path3.join(pdfjsRoot, "renderer.json"), {
@@ -10340,19 +10251,6 @@ function mergeNpmContributors(contributors) {
   }
   return [...merged.values()].sort((left, right) => bytewiseCompare3(left.key, right.key));
 }
-async function collectApiBundleContributors(root, apiBundle) {
-  const metafilePath = path3.join(path3.dirname(apiBundle), "metafile.json");
-  const metafile = JSON.parse(await readFile3(metafilePath, "utf8"));
-  const contributors = [];
-  for (const sourcePath of Object.keys(metafile.inputs ?? {}).sort(bytewiseCompare3)) {
-    const contributor = await npmIdentityForContributingSource(root, sourcePath, {
-      kind: "api-esbuild-metafile",
-      artifactPath: "api/server.mjs"
-    });
-    if (contributor) contributors.push(contributor);
-  }
-  return contributors;
-}
 async function collectWebBundleContributors(root, webAssets) {
   const maps = (await buildFileInventory(webAssets)).filter((file) => file.type === "file" && file.path.endsWith(".map")).sort((left, right) => bytewiseCompare3(left.path, right.path));
   invariant3(maps.length > 0, "production web build did not emit hidden source maps for contribution evidence");
@@ -10440,13 +10338,11 @@ async function collectMcpNodeContributors(payloadRoot, contracts) {
 }
 async function collectNodeContributors(payloadRoot, root, contracts) {
   const inputs = contracts.layout.standardInputs;
-  const [apiBundle, webBundle, apiPayload, mcpPayload] = await Promise.all([
-    collectApiBundleContributors(root, path3.join(root, inputs.apiBundle)),
+  const [webBundle, mcpPayload] = await Promise.all([
     collectWebBundleContributors(root, path3.join(root, inputs.webAssets)),
-    collectPayloadNpmContributors(payloadRoot, path3.join(componentRoot(payloadRoot, contracts, "jobctrl-api"), "node_modules")),
     collectMcpNodeContributors(payloadRoot, contracts)
   ]);
-  return mergeNpmContributors([...apiBundle, ...webBundle, ...apiPayload, ...mcpPayload]);
+  return mergeNpmContributors([...webBundle, ...mcpPayload]);
 }
 function assertNodeAttributionClosure(contributors, nodeInventory) {
   const contributorKeys = new Set(contributors.map((entry) => entry.key ?? npmPackageKey(entry.name, entry.version)));
@@ -10887,87 +10783,6 @@ async function scanMachODependencies(payloadRoot, {
     minimumOsVersions: Object.fromEntries([...minimumOsVersionCounts].sort(([left], [right]) => compareMacOsVersions(left, right)))
   };
 }
-async function reserveLoopbackPort() {
-  const { createServer } = await import("node:net");
-  const server = createServer();
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  invariant3(address && typeof address === "object", "failed to reserve API smoke port");
-  const port = address.port;
-  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  return port;
-}
-function createExtractedRuntimeStackPlan({ payloadRoot, stateRoot, temporalPort, apiPort, contracts }) {
-  invariant3(path3.isAbsolute(payloadRoot) && path3.isAbsolute(stateRoot), "extracted runtime stack paths must be absolute");
-  invariant3(Number.isInteger(temporalPort) && temporalPort > 0, "Temporal smoke port must be positive");
-  invariant3(Number.isInteger(apiPort) && apiPort > 0, "API smoke port must be positive");
-  const temporalAddress = `127.0.0.1:${temporalPort}`;
-  const pythonExecutable = path3.join(payloadRoot, contracts.componentPaths.get("python-runtime"), "bin", "python3");
-  const nodeExecutable = path3.join(payloadRoot, contracts.componentPaths.get("node-runtime"), "bin", "node");
-  const temporalExecutable = path3.join(payloadRoot, contracts.componentPaths.get("temporal-runtime"), "temporal");
-  const environment = {
-    HOME: path3.join(stateRoot, "home"),
-    JOBCTRL_DIR: path3.join(stateRoot, "home", ".jobctrl"),
-    JOBCTRL_PAYLOAD_DIR: payloadRoot,
-    JOBCTRL_RUNTIME_MODE: "bundled",
-    JOBCTRL_WEB_ASSETS_DIR: path3.join(payloadRoot, contracts.componentPaths.get("jobctrl-web")),
-    JOBCTRL_PYTHON_EXECUTABLE: pythonExecutable,
-    PLAYWRIGHT_BROWSERS_PATH: path3.join(payloadRoot, contracts.componentPaths.get("chromium-core")),
-    TEMPORAL_ADDRESS: temporalAddress,
-    TEMPORAL_NAMESPACE: "default",
-    JOBCTRL_API_PORT: String(apiPort),
-    JOBCTRL_API_HOST: "127.0.0.1",
-    PATH: "/usr/bin:/bin:/usr/sbin:/sbin"
-  };
-  return {
-    environment,
-    temporalAddress,
-    temporalDbPath: path3.join(environment.JOBCTRL_DIR, "temporal-smoke.db"),
-    temporal: {
-      command: temporalExecutable,
-      args: [
-        "server",
-        "start-dev",
-        "--ip",
-        "127.0.0.1",
-        "--port",
-        String(temporalPort),
-        "--db-filename",
-        path3.join(environment.JOBCTRL_DIR, "temporal-smoke.db"),
-        "--headless",
-        "--log-level",
-        "error",
-        "--disable-config-file",
-        "--disable-config-env"
-      ]
-    },
-    temporalHealth: {
-      command: temporalExecutable,
-      args: [
-        "operator",
-        "cluster",
-        "health",
-        "--address",
-        temporalAddress,
-        "--command-timeout",
-        "2s",
-        "--output",
-        "json",
-        "--disable-config-file",
-        "--disable-config-env"
-      ]
-    },
-    worker: {
-      command: pythonExecutable,
-      args: ["-I", "-B", "-c", readFileSync(path3.join(REPO_ROOT, "scripts", "distribution-smoke-model.py"), "utf8")]
-    },
-    api: { command: nodeExecutable, args: [path3.join(payloadRoot, "api", "server.mjs")] },
-    apiOrigin: `http://127.0.0.1:${apiPort}`
-  };
-}
 var LOOPBACK_ONLY_SANDBOX_PROFILE = `(version 1)
 (allow default)
 (deny network-outbound (remote ip))
@@ -11001,103 +10816,6 @@ function createNativeLauncherSmokePlan({ payloadRoot, extractedRoot, stockEnviro
 }
 async function runLoopbackSandboxed(command, args, options) {
   return run("/usr/bin/sandbox-exec", ["-p", LOOPBACK_ONLY_SANDBOX_PROFILE, command, ...args], options);
-}
-function spawnLoopbackSandboxed(command, args, { cwd, env }) {
-  const child = spawn("/usr/bin/sandbox-exec", ["-p", LOOPBACK_ONLY_SANDBOX_PROFILE, command, ...args], {
-    cwd,
-    env,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  let output = "";
-  child.stdout.on("data", (chunk) => {
-    output += chunk;
-  });
-  child.stderr.on("data", (chunk) => {
-    output += chunk;
-  });
-  child.capturedOutput = () => output;
-  return child;
-}
-function assertSmokeProcessRunning(child, label) {
-  invariant3(
-    child.exitCode === null && child.signalCode === null,
-    `${label} exited during startup: ${child.capturedOutput().slice(-4e3)}`
-  );
-}
-async function waitForTemporalHealth(plan, temporal) {
-  let lastError = null;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    assertSmokeProcessRunning(temporal, "embedded Temporal server");
-    try {
-      const health = await runLoopbackSandboxed(plan.temporalHealth.command, plan.temporalHealth.args, {
-        cwd: plan.environment.JOBCTRL_DIR,
-        env: plan.environment
-      });
-      return { status: "healthy", output: health.stdout.trim() };
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`embedded Temporal health did not become ready: ${lastError?.message ?? "unknown error"}
-${temporal.capturedOutput().slice(-4e3)}`);
-}
-async function waitForApiWorkerHealth(plan, api, worker) {
-  let lastError = null;
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    assertSmokeProcessRunning(api, "extracted API");
-    assertSmokeProcessRunning(worker, "extracted Temporal worker");
-    try {
-      const response = await fetch(`${plan.apiOrigin}/v1/health`);
-      if (response.ok) {
-        const health = await response.json();
-        if (health?.worker?.status === "healthy" && health.worker.heartbeat?.pid === worker.pid) return health;
-        lastError = new Error(`worker health is ${health?.worker?.status ?? "missing"} for pid ${health?.worker?.heartbeat?.pid ?? "missing"}`);
-      } else {
-        lastError = new Error(`API health returned HTTP ${response.status}`);
-      }
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`extracted runtime stack did not become ready: ${lastError?.message ?? "unknown error"}
-API: ${api.capturedOutput().slice(-3e3)}
-Worker: ${worker.capturedOutput().slice(-3e3)}`);
-}
-async function startExtractedRuntimeStack(plan) {
-  await mkdir2(plan.environment.JOBCTRL_DIR, { recursive: true, mode: 448 });
-  const temporal = spawnLoopbackSandboxed(plan.temporal.command, plan.temporal.args, {
-    cwd: plan.environment.JOBCTRL_DIR,
-    env: plan.environment
-  });
-  let worker = null;
-  let api = null;
-  try {
-    const temporalHealth = await waitForTemporalHealth(plan, temporal);
-    worker = spawnLoopbackSandboxed(plan.worker.command, plan.worker.args, {
-      cwd: plan.environment.JOBCTRL_DIR,
-      env: plan.environment
-    });
-    api = spawnLoopbackSandboxed(plan.api.command, plan.api.args, {
-      cwd: plan.environment.JOBCTRL_DIR,
-      env: plan.environment
-    });
-    const apiHealth = await waitForApiWorkerHealth(plan, api, worker);
-    return { temporal, worker, api, temporalHealth, apiHealth };
-  } catch (error) {
-    if (api) await terminateChildProcess(api).catch(() => null);
-    if (worker) await terminateChildProcess(worker).catch(() => null);
-    await terminateChildProcess(temporal).catch(() => null);
-    throw error;
-  }
-}
-async function terminateExtractedRuntimeStack(stack) {
-  return {
-    api: await terminateChildProcess(stack.api),
-    worker: await terminateChildProcess(stack.worker),
-    temporal: await terminateChildProcess(stack.temporal, { timeoutMs: 5e3 })
-  };
 }
 async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockEnvironment }) {
   const plan = createNativeLauncherSmokePlan({ payloadRoot, extractedRoot, stockEnvironment });
@@ -11141,8 +10859,8 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     const version = JSON.parse((await invoke(["version", "--json"])).stdout);
     invariant3(typeof version.buildId === "string" && /^[a-f0-9]{64}$/.test(version.manifestSha256), "native launcher version JSON is incomplete");
     await invoke(["doctor"]);
-    const digest = await invoke(["digest", "--json"]);
-    invariant3(digest.stdout.trim().startsWith("{"), "native launcher did not transparently dispatch JSON Python CLI command");
+    const actions = await invoke(["actions"]);
+    invariant3(Array.isArray(JSON.parse(actions.stdout).actions), "native launcher did not transparently dispatch canonical Python actions");
     await invoke(["pipeline-status"]);
     await invoke(["status", "--pipeline"]);
     process2.kill(status.components.worker.pid, "SIGKILL");
@@ -11162,7 +10880,7 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     status = await waitForStatus(["running"], "supervisor-kill restart");
     await stop();
     const stopped = await waitForStatus(["stopped"], "final stop");
-    return { executionSandbox: plan.executionSandbox, startUrl: "http://127.0.0.1:8766", components: Object.keys(status.components).sort(bytewiseCompare3), manifestSha256: version.manifestSha256, pipelineStatusCompatibility: "passed", pythonDispatch: ["doctor", "digest --json"], recovery: { workerKill: "degraded-stop-restart", supervisorKill: "orphaned-stop-restart" } };
+    return { executionSandbox: plan.executionSandbox, startUrl: "http://127.0.0.1:8766", components: Object.keys(status.components).sort(bytewiseCompare3), manifestSha256: version.manifestSha256, pipelineStatusCompatibility: "passed", pythonDispatch: ["doctor", "actions"], recovery: { workerKill: "degraded-stop-restart", supervisorKill: "orphaned-stop-restart" } };
   } finally {
     if (lifecycleStarted) await stop().catch(() => null);
   }
@@ -11194,114 +10912,6 @@ function nativeLauncherLifecycleSmokeRequirement(nativeLauncherReleaseChannel = 
     reason: "pre-sign-unavailable",
     releaseChannel: nativeLauncherReleaseChannel
   };
-}
-async function requireJsonResponse(url, options, label) {
-  const response = await fetch(url, options);
-  const text = await response.text();
-  invariant3(response.ok, `${label} failed with HTTP ${response.status}: ${text.slice(0, 1e3)}`);
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw new Error(`${label} did not return JSON: ${error.message}`);
-  }
-}
-function extensionCaptureSmokeHeaders(token) {
-  invariant3(typeof token === "string" && token.length >= 32, "extension smoke token is invalid");
-  return {
-    authorization: `Bearer ${token}`,
-    "content-type": "application/json",
-    origin: "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "sec-fetch-site": "cross-site"
-  };
-}
-function extensionCaptureSmokeJobId(result) {
-  invariant3(result?.ok === true, "extension capture smoke did not import the fixture job");
-  invariant3(
-    typeof result.jobKey === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(result.jobKey),
-    "extension capture smoke did not return a canonical JobId"
-  );
-  return result.jobKey;
-}
-function assertPersistedExtensionCaptureSmokeJob(detail, { jobId, jobUrl }) {
-  invariant3(
-    detail?.ok === true && detail.job?.jobKey === jobId && detail.job?.url === jobUrl,
-    "extracted API did not resolve the captured JobId to the workflow-imported offline fixture job"
-  );
-}
-async function submitExtensionCaptureFixture(plan, { captureId, jobUrl, captureHtml }) {
-  const pairing = await requireJsonResponse(
-    `${plan.apiOrigin}/v1/extension/pairing-token`,
-    { method: "GET" },
-    "extension pairing-token smoke"
-  );
-  invariant3(typeof pairing?.token === "string" && pairing.token.length >= 32, "extension pairing-token smoke returned no token");
-  const result = await requireJsonResponse(
-    `${plan.apiOrigin}/v1/extension/captures`,
-    {
-      method: "POST",
-      headers: extensionCaptureSmokeHeaders(pairing.token),
-      body: JSON.stringify({
-        captureId,
-        originatingUrl: jobUrl,
-        captureMode: "saved_html",
-        capturedUrl: jobUrl,
-        contentText: captureHtml,
-        futureManualActionRequired: false,
-        captureClient: "browser_extension",
-        extensionVersion: "distribution-smoke"
-      })
-    },
-    "extension saved-HTML capture smoke"
-  );
-  const jobId = extensionCaptureSmokeJobId(result);
-  return { itemId: result.itemId, jobKey: jobId, importedAt: result.importedAt };
-}
-async function waitForApiWorkflow(plan, workflowType) {
-  let last = null;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    last = await requireJsonResponse(
-      `${plan.apiOrigin}/v1/workflow-runs?page=1&pageSize=50&status=all`,
-      { method: "GET" },
-      "workflow projection smoke"
-    );
-    const run2 = (last.items ?? []).find((item) => item.workflowType === workflowType);
-    if (run2?.status === "succeeded") return run2;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`${workflowType} did not reach a succeeded API projection: ${JSON.stringify(last).slice(-2e3)}`);
-}
-async function requirePersistedJob(plan, jobId, jobUrl) {
-  const detail = await requireJsonResponse(
-    `${plan.apiOrigin}/v1/jobs/${encodeURIComponent(jobId)}`,
-    { method: "GET" },
-    "persisted captured job smoke"
-  );
-  assertPersistedExtensionCaptureSmokeJob(detail, { jobId, jobUrl });
-  return true;
-}
-async function describeTemporalWorkflow(plan, workflowId) {
-  const probe = await runLoopbackSandboxed(plan.worker.command, [
-    "-I",
-    "-B",
-    "-c",
-    `import asyncio
-import json
-import os
-from temporalio.client import Client
-
-async def main():
-    client = await Client.connect(os.environ["TEMPORAL_ADDRESS"], namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"))
-    description = await client.get_workflow_handle(os.environ["JOBCTRL_SMOKE_WORKFLOW_ID"]).describe()
-    print(json.dumps({"runId": description.run_id, "status": description.status.name}, sort_keys=True))
-
-asyncio.run(main())`
-  ], {
-    cwd: plan.environment.JOBCTRL_DIR,
-    env: { ...plan.environment, JOBCTRL_SMOKE_WORKFLOW_ID: workflowId }
-  });
-  const description = JSON.parse(probe.stdout.trim());
-  invariant3(/completed/i.test(description.status), `Temporal workflow ${workflowId} is not completed: ${description.status}`);
-  return description;
 }
 async function terminateChildProcess(child, { timeoutMs = 3e3 } = {}) {
   invariant3(Number.isInteger(timeoutMs) && timeoutMs >= 0, "child termination timeout must be non-negative");
@@ -11554,10 +11164,6 @@ finally:
     ],
     { cwd: payloadRoot, env: stockEnvironment }
   );
-  await runLoopbackSandboxed(nodeExecutable, [
-    "-e",
-    `const Database=require(${JSON.stringify(path3.join(payloadRoot, "api", "node_modules", "better-sqlite3"))});const db=new Database(':memory:');db.exec('create table smoke(value integer);insert into smoke values (1)');if(db.prepare('select value from smoke').get().value!==1)process.exit(2);db.close();`
-  ], { cwd: payloadRoot, env: stockEnvironment });
   await runLoopbackSandboxed(stockEnvironment.JOBCTRL_PYTHON_EXECUTABLE, ["-I", "-B", "-m", "jobctrl", "--help"], { cwd: payloadRoot, env: stockEnvironment });
   await runLoopbackSandboxed(stockEnvironment.JOBCTRL_PYTHON_EXECUTABLE, [
     "-I",
@@ -11571,246 +11177,7 @@ finally:
     "-c",
     "import tls_client\nfrom tls_client.cffi import library\nassert library is not None"
   ], { cwd: payloadRoot, env: stockEnvironment });
-  const offlineFixtureUrl = "https://offline.fixture.invalid/jobs/distribution-smoke";
-  const fixtureDescription = "Build local-first job search infrastructure with Python, TypeScript, observability, reliable workflow automation, product strategy, and privacy-preserving systems. ".repeat(6);
-  const fixtureJsonLd = {
-    "@context": "https://schema.org",
-    "@type": "JobPosting",
-    title: "Distribution Smoke Engineer",
-    description: fixtureDescription,
-    directApply: true,
-    url: offlineFixtureUrl,
-    validThrough: "2999-01-01T00:00:00+00:00",
-    hiringOrganization: { "@type": "Organization", name: "Offline Fixture" },
-    jobLocation: {
-      "@type": "Place",
-      address: { "@type": "PostalAddress", addressLocality: "Barcelona", addressCountry: "Spain" }
-    }
-  };
-  const fixtureCaptureHtml = `<!doctype html><html><head><script type="application/ld+json">${JSON.stringify(fixtureJsonLd)}</script></head><body><h1>Distribution Smoke Engineer</h1><p>${fixtureDescription}</p></body></html>`;
-  const fixtureSetup = await runLoopbackSandboxed(stockEnvironment.JOBCTRL_PYTHON_EXECUTABLE, [
-    "-I",
-    "-B",
-    "-c",
-    `import json
-import os
-from pathlib import Path
-
-from jobctrl.infrastructure.materials.html_resume_pdf import render_resume_html_to_pdf
-
-pdf_path = Path(os.environ["JOBCTRL_DIR"]) / "distribution-smoke.pdf"
-resume_html = """<!doctype html><html><head><meta charset='utf-8'><style>@page { size: A4; margin: 18mm; } body { font-family: sans-serif; color: #111; } h1 { font-size: 24px; }</style></head><body><h1>Distribution Smoke Resume</h1><p>Production HTML to PDF rendering from the bundled Python worker and Chromium runtime.</p></body></html>"""
-render_resume_html_to_pdf(resume_html, str(pdf_path))
-pdf_bytes = pdf_path.read_bytes()
-assert pdf_bytes.startswith(b"%PDF-"), pdf_bytes[:16]
-assert len(pdf_bytes) > 1000, len(pdf_bytes)
-print(json.dumps({"pdfPath": str(pdf_path), "pdfBytes": len(pdf_bytes)}, sort_keys=True))`
-  ], { cwd: payloadRoot, env: stockEnvironment });
-  const fixtureEvidence = JSON.parse(fixtureSetup.stdout.trim());
-  invariant3(fixtureEvidence.pdfBytes > 1e3, "production PDF renderer produced an empty PDF");
-  const webAssetsRoot = path3.join(payloadRoot, contracts.componentPaths.get("jobctrl-web"), "assets");
-  const webAssetNames = await readdir2(webAssetsRoot);
-  const pdfModuleNames = webAssetNames.filter((name) => /^pdf-[A-Za-z0-9_-]+\.js$/.test(name));
-  const pdfWorkerNames = webAssetNames.filter((name) => /^pdf\.worker-[A-Za-z0-9_-]+\.mjs$/.test(name));
-  invariant3(pdfModuleNames.length === 1, `expected one bundled PDF.js module, found ${pdfModuleNames.join(", ")}`);
-  invariant3(pdfWorkerNames.length === 1, `expected one bundled PDF.js worker module, found ${pdfWorkerNames.join(", ")}`);
-  const apiPort = await reserveLoopbackPort();
-  const temporalPort = await reserveLoopbackPort();
-  const runtimePlan = createExtractedRuntimeStackPlan({
-    payloadRoot,
-    stateRoot: canonicalExtractedRoot,
-    temporalPort,
-    apiPort,
-    contracts
-  });
-  const firstStack = await startExtractedRuntimeStack(runtimePlan);
-  let pdfPreviewEvidence = null;
-  let captureEvidence = null;
-  let workflowEvidence = null;
-  let workflowDetailEvidence = null;
-  let firstTemporalDescription = null;
-  let firstTermination = null;
-  try {
-    captureEvidence = await submitExtensionCaptureFixture(runtimePlan, {
-      captureId: "distribution-smoke-capture",
-      jobUrl: offlineFixtureUrl,
-      captureHtml: fixtureCaptureHtml
-    });
-    workflowEvidence = await waitForApiWorkflow(runtimePlan, "ManualCaptureImportWorkflow");
-    workflowDetailEvidence = await requireJsonResponse(
-      `${runtimePlan.apiOrigin}/v1/workflow-runs/${encodeURIComponent(workflowEvidence.workflowId)}`,
-      { method: "GET" },
-      "manual-capture workflow history smoke"
-    );
-    const workflowEventTypes = new Set((workflowDetailEvidence.events ?? []).map((event) => event.eventType));
-    invariant3(workflowEventTypes.has("WorkflowStarted") && workflowEventTypes.has("WorkflowCompleted"), "manual-capture workflow history is missing started/completed events");
-    await requirePersistedJob(runtimePlan, captureEvidence.jobKey, offlineFixtureUrl);
-    firstTemporalDescription = await describeTemporalWorkflow(runtimePlan, workflowEvidence.workflowId);
-    invariant3(
-      workflowDetailEvidence.temporalRunId === firstTemporalDescription.runId,
-      "manual-capture workflow projection does not identify the completed Temporal run"
-    );
-    const webResponse = await fetch(`${runtimePlan.apiOrigin}/`);
-    invariant3(webResponse.ok && (await webResponse.text()).includes("<html"), "extracted API did not serve the bundled web app");
-    const browserSmoke = await runLoopbackSandboxed(stockEnvironment.JOBCTRL_PYTHON_EXECUTABLE, [
-      "-I",
-      "-B",
-      "-c",
-      `import base64
-import json
-import os
-from pathlib import Path
-
-from playwright.sync_api import sync_playwright
-
-origin = os.environ["JOBCTRL_SMOKE_ORIGIN"]
-pdf_bytes = Path(os.environ["JOBCTRL_SMOKE_PDF_PATH"]).read_bytes()
-evaluation_input = {
-    "pdfBase64": base64.b64encode(pdf_bytes).decode("ascii"),
-    "pdfModuleUrl": origin + "/assets/" + os.environ["JOBCTRL_SMOKE_PDF_MODULE"],
-    "pdfWorkerUrl": origin + "/assets/" + os.environ["JOBCTRL_SMOKE_PDF_WORKER"],
-}
-render_script = """async (input) => {
-  const pdfjs = await import(input.pdfModuleUrl);
-  const worker = await import(input.pdfWorkerUrl);
-  if (typeof pdfjs.getDocument !== "function") throw new Error("bundled PDF.js module does not export getDocument");
-  globalThis.pdfjsWorker = worker;
-  pdfjs.GlobalWorkerOptions.workerSrc = input.pdfWorkerUrl;
-  const bytes = Uint8Array.from(atob(input.pdfBase64), (character) => character.charCodeAt(0));
-  const loadingTask = pdfjs.getDocument({ data: bytes });
-  const document = await loadingTask.promise;
-  const firstPage = await document.getPage(1);
-  const textContent = await firstPage.getTextContent();
-  const text = textContent.items.map((item) => item.str ?? "").join(" ");
-  const viewport = firstPage.getViewport({ scale: 1 });
-  const canvas = window.document.createElement("canvas");
-  canvas.width = Math.floor(viewport.width);
-  canvas.height = Math.floor(viewport.height);
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) throw new Error("canvas 2D context unavailable");
-  await firstPage.render({ canvas, canvasContext: context, viewport }).promise;
-  let nonZeroPixelBytes = 0;
-  let readbackAttempts = 0;
-  for (; readbackAttempts < 5 && nonZeroPixelBytes === 0; readbackAttempts += 1) {
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    for (const value of pixels) if (value !== 0) nonZeroPixelBytes += 1;
-    if (nonZeroPixelBytes === 0) await new Promise((resolve) => requestAnimationFrame(() => resolve()));
-  }
-  await loadingTask.destroy();
-  return { width: canvas.width, height: canvas.height, nonZeroPixelBytes, readbackAttempts, text };
-}"""
-
-def preview_attempt(playwright):
-    browser = playwright.chromium.launch(headless=True)
-    try:
-        page = browser.new_page()
-        response = page.goto(origin, wait_until="domcontentloaded")
-        assert response is not None and response.ok, response
-        smoke_document_url = origin + "/__jobctrl_distribution_pdf_smoke"
-        page.route(
-            smoke_document_url,
-            lambda route: route.fulfill(
-                status=200,
-                content_type="text/html",
-                body="<!doctype html><html><body>JobCtrl PDF preview smoke</body></html>",
-            ),
-        )
-        smoke_response = page.goto(smoke_document_url, wait_until="domcontentloaded")
-        assert smoke_response is not None and smoke_response.ok, smoke_response
-        return page.evaluate(render_script, evaluation_input)
-    finally:
-        browser.close()
-
-with sync_playwright() as playwright:
-    from pathlib import Path
-    import os
-    browser_root = Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
-    required_headless = browser_root / "chromium_headless_shell-1248" / "chrome-headless-shell-mac-arm64" / "chrome-headless-shell"
-    assert required_headless.is_file(), required_headless
-    assert not any(browser_root.glob("chromium-*")), list(browser_root.glob("chromium-*"))
-    assert not any(browser_root.rglob("*.app")), "full browser app bundle entered the core payload"
-    assert not any("Google Chrome for Testing" in str(candidate) for candidate in browser_root.rglob("*")), "full Chrome-for-Testing entered the core payload"
-    browser_attempts = []
-    result = None
-    for browser_attempt in range(1, 4):
-        result = preview_attempt(playwright)
-        assert result["width"] > 0 and result["height"] > 0, result
-        assert "Distribution Smoke Resume" in result["text"], result
-        browser_attempts.append({
-            "browserAttempt": browser_attempt,
-            "nonZeroPixelBytes": result["nonZeroPixelBytes"],
-            "readbackAttempts": result["readbackAttempts"],
-        })
-        if result["nonZeroPixelBytes"] > 0:
-            break
-    assert result is not None and result["nonZeroPixelBytes"] > 0, {"attempts": browser_attempts, "lastResult": result}
-    print(json.dumps({
-        "browserExecutable": str(required_headless),
-        "browserLaunchAttempts": browser_attempts,
-        "rootNavigation": True,
-        "isolatedSameOriginDocument": True,
-        **result,
-    }, sort_keys=True))`
-    ], {
-      cwd: payloadRoot,
-      env: {
-        ...runtimePlan.environment,
-        JOBCTRL_SMOKE_ORIGIN: runtimePlan.apiOrigin,
-        JOBCTRL_SMOKE_PDF_PATH: fixtureEvidence.pdfPath,
-        JOBCTRL_SMOKE_PDF_MODULE: pdfModuleNames[0],
-        JOBCTRL_SMOKE_PDF_WORKER: pdfWorkerNames[0]
-      }
-    });
-    pdfPreviewEvidence = JSON.parse(browserSmoke.stdout.trim());
-    invariant3(
-      pdfPreviewEvidence.rootNavigation === true && pdfPreviewEvidence.isolatedSameOriginDocument === true,
-      "bundled PDF.js smoke did not prove the real root plus isolated same-origin harness boundary"
-    );
-    invariant3(pdfPreviewEvidence.width > 0 && pdfPreviewEvidence.height > 0 && pdfPreviewEvidence.nonZeroPixelBytes > 0, "bundled PDF.js page preview smoke failed");
-  } finally {
-    firstTermination = await terminateExtractedRuntimeStack(firstStack);
-  }
-  invariant3(firstTermination?.api?.status === "exited" && firstTermination.worker?.status === "exited" && firstTermination.temporal?.status === "exited", "first extracted runtime stack did not terminate");
-  const secondStack = await startExtractedRuntimeStack(runtimePlan);
-  let secondTermination = null;
-  let secondTemporalDescription = null;
-  let restartEvidence = null;
-  try {
-    invariant3(secondStack.worker.pid !== firstStack.worker.pid, "runtime restart reused the first worker pid");
-    invariant3(
-      secondStack.apiHealth.worker.heartbeat.workerId !== firstStack.apiHealth.worker.heartbeat.workerId,
-      "runtime restart reused the first worker heartbeat identity"
-    );
-    invariant3(secondStack.apiHealth.dbIdentity === firstStack.apiHealth.dbIdentity, "runtime restart changed the JobCtrl DB identity");
-    invariant3(secondStack.apiHealth.worker.heartbeat.pid === secondStack.worker.pid, "runtime restart health does not identify the fresh worker");
-    await requirePersistedJob(runtimePlan, captureEvidence.jobKey, offlineFixtureUrl);
-    const persistedWorkflow = await requireJsonResponse(
-      `${runtimePlan.apiOrigin}/v1/workflow-runs/${encodeURIComponent(workflowEvidence.workflowId)}`,
-      { method: "GET" },
-      "persisted workflow projection smoke"
-    );
-    invariant3(persistedWorkflow?.status === "succeeded", "runtime restart lost the completed manual-capture workflow projection");
-    invariant3(
-      JSON.stringify(persistedWorkflow.events) === JSON.stringify(workflowDetailEvidence.events),
-      "runtime restart changed the completed manual-capture workflow history"
-    );
-    secondTemporalDescription = await describeTemporalWorkflow(runtimePlan, workflowEvidence.workflowId);
-    invariant3(secondTemporalDescription.runId === firstTemporalDescription.runId, "runtime restart changed the persisted Temporal run identity");
-    restartEvidence = {
-      status: "pass",
-      firstWorkerPid: firstStack.worker.pid,
-      secondWorkerPid: secondStack.worker.pid,
-      firstWorkerId: firstStack.apiHealth.worker.heartbeat.workerId,
-      secondWorkerId: secondStack.apiHealth.worker.heartbeat.workerId,
-      dbIdentity: secondStack.apiHealth.dbIdentity,
-      jobPersisted: true,
-      workflowProjectionPersisted: true,
-      temporalRunPersisted: true
-    };
-  } finally {
-    secondTermination = await terminateExtractedRuntimeStack(secondStack);
-  }
-  invariant3(secondTermination?.api?.status === "exited" && secondTermination.worker?.status === "exited" && secondTermination.temporal?.status === "exited", "restarted extracted runtime stack did not terminate");
+  const applicationJourneys = await runInstalledApplicationJourneys({ payloadRoot, contracts });
   const nativeLauncherLifecycleRequirement = nativeLauncherLifecycleSmokeRequirement(nativeLauncherReleaseChannel);
   const nativeLauncherLifecycle = nativeLauncherLifecycleRequirement.status === "required" ? await smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot: canonicalExtractedRoot, stockEnvironment }) : nativeLauncherLifecycleRequirement;
   await verifyExactPayloadTree(payloadRoot, manifest);
@@ -11821,22 +11188,38 @@ with sync_playwright() as playwright:
     tlsClientNative: "darwin-arm64-load-pass",
     dbBackedRoute: "/v1/jobs",
     browserRevision: 1248,
-    offlineManualCaptureJob: offlineFixtureUrl,
-    semanticModel: { provider: "distribution-smoke", model: "explicit-page-fixture", boundary: "model-port-test-double" },
-    manualCaptureWorkflow: {
-      itemId: captureEvidence.itemId,
-      workflowId: workflowEvidence.workflowId,
-      status: workflowEvidence.status,
-      temporalRunId: secondTemporalDescription.runId
-    },
-    productionPdfBytes: fixtureEvidence.pdfBytes,
-    pdfPreview: pdfPreviewEvidence,
-    runtimeRestart: restartEvidence,
-    runtimeTermination: { first: firstTermination, second: secondTermination },
+    applicationJourneys,
     nativeLauncherLifecycle,
     networkIsolation,
     postSmokePayloadTree: "exact-manifest-match",
     extractionForbiddenAudit
+  };
+}
+async function runInstalledApplicationJourneys({ payloadRoot, contracts }) {
+  const result = await run(process2.execPath, [path3.join(REPO_ROOT, "scripts", "run-e2e.mjs"), "--installed", "--project=chromium"], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process2.env,
+      JOBCTRL_E2E_PAYLOAD_DIR: payloadRoot,
+      JOBCTRL_E2E_PYTHON: path3.join(payloadRoot, contracts.componentPaths.get("python-runtime"), "bin", "python3"),
+      JOBCTRL_E2E_STATIC_DIR: path3.join(payloadRoot, contracts.componentPaths.get("jobctrl-web")),
+      JOBCTRL_TEMPORAL_CLI_PATH: path3.join(payloadRoot, contracts.componentPaths.get("temporal-runtime"), "temporal"),
+      PLAYWRIGHT_BROWSERS_PATH: path3.join(payloadRoot, contracts.componentPaths.get("chromium-core"))
+    }
+  });
+  const line = result.stdout.split("\n").findLast((value) => value.startsWith("E2E timing: "));
+  invariant3(line, "installed application journeys did not publish their owned evidence summary");
+  const evidence = JSON.parse(line.slice("E2E timing: ".length));
+  invariant3(
+    evidence.mode === "installed" && evidence.exitCode === 0 && evidence.lockfileUnchanged === true,
+    "installed application journeys did not complete against the exact extracted candidate"
+  );
+  return {
+    status: "pass",
+    suite: "target-application-e2e",
+    execution: "extracted-python-and-web-assets",
+    controlledExternalBoundaries: true,
+    ...evidence
   };
 }
 function filesMatchingSizeSpec(files, spec) {
@@ -12751,8 +12134,6 @@ async function buildRealPayload({
     });
     const evidenceRoot = path3.join(outputRoot, "build-evidence");
     await mkdir2(evidenceRoot, { recursive: true, mode: 493 });
-    await copyFile(path3.join(root, "dist", "api", "metafile.json"), path3.join(evidenceRoot, "api-esbuild-metafile.json"));
-    await chmod2(path3.join(evidenceRoot, "api-esbuild-metafile.json"), 420);
     await writeJson(path3.join(evidenceRoot, "node-contribution-closure.json"), {
       schemaVersion: 1,
       status: "complete",

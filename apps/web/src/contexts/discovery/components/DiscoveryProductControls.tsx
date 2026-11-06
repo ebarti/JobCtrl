@@ -1,13 +1,11 @@
 import type {
   DiscoveryFeedbackKind,
-  DiscoveryPreviewResponse,
   ManualCaptureImportRequest,
   ManualCaptureListResponse,
   QuarantineListResponse,
-  RoleMatchFeedbackListResponse,
-  SourceLocatorListResponse,
   SourceRegistryEntrySummary,
 } from "@jobctrl/contracts";
+import { SourceUpsertRequestSchema } from "@jobctrl/contracts";
 import type { SavedTableView } from "@jobctrl/contracts";
 import {
   IconAlertTriangle,
@@ -23,6 +21,7 @@ import {
 import { type FormEvent, useMemo, useState } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { useDiscoverySettingsQuery } from "../hooks/useDiscoverySettingsQuery.js";
 import {
   useDiscoveryQuarantineQuery,
   useDiscoverySourcePreviewQuery,
@@ -30,7 +29,7 @@ import {
   useRoleMatchFeedbackQuery,
   useSourceLocatorCandidatesQuery,
   useSourceRegistryQuery,
-} from "../../operations/hooks/useDiscoveryProductControlsQuery.js";
+} from "../hooks/useDiscoveryProductControlsQuery.js";
 import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Checkbox } from "../../../shared/ui/checkbox.js";
@@ -69,6 +68,7 @@ import {
   hasPolitenessOutcomes,
   politenessOutcomeSummary,
 } from "./SourcePolitenessBadges.js";
+import { DiscoveryFeedbackRefresh } from "./DiscoveryFeedbackRefresh.js";
 import {
   Tabs,
   TabsContent,
@@ -85,15 +85,20 @@ import {
   usePatchDiscoverySourceStateMutation,
   usePromoteSourceLocatorCandidateMutation,
   useRejectSourceLocatorCandidateMutation,
+  useResetSourceLocatorCandidateMutation,
   useRoleMatchFeedbackDecisionMutation,
   useUpsertDiscoverySourceMutation,
 } from "../hooks/useDiscoveryProductControlMutations.js";
 
 type QuarantineEntry = QuarantineListResponse["entries"][number];
 type ManualCaptureItem = ManualCaptureListResponse["items"][number];
-type LocatorCandidate = SourceLocatorListResponse["candidates"][number];
-type RoleMatchSuggestion = RoleMatchFeedbackListResponse["suggestions"][number];
-type PreviewLead = DiscoveryPreviewResponse["leads"][number];
+type LocatorCandidate = import("../contracts.js").LocatorCandidate;
+type RoleMatchSuggestion = import("../contracts.js").RoleFeedback["suggestions"][number];
+type PreviewLead = import("../contracts.js").DiscoveryPreview["leads"][number];
+function sourceRevision(source: SourceRegistryEntrySummary): number | null {
+  const revision = (source as SourceRegistryEntrySummary & { revision?: unknown }).revision;
+  return typeof revision === "number" && Number.isInteger(revision) && revision > 0 ? revision : null;
+}
 type SourceMetricTone = "good" | "warn" | "bad" | "unknown";
 type DiscoveryControlsLayout = "grid" | "tabs";
 type SourceRegistryStateFilter = "all" | SourceRegistryEntrySummary["state"];
@@ -230,6 +235,8 @@ function manualActionLabel(value: ManualCaptureItem["reason"]): string {
       return "Unconfirmed careers page";
     case "browser_extension_capture":
       return "Browser extension capture";
+    default:
+      return "Manual capture required";
   }
 }
 
@@ -253,6 +260,8 @@ function manualActionDetail(value: ManualCaptureItem["reason"]): string {
       return "The URL looks useful, but the app cannot confirm which careers system or parser should handle it yet.";
     case "browser_extension_capture":
       return "The user saved this posting from the browser extension.";
+    default:
+      return "A more specific reason was not recorded.";
   }
 }
 
@@ -385,10 +394,8 @@ export function DiscoveryProductControls({
   const quarantine = useDiscoveryQuarantineQuery();
   const manualCapture = useManualCaptureQueueQuery();
   const roleMatchFeedback = useRoleMatchFeedbackQuery();
-  const sourceCount = sources.data?.sources.length ?? 0;
-  const quarantineCount = quarantine.data?.entries.length ?? 0;
-  const manualCount = manualCapture.data?.items.length ?? 0;
-  const candidateCount = locatorCandidates.data?.candidates.length ?? 0;
+  const sourceCount = sources.data ? String(sources.data.sources.length) : sources.isPending ? "loading" : "unavailable";
+  const candidateCount = locatorCandidates.data ? String(locatorCandidates.data.candidates.length) : locatorCandidates.isPending ? "loading" : "unavailable";
   const pendingRoleSuggestionCount =
     roleMatchFeedback.data?.suggestions.filter(
       (suggestion) => suggestion.status === "pending",
@@ -400,14 +407,22 @@ export function DiscoveryProductControls({
     locatorCandidates.error ??
     roleMatchFeedback.error;
   const message = error instanceof Error ? error.message : null;
+  const reviewCount = quarantine.data && manualCapture.data && roleMatchFeedback.data
+    ? String(quarantine.data.entries.length + manualCapture.data.items.length + pendingRoleSuggestionCount)
+    : quarantine.isPending || manualCapture.isPending || roleMatchFeedback.isPending ? "loading" : "unavailable";
+  const sourcePanel = sources.data || sources.isPending ? <SourceRegistryPanel defaultStateFilter={layout === "tabs" ? "active" : "all"} sources={sources.data?.sources ?? []} loading={sources.isLoading} {...(sourceTable ? { sourceTable } : {})} /> : <p role="alert">Source registry unavailable.</p>;
+  const locatorPanel = locatorCandidates.data || locatorCandidates.isPending ? <SourceLocatorPanel candidates={locatorCandidates.data?.candidates ?? []} loading={locatorCandidates.isLoading} /> : <p role="alert">Source candidates unavailable.</p>;
+  const quarantinePanel = quarantine.data || quarantine.isPending ? <QuarantinePanel entries={quarantine.data?.entries ?? []} loading={quarantine.isLoading} /> : <p role="alert">Quarantine unavailable.</p>;
+  const feedbackPanel = roleMatchFeedback.data || roleMatchFeedback.isPending ? <RoleMatchFeedbackPanel suggestions={roleMatchFeedback.data?.suggestions ?? []} loading={roleMatchFeedback.isLoading} /> : <p role="alert">Role matching feedback unavailable.</p>;
+  const capturePanel = manualCapture.data || manualCapture.isPending ? <ManualCapturePanel items={manualCapture.data?.items ?? []} loading={manualCapture.isLoading} /> : <p role="alert">Manual capture queue unavailable.</p>;
 
   return (
     <section className="card full discovery-controls">
       <CardHeader
         title="Discovery controls"
-        meta={`${sourceCount} sources · ${candidateCount} candidates · ${quarantineCount + manualCount + pendingRoleSuggestionCount} review`}
+        meta={`${sourceCount} sources · ${candidateCount} candidates · ${reviewCount} review`}
       />
-      {message ? <div className="banner inline">{message}</div> : null}
+      {message ? <div className="banner inline" role="alert">{message} Previously loaded results remain visible where available.</div> : null}
       {layout === "tabs" ? (
         <Tabs defaultValue="sources" className="discovery-tabs">
           <TabsList aria-label="Discovery tools" className="discovery-tab-list">
@@ -418,61 +433,28 @@ export function DiscoveryProductControls({
             <TabsTrigger value="manual">Manual capture</TabsTrigger>
           </TabsList>
           <TabsContent value="sources" className="discovery-tab-panel">
-            <SourceRegistryPanel
-              defaultStateFilter="active"
-              sources={sources.data?.sources ?? []}
-              loading={sources.isLoading}
-              {...(sourceTable ? { sourceTable } : {})}
-            />
+            {sourcePanel}
           </TabsContent>
           <TabsContent value="locator" className="discovery-tab-panel">
-            <SourceLocatorPanel
-              candidates={locatorCandidates.data?.candidates ?? []}
-              loading={locatorCandidates.isLoading}
-            />
+            {locatorPanel}
           </TabsContent>
           <TabsContent value="quarantine" className="discovery-tab-panel">
-            <QuarantinePanel
-              entries={quarantine.data?.entries ?? []}
-              loading={quarantine.isLoading}
-            />
+            {quarantinePanel}
           </TabsContent>
           <TabsContent value="role-match" className="discovery-tab-panel">
-            <RoleMatchFeedbackPanel
-              suggestions={roleMatchFeedback.data?.suggestions ?? []}
-              loading={roleMatchFeedback.isLoading}
-            />
+            {feedbackPanel}
           </TabsContent>
           <TabsContent value="manual" className="discovery-tab-panel" keepMounted>
-            <ManualCapturePanel
-              items={manualCapture.data?.items ?? []}
-              loading={manualCapture.isLoading}
-            />
+            {capturePanel}
           </TabsContent>
         </Tabs>
       ) : (
         <div className="discovery-control-grid">
-          <SourceRegistryPanel
-            sources={sources.data?.sources ?? []}
-            loading={sources.isLoading}
-            {...(sourceTable ? { sourceTable } : {})}
-          />
-          <SourceLocatorPanel
-            candidates={locatorCandidates.data?.candidates ?? []}
-            loading={locatorCandidates.isLoading}
-          />
-          <QuarantinePanel
-            entries={quarantine.data?.entries ?? []}
-            loading={quarantine.isLoading}
-          />
-          <RoleMatchFeedbackPanel
-            suggestions={roleMatchFeedback.data?.suggestions ?? []}
-            loading={roleMatchFeedback.isLoading}
-          />
-          <ManualCapturePanel
-            items={manualCapture.data?.items ?? []}
-            loading={manualCapture.isLoading}
-          />
+          {sourcePanel}
+          {locatorPanel}
+          {quarantinePanel}
+          {feedbackPanel}
+          {capturePanel}
         </div>
       )}
     </section>
@@ -497,6 +479,7 @@ function SourceRegistryPanel({
   const [previewSourceId, setPreviewSourceId] = useState<string | null>(null);
   const preview = useDiscoverySourcePreviewQuery(previewSourceId);
   const [sourceId, setSourceId] = useState("");
+  const [sourceFormError, setSourceFormError] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [kind, setKind] = useState<(typeof SOURCE_KINDS)[number]>(
     "employer_careers_page",
@@ -731,13 +714,14 @@ function SourceRegistryPanel({
               variant="ghost"
               aria-label={`Activate ${source.displayName}`}
               title="Activate source"
-              disabled={patchState.isPending || source.state === "active"}
+              disabled={patchState.isPending || source.state === "active" || sourceRevision(source) === null}
               onClick={() =>
                 patchState.mutate({
                   sourceId: source.sourceId,
                   body: {
                     state: "active",
                     reason: "User enabled source from product controls.",
+                    expectedRevision: sourceRevision(source)!,
                   },
                 })
               }
@@ -750,13 +734,14 @@ function SourceRegistryPanel({
               variant="ghost"
               aria-label={`Quarantine ${source.displayName}`}
               title="Quarantine source"
-              disabled={patchState.isPending || source.state === "quarantined"}
+              disabled={patchState.isPending || source.state === "quarantined" || sourceRevision(source) === null}
               onClick={() =>
                 patchState.mutate({
                   sourceId: source.sourceId,
                   body: {
                     state: "quarantined",
                     reason: "User quarantined source from product controls.",
+                    expectedRevision: sourceRevision(source)!,
                   },
                 })
               }
@@ -840,7 +825,7 @@ function SourceRegistryPanel({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    upsert.mutate({
+    const parsed = SourceUpsertRequestSchema.safeParse({
       sourceId: sourceId.trim(),
       displayName: displayName.trim(),
       kind,
@@ -848,9 +833,14 @@ function SourceRegistryPanel({
       state: "experimental",
       ...(seedUrl.trim() ? { seedUrl: seedUrl.trim() } : {}),
     });
-    setSourceId("");
-    setDisplayName("");
-    setSeedUrl("");
+    if (!parsed.success) { setSourceFormError(parsed.error.issues[0]?.message ?? "Review the source fields."); return; }
+    setSourceFormError("");
+    const original = { sourceId, displayName, seedUrl };
+    upsert.mutate(parsed.data, { onSuccess: () => {
+      setSourceId((current) => current === original.sourceId ? "" : current);
+      setDisplayName((current) => current === original.displayName ? "" : current);
+      setSeedUrl((current) => current === original.seedUrl ? "" : current);
+    } });
   };
 
   return (
@@ -861,6 +851,8 @@ function SourceRegistryPanel({
           {sources.length} total
         </span>
       </div>
+      {upsert.error || patchState.error ? <p role="alert">The source change could not be confirmed. Review the current registry before retrying.</p> : null}
+      {sourceFormError ? <p role="alert">{sourceFormError}</p> : null}
       <div
         className="discovery-source-summary"
         aria-label="Source registry summary"
@@ -1029,7 +1021,7 @@ function SourcePreview({
               <span>
                 {lead.company || "Unknown company"} ·{" "}
                 {lead.location || "Unknown location"} · confidence{" "}
-                {pct(lead.estimatedConfidence)}
+                {pct(lead.estimatedConfidence ?? null)}
               </span>
               <span className="mono" data-typography="code">
                 {lead.candidateUrl}
@@ -1060,6 +1052,7 @@ function SourceLocatorPanel({
 }) {
   const promote = usePromoteSourceLocatorCandidateMutation();
   const reject = useRejectSourceLocatorCandidateMutation();
+  const reset = useResetSourceLocatorCandidateMutation();
 
   return (
     <div className="discovery-control-panel">
@@ -1069,6 +1062,7 @@ function SourceLocatorPanel({
           {candidates.length} candidates
         </span>
       </div>
+      {promote.error || reject.error || reset.error ? <p role="alert">Source decision could not be saved. Refresh and review the current candidate before retrying.</p> : null}
       <div className="rows compact">
         {candidates.map((candidate) => (
           <div className="discovery-review-row" key={candidate.candidateId}>
@@ -1082,6 +1076,7 @@ function SourceLocatorPanel({
                   : "ATS unknown"}
               </span>
               <span>{candidateEvidence(candidate)}</span>
+              <span>Decision: {candidate.decision ?? "unknown"}{!Number.isInteger(candidate.revision) ? " · revision unavailable" : ""}</span>
               {candidate.proposal ? (
                 <>
                   <span>Board: {candidate.proposal.sourceId}{candidate.proposal.boardToken ? ` · ${candidate.proposal.boardToken}` : ""} · Completeness unknown</span>
@@ -1126,13 +1121,14 @@ function SourceLocatorPanel({
                 variant="ghost"
                 aria-label={`Promote ${candidate.candidateUrl}`}
                 title="Promote candidate"
-                disabled={promote.isPending || reject.isPending || Boolean(candidate.proposal?.promotionBlockedReason) || candidate.proposal?.overlaps.some((entry) => entry.state !== "active")}
+                disabled={promote.isPending || reject.isPending || reset.isPending || !Number.isInteger(candidate.revision) || !candidate.decision || candidate.decision === "reject" || candidate.decision === "promote" || Boolean(candidate.proposal?.promotionBlockedReason) || candidate.proposal?.overlaps.some((entry) => entry.state !== "active")}
                 onClick={() =>
                   promote.mutate({
                     candidateId: candidate.candidateId,
                     body: {
                       reason:
                         "User promoted source locator candidate from product controls.",
+                      expectedRevision: candidate.revision!,
                     },
                   })
                 }
@@ -1145,19 +1141,21 @@ function SourceLocatorPanel({
                 variant="ghost"
                 aria-label={`Reject ${candidate.candidateUrl}`}
                 title="Reject candidate"
-                disabled={promote.isPending || reject.isPending}
+                disabled={promote.isPending || reject.isPending || reset.isPending || !Number.isInteger(candidate.revision) || !candidate.decision || candidate.decision === "reject" || candidate.decision === "promote"}
                 onClick={() =>
                   reject.mutate({
                     candidateId: candidate.candidateId,
                     body: {
                       reason:
                         "User rejected source locator candidate from product controls.",
+                      expectedRevision: candidate.revision!,
                     },
                   })
                 }
               >
                 <IconX size={14} aria-hidden="true" />
               </Button>
+              {candidate.decision === "reject" ? <Button type="button" variant="outline" size="sm" disabled={reset.isPending || promote.isPending || reject.isPending || !Number.isInteger(candidate.revision)} onClick={() => reset.mutate({ candidateId: candidate.candidateId, expectedRevision: candidate.revision! })}>Reopen rejected candidate</Button> : null}
             </div>
           </div>
         ))}
@@ -1290,6 +1288,9 @@ function RoleMatchFeedbackPanel({
   loading: boolean;
 }) {
   const decision = useRoleMatchFeedbackDecisionMutation();
+  const settings = useDiscoverySettingsQuery();
+  const exclusions = settings.data?.settings.exactTitleExclusions;
+  const knownExclusions = !settings.error && !settings.isFetching && Array.isArray(exclusions) && exclusions.every((item): item is string => typeof item === "string") ? exclusions : null;
   const pendingCount = suggestions.filter(
     (suggestion) => suggestion.status === "pending",
   ).length;
@@ -1302,6 +1303,8 @@ function RoleMatchFeedbackPanel({
           {pendingCount} pending · {suggestions.length} total
         </span>
       </div>
+      {decision.error ? <p role="alert">Proposal decision could not be confirmed. Review the current proposal before retrying.</p> : null}
+      <DiscoveryFeedbackRefresh />
       <div className="rows compact">
         {suggestions.map((suggestion) => (
           <div
@@ -1311,45 +1314,36 @@ function RoleMatchFeedbackPanel({
             <IconAlertTriangle size={16} aria-hidden="true" />
             <span className="title-stack">
               <b data-typography="strong-body">
-                Exclude “{suggestion.titleDisplay}”
+                {suggestion.ruleKind === "exact_title_exclusion" ? "Proposed exact-title exclusion" : "Proposed target review"}: “{suggestion.titleDisplay}”
               </b>
               <span>
-                {label(suggestion.status)} · {suggestion.sampleCount} low-score{" "}
-                {suggestion.sampleCount === 1 ? "example" : "examples"} ·{" "}
-                {label(suggestion.reasonCode)}
+                {label(suggestion.status)} · {label(suggestion.ruleKind)}
               </span>
               <span>{suggestion.reason}</span>
-              {suggestion.sourceIds.length ? (
-                <span className="mono" data-typography="code">
-                  sources: {suggestion.sourceIds.join(", ")}
-                </span>
-              ) : null}
-              {suggestion.evidence[0] ? (
-                <span>
-                  Latest: {suggestion.evidence[0].company || "Unknown company"}{" "}
-                  · score {suggestion.evidence[0].fitScore}/10
-                  {suggestion.evidence[0].roleFit === null
-                    ? ""
-                    : ` · role ${suggestion.evidence[0].roleFit}/10`}
-                </span>
-              ) : null}
+              {suggestion.appliedFilter ? <span>{knownExclusions === null ? "Exclusion recorded at approval; current settings unavailable" : knownExclusions.includes(suggestion.appliedFilter.literal) ? "Current exact-title exclusion" : "Exclusion recorded at approval; no longer in current settings"}: {suggestion.appliedFilter.literal}</span>
+                : suggestion.status === "approved" ? <span>Reviewed proposal; no active filter is recorded.</span> : null}
+              <details><summary>Feedback sources and model provenance</summary>
+                {suggestion.evidence.map((item, index) => <blockquote key={index}><code>{item.source_id}</code>: {item.quote}</blockquote>)}
+                <span>{suggestion.provenance.provider} · {suggestion.provenance.model} · {suggestion.provenance.prompt_version}</span>
+                <code className="break-all">{suggestion.provenance.receipt_id} · {suggestion.provenance.input_fingerprint}</code>
+              </details>
             </span>
             <div className="row-actions">
               <Button
                 type="button"
                 size="icon"
                 variant="ghost"
-                aria-label={`Approve role-match rule for ${suggestion.titleDisplay}`}
-                title="Approve rule"
+                aria-label={`Approve proposal for ${suggestion.titleDisplay}`}
+                title="Approve proposal"
                 disabled={
-                  decision.isPending || suggestion.status === "approved"
+                  decision.isPending || suggestion.status !== "pending"
                 }
                 onClick={() =>
                   decision.mutate({
                     suggestionId: suggestion.suggestionId,
                     body: {
                       decision: "approve",
-                      reason: "User approved low-score role-match suggestion.",
+                      reason: "User approved the reviewed Discovery proposal.",
                     },
                   })
                 }
@@ -1360,17 +1354,17 @@ function RoleMatchFeedbackPanel({
                 type="button"
                 size="icon"
                 variant="ghost"
-                aria-label={`Decline role-match rule for ${suggestion.titleDisplay}`}
-                title="Decline rule"
+                aria-label={`Decline proposal for ${suggestion.titleDisplay}`}
+                title="Decline proposal"
                 disabled={
-                  decision.isPending || suggestion.status === "declined"
+                  decision.isPending || suggestion.status !== "pending"
                 }
                 onClick={() =>
                   decision.mutate({
                     suggestionId: suggestion.suggestionId,
                     body: {
                       decision: "decline",
-                      reason: "User declined low-score role-match suggestion.",
+                      reason: "User declined the reviewed Discovery proposal.",
                     },
                   })
                 }

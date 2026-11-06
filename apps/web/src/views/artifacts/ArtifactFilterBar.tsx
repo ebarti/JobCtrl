@@ -1,102 +1,113 @@
+import { useForm } from "@tanstack/react-form";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useId } from "react";
+import { z } from "zod";
 
 import {
   ARTIFACT_STATUSES,
   type ArtifactsSearch,
 } from "../../routes/-artifacts.search.js";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../shared/ui/select.js";
-import { Field, FieldLabel } from "../../shared/ui/field.js";
 import { Button } from "../../shared/ui/button.js";
 import { Input } from "../../shared/ui/input.js";
+import { artifactStatusLabels } from "./columns.js";
 
+const searchSchema = z.object({ q: z.string().max(4000) });
 export interface ArtifactFilterBarProps {
-  search: ArtifactsSearch;
+  readonly search: ArtifactsSearch;
 }
-
 export function ArtifactFilterBar({ search }: ArtifactFilterBarProps) {
+  const id = useId();
   const navigate = useNavigate({ from: "/artifacts" });
-  const [query, setQuery] = useState(search.q);
-  useEffect(() => setQuery(search.q), [search.q]);
-  const statusItems = ARTIFACT_STATUSES.map((status) => ({
-    value: status,
-    label: status.charAt(0).toUpperCase() + status.slice(1),
-  }));
   const apply = (next: Partial<ArtifactsSearch>) => {
     void navigate({
-      search: (prev: ArtifactsSearch) => ({ ...prev, page: 1, ...next }),
+      search: (previous: ArtifactsSearch) => ({
+        ...previous,
+        page: 1,
+        ...next,
+      }),
     });
   };
+  const form = useForm({
+    defaultValues: { q: search.q },
+    validators: {
+      onSubmit: ({ value }) =>
+        searchSchema.safeParse(value).success
+          ? undefined
+          : "Search text is too long.",
+    },
+    onSubmit: ({ value }) => {
+      const parsed = searchSchema.safeParse(value);
+      if (parsed.success) apply({ q: parsed.data.q });
+    },
+  });
+  useEffect(() => {
+    form.reset({ q: search.q });
+  }, [form, search.q]);
   return (
     <form
-      className="artifact-filter-toolbar"
+      className="artifact-filter-toolbar flex flex-wrap items-end gap-3"
       aria-label="Artifact filters"
       onSubmit={(event) => {
         event.preventDefault();
-        apply({ q: query.trim() });
+        void form.handleSubmit();
       }}
     >
-      <Field className="artifact-search-field">
-        <FieldLabel htmlFor="artifact-search-filter">Search</FieldLabel>
-        <Input
-          id="artifact-search-filter"
-          placeholder="Title, company, or type"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </Field>
-      <Field className="field">
-        <FieldLabel htmlFor="artifact-status-filter">Status</FieldLabel>
-        <Select
-          items={statusItems}
+      <form.Field name="q">
+        {(field) => (
+          <label htmlFor={`${id}-q`}>
+            Literal search
+            <Input
+              id={`${id}-q`}
+              value={field.state.value}
+              maxLength={4000}
+              placeholder="Job title, employer, file or source ID"
+              onChange={(event) => field.handleChange(event.target.value)}
+            />
+          </label>
+        )}
+      </form.Field>
+      <label htmlFor={`${id}-status`}>
+        Recorded state
+        <select
+          id={`${id}-status`}
           value={search.status}
-          onValueChange={(status) => {
-            if (status !== null) apply({ status });
+          onChange={(event) => {
+            const status = ARTIFACT_STATUSES.find(
+              (value) => value === event.target.value,
+            );
+            if (status) apply({ status });
           }}
         >
-          <SelectTrigger
-            aria-label="Status"
-            className="w-full min-w-40"
-            id="artifact-status-filter"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent alignItemWithTrigger={false}>
-            <SelectGroup>
-              {statusItems.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </Field>
-      <div className="artifact-filter-actions">
-        <Button size="sm" type="submit">
-          Search
+          {ARTIFACT_STATUSES.map((status) => (
+            <option key={status} value={status}>
+              {status === "all"
+                ? "All recorded states"
+                : artifactStatusLabels[status]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <Button size="sm" type="submit">
+        Search
+      </Button>
+      {search.q ? (
+        <Button
+          size="sm"
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            form.reset({ q: "" });
+            apply({ q: "" });
+          }}
+        >
+          Clear search
         </Button>
-        {search.q ? (
-          <Button
-            size="sm"
-            type="button"
-            variant="ghost"
-            onClick={() => {
-              setQuery("");
-              apply({ q: "" });
-            }}
-          >
-            Clear
-          </Button>
-        ) : null}
-      </div>
+      ) : null}
+      <form.Subscribe selector={(state) => state.errors}>
+        {(errors) =>
+          errors.length ? <p role="alert">Search text is too long.</p> : null
+        }
+      </form.Subscribe>
     </form>
   );
 }

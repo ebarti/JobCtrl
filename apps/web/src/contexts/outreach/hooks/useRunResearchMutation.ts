@@ -1,6 +1,8 @@
 import type { ContactResearchStartResponse, RunContactResearchRequest } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
+import { invalidateQueriesWithOptimisticOwnership } from "../../../shared/lib/createOptimisticMutation.js";
+import { createUnconfirmedWriteError } from "../../../shared/lib/unconfirmed-write.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { outreachKeys } from "../queryKeys.js";
@@ -16,16 +18,23 @@ import { outreachKeys } from "../queryKeys.js";
 export function useRunResearchMutation(): UseMutationResult<
   ContactResearchStartResponse,
   Error,
-  RunContactResearchRequest
+  { body: RunContactResearchRequest; idempotencyKey: string }
 > {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: outreachKeys.researchTasks(tenantId),
-    mutationFn: (body: RunContactResearchRequest) => api.runContactResearch(body),
+    mutationFn: async ({ body, idempotencyKey }) => {
+      const path = "/v1/contacts/research";
+      const response = await http.json<ContactResearchStartResponse>("POST", path, { body, idempotencyKey });
+      if (response?.ok !== true || !response.taskId || !response.runId || !response.workflowId || !response.status) {
+        throw createUnconfirmedWriteError("POST", path, new TypeError("The research response did not confirm the queued task"));
+      }
+      return response;
+    },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: outreachKeys.researchTaskLists(tenantId) });
+      void invalidateQueriesWithOptimisticOwnership(queryClient, outreachKeys.researchTaskLists(tenantId));
     },
   });
 }

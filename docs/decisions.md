@@ -14,9 +14,19 @@ chronological order. For the full inventory of every plan and spec that produced
 these decisions — tracked plans and the untracked private planning corpus — see
 the Historical Spec Ledger in `plans/README.md`.
 
+**Transformation precedence (2026-11-06):** the accepted
+[Python modular application decision](#_2026-11-06-python-modular-application-and-approved-wording-composition)
+supersedes the affected historical runtime, ownership, tailoring and verification
+decisions listed in that entry. Those earlier entries remain historical; their
+`accepted` status at the time is not evidence that the old architecture remains
+the target. The transformation is under implementation and has not yet proved
+integrated parity.
+
 ## Index
 
 **Product strategy & repository shape**
+
+- [Python Modular Application And Approved-Wording Composition](#_2026-11-06-python-modular-application-and-approved-wording-composition) · 2026-11-06
 
 - [Local-First Before SaaS Hardening](#_2026-05-01-local-first-before-saas-hardening) · 2026-05-01
 - [TypeScript Product API, Python Workers](#_2026-05-01-typescript-product-api-python-workers) · 2026-05-01
@@ -478,6 +488,14 @@ The TanStack and Tailwind decisions remain accepted.
 ## 2026-05-06: Frontend Hexagonal Ports With Local + Hosted Adapters Named
 
 Status: accepted
+
+Amended (2026-11-06): the Python transformation replaces the historical
+`ApiClientPort` / `JobCtrlApiClient` transport named below with the shared
+`HttpPort` and local `BrowserHttpAdapter`. Feature modules own their paths,
+DTOs and validation; browser-local demo adapters also implement `HttpPort`.
+The old adapter table and 2026-09-05 amendment remain here as historical
+context, not a current contract or a guarantee of a hosted adapter. Integrated
+behavior remains subject to the transformation's verification gates.
 
 Amended (2026-09-05): `JobCtrlApiClient` satisfies `ApiClientPort` directly.
 The forwarding `FetchApiClientAdapter` has been removed; the interface and
@@ -3140,3 +3158,67 @@ unverified migrations leave the default source diagnostic API and web interface
 available without the worker or Temporal. Older application versions do not
 automatically downgrade the workspace. See
 [Local Development](local-development.md#schema-migrations-and-source-updates).
+
+## 2026-11-06: Python Modular Application And Approved-Wording Composition
+
+Status: accepted for implementation; integrated delivery and verification pending.
+
+**Decision.** Replace the split business backend with a single Python modular
+application. HTTP, CLI and the durable worker call the same application actions
+and canonical writers. Explicit composition injects small public ports between
+feature owners; SQLite, React and durable execution remain. At cutover, remove
+Fastify business routes, the TypeScript/Python JSON-RPC bridge, mixed backend
+and alternate business writers. No compatibility forwarding bridge is part of
+the target.
+
+Preserve the full Profile and its supporting sources, evidence, attachments,
+confirmations, preferences, provenance and authored baseline during a deliberate
+fresh-state transition. All other JobCtrl-owned data starts fresh. Keep every
+currently implemented capability except Cover Letters; parked expansion remains
+parked. A development or QA run does not reset a real user workspace.
+
+Profile owns facts and approved wording; Requirements owns qualified requirement
+meaning and occurrences; Fit owns person qualification and requirement-to-wording
+coverage relations; Resumes owns deterministic document composition, review,
+acceptance and rendering. Person qualification cannot be lowered by a wording
+gap. Resumes retains every baseline role and achievement, chooses exactly one
+approved wording per achievement, and maximizes weighted distinct requirement
+coverage followed by complementary depth with stable ties. There is no hidden
+brevity penalty or silent omission. Supported new wording requires explicit
+Profile approval; known requirements and rejected or deferred proposals are
+reused without regenerating the same proposal for every job.
+
+Semantic meaning, equivalence, evidence support and wording coverage require
+strict source-bound model determinations, persisted provenance, lane/spend
+preflight and no lexical fallback. Retrieval selects candidates but cannot
+establish semantic novelty. One assembled-resume coherence review is advisory.
+A user may explicitly accept a mechanically valid, source-bound document despite
+a review finding or timeout, with honest separate review and acceptance
+records. Baseline-copy/off mode makes zero resume model calls.
+
+Retain source/revision fencing, optimistic concurrency, explicit approval,
+cancellation/restart recovery, last-accepted-artifact preservation and
+at-most-once external effects with honest ambiguous outcomes. The recurring
+target suite is fresh and E2E-only: real application, API, database, worker
+and renderer, with controlled external LLM, job and provider boundaries. Static
+checks and builds remain; a synthetic one-off Profile transfer proof is separate.
+
+**Supersession.** This decision replaces the split-backend and transport portions
+of **TypeScript Product API, Python Workers**, **Fastify For The Local API**,
+**JSON-RPC 2.0 for the TS API ↔ Python Worker**, and **Heavy Sync RPC Handlers
+Become Workflows**. It replaces dual TypeScript/Python business projection
+writers in **In-Process EventPublisher + Read-Model Projections** and exact
+legacy storage/migration topology where inconsistent with the fresh-state
+transition. It also supersedes mandatory per-job rewrite, multi-stage
+judge/persona/polish loops and saved-bullet-limit omissions in the earlier
+resume-tailoring, quality-review, binding-repair and accomplishment-limit
+records. Earlier guarantees remain in force to the extent they are compatible
+with the feature ownership, safety and auditability boundaries above.
+
+**Consequences and evidence.** Every retained feature must be reachable through
+the integrated application and have its capability inventory reconciled.
+Moving files or declaring routes alone is not delivery. The accepted
+[transformation plan](plans/2026-11-06-python-transformation.md) and
+[foundation contract](plans/2026-11-06-python-contracts.md) record the
+workstream interfaces and acceptance gates. No real-user reset, release or
+deployment follows from this decision.

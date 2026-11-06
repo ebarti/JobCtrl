@@ -21,7 +21,7 @@ import time
 
 SOURCE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SOURCE / "workers/automation/src"))
-from jobctrl.infrastructure.process_ownership import (  # noqa: E402
+from jobctrl.process_ownership import (  # noqa: E402
     ProcessOwnershipError,
     _waitid_nowait,
     cleanup_budget,

@@ -11,6 +11,7 @@ import { outreachKeys } from "../queryKeys.js";
 export interface DeleteContactVariables {
   contactId: string;
   reason?: string;
+  expectedFingerprint: string;
 }
 
 type DeleteContext = OptimisticContext & { readonly listSnapshots: ReturnType<typeof snapshotContactLists> };
@@ -21,14 +22,14 @@ export function useDeleteContactMutation(): UseMutationResult<
   DeleteContactVariables
 > {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   const listPrefix = outreachKeys.contactLists(tenantId);
   const options = createOptimisticMutation<ContactDeleteResponse, DeleteContactVariables>(queryClient, {
     mutationKey: outreachKeys.contacts(tenantId),
-    mutationFn: ({ contactId, reason }) => {
-      const body: ContactDeleteRequest = reason ? { reason } : {};
-      return api.deleteContact(contactId, body);
+    mutationFn: ({ contactId, reason, expectedFingerprint }) => {
+      const body: ContactDeleteRequest & { expectedFingerprint: string } = { expectedFingerprint, ...(reason ? { reason } : {}) };
+      return http.json<ContactDeleteResponse>("DELETE", `/v1/contacts/${encodeURIComponent(contactId)}`, { body });
     },
     settle: () => [listPrefix, outreachKeys.dueFollowUps(tenantId)],
   });

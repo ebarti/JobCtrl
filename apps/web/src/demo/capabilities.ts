@@ -1,6 +1,4 @@
-import { ENDPOINTS, type EndpointClientMethods } from "@jobctrl/contracts";
-
-import type { DemoCapability, DemoCapabilityManifest } from "./contracts.js";
+import type { DemoCapabilityManifest } from "./contracts.js";
 
 const local = (reason: string) => ({ class: "browser_local", reason }) as const;
 const rehearsal = (reason: string) => ({ class: "rehearsed_external", reason }) as const;
@@ -8,13 +6,9 @@ const unavailable = (reason: string) => ({ class: "unavailable", reason }) as co
 
 export const DEMO_RESCORE_UNAVAILABLE_MESSAGE = "Rescoring is unavailable in the demo.";
 
-const endpointCapabilities = Object.fromEntries(
-  Object.values(ENDPOINTS).map((endpoint) => [endpoint.name, endpoint.demo]),
-) as Readonly<Record<keyof EndpointClientMethods, DemoCapability>>;
-
 /**
  * Every port member is deliberately classified before a demo adapter exists.
- * `satisfies` makes a newly added ApiClientPort member a compile-time failure.
+ * `satisfies` makes a newly added DemoApiClientPort member a compile-time failure.
  */
 export const DEMO_CAPABILITY_MANIFEST = {
   jobOffer: unavailable("Actual offers require a private local workspace."),
@@ -23,18 +17,43 @@ export const DEMO_CAPABILITY_MANIFEST = {
   postedCompensationFact: unavailable("Canonical compensation evidence requires a local workspace."),
   marketCompensationEstimate: unavailable("Recorded compensation evidence requires a local workspace."),
   downloadMaterialDocx: unavailable("DOCX downloads require retained exports in a local workspace."),
-
-  coverLetterPreviewPdfUrl: { class: "unavailable", reason: "Cover-letter PDF previews require the local renderer." },
   health: local("Shows synthetic browser-local service health."),
   dashboardSummary: local("Reads the synthetic dashboard projection."),
   pipelineOperations: unavailable("Pipeline operations telemetry is unavailable in the public demo."),
   outcomeAnalytics: local("Reads synthetic conversion analytics."),
-  ...endpointCapabilities,
-  learningRecommendationEvidence: unavailable(
-    "Learning evidence requires the local audited database.",
+  careerLearning: unavailable(
+    "Saved cohorts and milestones require the local audited workspace.",
   ),
-  tailoringPolicyRevisions: unavailable(
-    "Tailoring policy history requires the local audited database.",
+  writeCareerLearning: unavailable(
+    "Source-bound learning comparisons need a configured model and saved provenance.",
+  ),
+  acceptedMaterialExports: unavailable(
+    "DOCX export requires accepted materials in a local workspace.",
+  ),
+  materialLocaleVariants: unavailable(
+    "Locale translation requires accepted local material and a configured model.",
+  ),
+  screeningAnswers: unavailable(
+    "Reviewed screening answers require a private local workspace.",
+  ),
+  writeScreeningAnswer: unavailable(
+    "Screening answer interpretation and approval require saved local sources.",
+  ),
+  checkPostingAvailability: unavailable(
+    "Posting availability requires the local worker and employer evidence.",
+  ),
+  renderResumeReviewDraft: unavailable(
+    "Draft rendering requires the local renderer and saved material history.",
+  ),
+  scanGmailApplicationOutcomes: unavailable(
+    "Gmail outcome scanning requires a private local account connection.",
+  ),
+  providerStatus: local(
+    "Reads synthetic disconnected provider status without contacting an account.",
+  ),
+  providerModels: local("Reads the bundled synthetic model catalog."),
+  verifyCodexProvider: unavailable(
+    "Provider verification requires local credentials.",
   ),
   digest: local("Reads the synthetic daily digest."),
   acknowledgeDigest: local("Acknowledges a digest only in browser-local state."),
@@ -45,7 +64,9 @@ export const DEMO_CAPABILITY_MANIFEST = {
   discoverySources: local("Reads synthetic discovery sources."),
   upsertDiscoverySource: local("Edits a synthetic source locally."),
   patchDiscoverySourceState: local("Changes a synthetic source state locally."),
-  discoverySourcePreview: unavailable("This capability needs a configured model determination."),
+  discoverySourcePreview: local(
+    "Reads saved synthetic source observations without contacting a provider or job board.",
+  ),
   compensationSources: local("Reads synthetic compensation source policy."),
   updateCompensationSourcePolicy: local("Edits synthetic compensation policy locally."),
   discoveryLocatorCandidates: local("Reads bundled source-locator candidates."),
@@ -61,10 +82,16 @@ export const DEMO_CAPABILITY_MANIFEST = {
   importManualCapture: unavailable("This capability needs a configured model determination."),
   dismissManualCapture: local("Dismisses a bundled capture fixture locally."),
   recordDiscoveryFeedback: local("Records feedback only in browser-local state."),
-  roleMatchFeedbackSuggestions: local("Reads synthetic role-match feedback."),
-  decideRoleMatchFeedbackSuggestion: local("Decides synthetic feedback locally."),
+  roleMatchFeedbackSuggestions: unavailable(
+    "The old synthetic role-match examples have no recorded source-bound model receipt. Refresh and review require a private local workspace.",
+  ),
+  decideRoleMatchFeedbackSuggestion: unavailable(
+    "Role-match feedback decisions require their recorded source-bound determination in a private local workspace.",
+  ),
   applyReviewQueue: local("Reads the synthetic review queue."),
-  decideApplyReview: local("Records an approval decision locally."),
+  decideApplyReview: local(
+    "Records synthetic defer, decline and reset decisions; submit approval requires recorded inspection and rehearsal.",
+  ),
   checkRepeatApplication: unavailable("Role equivalence needs a configured model."),
   confirmRepeatApplication: unavailable("Repeat-application confirmations require the local audited database."),
   resumeReviewDraft: local("Reads a synthetic review draft."),
@@ -121,7 +148,7 @@ export const DEMO_CAPABILITY_MANIFEST = {
   artifact: local("Reads synthetic artifact metadata."),
   artifactPreviewPdfUrl: local("Returns a bundled same-origin PDF URL."),
   artifactPreviewHtmlUrl: local("Returns a bundled same-origin HTML URL."),
-  openArtifact: rehearsal("Records an in-browser preview; no host OS opener is invoked."),
+  openArtifact: unavailable("The browser demo cannot request a host OS opener. Use the illustrative sample links or the registered PDF preview and download."),
   profile: local("Reads the synthetic profile."),
   profilePreviewPdfUrl: local("Returns the bundled synthetic profile PDF."),
   profilePreviewHtmlUrl: local("Returns the bundled synthetic profile HTML."),
@@ -129,8 +156,6 @@ export const DEMO_CAPABILITY_MANIFEST = {
   targetRoleSuggestions: unavailable("This capability needs a configured model determination."),
   requiredBulletSuggestions: unavailable("Required bullet coaching needs a configured LLM provider."),
   importResume: unavailable("Resume extraction needs a configured model."),
-  settings: local("Reads synthetic application settings."),
-  updateSettings: local("Edits synthetic settings locally."),
   extensionCapabilityToken: unavailable("Browser-extension pairing is unavailable in the public demo."),
   discoveryBrowserBridgeStatus: unavailable("Live Chrome Discovery is unavailable in the public demo."),
   rotateExtensionCapabilityToken: unavailable("Browser-extension pairing is unavailable in the public demo."),
@@ -152,11 +177,15 @@ export const DEMO_CAPABILITY_MANIFEST = {
   researchTasks: local("Reads synthetic research tasks."),
   researchTask: local("Reads a synthetic research task."),
   runContactResearch: unavailable("Contact research is deferred from the public-demo MVP."),
-  confirmContactCandidate: local("Confirms a synthetic candidate locally."),
+  confirmContactCandidate: unavailable(
+    "Research confirmation requires recorded source review in a private local workspace.",
+  ),
   outreachThread: local("Reads a synthetic outreach thread."),
   generateOutreachDraft: unavailable("Outreach generation is deferred from the public-demo MVP."),
   reviseOutreachDraft: unavailable("Outreach revision is deferred from the public-demo MVP."),
-  approveOutreachDraft: local("Approves a synthetic draft locally."),
+  approveOutreachDraft: unavailable(
+    "The bundled synthetic drafts have no recorded provider review authority. Approval requires a private local workspace.",
+  ),
   rejectOutreachDraft: local("Rejects a synthetic draft locally."),
   logOutreachSend: unavailable("Send logging is deferred from the public-demo MVP."),
   scheduleOutreachFollowUp: local("Schedules a synthetic follow-up locally."),

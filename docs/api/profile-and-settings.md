@@ -1,331 +1,119 @@
-# Profile & Settings API
+# Profile and Settings API
 
-This route family owns candidate facts, preferences, discovery configuration,
-ordinary settings, and credential references. The important distinction is
-authority: profile facts and preferences live in the profile model; runtime
-settings control product behavior; secrets use the credential boundary.
-
-For every request/response field, use the
-[complete contract](complete-contract.md#profile-and-preferences).
+The Python transformation is in progress. Profile and foundation adapters own
+their respective HTTP contracts; this page states target semantics, not a
+verified exhaustive wire schema. Read the current feature implementation and
+exercise the composed application before relying on a specific route.
 
 ## Candidate Profile
 
-| Route | Purpose |
+The Profile feature owns facts, source attachments, evidence, confirmations,
+preferences, the complete authored baseline and wording text/approval. It imports
+no Fit or Requirements implementation. Other owners consume immutable public
+snapshots and source/revision guards.
+
+| Route | Contract |
 | --- | --- |
-| `GET /v1/profile` | Read the normalized candidate profile and current preferences. |
-| `PATCH /v1/profile` | Save validated profile fields and preference changes. |
-| `POST /v1/profile/import-resume` | Extract a transient resume draft for explicit review. |
-| `POST /v1/profile/target-role-suggestions` | Generate transient evidence-backed role proposals from an exact saved profile version. |
-| `POST /v1/profile/required-bullet-suggestions` | Inspect LLM coaching for Required bullets from an exact saved profile version. |
-| `GET /v1/profile/preview.html` | Render the baseline profile resume as HTML. |
-| `GET /v1/profile/preview.pdf` | Render the baseline profile resume as PDF. |
+| `GET /v1/profile` | `{ok, profileVersion, profile, style, templateText}`; initialized profiles also expose `factSemanticsVersion` and `wordingRevision`. |
+| `PATCH /v1/profile` | Requires `expectedProfileVersion` (`null` for creation); accepts `profile`/`profileText`, `style`/`styleText`, and/or `templateText`. |
+| `GET /v1/profile/sources` | `{ok, profileVersion, sources}` with stable `source_id`, `revision`, literal `text`, `kind`, provenance and confirmation status. |
+| `POST /v1/profile/sources` | `{expectedProfileVersion, source}` adds or revises owned supporting evidence; attachment bytes require their SHA-256 digest. |
+| `POST /v1/profile/sources/{source_id}/confirmation` | Requires `expectedProfileVersion`, `expectedSourceRevision`, `exactText`, and `decision: confirm\|reject\|defer`. |
+| `GET /v1/profile/wording` | `{ok, profileVersion, wordingRevision, roles, variants, proposals}`. Every role retains ordered achievement IDs and its baseline variant IDs. |
+| `POST /v1/profile/wording` | `{expectedProfileVersion, achievementId, text, sourceRefs}` creates a pending manual variant. |
+| `POST /v1/profile/wording/{variant_id}/decision` | Requires `expectedProfileVersion`, `expectedVariantRevision`, `exactText`, and `decision: approve\|reject\|defer`; returns the refreshed library. |
+| `POST /v1/profile/import-resume` | `{filename, pdfBase64, importProfile?, importStyle?}` extracts a recorded draft with `source.attemptId`, `determinationId`, observed style and the original base Profile version. |
+| `POST /v1/profile/target-role-suggestions` | `{expectedProfileVersion, maximumSuggestions?}` requests 1–5 source-bound, unselected model suggestions; no search consent is inferred. |
+| `POST /v1/profile/required-bullet-suggestions` | `{expectedProfileVersion, maximumSuggestions?}` requests 1–24 source-bound coaching findings, joining actual achievement IDs and saved positions. |
+| `GET /v1/profile/preview.html` / `.pdf` | Render the complete saved baseline through the public Resumes renderer with zero model calls. Slash-form preview aliases are also retained. |
+| `GET /v1/profile/legacy-evidence` | Inspect original/current cells, conflicts, historical receipts and exact review tokens. |
+| `POST /v1/profile/legacy-evidence/recover` | `{expectedProfileVersion, bundle}` inventories a retained legacy Profile export without replacing authored facts. |
+| `POST /v1/profile/legacy-evidence/decision` | Exact source confirmation fields plus `sourceId` and `token`; only `confirm` or `reject` is accepted. |
 
-The API gives each resume import a unique attempt ID. The worker binds that ID,
-the parsed PDF digest, its extraction determination and observed style together
-in the local database before returning. The API verifies the submitted bytes and
-worker response against that binding and builds the review from the recorded
-determination and observed style. Inherited Profile values cannot become import
-proposals. Missing or invalid authority returns `502`; the upload remains for
-retry and the Profile is unchanged. The binding contains no PDF bytes. Accepting
-either Profile or style changes rejoins the same attempt and determination in the
-version-fenced Profile transaction, with the draft ID matching that attempt.
-PDF style proposals include only observed
-page size, font size and font family.
+A source reference is `{source_id, revision}`. Confirmation is `confirmed`,
+`authored`, `unconfirmed`, `review_required`, `rejected` or `deferred`. Authored
+baseline data is distinct from independently confirmed evidence. Incoming
+`user_confirmed` or `confirmation_review_required` flags cannot manufacture or
+clear persisted authority. Wording status is `approved`, `pending`, `rejected`,
+`deferred` or `stale`. An approved variant carries an exact `approval_id`,
+`revision`, text and source references; readers rejoin the recorded approval.
+Canonical source and derived baseline-wording IDs are opaque hashes of a
+namespace and an explicitly ordered identity tuple, including the Profile ID.
+Readers use returned IDs and source `path`/`role_id`/`evidence_id` metadata;
+they never reconstruct composite IDs from punctuation in authored identifiers.
+A new attached source's caller-supplied intake ID is retained exactly as
+`authored_source_id`; use its returned canonical `source_id` for later edits or
+confirmation. Raw authored role, evidence and achievement IDs remain unchanged.
 
-Profile writes are explicit saves/autosaves of canonical candidate data. A job
-tailoring run consumes a versioned snapshot; it does not silently mutate the
-profile to fit a posting.
+Before initialization, Profile returns an empty editable draft with
+`profileVersion: null`. Source and wording reads return 200 empty collections;
+the empty wording library has `wordingRevision: 0`. They do not invent an
+experience role or any source/approval authority. Saving an initialized baseline
+requires at least one authored role. GET/HEAD readers never enter write paths,
+and preview HEAD returns format headers without launching the renderer.
 
-`GET /v1/profile` may include `legacyEvidenceReview: { status:
-"review_required", count }`. Affected achievement entries retain their original
-`user_confirmed` value and expose computed `confirmation_review_required: true`.
-Clients cannot clear that authority marker by saving a false flag. The bounded
-local [legacy review commands](../user/candidate-profile.md#review-legacy-confirmations)
-record explicit human decisions; this adds no browser mutation endpoint. Evidence
-Map freshness exposes `confirmationReviewRequired` and interview choices exclude
-pending rows. Private inventory and review payloads never enter generic SSE.
-Unresolved canonical authority reports `legacy_evidence_review_required` before
-new evidence-based generation, preserving accepted artifacts.
+Every mutation compares and writes under the same SQLite transaction as its
+committed invalidation. Conflicts return `409 revision_conflict`, with the safe
+reason such as `stale_profile_version`, `stale_source_revision` or
+`stale_wording_revision`. Validation returns `400`; provider/output failures use
+the shared gateway's safe error envelope. No private source/model text enters
+SSE. `ProfileUpdated`, `ProfileSourceUpdated` and `ProfileWordingUpdated` contain
+only IDs and the committed Profile version. Unchanged Profile saves do not
+advance its version or emit an update.
 
-`GET /v1/profile` includes `profileVersion` (`null` before initialization, then
-a positive monotonic integer). The API remains backward-compatible with
-callers that omit `expectedProfileVersion`, but the web form includes its saved
-base version on every full-profile manual and autosave write. It sends `null`
-for an initially absent profile, fencing its creation. A suggestion-derived
-save uses its reviewed version. The API compares and writes in one transaction;
-a mismatch returns `409
-stale_profile_version`, writes no profile row, records no `ProfileUpdated`
-event, and creates no preparation-continuation work.
+Factual source changes advance `factSemanticsVersion`. Approving or rejecting
+wording advances the overall Profile and wording revisions without changing
+factual fit. Failed authoring preserves accepted variants and records its
+failed request separately. An immutable authoring brief is deduplicated by its
+caller-owned `origin_key`; rejected and deferred requests are not regenerated
+for each job.
 
-Saving authored profile or preference edits never starts an LLM call. It returns
-the committed version without waiting for target-role interpretation, scoring, or
-material generation. Target-role suggestions run only after the user chooses
-**Get suggestions for target roles** in Discovery.
+PDF extraction uses the configured model with verbatim field spans. Import
+acceptance rejoins the recorded attempt/determination and selected sections in
+the version-fenced Profile transaction. It appends experience/education/skills,
+changes only selected personal fields/summary, retains original source bytes and
+never creates confirmed achievement evidence. Invalid extraction or acceptance
+leaves the saved Profile and draft recovery data unchanged.
 
-The target-role suggestion route accepts `{ expectedProfileVersion, maximumSuggestions }`,
-where the maximum is `1–5` and defaults to `3`. It reads only that canonical
-saved snapshot and returns `profileVersion`, `strategy`, bounded `warnings`, and
-zero to five editable role suggestions and up to five historical preference
-rows. Each role suggestion includes `title`,
-`classification` (`direct` or `adjacent`), an explicitly supported `track` and
-`seniority`, a concise `rationale`, and valid evidence references. Generation
-is transient: it writes no role, profile event, or Discovery plan. Only the
-user's selected acceptance enters the normal profile save path, where roles are
-appended and case-insensitively deduplicated instead of replacing existing
-values. Each `preferenceSuggestions[]` row has `location` (possibly empty),
-`workModel` (`Remote`, `Hybrid`, `On-site`, or empty), and canonical experience
-`evidenceIds`. Location and model remain paired by row position, including an
-empty counterpart. All role and historical preference rows are unselected by default; accepting a row
-adds it to the draft without changing existing location/model pairs. Normal
-profile place validation applies when the draft is saved.
-The Discovery compiler preserves empty positional counterparts: a model-only
-Remote row does not make a following city remote, and a location-only row keeps
-its local search behavior. It does not invent a city for a model-only Hybrid or
-On-site row. Rows with neither field set are jointly discarded before the
-home-location fallback and Discovery overlay.
-An edit that introduces an unsupported Remote, location, board and lookback
-combination returns HTTP 400 `unsupported_remote_search` and leaves the profile
-and Discovery settings unchanged. The message identifies the adjustment needed.
-New active Hybrid or On-site rows without a location are rejected too. Clearing
-a Profile target checks the legacy saved locations that would then apply.
-Existing unsupported board units are rejected before dispatch; supported units
-can finish and the workflow reports the incompatibility. Unrelated edits remain
-available.
+Coaching findings retain their exact per-finding `citations`; the response also
+retains the recorded root `citations`, `rationale`, `determinationId` and
+provider provenance. `GET /v1/profile/determinations/{determinationId}` exposes
+the feature-owned recorded request, result, source/Profile revision and gateway
+receipt metadata for inspection. A no-model empty inspection invents no receipt.
 
-The API binds the RPC request to its trusted app-directory and database
-identity; those values are never accepted from the browser. The worker checks
-that identity before loading the profile snapshot. The currently managed
-Claude, Codex, and Google SDK adapters cannot enforce this feature's requested
-output-token ceiling and conservative maximum call cost, so the production RPC
-does not invoke them. The production `deterministic` strategy uses exact saved
-experience titles and a small conservative adjacent-title policy. An adjacent
-title needs cited experience and independently relevant achievement evidence;
-every substantive title modifier must be supported, and saved track and
-seniority must match. Zero roles remain valid for sparse or incompatible
-evidence. The `model` strategy remains reserved in the wire contract and is
-exercised with synthetic adapters in domain tests; production does not emit it.
-The `provider_token_or_cost_bound_unsupported` warning explains that no model
-ran. Historical location rows come only from explicit experience locations;
-work models require an unambiguous exact marker in that field. Neither past
-location nor work arrangement expresses present search willingness.
+The one-off transfer API is `features.profile.transfer.export_legacy_profile`,
+`export_profile` and `import_profile`. The legacy exporter reads SQLite without
+writing and requires a complete `jobctrl.profile-browser-sources.v1` supplement
+for import. Known browser-held PDF bytes cannot be dropped; incomplete transfers
+return `409 profile_transfer_incomplete` before creating Profile state. Historic
+unavailable references remain explicit. Target export/import preserves every
+Profile-owned row, source/wording/approval ID and supporting attachment byte.
+See [Candidate Profile](../user/candidate-profile.md#preserve-profile-during-the-fresh-state-transition).
 
-If a suggestion-derived save conflicts with a newer canonical profile, the web
-keeps the local draft but does not authorize it with the newer version. The user
-must explicitly rebase non-overlapping edits onto the refreshed snapshot,
-regenerate suggestions, review them, and then save against that new version.
-The guard covers accepted roles and historical preference rows, including
-subsequent edits to those draft values.
-A common sequence of appended bullets can be combined with later additions and
-independent edits to existing bullets. Deletions, reordered originals, duplicate
-texts, competing appended sequences and conflicting edits to the same original
-bullet remain blocked for manual resolution or discard.
+## Settings and Credentials
 
-Required-bullet coaching accepts a saved `expectedProfileVersion` and optional
-`maximumSuggestions` (`1–24`, default `12`). It calls the configured LLM once
-with selected saved bullets, role/company context and matching achievement
-evidence. All coaching determinations come from the model; there is no heuristic
-fallback. Source binding and acceptance remain version-checked, and only an exact
-model-proposed whitespace cleanup can be applied automatically. Provider/invalid
-response failures preserve saved facts and the previous reviewed suggestions.
-Budget denial identifies daily spend or profile-lane token scope (429); provider
-setup/authentication failure asks for connection in Settings (503). Other provider
-failures and invalid responses return safe retry guidance (502). Admission checks
-observed daily/lane usage; current SDKs do not enforce per-call token/cost ceilings.
-The offline demo disables inspection and links to local installation. See the
-[complete Required-bullet contract](complete-contract.md#candidate-profile) for
-source fields, input/output limits, model-use flags and error codes.
+Foundation owns the reserved `/v1/settings` and `/v1/credentials` boundaries.
+Settings must not expose secret values. Credential mutations, storage and
+failure responses must preserve the [security boundary](../developer/security.md).
+The Python HTTP server, CLI and workers must use the same effective settings
+and canonical feature services, rather than independent business writers.
 
+## Config JSON Field Reference
 
-## Discovery Controls
-
-| Surface | Representative routes |
-| --- | --- |
-| Runtime discovery preferences | `GET/PATCH /v1/discovery/settings` |
-| Source registry | `GET/POST /v1/discovery/sources`, source state and preview routes |
-| Review queues | locator candidates, quarantine, and manual-capture routes |
-| Feedback | discovery feedback and role-match decision routes |
-
-Manual-capture conflict reasons can distinguish terminal workflow outcomes from
-an import still in progress. An explicit recovery action fences earlier attempts
-for the reviewed capture; see the [complete contract](complete-contract.md#discovery-controls).
-Queue lifetimes bind imports and dismissals to the reviewed item, including
-when the same URL is explicitly reopened.
-
-Source-locator reads are strictly read-only. The opt-in
-`source-proposals from-history` CLI path feeds the same queue and registry with
-saved origin/extraction receipts and unknown completeness. Explicit review
-records coordinate-scoped decisions; rejection persists until a CLI reset.
-Promotion preserves an existing active overlap and refuses held/disabled
-sources. See [Discovery](../user/discovery.md#propose-sources-from-saved-posting-history)
-and the [wire contract](complete-contract.md#discovery-controls).
-
-These controls decide where discovery may look and how proposed sources or jobs
-enter the system. They do not hold provider credentials or raw feed contents.
-The Manual Capture queue retains user-submitted pending page content locally for
-review and retry, with a durable unresolved-attempt flag across reloads; see the
-[capture contract](complete-contract.md#discovery-controls).
-
-## Settings And Credentials
-
-| Route | Storage boundary |
-| --- | --- |
-| `GET/PATCH /v1/settings` | File-backed non-secret Settings values in [`config.json`](#config-json-field-reference); no Discovery-page values. |
-| `GET/PATCH /v1/discovery/settings` | SQLite-backed discovery controls, including scheduling. |
-| `GET /v1/credentials` | Availability/status metadata, not secret values. |
-| `PATCH /v1/credentials` | Store or replace a credential through the local credential adapter. |
-| `PATCH /v1/credentials/batch` | Atomically replace or remove one guided provider configuration. |
-| `DELETE /v1/credentials/:key` | Remove a stored credential. |
-| `GET /v1/providers/status` | Read-only sanitized Codex/Claude/Google configuration and readiness; never copies ambient Codex auth. |
-| `GET /v1/providers/models` | Read-only sanitized model choices in stable Codex/Claude/Google order from each authenticated provider runtime; never copies ambient Codex auth. |
-| `POST /v1/providers/codex/verify` | Explicitly validate and import a reusable normal Codex CLI `auth.json` once when isolated auth is absent, then verify isolated auth without a model call. |
-| `GET /v1/extension/pairing-token` | Read the local extension pairing state. |
-| `POST /v1/extension/pairing-token/rotate` | Rotate the token immediately and disconnect existing extension clients. |
-| `GET /v1/browser-capabilities` | Read managed/optional capability states plus transient supported-browser candidates and their selectable profiles as opaque IDs and safe labels; no local path is returned or adopted. |
-| `POST /v1/browser-capabilities/:capabilityId/enable` | Explicitly adopt exactly one transient `detectedBrowserId` or one write-only `executablePath` for an optional capability. |
-| `POST /v1/browser-capabilities/:capabilityId/disable` | Disable an optional capability immediately. |
-| `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Backward-compatible operator API for copying one explicitly selected detected profile by opaque browser/profile IDs, retaining the legacy browser-only Default arm, or accepting one write-only manual source path; every arm requires explicit consent. It is not exposed by current Settings and is never used by integrated Discovery or Enrich. |
-
-Credential mutations are serialized across JobCtrl API processes for the same
-OS user. A bounded wait returns a sanitized `busy` response; uncertain helper
-completion reports incomplete recovery and fences later mutations until exit.
-An unreadable process identity returns `ownership_unverified` and preserves the
-coordination record.
-
-Discovery settings reads and writes reject an invalid saved row with
-`invalid_saved_search`; an absent row retains first-use defaults. See
-[Discovery controls](complete-contract.md#discovery-controls).
-
-Credential responses expose enough state for the UI to show whether a provider
-is configured, but do not return stored secret material. Guided provider
-replacement rolls back on failure; an unrecoverable rollback is reported as an
-explicit sanitized store failure. See the
-[Security guide](../user/security.md) for the user-facing trust boundary.
-
-The Codex verify response remains secret-free: it reports only provider,
-boolean result, bounded status, and a bounded message. The explicit import
-never overwrites JobCtrl's existing isolated auth or changes the normal Codex
-home. It invokes the same copy-once behavior retained by setup and generation.
-
-Browser detection is read-only discovery, not consent. The list response may
-offer supported Chrome/Chromium candidates as bounded `{ id, label, profiles }`
-values. Each profile contains only an opaque transient ID and Chrome's bounded
-display label; executable, user-data, and profile paths stay inside the worker,
-and nothing is launched, copied, or persisted. Enablement is a strict XOR input: send either
-`{ detectedBrowserId }` or `{ executablePath }`, never both or neither. A
-detected ID is resolved again at mutation time. If it is stale or no longer
-available, enablement fails closed with `400 browser_capability_failed` and
-does not retain or fall back to an earlier path.
-
-`PATCH /v1/settings` stores provider-scoped model choices as
-`preferred_models` in `config.json` and returns them as `preferredModels`.
-Each supplied non-null ID must be in the current catalog for a ready provider;
-`null` clears a choice even when that provider is unavailable. The setting
-contains provider and model IDs only, never credentials or account metadata.
-The same readiness and exact catalog membership checks apply to explicit
-`defaultLlmModel`, `tailoringGeneratorModels` and `tailoringJudgeModel` choices. Provider-qualified
-IDs use that provider's catalog; legacy bare IDs must be uniquely offered by a
-ready provider and are saved with that provider prefix. Unoffered or ambiguous
-choices return `400 invalid_default_model` for the default route or
-`400 invalid_tailoring_model` for a material override; unavailable
-providers return `409 provider_not_ready`, and a failed live catalog returns
-`503 provider_models_failed`. Validation precedes every settings write, so an
-invalid model cannot partially save other changes. `null` and provider-neutral
-`default` material selections remain available without a catalog request.
-The settings and discovery responses also include effective-source and
-activation metadata for managed controls.
-
-`codexReasoningEfforts` patches a mapping of bare Codex model IDs to effort IDs.
-Each non-null effort must appear in that ready model's current
-`supportedReasoningEfforts` catalog. Unsupported pairs return
-`400 invalid_reasoning_effort`; readiness and catalog failures use the same
-409/503 boundary as model choices. Validation is atomic with other settings.
-A `null` entry clears just that model's effort without requiring provider
-availability. Readback includes `codexReasoningEfforts` and its effective-source
-metadata; the mapping persists as `codex_reasoning_efforts`.
-
-The same route accepts `laneTokenLimits`, an object whose only valid keys are
-`discovery`, `enrichment`, `scoring`, `tailoring`, `apply`, `contact`,
-`interview`, `profile`, and `compensation`. Values are non-negative integers;
-omitted keys and `0` mean unlimited. `GET /v1/settings` returns every known lane
-with its effective value. Unknown keys, negative values, booleans, and
-fractional values are rejected.
-
-### `config.json` field reference {#config-json-field-reference}
-
-`~/.jobctrl/config.json` is one JSON object containing non-secret values owned
-by the Settings routes. The API returns camel-case field names, while API
-writes persist the canonical snake-case keys below.
-
-This file owns General settings, provider connection metadata, model-execution
-policy, compensation-source policy, and browser-adoption metadata. Every
-durable control composed on `/discovery` is stored in SQLite instead.
-
-| File field | Value and default | Meaning |
-| --- | --- | --- |
-| `apply_concurrency` | Integer `1–16`, default `1` | Maximum number of Apply jobs processed concurrently by the standing loop. |
-| `pipeline_internal_concurrency` | Integer `1–16`, default `1` | Shared internal parallelism for newly started manual Pipeline actions, automatic profile-update preparation, and idle recovery batches. |
-| `worker_activity_slots` | Integer `1–64`, default `4` | Desired Python Temporal activity capacity. A saved change becomes active after the worker restarts. |
-| `daily_budget_usd` | Non-negative number, default `25` | Daily LLM spend ceiling in USD. `0` disables the daily ceiling. |
-| `lane_token_limits` | Object keyed only by the nine LLM product lanes, each a non-negative integer; default all `0` | UTC daily observed input-plus-output token thresholds. `0` means unlimited. |
-| `analysis_legs` | Non-empty array of `codex`, `claude`, and/or `google`; default all three | Provider legs used by newly started employer-analysis work. |
-| `default_llm_model` | Provider-qualified model ID or `null`; default `null` | Default route for newly acquired core model calls and the optional writing pass. Explicit workflow and material choices take precedence. `null` restores automatic provider selection. |
-| `codex_reasoning_efforts` | Object mapping bare Codex model IDs to effort IDs; default `{}` | Explicit effort for newly constructed Codex adapters. Applies to thread and turn, overrides legacy numeric thinking budgets, and preserves unrelated models when patched. An absent entry retains existing per-call behavior. |
-| `tailoring_generator_models` | Non-empty array of model IDs or `null`; default `null` | Ordered generator-model policy for newly started tailoring workflows. `null` uses the provider/default policy. |
-| `tailoring_judge_model` | Model ID or `null`; default `null` | Judge model for newly started tailoring workflows. `null` uses the provider/default policy. |
-| `resume_voice_polish` | Boolean, default `false` | **Extra résumé polish** under Settings → Model selection. Newly constructed résumé preparation skips the additional post-approval writing pass by default. `true` requests it; changed prose still needs fresh factual, quality and applicable persona reviews. Already-constructed résumé generations retain their choice and accepted artifacts are unchanged; queued or later Tailor steps read the new value, including within an existing workflow. |
-| `cover_letter_generation` | Boolean, default `false` | **Generate cover letters** under Settings → Model selection; API field `coverLetterGeneration`. New preparation plans omit Cover when off. Generation admission and automatic recovery enforce the saved choice before starting a letter; accepted letters and already-admitted work remain intact. Enabling releases only this setting's own skipped Cover rows. |
-| `tailoring_judge_min_score` | Number `0–1`, default `0.82` | Minimum judge score for accepting a tailored candidate. |
-| `apply_max_budget_usd` | Non-negative number, default `5` | Per-application AI-agent budget cap in USD. |
-| `apply_timeout_seconds` | Integer `60–3600`, default `900` | Time limit for one application agent run. |
-| `score_criteria` | String up to 8,000 characters, default `""` | User scoring guidance consumed by subsequent scoring runs. |
-| `target_criteria` | String up to 8,000 characters, default `""` | Additional target-company or role guidance consumed by subsequent scoring runs. This is guidance, not the target-search title list. |
-| `preferred_models` | Object keyed by `codex`, `claude`, and/or `google`; default `{}` | Preferred model ID for each provider. It contains model identifiers only, never credentials. |
-| `compensation_sources` | Optional object; absent by default | Saved user-owned Levels.fyi and Glassdoor source-policy choices. It is written through `/v1/compensation/sources`, not `/v1/settings`. |
-| `provider_connections` | Optional object; absent by default | Non-secret Claude/Google route, project, region, profile, and credential-path configuration written through the Credentials API. Actual API keys remain in the native OS credential store. |
-| `browser_capabilities` | Optional object; absent by default | Non-secret adoption metadata for optional system-browser capabilities. Copied browser contents remain outside this file. |
-
-Within `compensation_sources`, the supported source keys are `levels_fyi` and
-`glassdoor`. Each source stores `enabled` and `access_mode`; `levels_fyi` also
-stores `europe_coverage_confirmed`. These are policy declarations only: the
-file does not contain credentials, feed locations, or compensation records.
-
-## Which Screen Owns What?
-
-| Screen | Owns |
-| --- | --- |
-| Profile (`/profile`) | Candidate facts, experience, skills, evidence, resume content. |
-| Preferences (`/preferences`) | Target role, location, work model, and fit/tailoring preferences. |
-| Discovery (`/discovery`) | Target search, sources, scheduling, quarantine, and capture controls. |
-| Settings → General (`/settings`) | Spend/apply/worker controls and compensation source policy (not a feed connection). |
-| Settings → Credentials (`/settings/credentials`) | Provider modes, credential presence, and explicit Codex verification. |
-| Settings → Model selection (`/settings/models`) | Provider-scoped preferred model IDs plus analysis and tailoring execution policy. |
-| Settings → Browser & extension (`/settings/browser`) | Apply-browser capability adoption/removal plus live-profile extension pairing, installation selection, status, and token rotation. It does not expose profile copying. |
-
-This split keeps a configuration change from masquerading as candidate evidence.
+Configuration field names and defaults are determined by the integrated Python
+settings adapter. Consult that implementation before relying on an old field or
+restart claim. Settings and credentials have different storage and disclosure
+rules; never put a secret in general settings, events or diagnostic output.
 
 ## Provider Endpoint Compatibility
 
-The provider family is declared in the shared endpoint registry and handled by
-`apps/api/src/provider-handlers.ts`. Generated `providerStatus`,
-`providerModels` and `verifyCodexProvider` clients parse the sanitized success
-schemas. GET calls send no body; verification sends `{}` by default. The server
-continues to ignore extra query/body inputs. Existing loopback Host/peer, CORS
-and mutation Origin/Referer/capability checks apply before dispatch.
+Model operations use the configured provider/model through the shared gateway.
+Lane/spend preflight, strict source-bound response validation and provenance are
+required. A provider being configured is not proof that a specific model or
+operation is available. Failure or invalid output has no lexical fallback.
 
-| Operation | RPC error | Invalid result | Transport failure |
-| --- | --- | --- | --- |
-| Status | 502 `provider_status_failed` | 502 `provider_status_failed` | 503 `provider_status_failed` |
-| Models | 503 `provider_models_failed` | 503 `provider_models_failed` | 503 `provider_models_failed` |
-| Codex verification | 502 `provider_verification_failed` | 502 `provider_verification_failed` | 503 `provider_verification_failed` |
+## Discovery Controls
 
-Errors expose fixed messages, never dispatcher exception text or error data.
-An unsuccessful verification result is still HTTP 200 with outer `ok: true`
-and inner `verification.ok: false`, status `not_configured` or `failed`.
-These synchronous routes do not require a healthy Temporal action worker.
-Settings uses the same checked model-catalog function before accepting a
-non-null preferred model; clearing a choice retains its readiness exception.
-
-The demo retains disconnected synthetic status and a synthetic model catalog;
-it cannot verify host authentication. Provider route tests inject synthetic
-results and failures without accessing credentials. See the
-[migration and verification boundaries](../architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration).
+Search targets, source enablement and schedules belong to Discovery even when a
+Settings page links to them. A disabled optional feature must not alter Profile
+ownership or remove manual Jobs.

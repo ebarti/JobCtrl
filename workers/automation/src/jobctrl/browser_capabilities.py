@@ -139,7 +139,7 @@ class DetectedBrowserProfile:
 def browser_capability_config_path(*, app_dir: Path | None = None) -> Path:
     """Return config.json, the owner of browser capability choices."""
 
-    from jobctrl.config import get_config_path
+    from jobctrl.native_runtime_config import get_config_path
 
     return get_config_path(app_dir=app_dir)
 
@@ -150,9 +150,9 @@ def capability_profile_dir(capability_id: str, *, app_dir: Path | None = None) -
     if capability_id != "authenticated-linkedin-browser":
         raise BrowserCapabilityError(f"{capability_id} does not use a copied browser profile")
     if app_dir is None:
-        from jobctrl.config import APP_DIR
+        from jobctrl.native_runtime_config import workspace_path
 
-        app_dir = APP_DIR
+        app_dir = workspace_path()
     return Path(app_dir) / "browser-profiles" / "linkedin-apply-url-resolver"
 
 
@@ -348,7 +348,7 @@ def load_browser_capability_state(
     """Read mutable state; absence intentionally means catalog defaults."""
 
     resolved_catalog = catalog or load_browser_capability_catalog()
-    from jobctrl.config import ConfigFileError, load_config_file
+    from jobctrl.native_runtime_config import ConfigFileError, load_config_file
 
     try:
         config = load_config_file(app_dir=app_dir, strict=True)
@@ -368,10 +368,10 @@ def _browser_capability_state_transaction(
 ):
     """Edit browser capability state inside the shared config.json transaction."""
     resolved_catalog = catalog or load_browser_capability_catalog()
-    from jobctrl.config import ConfigFileError, edit_config_file
+    from jobctrl.native_runtime_config import ConfigFileError, edit_config_file
 
     try:
-        with edit_config_file(app_dir=app_dir) as config:
+        with edit_config_file(app_dir=app_dir or _app_dir()) as config:
             payload = config.get(BROWSER_CAPABILITIES_CONFIG_KEY)
             state = (
                 _default_state()
@@ -754,7 +754,7 @@ def browser_capability_status(
     resolved_catalog = catalog or load_browser_capability_catalog()
     definition = resolved_catalog.get(capability_id)
     if definition.id == _CORE_BROWSER:
-        from jobctrl.infrastructure.preflight import check_playwright_chromium
+        from jobctrl.native_browser import check_playwright_chromium
 
         ready, detail = check_playwright_chromium()
         return BrowserCapabilityStatus(
@@ -1161,9 +1161,9 @@ def copy_detected_authenticated_linkedin_profile(
 
 
 def _app_dir() -> Path:
-    from jobctrl.config import APP_DIR
+    from jobctrl.native_runtime_config import workspace_path
 
-    return APP_DIR
+    return workspace_path()
 
 
 def _directory_open_flags() -> int:

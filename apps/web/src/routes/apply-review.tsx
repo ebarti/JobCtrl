@@ -1,4 +1,4 @@
-import { prefetchApplyReviewQueue } from "../contexts/operations/readQueries.js";
+import { prefetchApplicationQueue } from "../contexts/apply/index.js";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
 import { ApplyReviewView } from "../views/apply-review/ApplyReviewView.js";
@@ -9,7 +9,7 @@ import {
 
 export const Route = createFileRoute("/apply-review")({
   validateSearch: (search) => applyReviewSearchSchema.parse(search),
-  loader: ({ context }) => prefetchApplyReviewQueue(context),
+  loader: ({ context }) => prefetchApplicationQueue(context),
   component: ApplyReviewRoute,
 });
 

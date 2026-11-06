@@ -1,7 +1,7 @@
-import type { ApiClientPort } from "../ports/ApiClientPort.js";
 import type { FeatureFlagPort } from "../ports/FeatureFlagPort.js";
 
-export type ApiCapabilityOperation = keyof ApiClientPort;
+/** The owning feature names its capability; demo defaults unknown names to unavailable. */
+export type ApiCapabilityOperation = string;
 
 export const LOCAL_INSTALL_GUIDE_URL =
   "https://jobctrl.dev/user/getting-started";
@@ -21,7 +21,7 @@ export function apiCapabilityFlagKey(
 
 /**
  * Local adapters support their normal API surface. Demo adapters override the
- * typed capability flags from the exhaustive demo manifest and fail closed.
+ * capability flags from its explicit manifest and fails closed for unknown names.
  */
 export function getApiCapabilityAvailability(
   featureFlags: FeatureFlagPort,

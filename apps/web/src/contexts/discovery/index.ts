@@ -1,6 +1,13 @@
 export { discoveryKeys } from "./queryKeys.js";
+export { discoveryEvents } from "./events.js";
+export { useDiscoverySettingsQuery } from "./hooks/useDiscoverySettingsQuery.js";
+export { useSourceRegistryQuery, useSourceLocatorCandidatesQuery, useDiscoverySourcePreviewQuery, useDiscoveryQuarantineQuery, useManualCaptureQueueQuery, useRoleMatchFeedbackQuery } from "./hooks/useDiscoveryProductControlsQuery.js";
 
 export { DiscoveryProductControls } from "./components/DiscoveryProductControls.js";
+export { DiscoverySourceHealthPanel } from "./components/DiscoverySourceHealthPanel.js";
+export { DiscoveryRunsPanel } from "./components/DiscoveryRunsPanel.js";
+export { DiscoveryExplicitTargets } from "./components/DiscoveryExplicitTargets.js";
+export { DiscoveryTargetPlan } from "./components/DiscoveryTargetPlan.js";
 export { DiscoveryRuntimeSettingsPanel } from "./components/DiscoveryRuntimeSettingsPanel.js";
 export { DiscoveryAutomationSettingsPanel } from "./components/DiscoveryAutomationSettingsPanel.js";
 
@@ -13,19 +20,3 @@ export {
   useUpsertDiscoverySourceMutation,
 } from "./hooks/useDiscoveryProductControlMutations.js";
 export { useUpdateDiscoverySettingsMutation } from "./hooks/useUpdateDiscoverySettingsMutation.js";
-
-export { useDeleteJobMutation } from "./hooks/useDeleteJobMutation.js";
-export { useDeleteJobsBulkMutation } from "./hooks/useDeleteJobsBulkMutation.js";
-export { useHideJobsBulkMutation } from "./hooks/useHideJobsBulkMutation.js";
-export { useImportJobMutation } from "./hooks/useImportJobMutation.js";
-export { usePermanentlyDeleteJobsBulkMutation } from "./hooks/usePermanentlyDeleteJobsBulkMutation.js";
-export { useRestoreJobMutation } from "./hooks/useRestoreJobMutation.js";
-export { useRestoreJobsBulkMutation } from "./hooks/useRestoreJobsBulkMutation.js";
-export { useUnhideJobsBulkMutation } from "./hooks/useUnhideJobsBulkMutation.js";
-
-export {
-  jobDeletedHandler,
-  jobDiscoveredHandler,
-  jobRestoredHandler,
-  jobUpdatedHandler,
-} from "./handlers.js";

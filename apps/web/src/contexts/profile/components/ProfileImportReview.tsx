@@ -7,6 +7,7 @@ import { useToastStore } from "../../../shared/stores/toasts.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button } from "../../../shared/ui/button.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
+import { readProfile } from "../client.js";
 import {
   assertImportAcceptanceAuthority,
   buildImportAcceptance,
@@ -89,7 +90,7 @@ function LegacyRecovery({ draft }: { draft: ProfileImportReviewDraft }) {
 }
 
 function ImportReviewDraft({ draft }: { draft: ProfileImportReviewDraft }) {
-  const { api, storage } = usePorts();
+  const { http, storage } = usePorts();
   // A stale import can fail while another save succeeds. Do not roll an old
   // optimistic snapshot over the newer profile cache on that failure.
   const update = useUpdateProfileMutation({ optimistic: false });
@@ -153,7 +154,7 @@ function ImportReviewDraft({ draft }: { draft: ProfileImportReviewDraft }) {
           : "This draft is not available at the reviewed version. It may have changed or been rejected in another tab, or browser storage may be unavailable. Your selections remain here; check storage and the latest draft before saving.");
         return;
       }
-      const canonical = await api.profile();
+      const canonical = await readProfile(http);
       if (isRetry && canonical.profileVersion !== draft.attempt?.profileVersion) {
         setMessage("A previous save may have completed and the saved profile has changed. Inspect the saved profile and account for that attempt before removing this draft or starting another import; this draft cannot be retried or rebased safely.");
         return;
@@ -206,7 +207,7 @@ function ImportReviewDraft({ draft }: { draft: ProfileImportReviewDraft }) {
     setBusy(true);
     setMessage("");
     try {
-      const latest = await api.profile();
+      const latest = await readProfile(http);
       try {
         verifyCanonicalProfile(latest);
       } catch (error) {

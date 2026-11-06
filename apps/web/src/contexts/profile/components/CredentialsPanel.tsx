@@ -4,7 +4,7 @@ import type {
   CredentialsResponse,
   ProviderId,
   ProviderStatusItem,
-} from "@jobctrl/contracts";
+} from "../../settings/credentials.js";
 import { useMutationState } from "@tanstack/react-query";
 import { IconInfoCircle } from "@tabler/icons-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -27,12 +27,10 @@ import {
 } from "../forms/provider-setup-forms.js";
 import { CredentialForm } from "../forms/credential-form.js";
 import { useCredentialsQuery } from "../hooks/useCredentialsQuery.js";
-import { useProviderStatusQuery } from "../hooks/useProviderStatusQuery.js";
+import { credentialKeys, useProviderStatusQuery, useVerifyCodexProviderMutation } from "../../settings/credentials.js";
 import { useUpdateCredentialsBatchMutation } from "../hooks/useUpdateCredentialsBatchMutation.js";
-import { useVerifyCodexProviderMutation } from "../hooks/useVerifyCodexProviderMutation.js";
 import { credentialRecoveryMessage } from "../lib/credential-recovery-message.js";
 import { removeLegacyOpenAiKeyBatch } from "../lib/provider-credential-plans.js";
-import { profileKeys } from "../queryKeys.js";
 
 export function credentialLabel(key: CredentialKey): string {
   return key
@@ -104,6 +102,9 @@ export function CredentialsPanel() {
           providerStatusError={providerStatusQuery.error?.message}
           store={store}
         />
+        <Button size="sm" type="button" variant="outline" disabled={credentialsQuery.isFetching} onClick={() => void Promise.allSettled([credentialsQuery.refetch(), providerStatusQuery.refetch()])}>
+          {credentialsQuery.isFetching ? "Checking credential status…" : "Check credential status"}
+        </Button>
         {!store && !hasGuidedSetup ? (
           <div className="empty" role="status">Checking provider setup.</div>
         ) : (
@@ -170,7 +171,7 @@ export function CredentialsPanel() {
       {store && capSolver ? (
         <DisclosureSection
           className="provider-setup-shell provider-disclosure provider-disclosure--capsolver"
-          collapsedSummary={`${credentialsQuery.isError ? "Status unavailable" : credentialStatusLabel(capSolver)} · optional · restart required`}
+          collapsedSummary={`${credentialsQuery.isError ? "Status unavailable" : credentialStatusLabel(capSolver)} · optional · used by the next action`}
           defaultOpen={false}
           description="A CapSolver key only enables JobCtrl's owned solver tool during a user-started Apply. Unsupported or unconfigured CAPTCHA always fails closed."
           title="Apply CAPTCHA solver"
@@ -199,7 +200,7 @@ function useProviderConfigurationChanges() {
   const tenantId = useTenantId();
   const successfulUpdates = useMutationState({
     filters: {
-      mutationKey: [...profileKeys.credentials(tenantId), "batch"],
+      mutationKey: credentialKeys.batch(tenantId),
       status: "success",
     },
     select: (mutation) => mutation,
@@ -266,7 +267,7 @@ function ProviderSetupNotice({
   if (store.unavailableReason === "unsupported_platform") {
     return (
       <div className="banner credential-store-notice credential-store-notice--guidance">
-        Non-secret provider settings remain editable in config.json. API-key entry is unavailable until this platform has a supported secure-storage adapter; externally authenticated cloud routes remain available.
+        Non-secret provider settings remain editable in this workspace. API-key entry is unavailable until this platform has a supported secure-storage adapter; externally authenticated cloud routes remain available.
       </div>
     );
   }
@@ -294,9 +295,9 @@ function ProviderSetupNotice({
       <AlertTitle>Provider settings storage</AlertTitle>
       <AlertDescription>
         <p>
-          Provider modes and non-secret connection fields are saved in config.json. API keys
-          stay in {nativeStoreLabel(store.nativeStore)}. Restart JobCtrl after a change so provider processes reload
-          both sources.
+          Provider modes and non-secret connection fields stay in this workspace. API keys
+          stay in {nativeStoreLabel(store.nativeStore)}. Newly started actions use saved values immediately;
+          launch-environment overrides remain authoritative until that process restarts.
         </p>
         {providerStatusError ? (
           <p className="provider-status-warning" role="status">
@@ -332,7 +333,7 @@ function ProviderCard({
     : provider === "codex" && status?.mode === "cli_auth"
       ? "Authenticated · runtime unavailable"
       : status?.configured
-        ? "Configured · restart or verify"
+        ? "Configured · verify model access"
         : "Not configured";
   const statusMessage = statusUnknown ? undefined : visibleProviderStatusMessage(provider, status);
   const [open, setOpen] = useState(false);
@@ -401,7 +402,7 @@ function CodexProviderSetup({
   const [legacyMessage, setLegacyMessage] = useState("");
   const verification = verify.data?.verification;
   const verificationMessage = verify.error
-    ? "Codex verification could not be completed. Check that the worker is running and retry."
+    ? "Codex verification could not be completed. Check provider status before retrying."
     : verification?.message ?? "";
 
   async function removeLegacy() {
@@ -557,7 +558,7 @@ function CredentialPrivacyNotice({
         <Badge>Local only</Badge>
         <Badge>{boundaryBadge}</Badge>
         <Badge>Never in logs</Badge>
-        <Badge>Worker restart required</Badge>
+        <Badge>Used by the next action</Badge>
       </div>
     </DisclosureSection>
   );
@@ -629,8 +630,8 @@ function providerOwnership(
   if (
     entries.some((entry) => entry.effectiveSource === "config") &&
     entries.some((entry) => entry.effectiveSource === "native_store")
-  ) return `config.json + ${nativeStoreLabelFromCredentials(entries)}`;
-  if (entries.some((entry) => entry.effectiveSource === "config")) return "config.json";
+  ) return `workspace settings + ${nativeStoreLabelFromCredentials(entries)}`;
+  if (entries.some((entry) => entry.effectiveSource === "config")) return "workspace settings";
   if (entries.some((entry) => entry.effectiveSource === "native_store")) return "native credential store";
   if (status?.mode && status.mode !== "api_key") return "external cloud credential chain";
   if (entries.some((entry) => entry.effectiveSource === "inspection_unknown")) return "inspection unavailable";

@@ -2,16 +2,16 @@ import type {
   DiscoverySettingsResponse,
   DiscoverySettingsUpdateRequest,
   EffectiveDiscoverySettings,
-  EffectiveSetting,
+  EffectiveDiscoverySetting,
 } from "@jobctrl/contracts";
-import { DiscoverySettingsResponseSchema } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
-import { dashboardKeys } from "../../operations/dashboardKeys.js";
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
+import { createUnconfirmedWriteError } from "../../../shared/lib/unconfirmed-write.js";
 import { discoveryKeys } from "../queryKeys.js";
+import { DiscoverySettingsPythonSchema } from "../contracts.js";
 
 export function useUpdateDiscoverySettingsMutation(): UseMutationResult<
   DiscoverySettingsResponse,
@@ -19,12 +19,22 @@ export function useUpdateDiscoverySettingsMutation(): UseMutationResult<
   DiscoverySettingsUpdateRequest
 > {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation(
     createOptimisticMutation<DiscoverySettingsResponse, DiscoverySettingsUpdateRequest>(queryClient, {
       mutationKey: discoveryKeys.settings(tenantId),
-      mutationFn: (body) => api.updateDiscoverySettings(body),
+      mutationFn: async (body) => {
+        const current = DiscoverySettingsPythonSchema.safeParse(queryClient.getQueryData(discoveryKeys.settings(tenantId)));
+        if (!current.success) throw new Error("Refresh Discovery settings before saving.");
+        const response = await http.json<unknown>("PATCH", "/v1/discovery/settings", { body: { ...body, expectedRevision: current.data.revision, expectedPolicyRevision: current.data.policyRevision } });
+        const parsed = DiscoverySettingsPythonSchema.safeParse(response);
+        if (!parsed.success || parsed.data.revision !== current.data.revision + 1
+            || Object.entries(body).some(([key, value]) => key !== "expectedRevision" && key !== "expectedPolicyRevision" && JSON.stringify(parsed.data.settings[key]) !== JSON.stringify(value))) {
+          throw createUnconfirmedWriteError("PATCH", "/v1/discovery/settings", new Error("Settings response did not confirm the submitted values."));
+        }
+        return parsed.data;
+      },
       optimisticUpdates: (body) => [{
         queryKey: discoveryKeys.settings(tenantId),
         patch: (current) => patchDiscoverySettings(current, body),
@@ -32,7 +42,6 @@ export function useUpdateDiscoverySettingsMutation(): UseMutationResult<
       settle: () => [
         discoveryKeys.settings(tenantId),
         discoveryKeys.sourceRegistry(tenantId),
-        dashboardKeys.summary(tenantId),
       ],
     }),
   );
@@ -47,12 +56,10 @@ function patchDiscoverySettings(
   }
 
   const effectiveSettings: EffectiveDiscoverySettings = {
+    ...current.effectiveSettings,
     minFitScore: persistedValue(current.effectiveSettings.minFitScore, body.minFitScore),
     autoApply: persistedValue(current.effectiveSettings.autoApply, body.autoApply),
-    applyApprovalRequired: persistedValue(
-      current.effectiveSettings.applyApprovalRequired,
-      body.applyApprovalRequired,
-    ),
+    applyApprovalRequired: current.effectiveSettings.applyApprovalRequired,
     boards: persistedValue(current.effectiveSettings.boards, body.boards),
     resultsPerSite: persistedValue(
       current.effectiveSettings.resultsPerSite,
@@ -87,9 +94,6 @@ function patchDiscoverySettings(
       ...current.settings,
       ...(body.minFitScore !== undefined ? { minFitScore: body.minFitScore } : {}),
       ...(body.autoApply !== undefined ? { autoApply: body.autoApply } : {}),
-      ...(body.applyApprovalRequired !== undefined
-        ? { applyApprovalRequired: body.applyApprovalRequired }
-        : {}),
       ...(body.boards !== undefined ? { boards: body.boards } : {}),
       ...(body.resultsPerSite !== undefined ? { resultsPerSite: body.resultsPerSite } : {}),
       ...(body.hoursOld !== undefined ? { hoursOld: body.hoursOld } : {}),
@@ -113,13 +117,13 @@ function patchDiscoverySettings(
 }
 
 function isDiscoverySettingsResponse(value: unknown): value is DiscoverySettingsResponse {
-  return DiscoverySettingsResponseSchema.safeParse(value).success;
+  return DiscoverySettingsPythonSchema.safeParse(value).success;
 }
 
 function persistedValue<T>(
-  metadata: EffectiveSetting<T>,
+  metadata: EffectiveDiscoverySetting<T>,
   value: T | undefined,
-): EffectiveSetting<T> {
+): EffectiveDiscoverySetting<T> {
   if (value === undefined || !metadata.editable) {
     return metadata;
   }

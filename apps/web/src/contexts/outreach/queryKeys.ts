@@ -3,9 +3,8 @@ import type { TenantId } from "@jobctrl/domain-types";
 /**
  * Query-key factory for the Contact & Outreach context.
  *
- * Tenant-first hierarchical shape (`["tenant", tenantId, "outreach", ...]`) so
- * the invalidation router can target the right scope. Re-exported through
- * `contexts/operations/queryKeys.ts` per the frontend conventions in CLAUDE.md.
+ * Tenant-first hierarchical shape (`["tenant", tenantId, "outreach", ...]`)
+ * lets feature event handlers invalidate the appropriate scope.
  */
 export const outreachKeys = {
   all: (tenantId: TenantId) => ["tenant", tenantId, "outreach"] as const,
@@ -34,6 +33,8 @@ export const outreachKeys = {
   threads: (tenantId: TenantId) => [...outreachKeys.all(tenantId), "threads"] as const,
   thread: (tenantId: TenantId, threadId: string) =>
     [...outreachKeys.threads(tenantId), threadId] as const,
+  determinations: (tenantId: TenantId, threadId: string, draftId: string, ids: readonly string[]) =>
+    [...outreachKeys.thread(tenantId, threadId), "determinations", draftId, ids] as const,
   threadForContact: (tenantId: TenantId, contactId: string, jobId: string | null = null) =>
     [...outreachKeys.threads(tenantId), "for-contact", contactId, jobId] as const,
 
