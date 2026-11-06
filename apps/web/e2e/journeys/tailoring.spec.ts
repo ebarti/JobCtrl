@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Request, Route } from "@playwright/test";
 import {
   test,
   expect,
@@ -317,63 +318,187 @@ test("approved wording composes the full baseline and failed model or render ref
   await page
     .getByRole("combobox", { name: "Saved resume", exact: true })
     .selectOption(resume.resume_id);
-  await page
-    .getByRole("button", { name: "Review coherence", exact: true })
-    .click();
-  const invalidReview = await modelCall(app, "resumes.coherence");
-  invalidReview.reply({
-    verdict: "pass",
-    findings: [],
-    unauthorizedExtraField: "reject",
+
+  // Keep a genuine read of the review's intermediate claim in flight while
+  // the same browser receives its newer mutation result. Deliver its original
+  // bytes afterward, reproducing the response ordering observed in hosted CI.
+  const reviewingVersion = resume.version + 1;
+  const listUrl = new URL("/v1/resumes", app.baseURL);
+  listUrl.searchParams.set("jobId", posting.job_id);
+  const matchesList = (url: URL) => url.href === listUrl.href;
+  let staleListRead:
+    { request: Request; body: Buffer; resume: Resume } | undefined;
+  let releaseStaleRead!: () => void;
+  const staleReadGate = new Promise<void>((resolve) => {
+    releaseStaleRead = resolve;
   });
-  await expect
-    .poll(
-      async () => current(await getResume(api, resume.resume_id)).review.status,
-    )
-    .toBe("failed");
-  await app.failRendering();
-  await page
-    .getByRole("button", { name: "Render resume", exact: true })
-    .click();
-  await expect(
-    page.getByRole("alert").filter({ hasText: "Render failed" }),
-  ).toBeVisible();
-  expect(
-    createHash("sha256")
-      .update(
-        await (
-          await api.get(
-            `/v1/resumes/${resume.resume_id}/export?format=pdf&accepted=true`,
-          )
-        ).body(),
+  let releaseLaterReads!: () => void;
+  const laterReadGate = new Promise<void>((resolve) => {
+    releaseLaterReads = resolve;
+  });
+  let holdLaterReads = true;
+  const forwardingReads: Promise<void>[] = [];
+  const forwardList = async (route: Route) => {
+    const response = await route.fetch();
+    try {
+      const body = await response.body();
+      const listed = JSON.parse(body.toString("utf8")) as { resumes: Resume[] };
+      const selected = listed.resumes.find(
+        (item) => item.resume_id === resume.resume_id,
+      );
+      if (
+        selected?.version === reviewingVersion &&
+        current(selected).review.status === "running"
+      ) {
+        staleListRead ??= { request: route.request(), body, resume: selected };
+        await staleReadGate;
+      } else if (
+        holdLaterReads &&
+        staleListRead &&
+        selected &&
+        selected.version > reviewingVersion
+      ) {
+        // A newer refetch must not conceal whether the older read can undo an
+        // already successful own mutation before the next user action.
+        await laterReadGate;
+      }
+      await route.fulfill({ response });
+    } finally {
+      await response.dispose();
+    }
+  };
+  const delayList = async (route: Route) => {
+    const pending = forwardList(route);
+    forwardingReads.push(pending);
+    await pending;
+  };
+  await page.route(matchesList, delayList);
+  const browserReview = page.waitForResponse(
+    (response) =>
+      response.url() ===
+        `${app.baseURL}/v1/resumes/${resume.resume_id}/review` &&
+      response.request().method() === "POST",
+  );
+  try {
+    await page
+      .getByRole("button", { name: "Review coherence", exact: true })
+      .click();
+    const invalidReview = await modelCall(app, "resumes.coherence");
+    await expect
+      .poll(() => staleListRead?.resume.version, {
+        message: "The real list read must observe the in-progress review claim",
+      })
+      .toBe(reviewingVersion);
+    invalidReview.reply({
+      verdict: "pass",
+      findings: [],
+      unauthorizedExtraField: "reject",
+    });
+    const reviewedResponse = await browserReview;
+    expect(reviewedResponse.status()).toBe(200);
+    const reviewed: Resume = (await reviewedResponse.json()).resume;
+    expect(reviewed.version).toBe(reviewingVersion + 1);
+    expect(current(reviewed).review.status).toBe("failed");
+    const workspace = page
+      .getByRole("region", { name: "Resume", exact: true })
+      .filter({
+        has: page.getByRole("heading", {
+          name: "Advisory coherence review",
+          exact: true,
+        }),
+      });
+    await expect(
+      workspace.getByText(/^Status: failed(?: \([^)]*\))?\.$/),
+    ).toBeVisible();
+    const staleDelivery = page.waitForResponse(
+      (response) => response.request() === staleListRead!.request,
+    );
+    releaseStaleRead();
+    const delivered = await staleDelivery;
+    expect(delivered.status()).toBe(200);
+    expect(
+      createHash("sha256")
+        .update(await delivered.body())
+        .digest("hex"),
+    ).toBe(createHash("sha256").update(staleListRead!.body).digest("hex"));
+    expect(staleListRead!.resume.version).toBeLessThan(reviewed.version);
+    await app.failRendering();
+    const renderUrl = `${app.baseURL}/v1/resumes/${resume.resume_id}/render`;
+    const renderRequested = page.waitForRequest(
+      (request) => request.url() === renderUrl && request.method() === "POST",
+    );
+    const renderResponse = page.waitForResponse(
+      (response) =>
+        response.url() === renderUrl && response.request().method() === "POST",
+    );
+    await page
+      .getByRole("button", { name: "Render resume", exact: true })
+      .click();
+    const renderRequest = await renderRequested;
+    holdLaterReads = false;
+    releaseLaterReads();
+    await testInfo.attach("review-render-version-order", {
+      contentType: "application/json",
+      body: JSON.stringify({
+        resumeId: resume.resume_id,
+        staleReadVersion: staleListRead!.resume.version,
+        completedReviewVersion: reviewed.version,
+        renderExpectedVersion: renderRequest.postDataJSON().expected_version,
+      }),
+    });
+    expect(renderRequest.postDataJSON()).toEqual({
+      expected_version: reviewed.version,
+    });
+    const failedRenderResponse = await renderResponse;
+    expect(failedRenderResponse.status()).toBe(200);
+    const failedRender: Resume = (await failedRenderResponse.json()).resume;
+    expect(current(failedRender).render_attempts.at(-1)?.status).toBe("failed");
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Render failed" }),
+    ).toBeVisible();
+    expect(
+      createHash("sha256")
+        .update(
+          await (
+            await api.get(
+              `/v1/resumes/${resume.resume_id}/export?format=pdf&accepted=true`,
+            )
+          ).body(),
+        )
+        .digest("hex"),
+    ).toBe(acceptedDigest);
+    await app.restoreRendering();
+    await page
+      .getByRole("button", { name: "Render resume", exact: true })
+      .click();
+    await expect
+      .poll(
+        async () =>
+          current(await getResume(api, resume.resume_id)).renders.length,
+        { timeout: 30_000 },
       )
-      .digest("hex"),
-  ).toBe(acceptedDigest);
-  await app.restoreRendering();
-  await page
-    .getByRole("button", { name: "Render resume", exact: true })
-    .click();
-  await expect
-    .poll(
-      async () =>
-        current(await getResume(api, resume.resume_id)).renders.length,
-      { timeout: 30_000 },
-    )
-    .toBe(1);
-  await page
-    .getByRole("button", { name: "Accept with review override", exact: true })
-    .click();
-  await expect
-    .poll(
-      async () => (await getResume(api, resume.resume_id)).acceptances.length,
-    )
-    .toBe(2);
-  const overridden = await getResume(api, resume.resume_id);
-  expect(overridden.acceptances.at(-1)!.review_status).toBe("failed");
-  expect(overridden.acceptances.at(-1)!.review_override).toBe(true);
-  expect(current(overridden).selected_variants).toHaveLength(3);
-  await testInfo.attach("full-baseline-approval", {
-    body: await page.screenshot(),
-    contentType: "image/png",
-  });
+      .toBe(1);
+    await page
+      .getByRole("button", { name: "Accept with review override", exact: true })
+      .click();
+    await expect
+      .poll(
+        async () => (await getResume(api, resume.resume_id)).acceptances.length,
+      )
+      .toBe(2);
+    const overridden = await getResume(api, resume.resume_id);
+    expect(overridden.acceptances.at(-1)!.review_status).toBe("failed");
+    expect(overridden.acceptances.at(-1)!.review_override).toBe(true);
+    expect(current(overridden).selected_variants).toHaveLength(3);
+    await testInfo.attach("full-baseline-approval", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  } finally {
+    holdLaterReads = false;
+    releaseStaleRead();
+    releaseLaterReads();
+    await page.unroute(matchesList, delayList);
+    await Promise.all(forwardingReads);
+  }
 });

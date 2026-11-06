@@ -62,6 +62,18 @@ export function useResumes(jobId: string) {
   const tenantId = useTenantId(); const { http } = usePorts();
   return useQuery({ queryKey: resumeKeys.list(tenantId, jobId),
     queryFn: async () => parseList(await http.json<unknown>("GET", "/v1/resumes", { query: { jobId } })),
+    structuralSharing: (previous: unknown, incoming: unknown) => {
+      const current = previous as Resume[] | undefined;
+      const next = incoming as Resume[];
+      if (!current) return next;
+      const known = new Map(current.map((item) => [item.resume_id, item]));
+      // A read started before a write may arrive after its newer response.
+      // Keep incoming membership, but never regress a still-present resume.
+      return next.map((item) => {
+        const saved = known.get(item.resume_id);
+        return saved && saved.version > item.version ? saved : item;
+      });
+    },
     meta: { suppressGlobalErrorToast: true },
   });
 }

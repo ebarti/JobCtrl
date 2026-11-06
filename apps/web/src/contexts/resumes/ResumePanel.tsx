@@ -61,13 +61,13 @@ function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged }: { latest: 
   }, [revision?.edit_draft?.plate_document]);
   const updateDirty = useCallback((value: boolean) => { setDirty(value); onDirtyChange(value); }, [onDirtyChange]);
   useEffect(() => {
-    if (!dirty && !busy && latest.version !== session.version) {
+    if (!dirty && !busy && latest.version > session.version) {
       setSession(latest); setPlate(null); setChanges([]); setEditError("");
     }
   }, [busy, dirty, latest, session.version]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
   if (!revision) return <p role="alert">The current resume revision was not found.</p>;
-  const latestChanged = latest.version !== session.version;
+  const latestChanged = latest.version > session.version;
   const rendered = revision.renders.at(-1);
   const readyToAccept = revision.mechanical.status === "valid" && Boolean(rendered) && !(rendered?.layout_conflicts?.length);
   const changedBullets = revision.document.experience.flatMap((role) => role.bullets.filter((bullet) => {
@@ -77,7 +77,7 @@ function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged }: { latest: 
   const actionError = action.error?.message ?? exportFile.error?.message ?? editError;
   const run = (name: string, body: Record<string, unknown>) => {
     action.mutate({ resumeId: session.resume_id, action: name, body: { expected_version: session.version, ...body } }, {
-      onSuccess: (next) => { setSession(next); setPlate(null); setChanges([]); updateDirty(false); setEditError(""); if (name === "approve-edits") onProfileChanged?.(); },
+      onSuccess: (next) => { setSession((current) => current.version > next.version ? current : next); setPlate(null); setChanges([]); updateDirty(false); setEditError(""); if (name === "approve-edits") onProfileChanged?.(); },
     });
   };
   const save = () => {
