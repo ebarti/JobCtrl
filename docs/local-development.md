@@ -142,7 +142,12 @@ sources and attachment manifest, and explicit `--confirm-profile-only-reset`.
 It preserves the full Profile, supporting sources, confirmations, preferences
 and provenance; other application data starts fresh in the new workspace. The
 command leaves the source and workspace selection unchanged. Review the receipt
-and select the new workspace deliberately after verification. See
+and select the new workspace deliberately after verification. Installed cutover
+also requires a separate fresh native runtime home with no active selection; an
+existing installation's runtime home cannot adopt the incomplete database pair.
+First native selection consumes the transfer permission once. Preserve both old
+locations and inspect an interrupted selection rather than clearing its marker.
+See
 [Getting Started](user/getting-started.md#update-roll-back-or-remove-jobctrl)
 for the release boundary. A one-off Profile transfer integrity proof uses owned
 synthetic data; development and QA never reset a real user's workspace.

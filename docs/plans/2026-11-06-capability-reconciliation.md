@@ -19,12 +19,14 @@ latest acceptance readback. The initial inventory was taken during construction;
 its former missing adapters and legacy-retirement blockers must not be treated
 as current defects when the dispositions below close them. Source completion,
 focused public-journey success and complete-candidate acceptance are distinct.
-**Local installed acceptance is complete:** `e2e-Htgt0Q` passed all 22 journeys
-on the pinned installed runtime and final recorded web build. All source
-journeys also have passing observations across the full run and scoped repair
-reruns, and the isolated demo passed. The source-run history is still not one
-uninterrupted 22-journey source pass. Final whole-head hosted CI remains pending;
-no GitHub completion, merge or release is established here.
+**Recorded application journeys passed:** the hosted Browser job on `09f9d5c`
+passed 23/23 source journeys including the demo, and the latest database-fixed
+installed payload passed 22/22. These results apply to their recorded candidates;
+the final operational result and hosted checks are tracked in
+[#1428](https://github.com/ebarti/JobCtrl/issues/1428) and
+[PR #1454](https://github.com/ebarti/JobCtrl/pull/1454). This preparation snapshot
+does not establish a later merge or release. Earlier partial source runs and the prior installed payload
+remain historical evidence rather than being relabeled as current.
 
 - `SOURCE COMPLETE`: current source and static checks close the stated boundary.
 - `FOCUSED PASS`: named focused public journeys passed; wider acceptance remains
@@ -46,12 +48,13 @@ The latest evidence disposition is:
 | Legacy backend authority | Production source files in old Fastify, Python workflow/business roots, infrastructure, domain and global config/database/LLM roots are physically deleted. The earlier transitive closure was clear; whole static checks and the full installed suite passed. | Whole-head hosted CI remains open. No temporary runtime bridge is retained. |
 | CLI setup, onboarding and Digest | Source and installed CLI onboarding/setup passed. The separate actual Digest proof passes one-read threshold override, generated-at acknowledgement, stale acknowledgement refusal, unchanged settings and zero added model calls. | The earlier Digest parity defect is closed; hosted CI remains separate. |
 | Full Profile and supporting-source transfer | Final one-off synthetic `profile-transfer-umx5un0g` and identity `profile-identity-m8gba6hd` proofs are reported passed in the owning Profile record; full source bytes/raw review data and known versus uncertain authority are covered. | No real-user reset/transfer occurred. This is separate from recurring fresh-workspace E2E. |
-| Native lifecycle and process custody | Frozen native lifecycle partition passed in **47.659 seconds** (eight cases); custody passed in **61.296 seconds** (seven cases), with cleanup and independent no-listener readback. | These use real compiled binaries and an owned unsigned synthetic payload. Signed/notarized published-predecessor qualification and the remaining platform matrix are distinct release gates. |
-| Source/web acceptance | `e2e-w989ac` passed 18/22; `e2e-cOQbyj` passed three repaired journeys; `e2e-kz95to` passed the last Jobs query journey. All 22 have passing observations on the same frozen Python package. | The web build changed for repairs. Do not combine these into a claim that one final full source run passed. The complete installed run below supplies the final one-run local qualification. |
-| Full installed application | `e2e-Htgt0Q` passed **22/22**, zero skipped/flaky/unexpected cases: 202,126 milliseconds of journeys and 204,642 milliseconds total; real bundled import origin, pinned CPython 3.12.12 and Temporal 1.7.3. | Whole-head hosted CI and distinct signed/platform release qualification remain open. |
-| Offline demo | `e2e-tNQ809` and `demo/final-browser-proof.json` passed the actual consent Worker/D1/browser-local edit, wording approval, accepted PDF and cleanup journey, with zero product requests or page/console errors. | This verifies the recorded local demo bundle, not a hosted deployment or live model quality. |
+| Native lifecycle and process custody | Frozen local native lifecycle partition passed in **47.659 seconds** (eight cases); custody passed in **61.296 seconds** (seven cases), with cleanup and independent no-listener readback. Both Darwin partitions also passed hosted. | These use real compiled binaries and owned synthetic payloads. Signed/notarized published-predecessor qualification and the remaining platform matrix are distinct release gates. |
+| Source/web acceptance | Hosted Browser job [128139371277](https://github.com/ebarti/JobCtrl/actions/runs/42289605507/job/128139371277) on `09f9d5c` passed `e2e-DUQtlZ` **23/23**, including the demo. Linux x64, four CPUs, Node 22.21.1; preflight/build/journeys/total were 3,524/20,738/314,112/338,686 ms. | Lockfiles and web build were unchanged. This establishes the recorded Browser job, not all jobs or any later candidate. |
+| Full installed application | Database-fixed `e2e-kGHZtb` passed **22/22**, zero skipped/flaky/unexpected cases: 198,682 ms journeys and 200,351 ms total, with 34 ms snapshot, 1,598 ms preflight and no web rebuild. Real bundled import origin, pinned CPython 3.12.12 and Temporal 1.7.3. | This unsigned minimal payload has no provider packs and does not qualify the full distribution, signed predecessor or later candidate. |
+| Offline demo | `e2e-tNQ809` and `demo/final-browser-proof.json` passed the actual consent Worker/D1/browser-local edit, wording approval, accepted PDF and cleanup journey, with zero product requests or page/console errors. The hosted Browser run also includes the demo. | This verifies the tested demo journeys, not a hosted deployment or live model quality. |
+| Platform and CI gates | Original PR candidate `0db` passed the other hosted contexts, including Backend `128144844565` and Browser `128144844490`; its Windows credential failure was fixed. Windows credentials [job 128146721619](https://github.com/ebarti/JobCtrl/actions/runs/42291768416/job/128146721619) on `23bafd876` passed 37 controlled and 21 native checks with cleanup confirmed; the same focused workflow passed Linux and macOS. Windows Gmail and both Darwin lifecycle/custody partitions also passed on recorded candidates. | Final whole-head CI and the signed-only schema-2 exact-identity predecessor harness operational proof are required before merge; their current results belong to #1428 / PR #1454. |
 
-The observed source-run accounting is **18 + 3 + 1 distinct passing journeys**:
+Before the full hosted source pass, the local source-run accounting was **18 + 3 + 1 distinct passing journeys**:
 
 | Run | Actual result | Journey / total milliseconds |
 | --- | --- | --- |
@@ -65,17 +68,36 @@ and combined Python/policy
 `0c644feb105e9c26c53e7cf8dc77731c0d3014b4d426f8a7a5918b9c6572aacb`.
 The last web build is
 `0b172f2c478f9d690e77aa43a3485b4e977abad3547d8460027a75ca84a1d282`.
-The complete installed run `e2e-Htgt0Q` subsequently passed 22/22 on this web
-hash, with zero build time and 2,402 milliseconds of composition preflight.
-Its recorded import origin is inside the extracted payload's
-`worker/site-packages/jobctrl`, not the checkout. The coordinator's frozen
-payload readback identifies the same 313-file Python hash above, CPython 3.12.12
-and Temporal 1.7.3. Installed `results.json`/`timings.json` record exit zero,
-unchanged web build/lockfile, and all 22 expected results.
-The latest source failure was exact expected-conflict console accounting;
-the completed repair rerun passed, rather than suppressing an unobserved class
-of console errors. Results/timings were read from each run's actual JSON files
-under `/private/tmp/jobctrl-transform-1428/`.
+The earlier installed run `e2e-Htgt0Q` subsequently passed 22/22 on this web
+hash with 2,402 ms composition preflight. Its wheel hash was
+`33d3504d3e0dd50950627ae9d3d441d1e0925156e5e4b26902f6bd6cc2ff24be`.
+The source conflict-accounting repair passed a focused rerun rather than
+suppressing an unobserved class of console errors. These records remain tied to
+their earlier candidates.
+
+The earlier hosted Browser run's frozen Python source SHA-256 was
+`aa0464efab513542ad7446a06eea2e9e8927bcaf530c8ec21daeaf36fe367051`.
+The subsequent credential-fixed installed `e2e-npLcAJ` passed 22/22 using wheel
+`7d34a450c18292b160d5d84e135b96aa032ff3e81eed9d713e3a9c51f44b8e93`
+and payload `8b77fe37fae8b8cc0fcb5d2b4fdab1effdd0cefc07b2adb81204d3254ece9a81`.
+That is historical evidence for its own payload.
+
+The latest database-fixed `e2e-kGHZtb` has the same 313 source files and 3,313,583
+bytes in both the frozen source and installed wheel, with SHA-256
+`a94f09c4962c950675a7b5b04e1ecf557647b06387db113f5f75127daae06b70`.
+Its wheel SHA-256 was
+`2b238d4ffbfe5916c3b778ee016f6d12b5a5c77f789624a23f1e3fec3f2f5766`;
+the whole 8,247-file, 1,136,209,416-byte payload SHA-256 was
+`72610e9386f2768f9dddab3214577cf07e3560f85664ef3479d164eb5fa43cf8`.
+Its 99-file, 10,597,612-byte web candidate SHA-256 was
+`0b172f2c478f9d690e77aa43a3485b4e977abad3547d8460027a75ca84a1d282`.
+Installed `results.json` and `timings.json` record exit zero, 22 expected results,
+no skipped/flaky/unexpected results and unchanged web build/lockfile. The
+preparation, source equality and installed-origin receipts are under
+`/private/tmp/jobctrl-transform-1428/installed-application-_ajwp183/`; they
+place JobCtrl and its dependencies inside the extracted payload, not the checkout.
+The Windows startup failure was `OSError` `errno 9` from flushing the staged
+database opened read-only; the fix opens it writable for the flush.
 
 Digest evidence is `digest-cli-proof-rau9vjop/proof.json`. Profile's observed
 proof coverage is recorded in [its owning implementation record](2026-11-06-profile-transformation.md#observed-verification).
@@ -92,6 +114,25 @@ and `native-partitions-proof.json`, including the respective
 source and binary hashes. It also records limited post-run harness bookkeeping
 adjustments; the required partition inputs and assertions are reported
 equivalent, rather than claiming every final harness byte ran unchanged.
+
+The completed native first-selection repair passed an actual public full Profile
+transfer/readback, compiled installer, native start/stop/restart and complete-pair
+reinstall in **32.683 seconds**, with 19 refusal controls. The one-time
+workspace-local permission prevents a stale transfer receipt from authorizing
+new history under another runtime home. Unknown/legacy identity/version controls
+preserved the complete workspace inventory; an exact-current metadata inspection
+explicitly records SQLite companions without canonical database, receipt,
+selection or permission changes. Eight owned PIDs exited and fixed ports were
+free, with an unrelated control preserved until cleanup through its own handle.
+This owned unsigned operational proof is in
+`native-transfer-admission/operational-result.json`; final launcher/installer
+hashes are `db290a9467e37f228689220f119ba4e4b111f1147a77b7c537f008d12f0fe6af`
+and `72caa70d40bf4846da1f50db2ac488a3e9cd1cb3ca58164a478dd5a13038b34e`.
+Declared-platform build/vet passed. Independent review closed the release harness
+at `e30abba907adcfec805c81b19b21f9560710f47e52d7b7e0531baa62a4c287a0` with no
+remaining scoped findings; its final exact operational rerun is a distinct
+gate recorded in #1428, separate from this first-selection proof and protected
+release qualification.
 
 ## Capability ledger
 
@@ -145,7 +186,7 @@ they do not claim a separate recurring assertion for every option of a feature.
 | P0 · FOCUSED PASS | Extension token/auth, capture/ack, discovery claim/task/lease/result/cancel, typed autofill/map: `server.ts:658–949`; `apps/extension/src/local-api.ts` | Runtime extension transport + Foundation auth + Jobs/Discovery/Applications | All three full-run Extension journeys pass pairing/rotation/revocation, canonical capture replay across restart and real pending-task HEAD/lease/private-DNS/cancellation fences. Reviewed fill-only mapping is implemented; no automatic final submission is implied. |
 | P1 · VERIFIED | Public offline demo workspace, synthetic edits/history/consent/events/reset/export: `apps/web/src/demo/{portFactory,capabilities,DemoApiClientAdapter}.ts` | Demo owner + web feature transports | Actual isolated `e2e-tNQ809` and final demo proof pass real consent Worker/D1, local exact-wording approval, durable edits and accepted PDF. Zero product requests, authored-text leaks, console errors and page errors; owned cleanup passed. Verified for the recorded demo bundle, not a hosted deployment. |
 | P0 · FOCUSED PASS | Installed/source startup, stop/restart, provider/browser packs, backups/rollback/update, static assets and renderer | Runtime `launcher/`, `scripts/dev`, `packaging/distribution/` | Native lifecycle/custody partitions passed in 47.659/61.296 seconds with coherent backup/update/rollback and unrelated-process preservation. The full installed application then passed 22/22 on pinned runtimes and real bundled imports. Hosted CI and distinct signed/platform release qualifications remain open. No release/deployment is implied. |
-| P0 · VERIFIED | E2E-only fresh target suite and real product coverage | E2E `apps/web/e2e/harness/`, `scripts/run-e2e.mjs`, `docs/developer/qa/python-journeys.md` | Complete installed `e2e-Htgt0Q` passed 22/22, zero skipped/flaky cases, 202,126 ms journeys/204,642 ms total on the recorded final payload/web build. Source history remains the honest 18+3+1 accounting. This verifies the local installed candidate, not still-pending whole-head hosted CI or signed release qualification. |
+| P0 · VERIFIED | E2E-only fresh target suite and real product coverage | E2E `apps/web/e2e/harness/`, `scripts/run-e2e.mjs`, `docs/developer/qa/python-journeys.md` | Hosted Browser `e2e-DUQtlZ` passed 23/23 including demo; database-fixed installed `e2e-kGHZtb` passed 22/22 without skipped/flaky/unexpected cases, 198,682 ms journeys/200,351 ms total. These qualify recorded candidates, not pending whole-head CI or signed release qualification. |
 
 ## Architectural audit gates
 
@@ -299,10 +340,9 @@ does not reopen or override it.
 - Application inspection, batch/standing integration and the manual-browser/
   exact-approved-email distinction are implemented. Core uncertain-send and
   real-worker-restart evidence passed without broadening submit authority.
-- The coordinator now has passing observations for all source journeys, the
-  demo and the complete 22/22 installed run. Whole-head hosted CI remains the
-  unfinished acceptance gate, rather than initial missing composition or
-  feature implementations.
+- The hosted Browser job passed all 23 source journeys, including the demo;
+  the current database-fixed installed run passed 22/22. Whole-head hosted
+  CI and release-specific gates remain unfinished.
 
 This initial pass performed source inspection only. No production mutation,
 dependency installation, private-data access, runtime reset, external action or
@@ -423,7 +463,7 @@ leaving whole old modules for a few helpers obstructs retirement.
 | P1 — root reports removed | No target app/features/CLI/runtime imports or dynamic dispatch into old top-level `apply/`, `contact/`, `discovery/`, `enrichment/`, `interview/`, `materials/`, `pipeline/`, `preparation/`, `profile/`, `scoring/`, or `workflow_specs.py`. | Coordinator removed 76 tracked retired entry/activity/workflow files, also `actions.py`, `digest.py`, `infrastructure/{apply_tools,captcha,learning,pipeline}/` and `domain/feedback/`. Exact root inventory: `/private/tmp/jobctrl-transform-1428/retired-python-entrypoints.txt`. New feature packages and rewritten CLI adapters remain the owners. |
 | P1 — rehome implemented, owner proof reported | `app/model_providers.py` used private SDK helpers in whole legacy `infrastructure.analysis` and `infrastructure.llm` modules, which pulled old analysis/model-lane/spend dependencies. Native wrapper backedges also imported the old analysis modules. | Model owner created `app/provider_support/` with only pool/lifecycle, strict schemas, isolated SDK clients, auth validation, usage and safe-error leaves. Owner reports all three actual SDK boundary probes passed under a legacy-import blocker. Retired analysis classes, old spend writers and default concurrency singletons must not be copied. |
 | P1 — active old-authority read repaired | Contacts default `bootstrap.py` factory → `fetcher.GatewayContactResearchFetcher` → argument-free `PolitenessGateway()` → `resolve_request_headers()` → old `config.load_discovery_crawler_settings()` → `database._refuse_unresolved_initialization` and process-global `config.DB_PATH`. The controlled synthetic fetcher bypassed this path. | Contacts repaired direct/default constructors and composed factories to use explicit public Discovery settings or builtin identity. Owner reports cold production-path proof under an import blocker and real composed Discovery-settings readback; malformed saved identity fails the owned action without old fallback. All active consumers now import neutral `jobctrl/network/`, with no old recorder/config hooks. No execution of the old metric writer was proven. |
-| P1 — rehome implemented, owner proof reported | `features/applications/mail.py` imported old `infrastructure.gmail.auth` and `privacy`; auth imports old `config` at module scope. | `application_mail` moved explicit-path OAuth/token primitives into `mail_support.py`, with `mail_privacy.py` and `mail_windows.py`; no config defaults or global token access remain. Owner reports public CLI OAuth/atomic interruption proof on POSIX; Windows remains a separate required platform control. |
+| P1 — rehome implemented, owner proof reported | `features/applications/mail.py` imported old `infrastructure.gmail.auth` and `privacy`; auth imports old `config` at module scope. | `application_mail` moved explicit-path OAuth/token primitives into `mail_support.py`, with `mail_privacy.py` and `mail_windows.py`; no config defaults or global token access remain. Owner reports public CLI OAuth/atomic interruption proof on POSIX; the hosted Windows Gmail control also passed on its recorded candidate. Live user authentication remains separate. |
 | P1 — rehome implemented | `runtime_commands.py` used `config.get_env_path`/`APP_DIR`; `browser_capabilities.py` used `get_config_path`, `APP_DIR`, `ConfigFileError`, `load_config_file`, `edit_config_file`. | `native_runtime_config.py` now owns the explicit native file boundary; `native_browser.py` owns the retained real Chromium probe. Target credentials use explicit native primitives. `scripts/dev-process-owner.py` now imports neutral `jobctrl.process_ownership`; the owner reports authenticated original-child stop preserved an unrelated process. Payload assertions point to the current browser/native modules. |
 | P1 — pure-leaf escape and retirement complete | Interviews formerly consumed old `domain.determinations`, `job_snapshot`, `ProfileSnapshot`, claim-verification/artifact-quality values and services, IDs/tenant/LLM ports and lane contexts. Jobs/Discovery/Learning additionally used common citation/schema helpers, taxonomy and source-policy values; locale verification used `exact_values.numeric_literals`. | Current owners use shared `semantic/`, `tracing.py`, `source_values.py` and feature-owned Interview algorithms/model ports. Career handed off its replacement after the actual API/Temporal journey. Root has removed the old domain graph and dependent legacy top-level leaves; assets remain separate. |
 
@@ -577,7 +617,8 @@ explicit managed Codex login/verification, live catalog/readiness checks,
 revision-fenced selection and mutation-free dry-run; source provisioning belongs
 to current install/dev entry points. The actual shared CLI journey in
 `e2e-w989ac` passed after the doctor policy-snapshot repair. This is focused
-completion supplemented by the 22/22 installed pass; hosted CI remains separate.
+completion supplemented by the 22/22 installed and hosted Browser passes;
+remaining hosted jobs are separate.
 Future-only CapSolver
 storage is not proof of an active CAPTCHA solver, and obsolete framework
 prerequisites need not return.
@@ -590,17 +631,21 @@ full supporting-source transfer, have an implemented replacement and recorded
 proof. Source-complete rows do not silently become retired features merely
 because their every variant is not a standalone recurring test.
 
-1. **Whole-head hosted acceptance:** retain the actual CI result on the final
-   candidate before claiming full qualification. Native policy PR #1461's
-   trusted release-manifest inventory check precedes main transformation PR
-   #1454 admission. The complete installed 22/22 result is recorded; the earlier
-   source runs remain honest 18+3+1 observations rather than rewritten passes.
-2. **Evidence qualification:** final local demo, synthetic Profile transfer,
-   native lifecycle/custody and the full pinned installed application have
-   passed. No hosted deployment or real-user reset occurred. Published
-   signed/notarized predecessor, remaining native-platform qualification and
-   live-provider semantic quality are not established by controlled external
-   boundaries or unsigned local payloads. No release/deployment is claimed.
+1. **Whole-head hosted acceptance:** Browser job `128139371277` passed 23/23
+   on `09f9d5c`. Original PR candidate `0db` passed its other hosted contexts,
+   including Backend `128144844565` and Browser `128144844490`; Windows
+   credentials had failed. The corrected Windows job `128146721619` on
+   `23bafd876` passed 37 controlled plus 21 native checks with cleanup, and
+   Linux and macOS passed in the same focused workflow. Verify all
+   required contexts against the final candidate before claiming completion.
+2. **Evidence qualification:** local demo, synthetic Profile transfer, native
+   lifecycle/custody and the latest pinned installed application passed; hosted
+   Windows Gmail and both Darwin partitions also passed on their recorded
+   candidates. The active released-upgrade harness has been rewritten for
+   signed-only schema-2 exact identity; its actual operational result is tracked
+   in #1428 and is required before merge. Published signed/notarized predecessor qualification, remaining
+   platform controls and live-provider semantic quality remain separate. No
+   hosted deployment, release or real-user reset occurred.
 
 No additional capability retirement is authorized by a missing proof. The
 accepted retirements remain Cover and the specified adaptive Tailor policy;

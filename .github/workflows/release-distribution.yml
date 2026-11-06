@@ -613,7 +613,7 @@ jobs:
           cd "$RUNNER_TEMP/release"
           shasum -a 256 -c SHA256SUMS
 
-      - name: Verify the latest stable transition and its reported outcome
+      - name: Qualify the signed predecessor and Python application transition
         if: ${{ inputs.channel == 'stable' }}
         env:
           JOBCTRL_RELEASE_METADATA_TOKEN: ${{ github.token }}
@@ -623,6 +623,8 @@ jobs:
           node scripts/released-upgrade-smoke.mjs \
             --release-dir "$RUNNER_TEMP/release" \
             --output "$RUNNER_TEMP/released-upgrade-smoke.json"
+          jq -e '.schemaVersion == 2 and .status == "passed" and .qualification == "signed-latest-stable-and-candidate" and .executables == "actual-latest-stable-and-signed-candidate" and (.results | length == 1) and .results[0].status == "passed"' \
+            "$RUNNER_TEMP/released-upgrade-smoke.json"
 
       - name: Diagnose a retained predecessor notarization failure
         if: ${{ failure() && inputs.channel == 'stable' }}

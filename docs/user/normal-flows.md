@@ -869,6 +869,12 @@ outside the source, a complete `--browser-sources` export and
 `--confirm-profile-only-reset`. This preserves the full Profile and supporting
 sources while other application data starts fresh. Verify the transfer receipt
 before deliberately selecting the new workspace; the command does not switch it.
+For installed cutover, also use a separate fresh native runtime home and preserve
+the old installation. Its first selection consumes the verified transfer's
+permission to initialize new workflow history once; an interrupted selection
+requires inspection or a new explicit transfer into a different nonexistent
+target. Follow the unreleased transition boundary in Getting Started, rather
+than reusing the old native runtime home or deleting a consumed marker.
 Do not perform a real-user cutover during development or QA. Compatible later
 Python updates preserve target state; after a failed candidate startup, stop
 the owned runtime and resume forward with `jobctrl update`. See

@@ -60,7 +60,8 @@ Run the focused release checks from the clean worktree:
 
 ```bash
 corepack pnpm install --frozen-lockfile
-corepack pnpm scripts:test
+corepack pnpm check
+corepack pnpm e2e
 corepack pnpm distribution:audit
 python3 scripts/release_check.py --strict-prompt --release-tag vVERSION
 corepack pnpm docs:build
@@ -68,18 +69,18 @@ corepack pnpm docs:check:runtime
 git diff --check
 ```
 
-Changes to release shell checks also run the focused release tests on a macOS
-runner with the system Bash. On macOS, run `node --test
-scripts/release-resume-pypi.test.mjs scripts/release-distribution-workflow.test.mjs`
-to exercise the same compatibility boundary locally. Do not rely on `set -e`
-alone to stop after a failed `[[ ... ]]` assertion in the system Bash; make the
-failure explicit.
+Changes to release shell checks need the applicable actual release-entrypoint
+qualification on macOS with the system Bash. The former isolated script-test
+commands are retired; use the current [operational QA gates](../local-reliability-qa.md)
+and retain their real results. Do not rely on `set -e` alone to stop after a
+failed `[[ ... ]]` assertion in the system Bash; make the failure explicit.
 
-For a schema transition, require native cross-runtime migration proof with the
-locked Python and installed Node runtimes bound as documented in
+For the Python cutover, require explicit fresh-target Profile/source transfer
+integrity and legacy-admission refusal, plus target-to-target lifecycle proof
+with the pinned installed runtimes as documented in
 [Reliability & QA](../local-reliability-qa.md). Use only owned synthetic workspaces.
 Check candidate activation, paired backup, preservation, readiness failure,
-rollback, and supported source schemas. Applicable checks and product QA must pass;
+rollback, and the exact Python application identity. Applicable checks and product QA must pass;
 version parity and a successful build do not establish migration safety.
 
 Use a signed-off Conventional Commit, open the PR, inspect its final diff, and
@@ -230,33 +231,52 @@ Update and rollback verification must also exercise the real launcher entry
 point with a resumable transition journal, including the detached supervisor.
 A fresh installation and tests that replace the readiness-start function do not
 prove that an authenticated candidate can start before the journal is finalized.
-The protected release workflow runs `scripts/released-upgrade-smoke.mjs` against
-actual released executables before immutable publication. Its ordinary compatible
-protocol case upgrades from
-**the latest published stable version before the candidate**, rolls back to that
-version with its paired data backup, then explicitly upgrades again. For the
-re-update, the retained newer selector is authenticated independently from the
-rolled-back payload; an incompatible or untrusted selector is refused. For the
-protocol-1/schema-14 to protocol-2/schema-15 transition, it verifies the old
-controller's refusal, interrupts the signed new installer both before and after
-selector handoff, preserves later application and Temporal WAL writes through
-forward recovery, and checks that cross-protocol rollback is refused. Both cases check
-real service readiness, retained job data and Temporal history. When v0.3.1 is
-the latest stable predecessor, the v0.3.1-to-v0.4.0 exception reports
-`qualified-with-legacy-refusal`: it verifies
-that the real installer refuses an untracked legacy runtime, preserves the data
-pair, registry, selector and journal, and that the predecessor can restart in the
-controlled fixture. That result does **not** qualify a direct user upgrade.
-Other version pairs still require their positive upgrade qualification.
+`scripts/released-upgrade-smoke.mjs` qualifies **the latest published stable
+version before the candidate** against the signed Python candidate. The candidate
+must bind the exact `launcher/application-schema.json` declaration and Python
+server/worker entrypoints in its authenticated payload inventory. Launcher
+protocol compatibility alone never establishes database compatibility. Unknown
+application identities fail qualification.
 
-A compatible schema-15 update binds its first paired backup to the predecessor.
-Older protocol-2 controllers could instead record the candidate receipt on that
-snapshot. Explicit rollback can use that historical pair only when the completed
-update journal identifies the exact releases and original backup, neither a
-recovery backup nor a cross-schema transition is involved, both signed releases
-declare schema 15, and the pair's files and schema verify. Otherwise rollback
-refuses before restoring data. Installer trust failures include the system
-verifier's diagnostic; investigate that output without bypassing notarization.
+For a legacy application database (`application_id=0`, `user_version=14` or `15`),
+the harness saves a complete synthetic authored Profile through the predecessor's
+actual public API and records a real Temporal workflow. Acquiring a different
+candidate build into the old active runtime home succeeds as authenticated
+staging; it does not activate that build or admit legacy data. The refusal proof
+invokes the already staged candidate installer for first selection in the
+separate fresh acquisition home with the old `JOBCTRL_DIR`, and invokes the real
+Homebrew frontend against the old installation. Both must refuse legacy use
+before changing the source data,
+Temporal history, selectors, instance registries, transition journal or backups.
+The candidate's explicit `profile-transfer` command then imports the full Profile,
+baseline, style and template into a nonexistent target using a complete browser
+source manifest. Native first selection uses a separate fresh runtime home as
+well as the fresh application workspace, preserving the old runtime selection.
+The source remains unchanged. The new target must have empty
+Jobs and fresh Temporal history, preserve every authored Profile field, and pass
+actual start, healthy-worker, stop and restart checks. This qualifies the
+deliberate Profile-only cutover; it does not authorize an automatic in-place
+upgrade or a real-user reset.
+
+For an existing Python target (`application_id=1245926228`, `user_version=1`),
+both releases must declare that exact application identity. The harness upgrades,
+checks public Profile/Jobs/Discovery/Settings state and actual Temporal history,
+performs an explicit paired rollback, then upgrades again through the retained
+authenticated Homebrew frontend. The first pair belongs to the predecessor;
+later recovery pairs belong to the candidate. The re-update interrupts the
+actual controller at all eight current durable handoffs. Later canonical public
+writes and real Temporal workflow histories must survive every retry, a real
+readiness failure and the final selection commit. Failed startup preserves the
+live pair and continues forward; it cannot automatically restore an older
+snapshot. Rollback during an unfinished forward transition must refuse without
+mutation. Only an explicit paired rollback after a completed compatible update
+may restore accepted prior state. Installer trust failures retain the system
+verifier's diagnostic; investigate it without bypassing notarization.
+The disposable policy checks also revoke the running candidate: start/update
+must refuse, while authenticated owned stop still retires its execution receipts
+without changing the journal or selection. A revoked predecessor remains
+historical handoff evidence and cannot block forward recovery. These synthetic
+revocations are scoped to the private fixture policy, never a published channel.
 
 The harness resolves that source from GitHub's published stable releases, so the
 source advances automatically after each release. Drafts, prereleases and the
@@ -265,17 +285,23 @@ releases published before it can be predecessors. Ambiguous publication times
 fail the check. Its signed descriptor and artifact hashes must verify against protected
 release trust, and its signed sequence must precede the candidate's.
 
-Historical source schemas, detailed readiness-fault injection, old failed
-transitions, never-started installations, partial pairs and orphaned sidecars
-remain covered by the native suite. Do not repeat that compatibility matrix in
-every release's publication gate.
+Never-started installations, partial pairs, orphaned sidecars and process-custody
+refusals remain covered by the native suite. The release gate adds actual signed
+predecessor and candidate execution; a local unsigned fixture cannot replace it.
 
 The selected case retains its report and elapsed time, with a 20-minute limit.
 Publication depends directly on its success. It uses the existing self-contained
 verification bundle and actual bundled runtimes without installing application
 development dependencies. The signed formula-cache adapter replaces only
-Homebrew acquisition. Keep installers, migrations, services and data/history
+Homebrew acquisition. Keep installers, public Profile transfer, services and data/history
 checks real; use only owned synthetic workspaces.
+
+Both active release workflows require report schema version `2`, status `passed`
+and qualification `signed-latest-stable-and-candidate`. The command has no local
+trust bypass. Exported scenario helpers can support separate owned operational
+proofs, but those reports must say `unqualified-for-release` and cannot satisfy
+the protected publication gate. No signed predecessor/candidate run is claimed
+by a local helper proof or the installed application journey suite.
 
 Before channel promotion, the public-asset smoke verifies the immutable
 descriptor, installer and artifact, runs the native lifecycle, and audits,
@@ -311,51 +337,59 @@ Signing success or one published channel is not completion. This repository
 runbook is the canonical procedure; an optional agent skill should route here
 rather than duplicate workflow commands and security policy.
 
-## Schema-15 installed upgrade qualification
+<a id="schema-15-installed-upgrade-qualification"></a>
 
-The authenticated new installer owns the protocol-1/schema-14 to
-protocol-2/schema-15 transition. Historical controllers, including v0.3.1,
-must reject the protocol-2-only target before backup or journaling. Run the
-new release's verified installer against the original runtime home; retain the
-predecessor receipt and immutable payload as historical authentication evidence.
-The predecessor is never executed during this forward path. Normally used
-v0.3.1 installations have an untracked runtime registry that prevents the new
-controller from proving process shutdown. The v0.4.0 installer refuses those
-upgrades; no self-service recovery is documented. Reboot alone does not resolve
-the refusal. For a workspace with verified ownership, no bridge catalog, bridge
-release, or reboot is a migration prerequisite.
+## Python application cutover and installed qualification
 
-Before taking a paired, SQLite-online backup, the new controller requests clean
-exit for instance-owned processes and descendants, kills verified leftovers only
-after the shutdown timeout, and waits for exit. A real inspection or cleanup
-failure blocks migration and preserves the databases and journal. A restart
-normally follows successful cleanup; reboot is last-resort troubleshooting for
-an actual cleanup failure.
+The previous schema-14-to-15 in-place migration is historical. The Python target
+requires application ID `1245926228`, `user_version=1`, exact `app_metadata`,
+and an authenticated `launcher/application-schema.json` declaration. A retained
+`launcher/schema-transition.json` or historical release-smoke result is not
+authority to migrate old data into this application.
 
-The signed payload inventory must bind `launcher/schema-transition.json` to
-source schema 14 and target schema 15. Exact-v14 activation applies the additive
-migration in place, preserving the database inode. A failed or interrupted
-attempt preserves the live pair. Before selector replacement, retry the
-trusted new installer: the immutable protocol-1 public binary cannot decode
-the protocol-2 journal. After replacement, ordinary `jobctrl update` resumes
-through the new controller. Each attempt backs up the current live pair, including acknowledged WAL writes;
-it never restores an earlier snapshot over newer data or restarts retired code.
-A cross-protocol rollback is refused. A first install cannot adopt a schema-14
-workspace without its original authenticated predecessor selection; an exact-v15
-reinstall preserves data after normal cleanup.
+Legacy application databases, legacy Temporal layout and incompatible backup
+pairs must be refused without changing source data or using an old runtime
+bridge. For the deliberate transition, `profile-transfer` reads an existing
+source and a complete browser-source/attachment export through `--browser-sources`,
+requires a nonexistent target outside the source and `--confirm-profile-only-reset`,
+and preserves the full Profile and supporting sources. Other application data
+starts fresh. The command emits a transfer receipt and does not select the
+target. Verify the receipt and inventory before deliberately selecting it with
+both `JOBCTRL_DIR=NEW_WORKSPACE` and a separate fresh
+`JOBCTRL_RUNTIME_HOME=NEW_RUNTIME_HOME`. Preserve the source workspace and old
+runtime home/selection. The native installer's first selection admits an
+application-only database only with a complete private transfer receipt and
+absent Temporal state; it consumes that one-time workspace authority before
+selection. Reusing a consumed workspace under another runtime home, or an
+incomplete transfer, refuses. Update and rollback continue to require a complete
+authenticated pair.
+The original transfer receipt remains `selected:false`; a separate durable
+workspace marker records consumption before native selection. If that first
+selection is interrupted, preserve the Profile, marker and source. Inspect the
+interruption or explicitly transfer again into a different nonexistent target;
+never automatically remove the marker, reset data or retry under another home.
+Development and QA must use owned synthetic workspaces, never a real-user reset.
 
-Source merge and synthetic fixtures do not establish an available or qualified
-installed upgrade. Before first publication/use, exercise the actual signed,
-notarized installer and target through both curl and unmodified Homebrew,
-including archived-controller rejection, normal start/stop/restart, interruption
-and readiness failure, repeated forward recovery, revoked predecessor evidence,
-revoked-target startup/update refusal, pure cleanup of a revoked target's owned
-writers, and protected app/Temporal WAL and external-file bytes. Run the archived
-public binary at each pre-selector interruption and the new installer retry
-through its actual entry; calling the new `Run` implementation with an old
-executable pathname proves neither of those process boundaries.
-Use owned synthetic workspaces and the matrix in
+Later target-to-target updates and paired rollbacks must authenticate the exact
+Python application identity and preserve current data. Before backup/restore,
+the controller must verify owned-process cleanup and the complete paired data
+authority. If candidate startup fails, retain live databases and receipts;
+`jobctrl stop` followed by `jobctrl update` continues forward. Never automatically
+restore an earlier snapshot over possible later commits. Unresolved accounting,
+unknown process ownership or an incompatible pair refuses the operation.
+
+Source merge and unsigned synthetic payloads do not establish a published
+upgrade. Before publication, exercise the actual signed/notarized installer
+and target through curl and unmodified Homebrew, preserving predecessor
+authentication and revocation checks. Prove legacy refusal, current-target
+start/stop/restart, update/backup/rollback, interruption and readiness failure,
+forward recovery, and preservation of app/Temporal WAL and unrelated files.
+Use real entry points; an old executable pathname passed to a new in-process
+implementation does not establish an archived-binary boundary.
+
+The current local native lifecycle/custody partitions and pinned installed
+application suite are documented in
 [Reliability & QA](../local-reliability-qa.md#schema-15-forward-upgrade).
-The historical release-smoke upgrade/rollback cycle must not be claimed as
-cross-protocol upgrade evidence: qualify the new installer path and explicit
-cross-protocol rollback refusal separately.
+Their local passes do not replace signed acquisition or release-specific
+predecessor qualification. Preserve the protected signing, notarization,
+manifest, platform and publication gates when updating the release harness.

@@ -77,7 +77,7 @@ if len(header)!=100 or header[:16]!=b"SQLite format 3\x00":
     raise SystemExit(3)
 # The target identity is published before WAL is enabled. Never open SQLite
 # against a legacy workspace: even mode=ro can create WAL shared memory.
-if struct.unpack(">I",header[68:72])[0]!=0x4A435354:
+if struct.unpack(">I",header[68:72])[0]!=0x4A435354 or struct.unpack(">I",header[60:64])[0]!=1:
     print("profile-transfer-required")
     raise SystemExit(0)
 p=path.resolve().as_uri()+"?mode=ro"

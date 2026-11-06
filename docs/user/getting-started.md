@@ -286,10 +286,27 @@ old workspace remains untouched; development and QA must not reset live user
 data. The target database has application ID `1245926228` and user version `1`.
 
 The source transition uses the explicit `profile-transfer` command with a
-read-only source, an empty new target and `--confirm-profile-only-reset`. Select
-the new workspace deliberately after verifying the transfer. Do not treat a
-source checkout or synthetic smoke as a published upgrade; signed acquisition,
-predecessor compatibility and release qualification remain separate gates.
+read-only source, a nonexistent new target, a complete browser Profile sources
+manifest and `--confirm-profile-only-reset`. Verify the completed receipt before
+selecting the new workspace.
+
+An installed cutover also needs a **separate fresh native runtime home** with no
+active release selection. Preserve both the old workspace and its native runtime
+home. The authenticated candidate installer must first stage into the new runtime
+home; its bundled Python performs the transfer, and the same installer then makes
+the first selection with `JOBCTRL_DIR` pointing to the new workspace. This is a
+release-qualified operation, not a command to run with today's published version.
+The native installer supports `--stage-only --home`; the public install shell does
+not forward `--stage-only`.
+
+Only a verified, unused transfer may start without workflow history. First native
+selection consumes that permission once. If interrupted after consumption, keep
+the target for inspection or repeat the explicit transfer into a different
+nonexistent target; do not remove the selection marker to retry. Reusing an old
+runtime home or a used transfer cannot authorize missing-history recovery.
+Do not treat a source checkout or synthetic smoke as a published upgrade; signed
+acquisition, predecessor compatibility and release qualification remain separate
+gates.
 
 For later target-to-target updates, the new runtime preserves live workspace
 state. If an update is interrupted, stop the owned runtime and resume forward;

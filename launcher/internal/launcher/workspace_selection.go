@@ -31,6 +31,12 @@ func CheckWorkspaceSelection(home, payloadRoot string, env []string, initial boo
 		return err
 	}
 	verified := verifiedRelease{payloadRoot: payloadRoot, runtime: target, distribution: distribution}
+	if initial {
+		transferred, err := admitInitialProfileTransfer(ctx, verified)
+		if transferred || err != nil {
+			return err
+		}
+	}
 	if err := admitPythonApplicationLifecycle(ctx, verified); err != nil {
 		return err
 	}
