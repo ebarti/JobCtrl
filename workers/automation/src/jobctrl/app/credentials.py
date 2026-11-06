@@ -459,6 +459,13 @@ class CredentialService:
         self.settings = settings or (self.runtime.settings if self.runtime else None)
         self.environ = dict(os.environ if environ is None else environ)
         self.system_name = system_name or platform.system()
+        if self.system_name == "Windows":
+            # Copying os.environ loses its case-insensitive lookup behavior.
+            # The native adapter reads this conventional spelling explicitly.
+            system_root = next((value for key, value in self.environ.items() if key.upper() == "SYSTEMROOT"), None)
+            self.environ = {key: value for key, value in self.environ.items() if key.upper() != "SYSTEMROOT"}
+            if system_root is not None:
+                self.environ["SystemRoot"] = system_root
         self._local = threading.local()
         self.lock_timeout = lock_timeout
         self.identity_reader = identity_reader
@@ -791,8 +798,19 @@ class CredentialService:
                 wire_input = json.dumps(command, ensure_ascii=True) + "\n" + wire_input
             allowed = {"PATH", "HOME", "TMPDIR", "TEMP", "TMP", "SystemRoot", "WINDIR",
                        "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "LANG", "LC_ALL"}
-            environment = (dict(child_environment) if child_environment is not None else
-                           {key: value for key, value in self.environ.items() if key in allowed or key.startswith("JOBCTRL_E2E_")})
+            windows = self.system_name == "Windows"
+            if windows:
+                allowed = {key.upper() for key in allowed}
+            plumbing = {(key.upper() if windows else key): value for key, value in self.environ.items()
+                        if (key.upper() if windows else key) in allowed or key.startswith("JOBCTRL_E2E_")}
+            environment = dict(plumbing) if child_environment is None else {
+                (key.upper() if windows else key): value for key, value in child_environment.items()}
+            if windows and child_environment is not None:
+                # An isolated provider environment must still be able to load
+                # Windows system DLLs; never restore ambient provider auth.
+                for key in ("SYSTEMROOT", "WINDIR"):
+                    if key not in environment and key in plumbing:
+                        environment[key] = plumbing[key]
             suspended = enrollment and os.name == "nt"
             child = subprocess.Popen(launch, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True, encoding="utf-8", env=environment,

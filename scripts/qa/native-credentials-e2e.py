@@ -238,7 +238,15 @@ def main() -> int:
     allowed = {"PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR", "SystemDrive",
                "ComSpec", "PATHEXT", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
                "ProgramData", "DBUS_SESSION_BUS_ADDRESS"}
-    environment = {key: value for key, value in os.environ.items() if key in allowed}
+    native_macos = args.platform_native and platform.system() == "Darwin"
+    if native_macos:
+        # Keychain uses this OS-user context. Secret isolation comes from the
+        # random QA service; application data still lives in the owned workspace.
+        allowed.add("HOME")
+    if os.name == "nt":
+        allowed = {key.upper() for key in allowed}
+    environment = {key: value for key, value in os.environ.items()
+                   if (key.upper() if os.name == "nt" else key) in allowed}
     os.environ.clear()
     os.environ.update(environment)
     import httpx
@@ -266,6 +274,8 @@ def main() -> int:
         workspace.mkdir(mode=0o700)
         for key, name in (("HOME", "home"), ("USERPROFILE", "home"), ("APPDATA", "appdata"),
                           ("LOCALAPPDATA", "localappdata"), ("XDG_DATA_HOME", "data"), ("XDG_RUNTIME_DIR", "run")):
+            if native_macos and key == "HOME":
+                continue
             location = owned / name
             location.mkdir(mode=0o700, exist_ok=True)
             os.environ[key] = str(location)
