@@ -1,108 +1,152 @@
-import type { ArtifactSortField } from "@jobctrl/contracts";
-import { IconAlertTriangle } from "@tabler/icons-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import type { RowSelectionState, SortingState } from "@tanstack/react-table";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
-import { useArtifactsListQuery } from "../../contexts/operations/hooks/useArtifactsListQuery.js";
 import {
-  ARTIFACT_SORT_FIELDS_TUPLE,
-  type ArtifactsSearch,
-} from "../../routes/-artifacts.search.js";
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "../../shared/ui/alert.js";
+  useResumeArtifactCatalog,
+  type ResumeArtifact,
+} from "../../contexts/resumes/index.js";
+import type { ArtifactsSearch } from "../../routes/-artifacts.search.js";
+import { Button } from "../../shared/ui/button.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import { ArtifactFilterBar } from "./ArtifactFilterBar.js";
 import { ArtifactsTable } from "./ArtifactsTable.js";
+import { ResumeRecordHistory } from "./ResumeRecordHistory.js";
 
-const SORTABLE_ARTIFACT_FIELDS: ReadonlySet<ArtifactSortField> = new Set(
-  ARTIFACT_SORT_FIELDS_TUPLE,
-);
-
-function isArtifactSortField(value: string): value is ArtifactSortField {
-  return SORTABLE_ARTIFACT_FIELDS.has(value as ArtifactSortField);
+function field(
+  row: ResumeArtifact,
+  sort: ArtifactsSearch["sort"],
+): string | number {
+  return sort === "created_at"
+    ? (row.renderedAt ?? "")
+    : sort === "title"
+      ? row.title
+      : sort === "company"
+        ? (row.company ?? "")
+        : sort === "type"
+          ? row.locale
+            ? "translation_pdf"
+            : "resume_pdf"
+          : sort === "status"
+            ? row.status
+            : row.render.size_bytes;
 }
-
-function artifactsListInput(search: ArtifactsSearch) {
-  return {
-    page: search.page,
-    pageSize: search.pageSize,
-    q: search.q,
-    sort: search.sort,
-    dir: search.dir,
-    status: search.status === "all" ? "" : search.status,
-  };
-}
-
 export function ArtifactsView() {
   const search = useSearch({ from: "/artifacts" });
   const navigate = useNavigate({ from: "/artifacts" });
-
-  const { data, isFetching, error } = useArtifactsListQuery(artifactsListInput(search));
-  const message = error instanceof Error ? error.message : null;
-
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-
-  useEffect(() => {
-    setRowSelection({});
-  }, [search.dir, search.page, search.pageSize, search.q, search.sort, search.status]);
-
+  const query = useResumeArtifactCatalog();
+  const rows = useMemo(() => {
+    const literal = search.q.toLocaleLowerCase();
+    return (query.data?.artifacts ?? [])
+      .filter(
+        (row) =>
+          (search.status === "all" || row.status === search.status) &&
+          (!literal ||
+            [
+              row.title,
+              row.company ?? "",
+              row.artifactId,
+              row.jobId,
+              row.resumeId,
+              row.locale?.target_locale ?? "",
+              row.locale ? "translation PDF" : "resume PDF",
+            ].some((value) => value.toLocaleLowerCase().includes(literal))),
+      )
+      .toSorted((left, right) => {
+        const a = field(left, search.sort);
+        const b = field(right, search.sort);
+        const order =
+          typeof a === "number" && typeof b === "number"
+            ? a - b
+            : String(a).localeCompare(String(b));
+        return (
+          (search.dir === "desc" ? -order : order) ||
+          left.artifactId.localeCompare(right.artifactId)
+        );
+      });
+  }, [query.data, search.q, search.status, search.sort, search.dir]);
   const setSearch = (next: Partial<ArtifactsSearch>) => {
-    void navigate({ search: (prev: ArtifactsSearch) => ({ ...prev, ...next }) });
-  };
-
-  const sorting = useMemo<SortingState>(
-    () => [{ id: search.sort, desc: search.dir === "desc" }],
-    [search.sort, search.dir],
-  );
-
-  const handleSortingChange = (next: SortingState) => {
-    const head = next[0];
-    if (!head || !isArtifactSortField(head.id)) {
-      return;
-    }
-    setSearch({
-      sort: head.id,
-      dir: head.desc ? "desc" : "asc",
-      page: 1,
+    void navigate({
+      search: (previous: ArtifactsSearch) => ({ ...previous, ...next }),
     });
   };
-
+  const pages = Math.max(1, Math.ceil(rows.length / search.pageSize));
+  const page = Math.min(search.page, pages);
+  const unrendered = (query.data?.resumes ?? []).filter(
+    (resume) =>
+      !query.data?.artifacts.some((row) => row.resumeId === resume.resume_id) &&
+      (!search.q ||
+        [
+          resume.resume_id,
+          resume.job_id,
+          resume.job?.title ?? "",
+          resume.job?.company ?? "",
+        ].some((value) =>
+          value.toLocaleLowerCase().includes(search.q.toLocaleLowerCase()),
+        )),
+  );
   return (
-    <>
+    <main className="route-page grid gap-5">
       <PageHead
         eyebrow="Library"
         title="Artifacts"
-        subtitle={data ? `${data.pagination.total} total` : "loading"}
+        subtitle={
+          query.data
+            ? `${query.data.artifacts.length} registered PDF files · ${query.data.resumes.length} resume records`
+            : "Loading saved artifacts"
+        }
       />
+      <p>
+        Browse recorded resume and translation PDFs, their exact source
+        revisions, accepted history and audit. Acceptance and source freshness
+        are shown separately.
+      </p>
+      {query.error ? (
+        <p role="alert">
+          {query.error.message} The last loaded catalog remains visible.
+        </p>
+      ) : null}
+      <Button
+        variant="outline"
+        onClick={() => {
+          void query.refetch();
+        }}
+      >
+        Reload artifact catalog
+      </Button>
       <section className="card full data-list-card">
-        {message ? (
-          <Alert variant="destructive">
-            <IconAlertTriangle aria-hidden="true" />
-            <AlertTitle>Artifacts could not be loaded</AlertTitle>
-            <AlertDescription>{message}</AlertDescription>
-          </Alert>
-        ) : null}
         <ArtifactFilterBar search={search} />
         <ArtifactsTable
-          data={data ?? null}
-          loading={isFetching}
-          sorting={sorting}
-          onSortingChange={handleSortingChange}
-          rowSelection={rowSelection}
-          onRowSelectionChange={setRowSelection}
-          page={search.page}
+          items={rows.slice(
+            (page - 1) * search.pageSize,
+            page * search.pageSize,
+          )}
+          loading={query.isPending}
+          total={rows.length}
+          page={page}
+          pages={pages}
           pageSize={search.pageSize}
-          onPageChange={(page) => setSearch({ page })}
+          sort={search.sort}
+          direction={search.dir}
+          onSort={(sort, dir) => setSearch({ sort, dir, page: 1 })}
+          onPageChange={(next) => setSearch({ page: next })}
           onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
-          onOpenArtifact={(artifactId) =>
-            void navigate({ to: "/artifacts/$artifactId", params: { artifactId } })
-          }
         />
       </section>
-    </>
+      {unrendered.length && search.status === "all" ? (
+        <section
+          className="section grid gap-3"
+          aria-label="Resume records without a rendered PDF"
+        >
+          <h2>Resume records without a rendered PDF</h2>
+          <p>
+            Drafts and failed render attempts remain recorded even when no PDF
+            has been registered.
+          </p>
+          {unrendered.map((resume) => (
+            <ResumeRecordHistory key={resume.resume_id} resume={resume} />
+          ))}
+        </section>
+      ) : null}
+    </main>
   );
 }

@@ -7,7 +7,7 @@ import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { setThreadFollowUpInThread } from "../lib/follow-up-patches.js";
 import { outreachKeys } from "../queryKeys.js";
 
-export type ScheduleFollowUpVariables = ScheduleFollowUpRequest;
+export type ScheduleFollowUpVariables = ScheduleFollowUpRequest & { expectedFingerprint: string };
 
 /**
  * Schedule a surfaced-only follow-up reminder for the thread (a plan, never a
@@ -21,13 +21,15 @@ export function useScheduleFollowUpMutation(
   jobId?: string,
 ): UseMutationResult<OutreachThreadResponse, Error, ScheduleFollowUpVariables> {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   const threadForContactKey = outreachKeys.threadForContact(tenantId, contactId, jobId ?? null);
   return useMutation(
     createOptimisticMutation<OutreachThreadResponse, ScheduleFollowUpVariables>(queryClient, {
       mutationKey: outreachKeys.thread(tenantId, threadId),
-      mutationFn: (body) => api.scheduleOutreachFollowUp(threadId, body),
+      mutationFn: (body) => http.json<OutreachThreadResponse>(
+        "POST", `/v1/outreach/threads/${encodeURIComponent(threadId)}/follow-up/schedule`, { body },
+      ),
       optimisticUpdates: (variables) => [
         {
           queryKey: threadForContactKey,

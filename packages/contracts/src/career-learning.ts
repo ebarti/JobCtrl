@@ -1,8 +1,6 @@
 import { z } from "zod";
-import {
-  DeterminationCitationSchema,
-  DeterminationEnvelopeSchema,
-} from "./semantic-determinations.js";
+import { ModelReceiptSchema } from "./model-receipt.js";
+import { DeterminationCitationSchema } from "./semantic-determinations.js";
 
 export const CareerDemandSchema = z
   .object({
@@ -47,6 +45,7 @@ const SourceSchema = z
 const SnapshotSchema = z
   .object({
     profileVersion: z.number().int().positive().nullable(),
+    profileFingerprint: z.string().nullable(),
     jobs: z
       .array(
         z
@@ -55,6 +54,8 @@ const SnapshotSchema = z
             title: z.string(),
             company: z.string(),
             sourceId: z.string(),
+            sourceRevision: z.number().int().positive(),
+            sourceHash: z.string().min(1),
             text: z.string(),
             applicationUrls: z.array(z.string()),
           })
@@ -88,7 +89,7 @@ const CohortSchema = z
     snapshot: SnapshotSchema,
     snapshotFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     determinationId: z.string().regex(/^[a-f0-9]{64}$/),
-    determination: DeterminationEnvelopeSchema,
+    determination: ModelReceiptSchema,
     comparison: CareerDemandComparisonSchema,
   })
   .strict();
@@ -196,14 +197,6 @@ export const CareerLearningCommandSchema = z.discriminatedUnion("action", [
       },
     ),
 ]);
-export const CareerLearningParamsSchema = z
-  .object({
-    tenantId: z.string().min(1),
-    expectedAppDir: z.string().min(1),
-    expectedDbPath: z.string().min(1),
-    command: CareerLearningCommandSchema.optional(),
-  })
-  .strict();
 export type CareerLearningCommand = z.infer<typeof CareerLearningCommandSchema>;
 export type CareerLearningResponse = z.infer<
   typeof CareerLearningResponseSchema

@@ -21,12 +21,12 @@ export function useUpdateContactMutation(): UseMutationResult<
   UpdateContactVariables
 > {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   const listPrefix = outreachKeys.contactLists(tenantId);
   const options = createOptimisticMutation<ContactMutationResponse, UpdateContactVariables>(queryClient, {
     mutationKey: outreachKeys.contacts(tenantId),
-    mutationFn: ({ contactId, body }) => api.updateContact(contactId, body),
+    mutationFn: ({ contactId, body }) => http.json<ContactMutationResponse>("PATCH", `/v1/contacts/${encodeURIComponent(contactId)}`, { body }),
     optimisticUpdates: ({ contactId, body }) => [{
       queryKey: outreachKeys.contactDetail(tenantId, contactId),
       patch: (current) => patchContactDetail(current, body),

@@ -2,37 +2,36 @@ name: Gmail token Windows privacy
 'on':
   workflow_dispatch:
   workflow_call:
-    inputs:
-      enabled:
-        type: boolean
-        default: true
 permissions:
   contents: read
 jobs:
   private-token:
-    if: "${{ github.event_name == 'workflow_dispatch' || inputs.enabled }}"
     name: Synthetic Gmail token ACL (Windows)
-    runs-on: windows-latest
-    timeout-minutes: 20
+    runs-on: windows-2025
+    timeout-minutes: 12
+    env:
+      UV_PYTHON: '3.12'
+      UV_EXCLUDE_NEWER: 'false'
+      UV_LOCKED: '1'
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      with:
-        persist-credentials: false
-    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
-      with:
-        python-version: '3.12'
-    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
-      with:
-        version: 0.11.7
-        enable-cache: true
-        cache-dependency-glob: workers/automation/uv.lock
-    - name: Install locked worker dependencies
-      run: uv --project workers/automation sync --locked --all-extras
-    - name: Exercise synthetic token replacement and native DACL
-      env:
-        LANGFUSE_DISABLE: '1'
-        JOBCTRL_DIR: "${{ runner.temp }}/jobctrl-gmail-token-qa"
-        JOBCTRL_RUNTIME_MODE: source
-      run: uv --project workers/automation run --locked --all-extras pytest -q --noconftest
-        workers/automation/tests/test_gmail_token_atomic.py workers/automation/tests/test_gmail_token_windows_acl.py
-        workers/automation/tests/test_gmail_windows_acl_contract.py
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+      - name: Prepare the exact application runtime without provider SDK groups
+        run: uv --project workers/automation sync --locked --no-default-groups --no-dev
+      - name: Exercise real public OAuth command and native Windows DACLs
+        run: uv --project workers/automation run --locked --no-default-groups --no-dev python scripts/qa/gmail-token-e2e.py --workspace-root "$env:RUNNER_TEMP" --require-windows
+      - name: Require unchanged dependency locks
+        if: always()
+        run: git diff --exit-code -- workers/automation/uv.lock

@@ -148,7 +148,7 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | `.env` | Legacy/plaintext provider credentials used by remaining compatibility paths. Not encrypted at rest. |
 | `codex_home/` | Stable JobCtrl-owned Codex CLI state. `auth.json` is outside the prompt-readable `workspace/` subtree. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated or separately acquired provider runtime state. |
-| `tailored_resumes/`, `cover_letters/` | Generated text, HTML, and PDF artifacts. |
+| `tailored_resumes/` | Generated text, HTML, and PDF artifacts. |
 | `profile-imports/` | Uploaded import PDFs retained for retry. The corresponding source-attempt bindings, which contain the digest and observed style but no PDF bytes, are in `jobctrl.db`. |
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state, including CAPTCHA usage metadata when applicable. |
 | `browser-profiles/` | Consented copied profiles retained for separate compatibility capabilities. Integrated `DiscoverWorkflow` never reads or launches them. Non-secret adoption metadata lives in `config.json`. |
@@ -398,12 +398,12 @@ and live interview assistance are not shipped by this integration. See
 | --- | --- | --- |
 | LLM providers | Scoring, employer analysis, materials, contact extraction, stored interview prep, offer communication drafts, opted-in Required-bullet coaching | Posting text, relevant profile evidence, generated text, or opted-in fetched page text. Offer communication includes confirmed actual terms and quotations, the decision attestation and recorded compensation evidence; saving or reading an offer does not call a provider. Required-bullet coaching sends selected saved Required bullets, their role/company context and matching achievement evidence to your configured provider. Candidate interpretation and target-role suggestions send minimized saved profile sources to the configured Profile provider after spend preflight. Every suggestion cites source IDs and verbatim spans and needs your confirmation; provider or budget failure reports unavailable without a lexical substitute. |
 | Job boards, ATS APIs, posting pages | Discovery and Enrich prefer the connected paired extension; otherwise acquisition uses guarded public HTTP or anonymous Playwright | Both modes send search terms, URLs, and page/API requests. Connected Chrome may also send cookies or session state belonging to that site; its cookie values are never copied into worker tasks or results, and its user-agent string is returned as transport metadata. Anonymous acquisition uses no personal Chrome profile or ambient netrc credentials. |
-| Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | The reviewed application URL and the page content observed during the transport-locked inspection. Profile fields, job-description prose, resume and cover-letter text, local artifact paths, and upload authority are excluded; see [Apply](apply.md#approval-and-automation-modes). |
+| Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | The reviewed application URL and the page content observed during the transport-locked inspection. Profile fields, job-description prose, resume text, local artifact paths, and upload authority are excluded; see [Apply](apply.md#approval-and-automation-modes). |
 | Salary data sources | At the end of a Discover run, only for benchmark slices that are missing or past their seven-day freshness window; Levels.fyi or Glassdoor only when their Settings policy permits | Requests for public benchmark data from Euro Top Tech, ECB exchange rates when a currency conversion is needed, and Eurostat price levels when a slice has no direct benchmark. Levels.fyi public-page URLs name the role and location being benchmarked. |
 | Gmail | Authenticated verification, bounded outcome feedback, or an approved email application | Scoped queries/evidence or the exact approved recipient/attachment. |
 | Google Maps | Profile location autocomplete with a configured key | Address text typed into the location field. |
 | CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the owned local tool. |
-| Langfuse/OpenTelemetry | Explicitly configured telemetry | Metadata-only LLM, workflow, and JSON-RPC spans: provider/model, operation/stage, outcome, token counts, and safe sizes. |
+| Langfuse/OpenTelemetry | Explicitly configured telemetry | Metadata-only LLM and workflow spans: provider/model, operation/stage, outcome, token counts, and safe sizes. |
 
 When using the connected paired extension, Discovery and Enrich capture HTML
 and text from your current Chrome session. If you are signed in, those snapshots
@@ -482,8 +482,8 @@ Current estimated spend appears on the health surface.
 
 ## Telemetry
 
-Langfuse export is off unless configured. Its default is metadata-only LLM,
-workflow and JSON-RPC spans. Set `LANGFUSE_DISABLE=1` to force opt-out.
+Langfuse export is off unless configured. Its default is metadata-only LLM and
+workflow spans. Set `LANGFUSE_DISABLE=1` to force opt-out.
 
 For deliberate debugging, `JOBCTRL_TRACE_CONTENT=1` additionally captures LLM
 messages and returned completions on their generation spans. When supplied by the

@@ -82,10 +82,11 @@ var stopForRecoveryCommand = stop
 var removeSQLiteSidecar = os.Remove
 
 type databaseFile struct {
-	Name          string `json:"name"`
-	SHA256        string `json:"sha256"`
-	SizeBytes     int64  `json:"sizeBytes"`
-	SQLiteUserVer int64  `json:"sqliteUserVersion"`
+	Name                string `json:"name"`
+	SHA256              string `json:"sha256"`
+	SizeBytes           int64  `json:"sizeBytes"`
+	SQLiteUserVer       int64  `json:"sqliteUserVersion"`
+	SQLiteApplicationID int64  `json:"sqliteApplicationId,omitempty"`
 }
 type databasePair struct {
 	SchemaVersion  int             `json:"schemaVersion"`
@@ -168,97 +169,12 @@ func recoverRevokedTransitionBeforePrepare(env []string, output io.Writer) (bool
 		return false, nil
 	}
 	journal, err := store.ReadJournal()
-	if errors.Is(err, os.ErrNotExist) || err != nil || !journal.Resumable() || journal.Old == nil || journal.Candidate == nil {
+	if err != nil || !journal.Resumable() || journal.Old == nil || journal.Candidate == nil || store.Permit(*journal.Old) == nil {
 		return false, nil
 	}
-	if store.Permit(*journal.Old) == nil {
-		return false, nil
-	}
-	if err := store.Permit(*journal.Candidate); err != nil {
-		return true, fmt.Errorf("security transition recovery is fail-closed: prior release is revoked and staged candidate is not permitted: %w", err)
-	}
-	if journal.BackupID == "" {
-		return true, errors.New("security transition recovery is fail-closed: revoked predecessor has no durable paired backup; preserve the journal and repair from the staged candidate")
-	}
-	transition, err := store.TransitionLock()
-	if err != nil {
-		return true, err
-	}
-	defer transition.Close()
-	selection, err := store.SelectionLock(true)
-	if err != nil {
-		return true, err
-	}
-	defer selection.Close()
-	if err := refusePendingBridgeHandoff(store.Home); err != nil {
-		return true, err
-	}
-	// Re-read while holding both locks so a concurrent acquisition cannot alter
-	// the candidate/policy decision after our preflight.
-	journal, err = store.ReadJournal()
-	if err != nil || journal.Candidate == nil || journal.Old == nil || store.Permit(*journal.Old) == nil {
-		return true, errors.New("security transition changed while recovery was acquiring locks")
-	}
-	if journal.PreserveLiveOnFailure {
-		return true, errors.New("transition requires live database preservation; automatic recovery is unavailable; retain the live databases and journal")
-	}
-	ctx, err := transitionContextForReceipt(env, store, *journal.Candidate)
-	if err != nil {
-		return true, err
-	}
-	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
-		return true, err
-	}
-	if !protocolSupports(ctx.Distribution, launcherProtocol) {
-		return true, fmt.Errorf("security recovery target does not support launcher protocol %d; retain the transition for a compatible recovery controller", launcherProtocol)
-	}
-	var pair databasePair
-	if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil || pair.ReleaseReceipt != *journal.Old {
-		return true, errors.New("security transition recovery has no verified predecessor database pair")
-	}
-	if err := refuseUncertainTransitionRollback(journal, &pair); err != nil {
-		return true, err
-	}
-	if err := stopForRecoveryCommand(ctx); err != nil {
-		return true, fmt.Errorf("quiesce possibly-live candidate before security recovery restore: %w", err)
-	}
-	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
-		return true, err
-	}
-	if err := advanceRecoveryRestoring(store, &journal); err != nil {
-		return true, err
-	}
-	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
-		return true, err
-	}
-	if err := restorePair(ctx, pair); err != nil {
-		return true, err
-	}
-	if err := store.Advance(&journal, release.CandidateStarting, nil); err != nil {
-		return true, err
-	}
-	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
-		return true, err
-	}
-	if err := startReleaseCommand(ctx, *journal.Candidate, journal.ID); err != nil {
-		_ = store.Advance(&journal, release.Failed, err)
-		return true, fmt.Errorf("security transition candidate did not become healthy; revoked predecessor was not started: %w", err)
-	}
-	if err := store.Advance(&journal, release.CandidateHealthy, nil); err != nil {
-		return true, err
-	}
-	active, _ := store.ReadActive()
-	if _, err := store.WriteSelectedActive(*journal.Candidate, active.Generation, journal.Candidate.BuildID, active.Acquisition); err != nil {
-		return true, err
-	}
-	if err := writeLegacyCurrent(store.Home, *journal.Candidate); err != nil {
-		return true, err
-	}
-	if err := store.Advance(&journal, release.Promoted, nil); err != nil {
-		return true, err
-	}
-	_, err = fmt.Fprintf(output, "Recovered the verified security-update candidate %s; revoked predecessor was not started.\n", journal.Candidate.BuildID)
-	return true, err
+	// A revoked predecessor is never recovery execution authority. Target updates
+	// can continue forward through their separately authenticated update command.
+	return true, errors.New("interrupted transition cannot restore a revoked predecessor; preserve the live pair and journal and run jobctrl update to continue a target application update")
 }
 
 // recoverInterruptedTransitionBeforeBootstrap prevents a formula-owned
@@ -574,6 +490,15 @@ func update(ctx launchContext, args []string, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("read active release: %w", err)
 	}
+	verified, err := verifyInstalledReleaseForExecution(store, active.Receipt)
+	if err != nil {
+		return err
+	}
+	// Refuse legacy data before an acquisition adapter can invoke Homebrew or
+	// stage downloaded bytes. Promotion repeats this admission under its locks.
+	if err := admitPythonApplicationLifecycle(ctx, verified); err != nil {
+		return err
+	}
 	if active.Acquisition == "homebrew" {
 		if build != "" && environmentMap(ctx.Environment)["JOBCTRL_ACQUISITION_INTERNAL"] != "1" {
 			return errors.New("Homebrew updates select the formula's authenticated build; `jobctrl update --to` is unavailable")
@@ -879,20 +804,21 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	if !protocolSupports(activeVerified.distribution, launcherProtocol) || !protocolSupports(targetVerified.distribution, launcherProtocol) {
 		return fmt.Errorf("current launcher protocol %d cannot supervise both active and rollback payloads; keep the current release; cross-schema rollback is unavailable", launcherProtocol)
 	}
+	if err := admitPythonApplicationLifecycle(ctx, activeVerified); err != nil {
+		return err
+	}
+	if err := readPythonApplicationSchemaContract(targetVerified); err != nil {
+		return fmt.Errorf("rollback cannot select a legacy application: %w", err)
+	}
 	targetPair, err := retainedPairForReceipt(ctx.Instance.StateDir, target)
 	if err != nil {
-		// Older forward controllers labeled their first schema-15 snapshot
-		// with the candidate receipt. Only the completed transition's original
-		// journal and both signed schema contracts can establish its source.
-		journal, journalErr := store.ReadJournal()
-		if journalErr != nil {
-			return fmt.Errorf("rollback requires a verified paired backup for %s: %w", target.BuildID, err)
-		}
-		compatible, compatibilityErr := compatibleForwardRollbackPair(ctx, journal, active, activeVerified, targetVerified)
-		if compatibilityErr != nil {
-			return fmt.Errorf("rollback requires a verified paired backup for %s: %w", target.BuildID, err)
-		}
-		targetPair = compatible
+		return fmt.Errorf("rollback requires a verified target-application paired backup for %s: %w", target.BuildID, err)
+	}
+	if err := verifyPythonApplicationPair(ctx, targetPair); err != nil {
+		return fmt.Errorf("verify rollback pair before changing the live workspace: %w", err)
+	}
+	if err := refuseUnresolvedPythonSpendRecovery(ctx); err != nil {
+		return err
 	}
 	journal, err := store.Begin("rollback", &active.Receipt, &target, target.DescriptorSHA256)
 	if err != nil {
@@ -909,6 +835,9 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	}
 	if err := stopForRecoveryCommand(ctx); err != nil {
 		_ = store.Advance(&journal, release.Failed, err)
+		return err
+	}
+	if err := refuseUnresolvedPythonSpendRecovery(ctx); err != nil {
 		return err
 	}
 	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
@@ -1024,6 +953,22 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	if journal.Old == nil {
 		return false, errors.New("unfinished transition has no prior release receipt")
 	}
+	oldEvidence, err := verifyInstalledReleaseEvidence(store, *journal.Old, false)
+	if err != nil {
+		return false, err
+	}
+	if err := admitPythonApplicationLifecycle(ctx, oldEvidence); err != nil {
+		return false, err
+	}
+	if journal.Candidate != nil {
+		candidateEvidence, err := verifyInstalledReleaseEvidence(store, *journal.Candidate, false)
+		if err != nil {
+			return false, err
+		}
+		if err := readPythonApplicationSchemaContract(candidateEvidence); err != nil {
+			return false, err
+		}
+	}
 	// Recovery must not restore over an unresolved publication or restart a
 	// predecessor that may not implement the initialization admission check.
 	// The check itself does not open SQLite or alter any companions.
@@ -1064,43 +1009,17 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		return false, fmt.Errorf("interrupted transition recovery target does not support launcher protocol %d; retain the transition for a compatible recovery controller", launcherProtocol)
 	}
 	var recoveryPair *databasePair
-	preserveUnactivatedSource := false
 	if journal.BackupID != "" {
 		var pair databasePair
-		if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil {
-			return false, fmt.Errorf("read interrupted transition database pair: %w", err)
-		}
-		if pair.ReleaseReceipt != *journal.Old {
+		if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil || pair.ID != journal.BackupID || pair.ReleaseReceipt != *journal.Old {
 			return false, errors.New("interrupted transition backup does not bind the prior release")
 		}
-		recoveryPair = &pair
-		intent, legacyIntent, err := readMigrationSourcePreservation(ctx.Instance.StateDir, journal.ID)
-		if err != nil {
+		if err := verifyPythonApplicationPair(ctx, pair); err != nil {
 			return false, err
 		}
-		sourceVersion, sourceErr := pairedV15SourceSchemaVersion(pair)
-		if intent != nil && (sourceErr != nil || intent.BackupID != pair.ID || intent.SourceVersion != sourceVersion) {
-			return false, errors.New("v12 source preservation intent does not bind the paired backup")
-		}
-		// These are every durable phase after paired backup and before activation.
-		preactivation := journal.State == release.PairBackedUp || journal.State == release.PolicyPending || journal.State == release.MigrationCandidateReady
-		if sourceErr == nil && (preactivation || intent != nil) {
-			python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
-			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"), ctx.Environment)
-			if errors.Is(liveErr, errUnresolvedDatabasePublication) {
-				return false, liveErr
-			}
-			preserveUnactivatedSource = liveErr == nil && liveVersion == sourceVersion
-			if intent != nil && !preserveUnactivatedSource {
-				return false, errV15SourceChanged
-			}
-			if preserveUnactivatedSource && !legacyIntent {
-				if err := writeV15SourcePreservation(ctx.Instance.StateDir, journal.ID, pair.ID, sourceVersion); err != nil {
-					return false, err
-				}
-			}
-		}
+		recoveryPair = &pair
 	}
+
 	// Stop is in-process and performs its own ownership checks; it does not
 	// need selector startup authority. Keep the prior milestone retryable if
 	// shutdown or spend admission refuses before any database replacement.
@@ -1114,13 +1033,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	if err := advanceRecoveryRestoring(store, &journal); err != nil {
 		return false, err
 	}
-	cleanupV7Candidate(ctx.Instance.StateDir, journal.ID)
-	cleanupV9Candidate(ctx.Instance.StateDir, journal.ID)
-	cleanupV10Candidate(ctx.Instance.StateDir, journal.ID)
-	cleanupV11Candidate(ctx.Instance.StateDir, journal.ID)
-	cleanupV14Candidate(ctx.Instance.StateDir, journal.ID)
-	cleanupV15Candidate(ctx.Instance.StateDir, journal.ID)
-	if recoveryPair != nil && !preserveUnactivatedSource {
+	if recoveryPair != nil {
 		if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
 			return false, err
 		}
@@ -1128,6 +1041,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 			return false, err
 		}
 	}
+
 	active, activeErr := store.ReadActive()
 	generation := uint64(0)
 	if activeErr == nil {
@@ -1166,12 +1080,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	if err := store.Advance(&journal, release.RolledBack, nil); err != nil {
 		return false, err
 	}
-	if err := clearV14SourcePreservation(ctx.Instance.StateDir, journal.ID); err != nil {
-		return true, err
-	}
-	if err := clearV15SourcePreservation(ctx.Instance.StateDir, journal.ID); err != nil {
-		return true, err
-	}
+
 	return true, nil
 }
 
@@ -1192,292 +1101,13 @@ func parseBuildTarget(args []string, command string) (string, error) {
 	return "", fmt.Errorf("usage: jobctrl %s [--to BUILD_ID]", command)
 }
 
-// promoteExisting uses the same promotion path for a staged update and a
-// rollback. Candidate code starts while active.json still names old, then the
-// only selection pointer changes after the real launcher readiness probe.
-func promoteExisting(ctx launchContext, store *release.Store, active release.Active, build, operation string, output io.Writer) (result error) {
-	if err := refusePendingSourceMigration(ctx); err != nil {
-		return err
+// promoteExisting admits only the target application's forward update path.
+// Explicit rollback uses its separately verified retained database pair.
+func promoteExisting(ctx launchContext, store *release.Store, active release.Active, build, operation string, output io.Writer) error {
+	if operation != "update" {
+		return errors.New("promotion supports updates only; use explicit paired rollback")
 	}
-	if operation == "update" {
-		if handled, err := promoteForwardUpdate(ctx, build, environmentMap(ctx.Environment)["JOBCTRL_ACQUISITION_SOURCE"], output); handled {
-			return err
-		}
-	}
-	// Rebinding below selects the service payload. Keep the originally
-	// authenticated controller separately for any native health scope.
-	controller := ctx
-	transition, err := store.TransitionLock()
-	if err != nil {
-		return fmt.Errorf("acquire lifecycle transition lock: %w", err)
-	}
-	defer transition.Close()
-	selection, err := store.SelectionLock(true)
-	if err != nil {
-		return fmt.Errorf("acquire exclusive release selection lock: %w", err)
-	}
-	defer selection.Close()
-	if err := refusePendingBridgeHandoff(store.Home); err != nil {
-		return err
-	}
-	if err := refusePendingSourceMigration(ctx); err != nil {
-		return err
-	}
-	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
-		return err
-	}
-	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
-	if err != nil {
-		return err
-	}
-	if temporal != filepath.Join(ctx.Instance.StateDir, "temporal.db") {
-		return errors.New("legacy source history requires an authenticated forward update; paired rollback is unavailable")
-	}
-	if existing, journalErr := store.ReadJournal(); journalErr == nil && existing.Resumable() {
-		return fmt.Errorf("unfinished %s transition at %s must be recovered before another promotion", existing.Operation, existing.State)
-	} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
-		return fmt.Errorf("read existing release transition journal: %w", journalErr)
-	}
-	// Another updater may have completed while this command was waiting.
-	active, err = store.ReadActive()
-	if err != nil {
-		return err
-	}
-	ctx, err = rebindActiveContext(ctx, active.Receipt.BuildID)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = ctx.selection.Close() }()
-	candidate, err := readInstalledReceipt(store.Home, build)
-	if err != nil {
-		return err
-	}
-	if candidate.Channel != active.Receipt.Channel {
-		return errors.New("candidate channel differs from the active channel")
-	}
-	if candidate.BuildID == active.Receipt.BuildID {
-		if candidate != active.Receipt {
-			return errors.New("candidate build identity conflicts with the active immutable receipt")
-		}
-		_, err := fmt.Fprintf(output, "JobCtrl %s is already active.\n", candidate.BuildID)
-		return err
-	}
-	activeVerified, err := verifyInstalledReleaseForExecution(store, active.Receipt)
-	if err != nil {
-		return fmt.Errorf("active release is not safe to transition: %w", err)
-	}
-	candidateVerified, err := verifyInstalledReleaseForExecution(store, candidate)
-	if err != nil {
-		return fmt.Errorf("candidate is not safe to promote: %w", err)
-	}
-	if candidate.Sequence <= active.Receipt.Sequence {
-		return errors.New("update refuses a lower or equal-sequence different release; use explicit rollback for an eligible predecessor")
-	}
-	activeRuntime := verifiedReleaseContext(ctx, activeVerified)
-	candidateRuntime := verifiedReleaseContext(ctx, candidateVerified)
-	policy, err := readInstalledPolicy(store.Home, candidate)
-	if err != nil {
-		return err
-	}
-	if active.SelectorBuildID != candidate.BuildID {
-		candidateProtocol := candidateVerified.runtime.LauncherProtocol
-		if !protocolSupports(activeVerified.distribution, candidateProtocol) || !protocolSupports(candidateVerified.distribution, candidateProtocol) {
-			return fmt.Errorf("candidate launcher protocol %d cannot supervise both active and candidate payloads; use the new authenticated installer", candidateProtocol)
-		}
-	}
-	unused, err := unusedDatabasePair(ctx.Instance.StateDir)
-	if err != nil {
-		return err
-	}
-	journal, err := store.Begin(operation, &active.Receipt, &candidate, candidate.DescriptorSHA256)
-	if err != nil {
-		return err
-	}
-	if err := advance(store, &journal, release.MetadataVerified); err != nil {
-		return err
-	}
-	if err := advance(store, &journal, release.ReleaseCommitted); err != nil {
-		return err
-	}
-	if active.SelectorBuildID != candidate.BuildID {
-		if err := advance(store, &journal, release.SelectorHandoffPending); err != nil {
-			return err
-		}
-		if err := handoffPublicSelector(store.Home, candidateVerified); err != nil {
-			return err
-		}
-		if err := advance(store, &journal, release.SelectorReplaced); err != nil {
-			return err
-		}
-		updated, err := store.WriteSelectedActive(active.Receipt, active.Generation, candidate.BuildID, active.Acquisition)
-		if err != nil {
-			return err
-		}
-		active = updated
-	}
-	if err := advance(store, &journal, release.Quiescing); err != nil {
-		return err
-	}
-	if err := stop(ctx); err != nil {
-		_ = store.Advance(&journal, release.Failed, err)
-		return fmt.Errorf("quiesce active release: %w", err)
-	}
-	restartBeforeBackup := func(cause error) error {
-		if errors.Is(cause, errInitializationNotAdmitted) {
-			return cause
-		}
-		_ = store.Advance(&journal, release.RollbackRestoring, cause)
-		if stopErr := stop(ctx); stopErr != nil {
-			return fmt.Errorf("%v; old runtime could not be made safe to restart: %w", cause, stopErr)
-		}
-		if spendErr := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); spendErr != nil {
-			return fmt.Errorf("%v; predecessor restart refused: %w", cause, spendErr)
-		}
-		if legacyErr := writeLegacyCurrent(store.Home, active.Receipt); legacyErr != nil {
-			return fmt.Errorf("%v; restore legacy receipt: %w", cause, legacyErr)
-		}
-		if restartErr := startReleaseCommand(ctx, active.Receipt, journal.ID); restartErr != nil {
-			return fmt.Errorf("%v; old release restart failed: %w", cause, restartErr)
-		}
-		_ = store.Advance(&journal, release.RolledBack, cause)
-		return cause
-	}
-	if unused {
-		if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
-			return err
-		}
-		if err := advance(store, &journal, release.RollbackRestoring); err != nil {
-			return err
-		}
-		if err := startReleaseCommand(ctx, active.Receipt, journal.ID); err != nil {
-			return fmt.Errorf("initialize unused predecessor before paired backup: %w; run `jobctrl rollback` to recover", err)
-		}
-		if err := stop(ctx); err != nil {
-			return fmt.Errorf("quiesce initialized predecessor: %w", err)
-		}
-		if stillUnused, err := unusedDatabasePair(ctx.Instance.StateDir); err != nil || stillUnused {
-			return errors.New("predecessor did not initialize a complete database pair; preserve the journal for recovery")
-		}
-		if err := advance(store, &journal, release.Quiescing); err != nil {
-			return err
-		}
-	}
-	databaseVersion, err := jobCtrlSchemaVersion(activeRuntime)
-	if err != nil {
-		if errors.Is(err, errUnresolvedDatabasePublication) {
-			return err
-		}
-		return restartBeforeBackup(fmt.Errorf("read stopped JobCtrl schema before update: %w", err))
-	}
-	switch databaseVersion {
-	case legacyJobCtrlSchemaVersion:
-		if err := temporalQuiescenceProof(activeRuntime, candidateRuntime, controller); err != nil {
-			return restartBeforeBackup(fmt.Errorf("v6-to-v10 upgrade blocked before backup: %w", err))
-		}
-	case exactJobCtrlSchemaVersion:
-		// Exact v7 upgrades retain the private v8 step before the additive v9 step.
-	case previousJobCtrlSchemaVersion:
-		// Exact v8 upgrades pass through private v9 before v10.
-	case v9JobCtrlSchemaVersion:
-		// Exact v9 upgrades transfer URL authority after the paired backup.
-	case v10JobCtrlSchemaVersion:
-		// Exact v10 upgrades move global LLM spend into the legacy lane.
-	case v11JobCtrlSchemaVersion:
-		// Exact v11 upgrades add generation bindings and independently revisioned notes.
-	case v12JobCtrlSchemaVersion:
-		// Exact v12 is migrated to cited semantic determinations.
-	case v13JobCtrlSchemaVersion:
-		// Exact v13 requires the saved-settings authority cutover.
-	case v14JobCtrlSchemaVersion:
-		// Exact v14 receives the lifecycle-generation migration after backup.
-	case currentJobCtrlSchemaVersion:
-		// Ordinary exact-v15 release promotion uses the paired lifecycle unchanged.
-	default:
-		return restartBeforeBackup(fmt.Errorf("unsupported stopped JobCtrl schema version %d", databaseVersion))
-	}
-	pair, err := snapshotPair(ctx, active.Receipt)
-	if err != nil {
-		if errors.Is(err, errUnresolvedDatabasePublication) {
-			return err
-		}
-		if databaseVersion != currentJobCtrlSchemaVersion {
-			return restartBeforeBackup(fmt.Errorf("create paired pre-upgrade backup: %w", err))
-		}
-		_ = store.Advance(&journal, release.Failed, err)
-		return err
-	}
-	journal.BackupID = pair.ID
-	// Once a snapshot exists, independent commits may make it stale. Persist
-	// this fence before any later milestone can activate or start a candidate.
-	journal.PreserveLiveOnFailure = true
-	if err := advance(store, &journal, release.PairBackedUp); err != nil {
-		return err
-	}
-	journal.PendingPolicy = &policy
-	if err := advance(store, &journal, release.PolicyPending); err != nil {
-		return err
-	}
-	channelState, err := store.ValidateMetadata(policy)
-	if err != nil {
-		return err
-	}
-
-	rollbackFailure := func(cause error) error {
-		return fmt.Errorf("%w; a paired backup may no longer include later commits; automatic recovery is unavailable; retain the live databases and transition journal", cause)
-	}
-	if databaseVersion != currentJobCtrlSchemaVersion {
-		candidatePath, err := sealedV7CandidateBuilder(candidateRuntime, pair, journal.ID)
-		if err != nil {
-			return rollbackFailure(fmt.Errorf("build exact-v15 migration candidate: %w", err))
-		}
-		if err := advance(store, &journal, release.MigrationCandidateReady); err != nil {
-			return rollbackFailure(err)
-		}
-		if err := sealedV7CandidateInstaller(candidateRuntime, candidatePath); err != nil {
-			return rollbackFailure(fmt.Errorf("activate exact-v15 database: %w", err))
-		}
-		if err := advance(store, &journal, release.MigrationActivated); err != nil {
-			return rollbackFailure(err)
-		}
-	}
-	if err := advance(store, &journal, release.CandidateStarting); err != nil {
-		return rollbackFailure(err)
-	}
-	if err := startReleaseCommand(ctx, candidate, journal.ID); err != nil {
-		return rollbackFailure(fmt.Errorf("candidate start/readiness failed: %w", err))
-	}
-	if err := advance(store, &journal, release.CandidateHealthy); err != nil {
-		return rollbackFailure(err)
-	}
-	// The authenticated candidate policy may raise the safety floor or revoke
-	// the predecessor. Commit it only after real readiness succeeds. Earlier
-	// failures retain the live pair and journal for explicit recovery.
-	if err := store.CommitMetadata(channelState); err != nil {
-		if permitErr := store.Permit(active.Receipt); permitErr != nil {
-			return fmt.Errorf("finalize authenticated policy after candidate readiness: %w; predecessor is no longer permitted, preserve the journal for explicit safe recovery: %v", err, permitErr)
-		}
-		return rollbackFailure(fmt.Errorf("finalize authenticated policy after candidate readiness: %w", err))
-	}
-	if err := advance(store, &journal, release.PolicyFinalized); err != nil {
-		return err
-	}
-	source := environmentMap(ctx.Environment)["JOBCTRL_ACQUISITION_SOURCE"]
-	if source == "" {
-		source = active.Acquisition
-	}
-	if _, err := store.WriteSelectedActive(candidate, active.Generation, candidate.BuildID, source); err != nil {
-		return err
-	}
-	if err := writeLegacyCurrent(store.Home, candidate); err != nil {
-		return err
-	}
-	if err := advance(store, &journal, release.Promoted); err != nil {
-		return err
-	}
-	if err := retainReleases(store, ctx.Instance.StateDir); err != nil {
-		return fmt.Errorf("JobCtrl %s is active, but release retention did not complete: %w", candidate.BuildID, err)
-	}
-	_, err = fmt.Fprintf(output, "JobCtrl %s is active.\n", candidate.BuildID)
+	_, err := promoteForwardUpdate(ctx, build, environmentMap(ctx.Environment)["JOBCTRL_ACQUISITION_SOURCE"], output)
 	return err
 }
 
@@ -1492,6 +1122,9 @@ func startRelease(ctx launchContext, receipt release.Receipt, journalID string) 
 	verified, err := verifyInstalledReleaseForExecution(store, receipt)
 	if err != nil {
 		return fmt.Errorf("verify release immediately before execution: %w", err)
+	}
+	if err := admitPythonApplicationLifecycle(ctx, verified); err != nil {
+		return err
 	}
 	path := filepath.Join(store.Home, "bin", "jobctrl")
 	controller := selectorSupportsJournalStartup(store, path)
@@ -1566,9 +1199,6 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 	} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
 		return fmt.Errorf("read existing release transition journal: %w", journalErr)
 	}
-	if err := ensureSafeDirectory(directory); err != nil {
-		return err
-	}
 	active, err := store.ReadActive()
 	if err != nil {
 		return err
@@ -1581,6 +1211,16 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 		return err
 	}
 	defer func() { _ = ctx.selection.Close() }()
+	verified, err := verifyInstalledReleaseForExecution(store, active.Receipt)
+	if err != nil {
+		return err
+	}
+	if err := admitPythonApplicationLifecycle(ctx, verified); err != nil {
+		return err
+	}
+	if err := ensureSafeDirectory(directory); err != nil {
+		return err
+	}
 	wasRunning := false
 	if state, stateErr := readState(ctx.Instance.StatePath); stateErr == nil {
 		wasRunning = stateHasLiveProcesses(state)
@@ -1637,6 +1277,12 @@ func snapshotPair(ctx launchContext, receipt release.Receipt) (databasePair, err
 	return snapshotPairTo(ctx, receipt, filepath.Join(ctx.Instance.StateDir, "backups"))
 }
 func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (databasePair, error) {
+	if !usesPythonApplication(ctx.Manifest) {
+		return databasePair{}, errors.New("native paired backup requires the Python application; preserve legacy data for explicit Profile-only transfer")
+	}
+	if err := checkPythonApplicationWorkspace(ctx); err != nil {
+		return databasePair{}, err
+	}
 	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
 	if err != nil {
 		return databasePair{}, err
@@ -1673,6 +1319,12 @@ func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (
 		file, err := describeDatabase(destination, name, version)
 		if err != nil {
 			return databasePair{}, err
+		}
+		if name == "jobctrl.db" {
+			if version != pythonApplicationUserVersion {
+				return databasePair{}, errors.New("snapshot does not contain the Python application schema")
+			}
+			file.SQLiteApplicationID = pythonApplicationID
 		}
 		pair.Files = append(pair.Files, file)
 	}
@@ -1724,6 +1376,9 @@ finally: d.close()`
 	if err != nil {
 		return 0, fmt.Errorf("SQLite online backup: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	if err := os.Chmod(destination, 0o600); err != nil {
+		return 0, err
+	}
 	var version int64
 	if _, err := fmt.Sscan(strings.TrimSpace(string(out)), &version); err != nil {
 		return 0, errors.New("SQLite backup returned invalid schema version")
@@ -1767,6 +1422,15 @@ func restorePair(ctx launchContext, pair databasePair) error {
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
 		return fmt.Errorf("refuse paired restore: %w", err)
 	}
+	if err := checkPythonApplicationWorkspace(ctx); err != nil {
+		return err
+	}
+	if err := verifyPythonApplicationPair(ctx, pair); err != nil {
+		return err
+	}
+	if err := refuseUnresolvedPythonSpendRecovery(ctx); err != nil {
+		return err
+	}
 	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
 	if err != nil {
 		return err
@@ -1804,10 +1468,25 @@ func restorePair(ctx launchContext, pair databasePair) error {
 		if err := copyRegular(filepath.Join(dir, expected.Name), staged); err != nil {
 			return err
 		}
+		actual, err := describeDatabase(staged, expected.Name, expected.SQLiteUserVer)
+		if err != nil || actual.SHA256 != expected.SHA256 || actual.SizeBytes != expected.SizeBytes {
+			return errors.New("staged restore database differs from its verified pair")
+		}
+	}
+	stagedContext := ctx
+	stagedContext.Instance.StateDir = staging
+	if err := checkPythonApplicationWorkspace(stagedContext); err != nil {
+		return err
 	}
 	// No runtime is live (quiescing happened first). The journal makes a crash
 	// between the two renames recoverable; never restore a single DB by itself.
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
+	if err := refuseOpenWorkspaceDatabases(filepath.Join(ctx.Instance.StateDir, "jobctrl.db"), filepath.Join(ctx.Instance.StateDir, "temporal.db")); err != nil {
+		return err
+	}
+	if err := refuseUnresolvedPythonSpendRecovery(ctx); err != nil {
 		return err
 	}
 	for _, name := range []string{"jobctrl.db", "temporal.db"} {

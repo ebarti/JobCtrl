@@ -33,7 +33,7 @@ boundary.
 | Credentials and files | Secrets stay outside SQLite and `config.json`; status APIs are secret-free; saved passwords and reviewed artifacts can be used only by origin-bound local tools. |
 | Provider runtimes | JobCtrl-owned provider state, filtered subprocess environments, restricted tool surfaces, and prompt-driven filesystem boundaries isolate model execution from unrelated local data. |
 | Application submission | Model-driven browsers are transport-locked and require manual final submit. The owned Gmail sender requires exact recipient/attachment approval, records durable submit intent immediately before send, and retains at-most-once claiming and `needs_verification` recovery. |
-| Generated content | Structured outputs, literal evidence grounding, fabrication checks, provenance, judge review, and preservation of the last accepted artifact. |
+| Generated content | Structured outputs, source-bound semantic determinations, provenance, and preservation of the last accepted artifact. |
 | Bundled runtime | Payload path confinement, isolated Python startup, manifest verification, and hash-locked provider packs with activation-time revalidation. |
 | Privacy and release | Metadata-only telemetry, synthetic-demo isolation, private local file modes for sensitive control files, and release scanning for secrets and private artifacts. |
 
@@ -52,8 +52,8 @@ identity, and privacy contact, read the canonical
 
 | Outbound call | When | What can be sent |
 | --- | --- | --- |
-| LLM providers | Scoring, analysis, tailoring, cover letters, contact extraction, opt-in Required-bullet coaching | Posting text, relevant profile evidence, generated text, or opted-in page text. Required-bullet coaching sends only selected saved claims, role/company context and matching achievement evidence. Employer analysis uses Claude, Codex, and Gemini legs. |
-| Apply model | Apply/dry-run or an enabled standing loop | The reviewed application URL and page content observed during the transport-locked inspection. Stored profile fields, job-description prose, tailored resume text, cover-letter text, local artifact paths, and artifact-upload authority are excluded. |
+| LLM providers | Scoring, analysis, tailoring, contact extraction, opt-in Required-bullet coaching | Posting text, relevant profile evidence, generated text, or opted-in page text. Required-bullet coaching sends only selected saved claims, role/company context and matching achievement evidence. Employer analysis uses Claude, Codex, and Gemini legs. |
+| Apply model | Apply/dry-run or an enabled standing loop | The reviewed application URL and page content observed during the transport-locked inspection. Stored profile fields, job-description prose, tailored resume text, local artifact paths, and artifact-upload authority are excluded. |
 | Job/ATS/public pages | Integrated Discovery and its enrichment drain through the user's current Chrome profile; supervised contact research through its separate gateway | Search terms and network/page requests. During Discovery, Chrome may also send that site's existing cookies/session state; those browser-owned values are not copied into worker tasks. |
 | Salary data sources | At the end of a Discover run, only for benchmark slices that are missing or past their seven-day freshness window; Levels.fyi or Glassdoor only when their Settings policy permits | Requests for public benchmark data from Euro Top Tech, ECB exchange rates when a currency conversion is needed, and Eurostat price levels when a slice has no direct benchmark. Levels.fyi public-page URLs name the role and location being benchmarked. |
 | Gmail | Authenticated verification/outcome flows or approved email applications | Bounded queries/evidence, or the exact reviewed send. |
@@ -70,7 +70,7 @@ are never copied into worker tasks or results; the browser user-agent string is
 returned with results as transport metadata; it is not used for robots checks.
 
 The Apply model receives no applicant profile or generated-material prose.
-Reviewed resume and cover-letter files remain local for the user to handle
+Reviewed resume files remain local for the user to handle
 manually; the page-reading model cannot upload or access them.
 
 ## What Stays On Your Machine
@@ -325,7 +325,7 @@ stale ID fails closed rather than silently selecting another installation.
 ### Browser Final Submit Is Not Delegated
 
 The page-reading model receives an inspection-only prompt containing the
-reviewed application URL. It never receives profile, resume, cover-letter,
+reviewed application URL. It never receives profile, resume,
 job-description, generated-material prose, local artifact paths, or
 artifact-upload authority.
 It can inspect a transport-locked rehearsal, but it cannot perform the final
@@ -465,9 +465,8 @@ legal/screening attestation is missing, the agent stops instead of guessing.
 Job postings, imported documents, page text and model responses are untrusted
 inputs. Semantic claim support comes from a strict model determination. Code
 checks canonical IDs, exact verbatim citations, numeric/date/currency equality,
-schemas and versions before an artifact is accepted. An independent quality
-judge remains separate. Generated lines record source and requirement anchors;
-read-side code cannot infer provenance from text overlap. Model failure has a
+schemas and versions before an artifact is accepted. Source and requirement
+links are recorded rather than inferred from text overlap. Model failure has a
 distinct safe status and never selects a lexical fallback.
 
 Bounded verifier findings can request repair while remaining untrusted source

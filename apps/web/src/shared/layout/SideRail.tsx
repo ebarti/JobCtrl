@@ -2,7 +2,7 @@ import {
   IconAddressBook,
   IconAdjustments,
   IconBriefcase,
-  IconBug,
+  IconActivity,
   IconChartBar,
   IconChecklist,
   IconFileText,
@@ -18,6 +18,7 @@ import {
 } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
 
+import { useMountedFeatures } from "../../contexts/runtime/index.js";
 import { useDemoWorkspace } from "../../demo/workspace/DemoWorkspaceProvider.js";
 import { cn } from "../lib/cn.js";
 import { Sidebar, SidebarRail } from "../ui/sidebar.js";
@@ -45,6 +46,7 @@ interface NavItem {
   readonly label: string;
   readonly to: NavTarget;
   readonly icon: Icon;
+  readonly requires?: string;
 }
 
 interface NavGroup {
@@ -57,16 +59,16 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     label: "Overview",
     items: [
       { label: "Dashboard", to: "/dashboard", icon: IconLayoutDashboard },
-      { label: "Analytics", to: "/analytics", icon: IconChartBar },
+      { label: "Analytics", to: "/analytics", icon: IconChartBar, requires: "applications" },
     ],
   },
   {
     label: "Pipeline",
     items: [
       { label: "Jobs", to: "/jobs", icon: IconBriefcase },
-      { label: "Apply review", to: "/apply-review", icon: IconChecklist },
-      { label: "Pipelines", to: "/pipelines", icon: IconSitemap },
-      { label: "Discovery", to: "/discovery", icon: IconRadar },
+      { label: "Apply review", to: "/apply-review", icon: IconChecklist, requires: "applications" },
+      { label: "Pipelines", to: "/pipelines", icon: IconSitemap, requires: "preparation" },
+      { label: "Discovery", to: "/discovery", icon: IconRadar, requires: "discovery" },
     ],
   },
   {
@@ -74,15 +76,15 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     items: [
       { label: "Artifacts", to: "/artifacts", icon: IconFileText },
       { label: "Evidence", to: "/evidence-map", icon: IconMap2 },
-      { label: "Interviews", to: "/interviews", icon: IconNotebook },
-      { label: "Contacts", to: "/outreach", icon: IconAddressBook },
+      { label: "Interviews", to: "/interviews", icon: IconNotebook, requires: "interviews" },
+      { label: "Contacts", to: "/outreach", icon: IconAddressBook, requires: "contacts" },
     ],
   },
   {
     label: "Activity",
     items: [
       { label: "Runs", to: "/runs", icon: IconHistory },
-      { label: "Debug", to: "/debug", icon: IconBug },
+      { label: "Activity", to: "/debug", icon: IconActivity },
     ],
   },
   {
@@ -101,12 +103,14 @@ interface RailNavProps {
 }
 
 export function RailNav({ className, onNavigate }: RailNavProps) {
+  const features = useMountedFeatures();
   return (
     <nav
       className={cn("side-rail__nav", className)}
       aria-label="Main navigation"
     >
-      {NAV_GROUPS.map((group) => (
+      {NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => !item.requires || features.has(item.requires)) }))
+        .filter((group) => group.items.length > 0).map((group) => (
         <div
           key={group.label}
           className="side-rail__group"

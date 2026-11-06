@@ -24,8 +24,8 @@ import {
 } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
-import { useDiscoverySettingsQuery } from "../../operations/hooks/useDiscoverySettingsQuery.js";
-import { useAcknowledgedRuntimeValues } from "../../operations/hooks/useAcknowledgedRuntimeValues.js";
+import { useDiscoverySettingsQuery } from "../hooks/useDiscoverySettingsQuery.js";
+import { useAcknowledgedRuntimeValues } from "../hooks/useAcknowledgedRuntimeValues.js";
 import { useUpdateDiscoverySettingsMutation } from "../hooks/useUpdateDiscoverySettingsMutation.js";
 import { discoveryKeys } from "../queryKeys.js";
 import {
@@ -68,7 +68,7 @@ const RUNTIME_SETTING_HELP = {
   hoursOld: {
     title: "Posting lookback hours",
     description:
-      "Limit broad-board discovery to postings no older than this many hours when the provider supports age filtering. The next Discover run uses the new window.",
+      "Limit broad-board discovery to postings no older than this many hours when the provider supports age filtering. Use 0 for no cutoff. The next Discover run uses the new window.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-posting-lookback-hours`,
   },
   maxParallelFamilies: {
@@ -269,7 +269,7 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.resultsPerSite} id="discovery-results" name="resultsPerSite" label="Results per board" min={1} max={1000} value={field.state.value ?? 50} metadata={effective.resultsPerSite} onChange={field.handleChange} />}
         </form.Field>
         <form.Field name="hoursOld">
-          {(field) => <NumberControl help={RUNTIME_SETTING_HELP.hoursOld} id="discovery-lookback" name="hoursOld" label="Posting lookback hours" min={1} max={8760} value={field.state.value ?? 72} metadata={effective.hoursOld} onChange={field.handleChange} />}
+          {(field) => <NumberControl help={RUNTIME_SETTING_HELP.hoursOld} id="discovery-lookback" name="hoursOld" label="Posting lookback hours" min={0} max={8760} value={field.state.value ?? 72} metadata={effective.hoursOld} onChange={field.handleChange} />}
         </form.Field>
         <form.Field name="maxParallelFamilies">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.maxParallelFamilies} id="discovery-max-parallel" name="maxParallelFamilies" label="Parallel source families" min={1} max={4} value={field.state.value ?? initial.settings.maxParallelFamilies} metadata={effective.maxParallelFamilies} onChange={field.handleChange} />}

@@ -6,7 +6,7 @@ import {
   makeJobsPage,
   sampleJob,
   sampleSecondaryJob,
-} from "../../test/fixtures/projections.js";
+} from "../../../.storybook/fixtures/projections.js";
 import { JobsTable } from "./JobsTable.js";
 
 const meta = {

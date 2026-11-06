@@ -38,12 +38,6 @@ export const DEMO_ARTIFACTS = {
     url: "/demo/tailored-resume.pdf",
     label: "Bundled tailored resume preview",
   },
-  coverLetter: {
-    assetId: "demo-cover-letter",
-    contentType: "text/plain",
-    url: "/demo/cover-letter.txt",
-    label: "Bundled cover-letter preview",
-  },
   interviewNotes: {
     assetId: "demo-interview-notes",
     contentType: "text/plain",
@@ -53,5 +47,10 @@ export const DEMO_ARTIFACTS = {
 } as const satisfies DemoArtifacts;
 
 export function isDemoArtifactUrl(value: string): value is `/demo/${string}` {
-  return value.startsWith("/demo/") && !value.includes("://") && !value.includes("\\") && !value.includes("..");
+  return (
+    value.startsWith("/demo/") &&
+    !value.includes("://") &&
+    !value.includes("\\") &&
+    !value.includes("..")
+  );
 }

@@ -1,5 +1,6 @@
 export { DEMO_ARTIFACTS, isDemoArtifactUrl } from "./artifacts.js";
 export { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
+export { DemoHttpAdapter } from "./DemoHttpAdapter.js";
 export {
   DemoApiClientAdapter,
   DemoResourceNotFoundError,

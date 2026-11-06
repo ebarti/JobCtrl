@@ -52,6 +52,7 @@ The coordinator may consolidate through verified PRs under the owner's authoriza
 - #1421 measures ready composition after wording approval; human approval wait and cold preparation are separate, and no performance result is assumed.
 - #954 / PR #1114 RPC-specific work becomes obsolete when the RPC layer is actually retired. Preserve the useful contract ownership intent.
 - #908 full-document AI comparison is retired with delivery of simplified tailoring; no additional required review stage.
+- Old per-job adaptive writing, omission, polish and repair recommendations/policy rollback are superseded by #1255. Explicit Profile writing preferences, fixed source-grounding invariants and Resumes feedback/history remain.
 - #1002, #1004, #1006–#1009 contain delivered work to reuse, not outstanding tasks to redo.
 - #1124 remains the broader product simplification outcome; #1135 remains useful installed-reliability evidence, adapted to the fresh-state/E2E-only contract.
 - #1265 / PR #1266 remains parked and is not a prerequisite.
@@ -76,7 +77,7 @@ The coordinator may consolidate through verified PRs under the owner's authoriza
 - [ ] #1443 — replace legacy suites with fast complete application journeys. Integration prerequisites: #1429, #1439, #1442.
 - [ ] #1444 — remove Cover Letters and reconcile product documentation. Integration prerequisites: none.
 
-All sixteen workstreams may begin inventory, design and owned implementation immediately. Shared-contract integration follows the dependencies above. Final consolidation owns complete capability reconciliation, removal of legacy runtime paths and end-to-end acceptance.
+All workstreams may begin inventory, design and owned implementation immediately. Shared-contract integration follows the dependencies above. Final consolidation owns complete capability reconciliation, removal of legacy runtime paths and end-to-end acceptance.
 
 ## Local coordination contract
 

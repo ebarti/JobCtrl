@@ -19,19 +19,18 @@ import {
   FieldLabel,
 } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
-import { useDiscoverySettingsQuery } from "../../operations/hooks/useDiscoverySettingsQuery.js";
+import { useDiscoverySettingsQuery } from "../hooks/useDiscoverySettingsQuery.js";
 import { useUpdateDiscoverySettingsMutation } from "../hooks/useUpdateDiscoverySettingsMutation.js";
 
 type AutomationValues = Pick<
   DiscoverySettingsUpdateRequest,
-  "autoApply" | "minFitScore" | "applyApprovalRequired"
+  "autoApply" | "minFitScore"
 >;
 
 function toFormValues(response: DiscoverySettingsResponse): AutomationValues {
   return {
     autoApply: response.settings.autoApply,
     minFitScore: response.settings.minFitScore,
-    applyApprovalRequired: response.settings.applyApprovalRequired,
   };
 }
 
@@ -147,10 +146,10 @@ export function DiscoveryAutomationSettingsForm({
             <Input
               id="discovery-minimum-fit-score"
               type="number"
-              min={0}
+              min={1}
               max={10}
               step={1}
-              value={field.state.value ?? 0}
+              value={field.state.value ?? 1}
               onBlur={field.handleBlur}
               onChange={(event) => field.handleChange(Number(event.target.value))}
             />
@@ -175,37 +174,14 @@ export function DiscoveryAutomationSettingsForm({
           </Field>
         )}
       </form.Field>
-      <form.Field name="applyApprovalRequired">
-        {(field) => (
-          <Field className="field check" orientation="horizontal">
-            <Checkbox
-              aria-describedby="discovery-apply-approval-help"
-              checked={field.state.value ?? true}
-              id="discovery-apply-approval"
-              onCheckedChange={(checked) => field.handleChange(checked)}
-            />
-            <FieldContent>
-              <FieldLabel htmlFor="discovery-apply-approval">
-                Require approval before live submit
-              </FieldLabel>
-              <FieldDescription id="discovery-apply-approval-help">
-                Live submissions wait for Apply Review approval; dry-runs can still run.
-              </FieldDescription>
-            </FieldContent>
-          </Field>
-        )}
-      </form.Field>
+      <p>Live submissions require approval for the exact application payload. This approval cannot be disabled.</p>
       <form.Subscribe
         selector={(state) => ({
           autoApply: state.values.autoApply,
-          applyApprovalRequired: state.values.applyApprovalRequired,
         })}
       >
-        {({ autoApply, applyApprovalRequired }) => {
-          const summary = applyAutomationSummary({
-            autoApply: Boolean(autoApply),
-            applyApprovalRequired: applyApprovalRequired !== false,
-          });
+        {({ autoApply }) => {
+          const summary = applyAutomationSummary(Boolean(autoApply));
           if (summary.warning) {
             return (
               <Alert variant="warning">
@@ -257,26 +233,11 @@ export function DiscoveryAutomationSettingsForm({
   );
 }
 
-function applyAutomationSummary(values: {
-  autoApply: boolean;
-  applyApprovalRequired: boolean;
-}): { text: string; warning: boolean } {
-  if (values.autoApply && values.applyApprovalRequired) {
+function applyAutomationSummary(autoApply: boolean): { text: string; warning: boolean } {
+  if (autoApply) {
     return {
       text: "Auto apply is supervised: the standing loop polls eligible jobs, browser forms stop for manual completion, and exact-approved email applications may use the owned sender.",
       warning: false,
-    };
-  }
-  if (values.autoApply && !values.applyApprovalRequired) {
-    return {
-      text: "Approval gate is off: the standing loop may claim eligible jobs without review, but browser final submit stays manual and the owned email sender still requires exact approval.",
-      warning: true,
-    };
-  }
-  if (!values.autoApply && !values.applyApprovalRequired) {
-    return {
-      text: "Auto apply is off. Manually started live claims skip the Apply Review gate, but browser final submit stays manual and email sends still require exact approval.",
-      warning: true,
     };
   }
   return {

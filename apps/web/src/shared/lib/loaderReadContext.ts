@@ -1,14 +1,13 @@
 import type { TenantId } from "@jobctrl/domain-types";
 import type { QueryClient } from "@tanstack/react-query";
-import type { ApiClientPort } from "../ports/ApiClientPort.js";
+import type { HttpPort } from "../ports/HttpPort.js";
 
-// Structural dependencies: context reads never depend on the router or generated tree.
-export interface ReadContext<Method extends keyof ApiClientPort> {
+/** Narrow transport authority for feature-owned reads and their route loaders. */
+export interface HttpReadContext {
   readonly tenantId: TenantId;
-  readonly ports: { readonly api: Pick<ApiClientPort, Method> };
+  readonly ports: { readonly http: HttpPort };
 }
-export interface LoaderReadContext<
-  Method extends keyof ApiClientPort,
-> extends ReadContext<Method> {
+
+export interface HttpLoaderReadContext extends HttpReadContext {
   readonly queryClient: Pick<QueryClient, "prefetchQuery" | "ensureQueryData">;
 }

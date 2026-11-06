@@ -3,12 +3,13 @@ import {
   type CredentialsResponse,
   CredentialUpdateRequestSchema,
   type CredentialUpdateRequest,
-} from "@jobctrl/contracts";
+} from "../../settings/credentials.js";
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import { useForm } from "@tanstack/react-form";
 import { useEffect, useState } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
+import { useCredentialEditFence } from "../../settings/credentials.js";
 import {
   Field,
   FieldContent,
@@ -46,6 +47,7 @@ export function CredentialForm({
   editable,
 }: CredentialFormProps) {
   const updateCredential = useUpdateCredentialMutation();
+  const fence = useCredentialEditFence();
   const deleteCredential = useDeleteCredentialMutation();
   const [statusMessage, setStatusMessage] = useState("");
 
@@ -70,18 +72,19 @@ export function CredentialForm({
       const submittedValue = value.value;
       let response: CredentialsResponse;
       try {
-        response = await updateCredential.mutateAsync(value);
+        response = await updateCredential.mutateAsync(fence.request(value));
       } catch {
         return;
       }
       const newerInput = formApi.getFieldValue("value") !== submittedValue;
-      if (!newerInput) formApi.reset({ key: credentialKey, value: EMPTY_VALUE });
+      fence.accept(response.revision, newerInput);
       const checked = response.credentials.find(
         (entry) => entry.key === credentialKey,
       )?.configured;
+      if (checked === true && !newerInput) formApi.reset({ key: credentialKey, value: EMPTY_VALUE });
       const result = checked === true
-        ? `${label} saved in Keychain. Restart the JobCtrl worker to use it.`
-        : `${label} was submitted to Keychain, but JobCtrl could not verify it. Retry the Keychain check before making another change.`;
+        ? `${label} saved in the native credential store. Newly started actions use it immediately.`
+        : `${label} was submitted, but JobCtrl could not verify it. Your input remains here; check credential status before another change.`;
       setStatusMessage(`${result}${newerInput ? " Newer input remains unsaved." : ""}`);
     },
   });
@@ -90,22 +93,23 @@ export function CredentialForm({
     form.reset({ key: credentialKey, value: EMPTY_VALUE });
   }, [form, credentialKey]);
 
-  const removeCredential = () => {
+  const removeCredential = async () => {
     if (updateCredential.isPending || deleteCredential.isPending) return;
     setStatusMessage("");
     updateCredential.reset();
     deleteCredential.reset();
     const submittedValue = form.getFieldValue("value");
-    deleteCredential.mutate(credentialKey, {
-      onSuccess: (response) => {
-        const newerInput = form.getFieldValue("value") !== submittedValue;
-        if (!newerInput) form.reset({ key: credentialKey, value: EMPTY_VALUE });
-        const result = response.credentials.find((entry) => entry.key === credentialKey)?.configured === false
-          ? `${label} removed from Keychain. Restart the JobCtrl worker to apply the change.`
-          : `${label} removal was submitted, but JobCtrl could not verify it. Retry the Keychain check before making another change.`;
-        setStatusMessage(`${result}${newerInput ? " Newer input remains unsaved." : ""}`);
-      },
-    });
+    try {
+      const response = await deleteCredential.mutateAsync(credentialKey, fence.request({}).expectedRevision);
+      const newerInput = form.getFieldValue("value") !== submittedValue;
+      fence.accept(response.revision, newerInput);
+      const confirmed = response.credentials.find((entry) => entry.key === credentialKey)?.configured === false;
+      if (confirmed && !newerInput) form.reset({ key: credentialKey, value: EMPTY_VALUE });
+      const result = confirmed
+        ? `${label} removed from the native credential store. Newly started actions use the updated configuration.`
+        : `${label} removal was submitted, but could not be verified. Your input remains here; check credential status before another change.`;
+      setStatusMessage(`${result}${newerInput ? " Newer input remains unsaved." : ""}`);
+    } catch { /* Retain the draft and the mutation's visible failure result. */ }
   };
 
   const removing = deleteCredential.isPending;
@@ -114,7 +118,7 @@ export function CredentialForm({
     (configured === null && unavailableReason !== "unsupported_platform");
   const unsupportedPlatform = unavailableReason === "unsupported_platform";
   const environmentManaged = effectiveSource === "environment";
-  const canEditKeychain =
+  const canEditCredentialStore =
     available &&
     !inspectionUnknown &&
     !environmentManaged &&
@@ -125,7 +129,7 @@ export function CredentialForm({
   const credentialDescriptionId = `${inputId}-description`;
   const describedBy = [
     credentialDescriptionId,
-    !canEditKeychain ? unavailableDescriptionId : undefined,
+    !canEditCredentialStore ? unavailableDescriptionId : undefined,
   ].filter((value): value is string => value !== undefined).join(" ");
   return (
     <form
@@ -148,13 +152,13 @@ export function CredentialForm({
           : inspectionUnknown
             ? "unable to check"
             : configured === true
-              ? "stored in Keychain"
-              : "not in Keychain"}
+              ? "stored securely"
+              : "not configured"}
       </StatusBadge>
       <FieldGroup className="credential-row-field-group">
         <Field
           className="credential-row-field"
-          data-disabled={!canEditKeychain ? true : undefined}
+          data-disabled={!canEditCredentialStore ? true : undefined}
           orientation="horizontal"
         >
           <FieldContent className="credential-row-identity">
@@ -170,7 +174,7 @@ export function CredentialForm({
             {(field) => (
               <Input
                 aria-describedby={describedBy}
-                disabled={!canEditKeychain}
+                disabled={!canEditCredentialStore}
                 id={inputId}
                 name={credentialKey}
                 placeholder={
@@ -179,17 +183,17 @@ export function CredentialForm({
                     : unsupportedPlatform
                     ? "Use environment configuration on this platform"
                     : inspectionUnknown
-                      ? "Keychain inspection unavailable"
+                      ? "credential store inspection unavailable"
                       : !available
-                        ? "Keychain edits paused until inspection succeeds"
+                        ? "credential store edits paused until inspection succeeds"
                         : configured === true
-                          ? "Stored in Keychain"
-                          : "Paste value to store in Keychain"
+                          ? "Stored in credential store"
+                          : "Paste value to store in credential store"
                 }
                 type="password"
                 value={field.state.value}
                 onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.value)}
+                onChange={(event) => { fence.capture(); field.handleChange(event.target.value); }}
               />
             )}
           </form.Field>
@@ -209,7 +213,7 @@ export function CredentialForm({
               size="sm"
               type="submit"
               disabled={
-                !canEditKeychain ||
+                !canEditCredentialStore || fence.stale ||
                 !canSubmit ||
                 !isDirty ||
                 isSubmitting ||
@@ -225,12 +229,13 @@ export function CredentialForm({
           size="sm"
           type="button"
           variant="outline"
-          disabled={!canEditKeychain || configured !== true || removing || updateCredential.isPending}
-          onClick={removeCredential}
+          disabled={!canEditCredentialStore || fence.stale || configured !== true || removing || updateCredential.isPending}
+          onClick={() => void removeCredential()}
         >
           {removing ? "Removing…" : "Remove"}
         </Button>
       </div>
+      {fence.stale ? <span className="status-line warning" role="alert">Credential configuration changed. Your draft remains here. <Button type="button" variant="outline" onClick={fence.review}>Review current credential status</Button></span> : null}
       {statusMessage ? (
         <span className="status-line" role="status">
           {statusMessage}
@@ -238,7 +243,7 @@ export function CredentialForm({
       ) : null}
       {mutationErrorMessage ? (
         <span
-          aria-label="Keychain update failed"
+          aria-label="credential store update failed"
           className="status-line warning"
           role="alert"
         >
@@ -259,11 +264,7 @@ function credentialMutationErrorMessage(error: Error | null): string {
     return "The credential store is unavailable. Check credential status before trying again.";
   }
   if (error instanceof JobCtrlApiError && error.status === 409) {
-    const body = error.responseBody;
-    if (body && typeof body === "object" && "error" in body && body.error === "credential_managed_by_environment") {
-      return "This credential is managed by the launch environment and cannot be changed here.";
-    }
-    return "Keychain editing is unavailable on this platform. Use environment configuration instead.";
+    return "Credential configuration changed or is environment-managed. Your input remains here; check credential status before retrying.";
   }
-  return "JobCtrl could not update Keychain. Retry after checking Keychain Access.";
+  return "The credential change could not be confirmed. Your input remains here; check credential status before retrying.";
 }

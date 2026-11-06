@@ -1,243 +1,105 @@
 # Outcomes & Feedback
 
-An application outcome is a reviewed local record of what happened after you
-applied, such as a reply, interview, rejection, offer, withdrawal, or no
-response. Feedback includes your manual corrections and bounded suggestions
-from linked evidence; it improves the audit trail and analytics without
-changing scoring, ranking, thresholds, or Apply eligibility on its own. An
-owning policy changes only through an explicit score correction, approved role
-rule, or accepted learning recommendation.
+An outcome records what happened after an application: for example, a reply,
+interview, rejection, offer, withdrawal or no response. A reviewed outcome is
+distinct from an automation run and from an unreviewed email suggestion.
+
+::: info Python transformation in progress
+The flows below describe the accepted target and current Applications/Offers
+feature contracts. Integrated web, worker and installed-runtime verification is
+still pending; see [Getting Started](getting-started.md) for the published version.
+:::
 
 ## Retrying A Manual Record
 
-If saving an outcome or post-interview reflection fails to acknowledge, use the
-same form's **Record outcome** or **Record reflection** button again. The form
-keeps the original submitted values and request identity while the app is open.
-A retry returns the original record, including its timestamps, without another
-timeline entry or event, even after the local API restarts.
+Record the outcome, its time and an optional local note. A retry using the same
+request identity and unchanged input returns the recorded result rather than
+creating another entry. Reusing that identity for different values is a
+conflict. If acknowledgement was lost, inspect the saved timeline before
+starting a separate action; the first one may already be present.
 
-The attempted input stays visible and locked during this uncertainty. **Start a
-new action** unlocks it and creates a distinct request identity; the earlier action
-may already have been recorded. Successful acknowledgement also prepares a new
-action. Submitted private notes are held in memory for retry, not copied into
-browser storage. While the app is open, drafts and retry identities are kept
-separately for each tenant and job; switching back restores that tenant's own
-input, including after visiting another section. Reloading discards the
-in-memory state; inspect the timeline before deliberately recording another
-observation.
-
-Reusing a request identity with different values is a conflict and applies no
-change. A new reflection still requires an accepted or superseded prep generation
-for the same job. Adding another observation does not retract an earlier fact.
+An interview reflection can be linked to the relevant accepted preparation;
+independent question notes remain separate from outcome history. Neither notes
+nor a completed activity becomes a confirmed Profile fact or a Fit assessment.
 
 ## How Email Becomes An Outcome Suggestion
 
-1. **A user-started scan bounds application anchors.** Message count and date
-   windows are bounded too. Exact recipient, date, thread and domain checks remain
-   code.
-2. **A model reads bounded headers.** It determines which known application a
-   message belongs to before its body is read.
-3. **A second determination classifies the linked body.** It cites a verbatim
-   span and returns confidence and rationale.
-4. **Both decisions are persisted.** They record prompt/model versions and an input
-   fingerprint. The dashboard suggestion traces to that recorded evidence. If
-   the provider is unavailable, spend is denied or binding is invalid, the scan
-   reports its blocked reason and creates no suggestion. Existing reviewed
-   outcomes remain unchanged.
-5. **Accept or correct creates an outcome.** The user reviews the suggestion
-   before it becomes an outcome.
-6. **Ignore records only the suggestion decision.** Raw bodies remain local
-   and stay out of broad projections, events and logs.
+1. You start a bounded Gmail scan of known application and outcome anchors.
+   Recipient and time-window checks limit the search. In the current Python
+   command, defaults are 20 anchors, up to 10 results per anchor and a 45-day
+   window; the scan may miss messages outside those bounds.
+2. A source-bound model decision links message metadata to one application
+   before the body is read. Uncertain or unrelated metadata does not establish
+   a match.
+3. A separate source-bound decision classifies a linked body and cites the
+   relevant text. The result is a suggestion, not a reviewed outcome.
+4. You accept, correct or ignore the suggestion. Accepting or correcting can
+   record an outcome; ignoring records the decision without inventing one.
 
-Anchors come from applied job rows, reviewed outcomes and successful live Apply
-runs. The earliest qualifying anchor is kept for each job. A job row uses
-`applied_at`, falling back to `discovered_at` when a legacy applied row has no
-application timestamp. By default, the scan checks at most 25 anchors and five
-search results per anchor within a 45-day window starting at that anchor.
-
-Analytics always show raw counts. Conversion rates require at least five applied
-records in a cohort; median response time requires five response-time samples.
-These mechanical sample gates make no judgment about what an email means.
+Evidence and each message's decisions commit independently. A later failure
+preserves earlier committed suggestions and reviewed records. If a response is
+lost, progress may be unknown until inspection or retry; an already ingested
+message is not a new outcome. Message bodies, quotes and private rationale stay
+in scoped local reads, not general activity, events or progress responses. The
+suggestion audit can show its saved source and model authority without rerunning
+it. See [Apply](apply.md#gmail-connector-and-sending-boundary) for account and
+send boundaries.
 
 ## Explicit Feedback Learning
 
-Operations exposes one privacy-bounded `FeedbackSignal` union over explicit
-score corrections, recorded Discovery feedback, approved role-match
-suggestions, and accepted structured tailoring feedback. These records carry
-canonical IDs, revisions, timestamps, closed rule codes, and non-sensitive
-evidence references. They never copy raw notes, resume or job-description text,
-prompts, model output, mail bodies, credentials, or local paths.
-
-The first derived recommendation type is a closed Materials tailoring-rule
-revision. JobCtrl creates a pending recommendation only when at least three
-compatible accepted tailoring signals span at least two jobs, no unresolved
-contradiction remains, and the derivation version has a passing deterministic
-evaluation fixture. Application outcomes may support later evaluation, but an
-outcome cannot create or prove a policy improvement by itself. Score
-corrections and approved role rules already passed an explicit user decision,
-so their owning Scoring or Discovery history does not require a second review.
-
-The Dashboard shows the pending recommendation, observed-versus-required
-sample counts, confidence limit, allowlist/derivation versions, and bounded
-evidence IDs. Accept creates a new context-owned Materials policy revision;
-reject leaves the current policy unchanged. Neither action re-scores jobs,
-re-tailors artifacts, changes Apply eligibility, or rewrites history. Corrected,
-deleted, or tombstoned source signals trigger deterministic re-derivation while
-preserving earlier reviews and accepted policy revisions.
+Your corrections, reviewed outcomes, Discovery feedback and materials decisions
+retain their own sources and history. Any recommendation that changes a saved
+policy requires your explicit decision; recording an outcome does not silently
+rewrite a score, Profile fact, accepted artifact or application approval.
+Learning milestones, aspirations and posting demand are not evidence of a
+capability. The retained feedback-learning workflow remains subject to
+integrated verification in the transformation.
 
 ## What You Can See And Control
 
-- Open `/jobs/:jobId` and use **Application outcomes** to record an outcome,
-  occurrence time, and optional local note. The same Job Detail workspace shows
-  the ordered outcome timeline and any pending suggestion for that job.
-- After using stored interview prep, record a reflection in the prep panel. The
-  resulting interview outcome can link to the prep generation that preceded it.
-  A reflection records what happened after the interview. Editable per-question
-  preparation notes remain separate drafts; saving one does not create an
-  outcome, confirm a profile fact, or assess your answer. See
-  [Interview preparation](materials-and-tailoring.md#interview-preparation).
-- `/dashboard` surfaces pending outcome suggestions and the high-level
-  applied-to-response funnel.
-- `/analytics` groups recorded outcomes by source, score band, requirement-fit
-  band, apply mode, template, or policy. Small groups show counts until they
-  meet the API's current sample threshold; rates and medians are descriptive
-  associations, not causal claims.
-
-When the bounded Gmail feedback scanner has produced a suggestion, you choose
-whether to accept it, correct its classification, or ignore it. JobCtrl does not
-turn an email classification directly into a reviewed outcome without that
-decision. The current web app reviews resulting suggestions but does not expose
-the scan trigger; scan initiation is the `POST` API action listed below. Gmail
-setup and the read/send boundary are documented in
-[Apply](apply.md#gmail-connector-and-sending-boundary).
-
-A suggestion can be decided once. If another review already recorded a different
-decision or correction, the app shows that saved decision and keeps your attempted
-correction visible for review or copying. A retry of the same recorded request
-returns the original result without another outcome. Older decisions may lack
-the information needed to prove that a retry is identical; JobCtrl reports that
-uncertainty instead of claiming the request was applied. A damaged or missing
-decision receipt is also reported as unverifiable. Ignoring a suggestion
-does not record an outcome note or time; the API rejects those unused fields.
-While the app remains open, correction drafts and delayed results stay with
-their original tenant, job and suggestion, even if you navigate away.
-
-A failed scan reports its safe cause and any confirmed progress in the API
-response. Suggestions committed before the failure remain available for
-review; a deliberate retry skips messages already ingested. If the worker
-connection is lost, the amount committed may be unknown until retry.
-
-Apply-run state and application outcomes answer different questions. Apply
-history records what the automation attempted and whether submission evidence
-exists; outcome history records your reviewed understanding of what followed.
-Both may appear in the same job audit timeline without sharing ownership.
+The target Job Detail and dashboard flows show an outcome timeline and pending
+suggestions, while analytics summarize recorded data. Counts describe the
+records present; conversion rates and response-time medians are sample-gated
+and descriptive, not proof that a particular action caused an outcome. A
+suggestion is decided once; a conflicting decision must be reviewed against the
+latest saved state. The [API reference](../api/complete-contract.md#feedback-learning-and-policy-history)
+identifies the owning routes.
 
 ## Source Of Truth And Ownership
 
-- **Reviewed outcomes** live in canonical `application_outcomes` rows. Manual
-  entries and accepted/corrected suggestions use the same outcome record shape.
-- Only a reviewed `applied_confirmation` outcome is a confirmed application
-  fact for repeat-application protection. Other outcome kinds, local notes, and
-  unknown outcomes do not establish application history.
-- **Suggestions** remain separate in `application_outcome_suggestions` until you
-  decide them. A pending Gmail suggestion is never treated as a confirmed
-  application; suggestion accuracy is derived from later decisions.
-- **Linked Gmail evidence** stays local. A scan starts from known application
-  anchors and searches a bounded recipient and date window with a limit on the
-  messages returned. A source-bound model determination decides whether the
-  metadata links to an application; the body is read only after a valid link.
-  A bounded search can miss messages, and no anchors means no Gmail search.
-  Previously stored evidence remains available after a failed scan. Raw mail
-  bodies never enter broad projections, events, logs, telemetry, or scan responses.
-- **Local notes** stay in the canonical outcome table. Events carry safe IDs,
-  kinds, timestamps, confidence/link markers, and presence flags rather than
-  note text.
-- **Analytics** is a read model over canonical outcomes and accepted material
-  metadata. It cannot write back to a score, policy, profile, discovery query,
-  or application decision.
-- **Learning recommendations** remain separate from canonical feedback sources.
-  Their evidence and contradictions are reproducible, and no recommendation
-  changes behavior before explicit acceptance creates an owning revision.
+Applications owns reviewed outcomes, Gmail evidence and suggestions. A confirmed
+application fact, including a matching provider receipt or an explicit reviewed
+application confirmation, is different from an unconfirmed email suggestion.
+A manual outcome can document what happened after an uncertain send, but it does
+not erase the original submit intent or make an automatic retry safe.
 
-The job detail audit history is allow-listed explanatory history, not a raw
-event dump. It intentionally excludes private notes, mail bodies, local paths,
-and debug payloads.
-
-## Lifecycle
-
-### Manual outcome
-
-1. You choose an outcome and optionally add the time and a local note.
-2. The API validates the request and creates a new canonical outcome record.
-3. A privacy-bounded domain event invalidates outcome, job, dashboard, and
-   analytics reads.
-4. Projection-backed views show the reviewed timeline and recompute aggregate
-   counts or sample-gated rates.
-
-### Gmail suggestion
-
-1. A user-started bounded scan searches post-application windows using local
-   recipient, employer, title, URL/domain, and timing anchors.
-2. Confidently linked evidence is stored locally and produces a pending
-   suggestion; the response exposes only safe references and classification
-   metadata.
-3. Accept or correct writes a reviewed outcome. Ignore closes the suggestion
-   without manufacturing one.
-4. The suggestion decision remains available for accuracy reporting, while the
-   reviewed outcome becomes the job's lifecycle fact.
-
-Outcome feedback does not retrain a model or automatically adjust a scoring or
-tailoring policy. Score corrections have their own explicit lifecycle under
-[Scoring](scoring-and-employer-analysis.md); accepted tailoring recommendations
-and rollback are documented under
-[Materials & Tailoring](materials-and-tailoring.md#policy-history-and-rollback).
-
-## Implementation And API Pointers
-
-| Layer | Pointer |
-| --- | --- |
-| User surfaces | `/jobs/:jobId`, `/dashboard`, and `/analytics`; the practical monitoring loop is in [Daily Workflow → Inspect Progress](normal-flows.md). |
-| HTTP contract | `GET /v1/outcomes`, per-job outcome reads/writes, suggestion decisions, `POST /v1/outcomes/gmail/scan`, `GET /v1/analytics/outcomes`, and the `/v1/learning/*` review/history routes; see [Jobs & Materials API](../api/jobs-and-materials.md) and the [complete contract](../api/complete-contract.md#feedback-learning-and-policy-history). |
-| API implementation | Outcome routes and projections are composed in `apps/api/src/server.ts`, `apps/api/src/read-model.ts`, and `apps/api/src/projections.ts`. |
-| Web implementation | `apps/web/src/contexts/apply/components/ApplicationOutcomes.tsx`, Operations outcome hooks/keys, `views/dashboard/`, and `views/analytics/`. |
-| Deep architecture | [Apply Feedback & Projections](../architecture/read-model.md#apply-review-and-outcome-feedback) and its [sensitive projection boundaries](../architecture/read-model.md#evidence-analytics-and-compensation). |
-
+Interviews owns preparation and notes; Fit owns person qualification and
+corrections; Offers owns actual offer terms and decisions. Composed reads use
+those public owners without making the dashboard an alternate writer. General
+events carry identifiers and state, not private notes or message bodies.
 
 ## Actual Offer Terms And Decisions
 
-In Job Detail → **Application outcomes**, **Offer terms and decisions** records
-actual terms from an employer letter, message or your attested conversation.
-For each cash component, enter the offered amount, a three-letter currency
-(or leave it unknown), and its time base. Equity, benefits and the decision
-deadline are optional: blank values remain **Unknown**. JobCtrl does not infer
-an equity valuation, exchange rate, annualization, total package or deadline.
-Paste the source reference and verbatim quotation, then explicitly confirm that
-it supports every entered term. No source is fetched automatically.
+Record actual terms from an employer's letter, message or your attested
+conversation. Each entry carries a source reference, quotation and your explicit
+confirmation. Currency, time base, equity, benefits and deadlines remain unknown
+when they are not provided; JobCtrl must not invent a valuation, exchange rate,
+annualization or total package. Market compensation estimates are separate from
+the employer's actual terms.
 
-Saving the first terms records one offer milestone if no reviewed offer milestone already exists. Later terms revisions
-require a reason and preserve the earlier source and values. **Record offer
-decision** stores your accepted or declined attestation against the exact
-current terms. A later decision requires a correction reason and the current
-decision ID. If a save or another update changes the current offer while your
-form is open, your draft stays visible. Review the latest offer and choose to
-keep or discard your draft before trying again; keeping it requires a fresh
-confirmation or attestation. Offer history retains both
-records. When terms change after a decision, the old decision stays visible
-with an explanation that it refers to earlier terms. Review the new terms
-before reconfirming. These actions need no interview-prep session and never
-submit an application or change a pipeline stage or Apply approval.
+Changing terms or correcting an accept/decline decision requires the current
+revision or decision and a reason; prior terms and decisions remain visible.
+A decision bound to old terms does not silently approve revised terms. The first
+terms may also create an idempotent offer milestone when Applications is present.
+These actions do not submit an application. Offer-related communications follow
+the separate [Outreach review flow](contacts-and-outreach.md#offer-communications).
 
-**Compare with existing compensation evidence** displays the saved posting
-facts and market estimate separately, with their recorded currency, component,
-time base, source and confidence. Missing evidence stays missing. Comparisons
-do not fetch sources or turn estimates into actual offered terms.
+## Implementation And API Pointers
 
-**Draft an offer communication** selects a linked contact and a negotiation,
-clarification, acceptance or decline purpose. Acceptance and decline drafts
-require your matching decision on the current terms. The existing
-[outreach workflow](contacts-and-outreach.md#offer-communications) verifies,
-reviews and approves every generated or edited message before copying.
-
-Terms, quotations and decision reasons are private canonical ledger data.
-General activity, curated job audit and event-stream invalidations expose only
-safe references; use the offer panel to inspect the private record.
+The Python owner in `features/applications/feedback.py` declares outcome reads,
+idempotent manual writes, suggestion decisions, audit and user-started scans;
+`features/applications/http.py` declares their `/v1/outcomes` and per-job
+routes. Offers owns `/v1/jobs/{id}/offer`. See [feature reads](../architecture/read-model.md)
+and [local API](../api/complete-contract.md#apply-review-and-outcomes). Route
+declarations and controlled-provider proof are not evidence of live Gmail
+access or completed integrated release behavior.

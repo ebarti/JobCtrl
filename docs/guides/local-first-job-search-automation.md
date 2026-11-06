@@ -11,8 +11,8 @@ automated without making a vendor-hosted account the owner of your career data.
 
 ## What “Local-first” Means In JobCtrl
 
-JobCtrl runs as a small local system: a web app, a local TypeScript API, a
-Python worker, Temporal (the workflow engine), SQLite, and a directory of
+JobCtrl runs as a small local system: a web app, a local API, a worker,
+Temporal (the workflow engine), SQLite, and a directory of
 generated artifacts. The normal workspace is under `~/.jobctrl/`. There is no
 JobCtrl account and no hosted JobCtrl backend required to use the product.
 
@@ -22,7 +22,7 @@ That gives the local installation several concrete responsibilities:
 | --- | --- |
 | Candidate facts, preferences, and application answers | Versioned Candidate Profile rows in SQLite |
 | Discovered jobs, source observations, scores, and outcomes | The local `jobctrl.db` database |
-| Tailored resumes, cover letters, and previews | Registered files in the local JobCtrl workspace |
+| Tailored resumes and previews | Registered files in the local JobCtrl workspace |
 | Workflow progress, retries, and cancellation | The local Temporal runtime plus durable JobCtrl projections |
 | Non-secret product settings | SQLite or `config.json`, according to the owning setting |
 | Provider credentials | The documented environment, CLI, or OS-backed secret boundary—not browser-readable settings |

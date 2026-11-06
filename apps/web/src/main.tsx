@@ -2,7 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App.js";
-import { EventStreamProvider } from "./contexts/operations/providers/EventStreamProvider.js";
+import { EventStreamProvider } from "./shared/providers/EventStreamProvider.js";
 import {
   DemoConsentClient,
   DemoConsentGate,
@@ -12,6 +12,7 @@ import {
 } from "./demo/consent/index.js";
 import { createAppComposition, resolveAppMode } from "./demo/portFactory.js";
 import { DemoWorkspaceProvider } from "./demo/workspace/DemoWorkspaceProvider.js";
+import { featureEventHandlers } from "./feature-events.js";
 import { router } from "./router.js";
 import { createQueryClient } from "./shared/lib/queryClient.js";
 import { DensityProvider } from "./shared/providers/DensityProvider.js";
@@ -164,7 +165,7 @@ async function mountApplication(consentClient?: DemoConsentClient): Promise<void
         <PortsProvider ports={composition.ports}>
           <TenantProvider>
             <QueryClientProvider client={queryClient}>
-              <EventStreamProvider>
+              <EventStreamProvider handlers={featureEventHandlers}>
                 <ThemeProvider>
                   <DensityProvider>
                     <TooltipProvider>

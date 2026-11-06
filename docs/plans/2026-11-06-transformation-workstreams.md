@@ -2,6 +2,37 @@
 
 Read [the accepted plan](2026-11-06-python-transformation.md) first. Shared checkout: preserve every other worker's changes. Coordinate through the root agent; no worker git commits or dependency installations.
 
+## Additional parallel ownership
+
+The initial broad assignments below have been split into the following linked
+workstreams. Their current source contracts are in the Python integration
+contract and their actual acceptance evidence belongs in the capability and E2E
+ledgers. A completed worker handoff alone does not close an issue.
+
+| Workstream | GitHub issue |
+|---|---|
+| companies | [#1445](https://github.com/ebarti/JobCtrl/issues/1445) |
+| application_mail | [#1446](https://github.com/ebarti/JobCtrl/issues/1446) |
+| compensation_providers | [#1447](https://github.com/ebarti/JobCtrl/issues/1447) |
+| web_applications | [#1448](https://github.com/ebarti/JobCtrl/issues/1448) |
+| web_compensation | [#1449](https://github.com/ebarti/JobCtrl/issues/1449) |
+| architecture_docs | [#1450](https://github.com/ebarti/JobCtrl/issues/1450) |
+| demo | [#1451](https://github.com/ebarti/JobCtrl/issues/1451) |
+| credentials | [#1452](https://github.com/ebarti/JobCtrl/issues/1452) |
+| model_providers | [#1453](https://github.com/ebarti/JobCtrl/issues/1453) |
+| e2e_optional | [#1455](https://github.com/ebarti/JobCtrl/issues/1455) |
+| web_apply_review | [#1456](https://github.com/ebarti/JobCtrl/issues/1456) |
+| ts_contracts | [#1457](https://github.com/ebarti/JobCtrl/issues/1457) |
+| native_lifecycle | [#1458](https://github.com/ebarti/JobCtrl/issues/1458) |
+| pipeline_composition | [#1459](https://github.com/ebarti/JobCtrl/issues/1459) |
+| job_queries | [#1460](https://github.com/ebarti/JobCtrl/issues/1460) |
+
+Final architecture review also requires real feature-owned storage and external
+I/O ports in each application service. Merely moving a legacy implementation
+into a feature directory, renaming an adapter, or wrapping a raw SQL connection
+does not meet the accepted boundary. Composition selects adapters; application
+actions use semantic operations with atomic source guards and publication.
+
 ## foundation — #1429
 
 Own the target package layout, explicit composition root, shared runtime adapters, Python HTTP server, security boundary, feature route registration, durable application dispatch and single canonical SQLite transaction/event mechanics. Freeze a concise public interface contract first so feature teams can work in parallel. Replace Fastify/JSON-RPC at final integration rather than wrapping legacy business handlers. Port host/origin/peer/token protections, SSE, settings/credentials/health and static serving. Keep domain/application code independent of HTTP/SQLite/Temporal SDKs; keep infrastructure small. Coordinate package dependencies and database bootstrap with feature-owned schema.

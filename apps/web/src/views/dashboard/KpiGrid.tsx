@@ -27,20 +27,26 @@ const KPI_BASE: JobsSearch = {
   dir: "desc",
   page: 1,
   pageSize: 50,
+  grid: "v1",
+  job_state: "active",
+  direction: "desc",
+  offset: 0,
+  limit: 50,
 };
 
+const selected = (value: string) => ({ operator: "contains" as const, text: "", selectedValues: [value] });
 export function kpiSearchFor(target: KpiTarget): JobsSearch {
   if (target === "failed") {
-    return { ...KPI_BASE, state: "failed", stage: "all" };
+    return { ...KPI_BASE, state: "failed", column_filters: { current_state: selected("failed") } };
   }
   if (target === "blocked") {
-    return { ...KPI_BASE, state: "blocked", stage: "all" };
+    return { ...KPI_BASE, state: "blocked", column_filters: { current_state: selected("blocked") } };
   }
   if (target === "ready") {
-    return { ...KPI_BASE, stage: "apply", state: "pending" };
+    return { ...KPI_BASE, stage: "apply", state: "pending", column_filters: { current_stage: selected("apply"), current_state: selected("pending") } };
   }
   if (target === "applied") {
-    return { ...KPI_BASE, applyStatus: "applied" };
+    return { ...KPI_BASE, applyStatus: "applied", column_filters: { apply_status: selected("applied") } };
   }
   return { ...KPI_BASE, stage: "all", state: "all" };
 }
@@ -49,14 +55,13 @@ export function kpiHrefFor(target: KpiTarget): string {
   const search = kpiSearchFor(target);
   const params = new URLSearchParams();
   params.set("q", search.q);
-  params.set("stage", search.stage);
-  params.set("state", search.state);
-  params.set("applyStatus", search.applyStatus);
-  params.set("deleted", search.deleted);
+  params.set("grid", "v1");
+  params.set("job_state", search.job_state ?? "active");
   params.set("sort", search.sort);
-  params.set("dir", search.dir);
-  params.set("page", String(search.page));
-  params.set("pageSize", String(search.pageSize));
+  params.set("direction", search.direction ?? "desc");
+  params.set("offset", String(search.offset ?? 0));
+  params.set("limit", String(search.limit ?? 50));
+  if (search.column_filters) params.set("column_filters", JSON.stringify(search.column_filters));
   return `/jobs?${params.toString()}`;
 }
 

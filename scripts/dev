@@ -37,10 +37,10 @@ known_process_names() { echo "$(process_names) docs demo-api demo-web"; }
 
 process_command() {
   case "$1" in
-    temporal) echo 'temporal server start-dev --db-filename "$JOBCTRL_TEMPORAL_DB"' ;;
-    api)      echo "pnpm --filter @jobctrl/api dev" ;;
-    web)      echo 'pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port "$JOBCTRL_WEB_PORT"' ;;
-    worker)   echo "uv --project workers/automation run jobctrl worker" ;;
+    temporal) echo 'temporal server start-dev --ip 127.0.0.1 --port "$JOBCTRL_TEMPORAL_GRPC_PORT" --ui-ip 127.0.0.1 --ui-port "$JOBCTRL_TEMPORAL_UI_PORT" --db-filename "$JOBCTRL_TEMPORAL_DB" --disable-config-file --disable-config-env' ;;
+    api)      echo 'uv --project workers/automation run --no-sync python -m jobctrl.app.server --workspace "$JOBCTRL_DIR" --host "$JOBCTRL_API_HOST" --port "$JOBCTRL_API_PORT"' ;;
+    web)      echo 'corepack pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port "$JOBCTRL_WEB_PORT"' ;;
+    worker)   echo 'uv --project workers/automation run --no-sync python -m jobctrl.app.worker --workspace "$JOBCTRL_DIR"' ;;
     docs)     echo 'corepack pnpm exec vitepress dev docs --host 127.0.0.1 --port "$JOBCTRL_DOCS_PORT"' ;;
     demo-api) echo 'corepack pnpm --filter @jobctrl/demo-edge exec wrangler d1 migrations apply DEMO_TELEMETRY_DB --local --config wrangler.api.jsonc --persist-to "$JOBCTRL_DEMO_STATE_DIR" && exec corepack pnpm --filter @jobctrl/demo-edge exec wrangler dev --config wrangler.api.jsonc --local --ip 127.0.0.1 --port "$JOBCTRL_DEMO_API_PORT" --persist-to "$JOBCTRL_DEMO_STATE_DIR"' ;;
     demo-web) echo 'VITE_JOBCTRL_APP_MODE=demo VITE_DEMO_API_PROXY_TARGET="http://127.0.0.1:${JOBCTRL_DEMO_API_PORT}" exec corepack pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port "$JOBCTRL_DEMO_WEB_PORT"' ;;
@@ -146,6 +146,10 @@ set_default_env() {
   export JOBCTRL_DIR="${JOBCTRL_DIR:-$HOME/.jobctrl}"
   export JOBCTRL_API_HOST="${JOBCTRL_API_HOST:-127.0.0.1}"
   export JOBCTRL_API_PORT="${JOBCTRL_API_PORT:-8766}"
+  export JOBCTRL_TEMPORAL_ADDRESS="${JOBCTRL_TEMPORAL_ADDRESS:-${TEMPORAL_ADDRESS:-127.0.0.1:7233}}"
+  export JOBCTRL_TEMPORAL_NAMESPACE="${JOBCTRL_TEMPORAL_NAMESPACE:-${TEMPORAL_NAMESPACE:-default}}"
+  export JOBCTRL_TEMPORAL_GRPC_PORT="${JOBCTRL_TEMPORAL_GRPC_PORT:-${JOBCTRL_TEMPORAL_ADDRESS##*:}}"
+  export JOBCTRL_TEMPORAL_UI_PORT="${JOBCTRL_TEMPORAL_UI_PORT:-8233}"
   export VITE_JOBCTRL_API_BASE_URL="${VITE_JOBCTRL_API_BASE_URL:-http://${JOBCTRL_API_HOST}:${JOBCTRL_API_PORT}}"
   export JOBCTRL_WEB_PORT="${JOBCTRL_WEB_PORT:-5173}"
   export JOBCTRL_DOCS_PORT="${JOBCTRL_DOCS_PORT:-4174}"
@@ -333,7 +337,7 @@ print_binding_for() {
       fi
       ;;
     temporal)
-      echo "temporal: grpc 127.0.0.1:7233, ui http://127.0.0.1:8233"
+      echo "temporal: grpc 127.0.0.1:${JOBCTRL_TEMPORAL_GRPC_PORT}, ui http://127.0.0.1:${JOBCTRL_TEMPORAL_UI_PORT}"
       ;;
   esac
 }
@@ -402,6 +406,11 @@ prepare_runtime() {
   load_env_file
   set_default_env
   local name
+  for name in "$@"; do
+    if [[ "$name" == "temporal" ]]; then
+      export JOBCTRL_TEMPORAL_UI_URL="http://127.0.0.1:$JOBCTRL_TEMPORAL_UI_PORT"
+    fi
+  done
   if [[ "$temporal_path_conflict" -eq 1 ]]; then
     for name in "$@"; do
       case "$name" in
@@ -451,22 +460,11 @@ schema_is_incompatible() {
   [[ "$result" == "incompatible" ]]
 }
 
-# Keep the diagnostic API and web UI available without starting a worker or
-# Temporal against a database that the runtime refuses to open.
+# The Python application deliberately refuses a legacy workspace. Startup never
+# performs the breaking cutover: profile-transfer creates a new workspace only
+# after an explicit command, leaving the original data available for recovery.
 select_default_targets() {
-  if schema_is_incompatible; then
-    echo "dev: incompatible workspace database; starting the diagnostic API and web interface only."
-    if [[ "${JOBCTRL_DEV_INNER:-}" == "1" ]]; then
-      if [[ "$(process_state worker)" != "down" || "$(process_state temporal)" != "down" ]]; then
-        echo "dev: stop the unverified earlier development stack before starting diagnostics." >&2
-        return 1
-      fi
-    else
-      stop_one worker
-      stop_one temporal
-    fi
-    targets=(api web)
-  fi
+  reject_incompatible_worker_targets "${targets[@]}"
 }
 
 reject_incompatible_worker_targets() {
@@ -474,8 +472,8 @@ reject_incompatible_worker_targets() {
   local name
   for name in "$@"; do
     case "$name" in
-      temporal|worker)
-        echo "dev: this workspace database needs a compatible upgrade; start the default fleet for diagnostics instead of starting $name." >&2
+      temporal|api|worker)
+        echo "dev: this workspace belongs to the previous application. Run jobctrl profile-transfer --source SOURCE --target NEW_WORKSPACE --confirm-profile-only-reset --browser-sources BROWSER_MANIFEST.json, then select JOBCTRL_DIR=NEW_WORKSPACE. The source is preserved." >&2
         return 1
         ;;
     esac
@@ -614,6 +612,7 @@ prepare_source_run() {
   JOBCTRL_DEV_DEFER_API_PROBE=1
   prepare_runtime "${targets[@]}"
   unset JOBCTRL_DEV_DEFER_API_PROBE
+  reject_incompatible_worker_targets "${targets[@]}"
   source_control switch
   check_api_collision "${targets[@]}"
   export JOBCTRL_DEV_PREPARED=1
@@ -635,9 +634,6 @@ cmd_start_source() {
   for i in $(seq 1 600); do
     if [[ -f "$log" ]] && grep -Fq 'dev: foreground run active;' "$log"; then
       echo "dev: detached source stack started (logs $log)"
-      if grep -Fq 'dev: incompatible workspace database;' "$log"; then
-        echo "dev: incompatible workspace database; the diagnostic API and web interface are running without the worker and Temporal."
-      fi
       local running=()
       for name in "${targets[@]}"; do
         if is_running "$name"; then running+=("$name"); fi
@@ -755,7 +751,7 @@ cmd_migrate_credentials() {
   local user_env="${JOBCTRL_USER_ENV_PATH:-$HOME/JobCtrl/.env}"
   (
     cd "$ROOT"
-    uv --project workers/automation run jobctrl credentials migrate \
+    uv --project workers/automation run --no-sync python -m jobctrl credentials migrate \
       --env-file "$app_dir/.env" \
       --env-file "$ROOT/.env" \
       --env-file "$user_env" \

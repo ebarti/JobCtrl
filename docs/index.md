@@ -39,7 +39,7 @@ features:
     link: /user/scoring-and-employer-analysis
     linkText: Understand scoring
   - title: Audited Materials
-    details: Tailored resumes where every bullet traces back to its source, gates guard resumes and cover letters against invented facts, and keyword coverage is measured against the final document.
+    details: Tailored resumes where every bullet traces back to its source, gates guard resumes against invented facts, and keyword coverage is measured against the final document.
     link: /user/materials-and-tailoring
     linkText: Understand the audit trail
   - title: Supervised Apply

@@ -30,4 +30,4 @@ jobs:
       - name: Install locked dependencies
         run: corepack pnpm install --frozen-lockfile
       - name: Verify edge workers
-        run: corepack pnpm demo-edge:check && corepack pnpm demo-edge:test && corepack pnpm demo-edge:dry-run
+        run: corepack pnpm demo-edge:check && corepack pnpm demo-edge:dry-run

@@ -1,11 +1,12 @@
 import {
-  DOMAIN_EVENT_TYPES,
-  LOCAL_TENANT,
-  type DomainEventUnion,
-} from "@jobctrl/domain-types";
+  DEMO_EVENT_TYPES as DOMAIN_EVENT_TYPES,
+  type DemoEvent as DomainEventUnion,
+} from "../events.js";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
 import { materializeDemoSeed } from "../clock.js";
 import { DEMO_SEED } from "../seed.js";
+import { stableDemoStringify } from "../digest.js";
 import {
   DEMO_WORKSPACE_DATABASE_VERSION,
   DEMO_WORKSPACE_EVENT_LOG_LIMIT,
@@ -254,7 +255,7 @@ export class DemoWorkspaceRepository {
           );
         }
 
-        const draft = clone(withCurrentSettingsDefaults(current));
+        const draft = clone(current);
         const appendedEvents: DomainEventUnion[] = [];
         const context: DemoWorkspaceMutationContext = {
           putBlob: (blobId, value) => {
@@ -660,12 +661,12 @@ export class DemoWorkspaceRepository {
       durableBlobs.has(blobId),
     );
     const { pendingScenarios: _discardedOperations, ...savedState } = snapshot as DemoWorkspaceSnapshot & { pendingScenarios?: unknown };
-    const memorySnapshot = withCurrentSettingsDefaults({
+    const memorySnapshot: DemoWorkspaceSnapshot = {
       ...savedState,
       schemaVersion: DEMO_WORKSPACE_SCHEMA_VERSION,
       eventLog: snapshot.eventLog ?? [],
       blobIds: copiedBlobIds,
-    });
+    };
     if (this.channel) {
       this.channel.removeEventListener("message", this.onChannelMessage);
       this.channel.close();
@@ -696,7 +697,7 @@ export class DemoWorkspaceRepository {
       this.setUpgrade(upgrade);
       throw new DemoWorkspaceUpgradeRequiredError(upgrade);
     }
-    const snapshot = withCurrentSettingsDefaults(stored);
+    const snapshot = stored;
     this.adoptAuthoritativeSnapshot(snapshot, false);
     return snapshot;
   }
@@ -705,7 +706,7 @@ export class DemoWorkspaceRepository {
     stored: DemoWorkspaceSnapshot,
     advanceWatermark: boolean,
   ): void {
-    const snapshot = withCurrentSettingsDefaults(stored);
+    const snapshot = stored;
     this.authoritativeSnapshot = snapshot;
     this.receiptsSnapshot = snapshot.state.receipts;
     for (const listener of this.receiptListeners) {
@@ -852,7 +853,7 @@ export class DemoWorkspaceRepository {
   }
 
   private setReady(stored: DemoWorkspaceSnapshot): DemoWorkspaceReady {
-    const snapshot = withCurrentSettingsDefaults(stored);
+    const snapshot = stored;
     this.authoritativeSnapshot = snapshot;
     this.installChannel();
     const ready: DemoWorkspaceReady = {
@@ -933,6 +934,19 @@ export class DemoWorkspaceRepository {
       eventLog: [],
       blobIds: [],
       state: {
+        features: {
+          fitProfileSourceSignature: stableDemoStringify(
+            materialized.readModel.profile.config.profile,
+          ),
+          outreachSourceBinding: JSON.stringify([
+            materialized.readModel.profile.config.profileVersion,
+            materialized.readModel.outreach.thread.thread
+              ? materialized.readModel.contacts.details[
+                  materialized.readModel.outreach.thread.thread.contactId
+                ]?.contact
+              : null,
+          ]),
+        },
         title: materialized.title,
         generatedAt: materialized.generatedAt,
         artifacts: materialized.artifacts,
@@ -942,41 +956,6 @@ export class DemoWorkspaceRepository {
       },
     };
   }
-}
-
-/** Additive defaults interpret retained current-seed state without a read-time commit. */
-function withCurrentSettingsDefaults(
-  snapshot: DemoWorkspaceSnapshot,
-): DemoWorkspaceSnapshot {
-  if (
-    snapshot.schemaVersion > DEMO_WORKSPACE_SCHEMA_VERSION ||
-    snapshot.seedVersion !== DEMO_SEED.seedVersion
-  ) {
-    return snapshot;
-  }
-  let response = snapshot.state.readModel.settings;
-  for (const key of ["resumeVoicePolish", "coverLetterGeneration"] as const) {
-    const hasValue = Object.hasOwn(response.settings, key);
-    const hasMetadata = Object.hasOwn(response.effectiveSettings, key);
-    if (hasValue && hasMetadata) continue;
-    // Preserve an existing value, including malformed values for schema validation.
-    const value = hasValue
-      ? response.settings[key]
-      : hasMetadata ? response.effectiveSettings[key]?.value : false;
-    response = {
-      ...response,
-      settings: hasValue ? response.settings : { ...response.settings, [key]: value },
-      effectiveSettings: hasMetadata ? response.effectiveSettings : {
-        ...response.effectiveSettings,
-        [key]: { value, source: hasValue ? "persisted" : "default", activation: "next_workflow", editable: true },
-      },
-    };
-  }
-  if (response === snapshot.state.readModel.settings) return snapshot;
-  return {
-    ...snapshot,
-    state: { ...snapshot.state, readModel: { ...snapshot.state.readModel, settings: response } },
-  };
 }
 
 export const DEMO_WORKSPACE_TENANT = LOCAL_TENANT;
@@ -1023,6 +1002,7 @@ const REFRESHABLE_DEMO_SEED_VERSIONS = new Set([
   "2026-07-11.1",
   "2026-07-12.1",
   "2026-07-12.2",
+  "2026-07-31.1",
 ]);
 
 /** Only reviewed legacy fixtures may be destructively replaced. */
@@ -1089,7 +1069,7 @@ function assertDemoDomainEvent(
   event: unknown,
 ): asserts event is DomainEventUnion {
   const candidate = event as Partial<{
-    eventType: string;
+    type: string;
     tenantId: string;
     occurredAt: string;
     payload: unknown;
@@ -1097,8 +1077,8 @@ function assertDemoDomainEvent(
   if (
     typeof event !== "object" ||
     event === null ||
-    typeof candidate.eventType !== "string" ||
-    !KNOWN_DOMAIN_EVENT_TYPES.has(candidate.eventType) ||
+    typeof candidate.type !== "string" ||
+    !KNOWN_DOMAIN_EVENT_TYPES.has(candidate.type) ||
     candidate.tenantId !== LOCAL_TENANT ||
     typeof candidate.occurredAt !== "string" ||
     candidate.occurredAt.length === 0 ||

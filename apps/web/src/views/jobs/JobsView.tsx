@@ -1,1073 +1,199 @@
-import {
-  DEFAULT_PIPELINE_LLM_MODEL,
-  type BulkJobMutationRequest,
-  type BulkRunPendingPreparationRequest,
-  type BulkRetryFailedRequest,
-  type JobMutationResponse,
-  type JobSortField,
-  type JobSummary,
-  type SavedTableView,
-  USER_FACING_STAGE_STATES,
-} from "@jobctrl/contracts";
-import { useNavigate, useSearch } from "@tanstack/react-router";
-import type { UseMutationResult } from "@tanstack/react-query";
-import type { RowSelectionState, SortingState } from "@tanstack/react-table";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useForm } from "@tanstack/react-form";
+import { Link } from "@tanstack/react-router";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { SavedTableView } from "@jobctrl/contracts";
+import { z } from "zod";
 
-import { useDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/useDeleteJobsBulkMutation.js";
-import { useHideJobsBulkMutation } from "../../contexts/discovery/hooks/useHideJobsBulkMutation.js";
-import { permanentDeleteConflictReceipt, usePermanentlyDeleteJobsBulkMutation, usePreparePermanentDeleteSelectionMutation } from "../../contexts/discovery/hooks/usePermanentlyDeleteJobsBulkMutation.js";
-import { useRestoreJobsBulkMutation } from "../../contexts/discovery/hooks/useRestoreJobsBulkMutation.js";
-import { useUnhideJobsBulkMutation } from "../../contexts/discovery/hooks/useUnhideJobsBulkMutation.js";
-import { useReviewableJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
-import { JOB_STATES, type JobState } from "@jobctrl/contracts";
-import { useRetryFailedJobsMutation } from "../../contexts/pipeline/hooks/useRetryFailedJobsMutation.js";
-import { useRunPendingPreparationMutation } from "../../contexts/pipeline/hooks/useRunPendingPreparationMutation.js";
-import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
-import type { JobsSearch } from "../../routes/-jobs.search.js";
-import {
-  JOBS_TABLE_COLUMN_IDS,
-  DEFAULT_JOBS_HIDDEN_COLUMN_IDS,
-  JOBS_TABLE_ID,
-  DEFAULT_SAVED_TABLE_VIEW_ID,
-  type SavedTablePresentation,
-  type SavedTableViewSnapshot,
-  useSavedTableViewsStore,
-} from "../../shared/stores/saved-table-views.js";
+import { useJobActions, useJobBulkActions, useComposedJobs, useJobGridSelectionStore, type JobGridQuery, type PostingSnapshot } from "../../contexts/jobs/index.js";
+import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../shared/providers/PortsProvider.js";
+import { useTenantId } from "../../shared/providers/TenantProvider.js";
+import { useEventStreamStatus } from "../../shared/providers/EventStreamProvider.js";
+import { Button } from "../../shared/ui/button.js";
 import { PageHead } from "../../shared/ui/page-head.js";
-import {
-  type DataGridColumn,
-  type DataGridColumnWidthsState,
-  hasActiveDataGridFilters,
-  type DataGridFilterState,
-  type DataGridTextFilter,
-} from "../../shared/ui/filterable-data-grid.js";
-import {
-  SavedTableViewsControl,
-  type SavedTableColumnOption,
-} from "../../shared/ui/saved-table-views-control.js";
-import { JobBulkActions } from "./JobBulkActions.js";
-import { ImportJobUrlDialog } from "./ImportJobUrlDialog.js";
-import { JobsTable } from "./JobsTable.js";
-import { JOB_STATE_FILTER_VALUES, jobStateValue } from "./columns.js";
-import {
-  allJobStates,
-  bulkJobFilters,
-  effectiveJobStates,
-  jobsListInput,
-} from "./jobStageFilters.js";
+import { DEFAULT_JOBS_HIDDEN_COLUMN_IDS, DEFAULT_SAVED_TABLE_VIEW_ID, JOBS_TABLE_COLUMN_IDS, JOBS_TABLE_ID,
+  usePythonJobsTableViewsStore, type SavedTablePresentation, type SavedTableViewSnapshot } from "../../shared/stores/saved-table-views.js";
+import { SavedTableViewsControl } from "../../shared/ui/saved-table-views-control.js";
+import { isActiveDataGridFilter, type DataGridFilterState, type DataGridSortState } from "../../shared/ui/filterable-data-grid.js";
+import { AdvancedJobFilters } from "./AdvancedJobFilters.js";
+import { ComposedJobsGrid } from "./ComposedJobsGrid.js";
+import { criteriaFromQuery, defaultCriteria, restoreView, savedFilters, type GridCriteria } from "./jobGridState.js";
 
-const SORTABLE_JOB_FIELDS: ReadonlySet<JobSortField> = new Set([
-  "discovered_at",
-  "title",
-  "company",
-  "source",
-  "compensation_min_eur",
-  "compensation_max_eur",
-  "compensation_posted",
-  "compensation_market",
-  "compensation_confidence",
-  "compensation_warnings",
-  "location",
-  "fit_score",
-  "current_stage",
-  "current_state",
-  "apply_status",
-]);
-
-type BulkJobMutation = UseMutationResult<
-  JobMutationResponse,
-  Error,
-  BulkJobMutationRequest
->;
-type RetryFailedMutation = ReturnType<typeof useRetryFailedJobsMutation>;
-type RunPendingPreparationMutation = ReturnType<
-  typeof useRunPendingPreparationMutation
->;
-
-const SEARCH_FILTER_COLUMNS = new Set([
-  "current_stage",
-  "current_state",
-  "apply_status",
-  "job_state",
-]);
-const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
-const UNAVAILABLE_ACTIVE_STATES = new Set([
-  "closed",
-  "expired",
-  "removed",
-  "location_incompatible",
-]);
-const DEFAULT_JOBS_PRESENTATION: SavedTablePresentation = {
-  columns: {
-    order: [...JOBS_TABLE_COLUMN_IDS],
-    hidden: [...DEFAULT_JOBS_HIDDEN_COLUMN_IDS],
-    widths: {},
-  },
-  density: null,
-  grouping: null,
-  colorRules: [],
-};
-const DEFAULT_SAVED_URL_FILTERS = {
-  q: "",
-  stage: "all",
-  state: "all",
-  applyStatus: "all",
-  deleted: "active",
-  pageSize: 50,
-  minFitScore: undefined,
-  maxFitScore: undefined,
-  discoveredSince: undefined,
-  scoredSince: undefined,
-} satisfies SavedTableViewSnapshot["urlFilters"];
-
-function filterFor(value: string | undefined): DataGridTextFilter | undefined {
-  if (!value) return undefined;
-  return { operator: "contains", text: "", selectedValues: [value] };
+const captureSchema = z.object({ url: z.string().url(), title: z.string().trim().min(1), company: z.string(), description: z.string().trim().min(1), location: z.string() });
+const urlSchema = z.string().url();
+const unavailableFieldsSchema = z.object({ error: z.object({ code: z.literal("query_feature_unavailable"), details: z.object({ fields: z.array(z.string()) }).passthrough() }).passthrough() }).passthrough();
+const EMPTY_SELECTION: Readonly<Record<string, PostingSnapshot>> = {};
+const EMPTY_FILTERS: DataGridFilterState = {};
+const DEFAULT_PRESENTATION: SavedTablePresentation = { columns: { order: [...JOBS_TABLE_COLUMN_IDS], hidden: [...DEFAULT_JOBS_HIDDEN_COLUMN_IDS], widths: {} }, density: null, grouping: null, colorRules: [] };
+function initialSavedView() {
+  const state = usePythonJobsTableViewsStore.getState();
+  const id = state.activeViewIdByTable[JOBS_TABLE_ID] ?? DEFAULT_SAVED_TABLE_VIEW_ID;
+  return restoreView(state.views.find((view) => view.tableId === JOBS_TABLE_ID && view.id === id));
+}
+function gridQuery(criteria: GridCriteria, filters: DataGridFilterState, sort: DataGridSortState, offset: number, limit: number, revision: string | null): JobGridQuery {
+  const active = Object.fromEntries(Object.entries(filters).filter(([, value]) => isActiveDataGridFilter(value)));
+  return { q: criteria.q, job_state: criteria.jobState, fit_state: criteria.fitState, sort: sort.columnId, direction: sort.direction, offset, limit,
+    posted_known: criteria.postedKnown, market_known: criteria.marketKnown,
+    ...(criteria.compensationConfidence ? { compensation_confidence: criteria.compensationConfidence } : {}), compensation_warnings: criteria.compensationWarnings,
+    ...(criteria.minFitScore !== undefined ? { min_fit_score: criteria.minFitScore } : {}), ...(criteria.maxFitScore !== undefined ? { max_fit_score: criteria.maxFitScore } : {}),
+    ...(criteria.discoveredSince ? { discovered_since: criteria.discoveredSince } : {}), ...(criteria.scoredSince ? { scored_since: criteria.scoredSince } : {}),
+    ...(criteria.postedMinEur !== undefined ? { posted_min_eur: criteria.postedMinEur } : {}), ...(criteria.postedMaxEur !== undefined ? { posted_max_eur: criteria.postedMaxEur } : {}),
+    ...(criteria.marketMinEur !== undefined ? { market_min_eur: criteria.marketMinEur } : {}), ...(criteria.marketMaxEur !== undefined ? { market_max_eur: criteria.marketMaxEur } : {}),
+    ...(offset > 0 && revision ? { query_revision: revision } : {}),
+    ...(Object.keys(active).length ? { column_filters: active } : {}) };
 }
 
-function filterForValues(
-  values: readonly string[],
-): DataGridTextFilter | undefined {
-  if (!values.length) return undefined;
-  return { operator: "contains", text: "", selectedValues: [...values] };
+function CaptureJob() {
+  const { capture, importUrl } = useJobActions();
+  const { featureFlags } = usePorts();
+  const importAvailability = getApiCapabilityAvailability(featureFlags, "importJobUrl");
+  const [validation, setValidation] = useState("");
+  const form = useForm({ defaultValues: { url: "", title: "", company: "", description: "", location: "" }, onSubmit: async ({ value }) => {
+    const parsed = captureSchema.safeParse(value);
+    if (!parsed.success) { setValidation("Enter a valid URL, title and posting description."); return; }
+    setValidation("");
+    try { await capture.mutateAsync(parsed.data); form.reset(); } catch { /* Retain entered content for correction or retry. */ }
+  } });
+  const urlForm = useForm({ defaultValues: { url: "" }, onSubmit: async ({ value }) => {
+    if (!importAvailability.available) return;
+    const parsed = urlSchema.safeParse(value.url);
+    if (!parsed.success) { setValidation("Enter a valid posting URL."); return; }
+    setValidation("");
+    try { await importUrl.mutateAsync(parsed.data); urlForm.reset(); } catch { /* Retain URL for retry. */ }
+  } });
+  return <section className="card" aria-label="Add a job">
+    <h2>Add a job</h2>
+    <details><summary>Import posting URL</summary><form onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void urlForm.handleSubmit(); }}>
+      <urlForm.Field name="url">{(field) => <label>Posting URL<input type="url" value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</urlForm.Field>
+      <Button type="submit" disabled={!importAvailability.available || importUrl.isPending}>Import job</Button>
+      {!importAvailability.available ? <p>{importAvailability.reason}</p> : null}
+    </form></details>
+    <details><summary>Manual capture</summary><form onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
+      <form.Field name="url">{(field) => <label>Posting URL<input type="url" value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
+      <form.Field name="title">{(field) => <label>Job title<input value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
+      <form.Field name="company">{(field) => <label>Company<input value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
+      <form.Field name="location">{(field) => <label>Location<input value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
+      <form.Field name="description">{(field) => <label>Posting description<textarea value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
+      <Button type="submit" disabled={capture.isPending}>Save job</Button>
+    </form></details>
+    {validation ? <p role="alert">{validation}</p> : null}
+    {capture.error || importUrl.error ? <p role="alert">{(capture.error ?? importUrl.error)?.message}</p> : null}
+    {capture.data || importUrl.data ? <p role="status">Job captured. <Link to="/jobs/$jobId" params={{ jobId: (capture.data ?? importUrl.data)!.job_id }} search={(previous) => previous}>Open job</Link></p> : null}
+  </section>;
 }
 
-const JOB_STATE_LABEL_BY_VALUE: Record<
-  JobState,
-  (typeof JOB_STATE_FILTER_VALUES)[number]
-> = {
-  active: "Active",
-  deleted: "Deleted",
-  hidden: "Hidden",
-};
-
-const JOB_STATE_VALUE_BY_LABEL: ReadonlyMap<string, JobState> = new Map(
-  Object.entries(JOB_STATE_LABEL_BY_VALUE).map(([value, label]) => [
-    label,
-    value as JobState,
-  ]),
-);
-
-function sameJobStates(left: readonly JobState[], right: readonly JobState[]) {
-  return (
-    left.length === right.length && left.every((state) => right.includes(state))
-  );
-}
-
-function isWorkflowEligibleJob(job: JobSummary): boolean {
-  return (
-    jobStateValue(job) === "active" &&
-    !UNAVAILABLE_ACTIVE_STATES.has(job.activeState)
-  );
-}
-
-function firstAllowedValue<T extends string>(
-  filter: DataGridTextFilter | undefined,
-  allowed: readonly T[],
-): T | undefined {
-  return filter?.selectedValues.find((value): value is T =>
-    allowed.includes(value as T),
-  );
-}
-
-function searchFilters(search: JobsSearch): DataGridFilterState {
-  const jobStates = effectiveJobStates(search);
-  return {
-    ...(jobStates.length === JOB_STATES.length
-      ? {}
-      : {
-          job_state: filterForValues(
-            jobStates.map((state) => JOB_STATE_LABEL_BY_VALUE[state]),
-          ),
-        }),
-    ...(search.stage !== "all"
-      ? { current_stage: filterFor(search.stage) }
-      : {}),
-    ...(search.state !== "all"
-      ? { current_state: filterFor(search.state) }
-      : {}),
-    ...(search.applyStatus !== "all"
-      ? { apply_status: filterFor(search.applyStatus) }
-      : {}),
+export function JobsView({ optionalBulkActions, optionalGlobalActions, navigation = null, onNavigationChange }: {
+  optionalBulkActions?: (selectedJobIds: readonly string[]) => ReactNode;
+  optionalGlobalActions?: ReactNode;
+  navigation?: JobGridQuery | null;
+  onNavigationChange?: (next: JobGridQuery) => string | null;
+} = {}) {
+  const [initial] = useState(initialSavedView);
+  const [fallback] = useState(() => gridQuery(initial.criteria, initial.filters, initial.sort, 0, initial.pageSize, null));
+  const [unrouted, setUnrouted] = useState(fallback);
+  const [navigationError, setNavigationError] = useState("");
+  const queryInput = navigation ?? unrouted;
+  const criteria = useMemo(() => criteriaFromQuery(queryInput), [queryInput]);
+  const filters = queryInput.column_filters ?? EMPTY_FILTERS;
+  const sort: DataGridSortState = { columnId: queryInput.sort, direction: queryInput.direction };
+  const pageSize = queryInput.limit; const offset = queryInput.offset;
+  const [draft, setDraft] = useState(criteria.q);
+  const [confirmation, setConfirmation] = useState("");
+  const [previewScope, setPreviewScope] = useState<string | null>(null);
+  const [filtersVersion, setFiltersVersion] = useState(0);
+  const { session } = usePorts();
+  const tenant = useTenantId();
+  const streamStatus = useEventStreamStatus();
+  const selection = useJobGridSelectionStore((state) => state.current);
+  const updateSelection = useJobGridSelectionStore((state) => state.update);
+  const clearStoredSelection = useJobGridSelectionStore((state) => state.clear);
+  const selectionScope = JSON.stringify({ criteria, filters, sort, pageSize });
+  const selected = streamStatus !== "workspace_changed" && selection?.session === session && selection.tenant === tenant && selection.scope === selectionScope ? selection.rows : EMPTY_SELECTION;
+  const presentation = usePythonJobsTableViewsStore((state) => state.presentationByTable[JOBS_TABLE_ID]) ?? DEFAULT_PRESENTATION;
+  const setPresentation = usePythonJobsTableViewsStore((state) => state.setTablePresentation);
+  const jobs = useComposedJobs(queryInput);
+  const { bulk, previewDelete, permanentDelete } = useJobBulkActions();
+  useEffect(() => { if (!navigation && onNavigationChange) { const error = onNavigationChange(fallback); if (error) setNavigationError(error); } }, [navigation, onNavigationChange, fallback]);
+  useEffect(() => { setDraft(criteria.q); }, [criteria.q]);
+  useEffect(() => { if (streamStatus === "workspace_changed") clearStoredSelection(session, tenant); }, [streamStatus, clearStoredSelection, session, tenant]);
+  const selectedRows = Object.values(selected); const selectedIds = selectedRows.map((job) => job.job_id);
+  const selectionFingerprint = JSON.stringify(selectedRows.map((job) => [job.job_id, job.revision, job.state_revision]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))));
+  const preview = previewScope === selectionFingerprint ? previewDelete.data : undefined;
+  const clearSelection = () => { clearStoredSelection(session, tenant); previewDelete.reset(); setPreviewScope(null); setConfirmation(""); };
+  const pending = bulk.isPending || previewDelete.isPending || permanentDelete.isPending;
+  const onBulk = (action: "hide" | "unhide" | "delete" | "restore") => {
+    const submittedSelection = selection;
+    bulk.mutate({ action, selected: selectedRows }, { onSuccess: () => { if (useJobGridSelectionStore.getState().current === submittedSelection) clearSelection(); } });
   };
-}
-
-function localFiltersOnly(filters: DataGridFilterState): DataGridFilterState {
-  return Object.fromEntries(
-    Object.entries(filters).filter(
-      ([columnId, filter]) =>
-        !SEARCH_FILTER_COLUMNS.has(columnId) ||
-        (columnId === "current_stage" &&
-          (filter?.selectedValues.length ?? 0) > 1),
-    ),
-  );
-}
-
-function boundedInt(
-  value: string,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  return Math.min(max, Math.max(min, parsed));
-}
-
-function retryWorkersFromConfigs(
-  configs: ReturnType<typeof useStageTriggerStore.getState>["configs"],
-): number {
-  return Math.max(
-    boundedInt(configs.discover.workers, 1, 1, 16),
-    boundedInt(configs.score.workers, 1, 1, 16),
-    boundedInt(configs.tailor.workers, 1, 1, 16),
-  );
-}
-
-function retryRunOptions(
-  configs: ReturnType<typeof useStageTriggerStore.getState>["configs"],
-): Pick<
-  BulkRetryFailedRequest,
-  "runAfter" | "workers" | "minScore" | "validationMode" | "dryRun" | "llmModel"
-> {
-  return {
-    runAfter: true,
-    workers: retryWorkersFromConfigs(configs),
-    minScore: boundedInt(configs.tailor.minScore, 7, 0, 10),
-    validationMode: configs.tailor.validationMode,
-    dryRun: false,
-    llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+  const changeQuery = (next: JobGridQuery, clear = true) => {
+    const error = onNavigationChange?.(next) ?? null;
+    if (error) { setNavigationError(error); return false; }
+    setNavigationError("");
+    if (!onNavigationChange) setUnrouted(next);
+    if (clear) clearSelection();
+    return true;
   };
-}
-
-function pendingPreparationRunOptions(
-  configs: ReturnType<typeof useStageTriggerStore.getState>["configs"],
-): Pick<
-  BulkRunPendingPreparationRequest,
-  "workers" | "minScore" | "validationMode" | "dryRun" | "llmModel"
-> {
-  return {
-    workers: retryWorkersFromConfigs(configs),
-    minScore: boundedInt(configs.tailor.minScore, 7, 0, 10),
-    validationMode: configs.tailor.validationMode,
-    dryRun: false,
-    llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+  const updateCriteria = (next: GridCriteria) => changeQuery(gridQuery(next, filters, sort, 0, pageSize, null));
+  const applyView = (view: SavedTableView) => {
+    const next = restoreView(view);
+    if (changeQuery(gridQuery(next.criteria, next.filters, next.sort, 0, next.pageSize, null))) setFiltersVersion((version) => version + 1);
   };
-}
-
-function isJobSortField(value: string): value is JobSortField {
-  return SORTABLE_JOB_FIELDS.has(value as JobSortField);
-}
-
-function savedUrlFiltersFromSearch(
-  search: JobsSearch,
-): SavedTableViewSnapshot["urlFilters"] {
-  return {
-    q: search.q,
-    stage: search.stage,
-    state: search.state,
-    applyStatus: search.applyStatus,
-    deleted: search.deleted,
-    jobStates: search.jobStates,
-    pageSize: search.pageSize,
-    minFitScore: search.minFitScore,
-    maxFitScore: search.maxFitScore,
-    discoveredSince: search.discoveredSince,
-    scoredSince: search.scoredSince,
-  };
-}
-
-function searchPatchFromSavedView(view: SavedTableView): Partial<JobsSearch> {
-  const filters = { ...DEFAULT_SAVED_URL_FILTERS, ...view.urlFilters };
-  return {
-    q: filters.q ?? "",
-    stage: filters.stage ?? "all",
-    state: filters.state ?? "all",
-    applyStatus: filters.applyStatus ?? "all",
-    deleted: filters.deleted ?? "active",
-    jobStates: filters.jobStates,
-    pageSize: filters.pageSize ?? 50,
-    minFitScore: filters.minFitScore,
-    maxFitScore: filters.maxFitScore,
-    discoveredSince: filters.discoveredSince,
-    scoredSince: filters.scoredSince,
-    sort: isJobSortField(view.sort.columnId)
-      ? view.sort.columnId
-      : "discovered_at",
-    dir: view.sort.direction,
-    page: 1,
-  };
-}
-
-function columnOptionsFor(
-  columns: Array<DataGridColumn<JobSummary>>,
-): SavedTableColumnOption[] {
-  return columns.map((column) => ({
-    id: column.id,
-    label: column.label,
-    locked: column.id === "select",
-  }));
-}
-
-function sameKeys(
-  current: readonly string[],
-  next: readonly string[],
-): boolean {
-  return (
-    current.length === next.length &&
-    current.every((jobKey, index) => jobKey === next[index])
-  );
-}
-
-export function JobsView() {
-  const search = useSearch({ from: "/jobs" });
-  const navigate = useNavigate({ from: "/jobs" });
-
-  const deleteJobs = useDeleteJobsBulkMutation();
-  const hideJobs = useHideJobsBulkMutation();
-  const permanentlyDeleteJobs = usePermanentlyDeleteJobsBulkMutation();
-  const preparePermanentDelete = usePreparePermanentDeleteSelectionMutation();
-  const [permanentDeleteError, setPermanentDeleteError] = useState<string | null>(null);
-  const [permanentDeleteConflict, setPermanentDeleteConflict] = useState<ReturnType<typeof permanentDeleteConflictReceipt>>(null);
-  const restoreJobs = useRestoreJobsBulkMutation();
-  const unhideJobs = useUnhideJobsBulkMutation();
-  const retryFailedJobs = useRetryFailedJobsMutation();
-  const runPendingPreparation = useRunPendingPreparationMutation();
-  const stageTriggerConfigs = useStageTriggerStore((state) => state.configs);
-  const savedTableViews = useSavedTableViewsStore((state) => state.views);
-  const activeSavedViewId = useSavedTableViewsStore(
-    (state) =>
-      state.activeViewIdByTable[JOBS_TABLE_ID] ?? DEFAULT_SAVED_TABLE_VIEW_ID,
-  );
-  const savedPresentation =
-    useSavedTableViewsStore(
-      (state) => state.presentationByTable[JOBS_TABLE_ID],
-    ) ?? DEFAULT_JOBS_PRESENTATION;
-  const setSavedPresentation = useSavedTableViewsStore(
-    (state) => state.setTablePresentation,
-  );
-
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [allMatchingSelected, setAllMatchingSelected] = useState(false);
-  const [selectionObservationId, setSelectionObservationId] = useState<string | null>(null);
-  const [selectionLifecycle, setSelectionLifecycle] = useState<Record<string, { jobKey: string; deletedAt: string | null; hiddenAt: string | null }>>({});
-  const [localTableFilters, setLocalTableFilters] =
-    useState<DataGridFilterState>(
-      () =>
-        (savedTableViews.find(
-          (view) =>
-            view.tableId === JOBS_TABLE_ID && view.id === activeSavedViewId,
-        )?.gridFilters ?? {}) as DataGridFilterState,
-    );
-  const [visiblePageKeys, setVisiblePageKeys] = useState<string[]>([]);
-  const activeSavedView = useMemo(
-    () =>
-      savedTableViews.find(
-        (view) =>
-          view.tableId === JOBS_TABLE_ID && view.id === activeSavedViewId,
-      ) ?? null,
-    [activeSavedViewId, savedTableViews],
-  );
-  const tableFilters = useMemo<DataGridFilterState>(
-    () => ({
-      ...localTableFilters,
-      ...searchFilters(search),
-    }),
-    [
-      localTableFilters,
-      search.applyStatus,
-      search.deleted,
-      search.jobStates,
-      search.stage,
-      search.state,
-    ],
-  );
-  const selectedStages =
-    search.stage === "all"
-      ? JOB_TABLE_STAGE_FILTERS.filter((stage) =>
-          localTableFilters.current_stage?.selectedValues.includes(stage),
-        )
-      : undefined;
-  const stages = selectedStages?.length ? selectedStages : undefined;
-  const { data, isFetching, error, refetch: refreshJobs } = useReviewableJobsListQuery(
-    jobsListInput(search, stages),
-  );
-  const message = error instanceof Error ? error.message : null;
-
-  useEffect(() => {
-    setLocalTableFilters(
-      (activeSavedView?.gridFilters ?? {}) as DataGridFilterState,
-    );
-  }, [activeSavedView?.gridFilters]);
-
-  const hasLocalFilters = hasActiveDataGridFilters(
-    Object.fromEntries(
-      Object.entries(localTableFilters).filter(
-        ([key, filter]) =>
-          key !== "current_stage" || Boolean(filter?.text.trim()),
-      ),
-    ),
-  );
-  const savedViewSnapshot = useMemo<SavedTableViewSnapshot>(
-    () => ({
-      ...savedPresentation,
-      sort: { columnId: search.sort, direction: search.dir },
-      urlFilters: savedUrlFiltersFromSearch(search),
-      gridFilters: localTableFilters,
-    }),
-    [
-      localTableFilters,
-      savedPresentation,
-      search.applyStatus,
-      search.deleted,
-      search.jobStates,
-      search.dir,
-      search.discoveredSince,
-      search.maxFitScore,
-      search.minFitScore,
-      search.pageSize,
-      search.q,
-      search.scoredSince,
-      search.sort,
-      search.stage,
-      search.state,
-    ],
-  );
-
-  useEffect(() => {
-    setRowSelection({});
-    setAllMatchingSelected(false);
-    setSelectionObservationId(null);
-    setSelectionLifecycle({});
-  }, [
-    search.deleted,
-    search.jobStates,
-    search.dir,
-    search.page,
-    search.pageSize,
-    search.q,
-    search.sort,
-    search.stage,
-    search.state,
-    search.applyStatus,
-    search.discoveredSince,
-    search.minFitScore,
-    search.maxFitScore,
-    search.scoredSince,
-  ]);
-  useEffect(() => {
-    setRowSelection({});
-    setAllMatchingSelected(false);
-    setSelectionObservationId(null);
-    setSelectionLifecycle({});
-  }, [localTableFilters]);
-
-  const setSearch = useCallback(
-    (next: Partial<JobsSearch>) => {
-      void navigate({ search: (prev: JobsSearch) => ({ ...prev, ...next }) });
-    },
-    [navigate],
-  );
-
-  const handleSavedPresentationChange = useCallback(
-    (presentation: SavedTablePresentation) => {
-      setSavedPresentation(JOBS_TABLE_ID, presentation);
-    },
-    [setSavedPresentation],
-  );
-
-  const handleColumnWidthsChange = useCallback(
-    (widths: DataGridColumnWidthsState) => {
-      setSavedPresentation(JOBS_TABLE_ID, {
-        ...savedPresentation,
-        columns: { ...savedPresentation.columns, widths },
-      });
-    },
-    [savedPresentation, setSavedPresentation],
-  );
-
-  const handleColumnOrderChange = useCallback(
-    (order: readonly string[]) => {
-      setSavedPresentation(JOBS_TABLE_ID, {
-        ...savedPresentation,
-        columns: { ...savedPresentation.columns, order: [...order] },
-      });
-    },
-    [savedPresentation, setSavedPresentation],
-  );
-
-  const handleSavedViewApply = useCallback(
-    (view: SavedTableView) => {
-      setLocalTableFilters(view.gridFilters as DataGridFilterState);
-      setSearch(searchPatchFromSavedView(view));
-    },
-    [setSearch],
-  );
-
-  const renderSavedTableActions = useCallback(
-    (columns: Array<DataGridColumn<JobSummary>>) => (
-      <SavedTableViewsControl
-        tableId={JOBS_TABLE_ID}
-        columnOptions={columnOptionsFor(columns)}
-        snapshot={savedViewSnapshot}
-        onApplyView={handleSavedViewApply}
-        onPresentationChange={handleSavedPresentationChange}
+  const snapshot: SavedTableViewSnapshot = { ...presentation, sort, urlFilters: savedFilters(criteria, pageSize), gridFilters: filters };
+  const hasLimitedFacets = Object.values(jobs.data?.facets ?? {}).some((facet) => !facet.complete);
+  const errorBody = jobs.error && "responseBody" in jobs.error ? jobs.error.responseBody : undefined;
+  const unavailableFields = unavailableFieldsSchema.safeParse(errorBody);
+  const unavailable = jobs.data ? (["fit", "preparation", "compensation", "applications", "resumes"] as const)
+    .flatMap((name) => { const state = jobs.data?.modules[name]; return state && (!state.enabled || !state.available) ? [{ name, state }] : []; }) : [];
+  return <div className="route-page">
+    <PageHead eyebrow="Search" title="Jobs" subtitle="Captured postings and their saved source snapshots" />
+    <CaptureJob />
+    <section className="card" aria-label="Captured jobs">
+      {optionalGlobalActions ? <div className="toolbar" aria-label="Job maintenance">{optionalGlobalActions}</div> : null}
+      <form onSubmit={(event) => { event.preventDefault(); updateCriteria({ ...criteria, q: draft }); }}>
+        <label>Search jobs<input value={draft} onChange={(event) => setDraft(event.currentTarget.value)} /></label>
+        <Button type="submit" variant="outline">Search</Button>
+      </form>
+      <AdvancedJobFilters key={`${filtersVersion}:${JSON.stringify({ ...criteria, q: "" })}`} criteria={criteria} onApply={updateCriteria} />
+      <Button type="button" variant="outline" onClick={() => { if (changeQuery(gridQuery(defaultCriteria, {}, { columnId: "discovered_at", direction: "desc" }, 0, pageSize, null))) setFiltersVersion((version) => version + 1); }}>Clear all filters</Button>
+      {navigationError ? <p role="alert">{navigationError}</p> : null}
+      {unavailable.length ? <p role="status">Unavailable features: {unavailable.map(({ name, state }) => `${name} (${state.enabled ? "unavailable" : "disabled"})`).join(", ")}. Their saved criteria remain in effect and can be cleared.</p> : null}
+      {hasLimitedFacets ? <p>Some filter value lists are limited; use the text predicate to search the full result set.</p> : null}
+      {presentation.grouping ? <p>Groups organize the current page; sorting and filtering apply to all matching jobs.</p> : null}
+      {selectedRows.length ? <div className="toolbar" aria-label="Selected jobs actions">
+        <span>{selectedRows.length} selected</span>
+        <Button type="button" variant="outline" disabled={pending || selectedRows.some((job) => job.deleted || job.hidden)} onClick={() => onBulk("hide")}>Hide selected</Button>
+        <Button type="button" variant="outline" disabled={pending || selectedRows.some((job) => job.deleted || !job.hidden)} onClick={() => onBulk("unhide")}>Unhide selected</Button>
+        <Button type="button" variant="outline" disabled={pending || selectedRows.some((job) => job.deleted)} onClick={() => onBulk("delete")}>Move selected to deleted</Button>
+        <Button type="button" variant="outline" disabled={pending || selectedRows.some((job) => !job.deleted)} onClick={() => onBulk("restore")}>Restore selected</Button>
+        <Button type="button" variant="outline" disabled={pending || selectedRows.some((job) => !job.deleted)} onClick={() => { setConfirmation(""); setPreviewScope(selectionFingerprint); previewDelete.mutate(selectedIds); }}>Review permanent deletion</Button>
+        {optionalBulkActions?.(selectedIds)}
+        <Button type="button" variant="ghost" disabled={pending} onClick={clearSelection}>Clear selection</Button>
+      </div> : null}
+      {bulk.error || previewDelete.error || permanentDelete.error ? <p role="alert">{(bulk.error ?? previewDelete.error ?? permanentDelete.error)?.message} The saved job selection remains available.</p> : null}
+      {preview ? <section aria-label="Review permanent deletion"><h2>Review permanent deletion</h2>
+        <p>This permanently removes {preview.count} selected job(s) and their job-owned records. The selection expires at {preview.expiresAt}.</p>
+        <p>{preview.retentionNotice}</p>
+        <ul>{preview.jobs.map((job) => <li key={job.job_id}>{job.title}{job.company ? ` · ${job.company}` : ""} ({job.job_id})</li>)}</ul>
+        <label>Type DELETE to confirm<input value={confirmation} onChange={(event) => setConfirmation(event.currentTarget.value)} /></label>
+        <Button type="button" disabled={pending || confirmation !== "DELETE"} onClick={() => { const submittedSelection = selection; permanentDelete.mutate({ selectionId: preview.selectionId, jobIds: preview.jobIds }, { onSuccess: () => { if (useJobGridSelectionStore.getState().current === submittedSelection) clearSelection(); } }); }}>Permanently delete reviewed jobs</Button>
+      </section> : null}
+      {jobs.error ? <div role="alert">{jobs.error.message}{unavailableFields.success ? ` Unavailable criteria: ${unavailableFields.data.error.details.fields.join(", ")}.` : ""}{jobs.data ? " Showing the previously loaded page." : ""}{" "}<Button type="button" variant="outline" disabled={jobs.isFetching} onClick={() => void jobs.refetch()}>Retry loading jobs</Button>{offset > 0 ? <Button type="button" variant="outline" onClick={() => { changeQuery(gridQuery(criteria, filters, sort, 0, pageSize, null), false); }}>Reload from first page</Button> : null}</div> : null}
+      <ComposedJobsGrid data={jobs.data} loading={jobs.isPending || jobs.isFetching} error={Boolean(jobs.error)} selected={selected}
+        onSelectionChange={(rows, checked) => { updateSelection(session, tenant, selectionScope, rows, checked); previewDelete.reset(); setPreviewScope(null); setConfirmation(""); }}
+        filters={filters} onFiltersChange={(next) => { changeQuery(gridQuery(criteria, next, sort, 0, pageSize, null)); }}
+        sort={sort} onSortChange={(next) => { changeQuery(gridQuery(criteria, filters, next, 0, pageSize, null)); }}
+        page={Math.floor(offset / pageSize) + 1} pageSize={pageSize} onPageChange={(page) => {
+          const revision = page === 1 ? null : jobs.data?.query_revision ?? queryInput.query_revision ?? null;
+          if (page > 1 && !revision) { setNavigationError("Reload the first page before continuing."); return; }
+          changeQuery(gridQuery(criteria, filters, sort, (page - 1) * pageSize, pageSize, revision), false);
+        }}
+        onPageSizeChange={(size) => { changeQuery(gridQuery(criteria, filters, sort, 0, size, null)); }}
+        columnOrder={presentation.columns.order} hiddenColumnIds={presentation.columns.hidden} columnWidths={presentation.columns.widths}
+        onColumnOrderChange={(order) => setPresentation(JOBS_TABLE_ID, { ...presentation, columns: { ...presentation.columns, order: [...order] } })}
+        onColumnWidthsChange={(widths) => setPresentation(JOBS_TABLE_ID, { ...presentation, columns: { ...presentation.columns, widths } })}
+        density={presentation.density} grouping={presentation.grouping} colorRules={presentation.colorRules}
+        toolbarActions={(columns) => <SavedTableViewsControl tableId={JOBS_TABLE_ID} useViewsStore={usePythonJobsTableViewsStore} columnOptions={columns.map((column) => ({ id: column.id, label: column.label, ...(column.id === "select" ? { locked: true } : {}) }))} snapshot={snapshot} onApplyView={applyView} onPresentationChange={(next) => setPresentation(JOBS_TABLE_ID, next)} />}
       />
-    ),
-    [handleSavedPresentationChange, handleSavedViewApply, savedViewSnapshot],
-  );
-
-  const handleTableFiltersChange = useCallback(
-    (next: DataGridFilterState) => {
-      setLocalTableFilters(localFiltersOnly(next));
-      const nextStages = JOB_TABLE_STAGE_FILTERS.filter((stage) =>
-        next.current_stage?.selectedValues.includes(stage),
-      );
-      const nextStage = nextStages.length === 1 ? nextStages[0]! : "all";
-      const nextState =
-        firstAllowedValue(next.current_state, USER_FACING_STAGE_STATES) ??
-        "all";
-      const applyFilter = firstAllowedValue(next.apply_status, [
-        "applied",
-      ] as const);
-      const nextApplyStatus = applyFilter ?? "all";
-      const selectedJobStates = (next.job_state?.selectedValues ?? []).flatMap(
-        (label) => {
-          const value = JOB_STATE_VALUE_BY_LABEL.get(label);
-          return value ? [value] : [];
-        },
-      );
-      const nextJobStates = selectedJobStates.length
-        ? JOB_STATES.filter((state) => selectedJobStates.includes(state))
-        : allJobStates();
-      if (
-        nextStage !== search.stage ||
-        !sameKeys(
-          nextStages,
-          search.stage === "all"
-            ? (localTableFilters.current_stage?.selectedValues ?? [])
-            : [search.stage],
-        ) ||
-        nextState !== search.state ||
-        nextApplyStatus !== search.applyStatus ||
-        !sameJobStates(nextJobStates, effectiveJobStates(search))
-      ) {
-        setSearch({
-          stage: nextStage,
-          state: nextState,
-          applyStatus: nextApplyStatus,
-          jobStates: nextJobStates,
-          page: 1,
-        });
-      }
-    },
-    [
-      search.applyStatus,
-      search.deleted,
-      search.jobStates,
-      search.stage,
-      search.state,
-      localTableFilters,
-      setSearch,
-    ],
-  );
-
-  const sorting = useMemo<SortingState>(
-    () => [{ id: search.sort, desc: search.dir === "desc" }],
-    [search.sort, search.dir],
-  );
-
-  const handleSortingChange = (next: SortingState) => {
-    const head = next[0];
-    if (!head || !isJobSortField(head.id)) {
-      return;
-    }
-    setSearch({
-      sort: head.id,
-      dir: head.desc ? "desc" : "asc",
-      page: 1,
-    });
-  };
-
-  const handleRowSelectionChange = (next: RowSelectionState) => {
-    if (!Object.values(next).some(Boolean)) setSelectionObservationId(null);
-    else if (!selectionObservationId) setSelectionObservationId(data?.observationId ?? null);
-    setSelectionLifecycle((previous) => {
-      const retained: typeof previous = {};
-      for (const [key, selected] of Object.entries(next)) {
-        if (!selected) continue;
-        const job = (data?.items ?? []).find((item) => item.jobKey === key);
-        if (previous[key]) retained[key] = previous[key]!;
-        else if (job) retained[key] = { jobKey: key, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
-      }
-      return retained;
-    });
-    setAllMatchingSelected(false);
-    setRowSelection(next);
-  };
-
-  const selectedKeys = useMemo(
-    () =>
-      Object.entries(rowSelection)
-        .filter(([, on]) => on)
-        .map(([key]) => key),
-    [rowSelection],
-  );
-  const selectedKeysByState = useMemo<Record<JobState, string[]>>(() => {
-    const next: Record<JobState, string[]> = {
-      active: [],
-      deleted: [],
-      hidden: [],
-    };
-    const selected = new Set(selectedKeys);
-    for (const job of data?.items ?? []) {
-      if (selected.has(job.jobKey)) {
-        next[jobStateValue(job)].push(job.jobKey);
-      }
-    }
-    return next;
-  }, [data?.items, selectedKeys]);
-  const matchingJobStates = useMemo(
-    () => effectiveJobStates(search),
-    [search.deleted, search.jobStates],
-  );
-  const selectedJobStates = useMemo(
-    () =>
-      allMatchingSelected
-        ? matchingJobStates
-        : JOB_STATES.filter((state) => selectedKeysByState[state].length > 0),
-    [allMatchingSelected, matchingJobStates, selectedKeysByState],
-  );
-  const selectedWorkflowEligibleKeys = useMemo(() => {
-    if (allMatchingSelected) return [];
-    const selected = new Set(selectedKeys);
-    return (data?.items ?? [])
-      .filter((job) => selected.has(job.jobKey) && isWorkflowEligibleJob(job))
-      .map((job) => job.jobKey);
-  }, [allMatchingSelected, data?.items, selectedKeys]);
-  const hasActiveMatches =
-    Boolean(data?.pagination.total) &&
-    matchingJobStates.includes("active") &&
-    (search.jobStates !== undefined || search.deleted !== "closed");
-  const staleKeysOnPage = useMemo(
-    () =>
-      (data?.items ?? [])
-        .filter(
-          (job) => isWorkflowEligibleJob(job) && job.scoreStaleness.isStale,
-        )
-        .map((job) => job.jobKey),
-    [data?.items],
-  );
-  const selectedStaleKeys = useMemo(
-    () =>
-      allMatchingSelected
-        ? []
-        : selectedKeysByState.active.filter((jobKey) =>
-            staleKeysOnPage.includes(jobKey),
-          ),
-    [allMatchingSelected, selectedKeysByState.active, staleKeysOnPage],
-  );
-
-  const selectAllMatching = () => {
-    setSelectionObservationId(data?.observationId ?? null);
-    setSelectionLifecycle({});
-    setRowSelection({});
-    setAllMatchingSelected(Boolean(data?.pagination.total));
-  };
-
-  const clearSelection = () => {
-    setSelectionObservationId(null);
-    setSelectionLifecycle({});
-    setRowSelection({});
-    setAllMatchingSelected(false);
-  };
-
-  const selectPage = () => {
-    setSelectionObservationId(data?.observationId ?? null);
-    setSelectionLifecycle(Object.fromEntries((data?.items ?? [])
-      .filter((job) => visiblePageKeys.includes(job.jobKey))
-      .map((job) => [job.jobKey, { jobKey: job.jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt }])));
-    setAllMatchingSelected(false);
-    const next: RowSelectionState = {};
-    for (const jobKey of visiblePageKeys) {
-      next[jobKey] = true;
-    }
-    setRowSelection(next);
-  };
-  const handleVisiblePageRowsChange = useCallback(
-    (rows: readonly JobSummary[]) => {
-      const next = rows.map((row) => row.jobKey);
-      setVisiblePageKeys((current) =>
-        sameKeys(current, next) ? current : next,
-      );
-    },
-    [],
-  );
-
-  const selectionMutationBusy =
-    deleteJobs.isPending ||
-    hideJobs.isPending ||
-    permanentlyDeleteJobs.isPending || preparePermanentDelete.isPending ||
-    restoreJobs.isPending ||
-    unhideJobs.isPending;
-
-  const selectedPayloads = (
-    jobStates: readonly JobState[] = selectedJobStates,
-  ): BulkJobMutationRequest[] => {
-    if (!allMatchingSelected) {
-      return [
-        {
-          allMatching: false,
-          jobKeys: jobStates.flatMap(
-            (jobState) => selectedKeysByState[jobState],
-          ),
-        },
-      ];
-    }
-    const eligibleMatchingStates = matchingJobStates.filter((jobState) =>
-      jobStates.includes(jobState),
-    );
-    if (!eligibleMatchingStates.length) return [];
-    const filters = search.jobStates
-      ? bulkJobFilters(search, { jobStates: eligibleMatchingStates }, stages)
-      : bulkJobFilters(search, {}, stages);
-    return filters.map((filter) => ({
-      allMatching: true,
-      filter,
-      jobKeys: [],
-    }));
-  };
-
-  const selectedRetryPayloads = (): BulkRetryFailedRequest[] => {
-    const payloads = allMatchingSelected
-      ? selectedPayloads(["active"])
-      : [
-          {
-            allMatching: false as const,
-            jobKeys: selectedWorkflowEligibleKeys,
-          },
-        ];
-    return payloads.map((payload) => ({
-      ...payload,
-      ...retryRunOptions(stageTriggerConfigs),
-    }));
-  };
-
-  const pendingPreparationPayloads = (): BulkRunPendingPreparationRequest[] =>
-    bulkJobFilters(
-      search,
-      {
-        deleted: "active",
-        ...(search.jobStates ? { jobStates: ["active"] as const } : {}),
-        state: "pending",
-      },
-      stages,
-    ).map((filter) => ({
-      allMatching: true,
-      filter,
-      jobKeys: [],
-      ...pendingPreparationRunOptions(stageTriggerConfigs),
-    }));
-
-  const mutatePayloads = (
-    mutation: BulkJobMutation,
-    payloads: readonly BulkJobMutationRequest[],
-  ) => {
-    if (payloads.length === 1) {
-      mutation.mutate(payloads[0]!, {
-        onSuccess: () => clearSelection(),
-      });
-      return;
-    }
-    void Promise.all(payloads.map((payload) => mutation.mutateAsync(payload)))
-      .then(() => clearSelection())
-      .catch(() => undefined);
-  };
-
-  const mutateRetryPayloads = (
-    mutation: RetryFailedMutation,
-    payloads: readonly BulkRetryFailedRequest[],
-  ) => {
-    if (payloads.length === 1) {
-      mutation.mutate(payloads[0]!, {
-        onSuccess: () => clearSelection(),
-      });
-      return;
-    }
-    void Promise.all(payloads.map((payload) => mutation.mutateAsync(payload)))
-      .then(() => clearSelection())
-      .catch(() => undefined);
-  };
-
-  const mutatePendingPreparationPayloads = (
-    mutation: RunPendingPreparationMutation,
-    payloads: readonly BulkRunPendingPreparationRequest[],
-    options?: { clearSelectionOnSuccess?: boolean },
-  ) => {
-    if (payloads.length === 1) {
-      if (options?.clearSelectionOnSuccess === false) {
-        mutation.mutate(payloads[0]!);
-        return;
-      }
-      mutation.mutate(payloads[0]!, {
-        onSuccess: () => clearSelection(),
-      });
-      return;
-    }
-    void Promise.all(payloads.map((payload) => mutation.mutateAsync(payload)))
-      .then(() => {
-        if (options?.clearSelectionOnSuccess !== false) {
-          clearSelection();
-        }
-      })
-      .catch(() => undefined);
-  };
-
-  const mutateSelected = (
-    mutation: BulkJobMutation,
-    label: string,
-    jobStates: readonly JobState[],
-  ) => {
-    const payloads = selectedPayloads(jobStates);
-    const count = allMatchingSelected
-      ? (data?.pagination.total ?? 0)
-      : payloads.reduce((total, payload) => total + payload.jobKeys.length, 0);
-    if (!count) {
-      return;
-    }
-    const prompt = allMatchingSelected
-      ? `${label} all matching eligible jobs?`
-      : `${label} ${count} selected job${count === 1 ? "" : "s"}?`;
-    if (!window.confirm(prompt)) {
-      return;
-    }
-    mutatePayloads(mutation, payloads);
-  };
-
-  const deleteSelected = () => mutateSelected(deleteJobs, "Delete", ["active"]);
-
-  const restoreSelected = () =>
-    mutateSelected(restoreJobs, "Restore", ["deleted"]);
-
-  const unhideSelected = () => mutateSelected(unhideJobs, "Unhide", ["hidden"]);
-
-  const hideSelected = () => {
-    mutateSelected(hideJobs, "Hide", ["active"]);
-  };
-
-  const retryFailedSelected = () => {
-    const count = allMatchingSelected
-      ? (data?.pagination.total ?? 0)
-      : selectedWorkflowEligibleKeys.length;
-    if (!count) {
-      return;
-    }
-    const prompt = allMatchingSelected
-      ? "Retry all matching eligible active jobs?"
-      : `Retry ${count} selected job${count === 1 ? "" : "s"}?`;
-    if (!window.confirm(prompt)) {
-      return;
-    }
-    mutateRetryPayloads(retryFailedJobs, selectedRetryPayloads());
-  };
-
-  const retryAllFailed = () => {
-    if (
-      !window.confirm("Retry all failed jobs matching the current filters?")
-    ) {
-      return;
-    }
-    mutateRetryPayloads(
-      retryFailedJobs,
-      bulkJobFilters(
-        search,
-        {
-          deleted: "active",
-          ...(search.jobStates ? { jobStates: ["active"] as const } : {}),
-          state: "failed",
-        },
-        stages,
-      ).map((filter) => ({
-        allMatching: true,
-        filter,
-        jobKeys: [],
-        ...retryRunOptions(stageTriggerConfigs),
-      })),
-    );
-  };
-
-  const continuePendingPreparation = () => {
-    if (
-      !window.confirm(
-        "Continue pending preparation for matching active jobs? This will not run apply.",
-      )
-    ) {
-      return;
-    }
-    mutatePendingPreparationPayloads(
-      runPendingPreparation,
-      pendingPreparationPayloads(),
-    );
-  };
-
-  // Freeze the cohort before asking for confirmation. A filter is not an
-  // authority to delete jobs that start matching while the prompt is open.
-  const permanentDeleteSelectionRef = useRef("");
-  const permanentDeleteSelectionIdentity = JSON.stringify({
-    allMatchingSelected, selectedKeys, selectionLifecycle, search, stages, observationId: selectionObservationId,
-    rows: (data?.items ?? []).filter((job) => selectedKeys.includes(job.jobKey))
-      .map((job) => [job.jobKey, job.deletedAt, job.hiddenAt]),
-  });
-  permanentDeleteSelectionRef.current = permanentDeleteSelectionIdentity;
-
-  const permanentlyDeleteSelected = () => {
-    const expected = allMatchingSelected ? undefined : Object.values(selectionLifecycle)
-      .filter((job) => job.deletedAt || job.hiddenAt);
-    const selections = allMatchingSelected
-      ? selectedPayloads(["deleted", "hidden"])
-      : [{ allMatching: false, jobKeys: (expected ?? []).map((job) => job.jobKey) }];
-    if (!selections.length) return;
-    if (!selectionObservationId) {
-      setPermanentDeleteError("The job list needs to be refreshed before deleting. Select the removed jobs again.");
-      clearSelection();
-      void refreshJobs();
-      return;
-    }
-    const identity = permanentDeleteSelectionIdentity;
-    setPermanentDeleteError(null);
-    setPermanentDeleteConflict(null);
-    void (async () => {
-      try {
-        const prepared = await preparePermanentDelete.mutateAsync({
-          observationId: selectionObservationId,
-          selections,
-          ...(expected ? { expected } : {}),
-        });
-        if (identity !== permanentDeleteSelectionRef.current) {
-          setPermanentDeleteError("The selection changed. Select the removed jobs again before deleting.");
-          clearSelection();
-          void refreshJobs();
-          return;
-        }
-        if (!prepared.jobKeys.length) {
-          setPermanentDeleteError("No selected removed jobs are available. Refresh the list and select them again.");
-          clearSelection();
-          void refreshJobs();
-          return;
-        }
-        if (!window.confirm(`Permanently delete ${prepared.jobKeys.length} selected removed job${prepared.jobKeys.length === 1 ? "" : "s"}?`)) {
-          clearSelection();
-          void refreshJobs();
-          return;
-        }
-        await permanentlyDeleteJobs.mutateAsync({
-          allMatching: false,
-          jobKeys: prepared.jobKeys,
-          selectionId: prepared.selectionId,
-        });
-        clearSelection();
-      } catch (error) {
-        clearSelection();
-        setPermanentDeleteConflict(permanentDeleteConflictReceipt(error));
-        setPermanentDeleteError(error instanceof Error ? error.message : "The selected jobs could not be deleted. Refresh and select them again.");
-      }
-    })();
-  };
-
-  const selectedCount = allMatchingSelected
-    ? (data?.pagination.total ?? 0)
-    : selectedKeys.length;
-
-  const openJob = (jobKey: string) => {
-    void navigate({
-      to: "/jobs/$jobId",
-      params: { jobId: jobKey },
-      search: (prev: JobsSearch) => prev,
-    });
-  };
-
-  return (
-    <>
-      <PageHead
-        className="jobs-page-head"
-        eyebrow="Pipeline"
-        title="Jobs"
-        subtitle={
-          data
-            ? `${data.pagination.total} ${data.pagination.total === 1 ? "job" : "jobs"}`
-            : "Loading jobs"
-        }
-        actions={<ImportJobUrlDialog onImported={openJob} />}
-      />
-      <section className="card full data-list-card">
-        {message ? <div className="banner inline">{message}</div> : null}
-        {permanentDeleteError ? <div className="banner inline" role="alert">{permanentDeleteError}</div> : null}
-        {permanentDeleteConflict ? (
-          <details>
-            <summary>No jobs were deleted. {permanentDeleteConflict.conflictingJobKeys.length} changed; {permanentDeleteConflict.unprocessedJobKeys.length} were not processed.</summary>
-            <p>Changed: {permanentDeleteConflict.conflictingJobKeys.join(", ") || "none identified"}</p>
-            <p>Not processed: {permanentDeleteConflict.unprocessedJobKeys.join(", ") || "none"}</p>
-          </details>
-        ) : null}
-        <JobBulkActions
-          search={search}
-          selectedCount={selectedCount}
-          selectedJobStates={selectedJobStates}
-          allMatchingSelected={allMatchingSelected}
-          hasActiveMatches={hasActiveMatches}
-          selectedJobKeys={selectedWorkflowEligibleKeys}
-          staleCount={staleKeysOnPage.length}
-          selectedStaleKeys={selectedStaleKeys}
-          hasItems={visiblePageKeys.length > 0}
-          hasAnyMatching={Boolean(data?.pagination.total)}
-          hasLocalFilters={hasLocalFilters}
-          loading={selectionMutationBusy}
-          retryLoading={retryFailedJobs.isPending}
-          pendingPreparationLoading={runPendingPreparation.isPending}
-          onSelectPage={selectPage}
-          onSelectAllMatching={selectAllMatching}
-          onClearSelection={clearSelection}
-          onDeleteSelected={deleteSelected}
-          onRestoreSelected={restoreSelected}
-          onUnhideSelected={unhideSelected}
-          onHideSelected={hideSelected}
-          onPermanentlyDeleteSelected={permanentlyDeleteSelected}
-          onRetryFailedSelected={retryFailedSelected}
-          onRetryAllFailed={retryAllFailed}
-          onRunPendingPreparation={continuePendingPreparation}
-          onResetStaleSuccess={clearSelection}
-          onMaintenanceSuccess={clearSelection}
-        />
-        <JobsTable
-          data={data ?? null}
-          loading={isFetching}
-          sorting={sorting}
-          onSortingChange={handleSortingChange}
-          rowSelection={rowSelection}
-          onRowSelectionChange={handleRowSelectionChange}
-          allMatchingSelected={allMatchingSelected}
-          page={data?.pagination.page ?? search.page}
-          pageSize={search.pageSize}
-          onPageChange={(page) => setSearch({ page })}
-          onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
-          onOpenJob={openJob}
-          filters={tableFilters}
-          onFiltersChange={handleTableFiltersChange}
-          onVisiblePageRowsChange={handleVisiblePageRowsChange}
-          columnOrder={savedPresentation.columns.order}
-          onColumnOrderChange={handleColumnOrderChange}
-          hiddenColumnIds={savedPresentation.columns.hidden}
-          columnWidths={savedPresentation.columns.widths}
-          onColumnWidthsChange={handleColumnWidthsChange}
-          density={savedPresentation.density}
-          grouping={savedPresentation.grouping}
-          colorRules={savedPresentation.colorRules}
-          toolbarActions={renderSavedTableActions}
-        />
-      </section>
-    </>
-  );
+    </section>
+  </div>;
 }

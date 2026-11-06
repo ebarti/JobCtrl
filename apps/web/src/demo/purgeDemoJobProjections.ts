@@ -900,7 +900,6 @@ function recomputeDigest(draft: MutableSnapshot): void {
         job?.currentState !== "canceled" &&
         job?.currentState !== "skipped" &&
         (item.materials.hasResume ||
-          item.materials.hasCoverLetter ||
           item.materials.hasPdf) &&
         !item.materials.ready
       );

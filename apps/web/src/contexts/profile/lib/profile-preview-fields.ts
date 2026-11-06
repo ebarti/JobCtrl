@@ -54,7 +54,7 @@ export function bindProfilePreviewFields(html: string, source: unknown): string 
   };
 
   bind(owner("personal:full_name"), "personal:full_name", profile.personal.full_name ?? "");
-  bind(owner("summary"), "summary", profile.resume.executive_profile.baseline_text ?? "");
+  bind(owner("executive_profile#0") ?? owner("summary"), "summary", profile.resume.executive_profile.baseline_text ?? "");
   const addressGroups = [
     { fields: ["address", "city"] as const, separator: ", " },
     { fields: ["postal_code", "country"] as const, separator: " " },
@@ -77,7 +77,10 @@ export function bindProfilePreviewFields(html: string, source: unknown): string 
       bind(heading?.querySelector(`.resume-entry-${className}`), `${prefix}:${key}`, entry[key]);
     }
     bind(owner(`${prefix}:summary`), `${prefix}:summary`, entry.summary);
-    entry.bullets.forEach((bullet, index) => bind(owner(`${prefix}:bullet:${index + 1}`), `${prefix}:bullet:${index + 1}`, bullet));
+    entry.bullets.forEach((bullet, index) => {
+      const achievementId = entry.achievement_ids?.[index];
+      if (achievementId) bind(owner(achievementId), achievementId, bullet);
+    });
   }
   for (const entry of profile.resume.education_entries) {
     const prefix = `education:${entry.id}`;
@@ -102,7 +105,7 @@ export function bindProfilePreviewFields(html: string, source: unknown): string 
     const prefix = `skills:${category.id}`;
     const label = doc.createElement("b");
     label.append(field(`${prefix}:label`, category.label), separator(": "));
-    replaceComposite(owner(prefix), `${category.label}: ${category.items.join(", ")}`,
+    replaceComposite(owner(`${prefix}#0`) ?? owner(prefix), `${category.label}: ${category.items.join(", ")}`,
       [label, ...join(category.items.map((item, index) => field(`${prefix}:item:${index + 1}`, item)), ", ")], prefix);
   }
   return `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;

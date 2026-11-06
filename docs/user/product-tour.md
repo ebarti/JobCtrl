@@ -136,7 +136,7 @@ the owning job.
 
 Apply Review pairs its queue with the complete selected application workspace:
 job and requirement evidence, fit rationale, tailoring directives and coverage,
-accepted/current artifacts, editable resume, cover letter or email, comparison,
+accepted/current artifacts, editable resume or email, comparison,
 grounding/fabrication/judge warnings, dry-run evidence, and approval actions. A
 failed retry remains audit history and never hides the last accepted artifact.
 On desktop the queue remains a left rail and the selected review reads as
@@ -310,8 +310,8 @@ remain visibly read-only.
 ![JobCtrl Model Selection Settings route with provider catalogs and AI execution policy](../assets/screenshots/settings-models.png)
 
 Model selection shows authenticated provider catalogs, preferred models,
-generator/judge choices, analysis perspectives, and AI execution policy. Ready,
-unready, invalid, default, and override states remain distinct.
+analysis perspectives, and AI execution policy. Ready, unready, invalid,
+default, and override states remain distinct.
 
 ### Settings — Browser & Extension
 

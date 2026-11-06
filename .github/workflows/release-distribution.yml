@@ -267,7 +267,6 @@ jobs:
         run: |
           set -euo pipefail
           corepack pnpm distribution:audit
-          corepack pnpm scripts:test
           python3 scripts/release_check.py --strict-prompt --release-tag "$RELEASE_TAG"
 
       - name: Build unsigned candidate

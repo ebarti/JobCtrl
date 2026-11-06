@@ -9,6 +9,7 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { classifyDemoRoute } from "../consent/DemoTelemetryAdapter.js";
+import { DEMO_ARTIFACTS } from "../artifacts.js";
 import { useDemoWorkspace } from "../workspace/DemoWorkspaceProvider.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useToastStore } from "../../shared/stores/toasts.js";
@@ -24,7 +25,6 @@ import {
 
 const GUIDE_STATE_KEY = "demo.guide.state";
 const DEMO_JOB_ID = "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35";
-const DEMO_ARTIFACT_ID = "artifact-tailored-resume";
 
 type DemoGuideFeature = "scoring" | "materials" | "apply_review" | "pipeline";
 
@@ -150,8 +150,9 @@ export function DemoGuide() {
       </div>
 
       <p data-typography="body">
-        Every record and action in this demo is simulated and synthetic. Nothing
-        is sent to an employer, mailbox, or external service.
+        The examples and local edits are synthetic. No application or message is
+        sent to an employer or mailbox. Consented analytics measures coarse demo
+        activity without sending job or profile text.
       </p>
 
       <nav aria-label="Synthetic demo shortcuts">
@@ -182,15 +183,16 @@ export function DemoGuide() {
               className="h-auto w-full justify-between px-2 py-2 text-left"
               nativeButton={false}
               render={
-                <Link
-                  to="/artifacts/$artifactId"
-                  params={{ artifactId: DEMO_ARTIFACT_ID }}
+                <a
+                  href={DEMO_ARTIFACTS.tailoredResumeHtml.url}
+                  target="_blank"
+                  rel="noreferrer"
                   onClick={() => recordFeatureShortcut("materials")}
                   role="link"
                 />
               }
             >
-              <span>Review synthetic tailored materials</span>
+              <span>Open an illustrative resume sample</span>
               <IconArrowRight aria-hidden="true" size={15} />
             </Button>
           </li>
@@ -209,7 +211,7 @@ export function DemoGuide() {
                 />
               }
             >
-              <span>Open simulated Apply Review and dry run</span>
+              <span>Open browser-local application review</span>
               <IconArrowRight aria-hidden="true" size={15} />
             </Button>
           </li>

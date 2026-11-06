@@ -8,6 +8,7 @@ export interface RejectDraftButtonProps {
   contactId: string;
   jobId?: string;
   draftId: string;
+  expectedFingerprint?: string;
   disabled?: boolean;
   onActionStart?: () => boolean;
   onActionSettled?: () => void;
@@ -19,6 +20,7 @@ export function RejectDraftButton({
   contactId,
   jobId,
   draftId,
+  expectedFingerprint,
   disabled = false,
   onActionStart,
   onActionSettled,
@@ -27,11 +29,11 @@ export function RejectDraftButton({
   const errorMessage = mutation.error instanceof Error ? mutation.error.message : "";
 
   function onReject(): void {
-    if (disabled || mutation.isPending || (onActionStart && !onActionStart())) {
+    if (!expectedFingerprint || disabled || mutation.isPending || (onActionStart && !onActionStart())) {
       return;
     }
     mutation.mutate(
-      { draftId },
+      { draftId, expectedFingerprint },
       {
         onSettled: () => onActionSettled?.(),
       },
@@ -43,7 +45,7 @@ export function RejectDraftButton({
       <Button
         type="button"
         variant="outline"
-        disabled={disabled || mutation.isPending}
+        disabled={!expectedFingerprint || disabled || mutation.isPending}
         onClick={onReject}
       >
         {mutation.isPending ? "Rejecting…" : "Reject draft"}

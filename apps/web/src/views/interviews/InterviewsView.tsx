@@ -3,13 +3,15 @@ import {
   INTERVIEW_ROLE_LENSES,
 } from "@jobctrl/contracts";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { useId, useMemo } from "react";
+import { useId, useMemo, type ReactNode } from "react";
 
-import { InterviewQuestionDetail } from "../../contexts/materials/components/InterviewQuestionDetail.js";
-import { InterviewQuestionConnections } from "../../contexts/materials/components/InterviewQuestionConnections.js";
-import { InterviewJobPreparation } from "../../contexts/materials/components/InterviewJobPreparation.js";
-import { InterviewLibraryGraph } from "../../contexts/materials/components/InterviewLibraryGraph.js";
-import { useInterviewCatalogQuery, useInterviewQuestionQuery } from "../../contexts/operations/hooks/useInterviewQueries.js";
+import { InterviewQuestionDetail } from "../../contexts/interviews/components/InterviewQuestionDetail.js";
+import { InterviewQuestionConnections } from "../../contexts/interviews/components/InterviewQuestionConnections.js";
+import { InterviewJobPreparation } from "../../contexts/interviews/components/InterviewJobPreparation.js";
+import { InterviewLibraryGraph } from "../../contexts/interviews/components/InterviewLibraryGraph.js";
+import { useInterviewCatalogQuery, useInterviewQuestionQuery } from "../../contexts/interviews/hooks/useInterviewQueries.js";
+import { useJob } from "../../contexts/jobs/index.js";
+import type { InterviewCatalog, InterviewQuestionCard } from "@jobctrl/contracts";
 import type { InterviewsSearch } from "../../routes/-interviews.search.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
@@ -24,7 +26,18 @@ function Filter({ label, value, choices, onChange }: { readonly label: string; r
   return <div className="grid gap-1"><span data-typography="label">{label}</span><Select value={value} onValueChange={(next) => onChange(next ?? "")}><SelectTrigger aria-label={label} aria-describedby={valueId} title={selectedLabel} className="w-full"><SelectValue id={valueId}>{selectedLabel}</SelectValue></SelectTrigger><SelectContent><SelectItem value="">All {label.toLowerCase()}</SelectItem>{choices.map((choice) => <SelectItem key={choice.value} value={choice.value}>{choice.label}</SelectItem>)}</SelectContent></Select></div>;
 }
 
-export function InterviewsView() {
+function SelectedJobPreparation({ jobId, catalog, question, unavailableQuestionId, companyBriefing }: {
+  readonly jobId: string; readonly catalog: InterviewCatalog; readonly question: InterviewQuestionCard | null;
+  readonly unavailableQuestionId?: string | undefined;
+  readonly companyBriefing?: ((jobId: string) => ReactNode) | undefined;
+}) {
+  const query = useJob(jobId);
+  if (!query.data) return <Empty title={query.error ? "Job unavailable. Open a canonical job from Jobs to prepare." : "Loading selected job."} />;
+  return <InterviewJobPreparation job={{ jobId: query.data.job_id, title: query.data.title }} catalog={catalog} question={question}
+    unavailableQuestionId={unavailableQuestionId} companyBriefing={companyBriefing?.(jobId)} />;
+}
+
+export function InterviewsView({ companyBriefing }: { readonly companyBriefing?: (jobId: string) => ReactNode } = {}) {
   const search = useSearch({ from: "/interviews" });
   const navigate = useNavigate({ from: "/interviews" });
   const query = useInterviewCatalogQuery();
@@ -79,7 +92,7 @@ export function InterviewsView() {
         </div>
         {catalog ? <details className="interview-library__maturity"><summary>Research draft · source ledger and reading limits</summary><p>Criteria guide preparation. No readiness score or validated grading is offered; citations are guidance, never evidence of your experience.</p>{Object.entries(catalog.guidance).map(([section, text]) => <section key={section}><h3>{section.replaceAll("_", " ")}</h3><MarkdownDocument text={text} /></section>)}<p>Reviewed {catalog.reviewedAt}; {catalog.sources.length} sources; {catalog.authors.length} author groups.</p></details> : null}
       </section>
-      {search.job && catalog ? <InterviewJobPreparation key={search.job} jobId={search.job} catalog={catalog} question={selected} unavailableQuestionId={unavailableQuestionId} /> : null}
+      {search.job && catalog ? <SelectedJobPreparation key={search.job} jobId={search.job} catalog={catalog} question={selected} unavailableQuestionId={unavailableQuestionId} companyBriefing={companyBriefing} /> : null}
     </>
   );
 }

@@ -4,6 +4,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { outreachKeys } from "../queryKeys.js";
+import { requireThreadFingerprint, type ThreadResponse } from "../contracts.js";
 
 export interface UseOutreachThreadQueryInput {
   contactId: string;
@@ -19,12 +20,15 @@ export interface UseOutreachThreadQueryInput {
 export function useOutreachThreadQuery({
   contactId,
   jobId,
-}: UseOutreachThreadQueryInput): UseQueryResult<OutreachThreadResponse> {
+}: UseOutreachThreadQueryInput): UseQueryResult<ThreadResponse> {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   return useQuery({
     queryKey: outreachKeys.threadForContact(tenantId, contactId, jobId ?? null),
-    queryFn: () => api.outreachThread(contactId, jobId ? { jobId } : {}),
+    queryFn: async () => requireThreadFingerprint(await http.json<OutreachThreadResponse>(
+      "GET", `/v1/contacts/${encodeURIComponent(contactId)}/outreach`,
+      { query: jobId ? { jobId } : {} },
+    )),
     enabled: Boolean(contactId),
   });
 }

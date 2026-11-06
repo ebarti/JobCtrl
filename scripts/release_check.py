@@ -62,7 +62,6 @@ MINIFIED_BUILD_SUFFIXES = {".cjs", ".js", ".mjs"}
 DEMO_PUBLIC_FIXTURE_FILENAMES = frozenset(
     {
         "application-preview.html",
-        "cover-letter.txt",
         "interview-notes.txt",
         "profile-resume.html",
         "profile-resume.pdf",
@@ -223,7 +222,6 @@ PYTHON_LOCK_PATH = Path("workers/automation/uv.lock")
 EXTENSION_MANIFEST_PATH = Path("apps/extension/public/manifest.json")
 PACKAGE_VERSION_PATHS = (
     Path("package.json"),
-    Path("apps/api/package.json"),
     Path("apps/extension/package.json"),
     Path("apps/web/package.json"),
     Path("packages/api-client/package.json"),

@@ -89,6 +89,7 @@ export function OutreachDetailDrawer({
                     variant: "destructive",
                   })}
                   contactId={contact.contactId}
+                  expectedFingerprint={contact.fingerprint}
                   displayName={contact.displayName}
                   onDeleted={onClose}
                 />

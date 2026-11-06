@@ -39,7 +39,7 @@ var (
 	buildIDPattern       = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]{7,127}$`)
 	semverPattern        = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)
 	minimumOSPattern     = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,2}$`)
-	requiredComponentIDs = []string{"jobctrl-launcher", "jobctrl-api", "jobctrl-web", "jobctrl-worker", "node-runtime", "python-runtime", "temporal-runtime"}
+	requiredComponentIDs = []string{"jobctrl-launcher", "jobctrl-web", "jobctrl-worker", "node-runtime", "python-runtime", "temporal-runtime"}
 )
 
 const (
@@ -318,27 +318,6 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 	if err := refuseUnfinishedForwardUpdate(runtimeHome, args, inheritedEnv); err != nil {
 		return err
 	}
-	if len(args) > 0 && args[0] == "rollback" {
-		if handled, err := recoverBridgeBeforeBootstrap(inheritedEnv, args, stdout); handled {
-			return err
-		}
-		_, controllerErr := homebrewBootstrap(executable, args, inheritedEnv, stdout, stderr, true)
-		if handled, recoveryErr := recoverRevokedTransitionBeforePrepare(inheritedEnv, stdout); handled {
-			if recoveryErr != nil && controllerErr != nil {
-				return fmt.Errorf("prepare recovery controller: %v; recovery: %w", controllerErr, recoveryErr)
-			}
-			return recoveryErr
-		}
-		if handled, recoveryErr := recoverInterruptedTransitionBeforeBootstrap(inheritedEnv, stdout); handled {
-			if recoveryErr != nil && controllerErr != nil {
-				return fmt.Errorf("prepare recovery controller: %v; recovery: %w", controllerErr, recoveryErr)
-			}
-			return recoveryErr
-		}
-		if controllerErr != nil {
-			return controllerErr
-		}
-	}
 	if handled, uninstallErr := uninstallUnsafeActiveBeforePrepare(args, inheritedEnv, stdout); handled {
 		return uninstallErr
 	}
@@ -350,6 +329,9 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 		return err
 	}
 	defer func() { _ = ctx.selection.Close() }()
+	if !usesPythonApplication(ctx.Manifest) && !historicalInspectionCommand(args) {
+		return errors.New("this launcher executes only the Python application; preserve the previous workspace and use explicit Profile-only transfer into a fresh target")
+	}
 	// A source migration is resumed by its source controller. Product commands
 	// must not start another writer while that recovery record is present.
 	if len(args) == 0 || (args[0] != "stop" && args[0] != "status" && args[0] != "logs" && args[0] != "version" && args[0] != "help" && args[0] != "--help") {
@@ -369,6 +351,9 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 		} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
 			return fmt.Errorf("read release transition journal: %w", journalErr)
 		}
+	}
+	if len(args) > 0 && (args[0] == applyExecutionArgument || args[0] == applyWorkerArgument) && usesPythonApplication(ctx.Manifest) {
+		return errors.New("the retired Apply worker entrypoint is unavailable; use the reviewed Python application action")
 	}
 	if len(args) > 0 && args[0] == applyExecutionArgument {
 		if len(args) != 1 {
@@ -436,7 +421,7 @@ func commandRequiresOwnedExecution(args []string) bool {
 		return true
 	case "status":
 		return len(args) == 2 && args[1] == "--pipeline"
-	case "help", "--help", "stop", "logs", "open", "version", "update", "rollback", "backup", "uninstall":
+	case "help", "--help", "-h", "stop", "logs", "open", "version", "update", "rollback", "backup", "uninstall":
 		return false
 	default:
 		return true
@@ -477,7 +462,7 @@ func authenticatedTransitionStartup(ctx launchContext, args []string) bool {
 // same native start path. It exists separately from Run so that its routing
 // contract can be regression-tested without starting a runtime.
 func dispatchCommand(ctx launchContext, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printHelp(stdout)
 		return nil
 	}
@@ -530,6 +515,9 @@ func dispatchCommand(ctx launchContext, args []string, stdout, stderr io.Writer)
 }
 
 func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
+	if !usesPythonApplication(ctx.Manifest) {
+		return errors.New("the retired application runtime cannot be started by this launcher")
+	}
 	foreground, noOpen, err := parseStartArgs(args)
 	if err != nil {
 		return err
@@ -542,9 +530,6 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 	}
 	if err := requireLegacySourceOwnership(ctx); err != nil {
 		return err
-	}
-	if err := migrateHistoricalTransition(ctx); err != nil {
-		return fmt.Errorf("prepare target schema for historical update: %w", err)
 	}
 	if err := checkStartSchemaVersion(ctx); err != nil {
 		return err
@@ -565,23 +550,10 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 // An installed build must explain a version mismatch before a worker exit can
 // hide its cause. Normal release updates perform the migration before start.
 func checkStartSchemaVersion(ctx launchContext) error {
-	database := filepath.Join(ctx.Instance.StateDir, "jobctrl.db")
-	if _, err := os.Lstat(database); errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return err
+	if !usesPythonApplication(ctx.Manifest) {
+		return errors.New("the selected payload does not implement the Python application")
 	}
-	version, err := jobCtrlSchemaVersion(ctx)
-	if err != nil {
-		return fmt.Errorf("inspect the workspace database before startup: %w", err)
-	}
-	if version > currentJobCtrlSchemaVersion {
-		return errors.New("this workspace was upgraded by a newer JobCtrl build; update the installed app before starting it")
-	}
-	if version < currentJobCtrlSchemaVersion {
-		return errors.New("the workspace database needs an upgrade; use the supported JobCtrl installer or update path before starting")
-	}
-	return nil
+	return checkPythonApplicationWorkspace(ctx)
 }
 
 func ExitCode(err error) int {
@@ -1561,7 +1533,7 @@ func environmentMap(env []string) map[string]string {
 	return values
 }
 func childEnvironment(inherited []string, payloadRoot, stateDir string, manifest runtimeManifest) []string {
-	blocked := map[string]bool{"BASH_ENV": true, "VIRTUAL_ENV": true, "NODE_PATH": true, "NODE_OPTIONS": true, "PORT": true, "JOBCTRL_API_ALLOW_REMOTE_BIND": true, "JOBCTRL_API_HOST": true, "JOBCTRL_API_PORT": true, "JOBCTRL_WEB_PORT": true, "TEMPORAL_ADDRESS": true, "TEMPORAL_NAMESPACE": true, "JOBCTRL_TEMPORAL_DB": true, "PATH": true, "JOBCTRL_PAYLOAD_DIR": true, "JOBCTRL_RUNTIME_MODE": true, "JOBCTRL_WEB_ASSETS_DIR": true, "PLAYWRIGHT_BROWSERS_PATH": true, "JOBCTRL_PYTHON_EXECUTABLE": true}
+	blocked := map[string]bool{"BASH_ENV": true, "VIRTUAL_ENV": true, "NODE_PATH": true, "NODE_OPTIONS": true, "PORT": true, "JOBCTRL_API_ALLOW_REMOTE_BIND": true, "JOBCTRL_API_HOST": true, "JOBCTRL_API_PORT": true, "JOBCTRL_WEB_PORT": true, "TEMPORAL_ADDRESS": true, "TEMPORAL_NAMESPACE": true, "JOBCTRL_TEMPORAL_DB": true, "JOBCTRL_TEMPORAL_ADDRESS": true, "JOBCTRL_TEMPORAL_NAMESPACE": true, "JOBCTRL_TEMPORAL_UI_URL": true, "JOBCTRL_TEMPORAL_TASK_QUEUE": true, "JOBCTRL_WEB_DIR": true, "PATH": true, "JOBCTRL_PAYLOAD_DIR": true, "JOBCTRL_RUNTIME_MODE": true, "JOBCTRL_WEB_ASSETS_DIR": true, "PLAYWRIGHT_BROWSERS_PATH": true, "JOBCTRL_PYTHON_EXECUTABLE": true}
 	values := make(map[string]string, len(inherited))
 	for _, pair := range inherited {
 		key, value, ok := strings.Cut(pair, "=")
@@ -1574,10 +1546,14 @@ func childEnvironment(inherited []string, payloadRoot, stateDir string, manifest
 	values["JOBCTRL_PAYLOAD_DIR"] = payloadRoot
 	values["JOBCTRL_RUNTIME_MODE"] = "bundled"
 	values["JOBCTRL_WEB_ASSETS_DIR"] = filepath.Join(payloadRoot, "web")
+	values["JOBCTRL_WEB_DIR"] = filepath.Join(payloadRoot, "web")
 	values["PLAYWRIGHT_BROWSERS_PATH"] = filepath.Join(payloadRoot, "chromium")
 	values["JOBCTRL_PYTHON_EXECUTABLE"] = filepath.Join(payloadRoot, "python", "bin", "python3")
 	values["TEMPORAL_ADDRESS"] = fmt.Sprintf("127.0.0.1:%d", manifest.Ports.TemporalGRPC)
 	values["TEMPORAL_NAMESPACE"] = "default"
+	values["JOBCTRL_TEMPORAL_ADDRESS"] = values["TEMPORAL_ADDRESS"]
+	values["JOBCTRL_TEMPORAL_NAMESPACE"] = "default"
+	values["JOBCTRL_TEMPORAL_UI_URL"] = fmt.Sprintf("http://127.0.0.1:%d", manifest.Ports.TemporalUI)
 	values["JOBCTRL_API_HOST"] = "127.0.0.1"
 	values["JOBCTRL_API_PORT"] = strconv.Itoa(manifest.Ports.API)
 	values["JOBCTRL_TEMPORAL_DB"] = filepath.Join(stateDir, "temporal.db")
@@ -1603,7 +1579,7 @@ func substitute(argument string, ctx launchContext) (string, error) {
 			return "", err
 		}
 	}
-	return strings.NewReplacer("${PAYLOAD_ROOT}", ctx.PayloadRoot, "${TEMPORAL_GRPC_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalGRPC), "${TEMPORAL_UI_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalUI), "${TEMPORAL_DB}", temporal).Replace(argument), nil
+	return strings.NewReplacer("${PAYLOAD_ROOT}", ctx.PayloadRoot, "${STATE_DIR}", ctx.Instance.StateDir, "${API_PORT}", strconv.Itoa(ctx.Manifest.Ports.API), "${TEMPORAL_GRPC_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalGRPC), "${TEMPORAL_UI_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalUI), "${TEMPORAL_DB}", temporal).Replace(argument), nil
 }
 func componentByName(manifest runtimeManifest, name string) (commandSpec, error) {
 	for _, component := range manifest.Components {
@@ -1919,6 +1895,11 @@ func sendReady(writer io.Writer, err error) {
 }
 
 func supervise(ctx launchContext, ready io.Writer) (result error) {
+	if !usesPythonApplication(ctx.Manifest) {
+		err := errors.New("the retired application runtime cannot be supervised")
+		sendReady(ready, err)
+		return err
+	}
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
 		sendReady(ready, err)
 		return err
@@ -1929,6 +1910,12 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 		return err
 	}
 	defer releaseLock(lock)
+	if usesPythonApplication(ctx.Manifest) {
+		if err := checkPythonApplicationWorkspace(ctx); err != nil {
+			sendReady(ready, err)
+			return err
+		}
+	}
 	// Resolve after claiming the workspace: source and installed releases must
 	// operate on the same existing history, or refuse an ambiguous workspace.
 	ctx, err = withTemporalHistory(ctx)
@@ -2367,7 +2354,10 @@ func probeAPIWorker(ctx launchContext, expectedWorkerPID int) error {
 		return fmt.Errorf("API health returned HTTP %d", response.StatusCode)
 	}
 	var health struct {
-		Worker struct {
+		Application string `json:"application"`
+		WorkspaceID string `json:"workspaceId"`
+		Worker      struct {
+			PID       int    `json:"pid"`
 			Status    string `json:"status"`
 			Heartbeat *struct {
 				PID int `json:"pid"`
@@ -2380,7 +2370,11 @@ func probeAPIWorker(ctx launchContext, expectedWorkerPID int) error {
 	if health.Worker.Status != "healthy" {
 		return fmt.Errorf("worker health is %q", health.Worker.Status)
 	}
-	if health.Worker.Heartbeat == nil || health.Worker.Heartbeat.PID != expectedWorkerPID {
+	if usesPythonApplication(ctx.Manifest) {
+		if health.Application != "jobctrl-python" || health.WorkspaceID != ctx.Instance.ID || health.Worker.PID != expectedWorkerPID {
+			return errors.New("Python application health does not identify this workspace and owned worker")
+		}
+	} else if health.Worker.Heartbeat == nil || health.Worker.Heartbeat.PID != expectedWorkerPID {
 		return fmt.Errorf("worker heartbeat pid is not owned worker pid %d", expectedWorkerPID)
 	}
 	return nil
@@ -2988,6 +2982,9 @@ func version(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	return err
 }
 func dispatchPython(ctx launchContext, args []string) error {
+	if !usesPythonApplication(ctx.Manifest) {
+		return errors.New("the selected payload does not implement the canonical Python application CLI")
+	}
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
 		return err
 	}

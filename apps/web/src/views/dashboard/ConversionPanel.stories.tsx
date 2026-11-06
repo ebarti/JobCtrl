@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import type { DashboardSummary } from "@jobctrl/contracts";
-import { sampleDashboardSummary } from "../../test/fixtures/projections.js";
+import { sampleDashboardSummary } from "../../../.storybook/fixtures/projections.js";
 import { ConversionPanel } from "./ConversionPanel.js";
 
 type ConversionFunnel = DashboardSummary["conversion"]["totals"];

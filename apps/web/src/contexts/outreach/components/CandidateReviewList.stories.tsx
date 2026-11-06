@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
   makeResearchTaskDetail,
   sampleResearchTaskDetail,
-} from "../../../test/fixtures/contact-research.js";
+} from "../../../../.storybook/fixtures/contact-research.js";
 import { CandidateReviewList } from "./CandidateReviewList.js";
 
 const meta = {

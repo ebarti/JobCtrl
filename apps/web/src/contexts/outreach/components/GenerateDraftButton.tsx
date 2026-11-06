@@ -6,6 +6,7 @@ import {
   LOCAL_INSTALL_GUIDE_URL,
 } from "../../../shared/lib/apiCapabilityAvailability.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { isUnconfirmedWrite } from "../../../shared/lib/unconfirmed-write.js";
 import { Button } from "../../../shared/ui/button.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { readPublicationConflict } from "../lib/publication-conflict.js";
@@ -19,6 +20,9 @@ export interface GenerateDraftButtonProps {
   kind?: OutreachDraftKind;
   offerRevisionId?: string;
   label?: string;
+  /** Undefined while the current thread has not been read. */
+  expectedFingerprint?: string | null;
+  threadReady?: boolean;
 }
 
 // Generates a fresh outreach draft (a new generation). The server runs the
@@ -38,6 +42,8 @@ function GenerateDraftSession({
   jobId,
   kind,
   offerRevisionId,
+  expectedFingerprint,
+  threadReady = false,
   label = "Generate draft",
 }: GenerateDraftButtonProps): JSX.Element {
   const { featureFlags } = usePorts();
@@ -49,9 +55,15 @@ function GenerateDraftSession({
   const mutation = useGenerateDraftMutation(contactId);
   const [retainedConflict, setRetainedConflict] = useState<OutreachPublicationConflict | null>(null);
   const [reconciled, setReconciled] = useState(false);
+  const [reviewedFingerprint, setReviewedFingerprint] = useState<string | null | undefined>(undefined);
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const [checkedUnconfirmed, setCheckedUnconfirmed] = useState(false);
+  const [unconfirmedFingerprint, setUnconfirmedFingerprint] = useState<string | null | undefined>(undefined);
   const dispatching = useRef(false);
   const errorMessage = mutation.error instanceof Error ? mutation.error.message : "";
-  const blocked = mutation.isPending || !availability.available || (retainedConflict !== null && !reconciled);
+  const comparisonCurrent = reconciled && reviewedFingerprint === expectedFingerprint;
+  const unconfirmedReviewed = checkedUnconfirmed && threadReady && unconfirmedFingerprint === expectedFingerprint;
+  const blocked = expectedFingerprint === undefined || mutation.isPending || !availability.available || (retainedConflict !== null && !comparisonCurrent) || (unconfirmed && !unconfirmedReviewed);
 
   const onGenerate = async () => {
     if (blocked || dispatching.current) return;
@@ -61,12 +73,16 @@ function GenerateDraftSession({
     setReconciled(false);
     try {
       await mutation.mutateAsync({
+        expectedFingerprint: expectedFingerprint!,
         ...(jobId ? { jobId } : {}),
         ...(kind ? { kind } : {}),
         ...(offerRevisionId ? { offerRevisionId } : {}),
       });
       setRetainedConflict(null);
+      setUnconfirmed(false);
+      setCheckedUnconfirmed(false);
     } catch (error) {
+      if (isUnconfirmedWrite(error)) { setUnconfirmed(true); setCheckedUnconfirmed(false); }
       const conflict = readPublicationConflict(error);
       if (conflict) setRetainedConflict(conflict);
     } finally {
@@ -93,7 +109,7 @@ function GenerateDraftSession({
       ) : null}
       {retainedConflict ? (
         <>
-          <UnpublishedOutreachProposal conflict={retainedConflict} mode="generation" reconciled={reconciled} onReconciled={setReconciled} disabled={mutation.isPending} />
+          <UnpublishedOutreachProposal conflict={retainedConflict} mode="generation" reconciled={comparisonCurrent} onReconciled={(checked) => { setReconciled(checked); setReviewedFingerprint(checked ? expectedFingerprint : undefined); }} disabled={mutation.isPending || expectedFingerprint === undefined} />
           <Button type="button" variant="outline" disabled={mutation.isPending} onClick={() => {
             setRetainedConflict(null);
             setReconciled(false);
@@ -101,6 +117,10 @@ function GenerateDraftSession({
           }}>Discard unpublished draft</Button>
         </>
       ) : null}
+      {unconfirmed ? <div role="group" aria-label="Unconfirmed generation">
+        <p role="status">The request may have saved a draft even though its response was not confirmed. Check the current thread and history before starting another generation; the earlier request may still finish later.</p>
+        <label><input type="checkbox" checked={unconfirmedReviewed} disabled={!threadReady || mutation.isPending} onChange={(event) => { setCheckedUnconfirmed(event.target.checked); setUnconfirmedFingerprint(event.target.checked ? expectedFingerprint : undefined); }} />I reviewed the current thread and understand the earlier request may still appear</label>
+      </div> : null}
       {errorMessage ? (
         <span role="alert" className="banner inline">
           {errorMessage}

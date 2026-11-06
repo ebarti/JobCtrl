@@ -1,0 +1,86 @@
+name: Production source and build checks
+'on':
+  workflow_call:
+    inputs:
+      surface:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  checks:
+    name: ${{ inputs.surface == 'backend' && 'Core checks' || 'UI checks' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: '3.12'
+      UV_EXCLUDE_NEWER: 'false'
+      UV_LOCKED: '1'
+    steps:
+      - name: Checkout the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate the declared source surface
+        env:
+          CHECK_SURFACE: ${{ inputs.surface }}
+        run: |
+          case "$CHECK_SURFACE" in backend|frontend|support) ;; *) exit 1 ;; esac
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+      - name: Install the exact Node graph
+        run: corepack pnpm install --frozen-lockfile
+      - name: Set up Python
+        if: inputs.surface == 'backend'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Set up pinned Go
+        if: inputs.surface == 'backend'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: 1.26.4
+          cache-dependency-path: launcher/go.mod
+      - name: Set up pinned uv
+        if: inputs.surface == 'backend'
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+      - name: Install the exact Python graph
+        if: inputs.surface == 'backend'
+        run: uv --project workers/automation sync --locked --all-extras
+      - name: Check shared DTOs, Python authority and native source
+        if: inputs.surface == 'backend'
+        run: |
+          python -I scripts/release_check.py --strict-prompt
+          corepack pnpm --filter @jobctrl/domain-types check
+          corepack pnpm --filter @jobctrl/contracts check
+          corepack pnpm --filter @jobctrl/api-client check
+          corepack pnpm python:lint
+          corepack pnpm python:build
+          corepack pnpm launcher:check
+          corepack pnpm distribution:audit
+      - name: Check frontend types and feature boundaries
+        if: inputs.surface == 'frontend'
+        run: |
+          corepack pnpm web:check
+          corepack pnpm web:lint
+      - name: Build published documentation and supporting transports
+        if: inputs.surface == 'support'
+        run: |
+          corepack pnpm extension:check
+          corepack pnpm extension:build
+          corepack pnpm demo-edge:check
+          corepack pnpm demo-edge:dry-run
+          corepack pnpm docs:build
+      - name: Require unchanged dependency locks
+        if: always()
+        run: git diff --exit-code -- pnpm-lock.yaml workers/automation/uv.lock

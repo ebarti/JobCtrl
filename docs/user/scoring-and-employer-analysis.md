@@ -138,7 +138,7 @@ applies the same score bands.
 - **The minimum-fit threshold does not change the saved score.** It decides
   whether an existing score is eligible for materials. Changing it does not
   call the model or recalculate the score. A below-threshold decision is shown
-  on Tailor, Cover, and Apply as `skipped` with `MIN_SCORE` and the exact
+  on Tailor and Apply as `skipped` with `MIN_SCORE` and the exact
   score/threshold pair; it is not pending work or a generation failure.
 - **A correction is not a hidden weight change.** Your correction creates a new
   reviewed score version and a calibration anchor. An explicit re-score runs

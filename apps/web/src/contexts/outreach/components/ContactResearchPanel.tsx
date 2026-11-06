@@ -55,7 +55,7 @@ function ResearchTaskRow({ task }: { task: ContactResearchTaskSummary }): JSX.El
 // review + confirm proposed candidates. Views compose this; it owns its reads
 // and mutations (frontend conventions in CLAUDE.md).
 export function ContactResearchPanel({ jobId, employer }: ContactResearchPanelProps): JSX.Element {
-  const listQuery = useResearchTasksListQuery(jobId ? { jobId } : {});
+  const listQuery = useResearchTasksListQuery(jobId ? { jobId } : employer ? { employer } : {});
   const tasks = listQuery.data?.items ?? [];
   const errorMessage = listQuery.error instanceof Error ? listQuery.error.message : "";
 

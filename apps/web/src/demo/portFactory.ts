@@ -1,17 +1,19 @@
 import { BrowserRequestIdentityAdapter } from "../shared/adapters/local/BrowserRequestIdentityAdapter.js";
-import { JobCtrlApiClient } from "@jobctrl/api-client";
-import { BrowserArtifactDownloadAdapter } from "../shared/adapters/local/BrowserArtifactDownloadAdapter.js";
+import { BrowserHttpAdapter } from "../shared/adapters/local/BrowserHttpAdapter.js";
+import { BrowserProfileTransferAdapter } from "../shared/adapters/local/BrowserProfileTransferAdapter.js";
+import { BrowserBlobDownloadAdapter } from "../shared/adapters/local/BrowserBlobDownloadAdapter.js";
+import { BrowserSessionStorageAdapter } from "../shared/adapters/local/BrowserSessionStorageAdapter.js";
 
 import { ConsoleTelemetryAdapter } from "../shared/adapters/local/ConsoleTelemetryAdapter.js";
 import { LocalSessionAdapter } from "../shared/adapters/local/LocalSessionAdapter.js";
 import { LocalStorageAdapter } from "../shared/adapters/local/LocalStorageAdapter.js";
 import { NavigatorClipboardAdapter } from "../shared/adapters/local/NavigatorClipboardAdapter.js";
-import { OpenArtifactAdapter } from "../shared/adapters/local/OpenArtifactAdapter.js";
 import { BrowserPdfExportAdapter } from "../shared/adapters/local/BrowserPdfExportAdapter.js";
 import { SseEventStreamAdapter } from "../shared/adapters/local/SseEventStreamAdapter.js";
 import { StaticFeatureFlagAdapter } from "../shared/adapters/local/StaticFeatureFlagAdapter.js";
 import type { Ports } from "../shared/providers/PortsProvider.js";
 import { DemoApiClientAdapter } from "./DemoApiClientAdapter.js";
+import { DemoHttpAdapter } from "./DemoHttpAdapter.js";
 import type { DemoArtifactPreviewOpener } from "./DemoExternalRehearsalExecutor.js";
 import type { AppMode } from "./contracts.js";
 import {
@@ -23,7 +25,6 @@ import {
 } from "./workspace/index.js";
 import {
   DemoFeatureFlagAdapter,
-  DemoOpenInOsAdapter,
   DemoSessionAdapter,
   DemoStorageAdapter,
 } from "./ports.js";
@@ -58,16 +59,16 @@ export function resolveAppMode(value: unknown): AppMode {
 
 /** Preserves the original local composition in one named, directly testable factory. */
 export function createLocalPorts(apiBaseUrl = ""): Ports {
-  const api = new JobCtrlApiClient(apiBaseUrl);
   return {
-    api,
+    http: new BrowserHttpAdapter(apiBaseUrl),
+    blobDownload: new BrowserBlobDownloadAdapter(),
+    profileTransfer: new BrowserProfileTransferAdapter(),
     requestIdentity: new BrowserRequestIdentityAdapter(),
-    artifactDownload: new BrowserArtifactDownloadAdapter(api),
     eventStream: new SseEventStreamAdapter(apiBaseUrl),
     storage: new LocalStorageAdapter("jh:"),
     session: new LocalSessionAdapter(),
+    sessionStorage: new BrowserSessionStorageAdapter("local"),
     clipboard: new NavigatorClipboardAdapter(),
-    openInOs: new OpenArtifactAdapter(api),
     pdfExport: new BrowserPdfExportAdapter(),
     telemetry: new ConsoleTelemetryAdapter(),
     featureFlags: new StaticFeatureFlagAdapter(),
@@ -102,14 +103,14 @@ export async function createAppComposition(
   return {
     kind: "demo",
     ports: {
-      api,
+      http: new DemoHttpAdapter(api, workspace),
+      blobDownload: new BrowserBlobDownloadAdapter(),
       requestIdentity: new BrowserRequestIdentityAdapter(),
-      artifactDownload: new BrowserArtifactDownloadAdapter(api),
       eventStream: new DemoWorkspaceEventStreamAdapter(workspace),
       storage: new DemoStorageAdapter(),
       session: new DemoSessionAdapter(),
+      sessionStorage: new BrowserSessionStorageAdapter("demo"),
       clipboard: new NavigatorClipboardAdapter(),
-      openInOs: new DemoOpenInOsAdapter(api),
       pdfExport: new BrowserPdfExportAdapter(),
       telemetry: options.demoTelemetry ?? new ConsoleTelemetryAdapter(),
       featureFlags: new DemoFeatureFlagAdapter(),

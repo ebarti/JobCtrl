@@ -11,9 +11,6 @@
   "scripts": {
     "check": "tsc --noEmit --project tsconfig.json"
   },
-  "dependencies": {
-    "@jobctrl/contracts": "workspace:*"
-  },
   "devDependencies": {
     "@jobctrl/tsconfig": "workspace:*",
     "typescript": "^6.0.3"

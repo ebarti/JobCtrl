@@ -17,14 +17,19 @@ export function ApplyButton({
   const applyJob = useApplyJobMutation();
   const isPending = applyJob.isPending;
   return (
-    <Button
-      type="button"
-      {...(className ? { className } : {})}
-      size="sm"
-      disabled={isPending}
-      onClick={() => applyJob.mutate({ jobId })}
-    >
-      {isPending ? "Applying" : label}
-    </Button>
+    <span>
+      <Button
+        type="button"
+        {...(className ? { className } : {})}
+        size="sm"
+        disabled={isPending}
+        onClick={() => applyJob.mutate({ jobId })}
+      >
+        {isPending ? "Applying" : label}
+      </Button>
+      {applyJob.error ? (
+        <span role="alert">{applyJob.error.message}</span>
+      ) : null}
+    </span>
   );
 }

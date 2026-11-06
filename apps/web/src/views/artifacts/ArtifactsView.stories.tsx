@@ -11,10 +11,6 @@ import { http, HttpResponse } from "msw";
 import { useMemo } from "react";
 
 import { artifactsSearchSchema } from "../../routes/-artifacts.search.js";
-import {
-  makeArtifactsPage,
-  sampleArtifact,
-} from "../../test/fixtures/projections.js";
 import { ArtifactsView } from "./ArtifactsView.js";
 
 const meta = {
@@ -47,17 +43,13 @@ function ArtifactsViewHost() {
   return <RouterProvider router={router} />;
 }
 
-export const Populated: Story = {
-  render: () => <ArtifactsViewHost />,
-};
-
 export const Loading: Story = {
   parameters: {
     msw: {
       handlers: [
-        http.get("*/v1/artifacts", async () => {
+        http.get("*/v1/resumes", async () => {
           await new Promise((resolve) => setTimeout(resolve, 60_000));
-          return HttpResponse.json(makeArtifactsPage());
+          return HttpResponse.json({ ok: true, resumes: [] });
         }),
       ],
     },
@@ -69,8 +61,8 @@ export const Empty: Story = {
   parameters: {
     msw: {
       handlers: [
-        http.get("*/v1/artifacts", () =>
-          HttpResponse.json(makeArtifactsPage([])),
+        http.get("*/v1/resumes", () =>
+          HttpResponse.json({ ok: true, resumes: [] }),
         ),
       ],
     },
@@ -82,28 +74,8 @@ export const Error: Story = {
   parameters: {
     msw: {
       handlers: [
-        http.get("*/v1/artifacts", () =>
+        http.get("*/v1/resumes", () =>
           HttpResponse.json({ ok: false, error: "internal" }, { status: 500 }),
-        ),
-      ],
-    },
-  },
-  render: () => <ArtifactsViewHost />,
-};
-
-export const ManyResults: Story = {
-  parameters: {
-    msw: {
-      handlers: [
-        http.get("*/v1/artifacts", () =>
-          HttpResponse.json(
-            makeArtifactsPage(
-              Array.from({ length: 12 }, (_, index) => ({
-                ...sampleArtifact,
-                artifactId: `artifact-${index + 10}`,
-              })),
-            ),
-          ),
         ),
       ],
     },

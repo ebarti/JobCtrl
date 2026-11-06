@@ -31,7 +31,10 @@ type PreviewState =
   | { status: "error"; pages: RenderedPage[]; message: string };
 
 export interface PdfPreviewViewerProps {
-  url: string;
+  url?: string;
+  /** Feature-owned authorized byte read; keep the callback stable between renders. */
+  loadPdf?: () => Promise<Blob>;
+  onOpenPdf?: () => void;
   cacheKey?: number | string;
   title: string;
   loadingTitle: string;
@@ -98,6 +101,22 @@ async function loadingTaskForUrl(
   return pdfjs.getDocument({ data });
 }
 
+async function loadingTaskForSource(
+  pdfjs: PdfJsModule,
+  url: string | undefined,
+  loadPdf: (() => Promise<Blob>) | undefined,
+  signal: AbortSignal,
+): Promise<PdfLoadingTask> {
+  if (loadPdf) {
+    const blob = await loadPdf();
+    const data = new Uint8Array(await blob.arrayBuffer());
+    if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
+    return pdfjs.getDocument({ data });
+  }
+  if (!url) throw new Error("PDF preview is unavailable.");
+  return loadingTaskForUrl(pdfjs, url, signal);
+}
+
 export async function renderPdfPageToObjectUrl(
   page: PdfPage,
   renderViewport: PdfViewport,
@@ -150,6 +169,8 @@ function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 
 export function PdfPreviewViewer({
   url,
+  loadPdf,
+  onOpenPdf,
   cacheKey,
   title,
   loadingTitle,
@@ -200,7 +221,7 @@ export function PdfPreviewViewer({
         showProgress("Loading PDF renderer.");
         const pdfjs = await loadPdfJs();
         showProgress("Loading PDF bytes.");
-        loadingTask = await loadingTaskForUrl(pdfjs, url, abortController.signal);
+        loadingTask = await loadingTaskForSource(pdfjs, url, loadPdf, abortController.signal);
         if (cancelled) return;
         showProgress("Opening PDF.");
         document = await loadingTask.promise;
@@ -270,7 +291,7 @@ export function PdfPreviewViewer({
       revokePageImages();
       void destroyLoadingTask();
     };
-  }, [cacheKey, loadingMessage, url]);
+  }, [cacheKey, loadingMessage, url, loadPdf]);
 
   return (
     <div className="pdf-preview-viewer">
@@ -279,9 +300,8 @@ export function PdfPreviewViewer({
         <span className="toolbar-status" data-typography="metadata">
           {state.message}
         </span>
-        <a href={url} rel="noreferrer" target="_blank">
-          {openLabel}
-        </a>
+        {onOpenPdf ? <button type="button" onClick={onOpenPdf}>{openLabel}</button>
+          : url ? <a href={url} rel="noreferrer" target="_blank">{openLabel}</a> : null}
       </div>
       {state.status === "error" ? (
         <div className="pdf-preview-state" role="status">
@@ -318,6 +338,8 @@ export function PdfPreviewViewer({
 
 export function PdfAuditPreviewViewer({
   url,
+  loadPdf,
+  onOpenPdf,
   cacheKey,
   title,
   loadingTitle,
@@ -374,7 +396,7 @@ export function PdfAuditPreviewViewer({
         showProgress("Loading PDF renderer.");
         const pdfjs = await loadPdfJs();
         showProgress("Loading PDF bytes.");
-        loadingTask = await loadingTaskForUrl(pdfjs, url, abortController.signal);
+        loadingTask = await loadingTaskForSource(pdfjs, url, loadPdf, abortController.signal);
         if (cancelled) return;
         showProgress("Opening PDF.");
         document = await loadingTask.promise;
@@ -449,7 +471,7 @@ export function PdfAuditPreviewViewer({
       revokePageImages();
       void destroyLoadingTask();
     };
-  }, [cacheKey, layoutBoxes, lineTargets, loadingMessage, url]);
+  }, [cacheKey, layoutBoxes, lineTargets, loadingMessage, url, loadPdf]);
 
   return (
     <div className="pdf-preview-viewer pdf-audit-preview-viewer">
@@ -458,9 +480,8 @@ export function PdfAuditPreviewViewer({
         <span className="toolbar-status" data-typography="metadata">
           {state.message}
         </span>
-        <a href={url} rel="noreferrer" target="_blank">
-          {openLabel}
-        </a>
+        {onOpenPdf ? <button type="button" onClick={onOpenPdf}>{openLabel}</button>
+          : url ? <a href={url} rel="noreferrer" target="_blank">{openLabel}</a> : null}
       </div>
       {state.status === "error" ? (
         <div className="pdf-preview-state" role="status">

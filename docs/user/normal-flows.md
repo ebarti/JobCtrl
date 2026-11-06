@@ -28,8 +28,7 @@ use the checkout-prefixed commands documented in
 <DailyWorkflowJourney />
 
 Under the hood, Discover runs Enrich, Score, Tailor, and PDF work for each
-eligible job. Cover letters are included only when **Generate cover letters**
-is enabled in Settings → Model selection; the default is off. Live submission approval is bound to the current materials,
+eligible job. Live submission approval is bound to the current materials,
 profile version, application URL, and dry-run evidence.
 
 <WorkflowSurfaceSelector />
@@ -183,7 +182,7 @@ not prevent dispatch; public-source restrictions and worker readiness still
 apply. See [Crawl Politeness](discovery.md#crawl-politeness) for source-specific
 limits, including anonymous broad-board proxy restrictions.
 
-Per-stage commands (`jobctrl enrich`, `score`, `tailor`, `cover`) and the
+Per-stage commands (`jobctrl enrich`, `score`, `tailor`) and the
 single-job path (`jobctrl job <url> --dry-run`) start the same underlying
 workflows when you want a narrower run.
 
@@ -323,7 +322,7 @@ an older run has stopped. Workflow identifiers and bounded reason codes remain
 under **Technical details**.
 
 Internal stages such as Enrich and Score, and material generation (the `tailor`
-and `cover` commands), stay visible in job detail and diagnostics, but the
+command), stay visible in job detail and diagnostics, but the
 user-facing preparation stage is Discover.
 
 [Enrichment & Extraction](enrichment-and-extraction.md) explains how captured
@@ -482,7 +481,7 @@ then inspect evidence usage and gaps in the Evidence view.
 
 <WorkflowSurfacePanel surface="web">
 
-Eligible jobs receive tailored resumes and cover letters during Discover. You
+Eligible jobs receive tailored resumes during Discover. You
 can also generate materials for a single job from the Job Detail workspace.
 
 </WorkflowSurfacePanel>
@@ -494,7 +493,6 @@ full Discover run:
 
 ```bash
 jobctrl tailor
-jobctrl cover
 ```
 
 Inspect the generated records, validation, and accepted artifact history in the
@@ -513,7 +511,7 @@ diagnostic facts under **Technical details**, not the primary labels shown to
 the reviewer.
 
 In **Job Detail → Artifacts → Editable DOCX**, choose A4 or Letter and export an
-accepted resume or cover letter. Retained exports can be downloaded again without
+accepted resume. Retained exports can be downloaded again without
 regeneration; failed exports preserve the accepted materials. See
 [Editable DOCX Export](materials-and-tailoring.md#editable-docx-export) for limits.
 
@@ -797,7 +795,7 @@ truthful, reviewable message that you send yourself:
 - In the Contact Detail workspace's **Outreach** thread, click **generate draft**.
   JobCtrl writes a short message grounded only in your profile and the confirmed
   contact facts, then runs it through the **same anti-fabrication gates as your
-  resumes and cover letters**: a model claim-verification determination, a content
+  resumes**: a model claim-verification determination, a content
   validator, an LLM judge, and a claim-to-fact provenance record.
 - Review the **gate results** and the **claim → fact** bindings shown beside the
   draft. A draft that invents a metric, an employer, or a relationship it cannot
@@ -889,7 +887,7 @@ Cross-protocol rollback is refused. See
 | `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
 | `legacy-evidence list` / `recover` / `decide` | Inspect unknown legacy confirmation provenance; inventory a validated pre-cutover paired backup or explicitly missing authority, then make one current-state-bound human decision with the runtime stopped. Preserves source cells and history; see [Review legacy confirmations](candidate-profile.md#review-legacy-confirmations). |
 | `source-proposals from-history` / `list` / `reset CANDIDATE_ID` | Explicitly propose sources from saved canonical posting/application URLs, read retained evidence and review history, or reset one rejected coordinate. Review and promotion use the existing Source locator; see [Discovery](discovery.md#propose-sources-from-saved-posting-history). |
-| `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` includes eligible jobs that already have a score, across the scoring queue. |
+| `discover` / `enrich` / `score` / `tailor` | Start one stage; `score --rescore` includes eligible jobs that already have a score, across the scoring queue. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
 | `apply` | Start apply automation (`--dry-run`, `--url`, `--limit` for a maximum number of claimed jobs, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
 | `retry <stage> <url>` | Reset one stage for one job (`--reset-attempts`, `--run`). An exhausted budget renews automatically; other counts are retained unless reset explicitly. Accepted materials remain available, and the command reports when a replacement requires explicit re-tailoring. |
@@ -901,10 +899,9 @@ Cross-protocol rollback is refused. See
 | `credentials migrate` | Move allowlisted provider secrets from legacy `.env` files into the native credential store. |
 | `gmail-auth` | Connect Gmail for verification codes, outcome lookup, and approved email applications. |
 | `migrate-resume-html` | Convert or refresh approved resume PDFs onto the HTML/CSS renderer. |
-| `material-export JOB_ID --source-artifact-id ID --generation N` | Create an editable DOCX from an accepted resume or cover-letter text artifact; see [Editable DOCX Export](materials-and-tailoring.md#editable-docx-export) for formatting and locale limits. |
+| `material-export JOB_ID --source-artifact-id ID --generation N` | Create an editable DOCX from an accepted resume text artifact; see [Editable DOCX Export](materials-and-tailoring.md#editable-docx-export) for formatting and locale limits. |
 | `backup` | Source checkout only: write a `VACUUM INTO` copy of `jobctrl.db` (`--output`). |
 | `worker` | Run the long-lived Temporal worker. |
-| `rpc` | JSON-RPC server started by the TypeScript API (internal). |
 
 The digest counts new matches, stale scores and review items by their saved job
 identity. Hidden, closed and deleted jobs are excluded from those counts. New

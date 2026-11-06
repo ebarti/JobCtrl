@@ -2,6 +2,7 @@ import {
   JOB_APPLY_STATUS_FILTERS,
   JOB_SORT_FIELDS,
   JOB_STATES,
+  SavedJobGridFiltersSchema,
   STAGES,
   STAGE_STATES,
   type SavedTableView,
@@ -21,9 +22,12 @@ export const SAVED_TABLE_VIEW_STORE_VERSION = 4;
 export const SAVED_TABLE_VIEW_SCHEMA_VERSION = 1;
 export const DEFAULT_SAVED_TABLE_VIEW_ID = "default";
 export const JOBS_TABLE_ID = "jobs" satisfies TableId;
+// The Python composed read supports these additional owner-backed sort fields.
+export const PYTHON_JOBS_SORT_FIELDS = [...JOB_SORT_FIELDS, "job_state", "resume_template", "scored_at"] as const;
 export const JOBS_TABLE_COLUMN_IDS = [
   "select",
   "fit_score",
+  "eligibility",
   "title",
   "company",
   "job_state",
@@ -38,6 +42,7 @@ export const JOBS_TABLE_COLUMN_IDS = [
   "current_state",
   "resume_template",
   "discovered_at",
+  "scored_at",
   "apply_status",
 ] as const;
 
@@ -50,6 +55,7 @@ export const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
   "compensation_warnings",
   "resume_template",
   "discovered_at",
+  "scored_at",
 ] as const;
 
 export const DISCOVERY_SOURCES_TABLE_ID = "discovery-sources" satisfies TableId;
@@ -111,7 +117,7 @@ const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
       deleted: "active",
       pageSize: 50,
     },
-    sortableColumnIds: JOB_SORT_FIELDS,
+    sortableColumnIds: PYTHON_JOBS_SORT_FIELDS,
   },
   [DISCOVERY_SOURCES_TABLE_ID]: {
     tableId: DISCOVERY_SOURCES_TABLE_ID,
@@ -448,6 +454,10 @@ function normalizeUrlFilters(
       next[key] = timestamp.trim();
     }
   }
+  if (config.tableId === JOBS_TABLE_ID) {
+    const jobGrid = SavedJobGridFiltersSchema.safeParse(source["jobGrid"]);
+    if (jobGrid.success) next.jobGrid = jobGrid.data;
+  }
   if (source["sourceFilters"] !== undefined) {
     next.sourceFilters = normalizeGridFilters(source["sourceFilters"], config);
   }
@@ -667,7 +677,7 @@ function configFor(tableId: TableId): KnownTableConfig {
   return config;
 }
 
-export const useSavedTableViewsStore = create<SavedTableViewsState>()(
+function createSavedTableViewsStore(storageName: string) { return create<SavedTableViewsState>()(
   persist(
     (set, get) => ({
       ...initialState,
@@ -792,7 +802,7 @@ export const useSavedTableViewsStore = create<SavedTableViewsState>()(
       reset: () => set(normalizeSavedTableViewsState({})),
     }),
     {
-      name: "jh:saved-table-views",
+      name: storageName,
       storage: createJSONStorage(getStorage),
       version: SAVED_TABLE_VIEW_STORE_VERSION,
       migrate: migrateSavedTableViewsState,
@@ -807,4 +817,8 @@ export const useSavedTableViewsStore = create<SavedTableViewsState>()(
       }),
     },
   ),
-);
+); }
+
+export const useSavedTableViewsStore = createSavedTableViewsStore("jh:saved-table-views");
+/** Python-cutover Jobs views begin fresh; this key never reads legacy Jobs state. */
+export const usePythonJobsTableViewsStore = createSavedTableViewsStore("jh:python-jobs-table-views:v1");

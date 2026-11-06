@@ -7,8 +7,8 @@ import { profileQuery } from "../readQueries.js";
 
 export function useProfileQuery(): UseQueryResult<ProfileConfigResponse> {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   return useQuery({
-    ...profileQuery({ tenantId, ports: { api } }),
+    ...profileQuery({ tenantId, ports: { http } }),
   });
 }

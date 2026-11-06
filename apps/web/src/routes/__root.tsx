@@ -2,7 +2,7 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { createRootRouteWithContext } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 
-import { OutcomeDraftRetentionProvider } from "../contexts/apply/components/ApplicationOutcomes.js";
+import { FeatureProviders } from "../feature-providers.js";
 import type { RouterContext } from "../router.js";
 import { AppShell } from "../shared/layout/AppShell.js";
 import { Empty } from "../shared/ui/empty.js";
@@ -20,7 +20,7 @@ function RootComponent() {
 
   return (
     <>
-      <OutcomeDraftRetentionProvider><AppShell /></OutcomeDraftRetentionProvider>
+      <FeatureProviders><AppShell /></FeatureProviders>
       {showDevtools ? (
         <>
           <TanStackRouterDevtools position="bottom-right" />

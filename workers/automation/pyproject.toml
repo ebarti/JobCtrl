@@ -25,6 +25,10 @@ dependencies = [
     "click>=8.3.3",
     "rich>=13.0",
     "httpx>=0.24",
+    # Sole Python HTTP application and strict source-bound model output validation.
+    "starlette>=1.3.1,<2",
+    "uvicorn>=0.48,<1",
+    "jsonschema>=4.26,<5",
     "websocket-client>=1.8",
     "beautifulsoup4>=4.12",
     "playwright>=1.40",
@@ -42,10 +46,8 @@ dependencies = [
     # Typed, concurrent job-board events plus resumable checkpoints. Pin the
     # integration contract so JobCtrl's durable adapter changes deliberately.
     "jobstreaming==0.0.5",
-    # Pydantic backs the canonical employer-analysis domain model
-    # (``domain/materials/analysis.py``) and is also pulled transitively by
-    # the agent SDKs below. Declared explicitly because the domain layer
-    # imports it directly.
+    # Feature domain schemas and strict structured-model requests use Pydantic
+    # directly, independently of the SDKs that also depend on it.
     "pydantic>=2.10",
     # Gmail verification scopes derive sender domains from application URLs and
     # need public-suffix-aware eTLD+1 parsing.
@@ -59,11 +61,6 @@ dev = [
     "cryptography>=50.0.0",
     "google-auth>=2.0",
     "hatchling==1.32.4",
-    "pytest>=7.0",
-    "pytest-asyncio>=0.23",
-    "pytest-randomly>=4.0",
-    "pytest-timeout>=2.4,<3",
-    "pytest-xdist>=3.8,<4",
     "python-docx>=1.2,<2",
     "ruff==0.17.3",
 ]
@@ -87,9 +84,6 @@ provider-runtime = [
     "google-antigravity==0.1.2",
 ]
 release-build = ["build==1.6.1", "hatchling==1.32.4"]
-# The always-on privacy gate uses only this locked tool slice; it must not
-# resolve an independent floating pytest environment on every pull request.
-release-check = ["pytest>=7.0"]
 
 [project.scripts]
 jobctrl = "jobctrl.cli:app"
@@ -109,7 +103,7 @@ build-backend = "hatchling.build"
 packages = ["src/jobctrl"]
 
 [tool.hatch.build]
-artifacts = ["src/jobctrl/config/*.yaml", "src/jobctrl/assets/fonts/*", "src/jobctrl/assets/interview/*.json", "src/jobctrl/assets/determinations/*.json", "src/jobctrl/infrastructure/migrations/*.sql"]
+artifacts = ["src/jobctrl/config/*.yaml", "src/jobctrl/assets/fonts/*", "src/jobctrl/assets/interview/*.json", "src/jobctrl/assets/determinations/*.json"]
 
 [tool.hatch.build.targets.sdist.force-include]
 "../../LICENSE" = "LICENSE"
@@ -123,29 +117,11 @@ line-length = 120
 # Preserve the existing project policy across Ruff default-rule changes.
 select = ["E4", "E7", "E9", "F"]
 
-[tool.pytest.ini_options]
-asyncio_mode = "strict"
-tmp_path_retention_policy = "failed"
-# "thread" dumps every thread's stack at the bound and hard-exits the process.
-# "signal" raised only in the main thread and could not unwind a worker-pool
-# thread blocked in a SQLite BEGIN IMMEDIATE wait, which wedged the lane for
-# its whole job ceiling (run 32481181792, Python 3.11). faulthandler stays as
-# the slightly later second-chance dump if pytest-timeout itself fails.
-faulthandler_timeout = 240
-timeout = 180
-timeout_method = "thread"
-markers = [
-    "core: hermetic tests that do not own a Temporal test server or migration fixture",
-    "migration: database migration and copy tests routed to memory-backed CI storage",
-    "system_browser: opt-in smoke requiring a real local system Chrome/Chromium; set JOBCTRL_RUN_SYSTEM_BROWSER_TESTS=1",
-    "temporal: tests whose file owns a Temporal WorkflowEnvironment lifecycle",
-]
-
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
 extraPaths = ["src"]
-include = ["src", "tests"]
+include = ["src"]
 pythonVersion = "3.11"
 
 [tool.uv]

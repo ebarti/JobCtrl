@@ -60,7 +60,7 @@ feature off, but cannot turn it on.
 | Surface | Storage | API | When a saved change applies |
 | --- | --- | --- | --- |
 | Settings → General | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings` | Live, next poll/run/workflow, or restart, as labeled; worker activity slots show desired versus active values |
-| Settings → Credentials | Non-secret desired values in `config.json`; secrets in the native OS credential store, the launch environment, or native provider stores | `/v1/credentials` | Claude and Google credential edits require the relevant Python process to restart; an environment-owned active route remains authoritative until its value is removed and the process restarts; Codex verification is immediate |
+| Settings → Credentials | Non-secret desired values in `config.json`; secrets in the native OS credential store, the launch environment, or native provider stores | `/v1/credentials` | The in-progress Python target resolves saved credentials on the next execution; a nonempty launch-environment value remains authoritative and read-only in Settings. Integration verification is pending. |
 | Settings → Model selection | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings`; `/v1/providers/models` | Newly started work; no worker restart |
 | Settings → Browser & extension | Non-secret Apply-browser choices and adopted executable configuration in `config.json`; the pairing token and mode-`0600` selected-extension installation ID remain separate; live Discovery task status is transient | `/v1/browser-capabilities`; `/v1/extension/pairing-token`; `/v1/extension/discovery/claim`; `/v1/discovery/browser-extension/status` | Saving the token from an extension explicitly selects that Chrome installation; token rotation clears it. Discovery and Enrich prefer the selected installation while it is connected; offline launches remain available through guarded public HTTP/anonymous Playwright, subject to worker readiness and source policy. Settings does not create a LinkedIn profile copy. |
 
@@ -89,12 +89,11 @@ authenticated Codex CLI, and AWS, Google, and Azure credentials stay in their na
 the activation flags and non-secret identifiers needed to select those routes
 in `config.json`.
 
-At Python process startup, after env-file loading, JobCtrl uses an OS
-credential-store value only when the corresponding environment value is missing or empty; any
-non-empty environment value wins. Saving or removing a value is therefore
-**restart-to-activate** for Python consumers: restart the relevant worker or
-provider process before Claude or Google work. Preferred-model changes do not
-require that restart.
+The in-progress Python target resolves native-store credentials for each new
+provider execution. A nonempty value in the launch environment takes precedence
+and is read-only in Settings; changing that launch environment requires
+restarting the affected process. An in-flight request retains its existing
+credentials. Integrated provider verification is still required.
 
 Environment ownership is scoped to the active secret or auth route, not to the
 whole provider card. While an environment-owned route is active, its secret
@@ -216,18 +215,12 @@ settings, API/Vite proxy targets, or isolated stacks should use
 
 ## LLM Providers
 
-**Generate cover letters** in Settings → Model selection is off by default.
-Enable it to include new letters in material preparation. With it off, JobCtrl
-prepares the reviewed résumé and PDF; accepted letters remain available.
-See [Materials & Tailoring](materials-and-tailoring.md) for generation behavior.
-
 Local/custom endpoints are not currently supported or configurable. The
 [design-only local/custom provider contract](../plans/local-custom-provider-contract.md)
 defines the containment, capability, accounting, and product proof required
 before any such provider can become available; it does not enable one.
 
-Choose one provider in **Settings → Credentials**, restart the relevant Python
-process after a credential edit, and use `jobctrl doctor`. The pipeline model spec defaults to `default`, which resolves
+Choose one provider in **Settings → Credentials** and check its readiness. The pipeline model spec defaults to `default`, which resolves
 through a ready provider. Explicit model specs use `codex:`, `claude:`, or
 `google:`; `gemini:` remains an alias for the Google SDK route.
 
@@ -274,28 +267,15 @@ JobCtrl selects. Newly constructed adapters use this precedence:
 3. saved preference for the selected ready provider;
 4. that provider's default.
 
-The saved default is a provider-qualified route such as `codex:gpt-6.1-sol`.
-It also selects the optional writing pass's provider and model. Clear it to
-restore automatic provider selection. Employer-analysis perspectives and
-explicit generator/judge choices remain separate overrides; to use one model
-throughout analysis and materials, select only its provider perspective and set
-those roles to the same model. A pinned default fails visibly on provider
-failure rather than silently selecting a different model.
-
-**Extra résumé polish** is off by default under Settings → Model selection.
-A résumé is saved once its required factual, quality and applicable persona
-reviews approve it. Enable the option for an additional wording pass; any
-changed text receives fresh reviews, so this takes more time. The setting
-is read when each résumé generation starts. An already-started résumé generation
-keeps its choice; queued or later Tailor steps use the newly saved value, even
-within an existing workflow. Accepted materials are not rewritten. Saving this
-option alone does not require a live model catalog or change your model choices.
+A saved default is a provider-qualified route such as `codex:gpt-6.1-sol`.
+Clear it to restore automatic provider selection. A pinned default fails visibly
+on provider failure rather than silently selecting a different model.
 
 **Reasoning effort** appears for each selected Codex model whose live catalog
 reports supported efforts. Options come from that model's
 `supportedReasoningEfforts`; JobCtrl does not invent options from another model.
 The selected effort applies to every new call using that model, including
-analysis, generation, review and the writing pass. Higher efforts may take more
+analysis, generation and review. Higher efforts may take more
 time and tokens. The provider's option description is shown beside the choice.
 
 **Existing call settings** clears the override and preserves the earlier policy:
@@ -332,7 +312,7 @@ adapters and accepted determinations are never relabeled. Explicit model pins
 remain bound and fail visibly when their
 route is unavailable. Response/schema/citation failures and spend denial do
 not discard a provider. Restart or an explicit adapter reset clears observed
-availability failures; credential changes retain their restart requirement.
+availability failures.
 
 The **Employer analysis perspectives** selection is also saved here. Its
 execution behavior belongs to the Discover preparation workflow and is
@@ -459,7 +439,7 @@ draft; choose **Save changes** to retry, or edit it to schedule another attempt.
 **Concurrent applications** (`applyConcurrency`, default `1`) limits how many
 application jobs the standing Apply loop may process at the same time. The loop
 re-reads the saved value from `config.json` on its next poll. It does not control
-Score, Tailor, Cover, or the number of Temporal activities the worker can run.
+Score, Tailor, or the number of Temporal activities the worker can run.
 
 ### Pipeline internal concurrency {#runtime-setting-pipeline-internal-concurrency}
 
@@ -503,7 +483,7 @@ not general settings and must never be committed.
 
 | Variable | What it does |
 | --- | --- |
-| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Enable OpenTelemetry export of LLM, workflow, and JSON-RPC spans to Langfuse. |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Enable OpenTelemetry export of LLM and workflow spans to Langfuse. |
 | `LANGFUSE_DISABLE=1` | Disable export even when credentials are present. |
 | `LANGFUSE_OTEL_TIMEOUT_SECONDS` | OTLP/HTTP export timeout, default `5.0`. |
 | `JOBCTRL_TRACE_CONTENT=1` | Explicit debugging opt-in to capture LLM messages, returned output and adapter-supplied schema/runtime instructions at the configured tracing destination. Off by default; may contain private profile/job/material text. |

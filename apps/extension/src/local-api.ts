@@ -44,13 +44,14 @@ export async function checkLocalApiReady(options: LocalApiOptions = {}): Promise
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseUrl = normalizeLoopbackBaseUrl(options.baseUrl);
   try {
-    const response = await fetchWithTimeout(
+    const health = await fetchJsonBodyWithTimeout(
       fetchImpl,
       `${baseUrl}/v1/health`,
       { method: "GET" },
       options.timeoutMs ?? 5_000,
     );
-    return response.ok;
+    return Boolean(health && typeof health === "object" && "ok" in health && health.ok === true
+      && "application" in health && health.application === "jobctrl-python");
   } catch {
     return false;
   }
@@ -71,7 +72,7 @@ export async function postExtensionCapture(
   }
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseUrl = normalizeLoopbackBaseUrl(options.baseUrl);
-  const body = await fetchCaptureBodyWithTimeout(
+  const body = await fetchJsonBodyWithTimeout(
     fetchImpl,
     `${baseUrl}/v1/extension/captures`,
     {
@@ -114,7 +115,7 @@ function isCaptureAcknowledgement(
     source.captureMode === capture.captureMode && source.futureManualActionRequired === capture.futureManualActionRequired;
 }
 
-async function fetchCaptureBodyWithTimeout(
+async function fetchJsonBodyWithTimeout(
   fetchImpl: typeof fetch,
   input: RequestInfo | URL,
   init: RequestInit,
@@ -139,17 +140,19 @@ async function fetchCaptureBodyWithTimeout(
       if (response.status === 409) {
         let body: unknown;
         try { body = await response.json(); } catch { /* Preserve the generic conflict. */ }
-        if (body && typeof body === "object" && !Array.isArray(body)
-            && "ok" in body && body.ok === false && "error" in body && body.error === "extension_capture_superseded") {
+        const error = body && typeof body === "object" && !Array.isArray(body) && "error" in body
+          ? body.error : undefined;
+        const code = error && typeof error === "object" && "code" in error ? error.code : error;
+        if (code === "extension_capture_superseded") {
           throw new ExtensionCaptureSupersededError();
         }
       }
-      throw new LocalApiError(`Local JobCtrl API rejected capture: ${response.status}.`, response.status);
+      throw new LocalApiError(`Local JobCtrl API rejected request: ${response.status}.`, response.status);
     }
     try {
       return await response.json() as unknown;
     } catch {
-      throw new LocalApiError("Local JobCtrl API returned an invalid capture acknowledgement.");
+      throw new LocalApiError("Local JobCtrl API returned invalid JSON.");
     }
   })();
   try {
@@ -313,7 +316,7 @@ export async function isDiscoveryBrowserLeaseActive(
 export function normalizeLoopbackBaseUrl(baseUrl: string = LOOPBACK_API_ORIGINS[0]): LoopbackApiOrigin {
   const url = new URL(baseUrl);
   const normalized = url.origin;
-  if (!LOOPBACK_API_ORIGINS.includes(normalized as LoopbackApiOrigin)) {
+  if (url.username || url.password || url.search || url.hash || !["", "/"].includes(url.pathname) || !LOOPBACK_API_ORIGINS.includes(normalized as LoopbackApiOrigin)) {
     throw new LocalApiError(`Extension API base URL must be loopback: ${normalized}`);
   }
   return normalized as LoopbackApiOrigin;

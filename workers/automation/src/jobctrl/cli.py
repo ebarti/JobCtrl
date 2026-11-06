@@ -1,3988 +1,855 @@
-"""JobCtrl CLI — the main entry point."""
+"""Command-line adapter for the sole Python application authority.
+
+Business actions use the explicit Application composition. Reads and ordinary
+writes execute the registered HTTP adapter in-process, so CLI never grows a
+second repository or dispatches a legacy RPC method.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import hashlib
 import json
-import logging
 import os
-import sqlite3
-import time
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
+from urllib.parse import quote, urlencode, urlsplit
 
-import httpx
 import typer
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
 
 from jobctrl import __version__
-from jobctrl.company_briefing_cli import app as company_briefing_app
-from jobctrl.legacy_evidence_cli import app as legacy_evidence_app
-from jobctrl.pipeline import SUPPORTED_STAGE_ORDER, run_single_job
-from jobctrl.source_proposals_cli import app as source_proposals_app
-from jobctrl.workflow_specs import (
-    build_apply_workflow_spec,
-    build_compensation_refresh_workflow_spec,
-    build_run_stage_workflow_spec,
-    reject_discover_preview,
-    start_workflow_spec_and_wait_sync,
-    workflow_result_to_dict,
-)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%H:%M:%S",
-)
-
-app = typer.Typer(
-    name="jobctrl",
-    help="AI-powered end-to-end job application pipeline.",
-    no_args_is_help=True,
-)
-capability_app = typer.Typer(help="Inspect and explicitly manage optional browser capabilities.")
-app.add_typer(capability_app, name="capability")
-credentials_app = typer.Typer(help="Manage provider credentials in the operating system's native store.")
-app.add_typer(credentials_app, name="credentials")
-app.add_typer(company_briefing_app, name="company-briefing")
-app.add_typer(source_proposals_app, name="source-proposals")
-app.add_typer(legacy_evidence_app, name="legacy-evidence")
-console = Console()
-log = logging.getLogger(__name__)
-
-# Valid pipeline stages (in execution order)
-VALID_STAGES = SUPPORTED_STAGE_ORDER
-_TIER2_STAGE_FEATURES = {
-    "discover": "AI discovery preparation",
-    "score": "AI scoring",
-    "tailor": "resume tailoring",
-    "cover": "cover letter generation",
-}
+app = typer.Typer(name="jobctrl", no_args_is_help=True, help="JobCtrl local Python application.")
+_workspace: Path | None = None
 
 
-@credentials_app.command("migrate")
-def migrate_credentials(
-    env_file: list[Path] = typer.Option(
-        [],
-        "--env-file",
-        help="Exact persistent env file to migrate; repeat for launcher precedence order.",
-    ),
-    marker: Optional[Path] = typer.Option(
-        None,
-        "--marker",
-        help="Secret-free completion marker path (defaults under JOBCTRL_DIR).",
-    ),
-) -> None:
-    """Move allowlisted persistent provider secrets into the native store once."""
+def _workspace_path() -> Path:
+    return (_workspace or Path(os.environ.get("JOBCTRL_DIR", "~/.jobctrl"))).expanduser().absolute()
 
-    from jobctrl import config
-    from jobctrl.native_credentials import (
-        NativeCredentialMigrationError,
-        migrate_persistent_env_credentials,
-    )
-    from jobctrl.runtime import is_bundled_runtime
 
-    paths = list(env_file)
-    if not paths:
-        paths.append(config.get_env_path())
-        if not is_bundled_runtime():
-            cwd_env = Path.cwd() / ".env"
-            if cwd_env not in paths:
-                paths.append(cwd_env)
-            configured = os.environ.get("JOBCTRL_USER_ENV_PATH", "").strip()
-            configured_path = Path(configured).expanduser() if configured else Path.home() / "JobCtrl" / ".env"
-            if configured_path not in paths:
-                paths.append(configured_path)
-    marker_path = marker or (config.APP_DIR / ".native-credentials-migrated.json")
+def _output(value: Any) -> None:
+    typer.echo(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+
+
+def _fail(code: str, message: str, *, exit_code: int = 1) -> None:
+    typer.echo(json.dumps({"error": {"code": code, "message": message}}), err=True)
+    raise typer.Exit(exit_code)
+
+
+def _load_payload(payload: Path | None, data: str | None = None) -> dict:
+    if payload is not None and data is not None:
+        _fail("invalid_payload", "Choose --payload or --data.", exit_code=2)
     try:
-        result = migrate_persistent_env_credentials(paths, marker_path)
-    except NativeCredentialMigrationError as exc:
-        console.print(f"[red]Credential migration failed:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
-    except (OSError, UnicodeError) as exc:
-        console.print(
-            "[red]Credential migration failed:[/red] credential sources could not be inspected safely; no migration was completed."
-        )
-        raise typer.Exit(code=1) from exc
-    if result.already_completed:
-        console.print("Credential migration already completed; no files or native entries changed.")
-        return
-    console.print(
-        f"Credential migration completed: {len(result.migrated_keys)} native entr"
-        f"{'y' if len(result.migrated_keys) == 1 else 'ies'}, {len(result.source_files)} source file(s) inspected."
-    )
+        if payload is not None:
+            if not payload.is_file() or payload.stat().st_size > 20 * 1024 * 1024:
+                _fail("invalid_payload", "Payload must be a JSON object file smaller than 20 MiB.", exit_code=2)
+            encoded = payload.read_text(encoding="utf-8")
+        else:
+            encoded = data if data is not None else "{}"
+        def pairs(items):
+            result = {}
+            for key, item in items:
+                if key in result:
+                    raise ValueError("Duplicate JSON property.")
+                result[key] = item
+            return result
+        def constant(_value):
+            raise ValueError("Nonfinite JSON value.")
+        value = json.loads(encoded, object_pairs_hook=pairs, parse_constant=constant)
+    except (OSError, UnicodeError, ValueError):
+        _fail("invalid_payload", "Payload must be a readable UTF-8 JSON object.", exit_code=2)
+    if not isinstance(value, dict):
+        _fail("invalid_payload", "Payload must be a JSON object.", exit_code=2)
+    return value
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def _application():
+    from jobctrl.app.bootstrap import create_application
 
-_projection_subscription = None
+    from jobctrl.app.errors import AppError
 
-
-def _bootstrap(*, reconcile_posted_compensation: bool = False, strict_projection_refresh: bool = False) -> None:
-    """Common setup: load env, create dirs, init DB, refresh projections.
-
-    Phase 9 (S-32): the ``ProjectionBuilder`` runs an initial backfill on
-    every CLI invocation so the read-model projections reflect the
-    current canonical state before any stage logic runs.  This is
-    cheap (incremental from the watermark) and ensures the dashboards
-    don't go blank after a fresh DB or a schema migration.
-
-    Digest reads opt into an error if this refresh fails; other commands can
-    continue using their existing projections while a later refresh retries.
-
-    The same builder also subscribes (idempotently) to the process-wide
-    ``InProcessEventBus`` so events emitted later in the worker run
-    drive live projection refreshes.
-    """
-    global _projection_subscription
-    from jobctrl.config import ensure_dirs, load_env
-    from jobctrl.database import get_connection, init_db
-    from jobctrl.infrastructure.projections.projection_builder import (
-        ProjectionBuilder,
-    )
-
-    load_env()
-    ensure_dirs()
-    init_db()
-    # Bootstrap OTel as early as possible so every span emitted by the
-    # rest of this CLI invocation flows to the configured Langfuse instance.
-    # init_otel() is idempotent and degrades gracefully when env vars are
-    # absent, so it's safe to call from every command.
-    from jobctrl.infrastructure.observability import init_otel
-
-    init_otel()
     try:
-        # Pass a thread-local connection factory so the wildcard
-        # subscriber (which fires on whichever thread published the
-        # event — including ``ThreadPoolExecutor`` worker threads in
-        # ``apply --workers > 1``) opens a connection on its own
-        # thread instead of reusing the bootstrap-thread handle.
-        builder = (
-            ProjectionBuilder(conn_factory=get_connection, strict_reads=True)
-            if strict_projection_refresh
-            else ProjectionBuilder(conn_factory=get_connection)
-        )
-        builder.refresh()
-        if _projection_subscription is None:
-            from jobctrl.infrastructure.events import get_default_publisher
+        features = os.environ.get("JOBCTRL_FEATURES")
+        return create_application(_workspace_path(), enabled_features=features.split(",") if features else None)
+    except AppError as error:
+        _fail(error.code, error.message)
+    except Exception:
+        _fail("application_unavailable", "The application composition could not be initialized.")
 
-            _projection_subscription = builder.subscribe_to(get_default_publisher())
-    except Exception:  # noqa: BLE001 — projection refresh failure must not break boot
-        # A failed rebuild may leave SQLite inside the write transaction that
-        # contains its partial projection changes. Keeping the long-lived
-        # RPC/worker process on that handle would hold the rollback journal and
-        # block every API reader. Roll back before degrading startup so the
-        # existing projections remain readable and a later refresh can retry.
+
+def _run(awaitable):
+    from jobctrl.app.errors import AppError
+
+    async def lifetime():
         try:
-            get_connection().rollback()
-        except Exception:  # noqa: BLE001 - preserve the original failure
-            log.exception("ProjectionBuilder bootstrap rollback failed")
-        log.exception("ProjectionBuilder backfill on bootstrap failed")
-        if strict_projection_refresh:
-            raise
+            return await awaitable
+        finally:
+            from jobctrl.app.model_providers import close_provider_runtimes
+            await asyncio.to_thread(close_provider_runtimes)
+
+    try:
+        return asyncio.run(lifetime())
+    except AppError as error:
+        _fail(error.code, error.message)
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        _fail("interrupted", "The command was interrupted; inspect its durable run before retrying.", exit_code=130)
+    except Exception:
+        _fail("operation_failed", "The application operation failed; inspect its existing run before retrying.")
 
 
-def _check_tier2_stage(stage: str) -> None:
-    feature = _TIER2_STAGE_FEATURES.get(stage)
-    if feature is None:
-        return
+async def _request(method: str, path: str, body: dict | None = None):
+    import httpx
 
-    from jobctrl.config import check_tier
+    from jobctrl.app.http import create_http_app
+    from jobctrl.app.security import CapabilityToken
 
-    check_tier(2, feature)
+    parsed = urlsplit(path)
+    if not path.startswith("/v1/") or parsed.scheme or parsed.netloc or parsed.fragment:
+        _fail("invalid_path", "Request path must be a local /v1/ application path.", exit_code=2)
+    application = _application()
+    token = CapabilityToken(application.runtime.workspace).read_or_create()
+    transport = httpx.ASGITransport(app=create_http_app(application), client=("127.0.0.1", 0))
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8787", timeout=None) as client:
+        response = await client.request(method.upper(), path, json=body, headers={"authorization": f"Bearer {token}"})
+    if response.status_code >= 400:
+        try:
+            value = response.json()
+            error = value.get("error", {})
+            code = error.get("code", "request_failed") if isinstance(error, dict) else "request_failed"
+            message = error.get("message", "The application rejected the request.") if isinstance(error, dict) else "The application rejected the request."
+        except (ValueError, AttributeError):
+            code, message = "request_failed", "The application rejected the request."
+        _fail(code, message)
+    return response
 
 
-def _check_tier2_stage_list(stage_list: list[str]) -> None:
-    if "all" in stage_list or "discover" in stage_list:
-        _check_tier2_stage("discover")
-        return
-
-    if any(s in stage_list for s in ("score", "tailor", "cover")):
-        from jobctrl.config import check_tier
-
-        check_tier(2, "AI scoring/tailoring")
+async def _execute(action_name: str, payload: dict, *, background: bool, idempotency_key: str | None = None):
+    application = _application()
+    if background:
+        return await application.submit(action_name, payload, idempotency_key=idempotency_key)
+    if idempotency_key:
+        _fail("invalid_idempotency_key", "--idempotency-key requires --background.", exit_code=2)
+    return await application.execute(action_name, payload)
 
 
-def _version_callback(value: bool) -> None:
+def _version(value: bool) -> None:
     if value:
-        console.print(f"[bold]jobctrl[/bold] {__version__}")
+        typer.echo(f"jobctrl {__version__}")
         raise typer.Exit()
-
-
-def _validate_validation_mode(validation: str) -> str:
-    """Validate the tailor/cover validation mode option."""
-    valid_modes = ("strict", "normal", "lenient")
-    if validation not in valid_modes:
-        console.print(f"[red]Invalid --validation value:[/red] '{validation}'. Choose from: {', '.join(valid_modes)}")
-        raise typer.Exit(code=1)
-    return validation
-
-
-def _parse_tailor_models(value: str) -> tuple[str, ...]:
-    """Parse comma-separated LLM model specs for tailoring candidates."""
-    return tuple(part.strip() for part in value.split(",") if part.strip())
-
-
-def _repo_root() -> Path:
-    """Find the repository root from the installed source tree."""
-
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        if (parent / "package.json").exists() and (parent / "workers" / "automation" / "pyproject.toml").exists():
-            return parent
-    return current.parents[4]
-
-
-def _shell_join(cmd: list[str]) -> str:
-    import shlex
-
-    return shlex.join(cmd)
-
-
-def _run_setup_step(cmd: list[str], *, dry_run: bool, cwd: Path | None = None, quiet: bool = False) -> int:
-    import subprocess
-
-    if not quiet:
-        console.print(f"[dim]+ {_shell_join(cmd)}[/dim]")
-    if dry_run:
-        return 0
-    return subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=False).returncode
-
-
-def _env_file_updates(path: Path, updates: dict[str, str]) -> str:
-    """Return .env contents with ``updates`` replaced/appended, preserving comments."""
-
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else ["# JobCtrl configuration"]
-    seen: set[str] = set()
-    rendered: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in line:
-            rendered.append(line)
-            continue
-        key, _sep, _value = line.partition("=")
-        key = key.strip()
-        if key in updates:
-            rendered.append(f"{key}={updates[key]}")
-            seen.add(key)
-        else:
-            rendered.append(line)
-    for key, value in updates.items():
-        if key not in seen:
-            rendered.append(f"{key}={value}")
-    return "\n".join(rendered).rstrip() + "\n"
-
-
-def _write_env_updates(path: Path, updates: dict[str, str], *, dry_run: bool, quiet: bool = False) -> None:
-    if not updates:
-        return
-    if dry_run:
-        if not quiet:
-            console.print(f"[yellow]Would update {path}:[/yellow] {', '.join(sorted(updates))}")
-        return
-    from jobctrl.config import config_file_lock
-
-    # Coordinate the read/merge/write with the init wizard's file updates.
-    with config_file_lock(path=path):
-        path.write_text(_env_file_updates(path, updates), encoding="utf-8")
-        path.chmod(0o600)
-    for key, value in updates.items():
-        import os
-
-        os.environ[key] = value
-    if not quiet:
-        console.print(f"[green]Updated setup configuration:[/green] {path}")
-
-
-def _confirm_setup_action(prompt: str, *, yes: bool, non_interactive: bool, default: bool = False) -> bool:
-    if yes:
-        return True
-    if non_interactive:
-        return default
-    return typer.confirm(prompt, default=default)
-
-
-def _tool_available(name: str) -> tuple[bool, str]:
-    import shutil
-
-    found = shutil.which(name)
-    return (True, found) if found else (False, "not found")
-
-
-def _node_status() -> tuple[bool, str]:
-    import shutil
-    import subprocess
-
-    if shutil.which("node") is None:
-        return False, "not found"
-    try:
-        version = subprocess.check_output(["node", "-p", "process.versions.node"], text=True, timeout=3).strip()
-    except Exception as exc:  # noqa: BLE001 - setup diagnostic
-        return False, f"version check failed: {exc}"
-    parts = tuple(int(p) for p in version.split(".")[:3])
-    return parts >= (22, 13, 0), version
-
-
-def _setup_toolchain_rows() -> list[tuple[str, bool, str]]:
-    from jobctrl.infrastructure.preflight import check_playwright_chromium
-
-    rows: list[tuple[str, bool, str]] = []
-    node_ok, node_note = _node_status()
-    rows.append(("Node.js 22.13+", node_ok, node_note))
-    for command, label in (
-        ("corepack", "Corepack"),
-        ("uv", "uv"),
-        ("temporal", "Temporal CLI"),
-    ):
-        ok, note = _tool_available(command)
-        rows.append((label, ok, note))
-    chromium_ok, chromium_note = check_playwright_chromium()
-    rows.append(("Managed Playwright Chromium", chromium_ok, chromium_note))
-    return rows
-
-
-def _run_workflow_spec_from_cli(spec, *, label: str) -> dict[str, Any]:
-    workflow_name = getattr(spec.workflow, "__name__", str(spec.workflow))
-    console.print(f"[cyan]Starting {workflow_name} via Temporal:[/cyan] {label}")
-    try:
-        started = start_workflow_spec_and_wait_sync(spec)
-    except Exception as exc:  # noqa: BLE001 - CLI surfaces runtime reachability plainly
-        console.print(
-            "[red]Temporal workflow runtime is unavailable.[/red]\n"
-            f"{exc}\n"
-            "Run [bold]jobctrl doctor[/bold] and start the Temporal server + worker "
-            "before retrying."
-        )
-        raise typer.Exit(code=1) from exc
-
-    result = workflow_result_to_dict(started.result)
-    console.print(
-        f"[green]Workflow completed:[/green] {started.workflow_id} "
-        f"(run {started.first_execution_run_id or started.run_id})"
-    )
-    if _workflow_result_failed(result):
-        error_code = _workflow_error_code(result)
-        if error_code:
-            console.print(f"[red]Workflow failed:[/red] {error_code}")
-        else:
-            console.print("[red]Workflow failed.[/red]")
-        raise typer.Exit(code=1)
-    return result if isinstance(result, dict) else {"result": result}
-
-
-def _workflow_result_failed(result: Any) -> bool:
-    if not isinstance(result, dict):
-        return False
-    if result.get("ok") is False:
-        return True
-    status = str(result.get("status") or "").lower()
-    if status in {"failed", "failure", "canceled", "cancelled", "timed_out", "terminated"}:
-        return True
-    return bool(result.get("failure") or result.get("error"))
-
-
-def _workflow_error_code(result: Any) -> str | None:
-    if not isinstance(result, dict):
-        return None
-    value = result.get("error_code") or result.get("errorCode")
-    return str(value) if value else None
-
-
-def _load_telemetry_module():
-    """Load the apply telemetry module if it exists."""
-    try:
-        from jobctrl.apply import telemetry as telemetry_mod
-    except Exception:
-        return None
-    return telemetry_mod
-
-
-def _resolve_telemetry_fn(module, *names: str):
-    """Return the first callable telemetry helper matching one of the names."""
-    if module is None:
-        return None
-    for name in names:
-        fn = getattr(module, name, None)
-        if callable(fn):
-            return fn
-    return None
-
-
-def _row_to_dict(value) -> dict:
-    """Normalize sqlite rows, dicts, and simple objects into a dictionary."""
-    if value is None:
-        return {}
-    if isinstance(value, dict):
-        return dict(value)
-    if hasattr(value, "keys"):
-        try:
-            return {key: value[key] for key in value.keys()}
-        except Exception:
-            pass
-    if hasattr(value, "_asdict"):
-        try:
-            return dict(value._asdict())
-        except Exception:
-            pass
-    if hasattr(value, "__dict__"):
-        return {key: val for key, val in vars(value).items() if not key.startswith("_")}
-    return {"value": value}
-
-
-def _pick(data: dict, *keys: str, default=""):
-    for key in keys:
-        value = data.get(key)
-        if value not in (None, ""):
-            return value
-    return default
-
-
-def _coerce_rows(result) -> list:
-    """Turn telemetry helper results into a flat list of rows."""
-    if result is None:
-        return []
-    if isinstance(result, dict):
-        for key in ("runs", "events", "rows", "items", "data", "result"):
-            value = result.get(key)
-            if isinstance(value, list):
-                return value
-        return [result]
-    if isinstance(result, (str, bytes)):
-        return []
-    try:
-        return list(result)
-    except TypeError:
-        return [result]
-
-
-def _fmt_duration_ms(value) -> str:
-    """Format a duration in milliseconds into a compact human-readable string."""
-    if value in (None, ""):
-        return ""
-    try:
-        ms = int(float(value))
-    except (TypeError, ValueError):
-        return str(value)
-    if ms < 1000:
-        return f"{ms}ms"
-    seconds = ms / 1000
-    if seconds < 60:
-        return f"{seconds:.1f}s"
-    minutes = int(seconds // 60)
-    remaining = int(seconds % 60)
-    return f"{minutes}m {remaining:02d}s"
-
-
-def _normalize_run(record) -> dict:
-    """Normalize a telemetry run row for display."""
-    data = _row_to_dict(record)
-    run_id = str(_pick(data, "run_id", "id", "uuid", "task_id", default=""))
-    status = str(_pick(data, "status", "apply_status", "result_status", "final_status", default="unknown"))
-    title = str(_pick(data, "job_title", "title", "job", default=""))
-    company = str(_pick(data, "company", "site", "employer", default=""))
-    job_url = str(_pick(data, "job_url", "url", "application_url", default=""))
-    worker_id = _pick(data, "worker_id", "worker", "agent_id", default="")
-    started_at = str(_pick(data, "started_at", "created_at", "run_started_at", "attempted_at", default=""))
-    ended_at = str(_pick(data, "ended_at", "finished_at", "completed_at", "run_finished_at", default=""))
-    duration_ms = _pick(data, "duration_ms", "apply_duration_ms", "elapsed_ms", "runtime_ms", default="")
-    error = str(_pick(data, "error", "apply_error", "failure_reason", "result_error", default=""))
-    last_event = str(_pick(data, "last_event", "event", "last_message", "final_message", default=""))
-    log_path = str(_pick(data, "log_path", "worker_log_path", "output_path", "artifact_path", default=""))
-    model = str(_pick(data, "model", "provider_model", default=""))
-    cost_usd = _pick(data, "cost_usd", "total_cost_usd", "cost", default="")
-    input_tokens = _pick(data, "input_tokens", "prompt_tokens", default="")
-    output_tokens = _pick(data, "output_tokens", "completion_tokens", default="")
-    return {
-        "run_id": run_id,
-        "status": status,
-        "job_title": title,
-        "company": company,
-        "job_url": job_url,
-        "worker_id": str(worker_id),
-        "started_at": started_at,
-        "ended_at": ended_at,
-        "duration": _fmt_duration_ms(duration_ms),
-        "error": error,
-        "last_event": last_event,
-        "log_path": log_path,
-        "model": model,
-        "cost_usd": cost_usd,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-    }
-
-
-def _normalize_event(record) -> dict:
-    """Normalize a telemetry event row for display."""
-    data = _row_to_dict(record)
-    payload = _pick(data, "payload", "data", "details", default="")
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except Exception:
-            pass
-    return {
-        "ts": str(_pick(data, "ts", "timestamp", "created_at", "occurred_at", default="")),
-        "kind": str(_pick(data, "event_type", "type", "name", "action", default="event")),
-        "message": str(_pick(data, "message", "summary", "text", "detail", default="")),
-        "payload": payload,
-    }
-
-
-def _fetch_recent_runs(limit: int = 8, failed_only: bool = False) -> list[dict]:
-    """Fetch recent telemetry-backed apply runs if telemetry is available."""
-    telemetry = _load_telemetry_module()
-    fn = _resolve_telemetry_fn(
-        telemetry,
-        "fetch_recent_runs",
-        "get_recent_runs",
-        "list_recent_runs",
-    )
-    if fn is None:
-        return []
-
-    kwargs = {"limit": limit}
-    for key in ("failed_only", "errors_only", "only_failed"):
-        if failed_only:
-            kwargs[key] = True
-            break
-    try:
-        rows = _coerce_rows(fn(**kwargs))
-    except TypeError:
-        try:
-            rows = _coerce_rows(fn(limit))
-        except Exception:
-            return []
-    except Exception:
-        return []
-    return [_normalize_run(row) for row in rows]
-
-
-def _fetch_run_events(run_id: str, limit: int = 8) -> list[dict]:
-    """Fetch a timeline of events for a specific run."""
-    telemetry = _load_telemetry_module()
-    fn = _resolve_telemetry_fn(
-        telemetry,
-        "fetch_run_events",
-        "get_run_events",
-        "list_run_events",
-        "fetch_recent_events",
-        "get_recent_events",
-    )
-    if fn is None:
-        return []
-
-    kwargs = {"run_id": run_id, "limit": limit}
-    try:
-        rows = _coerce_rows(fn(**kwargs))
-    except TypeError:
-        try:
-            rows = _coerce_rows(fn(run_id, limit))
-        except TypeError:
-            try:
-                rows = _coerce_rows(fn(run_id))
-            except Exception:
-                return []
-    except Exception:
-        return []
-    return [_normalize_event(row) for row in rows]
-
-
-def _format_run_label(run: dict) -> str:
-    """Build a compact human-readable label for a telemetry run."""
-    title = run.get("job_title") or "Untitled"
-    company = run.get("company") or "?"
-    if company and company != "?":
-        return f"{title} @ {company}"
-    return title
-
-
-def _render_live_workers_table() -> Table | None:
-    """Render the current in-memory worker state if any workers are active."""
-    try:
-        from jobctrl.apply.dashboard import get_worker_states
-    except Exception:
-        return None
-
-    states = get_worker_states()
-    if not states:
-        return None
-
-    table = Table(title="Live Apply Workers", show_lines=False)
-    table.add_column("W", style="bold", width=3, justify="center")
-    table.add_column("Run", width=10, justify="center")
-    table.add_column("Job", min_width=30, max_width=46, no_wrap=True)
-    table.add_column("Status", width=12, justify="center")
-    table.add_column("Time", width=6, justify="right")
-    table.add_column("Acts", width=5, justify="right")
-    table.add_column("Last Action", min_width=20, max_width=35, no_wrap=True)
-
-    for state in states:
-        elapsed = ""
-        if getattr(state, "start_time", 0.0) and getattr(state, "status", "") == "applying":
-            elapsed = f"{int(time.time() - state.start_time)}s"
-        status = str(getattr(state, "status", "starting")).upper()
-        style = {
-            "STARTING": "dim",
-            "IDLE": "dim",
-            "LAUNCHING": "cyan",
-            "APPLYING": "yellow",
-            "APPLIED": "green",
-            "FINISHED": "green",
-            "FAILED": "red",
-            "EXPIRED": "red",
-            "CAPTCHA": "magenta",
-            "LOGIN_ISSUE": "red",
-            "DONE": "bold",
-        }.get(status, "")
-        job_text = f"{state.job_title[:28]} @ {state.company[:16]}" if state.job_title else ""
-        run_text = getattr(state, "run_id", "")[:8]
-        table.add_row(
-            str(state.worker_id),
-            run_text,
-            job_text,
-            Text(status, style=style),
-            elapsed,
-            str(getattr(state, "actions", 0) or ""),
-            getattr(state, "last_action", "")[:35],
-        )
-
-    return table
-
-
-def _render_recent_runs_table(limit: int = 8, failed_only: bool = False) -> Table | None:
-    """Render a telemetry-backed recent runs table."""
-    runs = _fetch_recent_runs(limit=limit, failed_only=failed_only)
-    if not runs:
-        return None
-
-    table = Table(title="Recent Apply Runs", show_lines=False)
-    table.add_column("Run", width=10, justify="center")
-    table.add_column("Status", width=11, justify="center")
-    table.add_column("Worker", width=7, justify="center")
-    table.add_column("Job", min_width=24, max_width=42, no_wrap=True)
-    table.add_column("When", min_width=16)
-    table.add_column("Duration", width=9, justify="right")
-    table.add_column("What happened", min_width=26, max_width=42, no_wrap=True)
-
-    for run in runs:
-        status = (run.get("status") or "unknown").upper()
-        status_style = {
-            "IN_PROGRESS": "yellow",
-            "RUNNING": "yellow",
-            "APPLIED": "green",
-            "SUCCESS": "green",
-            "FAILED": "red",
-            "ERROR": "red",
-            "SKIPPED": "dim",
-            "CANCELLED": "magenta",
-        }.get(status, "")
-        table.add_row(
-            run.get("run_id", "")[:8],
-            Text(status, style=status_style),
-            str(run.get("worker_id", "")),
-            _format_run_label(run),
-            run.get("started_at", ""),
-            run.get("duration", ""),
-            (run.get("error") or run.get("last_event") or "")[:42],
-        )
-
-    return table
-
-
-def _render_run_timeline(run: dict, limit: int = 8) -> Panel | None:
-    """Render the event timeline for a single run."""
-    run_id = run.get("run_id", "")
-    if not run_id:
-        return None
-
-    events = _fetch_run_events(run_id, limit=limit)
-    if not events:
-        return None
-
-    body = Text()
-    for event in events:
-        ts = event.get("ts", "")
-        kind = event.get("kind", "event")
-        message = event.get("message") or ""
-        payload = event.get("payload")
-        if not message and isinstance(payload, dict):
-            message = ", ".join(f"{k}={v}" for k, v in list(payload.items())[:3])
-        elif not message and payload not in (None, ""):
-            message = str(payload)
-        if len(message) > 240:
-            message = f"{message[:237]}..."
-        if body.plain:
-            body.append("\n")
-        body.append(ts, style="dim")
-        body.append(" ")
-        body.append(kind, style="cyan")
-        body.append(" ")
-        body.append(message)
-
-    return Panel(
-        body,
-        title=f"Run {run_id[:8]} Timeline",
-        border_style="dim",
-    )
-
-
-def _check_discover_preview(stages: list[str], *, dry_run: bool) -> None:
-    try:
-        reject_discover_preview(stages, dry_run=dry_run)
-    except ValueError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(code=2) from exc
-
-
-def _run_stage_command(
-    stage: str,
-    *,
-    min_score: int = 7,
-    workers: int = 1,
-    dry_run: bool = False,
-    validation: str = "normal",
-    limit: int = 0,
-    rescore: bool = False,
-    retailor: bool = False,
-    tailor_models: tuple[str, ...] = (),
-    tailor_judge_model: str | None = None,
-) -> None:
-    """Run a single pipeline stage through the shared orchestrator."""
-    _check_discover_preview([stage], dry_run=dry_run)
-    _bootstrap()
-
-    _check_tier2_stage(stage)
-
-    validation = _validate_validation_mode(validation)
-
-    _run_workflow_spec_from_cli(
-        build_run_stage_workflow_spec(
-            {
-                "tenantId": "local",
-                "stage": stage,
-                "minScore": min_score,
-                "dryRun": dry_run,
-                "workers": workers,
-                "validationMode": validation,
-                "limit": limit,
-                "rescore": rescore,
-                "retailor": retailor,
-                "tailorModels": tailor_models,
-                "tailorJudgeModel": tailor_judge_model,
-            }
-        ),
-        label=stage,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Commands
-# ---------------------------------------------------------------------------
 
 
 @app.callback()
 def main(
-    version: bool = typer.Option(
-        False,
-        "--version",
-        "-V",
-        help="Show version and exit.",
-        callback=_version_callback,
-        is_eager=True,
-    ),
+    workspace: Path | None = typer.Option(None, "--workspace", help="Owned workspace; defaults to JOBCTRL_DIR."),
+    version: bool = typer.Option(False, "--version", callback=_version, is_eager=True),
 ) -> None:
-    """JobCtrl — AI-powered end-to-end job application pipeline."""
+    global _workspace
+    _workspace = workspace
+    # Native credential/browser adapters resolve the same selected workspace.
+    if workspace is not None:
+        os.environ["JOBCTRL_DIR"] = str(workspace.expanduser().absolute())
 
 
-@capability_app.command("list")
-def capability_list() -> None:
-    """Show managed core and optional authenticated-browser readiness."""
-
-    from jobctrl.browser_capabilities import list_browser_capabilities
-
-    table = Table(title="JobCtrl browser capabilities")
-    table.add_column("Capability")
-    table.add_column("Status")
-    table.add_column("Details")
-    marks = {
-        "ready": "[green]READY[/green]",
-        "disabled": "[dim]DISABLED[/dim]",
-        "missing": "[yellow]MISSING[/yellow]",
-        "failed": "[red]FAILED[/red]",
-        "unavailable": "[red]UNAVAILABLE[/red]",
-    }
-    for capability in list_browser_capabilities():
-        detail = capability.detail
-        if capability.executable is not None:
-            detail = f"{detail} {capability.executable}"
-        table.add_row(capability.id, marks[capability.status], detail)
-    console.print(table)
-
-
-@capability_app.command("enable")
-def capability_enable(
-    name: str = typer.Argument(..., help="Capability to enable."),
-    browser_path: Path | None = typer.Option(
-        None,
-        "--browser-path",
-        help="Explicit Chrome or Chromium executable to adopt.",
-    ),
-    managed_pack: bool = typer.Option(
-        False,
-        "--managed-pack",
-        help="Request a managed browser pack (currently unavailable; nothing is downloaded).",
-    ),
-    copy_profile_from: Path | None = typer.Option(
-        None,
-        "--copy-profile-from",
-        help="Existing profile to copy into JobCtrl-owned LinkedIn resolver storage.",
-    ),
-    consent_copy_profile: bool = typer.Option(
-        False,
-        "--consent-copy-profile",
-        help="Affirm separately that JobCtrl may copy the supplied browser profile.",
-    ),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Accept safe non-profile prompts."),
-    non_interactive: bool = typer.Option(False, "--non-interactive", help="Do not prompt."),
-) -> None:
-    """Enable an optional browser only after choosing its executable explicitly."""
-
-    from jobctrl.browser_capabilities import (
-        BrowserCapabilityError,
-        BrowserCapabilityUnavailableError,
-        copy_authenticated_linkedin_profile,
-        enable_system_browser_capability,
-        managed_optional_browser_pack_unavailable,
-    )
-
-    if copy_profile_from is not None and name != "authenticated-linkedin-browser":
-        console.print("[red]Profile copying is only available for authenticated-linkedin-browser.[/red]")
-        raise typer.Exit(code=2)
-    if consent_copy_profile and copy_profile_from is None:
-        console.print("[red]--consent-copy-profile requires --copy-profile-from.[/red]")
-        raise typer.Exit(code=2)
-    if managed_pack and browser_path is not None:
-        console.print("[red]Choose either --managed-pack or --browser-path, not both.[/red]")
-        raise typer.Exit(code=2)
-    if managed_pack:
-        try:
-            managed_optional_browser_pack_unavailable(name)
-        except BrowserCapabilityUnavailableError as exc:
-            console.print(f"[yellow]{exc}[/yellow]")
-            raise typer.Exit(code=2) from exc
-
-    if browser_path is None:
-        if non_interactive or yes:
-            console.print(
-                "[red]Enabling a browser capability requires --browser-path with an explicit Chrome/Chromium executable.[/red]"
-            )
-            raise typer.Exit(code=2)
-        source = typer.prompt("Browser source (system or managed-pack)", default="system").strip().lower()
-        if source == "managed-pack":
-            try:
-                managed_optional_browser_pack_unavailable(name)
-            except BrowserCapabilityUnavailableError as exc:
-                console.print(f"[yellow]{exc}[/yellow]")
-                raise typer.Exit(code=2) from exc
-        if source != "system":
-            console.print("[red]Choose system or managed-pack.[/red]")
-            raise typer.Exit(code=2)
-        browser_path = Path(typer.prompt("Chrome/Chromium executable path")).expanduser()
-
-    if copy_profile_from is not None and not consent_copy_profile:
-        # ``--yes`` is deliberately not accepted as profile-copy consent.
-        if yes or non_interactive:
-            console.print(
-                "[red]Copying an existing browser profile requires --consent-copy-profile; --yes cannot grant this consent.[/red]"
-            )
-            raise typer.Exit(code=2)
-        consent_copy_profile = typer.confirm(
-            "Copy this existing browser profile into JobCtrl-owned storage?",
-            default=False,
-        )
-        if not consent_copy_profile:
-            console.print(
-                "[yellow]Browser capability was not enabled because profile-copy consent was not granted.[/yellow]"
-            )
-            raise typer.Exit(code=2)
-
-    try:
-        status = enable_system_browser_capability(name, browser_path)
-        if copy_profile_from is not None:
-            destination = copy_authenticated_linkedin_profile(
-                copy_profile_from,
-                consent=consent_copy_profile,
-            )
-            console.print(f"[green]{name} ready.[/green] Profile copied to JobCtrl-owned storage: {destination}")
-        else:
-            level = "green" if status.status == "ready" else "yellow"
-            console.print(f"[{level}]{name} {status.status}.[/{level}] {status.detail}")
-            if name == "authenticated-linkedin-browser":
-                console.print(
-                    "[yellow]A separate consented profile copy is still required before authenticated LinkedIn resolution can run.[/yellow]"
-                )
-    except BrowserCapabilityError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=2) from exc
-
-
-@capability_app.command("disable")
-def capability_disable(name: str = typer.Argument(..., help="Optional capability to disable.")) -> None:
-    """Disable an optional authenticated-browser capability immediately."""
-
-    from jobctrl.browser_capabilities import BrowserCapabilityError, disable_browser_capability
-
-    try:
-        status = disable_browser_capability(name)
-    except BrowserCapabilityError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=2) from exc
-    console.print(f"[green]{name} {status.status}.[/green] {status.detail}")
+@app.command()
+def actions() -> None:
+    """List the explicit actions registered by the installed feature composition."""
+    _output({"actions": sorted(_application().actions)})
 
 
 @app.command()
 def action(
-    stage: str = typer.Argument(
-        ..., help=f"Action stage. Valid: {', '.join((*VALID_STAGES, 'apply', 'profile_import'))}."
-    ),
-    url: Optional[str] = typer.Option(None, "--url", help="Target job URL for targeted actions."),
-    limit: int = typer.Option(0, "--limit", help="Maximum records to process. 0 means stage default."),
-    workers: int = typer.Option(1, "--workers", "-w", help="Worker count for supported actions."),
-    min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for material/apply actions."),
-    validation: str = typer.Option("normal", "--validation", help="Validation mode for material generation."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Return the planned action without executing."),
-    pdf_path: Optional[str] = typer.Option(None, "--pdf", help="Resume PDF path for profile_import."),
-    model: str = typer.Option(
-        "default", "--model", "-m", help="Apply action model. 'default' uses the local Claude Code default."
-    ),
-    tailor_models: str = typer.Option(
-        "", "--tailor-models", help="Comma-separated LLM specs for tailor candidate generation."
-    ),
-    tailor_judge_model: str = typer.Option(
-        "", "--tailor-judge-model", help="Optional LLM spec for the structured tailoring judge."
-    ),
-    headless: bool = typer.Option(False, "--headless", help="Run apply browser action headless."),
+    name: str = typer.Argument(..., help="Explicit feature.action name from `actions`."),
+    payload: Path | None = typer.Option(None, "--payload", help="JSON object payload file."),
+    data: str | None = typer.Option(None, "--data", help="Literal JSON object; use a file for private values."),
+    background: bool = typer.Option(False, "--background", help="Submit to the durable worker and return its run ID."),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
 ) -> None:
-    """Run a structured local action and print its JSON result."""
-    from jobctrl.actions import LocalActionRequest, run_local_action
+    """Execute the same canonical action as HTTP and the durable worker."""
+    _output(_run(_execute(name, _load_payload(payload, data), background=background, idempotency_key=idempotency_key)))
 
-    validation = _validate_validation_mode(validation)
-    try:
-        result = run_local_action(
-            LocalActionRequest(
-                stage=stage,
-                job_url=url,
-                limit=limit,
-                workers=workers,
-                min_score=min_score,
-                validation_mode=validation,
-                dry_run=dry_run,
-                pdf_path=pdf_path,
-                model=model,
-                tailor_models=_parse_tailor_models(tailor_models),
-                tailor_judge_model=tailor_judge_model.strip() or None,
-                headless=headless,
-            )
-        )
-    except (OSError, ValueError) as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
-    console.print_json(data=result.to_dict())
-    if not result.ok:
-        raise typer.Exit(code=1)
+
+def _feature_command(feature: str):
+    def command(
+        name: str = typer.Argument(..., help="Explicit action name (run `jobctrl actions` to inspect)."),
+        payload: Path | None = typer.Option(None, "--payload"),
+        data: str | None = typer.Option(None, "--data"),
+        background: bool = typer.Option(False, "--background"),
+        idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
+    ) -> None:
+        _output(_run(_execute(f"{feature}.{name}", _load_payload(payload, data), background=background, idempotency_key=idempotency_key)))
+    return command
+
+
+# Explicit names are part of the application composition, not discovered plugins.
+for _feature in (
+    "profile", "jobs", "requirements", "fit", "resumes", "discovery", "companies",
+    "contacts", "outreach", "applications", "interviews", "learning",
+    "compensation", "offers", "preparation",
+):
+    app.command(_feature, help=f"Execute a registered {_feature} action.")(_feature_command(_feature))
 
 
 @app.command()
-def init() -> None:
-    """Run the first-time setup wizard (profile, resume, search config)."""
-    from jobctrl.wizard.init import run_wizard
-    from jobctrl.domain.errors import ConfigurationError
-
-    try:
-        run_wizard()
-    except ConfigurationError as exc:
-        console.print(f"[red]Setup stopped:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
-
-
-@app.command()
-def setup(
-    yes: bool = typer.Option(False, "--yes", "-y", help="Accept safe defaults for prompts."),
-    non_interactive: bool = typer.Option(False, "--non-interactive", help="Do not prompt; use env/config only."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print setup actions without changing files."),
-    skip_system: bool = typer.Option(False, "--skip-system", help="Skip local toolchain checks."),
-    skip_dependencies: bool = typer.Option(False, "--skip-dependencies", help="Skip pnpm/uv dependency sync."),
-    skip_browsers: bool = typer.Option(False, "--skip-browsers", help="Skip Playwright Chromium installs."),
-    skip_doctor: bool = typer.Option(False, "--skip-doctor", help="Skip the final doctor run."),
-    json_output: bool = typer.Option(False, "--json", help="Print a machine-readable summary."),
-    launch_logins: bool = typer.Option(
-        False,
-        "--launch-logins",
-        help="Launch vendor login/enrollment commands when setup can do so safely.",
-    ),
+def request(
+    method: str,
+    path: str,
+    payload: Path | None = typer.Option(None, "--payload"),
+    data: str | None = typer.Option(None, "--data"),
+    output: Path | None = typer.Option(None, "--output", help="Create an export file; existing files are refused."),
 ) -> None:
-    """Install/check local dependencies and configure vendor analysis auth."""
-
-    import os
-    import subprocess
-    import sys
-
-    from jobctrl.config import ensure_dirs, get_env_path, load_env, update_config_file
-    from jobctrl.infrastructure.setup_probes import (
-        CODEX_NEUTRALIZED_AUTH_ENV,
-        antigravity_auth_kwargs,
-        codex_auth_path,
-        enabled_analysis_legs,
-        ensure_jobctrl_codex_auth,
-        jobctrl_codex_home,
-        prepare_jobctrl_codex_home,
-        probe_analysis_setup,
-        probe_antigravity_auth,
-        probe_claude_auth,
-        probe_codex_auth,
-        resolve_codex_binary,
-    )
-    from jobctrl.runtime import is_bundled_runtime, payload_dir
-
-    ensure_dirs()
-    load_env()
-    bundled = is_bundled_runtime()
-    root = None if bundled else _repo_root()
-    summary: dict[str, Any] = {
-        "runtimeMode": "bundled" if bundled else "source",
-        "toolchain": [],
-        "commands": [],
-        "analysis": [],
-        "configUpdates": [],
-        "envUpdates": [],
-    }
-
-    if not json_output:
-        console.print("[bold]JobCtrl Setup[/bold]")
-
-    if not skip_system:
-        rows = [("Bundled payload", True, str(payload_dir()))] if bundled else _setup_toolchain_rows()
-        summary["toolchain"] = [{"name": name, "ok": ok, "note": note} for name, ok, note in rows]
-        if not json_output:
-            console.print("\n[bold]Toolchain[/bold]")
-            for name, ok, note in rows:
-                status = "[green]OK[/green]" if ok else "[yellow]WARN[/yellow]"
-                console.print(f"  {name:<22} {status}  [dim]{note}[/dim]")
-
-    commands: list[list[str]] = []
-    if not bundled and not skip_dependencies:
-        commands.extend(
-            [
-                ["corepack", "pnpm", "install", "--frozen-lockfile"],
-                ["uv", "--project", "workers/automation", "sync", "--extra", "dev"],
-            ]
-        )
-    if not bundled and not skip_browsers:
-        commands.extend(
-            [
-                ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "install", "chromium"],
-                ["uv", "--project", "workers/automation", "run", "playwright", "install", "chromium"],
-            ]
-        )
-
-    if commands:
-        if not json_output:
-            console.print("\n[bold]Repository Dependencies[/bold]")
-        for command in commands:
-            summary["commands"].append(command)
-            rc = _run_setup_step(command, dry_run=dry_run, cwd=root, quiet=json_output)
-            if rc != 0:
-                console.print(f"[red]Setup command failed:[/red] {_shell_join(command)}")
-                raise typer.Exit(code=rc)
-
-    env_updates: dict[str, str] = {}
-    try:
-        configured_legs = list(enabled_analysis_legs())
-    except ValueError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=2) from exc
-    authenticated_legs: list[str] = []
-
-    if "codex" in configured_legs and not dry_run and not codex_auth_path().exists():
+    """Use the actual local HTTP route in-process, including feature reads/exports."""
+    if method.upper() not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+        _fail("invalid_method", "Use GET, POST, PUT, PATCH or DELETE.", exit_code=2)
+    body = _load_payload(payload, data) if payload is not None or data is not None else None
+    response = _run(_request(method, path, body))
+    if output is not None:
         try:
-            ensure_jobctrl_codex_auth()
-        except RuntimeError:
-            pass
-
-    if not json_output:
-        console.print("\n[bold]Analysis Vendor Auth[/bold]")
-    for probe in probe_analysis_setup():
-        summary["analysis"].append(
-            {
-                "name": probe.name,
-                "ok": probe.ok,
-                "note": probe.note,
-            }
-        )
-        if not json_output:
-            status = "[green]OK[/green]" if probe.ok else "[yellow]WARN[/yellow]"
-            console.print(f"  {probe.name:<28} {status}  [dim]{probe.note}[/dim]")
-
-    if "claude" in configured_legs:
-        claude_probe = probe_claude_auth()
-        if claude_probe.ok:
-            authenticated_legs.append("claude")
-        elif _confirm_setup_action(
-            "Paste ANTHROPIC_API_KEY for the Claude analysis leg?",
-            yes=False,
-            non_interactive=non_interactive or yes,
-            default=False,
-        ):
-            key = typer.prompt("ANTHROPIC_API_KEY", hide_input=True)
-            if key.strip():
-                env_updates["ANTHROPIC_API_KEY"] = key.strip()
-                authenticated_legs.append("claude")
-        elif _confirm_setup_action(
-            "Skip the Claude analysis leg for now?", yes=yes, non_interactive=non_interactive, default=True
-        ):
-            pass
-        else:
-            authenticated_legs.append("claude")
-
-    if "codex" in configured_legs:
-        codex_probe = probe_codex_auth()
-        if codex_probe.ok:
-            authenticated_legs.append("codex")
-        else:
-            key = os.environ.get("OPENAI_API_KEY") or os.environ.get("CODEX_API_KEY")
-            command: list[str] | None = None
-            stdin: str | None = None
-            if (
-                key
-                and launch_logins
-                and _confirm_setup_action(
-                    "Enroll the current OpenAI key into JobCtrl's Codex CLI home now?",
-                    yes=yes,
-                    non_interactive=non_interactive,
-                    default=False,
-                )
-            ):
-                command = [str(resolve_codex_binary()), "login", "--with-api-key"]
-                stdin = key + "\n"
-            elif launch_logins and _confirm_setup_action(
-                "Authenticate JobCtrl's Codex CLI with your ChatGPT subscription now?",
-                yes=yes,
-                non_interactive=non_interactive,
-                default=False,
-            ):
-                command = [str(resolve_codex_binary()), "login"]
-            if command is not None:
-                summary["commands"].append(command)
-                if not json_output:
-                    console.print(f"[dim]+ {_shell_join(command)}[/dim]")
-                if dry_run:
-                    authenticated_legs.append("codex")
-                else:
-                    try:
-                        prepare_jobctrl_codex_home()
-                    except RuntimeError as exc:
-                        console.print(f"[red]Unsafe JobCtrl Codex home:[/red] {exc}")
-                        raise typer.Exit(code=1) from exc
-                    login_env = dict(os.environ)
-                    login_env["CODEX_HOME"] = str(jobctrl_codex_home())
-                    for auth_key in CODEX_NEUTRALIZED_AUTH_ENV:
-                        login_env.pop(auth_key, None)
-                    proc = subprocess.run(
-                        command,
-                        input=stdin,
-                        text=True,
-                        check=False,
-                        cwd=str(root) if root else None,
-                        env=login_env,
-                    )
-                    if proc.returncode == 0 and probe_codex_auth(login_env).ok:
-                        authenticated_legs.append("codex")
-            elif not json_output:
-                console.print(
-                    "  [dim]Codex enrollment: run `CODEX_HOME=<JobCtrl Codex home> codex login` "
-                    "or pipe OPENAI_API_KEY to `codex login --with-api-key`, then rerun setup.[/dim]"
-                )
-            if "codex" not in authenticated_legs and _confirm_setup_action(
-                "Skip the Codex analysis leg for now?",
-                yes=yes,
-                non_interactive=non_interactive,
-                default=True,
-            ):
-                pass
-            elif "codex" not in authenticated_legs:
-                authenticated_legs.append("codex")
-
-    if "antigravity" in configured_legs:
-        antigravity_probe = probe_antigravity_auth()
-        if antigravity_probe.ok:
-            authenticated_legs.append("antigravity")
-        elif _confirm_setup_action(
-            "Paste GEMINI_API_KEY for the Antigravity analysis leg?",
-            yes=False,
-            non_interactive=non_interactive or yes,
-            default=False,
-        ):
-            key = typer.prompt("GEMINI_API_KEY", hide_input=True)
-            if key.strip():
-                env_updates["GEMINI_API_KEY"] = key.strip()
-                authenticated_legs.append("antigravity")
-        elif _confirm_setup_action(
-            "Skip the Antigravity analysis leg for now?", yes=yes, non_interactive=non_interactive, default=True
-        ):
-            pass
-        else:
-            authenticated_legs.append("antigravity")
-
-    # Validate an ADC-only Antigravity setup before persisting the leg. API-key
-    # paths were already handled by the probe; this catches malformed Vertex env.
-    if "antigravity" in authenticated_legs and not (
-        os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or env_updates.get("GEMINI_API_KEY")
-    ):
-        try:
-            antigravity_auth_kwargs({**os.environ, **env_updates})
-        except RuntimeError:
-            authenticated_legs.remove("antigravity")
-
-    if authenticated_legs:
-        persisted_legs = ["google" if leg == "antigravity" else leg for leg in authenticated_legs]
-        if not dry_run:
-            update_config_file({"analysis_legs": persisted_legs})
-        summary["configUpdates"] = ["analysis_legs"]
-    elif configured_legs:
-        if not json_output:
-            console.print(
-                "[yellow]No analysis leg is authenticated; leaving existing leg configuration unchanged.[/yellow]"
-            )
-    _write_env_updates(get_env_path(), env_updates, dry_run=dry_run, quiet=json_output)
-    summary["envUpdates"] = sorted(env_updates)
-
-    post_update_probes = probe_analysis_setup({**os.environ, **env_updates})
-    core_probe = next(probe for probe in post_update_probes if probe.name == "core LLM provider")
-    summary["analysisReady"] = core_probe.ok
-    if not core_probe.ok:
-        summary["analysisNotReadyReason"] = core_probe.note
-        if not json_output:
-            console.print(f"[red]Core AI stages are NOT ready:[/red] {core_probe.note}")
-    elif not json_output:
-        console.print("[green]Core AI provider ready.[/green]")
-
-    if not skip_doctor:
-        if not json_output:
-            console.print("\n[bold]Doctor[/bold]")
-        doctor_command = (
-            [sys.executable, "-I", "-B", "-m", "jobctrl", "doctor"]
-            if bundled
-            else ["uv", "--project", "workers/automation", "run", "jobctrl", "doctor"]
-        )
-        rc = _run_setup_step(
-            doctor_command,
-            dry_run=dry_run,
-            cwd=root,
-            quiet=json_output,
-        )
-        if rc != 0:
-            raise typer.Exit(code=rc)
-
-    if json_output:
-        console.print_json(data=summary)
+            fd = os.open(output.expanduser(), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(response.content)
+        except FileExistsError:
+            _fail("output_exists", "The export path already exists; choose a new path.")
+        _output({"exported": True, "path": str(output), "bytes": len(response.content)})
+    elif "application/json" in response.headers.get("content-type", ""):
+        _output(response.json())
+    elif response.headers.get("content-type", "").startswith("text/"):
+        typer.echo(response.text)
+    else:
+        _fail("output_required", "Use --output for binary exports.", exit_code=2)
 
 
-@app.command("provider-pack-install", hidden=True)
-def provider_pack_install(
-    pack: str = typer.Option(..., "--pack", help="Provider-pack id selected from the signed lock."),
-) -> None:
-    """Internal launcher hook for installing a hash-pinned provider pack."""
-
-    from jobctrl.config import APP_DIR
-    from jobctrl.provider_packs import (
-        ProviderPackError,
-        install_provider_pack,
-        load_provider_pack_spec,
-    )
-    from jobctrl.runtime import is_bundled_runtime, payload_path
-
-    if not is_bundled_runtime():
-        console.print("[red]Provider packs are managed only by the installed JobCtrl launcher.[/red]")
-        raise typer.Exit(code=2)
-    try:
-        # The lock is part of the signed, manifest-covered payload. Never accept
-        # a caller-selected lock whose hashes merely authenticate attacker-chosen
-        # wheels.
-        lock = payload_path("release/provider-packs.lock.json", require_exists=True)
-        installed = install_provider_pack(
-            load_provider_pack_spec(lock, pack_id=pack),
-            app_dir=APP_DIR,
-        )
-    except ProviderPackError as exc:
-        console.print(f"[red]Provider pack installation failed:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
-    console.print_json(data={"installed": True, "path": str(installed)})
+async def _preparation(recipe: str, job_ids: list[str], *, limit: int | None = None,
+                       force: bool = False, min_fit_score: int | None = None,
+                       allow_below_threshold: bool = False, wait: bool = False,
+                       idempotency_key: str | None = None, discovery: dict | None = None):
+    payload: dict = {"recipe": recipe, "scope": "selected" if job_ids else "pending", "force": force}
+    if job_ids:
+        payload["job_ids"] = job_ids
+    if limit is not None:
+        payload["limit"] = limit
+    if min_fit_score is not None:
+        payload["min_fit_score"] = min_fit_score
+    if allow_below_threshold:
+        payload["allow_below_threshold"] = True
+    if discovery is not None:
+        payload["discovery"] = discovery
+    application = _application()
+    receipt = await application.submit("preparation.run", payload, idempotency_key=idempotency_key)
+    if not wait:
+        return receipt
+    _output(receipt)
+    while True:
+        run = application.action_run(receipt["runId"])
+        if run["status"] == "succeeded":
+            return run
+        if run["status"] in {"failed", "cancelled", "start_failed"}:
+            _fail(run.get("errorCode") or "preparation_failed", "The preparation run ended without success; inspect its run ID and stage outcomes.")
+        await asyncio.sleep(0.25)
 
 
-@app.command()
-def run(
-    stages: Optional[list[str]] = typer.Argument(
-        None,
-        help=(f"Pipeline stages to run. Valid: {', '.join(VALID_STAGES)}, all. Defaults to 'all' if omitted."),
-    ),
-    min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for tailor/cover stages."),
-    workers: int = typer.Option(
-        1,
-        "--workers",
-        "-w",
-        help="Parallel threads for discovery/detail enrichment, scoring, and tailoring stages.",
-    ),
-    stream: bool = typer.Option(False, "--stream", help="Run stages concurrently (streaming mode)."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview stages without executing."),
-    limit: int = typer.Option(0, "--limit", help="Maximum records to process per stage. 0 means no explicit cap."),
-    validation: str = typer.Option(
-        "normal",
-        "--validation",
-        help=(
-            "Validation strictness for tailor/cover stages. "
-            "strict: banned words = errors, judge must pass. "
-            "normal: banned words = warnings only (default, recommended for Gemini free tier). "
-            "lenient: banned words ignored, LLM judge skipped (fastest, fewest API calls)."
-        ),
-    ),
-    retailor: bool = typer.Option(
-        False,
-        "--retailor",
-        help="When running tailor, include jobs that already have a tailored resume.",
-    ),
-    tailor_models: str = typer.Option(
-        "",
-        "--tailor-models",
-        help=(
-            "Comma-separated LLM specs for tailor candidate generation "
-            "(examples: default, codex:gpt-5.5, claude:claude-opus-4-8, google:gemini-3.5-flash)."
-        ),
-    ),
-    tailor_judge_model: str = typer.Option(
-        "",
-        "--tailor-judge-model",
-        help="Optional LLM spec for the structured tailoring judge.",
-    ),
-) -> None:
-    """Run one or more pipeline stages in order."""
-    stage_list = stages if stages else ["all"]
-    _check_discover_preview(stage_list, dry_run=dry_run)
-    _bootstrap()
+def _recipe_command(recipe: str):
+    def command(
+        job_id: list[str] = typer.Option([], "--job-id", help="Saved JobId; repeat for an explicit selection."),
+        limit: int | None = typer.Option(None, "--limit", min=1, max=1000),
+        force: bool = typer.Option(False, "--force"),
+        min_fit_score: int | None = typer.Option(None, "--min-fit-score", "--min-score", min=1, max=10),
+        allow_below_threshold: bool = typer.Option(False, "--allow-below-threshold"),
+        wait: bool = typer.Option(False, "--wait", help="Wait for this durable run; interruption leaves its ID available."),
+        idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
+    ) -> None:
+        _output(_run(_preparation(recipe, job_id, limit=limit, force=force, min_fit_score=min_fit_score,
+                                 allow_below_threshold=allow_below_threshold, wait=wait, idempotency_key=idempotency_key)))
+    return command
 
-    # Validate stage names
-    for s in stage_list:
-        if s != "all" and s not in VALID_STAGES:
-            console.print(f"[red]Unknown stage:[/red] '{s}'. Valid stages: {', '.join(VALID_STAGES)}, all")
-            raise typer.Exit(code=1)
 
-    # Discovery now drains scoring/tailoring preparation work, so explicit
-    # discover uses the same Tier 2 preflight as the maintenance AI stages.
-    _check_tier2_stage_list(stage_list)
-
-    # Validate the --validation flag value
-    validation = _validate_validation_mode(validation)
-
-    if stream and retailor and ("all" in stage_list or "tailor" in stage_list):
-        console.print(
-            "[red]--retailor cannot be combined with --stream.[/red]\n"
-            "Use a normal sequential run so the tailor stage can finish cleanly."
-        )
-        raise typer.Exit(code=1)
-
-    if stream:
-        console.print("[dim]Temporal owns workflow scheduling; --stream no longer selects an in-process runner.[/dim]")
-
-    _run_workflow_spec_from_cli(
-        build_run_stage_workflow_spec(
-            {
-                "tenantId": "local",
-                "stages": stage_list,
-                "minScore": min_score,
-                "dryRun": dry_run,
-                "workers": workers,
-                "validationMode": validation,
-                "limit": limit,
-                "retailor": retailor,
-                "tailorModels": _parse_tailor_models(tailor_models),
-                "tailorJudgeModel": tailor_judge_model.strip() or None,
-            }
-        ),
-        label=" -> ".join(stage_list),
-    )
+for _recipe in ("enrich", "analyze", "score", "tailor", "prepare"):
+    app.command(_recipe, help=f"Submit the explicit {_recipe} preparation recipe.")(_recipe_command(_recipe))
 
 
 @app.command()
 def discover(
-    workers: int = typer.Option(
-        1, "--workers", "-w", help="Parallel threads for discovery backends and detail enrichment."
-    ),
-    limit: int = typer.Option(0, "--limit", help="Maximum jobs to discover. 0 means all eligible jobs."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
+    query: list[str] = typer.Option([], "--query"),
+    location: list[str] = typer.Option([], "--location"),
+    board: list[str] = typer.Option([], "--board"),
+    limit: int | None = typer.Option(None, "--limit", min=1, max=1000),
+    results_per_site: int | None = typer.Option(None, "--results-per-site", min=1, max=1000),
+    hours_old: int | None = typer.Option(None, "--hours-old", min=1),
+    wait: bool = typer.Option(False, "--wait"),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
 ) -> None:
-    """Run only the discovery stage."""
-    _run_stage_command("discover", workers=workers, limit=limit, dry_run=dry_run)
-
-
-@app.command()
-def enrich(
-    workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for detail enrichment."),
-    limit: int = typer.Option(0, "--limit", help="Maximum jobs to enrich. 0 means all eligible jobs."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
-) -> None:
-    """Run the detail-enrichment queue directly for diagnostics."""
-    _run_stage_command("enrich", workers=workers, limit=limit, dry_run=dry_run)
-
-
-@app.command()
-def score(
-    workers: int = typer.Option(1, "--workers", "-w", help="Parallel LLM workers for scoring."),
-    limit: int = typer.Option(0, "--limit", help="Maximum jobs to score. 0 means all eligible jobs."),
-    rescore: bool = typer.Option(False, "--rescore", help="Re-score jobs that already have a score."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
-) -> None:
-    """Run only the scoring stage."""
-    _run_stage_command("score", workers=workers, dry_run=dry_run, limit=limit, rescore=rescore)
-
-
-@app.command()
-def tailor(
-    workers: int = typer.Option(1, "--workers", "-w", help="Parallel LLM workers for tailoring."),
-    min_score: int = typer.Option(7, "--min-score", help="Minimum fit score required for tailoring."),
-    limit: int = typer.Option(0, "--limit", help="Maximum jobs to tailor. 0 means all eligible jobs."),
-    retailor: bool = typer.Option(False, "--retailor", help="Re-tailor jobs that already have a tailored resume."),
-    validation: str = typer.Option(
-        "normal",
-        "--validation",
-        help=(
-            "Validation strictness. strict: banned words = errors, judge must pass. "
-            "normal: banned words = warnings only. "
-            "lenient: banned words ignored, LLM judge skipped."
-        ),
-    ),
-    tailor_models: str = typer.Option(
-        "",
-        "--tailor-models",
-        help="Comma-separated LLM specs for tailor candidate generation.",
-    ),
-    tailor_judge_model: str = typer.Option(
-        "",
-        "--tailor-judge-model",
-        help="Optional LLM spec for the structured tailoring judge.",
-    ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
-) -> None:
-    """Run only the resume tailoring stage."""
-    _run_stage_command(
-        "tailor",
-        workers=workers,
-        min_score=min_score,
-        dry_run=dry_run,
-        validation=validation,
-        limit=limit,
-        retailor=retailor,
-        tailor_models=_parse_tailor_models(tailor_models),
-        tailor_judge_model=tailor_judge_model.strip() or None,
-    )
-
-
-@app.command()
-def cover(
-    min_score: int = typer.Option(7, "--min-score", help="Minimum fit score required for cover letter generation."),
-    limit: int = typer.Option(0, "--limit", help="Maximum jobs to process. 0 means all eligible jobs."),
-    validation: str = typer.Option(
-        "normal",
-        "--validation",
-        help=(
-            "Validation strictness. strict: banned words = errors. "
-            "normal: banned words = warnings only. "
-            "lenient: banned words ignored."
-        ),
-    ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
-) -> None:
-    """Run only the cover letter stage."""
-    _run_stage_command(
-        "cover",
-        min_score=min_score,
-        dry_run=dry_run,
-        validation=validation,
-        limit=limit,
-    )
-
-
-@app.command("check-availability")
-def check_posting_availability(job_id: str = typer.Argument(..., help="Canonical saved JobId.")) -> None:
-    """Check one employer posting through the bounded worker acquisition path."""
-    _bootstrap()
-    from jobctrl.enrichment.availability_workflow import availability_workflow_spec
-    from jobctrl.infrastructure.runtime_identity import current_runtime_identity
-
-    identity = current_runtime_identity()
-    result = _run_workflow_spec_from_cli(
-        availability_workflow_spec(
-            {
-                "tenantId": "local",
-                "jobId": job_id,
-                "expectedAppDir": str(identity.app_dir),
-                "expectedDbPath": str(identity.db_path),
-            }
-        ),
-        label="posting availability",
-    )
-    console.print_json(data=result)
-
-
-@app.command("compensation-refresh")
-def compensation_refresh(
-    observations_json: Optional[Path] = typer.Option(
-        None,
-        "--observations-json",
-        help="JSON file of Levels.fyi, Glassdoor, or manual reported compensation observations.",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
-    ),
-    job_id: Optional[str] = typer.Option(None, "--job-id", help="Refresh one existing job by canonical JobId."),
-    limit: int = typer.Option(0, "--limit", help="Maximum jobs to refresh. 0 means all matching jobs."),
-    tenant_id: str = typer.Option("local", "--tenant-id", help="Tenant id for local canonical compensation rows."),
-    include_eurotoptech: Optional[bool] = typer.Option(
-        None,
-        "--include-eurotoptech/--no-eurotoptech",
-        help="Include public Euro Top Tech data. Defaults to on when --observations-json is omitted.",
-    ),
-    eurotoptech_max_pages: int = typer.Option(
-        10,
-        "--eurotoptech-max-pages",
-        min=1,
-        help="Maximum Euro Top Tech data-entry pages to load when Euro Top Tech is included.",
-    ),
-) -> None:
-    """Refresh posted salary facts and reported company-role estimates for existing jobs."""
-
-    _bootstrap()
-
-    result = _run_workflow_spec_from_cli(
-        build_compensation_refresh_workflow_spec(
-            {
-                "tenantId": tenant_id,
-                "jobId": job_id,
-                "allJobs": job_id is None,
-                "limit": limit,
-                "observationsJsonPath": str(observations_json) if observations_json else None,
-                "includeEuroTopTech": include_eurotoptech if include_eurotoptech is not None else True,
-                "euroTopTechMaxPages": eurotoptech_max_pages,
-            }
-        ),
-        label="compensation refresh",
-    )
-    console.print_json(data=result)
-
-
-@app.command()
-def apply(
-    limit: Optional[int] = typer.Option(
-        None, "--limit", "-l", help="Maximum jobs to claim, including skipped jobs (default: all ready jobs)."
-    ),
-    workers: int = typer.Option(1, "--workers", "-w", help="Number of parallel browser workers."),
-    min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for job selection."),
-    model: str = typer.Option(
-        "default", "--model", "-m", help="Claude model name. 'default' uses the local Claude Code default."
-    ),
-    continuous: bool = typer.Option(False, "--continuous", "-c", help="Run forever, polling for new jobs."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview actions without submitting."),
-    headless: bool = typer.Option(False, "--headless", help="Run browsers in headless mode."),
-    url: Optional[str] = typer.Option(None, "--url", help="Apply to a specific job URL."),
-    gen: bool = typer.Option(False, "--gen", help="Generate an inspection-only dry-run prompt instead of running."),
-    mark_applied: Optional[str] = typer.Option(None, "--mark-applied", help="Manually mark a job URL as applied."),
-    mark_failed: Optional[str] = typer.Option(
-        None, "--mark-failed", help="Manually mark a job URL as failed (provide URL)."
-    ),
-    fail_reason: Optional[str] = typer.Option(None, "--fail-reason", help="Reason for --mark-failed."),
-    reset_failed: bool = typer.Option(False, "--reset-failed", help="Reset all failed jobs for retry."),
-    recover_stopped: bool = typer.Option(False, "--recover-stopped", help="Recover verifiably ended Apply custody; retain Skip and submission evidence. No application is started."),
-) -> None:
-    """Launch auto-apply to submit job applications."""
-    _bootstrap()
-
-    from jobctrl.config import check_tier
-    from jobctrl.database import count_ready_to_apply, get_connection
-    from jobctrl.domain.discovery.value_objects import PostingUrl
-    from jobctrl.domain.identifiers import JobId
-    from jobctrl.domain.tenant import LOCAL_TENANT
-    from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
-    from jobctrl.infrastructure.profile import get_profile_repository
-
-    # --- Utility modes (no Chrome/Claude needed) ---
-
-    if recover_stopped:
-        from jobctrl.apply.launcher import recover_ambiguous_running_apply
-
-        count = recover_ambiguous_running_apply(only_stopped=True)
-        console.print(f"Recovered {count} Apply custody record(s). Skip and submission evidence retained; reset separately when safe.")
-        return
-
-    def resolve_job_id(posting_url: str) -> JobId:
-        identity = SqliteJobIdentityResolver(get_connection()).resolve_current_by_posting_url(
-            LOCAL_TENANT,
-            PostingUrl(value=posting_url),
-        )
-        if identity is None:
-            raise typer.BadParameter(
-                f"No current job found for URL: {posting_url}",
-                param_hint="--url",
-            )
-        return identity.job_id
-
-    if mark_applied:
-        from jobctrl.apply.launcher import mark_job
-
-        mark_job(resolve_job_id(mark_applied), "applied", tenant_id=LOCAL_TENANT)
-        console.print(f"[green]Marked as applied:[/green] {mark_applied}")
-        return
-
-    if mark_failed:
-        from jobctrl.apply.launcher import mark_job
-
-        try:
-            mark_job(
-                resolve_job_id(mark_failed),
-                "failed",
-                reason=fail_reason,
-                tenant_id=LOCAL_TENANT,
-            )
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc), param_hint="--mark-failed") from exc
-        console.print(f"[yellow]Marked as failed:[/yellow] {mark_failed} ({fail_reason or 'manual'})")
-        return
-
-    if reset_failed:
-        from jobctrl.apply.launcher import reset_failed as do_reset
-
-        count = do_reset()
-        console.print(f"[green]Reset {count} failed job(s) for retry.[/green]")
-        return
-
-    # --- Full apply mode ---
-
-    # Check 1: Tier 3 required (Claude apply runtime + explicitly enabled browser capability)
-    check_tier(3, "auto-apply")
-
-    # Check 2: Profile exists
-    try:
-        profile = get_profile_repository().load(LOCAL_TENANT)
-    except FileNotFoundError:
-        profile = None
-    if profile is None:
-        console.print("[red]Profile not found.[/red]\nRun [bold]jobctrl init[/bold] to create your profile first.")
-        raise typer.Exit(code=1)
-
-    # Check 3: Tailored resumes exist (skip for --gen with --url)
-    # ``ready`` is the count of jobs eligible for apply; default to 0 so the
-    # downstream ``effective_limit = ready`` reference is unambiguous to
-    # static analysers when the gen+url shortcut early-returns.
-    ready: int = 0
-    if not (gen and url):
-        conn = get_connection()
-        ready = count_ready_to_apply(conn, min_score=min_score, target_url=url)
-        if ready == 0:
-            console.print(
-                "[red]No jobs ready to apply.[/red]\n"
-                "Jobs need a tailored resume and a posting or direct application URL.\n"
-                "Run [bold]jobctrl run enrich score tailor[/bold] to prepare applications."
-            )
-            raise typer.Exit(code=1)
-
-    if gen:
-        from jobctrl.apply.launcher import gen_prompt
-
-        target = url or ""
-        if not target:
-            console.print("[red]--gen requires --url to specify which job.[/red]")
-            raise typer.Exit(code=1)
-        prompt_file = gen_prompt(
-            resolve_job_id(target),
-            min_score=min_score,
-            model=model,
-            tenant_id=LOCAL_TENANT,
-        )
-        if not prompt_file:
-            console.print("[red]No matching job found for that URL.[/red]")
-            raise typer.Exit(code=1)
-        console.print(f"[green]Wrote prompt to:[/green] {prompt_file}")
-        console.print(
-            "[yellow]Inspection-only dry-run prompt.[/yellow] No browser or MCP "
-            "execution command is emitted. Use JobCtrl's normal Apply path for "
-            "a live attempt so current approval and repeat evidence are rechecked."
-        )
-        return
-
-    if limit is not None:
-        effective_limit = limit
-    elif continuous:
-        effective_limit = 0
-    else:
-        # Default: apply to all currently ready jobs
-        effective_limit = ready
-    target_job_id = resolve_job_id(url) if url else None
-
-    console.print("\n[bold blue]Launching Auto-Apply[/bold blue]")
-    console.print(
-        f"  Limit:    {'unlimited' if continuous else f'{effective_limit} (all ready)' if limit is None else effective_limit}"
-    )
-    console.print(f"  Workers:  {workers}")
-    console.print(f"  Model:    {model}")
-    console.print(f"  Headless: {headless}")
-    console.print(f"  Dry run:  {dry_run}")
-    if url:
-        console.print(f"  Target:   {url}")
-    console.print()
-
-    _run_workflow_spec_from_cli(
-        build_apply_workflow_spec(
-            {
-                "tenantId": "local",
-                **({"jobId": str(target_job_id)} if target_job_id else {}),
-                "limit": effective_limit,
-                "minScore": min_score,
-                "headless": headless,
-                "model": model,
-                "dryRun": dry_run,
-                "continuous": continuous,
-                "workers": workers,
-            }
-        ),
-        label="apply",
-    )
-
-
-@app.command()
-def job(
-    url: str = typer.Argument(
-        ..., help="URL of the job to process. Automatically enriched if not already in the database."
-    ),
-    tailor_flag: bool = typer.Option(False, "--tailor", "-t", help="Only tailor resume + cover letter (skip apply)."),
-    apply_flag: bool = typer.Option(
-        False, "--apply", "-a", help="Only apply (skip tailoring). Job must already be tailored."
-    ),
-    validation: str = typer.Option(
-        "normal",
-        "--validation",
-        help="Validation strictness for tailor/cover. strict | normal | lenient.",
-    ),
-    model: str = typer.Option(
-        "default",
-        "--model",
-        "-m",
-        help="Claude model name for auto-apply. 'default' uses the local Claude Code default.",
-    ),
-    headless: bool = typer.Option(False, "--headless", help="Run browser in headless mode."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without executing."),
-) -> None:
-    """Run tailoring and/or application for a specific job URL.
-
-    By default, runs both tailoring and apply. Use --tailor or --apply to
-    run only one step. Both flags can be combined explicitly.
-
-    Examples:
-        jobctrl job https://example.com/job/123              # tailor + apply
-        jobctrl job https://example.com/job/123 --tailor     # tailor only
-        jobctrl job https://example.com/job/123 --apply      # apply only
-    """
-    _bootstrap()
-
-    validation = _validate_validation_mode(validation)
-
-    # Determine actions: neither flag → both; otherwise respect flags
-    if not tailor_flag and not apply_flag:
-        do_tailor = True
-        do_apply = True
-    else:
-        do_tailor = tailor_flag
-        do_apply = apply_flag
-
-    # Gate on required tiers
-    if do_tailor:
-        from jobctrl.config import check_tier
-
-        check_tier(2, "resume tailoring")
-    if do_apply:
-        from jobctrl.config import check_tier
-
-        check_tier(3, "auto-apply")
-
-    actions = []
-    if do_tailor:
-        actions.append("tailor")
-    if do_apply:
-        actions.append("apply")
-
-    console.print()
-    console.print(
-        Panel.fit(
-            f"[bold]Single Job[/bold] — {' + '.join(actions)}",
-            border_style="blue",
-        )
-    )
-    console.print(f"  URL:        {url}")
-    console.print(f"  Validation: {validation}")
-    if do_apply:
-        console.print(f"  Model:      {model}")
-        console.print(f"  Headless:   {headless}")
-    if dry_run:
-        console.print("  [yellow]DRY RUN[/yellow]")
-    console.print()
-
-    result = run_single_job(
-        url,
-        do_tailor=do_tailor,
-        do_apply=do_apply,
-        validation_mode=validation,
-        model=model,
-        headless=headless,
-        dry_run=dry_run,
-    )
-
-    if result.get("error"):
-        console.print(f"\n[red]Error:[/red] {result['error']}")
-        raise typer.Exit(code=1)
-
-    if result.get("errors"):
-        console.print(f"\n[yellow]Completed with {len(result['errors'])} issue(s):[/yellow]")
-        for err in result["errors"]:
-            console.print(f"  - {err}")
-    else:
-        console.print("\n[green]Done.[/green]")
-
-
-@app.command()
-def digest(
-    acknowledge: bool = typer.Option(
-        False,
-        "--acknowledge",
-        help="Mark the generated digest as reviewed after printing it.",
-    ),
-    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
-    min_fit_score: Optional[int] = typer.Option(
-        None,
-        "--min-fit-score",
-        min=1,
-        max=10,
-        help="Override the high-fit score threshold for this digest.",
-    ),
-) -> None:
-    """Show the local daily digest."""
-    _bootstrap(strict_projection_refresh=True)
-
-    from jobctrl.database import get_connection
-    from jobctrl.digest import acknowledge_digest, build_digest
-    from jobctrl.infrastructure.scoring.criteria_provider import read_min_fit_score
-
-    threshold = min_fit_score if min_fit_score is not None else read_min_fit_score()
-    conn = get_connection()
-    digest_payload = build_digest(conn, min_fit_score=threshold)
-    acknowledge_payload = None
-    if acknowledge:
-        acknowledge_payload = acknowledge_digest(
-            conn,
-            acknowledged_at=str(digest_payload["generatedAt"]),
-        )
-
-    if json_output:
-        payload = (
-            {"digest": digest_payload, "acknowledge": acknowledge_payload} if acknowledge_payload else digest_payload
-        )
-        console.print_json(data=payload)
-        return
-
-    since = digest_payload.get("since") or "first run"
-    console.print("\n[bold]Daily digest[/bold]")
-    console.print(
-        "[dim]"
-        f"Since {since} · generated {digest_payload.get('generatedAt')} · "
-        f"high-fit {digest_payload.get('highFitThreshold')}+"
-        "[/dim]\n"
-    )
-    console.print(_render_digest_table(digest_payload))
-    for briefing in digest_payload.get("companyBriefings", []):
-        console.print(
-            Text(
-                f"Company briefing: {briefing['name']} · {briefing['status']} · observed {briefing['observedAt'] or 'never'} · /jobs/{briefing['jobId']}"
-            )
-        )
-        if briefing["failureCode"]:
-            console.print(Text("Refresh failed: " + briefing["failureCode"]))
-    links_table = _render_digest_links_table(digest_payload)
-    if links_table:
-        console.print()
-        console.print(links_table)
-    if acknowledge_payload:
-        state = acknowledge_payload.get("state", {})
-        console.print(f"\n[green]Marked reviewed:[/green] {state.get('lastAcknowledgedAt')}")
-    else:
-        console.print("\n[dim]Run with --acknowledge after reviewing to move the digest watermark.[/dim]")
-
-
-def _render_digest_table(digest_payload: dict[str, Any]) -> Table:
-    new_matches = _dict(digest_payload.get("newMatches"))
-    blocked_sources = _dict(digest_payload.get("blockedSources"))
-    follow_ups = _dict(digest_payload.get("followUpsDue"))
-    budget = _dict(digest_payload.get("budget"))
-    table = Table(title="Review Queue", show_lines=False)
-    table.add_column("Area", style="bold")
-    table.add_column("Count", justify="right")
-    table.add_column("Notes")
-    table.add_row(
-        "New matches",
-        str(new_matches.get("count", 0)),
-        f"{new_matches.get('highFitCount', 0)} at high-fit threshold",
-    )
-    table.add_row(
-        "Blocked sources",
-        str(blocked_sources.get("count", 0)),
-        _blocked_source_note(blocked_sources),
-    )
-    table.add_row(
-        "Materials review",
-        str(_dict(digest_payload.get("reviewNeededMaterials")).get("count", 0)),
-        "Candidates needing resume or cover-letter review",
-    )
-    table.add_row(
-        "Pending approvals",
-        str(_dict(digest_payload.get("pendingApprovals")).get("count", 0)),
-        "Apply-review decisions waiting on the user",
-    )
-    table.add_row(
-        "Stale scores",
-        str(_dict(digest_payload.get("staleScores")).get("count", 0)),
-        "Jobs needing current-policy score refresh",
-    )
-    table.add_row(
-        "Follow-ups due",
-        str(follow_ups.get("count", 0)),
-        f"{follow_ups.get('thresholdDays', 7)} days, {follow_ups.get('dayBoundary', 'UTC')} boundary",
-    )
-    table.add_row("Budget", _budget_status_label(budget), _budget_note(budget))
-    return table
-
-
-def _render_digest_links_table(digest_payload: dict[str, Any]) -> Table | None:
-    links = _dict(digest_payload.get("deepLinks"))
-    if not links:
-        return None
-    table = Table(title="Open In Web App", show_lines=False)
-    table.add_column("Area", style="bold")
-    table.add_column("Path")
-    labels = {
-        "newMatches": "New matches",
-        "blockedSources": "Blocked sources",
-        "reviewNeededMaterials": "Materials review",
-        "staleScores": "Stale scores",
-        "pendingApprovals": "Pending approvals",
-        "followUpsDue": "Follow-ups due",
-        "budget": "Budget",
-    }
-    for key, label in labels.items():
-        value = links.get(key)
+    """Discover jobs and prepare new/pending work through the canonical recipe."""
+    discovery: dict = {}
+    for key, value in (("queries", query), ("locations", location), ("boards", board),
+                       ("resultsPerSite", results_per_site), ("hoursOld", hours_old)):
         if value:
-            table.add_row(label, str(value))
-    return table
+            discovery[key] = value
+    if limit is not None:
+        discovery["newJobLimit"] = limit
+    _output(_run(_preparation("discover", [], discovery=discovery or None, limit=limit,
+                             wait=wait, idempotency_key=idempotency_key)))
 
 
-def _dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _blocked_source_note(blocked_sources: dict[str, Any]) -> str:
-    sources = blocked_sources.get("sources")
-    if not isinstance(sources, list) or not sources:
-        return "No blocked or failing sources"
-    names = [
-        str(_dict(source).get("sourceId") or "") for source in sources[:3] if str(_dict(source).get("sourceId") or "")
-    ]
-    extra = len(sources) - len(names)
-    if extra > 0:
-        names.append(f"+{extra} more")
-    return ", ".join(names)
-
-
-def _budget_status_label(budget: dict[str, Any]) -> str:
-    status = str(budget.get("status") or "unknown")
-    if status == "over_budget":
-        return "[red]over budget[/red]"
-    if status == "ok":
-        return "[green]ok[/green]"
-    return status
-
-
-def _budget_note(budget: dict[str, Any]) -> str:
-    if budget.get("status") == "incomplete":
-        return "LLM spend pending or unresolved"
-    if budget.get("unlimited"):
-        return "Unlimited local daily budget"
-    estimated = float(budget.get("estimatedUsd") or 0.0)
-    daily = float(budget.get("dailyBudgetUsd") or 0.0)
-    remaining = budget.get("remainingUsd")
-    if remaining is None:
-        return f"${estimated:.2f} estimated of ${daily:.2f}"
-    return f"${estimated:.2f} estimated, ${float(remaining):.2f} remaining of ${daily:.2f}"
-
-
-@app.command("pipeline-status")
-def pipeline_status() -> None:
-    """Show pipeline statistics from the database."""
-    _bootstrap()
-
-    from jobctrl.database import get_stats
-
-    stats = get_stats()
-
-    console.print("\n[bold]JobCtrl Pipeline Status[/bold]\n")
-
-    # Summary table
-    summary = Table(title="Pipeline Overview", show_header=True, header_style="bold cyan")
-    summary.add_column("Metric", style="bold")
-    summary.add_column("Count", justify="right")
-
-    summary.add_row("Total jobs discovered", str(stats["total"]))
-    summary.add_row("With full description", str(stats["with_description"]))
-    summary.add_row("Pending enrichment", str(stats["pending_detail"]))
-    summary.add_row("Enrichment errors", str(stats["detail_errors"]))
-    summary.add_row("Scored by LLM", str(stats["scored"]))
-    summary.add_row("Pending scoring", str(stats["unscored"]))
-    summary.add_row("Tailored resumes", str(stats["tailored"]))
-    summary.add_row("Pending tailoring (7+)", str(stats["untailored_eligible"]))
-    summary.add_row("Cover letters", str(stats["with_cover_letter"]))
-    summary.add_row("Ready to apply", str(stats["ready_to_apply"]))
-    summary.add_row("Applied", str(stats["applied"]))
-    summary.add_row("Apply errors", str(stats["apply_errors"]))
-
-    console.print(summary)
-
-    # Score distribution
-    if stats["score_distribution"]:
-        dist_table = Table(title="\nScore Distribution", show_header=True, header_style="bold yellow")
-        dist_table.add_column("Score", justify="center")
-        dist_table.add_column("Count", justify="right")
-        dist_table.add_column("Bar")
-
-        max_count = max(count for _, count in stats["score_distribution"]) or 1
-        for score, count in stats["score_distribution"]:
-            bar_len = int(count / max_count * 30)
-            if score >= 7:
-                color = "green"
-            elif score >= 5:
-                color = "yellow"
-            else:
-                color = "red"
-            bar = f"[{color}]{'=' * bar_len}[/{color}]"
-            dist_table.add_row(str(score), str(count), bar)
-
-        console.print(dist_table)
-
-    # By site
-    if stats["by_site"]:
-        site_table = Table(title="\nJobs by Source", show_header=True, header_style="bold magenta")
-        site_table.add_column("Site")
-        site_table.add_column("Count", justify="right")
-
-        for site, count in stats["by_site"]:
-            site_table.add_row(site or "Unknown", str(count))
-
-        console.print(site_table)
-
-    live_workers = _render_live_workers_table()
-    recent_runs = _render_recent_runs_table(limit=6)
-
-    if live_workers or recent_runs:
-        console.print("\n[bold]Apply Agent Visibility[/bold]")
-        if live_workers:
-            console.print(live_workers)
-        if recent_runs:
-            console.print()
-            console.print(recent_runs)
-    else:
-        console.print("\n[dim]Apply telemetry is not available yet. Run `jobctrl apply` to populate it.[/dim]")
-
-    console.print()
+@app.command()
+def run(
+    stages: list[str] | None = typer.Argument(None, help="One explicit recipe; default run performs discovery and preparation."),
+    job_id: list[str] = typer.Option([], "--job-id"),
+    limit: int | None = typer.Option(None, "--limit", min=1, max=1000),
+    force: bool = typer.Option(False, "--force"),
+    min_fit_score: int | None = typer.Option(None, "--min-fit-score", "--min-score", min=1, max=10),
+    allow_below_threshold: bool = typer.Option(False, "--allow-below-threshold"),
+    wait: bool = typer.Option(False, "--wait"),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
+) -> None:
+    """Submit an explicit preparation recipe with retained per-stage outcomes."""
+    chosen = stages or ["run"]
+    if chosen == ["all"]:
+        chosen = ["discover"]
+    if len(chosen) != 1 or chosen[0] not in {"run", "discover", "enrich", "analyze", "score", "tailor", "prepare"}:
+        _fail("explicit_recipe_required", "Choose one recipe: run, discover, enrich, analyze, score, tailor or prepare. Custom implicit stage combinations are no longer accepted.", exit_code=2)
+    _output(_run(_preparation(chosen[0], job_id, limit=limit, force=force, min_fit_score=min_fit_score,
+                             allow_below_threshold=allow_below_threshold, wait=wait, idempotency_key=idempotency_key)))
 
 
 @app.command()
 def retry(
-    stage: str = typer.Argument(..., help="Stage to reset for retry."),
-    url: str = typer.Argument(..., help="Job URL to reset."),
-    reset_attempts: bool = typer.Option(
-        False,
-        "--reset-attempts",
-        help="Reset the stage attempt counter as well as status/error fields.",
-    ),
-    run_after: bool = typer.Option(
-        False,
-        "--run",
-        help="Run the stage after resetting. For some stages this may process other pending jobs too.",
-    ),
+    run_id: str,
+    job_id: list[str] = typer.Option([], "--job-id"),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
 ) -> None:
-    """Reset one job/stage so it can be retried."""
-    _bootstrap()
-
-    retry_stages = (*VALID_STAGES, "enrich", "apply")
-    if stage not in retry_stages:
-        console.print(f"[red]Unknown stage:[/red] '{stage}'. Valid stages: {', '.join(retry_stages)}")
-        raise typer.Exit(code=1)
-
-    from jobctrl.database import get_connection
-    from jobctrl.domain.discovery.value_objects import PostingUrl
-    from jobctrl.domain.tenant import LOCAL_TENANT
-    from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
-    from jobctrl.state import reset_job_stage
-
-    try:
-        job_url = reset_job_stage(get_connection(), url, stage, reset_attempts=reset_attempts)
-    except ValueError as e:
-        console.print(f"[red]{e}[/red]")
-        raise typer.Exit(code=1)
-
-    console.print(f"[green]Reset {stage} for retry:[/green] {job_url}")
-    if job_url.retailor_required:
-        console.print("Approved materials remain available. Use explicit re-tailor to create a replacement.")
-        return
-    if run_after:
-        if stage == "apply":
-            identity = SqliteJobIdentityResolver(get_connection()).resolve_current_by_posting_url(
-                LOCAL_TENANT,
-                PostingUrl(value=job_url),
-            )
-            if identity is None:
-                console.print(f"[red]No current job found for URL:[/red] {job_url}")
-                raise typer.Exit(code=1)
-            _run_workflow_spec_from_cli(
-                build_apply_workflow_spec(
-                    {
-                        "tenantId": "local",
-                        "jobId": str(identity.job_id),
-                        "limit": 1,
-                    }
-                ),
-                label="apply retry",
-            )
-        elif stage in (*VALID_STAGES, "enrich"):
-            _run_stage_command(stage, limit=1)
+    """Retry the recorded preparation outcome without inventing new approval."""
+    payload: dict = {"run_id": run_id}
+    if job_id:
+        payload["job_ids"] = job_id
+    _output(_run(_execute("preparation.retry", payload, background=True, idempotency_key=idempotency_key)))
 
 
 @app.command()
-def runs(
-    limit: int = typer.Option(8, "--limit", "-l", help="Number of recent runs to show."),
-    events: int = typer.Option(8, "--events", "-e", help="Number of events to show for one selected run."),
-    failed_only: bool = typer.Option(False, "--failed-only", help="Only show failed runs."),
-    run_id: Optional[str] = typer.Option(
-        None,
-        "--run-id",
-        help="Show the timeline for a specific run id or prefix.",
-    ),
+def digest(
+    acknowledge: bool = typer.Option(False, "--acknowledge"),
+    json_output: bool = typer.Option(False, "--json"),
+    min_fit_score: int | None = typer.Option(None, "--min-fit-score", min=0, max=10,
+                                           help="Override the high-fit threshold for this read only."),
 ) -> None:
-    """Inspect recent apply runs and the event timeline for one run."""
-    _bootstrap()
-
-    console.print("\n[bold]Apply Agent Runs[/bold]\n")
-
-    live_workers = _render_live_workers_table()
-    if live_workers:
-        console.print(live_workers)
-        console.print()
-
-    runs = _fetch_recent_runs(limit=max(limit, events, 20), failed_only=failed_only)
-    if not runs:
-        console.print("[dim]No telemetry-backed apply runs found yet.[/dim]")
-        return
-
-    recent = runs[:limit]
-    table = Table(title="Recent Apply Runs", show_lines=False)
-    table.add_column("Run", width=10, justify="center")
-    table.add_column("Status", width=11, justify="center")
-    table.add_column("Worker", width=7, justify="center")
-    table.add_column("Job", min_width=24, max_width=42, no_wrap=True)
-    table.add_column("When", min_width=16)
-    table.add_column("Duration", width=9, justify="right")
-    table.add_column("What happened", min_width=26, max_width=42, no_wrap=True)
-
-    for run in recent:
-        status = (run.get("status") or "unknown").upper()
-        status_style = {
-            "IN_PROGRESS": "yellow",
-            "RUNNING": "yellow",
-            "APPLIED": "green",
-            "SUCCESS": "green",
-            "FAILED": "red",
-            "ERROR": "red",
-            "SKIPPED": "dim",
-            "CANCELLED": "magenta",
-        }.get(status, "")
-        table.add_row(
-            run.get("run_id", "")[:8],
-            Text(status, style=status_style),
-            str(run.get("worker_id", "")),
-            _format_run_label(run),
-            run.get("started_at", ""),
-            run.get("duration", ""),
-            (run.get("error") or run.get("last_event") or "")[:42],
-        )
-
-    console.print(table)
-
-    selected = None
-    if run_id:
-        selected = next((run for run in runs if run.get("run_id", "").startswith(run_id)), None)
-    else:
-        selected = next(
-            (run for run in runs if (run.get("status") or "").upper() in {"FAILED", "ERROR", "IN_PROGRESS", "RUNNING"}),
-            recent[0],
-        )
-
-    if selected:
-        timeline = _render_run_timeline(selected, limit=events)
-        if timeline:
-            console.print()
-            console.print(timeline)
-
-
-@app.command()
-def rpc() -> None:
-    """Run the JSON-RPC 2.0 server on stdin/stdout (target §6.5).
-
-    Each line on stdin must be a single JSON-RPC request envelope; each
-    response is written as a single line on stdout.  Used by the TS API to
-    drive workflow-backed commands (``run_stage``, ``apply``, tailor / rescore)
-    and local actions (``profile_import``); ``register_default_handlers`` owns
-    the authoritative method set.
-    """
-    _bootstrap()
-    from jobctrl.infrastructure.observability import shutdown_otel
-    from jobctrl.infrastructure.rpc.handlers import register_default_handlers
-    from jobctrl.infrastructure.rpc.server import JsonRpcServer
-    from jobctrl.infrastructure.rpc.workflow_starter import (
-        default_workflow_canceler,
-        default_workflow_starter,
-    )
-
-    server = JsonRpcServer(workflow_starter=default_workflow_starter)
-    register_default_handlers(server, canceler=default_workflow_canceler)
-    try:
-        server.serve()
-    finally:
-        # Flush queued OTel spans before stdin EOF kills the process —
-        # without this the BatchSpanProcessor drops in-flight rpc.<method>
-        # spans and Langfuse loses the JSON-RPC trace tail.
-        shutdown_otel()
-
-
-async def _reconcile_discovery_schedule(client: Any, task_queue: str) -> None:
-    """Create/update or delete the disabled-by-default discovery schedule."""
-    from temporalio.client import (
-        Schedule,
-        ScheduleActionStartWorkflow,
-        ScheduleOverlapPolicy,
-        SchedulePolicy,
-        ScheduleSpec,
-        ScheduleUpdate,
-    )
-
-    from jobctrl.config import load_discovery_schedule_settings
-    from jobctrl.discovery.workflow import (
-        DiscoverWorkflow,
-        DiscoverWorkflowInput,
-        discover_workflow_id,
-    )
-    from jobctrl.domain.errors import InvalidSavedSearchError, SavedSearchReadError
-    from jobctrl.domain.tenant import LOCAL_TENANT
-
-    try:
-        enabled, cron = load_discovery_schedule_settings()
-    except (InvalidSavedSearchError, SavedSearchReadError) as exc:
-        # Do not delete or replace an existing schedule when its authority is
-        # unavailable. Discovery planning will refuse to use the same inputs.
-        log.warning("Discovery schedule reconciliation skipped: %s", exc)
-        return
-    schedule_id = f"jobctrl-discovery-{LOCAL_TENANT}"
-    handle = client.get_schedule_handle(schedule_id)
-    if not enabled:
-        try:
-            await handle.delete()
-        except Exception:
-            log.debug("Discovery schedule %s absent or already deleted", schedule_id, exc_info=True)
-        return
-
-    schedule = Schedule(
-        action=ScheduleActionStartWorkflow(
-            DiscoverWorkflow.run,
-            DiscoverWorkflowInput(tenant_id=str(LOCAL_TENANT)),
-            id=discover_workflow_id(str(LOCAL_TENANT)),
-            task_queue=task_queue,
-        ),
-        spec=ScheduleSpec(cron_expressions=[cron]),
-        policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
-    )
-    try:
-        await client.create_schedule(schedule_id, schedule)
-    except Exception:
-        try:
-            await handle.update(lambda _input: ScheduleUpdate(schedule))
-        except Exception:
-            log.warning("Discovery schedule %s reconcile failed", schedule_id, exc_info=True)
-
-
-# Truthy spellings accepted by the browser-preflight escape hatch, matching the
-# convention used by other JobCtrl env flags (e.g. ``LANGFUSE_DISABLE``).
-_SKIP_BROWSER_PREFLIGHT_TRUTHY = frozenset({"1", "true", "yes", "on"})
-
-
-def _preflight_browsers_or_exit() -> None:
-    """Fail fast at worker startup when Playwright Chromium is missing.
-
-    Discovery scraping and HTML/CSS PDF rendering both launch Chromium; without
-    it the worker would boot, connect to Temporal, and only fail hours into a
-    Discover run the first time an activity opens a browser. Set
-    ``JOBCTRL_SKIP_BROWSER_PREFLIGHT=1`` to bypass (e.g. a worker that only
-    runs non-browser activities).
-    """
-    import os
-
-    skip = os.environ.get("JOBCTRL_SKIP_BROWSER_PREFLIGHT", "").strip().lower()
-    if skip in _SKIP_BROWSER_PREFLIGHT_TRUTHY:
-        return
-
-    from jobctrl.infrastructure.preflight import check_playwright_chromium
-
-    ok, message = check_playwright_chromium()
-    if ok:
-        return
-
-    console.print(f"[red]Worker preflight failed:[/red] {message}")
-    console.print(
-        "[dim]Set JOBCTRL_SKIP_BROWSER_PREFLIGHT=1 to start the worker anyway "
-        "(browser activities will still fail at runtime).[/dim]"
-    )
-    raise typer.Exit(code=1)
-
-
-@app.command()
-def worker(
-    task_queue: Optional[str] = typer.Option(
-        None,
-        "--task-queue",
-        help="Override the Temporal task queue (defaults to JOBCTRL_TASK_QUEUE).",
-    ),
-) -> None:
-    """Run the long-lived JobCtrl Temporal worker."""
-    _bootstrap(reconcile_posted_compensation=True)
-
-    # Verify the browser this worker needs is installed before we connect to
-    # Temporal and start accepting activities — a missing binary must surface
-    # here, not two hours into a Discover run.
-    _preflight_browsers_or_exit()
-
-    from jobctrl.infrastructure.runtime_identity import (
-        current_runtime_identity,
-        write_worker_heartbeat,
-    )
-    from jobctrl.infrastructure.temporal import (
-        JOBCTRL_TASK_QUEUE,
-        build_worker,
-        get_temporal_client,
-    )
-    from jobctrl.infrastructure.temporal.activity_runtime_telemetry import (
-        ActiveActivityInventory,
-    )
-    from jobctrl.infrastructure.temporal.concurrency import resolve_max_concurrent_activities
-    from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
-
-    queue = task_queue or JOBCTRL_TASK_QUEUE
-
-    async def _run() -> None:
-        client = await get_temporal_client()
-        await _reconcile_discovery_schedule(client, queue)
-        # Repair any exact pre-lineage Discover execution before this worker
-        # starts accepting more activities.  The controller reads only that
-        # workflow/run's Temporal history and is idempotent, so a worker restart
-        # can finish a partial repair without canceling or restarting discovery.
-        try:
-            await _reconcile_legacy_discovery_executions(client)
-        except Exception:
-            # Recovery is retried by the heartbeat loop.  An unavailable
-            # history store must not take down the worker or mutate the run.
-            log.warning(
-                "Legacy Discover execution recovery failed at worker startup; will retry",
-                exc_info=True,
-            )
-        from jobctrl.apply.auto_apply import reconcile_auto_apply_loop
-
-        identity = current_runtime_identity()
-        await _reconcile_saved_postings(client, queue, identity)
-        await _reconcile_automatic_preparation(client, queue, identity)
-        startup_auto_apply = await reconcile_auto_apply_loop(
-            client,
-            task_queue=queue,
-            expected_app_dir=str(identity.app_dir),
-            expected_db_path=str(identity.db_path),
-        )
-        startup_activity_concurrency = resolve_max_concurrent_activities()
-        activity_inventory = ActiveActivityInventory()
-        worker = build_worker(
-            client,
-            workflows=WORKFLOWS,
-            activities=ACTIVITIES,
-            task_queue=queue,
-            max_concurrent_activities=startup_activity_concurrency.value,
-            activity_inventory=activity_inventory,
-        )
-        worker_started_at = datetime.now(timezone.utc)
-        startup_queue_observation = await _safe_task_queue_observation(client, queue)
-        heartbeat_worker_id = write_worker_heartbeat(
-            task_queue=queue,
-            max_concurrent_activities=startup_activity_concurrency.value,
-            activity_snapshot=activity_inventory.snapshot(),
-            task_queue_observation=startup_queue_observation,
-        )
-        heartbeat_task = asyncio.create_task(
-            _worker_heartbeat_loop(
-                queue,
-                heartbeat_worker_id,
-                worker_started_at=worker_started_at,
-                max_concurrent_activities=startup_activity_concurrency.value,
-                temporal_client=client,
-                activity_inventory=activity_inventory,
-            )
-        )
-        console.print(
-            f"[bold blue]JobCtrl worker[/bold blue] running on task queue "
-            f"[bold]{queue}[/bold] with {len(WORKFLOWS)} workflow(s) and "
-            f"{len(ACTIVITIES)} activity(ies) against DB "
-            f"[bold]{identity.db_path}[/bold] — Ctrl-C to stop."
-        )
-        if startup_auto_apply.changed:
-            console.print(
-                f"[yellow]Auto-apply loop {startup_auto_apply.action}: {startup_auto_apply.workflow_id}.[/yellow]"
-            )
-        try:
-            from jobctrl.infrastructure.temporal.worker import run_worker_until_sigterm
-
-            await run_worker_until_sigterm(worker)
-        finally:
-            from jobctrl.infrastructure.temporal.run_in_activity import (
-                drain_activity_executors,
-            )
-
-            heartbeat_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await heartbeat_task
-            await drain_activity_executors()
-
-    from jobctrl.infrastructure.observability import shutdown_otel
-
-    try:
-        asyncio.run(_run())
-    finally:
-        from jobctrl.infrastructure.llm.agent_runtime_pool import close_agent_runtimes
-
-        try:
-            from jobctrl.infrastructure.materials.letter_reviews import close_letter_reviews
-
-            close_letter_reviews()
-            close_agent_runtimes()
-        finally:
-            # Runtime teardown may emit final accounting; flush after it settles.
-            shutdown_otel()
-
-
-async def _worker_heartbeat_loop(
-    task_queue: str,
-    worker_id: str,
-    *,
-    worker_started_at: datetime | None = None,
-    max_concurrent_activities: int | None = None,
-    interval_seconds: float = 15.0,
-    temporal_client: Any = None,
-    activity_inventory: Any = None,
-) -> None:
-    while True:
-        await asyncio.sleep(interval_seconds)
-        try:
-            queue_observation = (
-                await _safe_task_queue_observation(temporal_client, task_queue) if temporal_client is not None else None
-            )
-            await asyncio.to_thread(
-                _worker_heartbeat_iteration,
-                task_queue,
-                worker_id,
-                worker_started_at=worker_started_at,
-                max_concurrent_activities=max_concurrent_activities,
-                activity_snapshot=(activity_inventory.snapshot() if activity_inventory is not None else None),
-                task_queue_observation=queue_observation,
-            )
-        except Exception:
-            log.warning("Worker heartbeat loop iteration failed; will retry", exc_info=True)
-            continue
-        # Describe-based reconciler: settle workflow-run rows whose Temporal
-        # execution closed without finalize, and repair a false
-        # reconciled_not_found terminal if the exact execution reappears.
-        if temporal_client is not None:
-            try:
-                reconciled = await _reconcile_workflow_runs(temporal_client)
-            except Exception:
-                log.warning("Workflow-run reconciler iteration failed; will retry", exc_info=True)
-            else:
-                if reconciled:
-                    console.print(f"[yellow]Workflow reconciler applied {reconciled} durable change(s).[/yellow]")
-            try:
-                from jobctrl.infrastructure.temporal.cancellation_audit import (
-                    reconcile_cancellation_audit,
-                )
-
-                audited = await reconcile_cancellation_audit(temporal_client)
-            except Exception:
-                log.warning(
-                    "Cancellation-audit reconciler iteration failed; will retry",
-                    exc_info=True,
-                )
-            else:
-                if audited:
-                    console.print(
-                        f"[yellow]Recovered the cancellation requester for {audited} workflow run(s).[/yellow]"
-                    )
-            try:
-                recovered = await _reconcile_legacy_discovery_executions(temporal_client)
-            except Exception:
-                log.warning(
-                    "Legacy Discover execution recovery iteration failed; will retry",
-                    exc_info=True,
-                )
-            else:
-                if recovered:
-                    console.print(
-                        f"[yellow]Recovered durable tracking for {recovered} legacy Discover execution(s).[/yellow]"
-                    )
-            try:
-                from jobctrl.apply.auto_apply import reconcile_auto_apply_loop
-                from jobctrl.infrastructure.runtime_identity import current_runtime_identity
-
-                identity = current_runtime_identity()
-                await _reconcile_saved_postings(temporal_client, task_queue, identity)
-                await _reconcile_automatic_preparation(temporal_client, task_queue, identity)
-                auto_apply = await reconcile_auto_apply_loop(
-                    temporal_client,
-                    task_queue=task_queue,
-                    expected_app_dir=str(identity.app_dir),
-                    expected_db_path=str(identity.db_path),
-                )
-            except Exception:
-                log.warning("Auto-apply loop reconciler iteration failed; will retry", exc_info=True)
-            else:
-                if auto_apply.changed:
-                    console.print(f"[yellow]Auto-apply loop {auto_apply.action}: {auto_apply.workflow_id}.[/yellow]")
-
-
-async def _reconcile_saved_postings(client: Any, task_queue: str, identity: Any) -> None:
-    from jobctrl.enrichment.availability_workflow import reconcile_saved_posting_availability
-
-    try:
-        await reconcile_saved_posting_availability(client, task_queue, identity)
-    except Exception:
-        log.warning("Saved-posting availability sweep deferred; will retry", exc_info=True)
-
-
-async def _reconcile_automatic_preparation(client: Any, task_queue: str, identity: Any) -> None:
-    from jobctrl.pipeline.automatic_preparation import reconcile_automatic_preparation
-
-    try:
-        queued = await reconcile_automatic_preparation(
-            client,
-            task_queue=task_queue,
-            expected_app_dir=str(identity.app_dir),
-            expected_db_path=str(identity.db_path),
-        )
-        if queued:
-            console.print(f"[yellow]Automatically recovering preparation for {queued} job(s).[/yellow]")
-    except Exception:
-        log.warning("Automatic preparation recovery failed; will retry", exc_info=True)
-
-
-def _worker_heartbeat_iteration(
-    task_queue: str,
-    worker_id: str,
-    *,
-    worker_started_at: datetime | None = None,
-    max_concurrent_activities: int | None = None,
-    activity_snapshot: Any = None,
-    task_queue_observation: Any = None,
-) -> None:
-    from jobctrl.infrastructure.runtime_identity import write_worker_heartbeat
-
-    write_worker_heartbeat(
-        task_queue=task_queue,
-        worker_id=worker_id,
-        max_concurrent_activities=max_concurrent_activities,
-        activity_snapshot=activity_snapshot,
-        task_queue_observation=task_queue_observation,
-    )
-
-
-def _legacy_discovery_recovery_candidates(
-    conn: Any,
-    *,
-    tenant_id: str,
-) -> list[dict[str, str]]:
-    """Return exact Discover executions whose durable tracking may need repair.
-
-    Open executions remain candidates while they run because a pre-lineage
-    history can grow between heartbeat passes.  For closed executions only the
-    newest selected-run candidate is considered, and its durable recovery
-    manifest is the sole readiness authority.  Projection row counts cannot
-    prove that the exact history was completely decoded.
-    """
-    from jobctrl.discovery.execution_reconciliation import (
-        _recovery_manifest_matches_persisted_keys,
-    )
-
-    terminal_statuses = (
-        "succeeded",
-        "failed",
-        "canceled",
-        "terminated",
-        "timed_out",
-        "dry_run_complete",
-    )
-    try:
-        recovery_manifest_exists = conn.execute(
-            """
-            SELECT 1 FROM sqlite_master
-            WHERE type = 'table' AND name = 'discovery_execution_recoveries'
-            """
-        ).fetchone()
-        if recovery_manifest_exists:
-            rows = conn.execute(
-                """
-                SELECT wrp.workflow_id, wrp.temporal_run_id, wrp.status,
-                       der.state AS recovery_state
-                FROM workflow_run_projections wrp
-                LEFT JOIN discovery_execution_recoveries der
-                  ON der.tenant_id = wrp.tenant_id
-                 AND der.discover_workflow_id = wrp.workflow_id
-                 AND der.discover_run_id = wrp.temporal_run_id
-                WHERE wrp.tenant_id = ?
-                  AND wrp.workflow_type = 'DiscoverWorkflow'
-                  AND wrp.temporal_run_id IS NOT NULL
-                  AND trim(wrp.temporal_run_id) <> ''
-                ORDER BY COALESCE(wrp.started_at, wrp.finished_at) DESC,
-                         wrp.workflow_id DESC
-                """,
-                (tenant_id,),
-            ).fetchall()
-        else:
-            # The first recovery attempt creates the manifest table.  Until
-            # then, missing checkpoint state means recovery is required.
-            rows = conn.execute(
-                """
-                SELECT workflow_id, temporal_run_id, status,
-                       NULL AS recovery_state
-                FROM workflow_run_projections
-                WHERE tenant_id = ?
-                  AND workflow_type = 'DiscoverWorkflow'
-                  AND temporal_run_id IS NOT NULL
-                  AND trim(temporal_run_id) <> ''
-                ORDER BY COALESCE(started_at, finished_at) DESC,
-                         workflow_id DESC
-                """,
-                (tenant_id,),
-            ).fetchall()
-    except sqlite3.OperationalError:
-        # First-run and migration windows are retried after schema setup.
-        return []
-
-    candidates: list[dict[str, str]] = []
-    latest_terminal_considered = False
-    for row in rows:
-        status = str(row["status"] or "")
-        recovery_state = str(row["recovery_state"] or "")
-        is_open = status not in terminal_statuses
-        if not is_open:
-            if latest_terminal_considered:
-                continue
-            latest_terminal_considered = True
-            # An exact-history decoder can prove that a legacy terminal fanout
-            # failed before its complete target set existed.  That evidence is
-            # durable but cannot become more complete on a closed history, so
-            # do not retry the same immutable run forever.
-            if recovery_state == "incomplete":
-                continue
-            if recovery_state == "ready" and (
-                _recovery_manifest_matches_persisted_keys(
-                    conn,
-                    tenant_id=tenant_id,
-                    workflow_id=str(row["workflow_id"]),
-                    temporal_run_id=str(row["temporal_run_id"]),
-                )
-            ):
-                continue
-        candidates.append(
-            {
-                "workflow_id": str(row["workflow_id"]),
-                "temporal_run_id": str(row["temporal_run_id"]),
-            }
-        )
-    return candidates
-
-
-async def _reconcile_legacy_discovery_executions(
-    temporal_client: Any,
-    *,
-    tenant_id: str | None = None,
-    conn: Any = None,
-) -> int:
-    """Idempotently recover exact legacy Discover tracking candidates.
-
-    One ambiguous or temporarily unavailable history is isolated from every
-    other candidate.  This function never starts, cancels, signals, or retries
-    a workflow; it only delegates exact-history projection repair to the
-    write-side reconciliation module.
-    """
-    from jobctrl.database import get_connection
-    from jobctrl.discovery.execution_reconciliation import (
-        LegacyDiscoveryRecoveryError,
-        reconcile_legacy_discovery_execution,
-    )
-    from jobctrl.domain.tenant import LOCAL_TENANT
-
-    tenant = str(tenant_id or LOCAL_TENANT)
-    connection = conn or get_connection()
-    candidates = _legacy_discovery_recovery_candidates(connection, tenant_id=tenant)
-    changed = 0
-    for candidate in candidates:
-        try:
-            result = await reconcile_legacy_discovery_execution(
-                temporal_client,
-                workflow_id=candidate["workflow_id"],
-                temporal_run_id=candidate["temporal_run_id"],
-                tenant_id=tenant,
-                conn=connection,
-            )
-        except LegacyDiscoveryRecoveryError as exc:
-            # Refusal is safe: the controller found evidence it cannot map
-            # uniquely.  Keep the execution untouched and retry after more
-            # canonical rows/history arrive.
-            log.warning(
-                "Legacy Discover execution recovery deferred (%s); will retry",
-                exc.code,
-            )
-            continue
-        except Exception:
-            log.warning(
-                "Legacy Discover execution recovery failed for one exact run; will retry",
-                exc_info=True,
-            )
-            continue
-        if result.activities_recovered or result.jobs_linked or result.work_plans_recovered:
-            changed += 1
-    return changed
-
-
-async def _safe_task_queue_observation(temporal_client: Any, task_queue: str) -> Any:
-    """Return an explicit queue observation without risking worker liveness."""
-    from jobctrl.infrastructure.temporal.task_queue_observation import (
-        TaskQueueObservation,
-        sample_task_queue_observation,
-    )
-
-    try:
-        return await sample_task_queue_observation(temporal_client, task_queue)
-    except Exception:
-        # The sampler already converts expected RPC failures. This outer guard
-        # protects the worker from SDK/protobuf incompatibilities without
-        # logging transport text that could contain deployment details.
-        log.warning("Temporal task-queue telemetry sample failed; heartbeat will mark it unavailable")
-        return TaskQueueObservation.unavailable(
-            observed_at=datetime.now(timezone.utc),
-            reason_code="describe_task_queue_unavailable",
-        )
-
-
-# Temporal execution status -> the terminal workflow-run status the reconciler
-# records. RUNNING / CONTINUED_AS_NEW are intentionally absent: those rows are
-# still live and are left untouched.
-def _reconcile_status_map() -> dict:
-    from temporalio.client import WorkflowExecutionStatus
-
-    return {
-        WorkflowExecutionStatus.COMPLETED: "succeeded",
-        WorkflowExecutionStatus.FAILED: "failed",
-        WorkflowExecutionStatus.CANCELED: "canceled",
-        WorkflowExecutionStatus.TERMINATED: "terminated",
-        WorkflowExecutionStatus.TIMED_OUT: "timed_out",
-    }
-
-
-def _reconciled_reason(status: str, describe_status: Any) -> tuple[str | None, str | None]:
-    """Reason fields for a row the reconciler terminalizes.
-
-    A backstop-closed run carries no app-level error detail (finalize never ran
-    on it), so without this the ``/runs`` UI shows a terminated run with no
-    explanation. The reconciler stamps its own provenance instead: an
-    ``errorCode`` naming why it closed the row and a human-readable message
-    quoting the Temporal execution status. A reconciled success needs no reason
-    and keeps both fields null. The NOT_FOUND code (``reconciled_not_found``) is
-    set at its call site in ``_reconcile_one_workflow_run``.
-    """
-    if status == "succeeded":
-        return None, None
-    name = getattr(describe_status, "name", str(describe_status))
-    code = "reconciled_terminated" if status == "terminated" else f"reconciled_closed_{status}"
-    return code, f"The reconciler closed this run: the Temporal execution reported {name}."
-
-
-async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | None = None) -> int:
-    """Reconcile workflow projections against their exact Temporal executions.
-
-    Normal open rows settle from their exact recorded Temporal run. A
-    ``reconciled_not_found`` terminal remains provisional: the loop keeps
-    probing that same run and repairs the projection if its authoritative
-    history becomes reachable again.
-    """
-    from jobctrl.database import get_connection
-    from jobctrl.domain.tenant import LOCAL_TENANT
-    from jobctrl.infrastructure.projections.sqlite_projection_store import (
-        SqliteProjectionStore,
-    )
-
-    tenant = tenant_id or LOCAL_TENANT
-    conn = get_connection()
-    try:
-        store = SqliteProjectionStore(conn)
-        open_runs = store.open_workflow_runs(str(tenant))
-        cancellation_audit_runs = store.workflow_runs_missing_cancellation_audit(str(tenant))
-    except sqlite3.OperationalError:
-        return 0
-
-    changed = 0
-    for run in open_runs:
-        if await _reconcile_one_workflow_run(temporal_client, conn, run):
-            changed += 1
-    for run in cancellation_audit_runs:
-        if await _reconcile_cancellation_audit(temporal_client, conn, run):
-            changed += 1
-    changed += _reconcile_canceled_enrichment_cohorts(conn, tenant_id=str(tenant))
-    from jobctrl.infrastructure.temporal.preparation_outcome_audit import reconcile_preparation_outcomes
-
-    changed += await reconcile_preparation_outcomes(temporal_client, conn=conn, tenant_id=str(tenant))
-    return changed
-
-
-def _reconcile_canceled_enrichment_cohorts(conn, *, tenant_id: str) -> int:
-    """Terminalize unfinished Enrich rows still owned by a canceled run.
-
-    Runs whose lease lane already carries the terminal phase-3
-    ``cancellation:`` claim are settled: the first successful pass wrote that
-    claim, so re-selecting them here would cost two write transactions per
-    canceled run on every heartbeat forever. They are excluded below. A
-    settled run that still (or again) owns live rows keeps recovering through
-    the stage-row query, which resurfaces its cohort until every member is
-    terminal, so a crash between the lease claim and the row transaction
-    cannot strand work.
-    """
-
-    from collections import defaultdict
-
-    from jobctrl.domain.identifiers import JobId
-    from jobctrl.domain.tenant import TenantId
-    from jobctrl.enrichment.detail import cancel_enrichment_cohort
-
-    canceled_execution_rows = conn.execute(
-        """
-        SELECT run.workflow_id, run.temporal_run_id
-        FROM workflow_run_projections AS run
-        WHERE run.tenant_id = ?
-          AND run.status = 'canceled'
-          AND run.temporal_run_id IS NOT NULL
-          AND EXISTS (
-            SELECT 1 FROM job_events AS lease
-            WHERE lease.tenant_id = run.tenant_id
-              AND lease.event_type = 'EnrichmentLeaseClaimed'
-              AND lease.payload_json IS NOT NULL
-              AND json_valid(lease.payload_json)
-              AND json_extract(lease.payload_json, '$.execution.workflowId') = run.workflow_id
-              AND json_extract(lease.payload_json, '$.execution.runId') = run.temporal_run_id
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM job_events AS settled
-            WHERE settled.tenant_id = run.tenant_id
-              AND settled.event_type = 'EnrichmentLeaseClaimed'
-              AND settled.payload_json IS NOT NULL
-              AND json_valid(settled.payload_json)
-              AND json_extract(settled.payload_json, '$.execution.workflowId') = run.workflow_id
-              AND json_extract(settled.payload_json, '$.execution.runId') = run.temporal_run_id
-              AND COALESCE(CAST(json_extract(settled.payload_json, '$.activityPhase') AS INTEGER), 1) >= 3
-          )
-        ORDER BY run.workflow_id, run.temporal_run_id
-        """,
-        (tenant_id,),
-    ).fetchall()
-    rows = conn.execute(
-        """
-        SELECT stage.job_id,
-               json_extract(stage.metadata_json, '$.workflowId') AS workflow_id,
-               json_extract(stage.metadata_json, '$.temporalRunId') AS temporal_run_id
-        FROM job_stage_states AS stage
-        JOIN workflow_run_projections AS run
-          ON run.tenant_id = stage.tenant_id
-         AND run.workflow_id = json_extract(stage.metadata_json, '$.workflowId')
-         AND (
-           json_extract(stage.metadata_json, '$.temporalRunId') IS NULL
-           OR run.temporal_run_id = json_extract(stage.metadata_json, '$.temporalRunId')
-         )
-        WHERE stage.tenant_id = ?
-          AND stage.stage = 'enrich'
-          AND stage.state IN ('pending', 'queued', 'running')
-          AND stage.metadata_json IS NOT NULL
-          AND json_valid(stage.metadata_json)
-          AND run.status = 'canceled'
-        ORDER BY workflow_id, temporal_run_id, stage.job_id
-        """,
-        (tenant_id,),
-    ).fetchall()
-    cohorts: dict[tuple[str, str | None], list[JobId]] = defaultdict(list)
-    for row in canceled_execution_rows:
-        cohorts[(str(row[0]), str(row[1]))]
-    for row in rows:
-        workflow_id = str(row[1] or "")
-        if not workflow_id:
-            continue
-        run_id = str(row[2] or "") or None
-        cohorts[(workflow_id, run_id)].append(JobId(str(row[0])))
-
-    changed = 0
-    for (workflow_id, run_id), job_ids in cohorts.items():
-        changed += cancel_enrichment_cohort(
-            conn,
-            tuple(job_ids),
-            tenant_id=TenantId(tenant_id),
-            workflow_id=workflow_id,
-            workflow_run_id=run_id,
-        )
-    return changed
-
-
-async def _reconcile_cancellation_audit(
-    temporal_client: Any,
-    conn,
-    run: dict,
-) -> bool:
-    """Backfill requester/source from the exact Temporal cancel history event."""
-
-    from jobctrl.infrastructure.temporal.cancellation_audit import (
-        cancellation_request_from_history,
-        record_workflow_cancellation_requested,
-    )
-
-    workflow_id = str(run.get("workflow_id") or "")
-    temporal_run_id = str(run.get("temporal_run_id") or "")
-    if not workflow_id or not temporal_run_id:
-        return False
-    try:
-        handle = temporal_client.get_workflow_handle(
-            workflow_id,
-            run_id=temporal_run_id,
-        )
-        observed = await cancellation_request_from_history(handle)
-    except Exception:  # noqa: BLE001 - history may be transiently unavailable
-        log.warning(
-            "cancel history unavailable for %s; will retry",
-            workflow_id,
-            exc_info=True,
-        )
-        return False
-    if observed is None:
-        return False
-    return record_workflow_cancellation_requested(
-        conn,
-        workflow_id=workflow_id,
-        workflow_type=str(run.get("workflow_type") or ""),
-        temporal_run_id=temporal_run_id,
-        requested_by=observed.requested_by,
-        source=observed.source,
-        requested_at=observed.requested_at,
-        evidence_kind="temporal_history",
-        reason=observed.reason,
-        tenant_id=str(run.get("tenant_id") or "local"),
-    )
-
-
-async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> bool:
-    from temporalio.service import RPCError, RPCStatusCode
-
-    workflow_id = str(run.get("workflow_id") or "")
-    if not workflow_id:
-        return False
-    temporal_run_id = str(run.get("temporal_run_id") or "") or None
-    missing_history_terminal = (
-        str(run.get("status") or "") == "terminated" and str(run.get("error_code") or "") == "reconciled_not_found"
-    )
-    try:
-        handle = temporal_client.get_workflow_handle(
-            workflow_id,
-            **({"run_id": temporal_run_id} if temporal_run_id else {}),
-        )
-        description = await handle.describe()
-    except RPCError as exc:
-        if exc.status == RPCStatusCode.NOT_FOUND:
-            if missing_history_terminal:
-                # The provisional terminal is already recorded. Keep probing
-                # without appending duplicate events so reconnecting to the
-                # authoritative history store can heal it later.
-                return False
-            # The dev server lost its history across a restart; treat the run as
-            # provisionally terminated so it stops showing as forever-running.
-            _record_reconciled_outcome(
-                conn,
-                run,
-                status="terminated",
-                error_code="reconciled_not_found",
-                error_message=(
-                    "The reconciler closed this run: its Temporal execution no "
-                    "longer exists on the server (dev-server history loss)."
-                ),
-                temporal_run_id=run.get("temporal_run_id"),
-            )
-            return True
-        log.warning("describe_workflow failed for %s; will retry", workflow_id, exc_info=True)
-        return False
-
-    recovered = False
-    if missing_history_terminal:
-        recovered = _record_reconciled_recovery(
-            conn,
-            run,
-            temporal_run_id=str(description.run_id or temporal_run_id or "") or None,
-        )
-        if not recovered:
-            return False
-
-    status = _reconcile_status_map().get(description.status)
-    if status is None:
-        # RUNNING / CONTINUED_AS_NEW — still live, leave it.
-        return recovered
-    error_code, error_message = _reconciled_reason(status, description.status)
-    _record_reconciled_outcome(
-        conn,
-        run,
-        status=status,
-        error_code=error_code,
-        error_message=error_message,
-        temporal_run_id=description.run_id or run.get("temporal_run_id"),
-    )
-    if status == "canceled":
-        # Audit enrichment, never settlement-blocking: record Temporal's
-        # immutable requester identity from the exact execution the describe
-        # just observed. Failures degrade to the recovered_temporal_history
-        # backfill sweep on a later heartbeat iteration.
-        from jobctrl.domain.tenant import LOCAL_TENANT
-        from jobctrl.infrastructure.temporal.cancellation_audit import (
-            observe_and_record_cancellation_request,
-        )
-
-        observed_run_id = str(description.run_id or temporal_run_id or "") or None
-        try:
-            audit_handle = (
-                temporal_client.get_workflow_handle(workflow_id, run_id=observed_run_id) if observed_run_id else handle
-            )
-            await observe_and_record_cancellation_request(
-                conn,
-                audit_handle,
-                workflow_id=workflow_id,
-                evidence_kind="temporal_history",
-                workflow_type=str(run.get("workflow_type") or "") or None,
-                temporal_run_id=observed_run_id,
-                tenant_id=str(run.get("tenant_id") or LOCAL_TENANT),
-            )
-        except Exception:
-            log.warning(
-                "Cancellation-request audit recording failed for %s; the backfill sweep will retry",
-                workflow_id,
-                exc_info=True,
-            )
-    return True
-
-
-def _record_reconciled_recovery(
-    conn,
-    run: dict,
-    *,
-    temporal_run_id: str | None,
-) -> bool:
-    """Reopen one false missing-history terminal after exact-run recovery.
-
-    The prior ``WorkflowTerminated`` event remains in the audit stream. The
-    compensating ``WorkflowStarted`` carries an explicit recovery marker, and
-    both projection folds accept that marker only when the current terminal is
-    ``reconciled_not_found`` and the Temporal run id is unchanged.
-    """
-    from jobctrl.database import get_connection
-    from jobctrl.domain.events.workflow import (
-        WorkflowStartedPayload,
-        create_workflow_started,
-    )
-    from jobctrl.domain.tenant import LOCAL_TENANT
-    from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
-    from jobctrl.state import record_job_event
-
-    workflow_id = str(run.get("workflow_id") or "")
-    expected_run_id = str(run.get("temporal_run_id") or "") or None
-    if not workflow_id or not temporal_run_id or temporal_run_id != expected_run_id:
-        return False
-
-    own_txn = not conn.in_transaction
-    if own_txn:
-        conn.execute("BEGIN IMMEDIATE")
-    try:
-        existing = conn.execute(
-            """
-            SELECT status, error_code, temporal_run_id, started_at,
-                   input_summary_json
-            FROM workflow_run_projections
-            WHERE workflow_id = ?
-            """,
-            (workflow_id,),
-        ).fetchone()
-        if (
-            existing is None
-            or str(existing["status"]) != "terminated"
-            or str(existing["error_code"] or "") != "reconciled_not_found"
-            or str(existing["temporal_run_id"] or "") != temporal_run_id
-        ):
-            if own_txn:
-                conn.rollback()
-            return False
-        try:
-            input_summary = json.loads(existing["input_summary_json"] or "{}")
-        except (TypeError, ValueError):
-            input_summary = {}
-        if not isinstance(input_summary, dict):
-            input_summary = {}
-        event = create_workflow_started(
-            str(run.get("tenant_id") or LOCAL_TENANT),
-            WorkflowStartedPayload(
-                workflow_id=workflow_id,
-                workflow_type=str(run.get("workflow_type") or ""),
-                input_summary=input_summary,
-                started_at=str(existing["started_at"] or "") or None,
-                temporal_run_id=temporal_run_id,
-                recovered_from_missing_history=True,
-            ),
-        )
-        record_job_event(
-            conn,
-            None,
-            "workflow",
-            event.event_type,
-            payload=dict(event.payload),
-            occurred_at=event.occurred_at,
-        )
-        if own_txn:
-            conn.commit()
-    except Exception:
-        if own_txn:
-            conn.rollback()
-        raise
-    ProjectionBuilder(conn_factory=get_connection).refresh()
-    return True
-
-
-def _record_reconciled_outcome(
-    conn,
-    run: dict,
-    *,
-    status: str,
-    temporal_run_id: str | None = None,
-    error_code: str | None = None,
-    error_message: str | None = None,
-) -> None:
-    from jobctrl.database import get_connection
-    from jobctrl.domain.tenant import LOCAL_TENANT
-    from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
-    from jobctrl.infrastructure.projections.sqlite_projection_store import (
-        SqliteProjectionStore,
-    )
-    from jobctrl.infrastructure.temporal.finalize import (
-        WorkflowOutcomeInput,
-        build_workflow_outcome_event,
-    )
-    from jobctrl.state import record_job_event, utc_now
-
-    workflow_id = str(run.get("workflow_id") or "")
-    if not workflow_id:
-        return
-
-    # The reconciler is a backstop for runs stuck open, never an overwriter of
-    # terminal truth. Both workflows encode stage/apply failure in their return
-    # value, so a failing run closes COMPLETED on the Temporal side even though
-    # finalize already recorded WorkflowFailed. Take the write lock first, then
-    # re-read the row: if a finalize landed the real terminal outcome between the
-    # open-runs snapshot and now, leave it rather than describe over it (M-1
-    # review). Layer 2 (the first-terminal-wins fold) backstops any event that
-    # slips past this check.
-    own_txn = not conn.in_transaction
-    if own_txn:
-        conn.execute("BEGIN IMMEDIATE")
-    try:
-        existing = conn.execute(
-            "SELECT status FROM workflow_run_projections WHERE workflow_id = ?",
-            (workflow_id,),
-        ).fetchone()
-        if existing is not None and str(existing["status"]) in SqliteProjectionStore.WORKFLOW_TERMINAL_STATUSES:
-            if own_txn:
-                conn.rollback()
-            return
-        event = build_workflow_outcome_event(
-            WorkflowOutcomeInput(
-                tenant_id=str(run.get("tenant_id") or LOCAL_TENANT),
-                workflow_id=workflow_id,
-                workflow_type=str(run.get("workflow_type") or ""),
-                status=status,
-                error_code=error_code,
-                error_message=error_message,
-                finished_at=utc_now(),
-                temporal_run_id=temporal_run_id,
-            )
-        )
-        record_job_event(conn, None, "workflow", event.event_type, payload=dict(event.payload))
-        if own_txn:
-            conn.commit()
-    except Exception:
-        if own_txn:
-            conn.rollback()
-        raise
-    ProjectionBuilder(conn_factory=get_connection).refresh()
-
-
-@app.command()
-def backup(
-    output: Optional[Path] = typer.Option(
-        None,
-        "--output",
-        "-o",
-        help=(
-            "Destination file, or a directory to place a timestamped backup in. "
-            "Defaults to ~/.jobctrl/backups/jobctrl-<timestamp>.db."
-        ),
-    ),
-) -> None:
-    """Write a consistent snapshot of the local SQLite database.
-
-    Uses SQLite VACUUM INTO, so it is safe to run while the app is running.
-    Nothing is ever deleted. To restore, stop the app and copy a backup file
-    over ~/.jobctrl/jobctrl.db.
-    """
-    from jobctrl.database import UnresolvedDatabaseInitializationError, backup_database
-
-    try:
-        destination = backup_database(output)
-    except (FileNotFoundError, FileExistsError, OSError, sqlite3.Error, UnresolvedDatabaseInitializationError) as exc:
-        console.print(f"[red]Backup failed:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
-
-    size = destination.stat().st_size
-    console.print(f"[green]Database backup written:[/green] {destination} ({size:,} bytes)")
-
-
-# Broad job boards whose internal per-board transport is owned by JobStreaming
-# (R10, D3): we cannot robots-gate or count their individual requests, only pace
-# and budget at our invocation boundary. ``doctor`` discloses when they are on.
-_BROAD_BOARDS = frozenset({"indeed", "linkedin", "glassdoor", "zip_recruiter"})
-
-
-def _politeness_blocked_source_ids(conn) -> set[str]:
-    """Distinct source_ids with a recorded robots/rate-limit block (empty on any error)."""
-    try:
-        rows = conn.execute(
-            """
-            SELECT DISTINCT source_id FROM operational_attempt_metrics
-            WHERE outcome = 'blocked'
-              AND failure_category IN ('robots_disallowed', 'rate_limited')
-              AND source_id IS NOT NULL
-            """
-        ).fetchall()
-    except Exception:  # noqa: BLE001 - doctor discloses posture; a missing table is not fatal.
-        return set()
-    return {str(row[0]) for row in rows if row[0]}
-
-
-def politeness_doctor_notices(conn, search_cfg: dict) -> list[tuple[str, str, str]]:
-    """Crawl-politeness disclosure rows as ``(check, level, note)``.
-
-    ``level`` is ``"ok"`` or ``"warn"``. Pure and side-effect-free (no printing,
-    no network) so it is unit-testable with an in-memory connection and a
-    search-config dict. ``doctor`` maps the levels to its status marks.
-    """
-    from jobctrl.config import resolve_jobspy_boards
-    from jobctrl.infrastructure.network.politeness import resolve_request_headers
-
-    rows: list[tuple[str, str, str]] = []
-
-    user_agent = resolve_request_headers(search_cfg)["User-Agent"]
-    rows.append(
-        (
-            "crawl user-agent",
-            "ok",
-            f"{user_agent} — review before real crawls; header mode is set in Discovery runtime settings",
-        )
-    )
-
-    boards = resolve_jobspy_boards(search_cfg, warn=False)
-    active_broad = [board for board in boards if board in _BROAD_BOARDS]
-    if active_broad:
-        rows.append(
-            (
-                "broad-board discovery",
-                "warn",
-                f"active: {', '.join(active_broad)} — JobStreaming owns their transport; "
-                "only invocation-boundary budget + pacing apply (D3)",
-            )
-        )
-    else:
-        rows.append(("broad-board discovery", "ok", "no broad boards active"))
-
-    blocked = _politeness_blocked_source_ids(conn)
-    if blocked:
-        preview = ", ".join(sorted(blocked)[:5])
-        extra = "" if len(blocked) <= 5 else f" (+{len(blocked) - 5} more)"
-        rows.append(
-            (
-                "robots/rate-limited sources",
-                "warn",
-                f"{len(blocked)} source(s) recently blocked: {preview}{extra}",
-            )
-        )
-    else:
-        rows.append(("robots/rate-limited sources", "ok", "none recently blocked"))
-
-    return rows
-
-
-def llm_budget_doctor_notices() -> list[tuple[str, str, str]]:
-    """Return global USD and per-lane token status rows for ``doctor``."""
-    from jobctrl.llm import read_spend_budget_status
-    from jobctrl.llm_lanes import LLM_LANES
-
-    rows: list[tuple[str, str, str]] = []
-    first = read_spend_budget_status(lane=LLM_LANES[0], require_complete=True)
-    global_limit = "unlimited" if first.daily_budget_usd <= 0 else f"${first.daily_budget_usd:.2f}"
-    rows.append(
-        (
-            "LLM daily spend",
-            "warn" if first.global_exceeded else "ok",
-            f"${first.estimated_usd:.4f} / {global_limit} on {first.day} UTC",
-        )
-    )
-    for lane in LLM_LANES:
-        status = first if lane == first.lane else read_spend_budget_status(lane=lane, require_complete=True)
-        total = status.lane_input_tokens + status.lane_output_tokens
-        limit = "unlimited" if status.lane_token_limit <= 0 else f"{status.lane_token_limit} tokens"
-        rows.append(
-            (
-                f"LLM lane {lane}",
-                "warn" if status.lane_exceeded else "ok",
-                f"{total} tokens / {limit}",
-            )
-        )
-    return rows
-
-
-@app.command()
-def doctor() -> None:
-    """Check your setup and diagnose missing requirements."""
-    import os
-    import shutil
-
-    from jobctrl.config import (
-        DB_PATH,
-        RESUME_PATH,
-        RESUME_PDF_PATH,
-        gmail_mcp_auth_status,
-        load_env,
-        load_search_config,
-    )
-    from jobctrl.domain.tenant import LOCAL_TENANT
-    from jobctrl.infrastructure.apply.claude_code_cli import _claude_supports_budget_flag
-    from jobctrl.infrastructure.profile import get_profile_repository
-    from jobctrl.infrastructure.scoring.criteria_provider import (
-        read_apply_approval_required,
-    )
-    from jobctrl.infrastructure.setup_probes import (
-        probe_analysis_setup,
-        resolve_claude_apply_binary,
-    )
-    from jobctrl.native_credentials import native_store_label
-    from jobctrl.runtime import is_bundled_runtime, payload_path
-
-    credential_diagnostics = load_env() or ()
-    bundled = is_bundled_runtime()
-    native_label = native_store_label()
-
-    ok_mark = "[green]OK[/green]"
-    fail_mark = "[red]MISSING[/red]"
-    warn_mark = "[yellow]WARN[/yellow]"
-
-    results: list[tuple[str, str, str]] = []  # (check, status, note)
-
-    loaded_from_native = sum(result.status == "loaded" for result in credential_diagnostics)
-    unavailable_from_native = sum(result.status == "unavailable" for result in credential_diagnostics)
-    unsupported_from_native = sum(result.status == "unsupported" for result in credential_diagnostics)
-    explicit_provider_settings = sum(result.status == "explicit" for result in credential_diagnostics)
-    if loaded_from_native:
-        results.append(
-            (
-                "provider credential source",
-                ok_mark,
-                f"{loaded_from_native} setting(s) loaded from {native_label} for this process; restart the worker after Settings changes",
-            )
-        )
-    elif unavailable_from_native:
-        results.append(
-            (
-                "provider credential source",
-                warn_mark,
-                f"{native_label} is unavailable; unlock or repair it, then restart. A non-empty inherited environment value remains an ephemeral override",
-            )
-        )
-    elif unsupported_from_native:
-        results.append(
-            (
-                "provider credential source",
-                "[dim]environment only[/dim]",
-                "native credential storage is unavailable on this platform; inherited environment values remain available for ephemeral runs",
-            )
-        )
-    elif explicit_provider_settings:
-        results.append(
-            (
-                "provider credential source",
-                ok_mark,
-                f"inherited environment configuration takes precedence over {native_label}",
-            )
-        )
-    else:
-        results.append(
-            (
-                "provider credential source",
-                "[dim]optional[/dim]",
-                f"no {native_label} entries found; inherited environment configuration remains available for ephemeral runs",
-            )
-        )
-
-    # --- Tier 1 checks ---
-    # Profile
-    try:
-        profile = get_profile_repository().load(LOCAL_TENANT)
-        if profile is None:
-            results.append(("candidate profile", fail_mark, "Run 'jobctrl init' to create"))
-        else:
-            results.append(("candidate profile", ok_mark, f"SQLite source of truth at {DB_PATH}"))
-            attestations = profile.to_dict().get("application_attestations") or {}
-            required_attestations = (
-                "age_18_plus",
-                "background_check_consent",
-                "felony_conviction",
-                "previously_worked_at_employer",
-            )
-            missing_attestations = [key for key in required_attestations if attestations.get(key) is None]
-            if missing_attestations:
-                results.append(
-                    (
-                        "application attestations",
-                        warn_mark,
-                        "incomplete; live applies may fail on screening questions",
-                    )
-                )
-            else:
-                results.append(
-                    (
-                        "application attestations",
-                        ok_mark,
-                        "typed screening attestations complete",
-                    )
-                )
-    except FileNotFoundError:
-        results.append(("candidate profile", fail_mark, "Run 'jobctrl init' to create"))
-    except Exception:  # noqa: BLE001 - doctor should report validation problems instead of crashing
-        results.append(("candidate profile", fail_mark, "Profile exists but failed validation"))
-
-    # Resume
-    if RESUME_PATH.exists():
-        results.append(("resume.txt", ok_mark, str(RESUME_PATH)))
-    elif RESUME_PDF_PATH.exists():
-        results.append(("resume.txt", warn_mark, "Only PDF found — plain-text needed for AI stages"))
-    else:
-        results.append(("resume.txt", fail_mark, "Run 'jobctrl init' to add your resume"))
-
-    from jobctrl.browser_capabilities import list_browser_capabilities
-
-    browser_capabilities = {item.id: item for item in list_browser_capabilities()}
-    core_browser = browser_capabilities["core-browser"]
-    results.append(
-        (
-            "core browser (scraping + PDF)",
-            ok_mark if core_browser.status == "ready" else fail_mark,
-            core_browser.detail,
-        )
-    )
-    auto_apply_browser = browser_capabilities["auto-apply-browser"]
-    linkedin_browser = browser_capabilities["authenticated-linkedin-browser"]
-    capability_marks = {
-        "ready": ok_mark,
-        "disabled": "[dim]DISABLED[/dim]",
-        "missing": warn_mark,
-        "failed": fail_mark,
-        "unavailable": fail_mark,
-    }
-    for capability in (auto_apply_browser, linkedin_browser):
-        results.append(
-            (
-                f"{capability.id} capability",
-                capability_marks[capability.status],
-                capability.detail,
-            )
-        )
-
-    try:
-        search_cfg = load_search_config()
-        boards = ", ".join(str(board) for board in search_cfg.get("boards", [])) or "default boards"
-        results.append(("discovery_settings", ok_mark, f"SQLite-backed search settings ({boards})"))
-    except Exception as exc:  # noqa: BLE001 - doctor should report setup issues, not crash.
-        results.append(("discovery_settings", warn_mark, f"Unable to load search settings: {exc}"))
-
-    # JobStreaming is a required, pinned worker dependency because broad-board
-    # discovery and its durable event/checkpoint contract ship together.
-    try:
-        from importlib import import_module, metadata
-
-        import_module("jobstreaming")
-        version = metadata.version("jobstreaming")
-        results.append(("JobStreaming", ok_mark, f"Job board streaming available ({version})"))
-    except ImportError:
-        results.append(("JobStreaming", fail_mark, "Run scripts/install to restore worker dependencies"))
-
-    # --- Tier 2 checks ---
-    for probe in probe_analysis_setup():
-        mark = ok_mark if probe.ok else (fail_mark if probe.required else "[dim]optional[/dim]")
-        results.append((probe.name, mark, probe.note))
-
-    # --- Tier 3 checks ---
-    # Claude apply runtime
-    try:
-        claude_bin = resolve_claude_apply_binary()
-        if shutil.which(claude_bin) or Path(claude_bin).expanduser().exists():
-            results.append(("Claude apply runtime", ok_mark, claude_bin))
-            if _claude_supports_budget_flag(claude_bin, bare=bundled):
-                results.append(("Claude apply budget flag", ok_mark, "--max-budget-usd available"))
-            else:
-                results.append(
-                    (
-                        "Claude apply budget flag",
-                        warn_mark,
-                        "installed Claude runtime does not advertise --max-budget-usd",
-                    )
-                )
-        else:
-            results.append(("Claude apply runtime", fail_mark, "set JOBCTRL_CLAUDE_BIN or install dependencies"))
-    except Exception as exc:  # noqa: BLE001 - doctor is diagnostic
-        results.append(("Claude apply runtime", fail_mark, f"unavailable: {exc}"))
-
-    # Playwright MCP uses the payload-owned Node/runtime wrapper in bundled
-    # mode; only source checkouts need a machine-level npx executable.
-    if bundled:
-        try:
-            playwright_mcp = payload_path(
-                "playwright-mcp/bin/playwright-mcp",
-                require_exists=True,
-            )
-            if not playwright_mcp.is_file() or not os.access(playwright_mcp, os.X_OK):
-                raise RuntimeError(f"embedded wrapper is not executable: {playwright_mcp}")
-            results.append(("Playwright MCP runtime", ok_mark, str(playwright_mcp)))
-        except Exception as exc:  # noqa: BLE001 - doctor is diagnostic
-            results.append(("Playwright MCP runtime", fail_mark, f"unavailable: {exc}"))
-    else:
-        npx_bin = shutil.which("npx")
-        if npx_bin:
-            results.append(("Node.js (npx)", ok_mark, npx_bin))
-        else:
-            results.append(
-                ("Node.js (npx)", fail_mark, "Install Node.js 22.13+ from nodejs.org (needed for auto-apply)")
-            )
-
-    # Gmail connector is optional, but apply runs that hit email verification need it
-    # to stay browser-independent and finish automatically.
-    gmail_ok, gmail_note = gmail_mcp_auth_status()
-    if gmail_ok:
-        results.append(("Gmail connector auth", ok_mark, gmail_note))
-    else:
-        results.append(
-            (
-                "Gmail connector auth",
-                warn_mark,
-                f"{gmail_note}; email verification will stop as login_issue and email applications cannot send",
-            )
-        )
-
-    # CapSolver (optional; the owned solve_captcha tool fails closed when absent)
-    capsolver = os.environ.get("CAPSOLVER_API_KEY")
-    if capsolver:
-        results.append(
-            (
-                "CapSolver API key",
-                "[dim]configured[/dim]",
-                "owned solve_captcha tool can handle supported widgets",
-            )
-        )
-    else:
-        results.append(
-            (
-                "CapSolver API key",
-                "[dim]optional[/dim]",
-                "not required; unsupported or unconfigured CAPTCHA flows fail closed",
-            )
-        )
-
-    # The gate defaults on. If an operator has explicitly disabled it, make the
-    # resulting live-submission posture visible in the same preflight that
-    # reports the other preserved automation capabilities.
-    if read_apply_approval_required(default=True):
-        results.append(
-            (
-                "apply approval gate",
-                ok_mark,
-                "required before eligible live submissions",
-            )
-        )
-    else:
-        results.append(
-            (
-                "apply approval gate",
-                warn_mark,
-                "disabled; eligible live runs may submit without human review",
-            )
-        )
-
-    # Temporal dev server (workflow engine)
-    from jobctrl.infrastructure.temporal import get_temporal_client
-
-    async def _probe_temporal() -> None:
-        await asyncio.wait_for(get_temporal_client(), timeout=3.0)
-
-    try:
-        asyncio.run(_probe_temporal())
-        results.append(("Temporal", ok_mark, "reachable"))
-    except (Exception, asyncio.TimeoutError):  # noqa: BLE001 — any failure ⇒ unreachable
-        results.append(("Temporal", fail_mark, "unreachable (start with: temporal server start-dev)"))
-
-    # Langfuse OTLP ingest (observability target)
-    # Skip the network probe entirely if LANGFUSE_DISABLE is set — it's the
-    # opt-out switch users flip when they don't want export running and they
-    # shouldn't see a misleading "MISSING" or "unreachable" row.
-    from jobctrl.infrastructure.observability import langfuse_disabled
-
-    if langfuse_disabled():
-        results.append(("Langfuse", "[dim]disabled[/dim]", "LANGFUSE_DISABLE=1"))
-    else:
-        lf_pub = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
-        lf_sec = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
-        lf_url = os.environ.get("LANGFUSE_BASE_URL", "").strip().rstrip("/")
-        if not (lf_pub and lf_sec and lf_url):
-            results.append(
-                (
-                    "Langfuse",
-                    fail_mark,
-                    "MISSING (set LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)",
-                )
-            )
-        else:
-            try:
-                resp = httpx.head(f"{lf_url}/api/public/otel/v1/traces", timeout=2.0)
-                # HEAD cannot verify ingestion or credentials. A success, 401
-                # (auth required), or 405 (HEAD unsupported) indicates that the
-                # configured route responds; a 404 or redirect does not.
-                if 200 <= resp.status_code < 300 or resp.status_code in (401, 405):
-                    results.append(("Langfuse", ok_mark, "reachable"))
-                else:
-                    results.append(
-                        (
-                            "Langfuse",
-                            fail_mark,
-                            f"unreachable (status={resp.status_code})",
-                        )
-                    )
-            except Exception:  # noqa: BLE001 — any failure ⇒ unreachable
-                results.append(("Langfuse", fail_mark, "unreachable"))
-
-    # --- Crawl politeness disclosure (R10) ---
-    try:
-        from jobctrl.config import load_discovery_crawler_settings
-        from jobctrl.database import get_connection as _get_connection
-
-        try:
-            politeness_cfg = load_discovery_crawler_settings()
-        except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
-            politeness_cfg = {}
-        try:
-            politeness_conn = _get_connection()
-        except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
-            politeness_conn = None
-        mark_for = {"ok": ok_mark, "warn": warn_mark}
-        for check, level, note in politeness_doctor_notices(politeness_conn, politeness_cfg):
-            results.append((check, mark_for.get(level, warn_mark), note))
-    except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
-        pass
-
-    try:
-        mark_for = {"ok": ok_mark, "warn": warn_mark}
-        for check, level, note in llm_budget_doctor_notices():
-            results.append((check, mark_for[level], note))
-    except Exception as exc:  # noqa: BLE001 - doctor reports unavailable accounting without crashing.
-        results.append(("LLM budget accounting", warn_mark, f"unavailable: {exc}"))
-
-    # --- Render results ---
-    console.print()
-    console.print("[bold]JobCtrl Doctor[/bold]\n")
-
-    col_w = max(len(r[0]) for r in results) + 2
-    for check, status, note in results:
-        pad = " " * (col_w - len(check))
-        console.print(f"  {check}{pad}{status}  [dim]{note}[/dim]")
-
-    console.print()
-
-    # Tier summary
-    from jobctrl.config import TIER_LABELS, get_tier
-
-    tier = get_tier()
-    console.print(f"[bold]Current tier: Tier {tier} — {TIER_LABELS[tier]}[/bold]")
-
-    if tier == 1:
-        console.print("[dim]  → Tier 2 unlocks: scoring, tailoring, cover letters (needs an LLM provider)[/dim]")
-        tier3_tools = "Claude apply runtime + an explicitly enabled auto-apply browser capability" + (
-            "" if bundled else " + Node.js"
-        )
-        console.print(f"[dim]  → Tier 3 unlocks: auto-apply (needs {tier3_tools})[/dim]")
-    elif tier == 2:
-        tier3_tools = "Claude apply runtime + an explicitly enabled auto-apply browser capability" + (
-            "" if bundled else " + Node.js"
-        )
-        console.print(f"[dim]  → Tier 3 unlocks: auto-apply (needs {tier3_tools})[/dim]")
-
-    console.print()
-
-
-@app.command("migrate-resume-html")
-def migrate_resume_html(
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Report matching resume PDFs without writing files or DB rows."
-    ),
-    force: bool = typer.Option(
-        False, "--force", help="Refresh already-HTML resume PDFs from their sibling text source."
-    ),
-    job_url: Optional[str] = typer.Option(None, "--job-url", help="Limit migration to one job URL."),
-    limit: Optional[int] = typer.Option(
-        None, "--limit", min=1, help="Maximum number of resume PDFs to migrate or refresh."
-    ),
-) -> None:
-    """Migrate or refresh approved resume PDFs as HTML/CSS-rendered artifacts."""
-    _bootstrap()
-
-    from jobctrl.database import get_connection
-    from jobctrl.infrastructure.materials.resume_html_migration import migrate_legacy_resume_pdfs
-    from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
-
-    conn = get_connection()
-    results = migrate_legacy_resume_pdfs(conn, dry_run=dry_run, force=force, job_url=job_url, limit=limit)
-    if not dry_run:
-        ProjectionBuilder(conn_factory=get_connection).refresh()
-
-    table = Table(title="Resume HTML migration")
-    table.add_column("Status")
-    table.add_column("Artifact")
-    table.add_column("Reason")
-    table.add_column("Path")
-    for result in results:
-        table.add_row(result.status, result.artifact_id[:10], result.reason, result.path)
-    console.print(table)
-    migrated = sum(1 for result in results if result.status == "migrated")
-    refreshed = sum(1 for result in results if result.status == "refreshed")
-    ready = sum(1 for result in results if result.status == "would_migrate")
-    ready_refresh = sum(1 for result in results if result.status == "would_refresh")
-    skipped = sum(1 for result in results if result.status == "skipped")
-    if dry_run:
-        console.print(
-            f"[bold]{ready}[/bold] resume PDF(s) ready to migrate; "
-            f"[bold]{ready_refresh}[/bold] ready to refresh; [bold]{skipped}[/bold] skipped."
-        )
-    else:
-        console.print(
-            f"[bold]{migrated}[/bold] resume PDF(s) migrated; "
-            f"[bold]{refreshed}[/bold] refreshed; [bold]{skipped}[/bold] skipped."
-        )
-
-
-@app.command("gmail-auth")
-def gmail_auth(
-    no_browser: bool = typer.Option(False, "--no-browser", help="Print the auth URL without opening a browser."),
-    timeout_seconds: int = typer.Option(180, "--timeout-seconds", help="Seconds to wait for the local OAuth callback."),
-) -> None:
-    """Authenticate the first-party Gmail connector."""
-    from jobctrl.infrastructure.gmail.auth import GmailAuthError, authenticate
-
-    try:
-        token_path = authenticate(open_browser=not no_browser, timeout_seconds=timeout_seconds)
-    except GmailAuthError as exc:
-        console.print(f"[red]Gmail auth failed:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
-    console.print(f"[green]Gmail token saved:[/green] {token_path}")
+    """Read or explicitly acknowledge the canonical current digest."""
+    async def read():
+        query = "?" + urlencode({"minFitScore": min_fit_score}) if min_fit_score is not None else ""
+        generated = (await _request("GET", "/v1/digest" + query)).json()
+        if acknowledge:
+            receipt = (await _request("POST", "/v1/digest/acknowledge", {"acknowledgedAt": generated["generatedAt"]})).json()
+            return {"digest": generated, "acknowledge": receipt}
+        return generated
+
+    _output(_run(read()))
 
 
 @app.command("material-export")
 def material_export(
-    job_id: str,
-    source_artifact_id: str = typer.Option(..., "--source-artifact-id", help="Accepted material artifact ID."),
-    generation: int = typer.Option(..., "--generation", help="Expected accepted generation."),
-    format_name: str = typer.Option("docx", "--format"),
-    paper: str = typer.Option("A4", "--paper"),
-    locale: str | None = typer.Option(None, "--locale", help="Label unrecorded source language; never translate."),
-    tenant: str = typer.Option("local", "--tenant"),
+    resume_id: str,
+    output: Path = typer.Option(..., "--output", "-o"),
+    format: str = typer.Option("pdf", "--format"),
+    accepted: bool = typer.Option(False, "--accepted"),
+    revision_id: str | None = typer.Option(None, "--revision-id", help="Pin one exact saved document revision."),
 ) -> None:
-    """Export accepted resume/cover-letter text as an editable DOCX."""
-    from jobctrl.config import APP_DIR
-    from jobctrl.database import init_db
-    from jobctrl.domain.materials.editable_export import ExportFailure
-    from jobctrl.infrastructure.materials.accepted_export import export_accepted_material
-
-    connection = init_db()
-    try:
-        result = export_accepted_material(
-            connection,
-            tenant_id=tenant,
-            job_id=job_id,
-            artifact_id=source_artifact_id,
-            generation=generation,
-            root=APP_DIR,
-            settings={"format": format_name, "paper": paper, "locale": locale},
-        )
-        typer.echo(json.dumps(result, ensure_ascii=False))
-    except ExportFailure as error:
-        typer.echo(error.code, err=True)
-        raise typer.Exit(1) from None
-    except (OSError, sqlite3.Error):
-        typer.echo("material_export_failed: accepted materials and approvals are preserved", err=True)
-        raise typer.Exit(1) from None
-    finally:
-        connection.close()
+    """Export the actual Resumes document with source/acceptance guards."""
+    if format not in {"pdf", "docx", "html", "txt"}:
+        _fail("invalid_export_format", "Choose pdf, docx, html or txt.", exit_code=2)
+    query = urlencode({"format": format, "accepted": str(accepted).lower(),
+                       **({"revision_id": revision_id} if revision_id else {})})
+    request("GET", "/v1/resumes/" + quote(resume_id, safe="") + "/export?" + query,
+            payload=None, data=None, output=output)
 
 
 @app.command("material-locale")
 def material_locale(
-    job_id: str,
-    operation_name: str = typer.Option("history", "--operation"),
-    source_artifact_id: str = typer.Option("", "--source-artifact-id"),
-    source_locale: str = typer.Option("en", "--source-locale"),
-    target_locale: str = typer.Option("es", "--target-locale"),
-    generation: int = typer.Option(1, "--generation"),
-    profile_version: int = typer.Option(1, "--profile-version"),
-    revision_id: str = typer.Option("", "--revision-id"),
-    expected_version: int = typer.Option(1, "--expected-version"),
-    dimension: str = typer.Option("terminology", "--dimension"),
-    decision: str = typer.Option("accepted", "--decision"),
-    note: str = typer.Option("", "--note"),
-    format_name: str = typer.Option("txt", "--format"),
-):
-    """Generate, independently review, accept and export source-linked locale revisions."""
-    from jobctrl.config import APP_DIR
-    from jobctrl.database import init_db
-    from jobctrl.domain.determinations import DeterminationFailure
-    from jobctrl.infrastructure.materials.locale_variants import operation
-
-    request = {"operation": operation_name}
-    if operation_name == "generate":
-        request.update(
-            sourceArtifactId=source_artifact_id,
-            sourceLocale=source_locale,
-            targetLocale=target_locale,
-            expectedGeneration=generation,
-            expectedProfileVersion=profile_version,
-        )
-    elif operation_name != "history":
-        request.update(revisionId=revision_id, expectedVersion=expected_version)
-        if operation_name == "review":
-            request.update(dimension=dimension, decision=decision, note=note)
-        elif operation_name == "export":
-            request.update(format=format_name)
-    connection = init_db()
-    try:
-        result = operation(connection, tenant_id="local", job_id=job_id, root=APP_DIR, request=request)
-        typer.echo(json.dumps(result, ensure_ascii=False))
-    except DeterminationFailure as error:
-        typer.echo(error.code, err=True)
-        raise typer.Exit(1) from None
-    finally:
-        connection.close()
+    resume_id: str,
+    operation: str = typer.Argument("list", help="list, generate, review, accept or export."),
+    locale_id: str | None = typer.Option(None, "--locale-id"),
+    payload: Path | None = typer.Option(None, "--payload"),
+    output: Path | None = typer.Option(None, "--output"),
+    format: str = typer.Option("pdf", "--format"),
+) -> None:
+    """Use source-linked locale generation, review, acceptance and exports."""
+    path = "/v1/resumes/" + quote(resume_id, safe="") + "/locales"
+    if operation == "list":
+        request("GET", path, payload=None, data=None, output=None)
+        return
+    if operation not in {"generate", "review", "accept", "export"}:
+        _fail("invalid_locale_operation", "Choose list, generate, review, accept or export.", exit_code=2)
+    if operation == "generate":
+        path += "/generate"
+    else:
+        if locale_id is None:
+            _fail("locale_id_required", "This operation requires --locale-id.", exit_code=2)
+        path += "/" + quote(locale_id, safe="") + "/" + operation
+    if operation == "export":
+        if output is None:
+            _fail("output_required", "Locale export requires --output.", exit_code=2)
+        request("GET", path + "?" + urlencode({"format": format}), payload=None, data=None, output=output)
+    else:
+        if payload is None:
+            _fail("payload_required", "Locale changes require an exact revision-bound --payload.", exit_code=2)
+        request("POST", path, payload=payload, data=None, output=None)
 
 
-screening_app = typer.Typer(help="Review local screening answers; never enter or submit forms.")
-app.add_typer(screening_app, name="screening")
+@app.command("check-availability")
+def check_posting_availability(job_id: str) -> None:
+    """Refresh the saved posting through Jobs source-bound availability authority."""
+    async def refresh():
+        application = _application()
+        snapshot = application.services["jobs"].get_job(job_id)
+        return await application.submit("jobs.refresh", {"job_id": job_id, "expectedRevision": snapshot["revision"]})
+    _output(_run(refresh()))
 
 
-def _screening_cli_response(job_id, tenant, command=None):
-    from jobctrl import config
-    from jobctrl.infrastructure.rpc.handlers import screening_answers
-    from jobctrl.infrastructure.rpc.server import _RpcParamError
-
-    params = {
-        "tenantId": tenant,
-        "jobId": job_id,
-        "expectedAppDir": str(config.APP_DIR),
-        "expectedDbPath": str(config.DB_PATH),
-    }
-    if command is not None:
-        params["command"] = command
-    try:
-        return screening_answers(params)
-    except _RpcParamError as failure:
-        console.print(f"Screening request refused: {failure}")
-        raise typer.Exit(1) from None
-    except Exception:
-        console.print("Screening request unavailable; accepted history is preserved.")
-        raise typer.Exit(1) from None
+screening_app = typer.Typer(help="Read and explicitly review application-bound screening answers.", no_args_is_help=True)
 
 
 @screening_app.command("read")
-def screening_read(job_id: str, tenant: str = "local") -> None:
-    """Inspect the library and application-bound history."""
-    print(json.dumps(_screening_cli_response(job_id, tenant), ensure_ascii=False))
+def screening_read(job_id: str, tenant: str = typer.Option("local", "--tenant")) -> None:
+    if tenant != "local":
+        _fail("invalid_tenant", "Only the local workspace is available.", exit_code=2)
+    _output(_run(_request("GET", "/v1/jobs/" + quote(job_id, safe="") + "/screening-answers")).json())
 
 
 @screening_app.command("write")
-def screening_write(job_id: str, command_file: Path, tenant: str = "local") -> None:
-    """Execute capture/draft/edit/review/reuse/use from an explicit JSON command."""
+def screening_write(job_id: str, command_file: Path, tenant: str = typer.Option("local", "--tenant")) -> None:
+    if tenant != "local":
+        _fail("invalid_tenant", "Only the local workspace is available.", exit_code=2)
+    _output(_run(_request("POST", "/v1/jobs/" + quote(job_id, safe="") + "/screening-answers", _load_payload(command_file))).json())
+
+
+app.add_typer(screening_app, name="screening")
+
+
+@app.command("compensation-refresh")
+def compensation_refresh(
+    job_id: str | None = typer.Option(None, "--job-id"),
+    all_jobs: bool = typer.Option(False, "--all"),
+    stale: bool = typer.Option(False, "--stale"),
+    observations_json: Path | None = typer.Option(None, "--observations-json", exists=True, dir_okay=False, readable=True),
+    limit: int = typer.Option(0, "--limit", min=0, max=1000),
+    tenant_id: str = typer.Option("local", "--tenant-id"),
+    include_eurotoptech: bool | None = typer.Option(None, "--include-eurotoptech/--no-eurotoptech"),
+    eurotoptech_max_pages: int | None = typer.Option(None, "--eurotoptech-max-pages", min=1, max=100),
+    payload: Path | None = typer.Option(None, "--payload"),
+    background: bool = typer.Option(True, "--background/--foreground"),
+) -> None:
+    """Refresh one job, all jobs or stale compensation through the owning action."""
+    if tenant_id != "local":
+        _fail("invalid_tenant", "Only the local workspace is available.", exit_code=2)
+    if sum((job_id is not None, all_jobs, stale)) > 1:
+        _fail("invalid_compensation_selection", "Choose a JobId, --all or --stale.", exit_code=2)
+    value = _load_payload(payload)
+    for key, item in (("observationsJsonPath", str(observations_json.expanduser().resolve()) if observations_json else None),
+                      ("includeEuroTopTech", include_eurotoptech), ("euroTopTechMaxPages", eurotoptech_max_pages)):
+        if item is not None:
+            if key in value:
+                _fail("duplicate_refresh_option", "Choose each refresh option in its flag or payload file once.", exit_code=2)
+            value[key] = item
+    if limit:
+        value["limit"] = limit
+    if job_id is not None:
+        value["jobId"] = job_id
+    action_name = "compensation.refresh" if job_id else "compensation.refresh_stale" if stale else "compensation.refresh_all"
+    _output(_run(_execute(action_name, value, background=background)))
+
+
+@app.command()
+def apply(
+    job_id: str | None = typer.Option(None, "--job-id"),
+    payload_id: str | None = typer.Option(None, "--payload-id"),
+    approval_id: str | None = typer.Option(None, "--approval-id"),
+    payload: Path | None = typer.Option(None, "--payload", help="Exact approved batch items JSON."),
+    limit: int = typer.Option(25, "--limit", min=1, max=100),
+    workers: int | None = typer.Option(None, "--workers", "-w", min=1, max=8),
+    min_fit_score: int | None = typer.Option(None, "--min-fit-score", "--min-score", min=1, max=10),
+    url: str | None = typer.Option(None, "--url", help="Exact stored job/application URL; no source fetch or approval creation."),
+    control: str | None = typer.Option(None, "--control", help="skip, cancel, reset, mark_failed or mark_applied."),
+    expected_version: int | None = typer.Option(None, "--expected-version", min=0),
+    reset_attempts: bool = typer.Option(False, "--reset-attempts"),
+    recover: bool = typer.Option(False, "--recover", help="Inspect the canonical outcome/intent audit before any retry."),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    review_only: bool = typer.Option(False, "--review-only"),
+    continuous: bool = typer.Option(False, "--continuous", help="Enable only the standing already-approved application poll."),
+    stop_continuous: bool = typer.Option(False, "--stop-continuous"),
+    interval_minutes: int = typer.Option(5, "--interval-minutes", min=1, max=1440),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
+) -> None:
+    """Execute current exact approvals or rehearse a reviewed payload.
+
+    This command never creates approval or renews external authorization.
+    """
+    if control is not None or recover:
+        if control is not None and recover:
+            _fail("invalid_apply_selection", "Choose a control mutation or read-only recovery inspection.", exit_code=2)
+        if not job_id or any((payload_id, approval_id, payload, dry_run, continuous, stop_continuous, url)):
+            _fail("invalid_apply_selection", "Application control/recovery inspection requires exactly one --job-id.", exit_code=2)
+        base = "/v1/jobs/" + quote(job_id, safe="")
+        if recover:
+            _output(_run(_request("GET", base + "/apply-audit")).json())
+            return
+        if control not in {"skip", "cancel", "reset", "mark_failed", "mark_applied"}:
+            _fail("invalid_apply_control", "Choose skip, cancel, reset, mark_failed or mark_applied.", exit_code=2)
+        if idempotency_key is None:
+            _fail("idempotency_key_required", "Application control requires --idempotency-key.", exit_code=2)
+        if control == "mark_applied":
+            _output(_run(_request("POST", base + "/outcomes", {"idempotencyKey": idempotency_key, "kind": "applied_confirmation"})).json())
+            return
+        if expected_version is None:
+            _fail("expected_version_required", "Application control requires the reviewed --expected-version.", exit_code=2)
+        _output(_run(_request("POST", base + "/application/control", {"idempotencyKey": idempotency_key,
+                     "expectedVersion": expected_version, "action": control, "resetAttempts": reset_attempts})).json())
+        return
+    if continuous or stop_continuous:
+        if continuous and stop_continuous or any((job_id, payload_id, approval_id, payload, dry_run, review_only, url)) or limit != 25:
+            _fail("invalid_apply_selection", "Standing-poll configuration cannot be combined with a job or batch operation.", exit_code=2)
+        settings = _run(_request("GET", "/v1/settings")).json()
+        patch = {"expectedRevision": settings["revision"], "applyAutomationEnabled": continuous,
+                 "applyAutomationIntervalMinutes": interval_minutes}
+        if workers is not None:
+            patch["applyConcurrency"] = workers
+        if min_fit_score is not None:
+            patch["minFitScore"] = min_fit_score
+        _output(_run(_request("PATCH", "/v1/settings", patch)).json())
+        return
+    if review_only:
+        if not job_id:
+            _fail("job_id_required", "Review requires --job-id.", exit_code=2)
+        _output(_run(_request("GET", "/v1/jobs/" + quote(job_id, safe="") + "/application")).json())
+        return
+    if payload is not None:
+        if any((job_id, payload_id, approval_id, dry_run)):
+            _fail("invalid_apply_selection", "Choose an approved batch file or a single reviewed payload.", exit_code=2)
+        value, action_name = _load_payload(payload), "applications.batch"
+    elif job_id is not None:
+        if not payload_id or (not dry_run and not approval_id):
+            _fail("exact_approval_required", "Provide --payload-id and --approval-id, or --dry-run with --payload-id; inspect --review-only first.", exit_code=2)
+        value = {"jobId": job_id, "payloadId": payload_id}
+        if not dry_run:
+            value["approvalId"] = approval_id
+        action_name = "applications.rehearse" if dry_run else "applications.execute"
+    else:
+        if payload_id or approval_id:
+            _fail("job_id_required", "A payload operation requires --job-id.", exit_code=2)
+        value, action_name = {"limit": limit, "dry_run": dry_run}, "applications.run_approved"
+        for key, item in (("workers", workers), ("min_fit_score", min_fit_score), ("url", url)):
+            if item is not None:
+                value[key] = item
+    _output(_run(_execute(action_name, value, background=True, idempotency_key=idempotency_key)))
+
+
+@app.command()
+def job(
+    target: str,
+    apply_ready: bool = typer.Option(False, "--apply", help="Execute only a current exact approved payload for this saved URL."),
+    prepare: bool = typer.Option(False, "--prepare"),
+    score: bool = typer.Option(False, "--score"),
+    tailor: bool = typer.Option(False, "--tailor"),
+    wait: bool = typer.Option(False, "--wait"),
+) -> None:
+    """Inspect a saved JobId/URL, import a new URL, or submit its explicit recipe."""
+    async def execute():
+        application = _application()
+        jobs = application.services["jobs"]
+        if urlsplit(target).scheme in {"http", "https"}:
+            snapshot = jobs.resolve_url(target)
+            if snapshot is None:
+                if any((apply_ready, prepare, score, tailor)):
+                    _fail("saved_job_required", "Import the URL first, then inspect and review its saved data before requesting preparation or Apply.", exit_code=2)
+                return await application.submit("jobs.capture_url", {"url": target})
+        else:
+            snapshot = jobs.get_job(target)
+        if sum((apply_ready, prepare, score, tailor)) > 1:
+            _fail("explicit_job_action_required", "Choose one explicit job action.", exit_code=2)
+        if apply_ready:
+            return await application.submit("applications.run_approved", {"limit": 1, "url": snapshot["url"]})
+        if any((prepare, score, tailor)):
+            recipe = "prepare" if prepare else "score" if score else "tailor"
+            return await _preparation(recipe, [snapshot["job_id"]], wait=wait)
+        return snapshot
+    _output(_run(execute()))
+
+
+@app.command("run-status")
+def run_status(run_id: str) -> None:
+    """Inspect the canonical durable run without starting it again."""
+    async def inspect():
+        return _application().action_run(run_id)
+    _output(_run(inspect()))
+
+
+@app.command()
+def cancel(run_id: str) -> None:
+    """Request cancellation of the existing durable action."""
+    async def stop():
+        return await _application().cancel(run_id)
+    _output(_run(stop()))
+
+
+@app.command()
+def init() -> None:
+    """Initialize a fresh workspace and guide Profile, discovery and provider setup."""
+    from jobctrl.runtime import is_bundled_runtime
+
+    health = _run(_request("GET", "/v1/health")).json()
+    _output({**health, "nextSteps": [
+        {"command": "jobctrl start" if is_bundled_runtime() else "corepack pnpm dev",
+         "purpose": "Start the local application and open its web interface."},
+        {"path": "/profile", "purpose": "Create or review your complete structured Profile and authored baseline."},
+        {"path": "/profile/import", "purpose": "Import a text or PDF source, then review it before acceptance."},
+        {"path": "/discovery", "purpose": "Choose roles, locations and source filters without replacing existing choices."},
+        {"command": "jobctrl setup", "path": "/settings/credentials",
+         "purpose": "Explicitly configure provider credentials and select a live model."},
+    ]})
+
+
+@app.command()
+def doctor(json_output: bool = typer.Option(False, "--json")) -> None:
+    """Inspect real Profile, providers, browser, worker, budget and Temporal readiness."""
+    _output(_run(_request("GET", "/v1/setup/status")).json())
+
+
+@app.command()
+def setup(
+    payload: Path | None = typer.Option(None, "--payload", help="Canonical settings patch, including expectedRevision."),
+    provider: str | None = typer.Option(None, "--provider", help="Explicit codex, claude or google provider."),
+    model: str | None = typer.Option(None, "--model", help="Exact model ID from the provider catalog."),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+    non_interactive: bool = typer.Option(False, "--non-interactive"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show intended actions without creating or changing files."),
+    json_output: bool = typer.Option(False, "--json", help="Print the secret-free machine-readable result."),
+    launch_logins: bool = typer.Option(False, "--launch-logins", help="Explicitly enroll Codex using its managed vendor login."),
+    skip_doctor: bool = typer.Option(False, "--skip-doctor"),
+) -> None:
+    """Guide provider/model selection through canonical settings and native credentials.
+
+    Interactive Claude/Google keys go only to the operating system native
+    store. Cloud modes remain available through Settings → Credentials or the
+    same public credential routes. Source tool/browser provisioning belongs to
+    scripts/install and scripts/dev setup.
+    """
+    if provider is not None and provider not in {"codex", "claude", "google"}:
+        _fail("invalid_provider", "Choose codex, claude or google.", exit_code=2)
+    if model is not None and provider is None:
+        _fail("provider_required", "--model requires --provider.", exit_code=2)
+    if payload is not None and (provider is not None or model is not None or launch_logins):
+        _fail("invalid_setup_options", "Apply a settings payload separately from provider selection or vendor login.", exit_code=2)
+    if launch_logins and provider not in {None, "codex"}:
+        _fail("invalid_login_provider", "Managed CLI login is available for Codex; choose --provider codex.", exit_code=2)
+    if dry_run:
+        patch = _load_payload(payload) if payload is not None else None
+        _output({"ok": True, "dryRun": True, "workspace": str(_workspace_path()),
+                 "provider": provider, "model": model, "settingsPatchKeys": sorted(patch) if patch is not None else [],
+                 "credentialInput": "hidden_interactive_only", "codexLoginRequested": launch_logins,
+                 "doctorRequested": not skip_doctor, "liveValidation": "required_when_applied"})
+        return
+    if payload is not None:
+        _output(_run(_request("PATCH", "/v1/settings", _load_payload(payload))).json())
+        return
+    current = _run(_request("GET", "/v1/settings")).json()
+    statuses = _run(_request("GET", "/v1/providers/status")).json()
+    interactive = not (non_interactive or yes)
+    if launch_logins and provider is None:
+        provider = "codex"
+    if provider is None and interactive:
+        _output(statuses)
+        provider = typer.prompt("Provider (codex, claude, google)", default=current["defaultProvider"])
+    changed = False
+    if provider is not None:
+        if provider not in {"codex", "claude", "google"}:
+            _fail("invalid_provider", "Choose codex, claude or google.", exit_code=2)
+        selected_status = next(item for item in statuses["providers"] if item["provider"] == provider)
+        if provider in {"claude", "google"} and interactive:
+            key = "ANTHROPIC_API_KEY" if provider == "claude" else "GEMINI_API_KEY"
+            if typer.confirm(f"Add or update {key} in the operating system native credential store?", default=False):
+                credentials = _run(_request("GET", "/v1/credentials")).json()
+                selected_key = next(item for item in credentials["credentials"] if item["key"] == key)
+                if not selected_key["editable"]:
+                    _fail("credential_not_editable", "This credential is supplied by the launch environment or its native store is unavailable.")
+                secret = typer.prompt(key, hide_input=True).strip()
+                if not secret:
+                    _fail("credential_required", "A nonempty credential is required.", exit_code=2)
+                _run(_request("PATCH", "/v1/credentials", {"expectedRevision": credentials["revision"], "key": key, "value": secret}))
+                del secret
+                changed = True
+        elif provider == "codex":
+            if launch_logins:
+                enrollment = _run(_request("POST", "/v1/providers/codex/login", {})).json()
+                if not enrollment.get("ok"):
+                    _fail("provider_login_failed", "Codex login did not establish an authenticated managed runtime.")
+                changed = True
+            elif interactive and not selected_status["ready"] and typer.confirm("Reuse and verify an existing Codex login for this workspace?", default=False):
+                enrollment = _run(_request("POST", "/v1/providers/codex/verify", {})).json()
+                if not enrollment.get("ok"):
+                    _fail("provider_not_ready", "Codex authentication could not be verified; use setup --provider codex --launch-logins or Settings → Credentials.")
+        catalog = _run(_request("GET", "/v1/providers/models")).json()
+        selected_catalog = next(item for item in catalog["providers"] if item["provider"] == provider)
+        if not selected_catalog["ready"] or not selected_catalog["models"]:
+            _fail("provider_not_ready", selected_catalog.get("message") or "The selected provider has no available live models; previous model settings are preserved.")
+        # Native credential changes advance the shared settings revision too.
+        # Read the current canonical selection after enrollment, then retain CAS
+        # across the user's model prompt and final confirmation.
+        current = _run(_request("GET", "/v1/settings")).json()
+        if model is None and interactive:
+            _output({"provider": provider, "models": selected_catalog["models"]})
+            identifiers = [item["id"] for item in selected_catalog["models"]]
+            saved = current["providerModels"][provider]
+            model = typer.prompt("Exact model ID from the live catalog", default=saved if saved in identifiers else identifiers[0])
+        if model is None:
+            model = current["providerModels"][provider]
+        if yes or non_interactive or typer.confirm("Save this provider/model selection?", default=False):
+            value = {"expectedRevision": current["revision"], "defaultProvider": provider,
+                     "providerModels": {**current["providerModels"], provider: model}}
+            _run(_request("PATCH", "/v1/settings", value))
+            changed = True
+    if not skip_doctor:
+        _output(_run(_request("GET", "/v1/setup/status")).json())
+    else:
+        _output({"ok": True, "settingsChanged": changed, "provider": provider})
+
+
+@app.command("pipeline-status")
+def pipeline_status() -> None:
+    """Inspect durable application/worker readiness."""
+    _output(_run(_request("GET", "/v1/health")).json())
+
+
+@app.command("runs")
+def runs() -> None:
+    """List canonical durable action runs."""
+    _output(_run(_request("GET", "/v1/action-runs")).json())
+
+
+@app.command("extension-token")
+def extension_token(rotate: bool = typer.Option(False, "--rotate")) -> None:
+    """Show the local pairing capability only on this explicit command."""
+    from jobctrl.app.security import CapabilityToken
+
+    application = _application()
+    token = CapabilityToken(application.runtime.workspace)
+    _output({"token": token.rotate() if rotate else token.read_or_create()})
+
+
+@app.command("profile-transfer")
+def profile_transfer(
+    source: Path = typer.Option(..., "--source", help="Existing source workspace; read-only."),
+    target: Path = typer.Option(..., "--target", help="Nonexistent path for the fresh application workspace."),
+    confirm_profile_only_reset: bool = typer.Option(False, "--confirm-profile-only-reset", help="Explicitly transfer only Profile; other application data starts empty."),
+    browser_sources: Path = typer.Option(..., "--browser-sources", help="Complete read-only browser Profile sources/attachment manifest."),
+) -> None:
+    """Deliberate breaking cutover: preserve full Profile into a new workspace.
+
+    Source data remains untouched. No current workspace selector is changed.
+    """
+    if not confirm_profile_only_reset:
+        _fail("confirmation_required", "Pass --confirm-profile-only-reset after reviewing that only Profile transfers.", exit_code=2)
+    source = source.expanduser().absolute()
+    target = target.expanduser().absolute()
+    if source.is_symlink() or not source.is_dir():
+        _fail("invalid_source", "Source must be an existing workspace directory.", exit_code=2)
+    source = source.resolve()
+    target = target.parent.resolve() / target.name
+    if target == source or source in target.parents:
+        _fail("invalid_target", "The fresh target must be outside the source workspace.", exit_code=2)
+    if target.exists() or target.is_symlink():
+        _fail("target_exists", "Target must not exist; existing data is never overwritten.", exit_code=2)
+    from jobctrl.app.bootstrap import create_application
+    from jobctrl.app.errors import AppError
+    from jobctrl.features.profile.transfer import export_legacy_profile, import_profile, validate_bundle
+
     try:
-        command = json.loads(command_file.read_text())
+        # Export before creating any target. Profile owns the read-only snapshot,
+        # exact attachments and provenance validation, never a runtime SQL copy.
+        bundle = export_legacy_profile(source, browser_export=_load_payload(browser_sources))
+        transferred = validate_bundle(bundle)
+        if transferred.get("transfer_complete") is not True:
+            _fail("profile_transfer_incomplete", "The browser Profile export is incomplete; no target was created.")
+        digest = hashlib.sha256(json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        target.mkdir(mode=0o700, parents=False, exist_ok=False)
+        application = create_application(target, enabled_features={"profile"})
+        import_profile(application.services["profile"], bundle)
+        receipt = {
+            "schema": "jobctrl.profile-cutover.v1", "status": "complete", "sourcePreserved": True,
+            "target": str(target), "profileBundleSha256": digest, "reset": "all-non-profile-application-data",
+            "selected": False,
+        }
+        with (target / "profile-transfer-receipt.json").open("x", encoding="utf-8") as stream:
+            os.chmod(stream.name, 0o600)
+            json.dump(receipt, stream, indent=2)
+        _output(receipt)
+    except AppError as error:
+        _fail(error.code, error.message)
+    except FileExistsError:
+        _fail("target_exists", "Target was created concurrently; no existing data is overwritten.")
     except (OSError, ValueError):
-        console.print("Invalid screening command file.")
-        raise typer.Exit(1) from None
-    if not isinstance(command, dict):
-        console.print("Invalid screening command file.")
-        raise typer.Exit(1)
-    print(json.dumps(_screening_cli_response(job_id, tenant, command), ensure_ascii=False))
+        _fail("profile_transfer_failed", "Profile transfer did not complete; preserve the source and inspect any owned target before retrying.")
 
 
-if __name__ == "__main__":
-    app()
+@app.command()
+def backup(output: Path | None = typer.Option(None, "--output", "-o")) -> None:
+    """Create a consistent read-only snapshot; never replace an existing file."""
+    import sqlite3
+    import tempfile
+    from contextlib import closing
+    from datetime import datetime, timezone
+
+    source = _workspace_path() / "jobctrl.db"
+    if source.is_symlink() or not source.is_file():
+        _fail("database_missing", "Choose an existing regular application database.")
+    destination = output or (_workspace_path() / "backups" / ("jobctrl-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + ".db"))
+    destination = destination.expanduser().absolute()
+    if destination.is_dir():
+        destination /= "jobctrl-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + ".db"
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = None
+    try:
+        fd, name = tempfile.mkstemp(prefix=".jobctrl-backup-", suffix=".db", dir=destination.parent)
+        os.close(fd)
+        temporary = Path(name)
+        with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as reader:
+            with closing(sqlite3.connect(temporary)) as writer:
+                reader.backup(writer)
+                if writer.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                    _fail("backup_invalid", "The SQLite snapshot did not pass integrity validation.")
+        os.link(temporary, destination)
+        _output({"backedUp": True, "path": str(destination), "bytes": destination.stat().st_size})
+    except FileExistsError:
+        _fail("output_exists", "The backup destination already exists; choose a new path.")
+    except (OSError, sqlite3.Error):
+        _fail("backup_failed", "A consistent backup could not be created; the source was not modified.")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+@app.command("gmail-auth")
+def gmail_auth(no_open: bool = typer.Option(False, "--no-open"), timeout: int = typer.Option(180, "--timeout", min=10, max=600)) -> None:
+    """Start the explicit Gmail OAuth flow through the Applications mail adapter."""
+    from jobctrl.app.errors import AppError
+    from jobctrl.features.applications.mail import authenticate_gmail
+
+    try:
+        path = authenticate_gmail(_workspace_path(), open_browser=not no_open, timeout_seconds=timeout)
+    except AppError as error:
+        _fail(error.code, error.message)
+    _output({"authenticated": True, "tokenPath": str(path)})
+
+
+from jobctrl.company_briefing_cli import app as company_briefing_app  # noqa: E402
+from jobctrl.source_proposals_cli import app as source_proposals_app  # noqa: E402
+from jobctrl.legacy_evidence_cli import app as legacy_evidence_app  # noqa: E402
+
+app.add_typer(company_briefing_app, name="company-briefing")
+app.add_typer(source_proposals_app, name="source-proposals")
+app.add_typer(legacy_evidence_app, name="legacy-evidence")
+
+
+# These are native I/O adapters, never business/database bootstrap. Importing
+# them registers names only; workspace-sensitive modules load inside commands.
+from jobctrl.runtime_commands import capability_app, credentials_app, provider_pack_install  # noqa: E402
+
+app.add_typer(capability_app, name="capability")
+app.add_typer(credentials_app, name="credentials")
+app.command("provider-pack-install", hidden=True)(provider_pack_install)

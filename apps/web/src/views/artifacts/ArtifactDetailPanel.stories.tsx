@@ -40,7 +40,16 @@ function ArtifactDetailHost({ artifactId }: { artifactId: string }) {
   return <RouterProvider router={router} />;
 }
 
-export const Populated: Story = {
+export const NotFound: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get("*/v1/resumes", () =>
+          HttpResponse.json({ ok: true, resumes: [] }),
+        ),
+      ],
+    },
+  },
   render: () => <ArtifactDetailHost artifactId="artifact-1" />,
 };
 
@@ -48,9 +57,9 @@ export const Loading: Story = {
   parameters: {
     msw: {
       handlers: [
-        http.get("*/v1/artifacts/:artifactId", async () => {
+        http.get("*/v1/resumes", async () => {
           await new Promise((resolve) => setTimeout(resolve, 60_000));
-          return HttpResponse.json({ ok: true });
+          return HttpResponse.json({ ok: true, resumes: [] });
         }),
       ],
     },
@@ -62,7 +71,7 @@ export const Error: Story = {
   parameters: {
     msw: {
       handlers: [
-        http.get("*/v1/artifacts/:artifactId", () =>
+        http.get("*/v1/resumes", () =>
           HttpResponse.json({ ok: false, error: "internal" }, { status: 500 }),
         ),
       ],

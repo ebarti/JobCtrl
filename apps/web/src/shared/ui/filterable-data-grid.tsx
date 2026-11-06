@@ -56,6 +56,8 @@ export interface DataGridColumn<TData> {
   getFilterValue?: (row: TData) => string;
   getFilterSearchValue?: (row: TData) => string;
   filterValues?: readonly string[];
+  /** Presentation only; selection and filtering continue to use the raw value. */
+  formatFilterValue?: (value: string) => string;
   filterText?: boolean;
   className?: string;
   headerClassName?: string;
@@ -396,7 +398,7 @@ function ColumnFilterDialog<TData>({
   const normalizedQuery = normalize(valueQuery);
   const visibleValues = values
     .filter(
-      (value) => !normalizedQuery || normalize(value).includes(normalizedQuery),
+      (value) => !normalizedQuery || normalize(column.formatFilterValue?.(value) ?? value).includes(normalizedQuery),
     )
     .slice(0, column.filterValueLimit ?? 80);
 
@@ -491,7 +493,7 @@ function ColumnFilterDialog<TData>({
                   checked={filter.selectedValues.includes(value)}
                   onChange={() => onToggleValue(value)}
                 />
-                <span>{value}</span>
+                <span>{column.formatFilterValue?.(value) ?? value}</span>
               </label>
             ))}
             {values.length > visibleValues.length ? (
@@ -1144,7 +1146,7 @@ export function FilterableDataGrid<TData>({
               <span>{column.label}</span>
               <span>
                 {filter?.selectedValues.length
-                  ? filter.selectedValues.join(", ")
+                  ? filter.selectedValues.map((value) => column.formatFilterValue?.(value) ?? value).join(", ")
                   : `${operatorLabel(filter?.operator ?? "contains")} "${filter?.text.trim()}"`}
               </span>
               <IconX size={12} aria-hidden="true" />

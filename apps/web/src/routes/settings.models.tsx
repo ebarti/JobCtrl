@@ -1,17 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { ModelSelectionPanel } from "../contexts/profile/components/ModelSelectionPanel.js";
-import { AiExecutionPolicyPanel } from "../contexts/materials/components/AiExecutionPolicyPanel.js";
+import { ApplicationSettingsPanel } from "../contexts/settings/index.js";
 
 export const Route = createFileRoute("/settings/models")({
   component: ModelsSettingsRoute,
 });
 
 function ModelsSettingsRoute() {
-  return (
-    <>
-      <AiExecutionPolicyPanel />
-      <ModelSelectionPanel />
-    </>
-  );
+  return <ApplicationSettingsPanel section="models" />;
 }

@@ -1,0 +1,566 @@
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
+import type { APIRequestContext } from "@playwright/test";
+
+import {
+  test,
+  expect,
+  json,
+  action,
+  completed,
+  modelCall,
+  type ApplicationStack,
+} from "../harness/fixtures.js";
+import { createBaseline, qualifyPosting, type Posting } from "./core-data.js";
+
+type Job = Posting & {
+  title: string;
+  hidden: boolean;
+  deleted: boolean;
+  state_revision: number;
+};
+type Query = {
+  total: number;
+  query_revision: string;
+  rows: { job: Job; scalars: Record<string, string | number | null> }[];
+  facets: Record<string, { values: string[]; complete: boolean }>;
+  modules: Record<string, { enabled: boolean; available: boolean }>;
+};
+
+const targetTitle = "Synthetic Senior Global Fit Engineer";
+const targetCompany = "Synthetic Grid Target Company";
+const targetLocation = "Madrid, Spain";
+
+async function capture(api: APIRequestContext, slug: string, title: string) {
+  return json<Job>(api, "post", "/v1/jobs/capture", {
+    url: `https://example.com/jobs/${slug}`,
+    title,
+    company: title === targetTitle ? targetCompany : "Synthetic Grid Company",
+    location: targetLocation,
+    description: "Implement and maintain durable workflow recovery.",
+    ...(title === targetTitle
+      ? { salary: "Base salary EUR 80000 to EUR 100000 per year." }
+      : {}),
+  });
+}
+
+async function recordCompensation(
+  api: APIRequestContext,
+  app: ApplicationStack,
+  job: Posting,
+) {
+  // An authored report is ingested through the public source adapter. It is
+  // neither a database seed nor a replay of a previous model determination.
+  const report = path.join(app.workspace, "jobs-query-compensation.json");
+  await writeFile(
+    report,
+    JSON.stringify([
+      {
+        source: "manual",
+        company: targetCompany,
+        role: targetTitle,
+        location: targetLocation,
+        level: "senior",
+        currency: "EUR",
+        period: "year",
+        component: "total_compensation",
+        min: 85000,
+        max: 110000,
+        sampleCount: 5,
+        releaseYear: 2026,
+        attribution: "Authored synthetic Jobs query report",
+      },
+    ]),
+  );
+  const run = await action(api, "compensation.refresh", {
+    jobId: job.job_id,
+    observationsJsonPath: report,
+    includeEuroTopTech: false,
+  });
+  const posted = await modelCall(app, "compensation.posted_pay");
+  const source = (
+    posted.body["sources"] as { source_id: string; text: string }[]
+  )[0]!;
+  expect(source.text).toBe("Base salary EUR 80000 to EUR 100000 per year.");
+  posted.reply({
+    parse_state: "parsed_range",
+    currency: "EUR",
+    period: "year",
+    component: "base_salary",
+    minimum_amount: 80000,
+    maximum_amount: 100000,
+    confidence: "high",
+    warnings: [],
+    citations: [{ source_id: source.source_id, quote: source.text }],
+    rationale: "The selected posting states this annual base range.",
+  });
+  for (const kind of ["posting", "report"] as const) {
+    const call = await modelCall(app, "compensation.classification");
+    const actual = (
+      call.body["sources"] as { source_id: string; text: string }[]
+    )[0]!;
+    expect(actual.source_id).toContain(
+      kind === "posting"
+        ? `posting:${job.job_id}`
+        : "manual_reported_compensation:",
+    );
+    const judgment = (value: string, quote: string) => {
+      expect(actual.text).toContain(quote);
+      return {
+        value,
+        citations: [{ source_id: actual.source_id, quote }],
+        rationale: "Explicit classification of the cited synthetic source.",
+      };
+    };
+    call.reply({
+      occupation: judgment("software_engineering", targetTitle),
+      seniority: judgment("senior", targetTitle),
+      countries: [judgment("ES", targetLocation)],
+      geography_scope: judgment("locality", targetLocation),
+      locality: judgment("Madrid", targetLocation),
+      market_scope: judgment("company", targetCompany),
+      company_tier: judgment("unknown", targetCompany),
+    });
+  }
+  await completed(api, run.runId);
+}
+
+test("Jobs sorts and facets the complete set, then restores a source-bound filtered saved view", async ({
+  page,
+  api,
+  app,
+}, testInfo) => {
+  const { library } = await createBaseline(api);
+  // This journey records the existing score stage. Tailored preparation has
+  // separate wording/coverage prerequisites and is covered in its own journey.
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  expect(
+    await json(api, "patch", "/v1/settings", {
+      expectedRevision: settings.revision,
+      resumeMode: "baseline",
+    }),
+  ).toMatchObject({ resumeMode: "baseline" });
+  // The scored target is deliberately captured before more than one page of
+  // newer jobs. Sorting a hydrated first page alone cannot find it.
+  const target = await capture(api, "grid-global-fit", targetTitle);
+  const fillers: Job[] = [];
+  for (let index = 0; index < 51; index += 1) {
+    fillers.push(
+      await capture(
+        api,
+        `grid-filler-${index}`,
+        `Synthetic Grid Filler ${String(index).padStart(2, "0")}`,
+      ),
+    );
+  }
+  await qualifyPosting(api, app, target, library);
+  const callsBeforePreparation = app.external.calls.length;
+  const preparation = await action(api, "preparation.run", {
+    recipe: "score",
+    job_ids: [target.job_id],
+    scope: "selected",
+  });
+  await completed(api, preparation.runId);
+  expect(app.external.calls.length).toBe(callsBeforePreparation);
+  await recordCompensation(api, app, target);
+
+  const initial = await json<Query>(api, "get", "/v1/jobs/query");
+  expect(initial.total).toBe(52);
+  expect(initial.rows).toHaveLength(50);
+  expect(initial.rows.map((row) => row.job.job_id)).not.toContain(
+    target.job_id,
+  );
+  expect(initial.facets["fit_score"]).toMatchObject({
+    values: expect.arrayContaining(["10"]),
+    complete: true,
+  });
+  expect(initial.facets["current_stage"]?.values).toContain("fit");
+
+  const legacyViewName = "Synthetic legacy Jobs view";
+  const jobsViewsKey = "jh:python-jobs-table-views:v1";
+  await page.addInitScript(
+    ({ origin, value }) => {
+      if (
+        location.origin === origin &&
+        localStorage.getItem("jh:saved-table-views") === null
+      ) {
+        localStorage.setItem("jh:saved-table-views", value);
+      }
+    },
+    {
+      origin: new URL(app.baseURL).origin,
+      value: JSON.stringify({
+        version: 4,
+        state: {
+          activeViewIdByTable: { jobs: "synthetic-legacy-jobs" },
+          views: [
+            {
+              id: "synthetic-legacy-jobs",
+              tableId: "jobs",
+              name: legacyViewName,
+              builtIn: false,
+              columns: { order: ["select", "title"], hidden: [], widths: {} },
+              density: null,
+              grouping: null,
+              colorRules: [],
+              schemaVersion: 1,
+              sort: { columnId: "title", direction: "asc" },
+              urlFilters: {
+                q: "synthetic legacy filter matches no current job",
+              },
+              gridFilters: {},
+            },
+          ],
+        },
+      }),
+    },
+  );
+  await page.goto("/jobs");
+  await expect(page).toHaveURL(/\/jobs/);
+  await expect(page).toHaveTitle(/JobCtrl/);
+  await expect(
+    page.getByRole("heading", { name: "Jobs", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+  const table = page.getByRole("table", { name: "Jobs table", exact: true });
+  await expect(page.getByLabel("Search jobs", { exact: true })).toHaveValue("");
+  await expect(
+    page.getByRole("combobox", { name: "Saved table view", exact: true }),
+  ).not.toContainText(legacyViewName);
+  await expect(table.locator("tbody tr")).toHaveCount(50);
+  await expect(
+    table.getByRole("link", { name: targetTitle, exact: true }),
+  ).toHaveCount(0);
+
+  await table
+    .getByRole("button", { name: "Filter Stage column", exact: true })
+    .click();
+  const stages = page.getByRole("dialog", {
+    name: "Stage filter",
+    exact: true,
+  });
+  await expect(
+    stages.getByRole("checkbox", { name: "fit", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(stages).not.toBeVisible();
+
+  await table
+    .getByRole("button", { name: "Sort by Person fit", exact: true })
+    .click();
+  await table
+    .getByRole("button", {
+      name: "Sort by Person fit (ascending)",
+      exact: true,
+    })
+    .click();
+  await expect(table.locator('th[data-column-id="fit_score"]')).toHaveAttribute(
+    "aria-sort",
+    "descending",
+  );
+  await expect(
+    table
+      .locator("tbody tr")
+      .first()
+      .getByRole("link", { name: targetTitle, exact: true }),
+  ).toBeVisible();
+  await expect(table.locator("tbody tr").nth(1)).toContainText("Not assessed");
+
+  await table
+    .getByRole("button", { name: "Filter Stage column", exact: true })
+    .click();
+  await stages.getByRole("checkbox", { name: "fit", exact: true }).check();
+  await page.keyboard.press("Escape");
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  await page.getByText("Job filters", { exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Fit assessment", exact: true })
+    .selectOption("current");
+  await page
+    .getByLabel("Minimum person fit (1–10)", { exact: true })
+    .fill("10");
+  await page
+    .getByRole("combobox", { name: "Posted pay", exact: true })
+    .selectOption("known");
+  await page
+    .getByRole("combobox", { name: "Market pay", exact: true })
+    .selectOption("known");
+  await page
+    .getByLabel("Posted annual minimum at least (€)", { exact: true })
+    .fill("80000");
+  await page
+    .getByLabel("Market annual minimum at least (€)", { exact: true })
+    .fill("85000");
+  await page
+    .getByRole("button", { name: "Apply filters", exact: true })
+    .click();
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  await expect(
+    table.getByRole("link", { name: targetTitle, exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Save as view", exact: true }).click();
+  const save = page.getByRole("dialog", { name: "Save view", exact: true });
+  await save.getByLabel("Name", { exact: true }).fill("Global fit and pay");
+  await save.getByRole("button", { name: "Save", exact: true }).click();
+  await expect
+    .poll(
+      async () =>
+        (
+          await page.evaluate((key) => localStorage.getItem(key), jobsViewsKey)
+        )?.includes("Global fit and pay") ?? false,
+    )
+    .toBe(true);
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), jobsViewsKey),
+  ).not.toContain(legacyViewName);
+  // A filtered URL could restore the grid without consulting the saved view.
+  // Start from the bare route so only the new Jobs store supplies these choices.
+  await page.goto("/jobs");
+  await expect(
+    page.getByRole("combobox", { name: "Saved table view", exact: true }),
+  ).toContainText("Global fit and pay");
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  await expect(
+    table.getByRole("link", { name: targetTitle, exact: true }),
+  ).toBeVisible();
+  await expect(
+    table.getByRole("button", {
+      name: "Filter Stage column (active)",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(table.locator('th[data-column-id="fit_score"]')).toHaveAttribute(
+    "aria-sort",
+    "descending",
+  );
+  await expect(
+    page.getByLabel("Minimum person fit (1–10)", { exact: true }),
+  ).toHaveValue("10");
+  await expect(
+    page.getByRole("combobox", { name: "Posted pay", exact: true }),
+  ).toHaveValue("known");
+  await expect(
+    page.getByLabel("Market annual minimum at least (€)", { exact: true }),
+  ).toHaveValue("85000");
+  const filteredSearch = new URL(page.url()).search;
+  await table
+    .getByRole("checkbox", { name: `Select ${target.title}`, exact: true })
+    .check();
+  await table.getByRole("link", { name: targetTitle, exact: true }).click();
+  await expect(
+    page.getByRole("main", { name: "Job details", exact: true }),
+  ).toBeVisible();
+  expect(new URL(page.url()).search).toBe(filteredSearch);
+  await page.getByRole("button", { name: "Back to jobs", exact: true }).click();
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  expect(new URL(page.url()).search).toBe(filteredSearch);
+  await expect(
+    table.getByRole("checkbox", {
+      name: `Select ${target.title}`,
+      exact: true,
+    }),
+  ).toBeChecked();
+  await table.scrollIntoViewIfNeeded();
+  await testInfo.attach("jobs-global-filter-saved-view", {
+    contentType: "image/png",
+    body: await page.screenshot(),
+  });
+
+  // Exercise the real continuation UI: changed sources must not mix page two
+  // with the first page's earlier owner snapshot.
+  await page
+    .getByRole("button", { name: "Clear all filters", exact: true })
+    .click();
+  await expect(table.locator("tbody tr")).toHaveCount(50);
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(
+    page.getByText("Page 2 of 2 · 52 rows", { exact: true }),
+  ).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("offset")).toBe("50");
+  expect(new URL(page.url()).searchParams.get("query_revision")).toBeTruthy();
+  const continuation = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/v1/jobs/query" &&
+      url.searchParams.get("offset") === "50" &&
+      response.status() === 409
+    );
+  });
+  await json(api, "post", `/v1/jobs/${fillers[0]!.job_id}/hide`, {});
+  expect((await (await continuation).json()).error.code).toBe(
+    "revision_conflict",
+  );
+  await expect(
+    page.getByRole("alert").filter({ hasText: "sources changed" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Reload from first page", exact: true })
+    .click();
+  await expect(
+    page.getByText("Page 1 of 2 · 51 rows", { exact: true }),
+  ).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("offset")).toBe("0");
+  expect(new URL(page.url()).searchParams.has("query_revision")).toBe(false);
+  expect((await json<Query>(api, "get", "/v1/jobs/query")).total).toBe(51);
+});
+
+test.describe("Jobs without optional read owners", () => {
+  test.use({ features: "profile,jobs" });
+
+  test("unavailable criteria stay explicit and bulk deletion fences the exact reviewed selection", async ({
+    page,
+    api,
+    app,
+  }, testInfo) => {
+    const target = await capture(
+      api,
+      "guarded-target",
+      "Synthetic Guarded Target",
+    );
+    const peer = await capture(api, "guarded-peer", "Synthetic Preserved Peer");
+    const available = await json<Query>(api, "get", "/v1/jobs/query");
+    expect(available.modules["compensation"]).toEqual({
+      enabled: false,
+      available: false,
+    });
+    await page.goto("/jobs");
+    await expect(
+      page.getByRole("heading", { name: "Jobs", exact: true }),
+    ).toBeVisible();
+    const table = page.getByRole("table", { name: "Jobs table", exact: true });
+    await expect(table.locator("tbody tr")).toHaveCount(2);
+    await expect(
+      page.getByRole("status").filter({ hasText: "compensation (disabled)" }),
+    ).toBeVisible();
+    await expect(
+      table.getByRole("button", { name: "Sort by Person fit", exact: true }),
+    ).toHaveCount(0);
+
+    await page.getByText("Job filters", { exact: true }).click();
+    await page
+      .getByRole("combobox", { name: "Posted pay", exact: true })
+      .selectOption("known");
+    const rejected = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/v1/jobs/query" &&
+        response.status() === 409,
+    );
+    await page
+      .getByRole("button", { name: "Apply filters", exact: true })
+      .click();
+    expect((await (await rejected).json()).error.code).toBe(
+      "query_feature_unavailable",
+    );
+    await expect(
+      page.getByRole("alert").filter({ hasText: "unavailable feature" }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Clear all filters", exact: true })
+      .click();
+    await expect(table.locator("tbody tr")).toHaveCount(2);
+
+    await table
+      .getByRole("checkbox", { name: `Select ${target.title}`, exact: true })
+      .check();
+    await table
+      .getByRole("checkbox", { name: `Select ${peer.title}`, exact: true })
+      .check();
+    await expect(
+      page.getByRole("button", {
+        name: "Review permanent deletion",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    await json(api, "post", `/v1/jobs/${peer.job_id}/hide`, {});
+    const stale = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/v1/jobs/bulk-delete",
+    );
+    await page
+      .getByRole("button", { name: "Move selected to deleted", exact: true })
+      .click();
+    expect((await stale).status()).toBe(409);
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: "selection remains available" }),
+    ).toBeVisible();
+    expect(
+      (await json<Job>(api, "get", `/v1/jobs/${target.job_id}`)).deleted,
+    ).toBe(false);
+    expect(
+      await json<Job>(api, "get", `/v1/jobs/${peer.job_id}`),
+    ).toMatchObject({ hidden: true, deleted: false });
+
+    await page
+      .getByRole("button", { name: "Clear selection", exact: true })
+      .click();
+    await table
+      .getByRole("checkbox", { name: `Select ${target.title}`, exact: true })
+      .check();
+    await page
+      .getByRole("button", { name: "Move selected to deleted", exact: true })
+      .click();
+    await expect(
+      table.getByRole("link", { name: target.title, exact: true }),
+    ).toHaveCount(0);
+    await page.getByText("Job filters", { exact: true }).click();
+    await page
+      .getByRole("combobox", { name: "Job state", exact: true })
+      .selectOption("deleted");
+    await page
+      .getByRole("button", { name: "Apply filters", exact: true })
+      .click();
+    await table
+      .getByRole("checkbox", { name: `Select ${target.title}`, exact: true })
+      .check();
+    const previewResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+        "/v1/jobs/permanent-delete-selection",
+    );
+    await page
+      .getByRole("button", { name: "Review permanent deletion", exact: true })
+      .click();
+    const preview = (await (await previewResponse).json()) as {
+      selectionId: string;
+      jobIds: string[];
+    };
+    expect(preview.jobIds).toEqual([target.job_id]);
+    const review = page.getByRole("region", {
+      name: "Review permanent deletion",
+      exact: true,
+    });
+    await expect(review).toContainText(target.title);
+    await expect(review).not.toContainText(peer.title);
+    await expect(review).toContainText("Independently saved learning plans");
+    const confirm = review.getByRole("button", {
+      name: "Permanently delete reviewed jobs",
+      exact: true,
+    });
+    await expect(confirm).toBeDisabled();
+    await review
+      .getByLabel("Type DELETE to confirm", { exact: true })
+      .fill("delete");
+    await expect(confirm).toBeDisabled();
+    const wrongSelection = await api.post("/v1/jobs/bulk-delete-permanent", {
+      data: { selectionId: preview.selectionId, jobIds: [peer.job_id] },
+    });
+    expect(wrongSelection.status(), await wrongSelection.text()).toBe(409);
+    await review.scrollIntoViewIfNeeded();
+    await testInfo.attach("jobs-reviewed-delete-guard", {
+      contentType: "image/png",
+      body: await page.screenshot(),
+    });
+    await review
+      .getByLabel("Type DELETE to confirm", { exact: true })
+      .fill("DELETE");
+    await confirm.click();
+    await expect(review).not.toBeVisible();
+    expect((await api.get(`/v1/jobs/${target.job_id}`)).status()).toBe(404);
+    expect(
+      await json<Job>(api, "get", `/v1/jobs/${peer.job_id}`),
+    ).toMatchObject({ hidden: true, deleted: false });
+    expect(app.external.calls).toHaveLength(0);
+  });
+});

@@ -19,6 +19,9 @@ const personalLabels: Readonly<Record<string, string>> = {
   linkedin: "LinkedIn",
   github: "GitHub",
   website: "Website",
+  linkedin_url: "LinkedIn",
+  github_url: "GitHub",
+  website_url: "Website",
   city: "City",
   country: "Country",
 };
@@ -37,6 +40,9 @@ const strings = (value: unknown): string[] =>
     ? value.filter((item): item is string => typeof item === "string")
     : [];
 const attemptIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+// Existing receipts may be digest IDs or gateway UUIDs. The server verifies
+// the exact receipt against the persisted import attempt before any write.
+const receiptIdPattern = /^(?:[a-f0-9]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 export function importAttemptId(result: ReviewInput["result"]): string | null {
   const id = record(result.source).attemptId;
@@ -48,7 +54,7 @@ type ReviewInput = Omit<ProfileImportReviewDraft, "id" | "revision" | "attempt">
 /** A new API response carries the exact personal values from its persisted extraction receipt. */
 function extractedPersonal(result: ReviewInput["result"]): JsonRecord | null {
   const source = record(result.source);
-  if (!importAttemptId(result) || typeof source.determinationId !== "string" || !/^[a-f0-9]{64}$/.test(source.determinationId)
+  if (!importAttemptId(result) || typeof source.determinationId !== "string" || !receiptIdPattern.test(source.determinationId)
       || !isJsonRecord(source.extractedPersonal)) return null;
   const values = source.extractedPersonal;
   if (Object.entries(values).some(([key, value]) =>
@@ -65,7 +71,7 @@ const inferredStyleKeys = ["paper_size", "document_font_size", "font_family"] as
 
 function inferredStyle(result: ReviewInput["result"]): JsonRecord | null {
   const source = record(result.source);
-  if (!importAttemptId(result) || typeof source.determinationId !== "string" || !/^[a-f0-9]{64}$/.test(source.determinationId)
+  if (!importAttemptId(result) || typeof source.determinationId !== "string" || !receiptIdPattern.test(source.determinationId)
       || source.styleReceiptId !== importAttemptId(result)
       || !isJsonRecord(source.inferredStyle)) return null;
   if (Object.entries(source.inferredStyle).some(([key, value]) =>
@@ -171,7 +177,7 @@ export function projectImportReview(input: ReviewInput): ReviewInput {
   const provenance: JsonRecord = {};
   if (importAttemptId(input.result)) provenance.attemptId = source.attemptId;
   for (const key of ["determinationId", "candidateDeterminationId"]) {
-    if (typeof source[key] === "string" && /^[a-f0-9]{64}$/.test(source[key])) provenance[key] = source[key];
+    if (typeof source[key] === "string" && receiptIdPattern.test(source[key])) provenance[key] = source[key];
   }
   if (sourcePersonal !== null) provenance.extractedPersonal = personal;
   if (sourceStyle !== null && input.importStyle) {
@@ -325,7 +331,14 @@ export function importReviewSections(
 /** Refuse partial reads; ProfileSchema defaults must not hide missing saved data. */
 export function verifyCanonicalProfile(canonical: ProfileConfigResponse): void {
   if (canonical.profileVersion === null) {
-    if (!isJsonRecord(canonical.profile) || Object.keys(canonical.profile).length !== 0)
+    const emptyProfile = {
+      personal: {}, work_authorization: {}, availability: {}, compensation: {}, experience: {}, eeo_voluntary: {},
+      resume_constraints: {}, application_attestations: { age_18_plus: null, background_check_consent: null,
+        felony_conviction: null, previously_worked_at_employer: null, additional: {} },
+      application_preferences: { how_heard: "" },
+      resume: { executive_profile: {}, experience_entries: [], education_entries: [], skill_categories: [], tailoring_rules: {} },
+    };
+    if (!isJsonRecord(canonical.profile) || (Object.keys(canonical.profile).length !== 0 && !sameJson(canonical.profile, emptyProfile)))
       throw new Error("The saved profile could not be verified. Your draft is unchanged.");
   } else {
     if (!Number.isSafeInteger(canonical.profileVersion) || canonical.profileVersion <= 0)
@@ -367,7 +380,7 @@ export function buildImportAcceptance(
     );
   }
   const source = record(draft.result.source);
-  if (typeof source.determinationId !== "string" || !/^[a-f0-9]{64}$/.test(source.determinationId))
+  if (typeof source.determinationId !== "string" || !receiptIdPattern.test(source.determinationId))
     throw new Error("The extraction receipt is unavailable. Preserve the draft and import the PDF again.");
   request.importReview = {
     attemptId: importAttemptId(draft.result)!,

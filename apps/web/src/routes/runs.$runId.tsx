@@ -1,12 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { WorkflowRunDrawer } from "../views/runs/WorkflowRunDrawer.js";
+import { ActionRunDetail, ensureActionRun } from "../contexts/runs/index.js";
+import { PreparationRunDetail } from "../contexts/pipeline/index.js";
 
 export const Route = createFileRoute("/runs/$runId")({
-  component: WorkflowRunRoute,
+  loader: ({ context, params }) => ensureActionRun(context, params.runId),
+  component: RunRoute,
 });
 
-function WorkflowRunRoute() {
+function RunRoute() {
   const { runId } = Route.useParams();
-  return <WorkflowRunDrawer runId={runId} />;
+  return <ActionRunDetail runId={runId} renderFeatureDetail={(run) =>
+    run.action.startsWith("preparation.") && !["pending", "queued", "start_failed"].includes(run.status)
+      ? <PreparationRunDetail runId={runId} /> : null} />;
 }

@@ -1,0 +1,11 @@
+export { CompensationPanel } from "./components/CompensationPanel.js";
+export { CompensationSourcePolicyPanel } from "./components/CompensationSourcePolicyPanel.js";
+export { OfferCompensationComparison } from "./components/OfferCompensationComparison.js";
+export { RefreshAllCompensationButton } from "./components/RefreshAllCompensationButton.js";
+export { CompensationAuditSection, CompensationSummaryCell, CompensationSummaryStrip, compensationSearchText } from "./components/CompensationEvidence.js";
+export { compensationEvents } from "./events.js";
+export { compensationKeys } from "./queryKeys.js";
+export { useCompensationEvidenceQuery } from "./hooks/useCompensationEvidenceQuery.js";
+export { useCompensationSourcePolicyQuery } from "./hooks/useCompensationSourcePolicyQuery.js";
+export { useUpdateCompensationSourcePolicyMutation } from "./hooks/useUpdateCompensationSourcePolicyMutation.js";
+export { useRefreshAllCompensationMutation, useRefreshCompensationMutation } from "./hooks/useRefreshCompensationMutation.js";

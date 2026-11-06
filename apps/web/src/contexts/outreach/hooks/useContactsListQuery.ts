@@ -14,9 +14,9 @@ export function useContactsListQuery(
   filters: ContactsListFilters = {},
 ): UseQueryResult<ContactListResponse> {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useQuery({
-    ...contactsListQuery({ tenantId, ports: { api }, queryClient }, filters),
+    ...contactsListQuery({ tenantId, ports: { http }, queryClient }, filters),
   });
 }

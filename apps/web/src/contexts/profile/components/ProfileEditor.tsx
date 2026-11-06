@@ -9,11 +9,14 @@ import { ToggleGroup, ToggleGroupItem } from "../../../shared/ui/toggle-group.js
 import {
   ResumeStandalonePlateEditor,
   type ResumePlateSemanticTextChange,
-} from "../../materials/components/ResumeAuditPins.js";
+} from "../../materials/components/ResumeStandalonePlateEditor.js";
 import { ProfileForm, type ProfilePlateTextController } from "../forms/profile-form.js";
 import { ProfileImportReview } from "./ProfileImportReview.js";
+import { WordingLibrary } from "./WordingLibrary.js";
+import { ProfileTransferExport } from "./ProfileTransferExport.js";
 import type { ProfileConfigResponse } from "@jobctrl/contracts";
 import { useProfileHtmlPreviewUrl } from "../hooks/useProfileHtmlPreviewUrl.js";
+import { profileHtmlPreviewPath } from "../client.js";
 import { useProfileQuery } from "../hooks/useProfileQuery.js";
 import { useResumeTemplatesQuery } from "../hooks/useResumeTemplatesQuery.js";
 import { bindProfilePreviewFields } from "../lib/profile-preview-fields.js";
@@ -35,7 +38,7 @@ export interface ProfileEditorProps {
 }
 
 export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
-  const { api, storage } = usePorts();
+  const { storage } = usePorts();
   const profileQuery = useProfileQuery();
   const resumeTemplatesQuery = useResumeTemplatesQuery();
   const { url: profileHtmlPreviewUrl } = useProfileHtmlPreviewUrl();
@@ -43,6 +46,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
   const plateTextControllerRef = useRef<ProfilePlateTextController | null>(null);
   const [previewSource, setPreviewSource] = useState<{
     profile: ProfileConfigResponse["profile"];
+    profileVersion: number | null;
     revision: number;
   } | null>(null);
   const [workspaceView, setWorkspaceView] = useState<ProfileWorkspaceView>("profile-data");
@@ -62,7 +66,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
   // The form advances this snapshot only on a clean save/reset. Query cache
   // optimism and older save responses must not replace newer Plate typing.
   const handlePreviewSourceChange = useCallback((saved: ProfileConfigResponse) => {
-    setPreviewSource((previous) => ({ profile: saved.profile, revision: (previous?.revision ?? -1) + 1 }));
+    setPreviewSource((previous) => ({ profile: saved.profile, profileVersion: saved.profileVersion, revision: (previous?.revision ?? -1) + 1 }));
   }, []);
   const bindPreviewFields = useCallback((html: string) =>
     bindProfilePreviewFields(html, previewSource?.profile), [previewSource?.profile]);
@@ -121,7 +125,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
       ]
     : [
         ["preferences-application", "Application"],
-        ["preferences-tailoring", "Tailoring"],
+        ["preferences-tailoring", "Resume composition"],
         ["preferences-style", "Resume style"],
         ["preferences-templates", "Templates"],
       ];
@@ -155,7 +159,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
             <>
               <ProfileForm initial={profileQuery.data} section={section} />
               <div id="preferences-templates" className="profile-template-section">
-                <ResumeTemplatePanel profileHtmlPreviewUrl={profileHtmlPreviewUrl} />
+                <ResumeTemplatePanel profileHtmlPreviewUrl={profileQuery.data.profileVersion === null ? null : profileHtmlPreviewUrl} />
               </div>
             </>
           ) : (
@@ -270,7 +274,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
                 ? { transformKey: effectiveResumeTemplateVersion.versionId }
                 : {})}
               className="profile-resume-plate-editor"
-              htmlUrl={previewSource ? api.profilePreviewHtmlUrl(previewSource.revision) : null}
+              htmlUrl={previewSource?.profileVersion != null ? profileHtmlPreviewPath(previewSource.revision) : null}
               htmlTransform={bindPreviewFields}
               pdfFilename="baseline-resume.pdf"
               previewStyle={resumePreviewStyle}
@@ -279,6 +283,8 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
             />
           </aside>
       </div>
+      <WordingLibrary />
+      <ProfileTransferExport />
     </div>
   );
 }

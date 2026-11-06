@@ -13,6 +13,7 @@ import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { useImportResumeMutation } from "../hooks/useImportResumeMutation.js";
+import { readProfile } from "../client.js";
 import { hasVerifiedPersonalSource, hasVerifiedStyleSource, importReviewSections, projectImportReview } from "../lib/import-review.js";
 import { useProfileImportReviewStore } from "../stores/profile-import-review-store.js";
 import {
@@ -24,7 +25,7 @@ import {
 export function ImportConfirmForm() {
   const navigate = useNavigate();
   const router = useRouter();
-  const { api, storage } = usePorts();
+  const { http, storage } = usePorts();
   const tenantId = useTenantId();
   const filename = useProfileImportStore((state) => state.filename);
   const pdfBase64 = useProfileImportStore((state) => state.pdfBase64);
@@ -102,7 +103,7 @@ export function ImportConfirmForm() {
       try {
         // Bind the review to the canonical version before the importer reads
         // its base. A concurrent save during extraction will then conflict.
-        const base = await api.profile();
+        const base = await readProfile(http);
         if (
           generation !== navigationGeneration.current ||
           pathname !== router.history.location.pathname

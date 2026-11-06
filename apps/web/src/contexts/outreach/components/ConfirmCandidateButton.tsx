@@ -6,6 +6,7 @@ import { useConfirmCandidateMutation } from "../hooks/useConfirmCandidateMutatio
 export interface ConfirmCandidateButtonProps {
   taskId: string;
   candidateId: string;
+  expectedRevision?: number;
   disabled?: boolean;
 }
 
@@ -14,6 +15,7 @@ export interface ConfirmCandidateButtonProps {
 export function ConfirmCandidateButton({
   taskId,
   candidateId,
+  expectedRevision,
   disabled = false,
 }: ConfirmCandidateButtonProps): JSX.Element {
   const mutation = useConfirmCandidateMutation(taskId);
@@ -22,8 +24,8 @@ export function ConfirmCandidateButton({
     <div className="confirm-candidate">
       <Button
         type="button"
-        disabled={disabled || mutation.isPending}
-        onClick={() => mutation.mutate({ candidateId })}
+        disabled={expectedRevision === undefined || disabled || mutation.isPending}
+        onClick={() => { if (expectedRevision !== undefined) mutation.mutate({ candidateId, expectedRevision }); }}
       >
         {mutation.isPending ? "Confirming…" : "Confirm contact"}
       </Button>

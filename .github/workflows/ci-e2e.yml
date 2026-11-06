@@ -1,0 +1,100 @@
+name: Complete application journeys
+'on':
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  journeys:
+    name: UI checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: '3.12'
+      UV_EXCLUDE_NEWER: 'false'
+      UV_LOCKED: '1'
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright
+    steps:
+      - name: Start total preparation timing
+        run: date +%s > "$RUNNER_TEMP/jobctrl-e2e-start"
+      - name: Checkout the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+      - name: Install the exact dependency graphs once
+        run: |
+          corepack pnpm install --frozen-lockfile
+          uv --project workers/automation sync --locked --all-extras
+      - name: Install the verified real Temporal server
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/temporal.tar.gz"
+          executable_dir="$RUNNER_TEMP/temporal"
+          curl --fail --location --silent --show-error --connect-timeout 15 --max-time 120 \
+            --output "$archive" https://github.com/temporalio/cli/releases/download/v1.7.3/temporal_cli_1.7.3_linux_amd64.tar.gz
+          printf '%s  %s\n' 32a4320080342bccab37633b8777f548aa0b413c3d37fdbc7cb9d861c5fa11d0 "$archive" | sha256sum --check
+          mkdir -p "$executable_dir"
+          tar -xOf "$archive" temporal > "$executable_dir/temporal"
+          chmod 700 "$executable_dir/temporal"
+          echo "JOBCTRL_TEMPORAL_CLI_PATH=$executable_dir/temporal" >> "$GITHUB_ENV"
+      - name: Prepare real browser and PDF tools
+        timeout-minutes: 8
+        run: |
+          bash scripts/ci-apt-timeouts.sh
+          corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
+          uv --project workers/automation run --locked --all-extras playwright install chromium
+          sudo apt-get install --yes poppler-utils
+      - name: Record setup and declared runner resources
+        run: |
+          node --input-type=module <<'NODE'
+          import os from 'node:os';
+          import fs from 'node:fs';
+          const start = Number(fs.readFileSync(process.env.RUNNER_TEMP + '/jobctrl-e2e-start', 'utf8'));
+          console.log(JSON.stringify({runner:'ubuntu-24.04',arch:process.arch,cpus:os.availableParallelism(),memoryMiB:Math.round(os.totalmem()/1024/1024),setupSeconds:Math.floor(Date.now()/1000)-start,node:process.version}));
+          NODE
+      - name: Build once and run complete real application journeys
+        timeout-minutes: 10
+        run: corepack pnpm e2e
+      - name: Require unchanged dependency locks
+        if: always()
+        run: git diff --exit-code -- pnpm-lock.yaml workers/automation/uv.lock
+      - name: Report total job time including setup
+        if: always()
+        run: |
+          started="$(cat "$RUNNER_TEMP/jobctrl-e2e-start")"
+          echo "Complete E2E job including setup: $(( $(date +%s) - started )) seconds" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain bounded synthetic journey evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: python-application-journeys-${{ github.run_attempt }}
+          path: |
+            /tmp/jobctrl-transform-1428/e2e-*/timings.json
+            /tmp/jobctrl-transform-1428/e2e-*/junit.xml
+            /tmp/jobctrl-transform-1428/e2e-*/results.json
+            /tmp/jobctrl-transform-1428/e2e-*/playwright/
+            /tmp/jobctrl-transform-1428/e2e-*/application-*/api.log
+            /tmp/jobctrl-transform-1428/e2e-*/application-*/worker-*.log
+            /tmp/jobctrl-transform-1428/e2e-*/temporal-*/temporal.log
+          retention-days: 7
+          if-no-files-found: warn

@@ -1,19 +1,22 @@
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
-import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import type { FeatureFlagPort } from "../shared/ports/FeatureFlagPort.js";
-import type { OpenInOsPort } from "../shared/ports/OpenInOsPort.js";
 import type { Session, SessionPort } from "../shared/ports/SessionPort.js";
 import type { StoragePort } from "../shared/ports/StoragePort.js";
 import { LocalStorageAdapter } from "../shared/adapters/local/LocalStorageAdapter.js";
-import { apiCapabilityFlagKey } from "../shared/lib/apiCapabilityAvailability.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 
 export class DemoCapabilityError extends Error {
   readonly code = "demo_capability_not_implemented" as const;
 
-  constructor(method: string) {
-    super(`Demo capability ${method} is not available in this demo phase.`);
+  constructor(method: string, reason?: string) {
+    const capability =
+      DEMO_CAPABILITY_MANIFEST[method as keyof typeof DEMO_CAPABILITY_MANIFEST];
+    super(
+      reason ??
+        capability?.reason ??
+        "This action requires the configured private local workspace.",
+    );
     this.name = "DemoCapabilityError";
   }
 }
@@ -60,27 +63,18 @@ export class DemoFeatureFlagAdapter implements FeatureFlagPort {
     ) as (keyof typeof DEMO_CAPABILITY_MANIFEST)[]) {
       const capability = DEMO_CAPABILITY_MANIFEST[operation];
       if (
-        key === apiCapabilityFlagKey(operation, "available") &&
+        key === `apiCapability:${operation}:available` &&
         typeof defaultValue === "boolean"
       ) {
         return (capability.class !== "unavailable") as T;
       }
       if (
-        key === apiCapabilityFlagKey(operation, "reason") &&
+        key === `apiCapability:${operation}:reason` &&
         typeof defaultValue === "string"
       ) {
         return capability.reason as T;
       }
     }
     return defaultValue;
-  }
-}
-
-/** The public demo cannot invoke the local host OS opener. */
-export class DemoOpenInOsAdapter implements OpenInOsPort {
-  constructor(private readonly api: Pick<ApiClientPort, "openArtifact">) {}
-
-  open(artifactId: string) {
-    return this.api.openArtifact(artifactId);
   }
 }

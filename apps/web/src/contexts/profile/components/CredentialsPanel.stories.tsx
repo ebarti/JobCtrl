@@ -4,7 +4,7 @@ import { delay, http, HttpResponse } from "msw";
 import {
   sampleCredentialsResponse,
   sampleProviderStatusResponse,
-} from "../../../test/fixtures/projections.js";
+} from "../../../../.storybook/fixtures/projections.js";
 import { CredentialsPanel } from "./CredentialsPanel.js";
 
 const meta = {

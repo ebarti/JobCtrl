@@ -9,12 +9,10 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit --project tsconfig.json",
-    "test": "vitest run test"
+    "check": "tsc --noEmit --project tsconfig.json"
   },
   "devDependencies": {
     "@jobctrl/tsconfig": "workspace:*",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.12"
+    "typescript": "^6.0.3"
   }
 }

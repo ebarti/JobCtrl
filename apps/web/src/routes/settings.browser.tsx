@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { BrowserCapabilitiesPanel } from "../contexts/operations/components/BrowserCapabilitiesPanel.js";
-import { ExtensionPairingPanel } from "../contexts/operations/components/ExtensionPairingPanel.js";
+import { BrowserCapabilitiesPanel, ExtensionPairingPanel } from "../contexts/browser/index.js";
 
 export const Route = createFileRoute("/settings/browser")({
   component: BrowserSettingsRoute,

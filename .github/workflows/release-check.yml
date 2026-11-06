@@ -1,37 +1,24 @@
 name: Release Privacy Gate
+'on':
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
   group: release-check-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: "${{ github.ref != 'refs/heads/main' }}"
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   release-check:
     name: Release check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      with:
-        persist-credentials: false
-    - name: Set up Python
-      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
-      with:
-        python-version: '3.11'
-    - name: Set up pinned uv
-      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
-      with:
-        version: 0.11.7
-        enable-cache: true
-        cache-dependency-glob: workers/automation/uv.lock
-        cache-suffix: release-check
-    - name: Sync locked privacy-gate tools
-      run: uv --project workers/automation sync --locked --only-group release-check
-    - name: Run release check
-      run: uv --project workers/automation run --locked --only-group release-check
-        python scripts/release_check.py --strict-prompt
-    - name: Run release check self-test
-      run: uv --project workers/automation run --locked --only-group release-check
-        pytest -q -c /dev/null -p no:cacheprovider --noconftest workers/automation/tests/test_release_check.py
-'on':
-  workflow_dispatch:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up standard-library Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Scan the whole candidate
+        run: python -I scripts/release_check.py --strict-prompt

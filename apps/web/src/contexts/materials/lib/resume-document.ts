@@ -381,15 +381,12 @@ function resumeSemanticTextsFromPlateNode(node: Descendant): readonly string[] {
 }
 
 function resumeBulletSemanticId(node: Descendant): string {
-  if ("text" in node || typeof node.semanticId !== "string") return "";
-  const semanticId = node.semanticId.trim();
-  // Baseline previews use canonical field paths; generated artifacts use
-  // recorded anchor IDs. Both are current structural ID contracts.
-  return /^(?:experience:.+:bullet:[1-9]\d*|experience:.+#\d+)$/u.test(
-    semanticId,
-  )
-    ? semanticId
-    : "";
+  if ("text" in node) return "";
+  // A bullet's source identity is opaque. Profile previews may bind it to a
+  // field (including an explicit unmapped marker); generated resumes use the
+  // achievement ID directly. Do not infer or rewrite either identity.
+  const identity = typeof node.profileField === "string" ? node.profileField : node.semanticId;
+  return typeof identity === "string" ? identity : "";
 }
 
 function isResumeBulletContainer(node: Descendant): boolean {

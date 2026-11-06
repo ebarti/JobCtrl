@@ -1,7 +1,11 @@
-import type { DomainEventUnion, OutcomeSuggestionDecidedPayload } from "@jobctrl/domain-types";
+import type {
+  DemoEvent as DomainEventUnion,
+  DemoOutcomeSuggestionDecidedPayload as OutcomeSuggestionDecidedPayload,
+} from "../events.js";
 import type { ApplicationOutcome, OutcomeSuggestion, OutcomeSuggestionDecisionRequest } from "@jobctrl/contracts";
 
 import type { MaterializedDemoSeed } from "../clock.js";
+import type { DemoFeatureState } from "../DemoFeatureHttpAdapter.js";
 import type {
   DemoExternalRehearsalOperation,
   DemoReceipt,
@@ -92,6 +96,7 @@ export interface DemoWorkspaceSnapshot {
    */
   readonly blobIds: readonly string[];
   readonly state: {
+    features?: DemoFeatureState;
     actionReceipts?: Record<string, { occurredAtOmitted: boolean; outcomeId: string }>;
     suggestionDecisionReceipts?: Record<string, DemoSuggestionDecisionReceipt>;
     readonly title: string;

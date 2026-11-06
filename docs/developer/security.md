@@ -1,505 +1,185 @@
 # Threat Model & Security Engineering
 
-JobCtrl is a local-first application, and its security model follows from that:
-the trust boundary is the developer's or user's own machine, not a network
-perimeter. Ordinary web and CLI API access is intentionally protected by
-locality rather than identity; browser-extension routes add a scoped local
-capability token without changing the loopback posture. This page explains what
-enforces that boundary, how the highest-risk path (apply) is contained, which
-integrity gates double as security controls, the hygiene rules that keep private
-data out of the repository, and which seams change the posture if JobCtrl is
-ever hosted.
-
-**Read this if** you are changing the API surface, the apply path, or credential
-and data handling, and need to know which boundary keeps private data on the
-machine.
-
-The user-facing companion is the [user Security page](../user/security.md); the
-local data inventory is in [Data & Safety](../user/data-and-safety.md).
+JobCtrl's supported security boundary is a single-user local workstation. The
+accepted [Python transformation](../plans/2026-11-06-python-transformation.md)
+retains that boundary while moving canonical actions to Python. **The target is
+under implementation:** the controls below are requirements for the integrated
+candidate, not a claim that every migrated path has passed security verification.
+The [user security guide](../user/security.md) and [SECURITY.md](../../SECURITY.md)
+cover user-facing guarantees and reporting.
 
 ## Repository Threat Model
 
-### Overview
+### Assets and adversaries
 
-JobCtrl is a local-first job-search automation system. A React/Vite UI talks to
-a loopback Fastify API, the API reads SQLite projections and starts work through
-JSON-RPC/Temporal, and a Python worker performs discovery, enrichment, scoring,
-resume and cover-letter generation, PDF rendering, Gmail-assisted verification,
-and guarded apply automation. A Chromium extension is integrated Discovery's
-live-profile browser transport and can also capture the active page and run
-source-bound model autofill against the local API.
+Sensitive assets include Profile facts, evidence and attachments, resumes,
+application and outreach history, SQLite data, credentials, Gmail tokens, browser
+profiles and cookies, local paths, logs, and the user's reputation with
+employers. Job postings, employer sites and emails, redirects, imported PDFs and
+HTML, captured page text and model outputs are untrusted. Providers, browsers,
+network destinations and telemetry services are separate trust boundaries.
 
-Primary assets are the candidate profile and resume baseline, generated resumes
-and cover letters, application history, SQLite event/projection data, local
-settings, LLM/API/CAPTCHA keys, Gmail OAuth tokens, browser profiles and
-cookies, apply-worker state, prompt/completion traces, and the user's
-reputation with employers.
+Defend against hostile web content or pages reaching loopback, prompt injection,
+unsafe file or URL handling, unauthorized external effects, stale approvals and
+accidental private-data disclosure. Local data is not encrypted at rest; a
+compromised operating-system account or an attacker with full local disk control
+is outside this local-only boundary. Tenant-shaped fields do not constitute
+hosted authentication or multi-user isolation.
 
-The supported deployment is a single-user workstation with data under
-`~/.jobctrl/`. JobCtrl is not designed as an internet-facing or multi-user
-service. Security severity is therefore calibrated around remote job-board or
-employer content, malicious pages visited by Playwright/Chrome, malicious
-emails/PDFs/HTML captures imported by the user, local browser pages attempting
-to reach loopback services, and accidental export of private local data.
+### Local API and browser boundary
 
-### Threat Model, Trust Boundaries, And Assumptions
+The Python application is intended to bind locally and check both the requested
+Host and actual peer for loopback. Unsafe browser mutations require trusted local
+Origin/Referer and fetch metadata or the narrowly scoped local capability
+credential; an attacker cannot bypass peer/Host admission by supplying a token.
+Extension routes require the capability token, including when a valid
+`chrome-extension://` origin is supplied. Pairing is restricted to a first-party
+local context. Token files require private permissions and no credential may
+appear in logs, events or errors. Request bodies, CORS, browser origins, security
+headers and file access require explicit bounds.
 
-The core trust boundary is "a local process reading and writing local data on a
-single-user machine." The adversaries JobCtrl defends against are other local
-processes reaching the API without going through product gates, browser pages
-reaching the API through DNS rebinding or CSRF, untrusted job postings steering
-LLM or browser automation, malicious or malformed user-imported documents, and
-private data accidentally leaving the machine through git, telemetry, LLM
-providers, or agent/tool output.
+The work-in-progress reference implementation is
+`workers/automation/src/jobctrl/app/security.py`; registration, installed
+runtime and real request behavior still require integrated verification. A
+loopback check is defense in depth, not authentication suitable for an
+internet-facing or multi-user deployment. Do not infer a service is down from a
+blocked probe without independent listener/process evidence.
 
-JobCtrl does **not** defend against a compromised OS account, an attacker with
-local disk access, or an operator who intentionally writes malicious values into
-the local database, config, or workspace. Local data is not encrypted at rest,
-so those are out of scope for the local-only product unless the issue crosses a
-new boundary such as remote code execution, secret exfiltration, or real
-application submission without informed approval.
+### Extension and outbound destinations
 
-Inputs fall into three groups:
+Extension capture and autofill are passive until explicitly invoked; proposed
+values come from current Profile sources and need user acceptance. The extension
+does not own application submission. Discovery's explicitly leased browser
+work must bind task, installation, execution, destination, timeout and payload
+limits; cancellation and cleanup affect only task-owned tabs and resources.
+Chrome owns its cookies, session and user agent: do not copy browser profiles or
+accept worker-supplied browser-owned credentials and headers.
 
-- **Attacker-controlled inputs:** public job-board and ATS pages, page
-  JavaScript, redirects, JSON-LD/API responses, discovered job titles,
-  descriptions, URLs, apply URLs, extension-captured page text, employer emails
-  scanned for verification or outcomes, user-imported PDFs and saved HTML, and
-  all LLM/model outputs. These values are stored in SQLite, rendered in the UI,
-  used in prompts, and sometimes become browser navigation targets.
-- **Operator-controlled inputs:** local UI/API/CLI requests, profile/settings
-  values, source registry entries, `~/.jobctrl/.env`, provider endpoints and
-  model choices, resume template/style values, extension pairing tokens, and
-  Apply Review decisions. If an attacker can modify these directly, they have
-  substantial local control already.
-- **Developer-controlled inputs:** docs, tests, fixtures, release scripts,
-  build scripts, and packaged defaults. Findings limited to these are normally
-  low risk unless the data is reachable from production runtime or the release
-  path can publish private artifacts or secrets.
+Fetching untrusted public URLs requires destination validation, rejection of
+loopback/private/link-local/reserved/metadata addresses, controlled redirects,
+and renewed checks for each destination. DNS checks and actual use must be
+bound so a rebinding or redirect cannot reach private data. Preserve each
+provider's access restrictions, source policy, pacing and budgets. Do not bypass
+login, CAPTCHA, paywalls, rate limits or bot controls without explicit user
+authorization. A configured provider or paired extension alone is not proof
+that a live connection is ready.
 
-External services are separate trust boundaries: LLM providers, Gmail, Google
-Maps, CAPTCHA providers, Langfuse/OpenTelemetry endpoints, public job boards and
-ATS APIs, Temporal, the system `claude` or SDK-bundled Claude runtime, Chrome,
-and any configured network proxy. Tenant IDs are currently the constant
-`local`; cross-tenant isolation is roadmap/hosted-mode posture, not a current
-local-mode boundary.
+### Models, files and telemetry
 
-Locality is enforced structurally for ordinary local callers:
+Model-facing job, company and contact content remains untrusted. Strict,
+source-bound determinations, response validation, provenance, lane/spend
+preflight and revision checks limit the consequences of unsupported claims.
+Word lists, regexes or overlap cannot decide meaning or substitute for a failed
+model determination. Prompt and completion content, Profile evidence, job text,
+credentials and generated documents are excluded from broad events, operational
+projections, diagnostics and telemetry. Treat HTML previews, document imports,
+artifact paths and renderer input as untrusted: enforce size/time limits,
+escaping, safe URLs and owned-path confinement.
 
-| Control | Mechanism | Where |
-| --- | --- | --- |
-| Loopback bind | The API binds `127.0.0.1` by default and refuses a non-loopback host unless `JOBCTRL_API_ALLOW_REMOTE_BIND` is set. | `apps/api/src/config.ts` |
-| Host-header allowlist | Requests whose `Host` is not `127.0.0.1`, `localhost`, or `[::1]` are rejected as `forbidden_host`. This is the DNS-rebinding defense. | `apps/api/src/server.ts`, `apps/api/src/local-origin.ts` |
-| Peer-address validation | Requests whose actual socket peer is not loopback are rejected as `forbidden_remote_client`, so a remote caller cannot satisfy locality by forging a loopback `Host`. | `apps/api/src/server.ts`, `apps/api/src/local-origin.ts` |
-| Origin/Referer check | Unsafe mutation requests require a first-party local web `Origin`/`Referer`; arbitrary loopback web origins and no-token headerless clients are rejected as `cross_site_request`. | `apps/api/src/server.ts`, `apps/api/src/local-origin.ts` |
-| Fetch metadata check | Unsafe browser mutations that carry `Sec-Fetch-Site` metadata must use a trusted value unless the request is a trusted extension request. | `apps/api/src/server.ts` |
-| Local capability token | Authenticated `/v1/extension/*` routes require a bearer token stored under `~/.jobctrl/`; non-browser local clients can also use it for unsafe mutations when no browser origin/fetch metadata is present. The loopback Host gate still applies. | `apps/api/src/server.ts`, `apps/api/src/extension-auth.ts`, `apps/api/src/local-origin.ts` |
-| Worker public-page egress guard | Contact-research public-page fetches reject loopback, private-network, link-local, reserved, unspecified, multicast, and metadata targets before fetching, disable automatic redirects, and re-run the source policy plus DNS/public-address check for each redirect target. | `workers/automation/src/jobctrl/domain/contact/source_policy.py`, `workers/automation/src/jobctrl/infrastructure/contact/research_fetcher.py` |
-| Worker-readiness gate | Worker-backed action routes return `503 worker_runtime_unavailable` until a healthy worker heartbeat exists. | `apps/api/src/server.ts`, `GET /v1/health` |
+### Severity calibration
 
-::: warning The loopback assumption is load-bearing
-Be honest about the limits. This posture is safe only while the API stays on
-loopback; the moment it is exposed remotely, the loopback assumption breaks and
-real authentication and a separate security review are required. Remote or
-multi-user exposure is outside this local threat model; see
-[SECURITY.md](../../SECURITY.md). Local data at rest is not encrypted.
-:::
-
-### Attack Surface, Mitigations, And Attacker Stories
-
-**Local API, web UI, and SSE.** The Fastify API exposes powerful local routes:
-profile edits, settings and credential writes, workflow starts, resume imports,
-manual captures, artifact rendering/opening, Apply Review decisions, apply
-controls, and the `GET /v1/events/stream` event stream. Important controls are
-Zod/shared-contract validation, prepared SQLite statements, bounded DTO fields,
-the loopback/Host/Origin/Referer/Sec-Fetch gates above, and the worker-readiness
-gate for worker-backed actions. Because there is no local auth layer, a bypass
-of locality checks or an accidental remote bind is a full local-API compromise.
-React escaping, the small `MarkdownDocument` renderer, safe-link filtering in
-resume audit parsing, and HTML preview CSPs reduce UI injection risk; security
-reviews should still treat any externally supplied `href`, artifact path, or
-HTML preview path as sensitive.
-
-**Browser extension.** The extension is a local companion, not a hosted auth
-surface. After pairing with the local capability token it can POST active-page
-captures, GET a whitelisted autofill profile DTO, and lease bounded
-execution-bound Discovery tasks from the memory-only broker. It has no
-apply/submit route, and source-bound model autofill excludes password and resume
-content. The content script intentionally matches all HTTP(S) pages so source
-and application hosts do not require per-host releases; autofill remains passive
-until an explicit review click, while the background worker may open temporary
-tabs for an explicitly started/scheduled Discover execution. LinkedIn job
-pages use an active tab in an unfocused window; other pages remain inactive. The
-manifest's HTTP(S) host permission is also wildcarded so brokered API requests
-can execute in the service worker when an API origin cannot host an injectable
-HTML page. Capture/autofill routes remain loopback-only; the service worker does
-not create a remote request without a leased Discovery task. Worker task
-contracts reject browser-owned cookie/user-agent/origin and `Sec-*`/`Proxy-*`
-headers; Chrome supplies those values from the profile where the extension is
-installed. Main risks are token disclosure to a local process or malicious
-extension, unexpected page interaction from broad content-script reach,
-overbroad autofill fields, or a task/result escaping its
-execution/URL/payload/timeout bounds.
-
-One extension-local installation UUID is selected by the user's explicit token
-save and persisted as a mode-`0600` control file; every heartbeat, lease-control,
-and completion request carries that ID. Another Chrome profile holding the same
-token receives `409` until its own explicit save replaces the selection. The
-broker admits four active/pending tasks for four background executors. Worker
-admission retries a `429` capacity response under a separate 30-second bound;
-the 120-second task timeout begins only on lease. An independent 750 ms
-lease-control poll keeps bridge liveness fresh and aborts/closes a rendered-page
-tab when the worker deletes the lease. The executor also applies the hard
-timeout when a service-worker HTTP request or page request never settles.
-
-**Discovery, enrichment, and crawling.** Integrated Discovery processes
-supported provider-owned job sources, ATS APIs, broad-board crawls, page HTML,
-and captured API responses through the paired extension in the user's current
-Chrome profile. The API and extension both reject live-browser tasks outside a
-fixed provider-owned DNS-zone boundary; arbitrary discovered posting URLs use
-the worker's address-pinned public transport. This closes the validation/use
-gap in which Chrome could resolve an attacker hostname differently after the
-API's DNS check. Within the provider boundary, the API validates each initial
-task, revalidates its DNS/public-address decision immediately before lease, and
-validates the reported final URL. HTTP/API tasks run in the extension service worker with
-redirect following disabled. Before rendered-page navigation, the extension
-installs tab-scoped DNR rules that allow main-frame navigation
-only to the exact source origin; a cross-origin redirect is blocked before
-dispatch. A task-scoped `webNavigation.onErrorOccurred` listener observes only
-the temporary tab's top frame, reports cross-origin blocked navigation as
-non-retryable `unsafe_redirect`, and is removed during task cleanup. LinkedIn job tasks move their known owned `about:blank` tab into
-`windows.create({focused: false, tabId})` before target navigation, leaving that
-tab active without focusing its window. Cleanup removes only the task-owned tab,
-not the whole window, so user-added tabs survive. Late tab/window creation and
-DNR installation perform cleanup again after cancellation instead of leaking
-resources or starting a canceled navigation. Page-owned
-fetch/XHR subresources are not matched by the DNR rules. The content script and broker independently reject non-web,
-credential-bearing, lexically local, or cross-origin final targets. Response
-streaming stops at the 4 MB UTF-8 byte bound instead of buffering an unbounded
-body. JobCtrl applies host pacing,
-concurrency and run budgets around that transport. Neither connected nor
-anonymous Discovery/Enrich requests or evaluates `robots.txt`; historical
-robots-blocked outcomes remain readable and retryable.
-JobStreaming remains a documented residual for request accounting because its
-internal traversal is invocation-gated, even though its provider sessions use
-the extension. Normal rendered-page subresource loading is Chrome/site-owned and
-must not be described as the old Playwright request-replay guard. Contact
-research, standalone maintenance Playwright paths, copied-profile LinkedIn
-resolution, and apply retain their own applicable destination guards. New
-integrated Discovery acquisition paths must reuse the live bridge rather than
-creating a raw-HTTP or copied-profile egress exception.
-
-**LLM scoring, materials, and outreach.** Scoring, employer analysis,
-interview prep, contact research, outreach drafts, resume tailoring, and
-cover-letter generation combine untrusted job/contact text with sensitive
-profile facts. Main impacts are privacy leakage to configured providers and
-integrity attacks on scores, recommendations, generated materials, or
-applicant-side outreach drafts. Controls include structured schemas,
-source-bound model claim verification and mechanical citation binding, provenance rows, rendered-text
-keyword coverage, never-fabricate detectors, structured judge review,
-adversarial review for high-fit jobs, and fail-closed preservation of the last
-accepted artifact. Prompt injection that only changes a reviewable score or
-draft is usually lower severity than injection that bypasses these gates or
-ships false claims to an employer.
-
-**Apply automation.** Apply is the highest-risk path because it drives a real
-browser over an employer form and the owned Gmail adapter can submit a real
-application. The current apply agent runs as a local Claude subprocess with
-`--no-session-persistence`, explicit
-`--allowedTools`, explicit `--disallowedTools`, a filtered environment, and an
-owned MCP config. The allowlist covers inspection navigation, page
-snapshots/screenshots, and optional `solve_captcha`. Generic text/form/key/
-select/drag/dialog writes, Gmail verification lookup, `type_credential`, and
-`upload_artifact` are excluded and explicitly denied alongside shell/file
-tools, raw Gmail send tools, broad mailbox access, raw page-script evaluation,
-and broad permission bypass. The default inspection MCP configuration also
-omits Gmail, profile-database, and credential-policy access. Model-driven
-browser sessions are transport-locked and cannot perform final browser
-submission. Job-site passwords and CAPTCHA provider keys are not placed in the
-model prompt; only the owned CAPTCHA tool receives its configured provider key,
-and the server consumes at most one outbound solve attempt per apply run.
-Gmail email applications are sent by JobCtrl's owned sender only after exact
-Apply Review approval, not by an agent mailbox tool.
-The detailed containment rules are below in
-[Apply-Path Containment](#apply-path-containment).
-
-**Secrets, files, and observability.** Runtime LLM provider keys use explicit
-inherited environment variables first, with a process-start native OS
-credential-store fallback for the fixed secret allowlist. The fallback never
-overrides a non-empty environment value and never exposes the stored value through HTTP, logs, or diagnostics.
-The adapters use macOS Keychain, Windows Credential Manager, and Linux Secret
-Service. The CapSolver key is an env var scoped to the owned solver tool; Gmail token files are local and
-use a private same-directory staged replacement for authentication and refresh.
-Windows stages use a protected current-user and LocalSystem DACL at creation;
-filesystems without persistent ACLs refuse the write. Provider errors and token
-contents are not included in persistence errors.
-Job-site passwords, if saved, remain local profile data and are not exposed to
-the page-reading agent.
-SQLite, generated artifacts, browser profiles, logs, prompts, completions, and
-worker directories are sensitive. Langfuse/OTel export is opt-in and
-metadata-only; LLM prompts and completions are excluded. Enrichment spans
-intentionally avoid raw posting text, resumes, cover letters, and credentials. Security
-reviews should watch for secret material in logs, traces, release artifacts,
-HTML previews, generated PDFs, worker stdout, and exception payloads.
-
-**Untrusted files and generated previews.** Profile import parses user-supplied
-PDFs, manual capture accepts page text/HTML, and resume review/template flows
-render generated HTML/PDF previews. These paths should preserve size limits,
-timeouts, path confinement under `~/.jobctrl/`, HTML escaping, CSPs, and
-executable-markup checks. Bugs here are usually local DoS or file disclosure
-unless attacker-controlled content can cross into code execution, API control,
-or secret exfiltration.
-
-### Severity Calibration
-
-**Critical:** untrusted job/web content causes Claude, Playwright, or a worker
-subprocess to execute arbitrary local commands; read or exfiltrate
-`~/.jobctrl/`, browser cookies, Gmail content, API keys, or environment secrets;
-submit real applications without a fresh bound approval; or bypass locality so a
-remote attacker controls the local API. Playwright/HTTP SSRF that reads local or
-cloud metadata and sends it to a DB, LLM, or telemetry provider is also
-critical.
-
-**High:** persistent XSS or unsafe URL rendering in the local UI enables API
-calls, PII theft, or phishing inside the trusted local app; prompt injection
-bypasses apply safeguards without shell access but materially changes submitted
-answers/materials; Gmail connector flaws read broad mailbox content or send
-without the owned approval path; SQL injection or artifact/path traversal
-reachable from job-board content reads or writes sensitive local files.
-
-**Medium:** prompt injection poisons scoring, ranking, employer analysis,
-interview prep, outreach drafts, or resume candidates that remain reviewable;
-untrusted PDF/HTML import causes local CPU/memory/storage exhaustion; an
-operator-configured source or LLM endpoint performs SSRF; overbroad extension
-autofill exposes more profile fields than intended; telemetry/logging exposes
-PII after explicit opt-in but without clear warning or redaction.
-
-**Low:** UI spoofing, malformed display data, broken links, non-sensitive local
-DoS, or issues requiring the operator/developer to edit local config, fixtures,
-database rows, or files they already control. Cross-tenant authorization
-findings are low/out of scope in current local mode because there is no hosted
-multi-tenant boundary, but they become high or critical once hosted auth and
-tenant isolation exist.
+A remote page that causes arbitrary code execution, private-data exfiltration,
+remote control of the local API, or an unauthorized real application or message
+is critical. Persistent UI injection, SSRF/path traversal to sensitive data, or
+bypass of exact approval is high. Poisoned but still reviewable analysis or
+drafts, overbroad autofill, and bounded resource exhaustion are generally
+medium; impact and demonstrated boundary crossing determine severity. Local-only
+tenant identifiers do not establish any hosted isolation guarantee.
 
 ## Apply-Path Containment
 
-Apply is the riskiest surface: it drives a real browser over employer-controlled
-content, delegates form inspection to an autonomous agent, and retains an owned
-Gmail submission sink. It is isolated in its own Temporal workflow with tighter
-retries and layered containment. The use case
-(`domain/apply/use_cases.py`), saga (`domain/apply/process_manager.py`), launcher
-(`apply/launcher.py`), browser adapter (`apply/chrome.py`), and agent adapter
-(`infrastructure/apply/claude_code_cli.py`) enforce it; the full stage walkthrough
-is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
+Applications is the owner of screening answers, exact-payload approval,
+assisted execution and outcomes. Its safety obligations apply through HTTP,
+CLI, direct application actions and worker retries; no alternate writer may
+bypass them. Integration and synthetic product-path proof remain required.
 
-- **Launch-bound browser cleanup.** Browser startup refuses an occupied CDP
-  resource. Cancellation and shutdown select only the exact recorded launch
-  identity, preserving unrelated listeners and processes. The platform
-  authority and incomplete-cleanup rules are owned by
-  [Apply browser ownership](../architecture/runtime.md#apply-browser-ownership).
-- **No model-owned final browser commit.** Every model-driven browser session
-  is transport-locked. A live browser-form run returns
-  `trusted_final_submit_required` before prompt rendering or browser launch.
-  The saga rejects an unlocked live browser config before launching, and the
-  agent adapter rejects `dry_run=False` before writing files or spawning a
-  subprocess. This conservative manual boundary remains until a trusted
-  canonical final-form manifest and one-shot mediator exist below the model.
-- **Atomic approval claim.** The launcher opens a `BEGIN IMMEDIATE` stage-lock
-  transaction and, while `approval_required` is on for a live (non-dry-run)
-  claim, refuses to proceed unless the latest recorded decision for the job is
-  `approve_submit`. Because the check runs inside the claim transaction, no API
-  or RPC path can bypass it while enabled. Disabling the claim gate does not
-  grant browser-submit authority or bypass the owned email sink's exact
-  recipient/attachment check. Dry-run claims bypass the approval gate because
-  they submit nothing.
-- **Atomic repeat-application decision.** The same live claim transaction
-  recomputes relationships from canonical job identity, accepted duplicate
-  links, and confirmed application facts. Exact identities fail closed; a
-  conservative same-employer/equivalent-role relationship requires a reasoned
-  confirmation. The confirmation is fingerprint-bound to the target and prior
-  evidence, then consumed once in that transaction. Direct dispatch, standing
-  polling, stale clients, approval-disabled mode, and concurrent requests cannot
-  skip or reuse it. Pending Gmail suggestions, notes, dry runs, pre-submit
-  failures, and unverified assumptions are deliberately outside the confirmed
-  fact query.
-- **At-most-once owned submission.** The model never records browser submit
-  intent. For an exact-approved email candidate, the saga rechecks the active
-  capability and writes `ApplySubmitIntended` immediately before invoking the
-  owned Gmail sender. The claim excludes jobs already `running`, `succeeded`, or
-  `needs_verification`. Combined with the per-job workflow ID
-  (`apply-{tenant}-{jobKey}` + `USE_EXISTING`) and a live retry policy of exactly
-  one attempt, an owned send is never silently retried into a duplicate. A crash
-  or provider exception after the checkpoint parks the run as
-  `needs_verification`; a run with no submit intent can be safely rewound to
-  `pending`.
-- **Browser-layer dry-run guard.** In dry-run, `chrome.py` attaches a CDP session
-  that enables the `Fetch` domain with one run-bound grant for an exact initial
-  `GET` to the reviewed application URL. It consumes and records that grant,
-  then fails replays, `HEAD`, path/query changes, redirects, later document
-  navigation, and all other requests with `BlockedByClient`, alongside a
-  `Page.addScriptToEvaluateOnNewDocument` form-submit guard. Missing allowed
-  navigation evidence downgrades coverage, so dry-run safety and receipts do
-  not depend on the agent choosing not to click submit or narrate success.
-- **Approval-origin browser capability.** `BrowserWorkerConfig` carries the
-  reviewed application URL into `chrome.py`. The browser-level CDP guard
-  canonicalizes its HTTP(S) origin and fails every intercepted page-target
-  request to another origin, including public redirects, popups, tabs,
-  subresources, and live form submissions. Chrome worker targets do not expose
-  `Fetch.enable`, so dedicated, shared, and service workers are closed while
-  `waitForDebuggerOnStart` still prevents their code from running. Public
-  routability remains a separate prerequisite; a public destination is not
-  automatically authorized. Cross-origin ATS transitions require a newly
-  reviewed destination rather than learning authority from the page or model.
-- **Spend ceiling as a blast-radius control.** The `check_spend_budget` preflight
-  runs before the apply activity, so a runaway or injected loop cannot spend past
-  the daily ceiling.
-- **Prompt-injection surface.** The agent is a Claude apply-runtime subprocess
-  reading untrusted third-party page text, so prompt injection is a genuine
-  exposure. Transport locking removes generic final-browser-submit authority;
-  the remaining controls bound other consequences but do not make page content
-  trusted.
-  The subprocess runs with `--no-session-persistence`, an explicit
-  `--allowedTools` surface, explicit `--disallowedTools`, and a filtered
-  environment. The allowlist is limited to inspection navigation,
-  snapshots/screenshots, and optional CAPTCHA solving. Generic browser writes,
-  Gmail verification lookup, credential typing, and artifact upload are
-  explicitly denied and cannot be restored by a caller-supplied MCP
-  configuration. Job-site passwords and CAPTCHA provider keys stay out of the
-  model prompt. The local `solve_captcha` tool owns provider-key use when
-  configured and enforces one outbound provider attempt per apply run even when
-  that attempt fails.
-  Gmail send is not exposed as an agent tool; email-only applications are
-  recorded as review candidates and sent only by the owned email sender after a
-  matching Apply Review approval.
+1. **Current, specific authority.** The approved recipient, application URL,
+   answers, accepted resume and any other submitted payload inputs are bound to
+   their exact versions or bytes. Recheck authority at claim and immediately
+   before an owned external effect. A changed source, payload, artifact or
+   decision invalidates stale approval. Dry runs authorize no submission.
+2. **Repeat-application protection.** Use confirmed application facts and
+   canonical identity to block an exact prior application. A materially
+   equivalent same-employer role requires an explicit evidence-bound,
+   reasoned, one-attempt confirmation. Unconfirmed assumptions, suggestions,
+   dry runs and failed pre-submit attempts are not confirmed prior applications.
+3. **No model-owned final browser submit.** Untrusted employer pages and the
+   model reading them never receive final submission authority. Until a trusted
+   final-form manifest and one-shot mediator exist below the model, live
+   browser-form completion remains manual. Browser inspection must not expose
+   generic form submission, credentials, mailbox send, shell or arbitrary
+   filesystem capabilities to page-controlled content.
+4. **Bounded browser work.** A dry-run browser guard restricts navigation and
+   side effects to the reviewed target and records its coverage; missing guard
+   evidence is not a successful safe run. Redirects or other origins require
+   separate authorization. Cancellation and cleanup select only the exact
+   task-owned browser/process resources and preserve unrelated sessions.
+5. **At-most-once owned effects.** Persist a unique, exact-payload submit intent
+   immediately before an authorized owned send. A valid matching receipt can
+   settle it; lost acknowledgement, process failure or uncertain provider
+   response remains **needs verification**, not a safe automatic retry. A
+   Temporal retry cannot create new user authority. The same principle applies
+   to authorized Outreach sends.
 
-The product-level no-bypass rule (BR-001) is the policy behind these mechanisms:
-JobCtrl must never bypass CAPTCHA, paywall, login, rate-limit, or bot-control
-gates without explicit user authorization.
-
-Repeat decisions use dedicated append-only audit rows instead of changing
-historical application facts. Assessment rows capture the relationship evidence
-that produced a warning or block; override rows capture actor, reason, timestamp,
-target, selected prior job, and evidence fingerprint; consumption rows bind the
-one-attempt authorization to its run. API reads expose the bounded evidence and
-audit trail without projecting notes, mail bodies, job descriptions, or other
-private payloads.
+Explicit authorization never turns a prompt-injected page, generated text or
+untrusted sender into an authority for a different recipient or action. Never
+submit a real application or send a real message during QA.
 
 ## Truthfulness And Integrity Gates
 
-Resume tailoring has deterministic controls that are security-adjacent because
-they prevent the product from emitting false claims to an employer. A never-fabricate
-detector hard-rejects any numeric, date, title, or employer token that does not
-trace to recorded profile evidence; a prose skill/tool gate rejects invented
-named technologies; claim grounding binds every coverage-bearing claim to shipped
-rendered text; and a structured judge (plus adversarial personas on high-fit jobs)
-must pass before approval. The same never-fabricate and skill/tool gates run over
-the cover-letter body before it can ship. Generator retries map outcomes to
-bounded code-owned reason guidance; free-form validator, judge, adversarial, and
-prior-output text remains audit-only and never enters a later generator message.
-These gates fail closed — when no clean candidate survives, the resume is not
-approved and the last accepted artifact is preserved. Full detail is in
-[Resume Tailoring](../architecture/tailoring.md).
+Profile retains authored facts, sources, confirmations and approved wording.
+Requirements and Fit record model-determined meaning, support and wording
+coverage with source versions. Resumes chooses only approved wording, retains
+the full baseline and checks exact source and approval bindings mechanically.
+A missing wording does not lower person fit. One coherence review of the
+assembled resume is advisory and is recorded separately from acceptance. The
+user may explicitly accept a mechanically valid, source-bound document with a
+finding or timeout; the record must not claim a passed review. No unavailable
+model, stale source or failed refresh may replace the last accepted artifact.
+See [tailoring](../architecture/tailoring.md) and
+[materials audit](../architecture/materials.md).
 
 ## Secrets And Data Hygiene
 
-**Never commit** local secrets or generated user data: `.env` files or API keys,
-`jobctrl.db` or any copied SQLite database, resumes, cover letters, PDFs,
-screenshots with real profile data, browser profiles, Gmail OAuth tokens,
-apply-worker state, or raw logs and traces. Use synthetic fixtures or
-`pnpm qa:seed` for reproduction cases. This mirrors the rules in
-[SECURITY.md](../../SECURITY.md) and `.gitignore`.
+Never commit or disclose `.env` files, keys, real Profile facts, resumes,
+generated materials, PDFs, screenshots containing user data, SQLite databases,
+browser profiles, Gmail tokens, local paths, raw logs or traces. Use owned
+synthetic workspaces and clean only task-owned temporary resources. Credentials
+belong in native secret storage or explicitly inherited environment variables,
+not SQLite, event payloads, snapshots or artifacts. Presence, unavailable
+inspection and confirmed absence must remain distinguishable without returning
+secret values. Provider failures and unexpected exceptions must be sanitized.
 
-**Store credentials in a secret port.** Credentials must use a secret port or
-explicit environment variables, never SQLite, snapshots, logs, traces, or
-artifacts (TR-013). The native API credential store
-(`apps/api/src/credentials.ts`) accepts only the fixed Claude/Google guided
-allowlist plus legacy OpenAI-key deletion. It can atomically replace a provider
-configuration, presence-check, and remove those native entries without
-returning values. Native reads used for presence inspection, compensating
-rollback, or migration verification remain private and must never be logged or
-sent over HTTP. Presence is tri-state:
-`configured: false` means
-confirmed absent; `configured: null` with `inspection_failed` means unknown and
-must not be collapsed into absence. Unsupported mutations return a sanitized
-409, operational store failures a sanitized 503 with an explicit failure reason, and
-neither exposes raw native-store command output. After env-file loading, the shared Python
-`config.load_env()` boundary loads a missing or empty value through a bounded,
-native credential lookup once per process; any non-empty environment
-value wins, failures degrade to no fallback, and long-lived workers require a
-restart after a web edit. Persistent legacy secret migration verifies native
-readback before removing source assignments and never logs values. The
-CapSolver key is an env var scoped to the
-owned CAPTCHA tool. A job-site login password, if the user provides one,
-remains local profile data; it is neither interpolated into the Apply prompt nor
-passed to the inspection MCP configuration. The page-reading model has no
-credential-typing authority, even when
-`JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS` is configured.
+Browser discovery is read-only and path-free; discovering an executable does
+not authorize launching, persisting or adopting it. Selection and adoption need
+explicit consent, and stale identifiers fail closed. Use the release privacy
+scanner and the documented release gates before release-bound changes; a
+passing scanner does not authorize putting real user data in a fixture. The
+published documentation site excludes repository-only plans and incident
+records; review linked or generated content for accidental disclosure.
 
-**Keep detection separate from browser adoption.** The browser-capability list
-may inspect known installation locations, but the RPC/API response exposes only
-bounded candidate IDs and labels, never executable paths. Listing must not
-launch, persist, copy, or enable a browser. The enable request is a strict XOR
-between one transient `detectedBrowserId` and one write-only `executablePath`.
-The worker resolves detected IDs again inside the mutation transaction; a
-stale or missing candidate fails closed and must not reuse cached path data.
-The legacy profile-copy API remains a second, separately versioned
-affirmative-consent compatibility arm. Current Settings does not expose it,
-and integrated Discovery or Enrich must never call it.
+## Verification
 
-**The release gate is enforced before release-bound changes land.**
-`scripts/release_check.py` runs automatically on every push to `main` and is
-available as a manual GitHub workflow for maintainer-reviewed branches. Public
-pull requests do not run heavyweight CI automatically, so maintainers run the
-manual workflow or local scanner before merging release-bound changes. The
-scanner checks the git-tracked and untracked tree — plus any built wheel/sdist
-archives — for:
-
-- private-profile needles (real names, emails, personal domains, employer
-  evidence, home paths, and private toolchain paths);
-- non-placeholder secret assignments in `.env`, JSON, YAML, and TOML files;
-- forbidden filenames (`.env*`, `resume.pdf`, `resume.txt`, `profile.json`,
-  `token.json`) and blocked suffixes (`.db`, `.sqlite`, `.pdf`, `.log`, `.pem`,
-  `.key`, `.docx`, `.har`, and database sidecars);
-- browser-profile artifacts and the private `.planning/` corpus;
-- a blocked distribution name combined with a tag-publish trigger.
-
-`PUBLIC_COMPARISON_SOURCE_URLS` permits four exact, reviewed public competitor
-source/release URLs in `docs/comparison.md` for the legacy-owner check only.
-This exception does not exclude the page from scanning: bare owner text,
-unreviewed references, forbidden paths, and private facts alongside a permitted
-citation still fail. The four exact reference pins and their positive and
-negative regression cases are maintained in the release checker and its tests.
-
-It also scans for apply-prompt tripwires: CapSolver key interpolation,
-hardcoded attestation defaults, and profile-password interpolation. The default
-local mode keeps these as compatibility warnings for investigations, while both
-the main/manual privacy workflow and the post-build publication gate run
-`--strict-prompt`, where any of those tripwires is a failure. Treat a passing
-release check as necessary but not sufficient, and do not add real profile data
-to a fixture just because the scrubber is green today.
-
-**The docs site has a publish boundary.** The VitePress config
-(`docs/.vitepress/config.ts`) excludes `docs/plans/`, `docs/incidents/`,
-`docs/delivered.md`, and the repo-facing `docs/README.md`
-from the built site via `srcExclude`,
-and rewrites any inbound link that escapes the published set (repo-root files or
-unpublished internal docs) to an absolute GitHub URL so the deployed site never
-ships a relative link that 404s. When adding a page, keep internal-only material
-in the excluded set and link to it normally; the config handles the rewrite.
+Use the real Python application, HTTP, SQLite and durable worker with owned
+synthetic state and controlled external providers. Exercise trusted and rejected
+hosts/peers/origins/tokens, request bounds, stale saves, committed-only events,
+source/revision changes, cancellation and restart, exact approval, intent and
+ambiguous-send recovery. Verify actual browser and renderer containment where
+applicable; declarations or a mocked internal API do not prove enforcement.
+Record the candidate and observable results. The one-off full Profile transfer
+proof is separate from the recurring E2E suite and never resets real user data.
+See [local reliability QA](../local-reliability-qa.md).
 
 ## Deployment Boundary {#hosted-future-posture}
 
-This threat model covers the local product. Tenant-scoped types and query keys
-do not establish authenticated multi-user isolation, and loopback checks do not
-protect a remotely exposed API. A different deployment requires its own
-authentication, authorization, credential, browser and data-isolation review
-before it can make security guarantees. The current guarantees and reporting
-policy are documented in [SECURITY.md](../../SECURITY.md).
+Hosted or multi-user deployment requires a separate authentication,
+authorization, tenant isolation, secret custody, network and operational
+security design. Local loopback protections cannot be reused as proof of those
+properties.
 
 ## Reporting A Security Issue
 
-Report vulnerabilities privately and never in a public issue with exploit
-details. Prefer GitHub private vulnerability reporting when enabled; otherwise
-open a minimal public issue asking for a private contact path, omitting secrets,
-logs, profile data, generated materials, and local paths. The policy is
-[SECURITY.md](../../SECURITY.md).
+Report vulnerabilities privately. Prefer GitHub private vulnerability reporting
+when available; otherwise open a minimal public issue asking for a private
+contact path, without exploit details, secrets, logs, Profile data, generated
+materials or local paths. See [SECURITY.md](../../SECURITY.md).

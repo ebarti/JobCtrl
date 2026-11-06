@@ -3,6 +3,7 @@ import { useDeleteContactMutation } from "../hooks/useDeleteContactMutation.js";
 
 export interface ContactDeleteButtonProps {
   contactId: string;
+  expectedFingerprint?: string;
   displayName?: string;
   onDeleted?: () => void;
   label?: string;
@@ -11,6 +12,7 @@ export interface ContactDeleteButtonProps {
 
 export function ContactDeleteButton({
   contactId,
+  expectedFingerprint,
   displayName,
   onDeleted,
   label = "Delete",
@@ -19,25 +21,26 @@ export function ContactDeleteButton({
   const deleteContact = useDeleteContactMutation();
 
   const handleDelete = () => {
+    if (!expectedFingerprint) return;
     const target = displayName ?? "this contact";
     if (!window.confirm(`Delete ${target}? This removes it from your outreach list.`)) {
       return;
     }
     deleteContact.mutate(
-      { contactId },
+      { contactId, expectedFingerprint },
       { onSuccess: () => onDeleted?.() },
     );
   };
 
   return (
-    <Button
+    <><Button
       type="button"
       {...(className ? { className } : {})}
       variant="destructive"
-      disabled={deleteContact.isPending}
+      disabled={!expectedFingerprint || deleteContact.isPending}
       onClick={handleDelete}
     >
       {deleteContact.isPending ? "Deleting…" : label}
-    </Button>
+    </Button>{deleteContact.error ? <span role="alert">{deleteContact.error.message}</span> : null}</>
   );
 }

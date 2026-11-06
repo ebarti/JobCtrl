@@ -1,4 +1,3 @@
-import { isApplicableRequiredBulletCleanup } from "@jobctrl/domain-types";
 import {
   ProfileSchema,
   type ProfileShape,
@@ -19,6 +18,7 @@ import { StructuredProfileEditor } from "../components/StructuredProfileEditor.j
 import { RequiredBulletSuggestions } from "../components/RequiredBulletSuggestions.js";
 import { TargetRoleSuggestions } from "../components/TargetRoleSuggestions.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
+import { useWordingLibrary } from "../hooks/useWordingLibrary.js";
 import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
 import {
   isProfileDateRangeChronological,
@@ -570,7 +570,7 @@ function profileWithPlateChanges(
       });
       continue;
     }
-    if (change.semanticId === "summary") {
+    if (change.semanticId === "summary" || change.semanticId === "executive_profile#0") {
       applySingleText(
         change,
         readText("resume.executive_profile.baseline_text"),
@@ -659,71 +659,23 @@ function profileWithPlateChanges(
       continue;
     }
 
-    if (change.semanticId.startsWith("unmapped:")) {
-      unmappedCount += 1;
+    const entries = getPathValue(updatedProfile, "resume.experience_entries");
+    const targets = Array.isArray(entries) ? entries.flatMap((entry, entryIndex) => {
+      if (!isJsonRecord(entry) || !isTextArray(entry["bullets"]) || !isTextArray(entry["achievement_ids"])) return [];
+      const index = entry["achievement_ids"].indexOf(change.semanticId);
+      return index >= 0 ? [{ entryIndex, index, bullets: entry["bullets"] }] : [];
+    }) : [];
+    if (targets.length === 1 && change.plateTexts.length <= 1) {
+      const target = targets[0]!;
+      applySingleText(change, target.bullets[target.index] ?? null, (value) => {
+        target.bullets[target.index] = value;
+        setPathValue(updatedProfile, `resume.experience_entries.${target.entryIndex}.bullets`, target.bullets);
+      });
       continue;
     }
-
-    const bulletMatch = /^experience:(.+):bullet:([1-9]\d*)$/.exec(
-      change.semanticId,
-    );
-    if (bulletMatch) {
-      const entryId = bulletMatch[1];
-      const bulletOrdinal = bulletMatch[2];
-      if (!entryId || !bulletOrdinal) continue;
-      const target = findEntry("resume.experience_entries", entryId);
-      const bullets = target?.entry["bullets"];
-      if (!target || !isTextArray(bullets)) {
-        appliedTargets.delete(change.semanticId);
-        conflictCount += 1;
-        continue;
-      }
-      const previousTarget = appliedTargets.get(change.semanticId);
-      const expectedTexts = previousTarget?.texts ?? change.baselineTexts;
-      const desiredTexts = change.plateTexts
-        .map(normalizedPlateText)
-        .filter(Boolean);
-      let bulletIndex: number | null = null;
-      if (
-        previousTarget?.bulletIndex !== undefined &&
-        plateTextArraysEqual(
-          bullets.slice(
-            previousTarget.bulletIndex,
-            previousTarget.bulletIndex + expectedTexts.length,
-          ),
-          expectedTexts,
-        )
-      ) {
-        bulletIndex = previousTarget.bulletIndex;
-      } else {
-        const matches = matchingTextSequenceIndexes(bullets, expectedTexts);
-        if (matches.length === 1) {
-          bulletIndex = matches[0] ?? null;
-        }
-      }
-      if (bulletIndex === null) {
-        appliedTargets.delete(change.semanticId);
-        conflictCount += 1;
-        continue;
-      }
-      const currentTexts = bullets.slice(
-        bulletIndex,
-        bulletIndex + expectedTexts.length,
-      );
-      if (!plateTextArraysEqual(currentTexts, desiredTexts)) {
-        bullets.splice(bulletIndex, expectedTexts.length, ...desiredTexts);
-        setPathValue(updatedProfile, `resume.experience_entries.${target.index}.bullets`, bullets);
-        changed = true;
-      }
-      if (activeChanges.has(change.semanticId)) {
-        appliedTargets.set(change.semanticId, {
-          bulletIndex,
-          texts: desiredTexts,
-        });
-      } else {
-        appliedTargets.delete(change.semanticId);
-      }
-    }
+    // Never locate an achievement by text when its stable identity is absent.
+    if (targets.length > 1 || change.plateTexts.length > 1) conflictCount += 1;
+    else unmappedCount += 1;
   }
 
   // All edits in this projection share the resulting snapshot. Capturing it
@@ -756,6 +708,7 @@ export function ProfileForm({
   showSectionHeading = true,
 }: ProfileFormProps) {
   const updateProfile = useUpdateProfileMutation();
+  const wordingLibrary = useWordingLibrary();
   const [statusMessage, setStatusMessage] = useState("");
   const [statusTone, setStatusTone] = useState<"saved" | "warning">("saved");
   const [resetToken, setResetToken] = useState(0);
@@ -1222,7 +1175,17 @@ export function ProfileForm({
     const entryIndex = parsed.data.resume.experience_entries.findIndex(
       (candidate) => candidate.id === suggestion.source.experienceId,
     );
-    if (!isApplicableRequiredBulletCleanup(parsed.data, expectedProfileVersion, suggestion)) {
+    const matches = parsed.data.resume.experience_entries.filter((candidate) => candidate.id === suggestion.source.experienceId);
+    const role = wordingLibrary.data?.roles.find((candidate) => candidate.role_id === suggestion.source.experienceId);
+    const pinned = parsed.data.resume.tailoring_rules?.required_bullets_by_experience_id?.[suggestion.source.experienceId];
+    const applicable = wordingLibrary.data?.profileVersion === expectedProfileVersion
+      && matches.length === 1 && entryIndex >= 0 && suggestion.source.identityKind === "canonical_achievement"
+      && role?.achievements[suggestion.source.bulletIndex]?.achievement_id === suggestion.source.sourceId
+      && matches[0]?.bullets[suggestion.source.bulletIndex] === suggestion.originalText
+      && pinned?.[suggestion.source.requiredBulletIndex] === suggestion.originalText
+      && pinned.filter((item) => item === suggestion.originalText).length === 1
+      && suggestion.proposedText === suggestion.originalText.trim().replace(/\s+/g, " ");
+    if (!applicable) {
       setStatusTone("warning");
       setStatusMessage("The saved Required bullet no longer matches this suggestion. Inspect it again.");
       return false;
@@ -1439,7 +1402,7 @@ export function ProfileForm({
     } finally {
       requiredAcceptPendingRef.current = false;
     }
-  }, [form, formBaseVersion, initial.profileVersion, onPreviewSourceChange, updateProfile]);
+  }, [form, formBaseVersion, initial.profileVersion, onPreviewSourceChange, updateProfile, wordingLibrary.data]);
 
   return (
     <form

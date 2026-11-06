@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import ctypes
-import errno
 import json
 import os
 import platform
@@ -12,7 +11,7 @@ import re
 import stat
 import subprocess
 import tempfile
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Mapping, MutableMapping, Sequence
@@ -300,92 +299,6 @@ class MigrationResult:
     already_completed: bool
 
 
-def migrate_persistent_env_credentials(
-    paths: Sequence[Path],
-    marker_path: Path,
-    *,
-    store: NativeCredentialStore | None = None,
-) -> MigrationResult:
-    """Move fixed allowlisted secrets from exact env files into the native store."""
-
-    # Configuration imports this module, so acquire its shared file locks only
-    # at call time. The migration lock is always first, followed by unique
-    # source directories in sorted order; rollback remains inside every lock.
-    from jobctrl.config import APP_DIR, ConfigFileError, config_file_lock
-
-    with _exclusive_migration_lock(marker_path):
-        if marker_path.is_symlink():
-            raise NativeCredentialMigrationError("credential migration refuses a symbolic-link marker")
-        if marker_path.exists():
-            _validate_completion_marker(marker_path)
-            return MigrationResult((), (), True)
-
-        existing_parents: dict[Path, list[Path]] = {}
-        eligible_paths: list[Path] = []
-        missing_parents: list[Path] = []
-        try:
-            owner = APP_DIR.expanduser().resolve(strict=False)
-        except (OSError, RuntimeError) as exc:
-            raise NativeCredentialMigrationError("JobCtrl state directory could not be resolved safely") from exc
-        lexical_owner = Path(os.path.abspath(APP_DIR.expanduser()))
-        for candidate in paths:
-            expanded = candidate.expanduser()
-            lexical_parent = Path(os.path.abspath(expanded.parent))
-            try:
-                resolved_parent = expanded.parent.resolve(strict=False)
-            except (OSError, RuntimeError) as exc:
-                raise NativeCredentialMigrationError("credential source directory could not be resolved safely") from exc
-            inside_owner = resolved_parent.is_relative_to(owner)
-            if lexical_parent.is_relative_to(lexical_owner) and not inside_owner:
-                raise NativeCredentialMigrationError(
-                    "credential source under the JobCtrl state directory resolves outside it; check its symlinks"
-                )
-            try:
-                parent = expanded.parent.resolve(strict=True)
-            except FileNotFoundError:
-                # Match the existing missing-source behavior without creating
-                # an unrelated directory merely to obtain a lock. Check again
-                # before completing in case a source appeared in the meantime.
-                _require_absent_sources([expanded])
-                if inside_owner:
-                    raise NativeCredentialMigrationError(
-                        "the JobCtrl credential source directory is missing; configure a provider with "
-                        "jobctrl setup or create that directory, then retry jobctrl credentials migrate. "
-                        "No completion marker was written."
-                    ) from None
-                missing_parents.append(expanded)
-                continue
-            existing_parents.setdefault(parent, []).append(expanded)
-            eligible_paths.append(candidate)
-        try:
-            with ExitStack() as locks:
-                skipped = list(missing_parents)
-                for parent in sorted(existing_parents):
-                    try:
-                        locks.enter_context(config_file_lock(path=parent / "config.json"))
-                    except OSError as exc:
-                        if exc.errno not in (errno.EACCES, errno.EPERM, errno.EROFS):
-                            raise
-                        _require_absent_sources(existing_parents[parent])
-                        if parent.is_relative_to(owner):
-                            raise NativeCredentialMigrationError(
-                                "the JobCtrl credential source directory cannot be locked; check its permissions "
-                                "or configure a provider with jobctrl setup, then retry jobctrl credentials migrate. "
-                                "No completion marker was written."
-                            ) from exc
-                        # An inaccessible external directory need not block
-                        # migration if every requested source is still absent.
-                        skipped.extend(existing_parents[parent])
-                skipped_set = set(skipped)
-                locked_paths = [path for path in eligible_paths if path.expanduser() not in skipped_set]
-                return _migrate_persistent_env_credentials(
-                    locked_paths, marker_path, store=store,
-                    check_skipped=lambda: _require_absent_sources(skipped),
-                )
-        except ConfigFileError as exc:
-            raise NativeCredentialMigrationError("credential sources are busy; retry migration") from exc
-
-
 def _require_absent_sources(paths: Sequence[Path]) -> None:
     """Fail closed if a skipped, unlocked source appeared or cannot be checked.
 
@@ -402,21 +315,26 @@ def _require_absent_sources(paths: Sequence[Path]) -> None:
         raise NativeCredentialMigrationError("an unlocked credential source exists or appeared; check access and retry")
 
 
-def _migrate_persistent_env_credentials(
+def migrate_explicit_env_credentials(
     paths: Sequence[Path],
     marker_path: Path,
     *,
-    store: NativeCredentialStore | None = None,
+    store: NativeCredentialStore,
     check_skipped: Callable[[], None] | None = None,
 ) -> MigrationResult:
-    """Run a migration while the caller holds the marker and source locks."""
+    """Migrate exact source files under the caller's native mutation/marker locks.
+
+    The application supplies its explicit native adapter and workspace policy;
+    this leaf owns atomic source replacement, ACL preservation and rollback.
+    It never imports runtime settings or chooses a global credential namespace.
+    """
 
     if marker_path.is_symlink():
         raise NativeCredentialMigrationError("credential migration refuses a symbolic-link marker")
     if marker_path.exists():
         _validate_completion_marker(marker_path)
         return MigrationResult((), (), True)
-    active_store = store or NativeCredentialStore()
+    active_store = store
     if active_store.kind is None:
         raise NativeCredentialMigrationError("native credential storage is unsupported")
 

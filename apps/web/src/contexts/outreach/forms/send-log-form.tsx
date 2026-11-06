@@ -35,7 +35,8 @@ export interface SendLogFormProps {
 }
 
 function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 }
 
 const SEND_CHANNEL_LABELS: Record<OutreachSendChannel, string> = {

@@ -13,16 +13,6 @@
       "notes": "Native Go launcher; Go toolchain and standard-library notices are recorded in the release SBOM."
     },
     {
-      "id": "jobctrl-api",
-      "classification": "core-runtime",
-      "owner": "JobCtrl",
-      "versionSource": "apps/api/package.json#version",
-      "source": "https://github.com/ebarti/JobCtrl/tree/main/apps/api",
-      "license": "AGPL-3.0-only",
-      "redistribution": "bundle",
-      "requiredInCore": true
-    },
-    {
       "id": "jobctrl-web",
       "classification": "core-runtime",
       "owner": "JobCtrl",
@@ -52,18 +42,6 @@
       "redistribution": "bundle",
       "requiredInCore": true,
       "notes": "Owns the payload SBOM, license texts, notices, provenance, and size report. The manifest and its detached signature are the only fixed signed-envelope exclusions from the manifest file list."
-    },
-    {
-      "id": "better-sqlite3-native",
-      "classification": "core-runtime",
-      "owner": "WiseLibs contributors",
-      "version": "12.9.0",
-      "source": "https://github.com/WiseLibs/better-sqlite3/releases/tag/v12.9.0",
-      "license": "MIT",
-      "redistribution": "bundle",
-      "requiredInCore": false,
-      "embeddedIn": "jobctrl-api",
-      "notes": "Pinned Node 22 ABI 127 darwin-arm64 prebuild. The builder verifies this archive directly and never runs prebuild-install or node-gyp."
     },
     {
       "id": "font-jetbrains-mono",
