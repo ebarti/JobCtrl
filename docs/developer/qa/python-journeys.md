@@ -100,6 +100,26 @@ unchanged Python sources and locks. Its web SHA-256 was
 The revised setup screenshot was inspected; the final combined candidate's
 hosted results belong to the PR checks.
 
+The first hosted run on `6d876ff9e`,
+[CI 42917881590](https://github.com/ebarti/JobCtrl/actions/runs/42917881590),
+passed ten jobs but did not qualify the browser suite: its 480-second aggregate
+deadline stopped execution after 40 passed cases and left eight incomplete.
+There was no assertion failure; the next case was interrupted during setup.
+For the same 39 completed cases, workspace startup took 295,485 ms versus
+185,094 ms in the earlier hosted run, while test bodies took 141,025 ms versus
+112,854 ms. Web build time also rose from 14,957 ms to 24,181 ms. Startup
+continued steadily (7.79 seconds median, 8.28 seconds maximum), rather than
+stalling in one journey.
+
+Those measurements project roughly 610–630 seconds for all 48 cases on the
+slower runner. The aggregate suite allowance is now 720 seconds, with a
+14-minute CI build/suite step and the existing 20-minute job limit. This leaves
+bounded room for composition, build, teardown and evidence collection. The
+90-second ordinary test, 150-second demo and 60-second fixture limits, one
+worker, zero retries, assertions and owned-process cleanup are unchanged.
+This is a measured harness-budget correction; the timed-out run remains
+non-passing, and product behavior was not changed to accommodate it.
+
 ### Earlier transformation qualification
 
 The hosted [Browser job](https://github.com/ebarti/JobCtrl/actions/runs/42289605507/job/128139371277)

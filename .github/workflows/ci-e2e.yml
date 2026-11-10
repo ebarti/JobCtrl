@@ -73,7 +73,8 @@ jobs:
           console.log(JSON.stringify({runner:'ubuntu-24.04',arch:process.arch,cpus:os.availableParallelism(),memoryMiB:Math.round(os.totalmem()/1024/1024),setupSeconds:Math.floor(Date.now()/1000)-start,node:process.version}));
           NODE
       - name: Build once and run complete real application journeys
-        timeout-minutes: 10
+        # Reserve two minutes beyond the suite ceiling for build and owned cleanup.
+        timeout-minutes: 14
         run: corepack pnpm e2e
       - name: Require unchanged dependency locks
         if: always()
