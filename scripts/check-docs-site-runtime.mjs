@@ -53,7 +53,7 @@ const PAGES = [
   },
   {
     path: "/guides/at-most-once-job-application-submission",
-    visualSelector: ".mermaid svg",
+    visualSelector: null,
     images: false,
   },
   {
@@ -61,16 +61,17 @@ const PAGES = [
     visualSelector: null,
     images: false,
   },
-  { path: "/architecture/", visualSelector: ".system-topology", images: false },
+  { path: "/architecture/", visualSelector: ".vp-doc table", images: false },
+  { path: "/architecture/runtime", visualSelector: ".vp-doc table", images: false },
   { path: "/developer/", visualSelector: null, images: false },
   {
     path: "/architecture/scoring",
-    visualSelector: ".mermaid svg",
+    visualSelector: null,
     images: false,
   },
   {
     path: "/architecture/pipeline/operations",
-    visualSelector: ".mermaid svg",
+    visualSelector: null,
     images: false,
   },
   {
@@ -79,6 +80,7 @@ const PAGES = [
     images: true,
   },
   { path: "/user/getting-started", visualSelector: null, images: false },
+  { path: "/user/configuration", visualSelector: null, images: false },
   { path: "/user/product-tour", visualSelector: null, images: true },
   {
     path: "/user/data-and-safety",
@@ -94,7 +96,7 @@ const PAGES = [
   { path: "/user/apply", visualSelector: null, images: false },
   {
     path: "/user/candidate-profile",
-    visualSelector: null,
+    visualSelector: ".candidate-profile-flow",
     images: false,
   },
   {
@@ -104,7 +106,7 @@ const PAGES = [
   },
   {
     path: "/user/materials-and-tailoring",
-    visualSelector: ".mermaid svg",
+    visualSelector: null,
     images: false,
   },
   {
@@ -155,7 +157,96 @@ const DOCS_ANALYTICS_CONSENT_STORAGE_KEY =
   "jobctrl-docs-analytics-consent-v1";
 const observedSocialDescriptions = new Map();
 
-const LIFECYCLE_EXPLANATION_CONTRACTS = [
+// Assert the current Python feature documentation explicitly. Retired diagrams
+// and TypeScript-era wording are not evidence of a rendering failure.
+const EXPLANATION_CONTRACTS = [
+  {
+    path: "/guides/at-most-once-job-application-submission",
+    heading: "#approval-is-bound-at-the-mutation-boundary",
+    selectors: [
+      "#at-most-once-is-not-exactly-once",
+      "#local-stops-do-not-resolve-external-uncertainty",
+      "#browser-and-email-have-different-submission-boundaries",
+    ],
+    tokens: [
+      "needs_verification",
+      "one unique intent",
+      "pinned bytes",
+      "final form submission is manual",
+      "sender does not retry an existing intent",
+    ],
+  },
+  {
+    path: "/architecture/",
+    heading: "#architecture",
+    selectors: [".vp-doc table"],
+    tokens: [
+      "workers/automation/src/jobctrl/app/",
+      "workers/automation/src/jobctrl/features/<owner>/",
+      "Temporal runs the same Python application actions",
+      "no sibling-private-table reads or alternate business writers",
+      "Missing wording cannot lower factual qualification",
+    ],
+  },
+  {
+    path: "/architecture/runtime",
+    heading: "#admission-and-readiness",
+    selectors: ["#processes-and-entrypoints", "#model-execution-and-shutdown"],
+    tokens: [
+      "Every request checks the actual peer and Host",
+      "Tokens and credentials never enter ordinary settings, event payloads or application logs",
+      "lane capacity and spend checks",
+      "Credentials are loaded only at the provider boundary and remain outside prompts",
+      "Model failures preserve the feature's accepted artifact",
+    ],
+  },
+  {
+    path: "/architecture/scoring",
+    heading: "#inputs-and-semantic-authority",
+    selectors: [
+      "#deterministic-score-resolution",
+      "#profile-edits-and-explicit-refresh",
+    ],
+    tokens: [
+      "source-bound model determination",
+      "Failed, invalid or stale determinations do not replace the last accepted score",
+      "document gap and does not reduce factual fit",
+      "requirement-fit-v2-scoped",
+    ],
+  },
+  {
+    path: "/architecture/pipeline/operations",
+    heading: "#automatic-preparation-recovery",
+    selectors: [
+      "#discovery-schedule",
+      "#domain-events-projections-and-sse",
+      "#spend-ceiling",
+    ],
+    tokens: [
+      "Recurring discovery is off by default",
+      "preserve committed progress, respect the user's stop",
+      "Feature mutations and bounded invalidations commit together",
+      "lane/spend preflight before external calls",
+      "none permits lexical fallback or destruction of an accepted artifact",
+    ],
+  },
+  {
+    path: "/user/configuration",
+    heading: "#configuration-sources",
+    tokens: [
+      "macOS Keychain",
+      "Windows Credential Manager",
+      "Linux Secret Service",
+      "resolves native-store credentials for each new provider execution",
+      "A nonempty value in the launch environment takes precedence",
+      "An in-flight request retains its existing credentials",
+      "Stored secret values are never rendered",
+      "inspection_failed",
+      "does not save submitted secrets to a plaintext fallback",
+      "all-or-nothing",
+      "failed change preserves the previous configuration",
+    ],
+  },
   {
     path: "/user/discovery",
     heading: "#runtime-sources-and-schedule",
@@ -173,12 +264,15 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
       "#candidate-profile-application-fields",
       "#approval-and-automation-modes",
       "#browser-apply-automation",
+      "#final-browser-submission-is-manual",
+      "#skip-and-safe-reset",
     ],
     tokens: [
-      "missing_profile_data:<field>",
-      "autoApply",
-      "applyApprovalRequired",
-      "at-most-once",
+      "partial coverage",
+      "read-only",
+      "exact recipient, subject, body and accepted resume bytes",
+      "commits a unique intent",
+      "blocks automatic resending",
       "CAPTCHA",
     ],
   },
@@ -187,10 +281,10 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
     heading: "#how-profile-data-becomes-runtime-evidence",
     labels: [
       "Import creates a draft.",
-      "Save validates and normalizes.",
+      "Save validates and retains the authored data.",
       "Work receives an immutable snapshot.",
-      "Consumers bind to the version they used.",
-      "Propagation remains explicit and recoverable.",
+      "Fact and wording revisions remain separate.",
+      "Refresh preserves accepted work.",
     ],
     tokens: ["ProfileSnapshot", "profile version", "Apply approval"],
   },
@@ -209,15 +303,33 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
   {
     path: "/user/materials-and-tailoring",
     heading: "#how-jobctrl-chooses-a-resume",
-    selectors: [".mermaid svg"],
-    labels: ["Bind canonical inputs.", "Generate candidates with anchors.", "Verify the final text.", "Repair bounded failures.", "Persist accepted output."],
-    tokens: ["claim-verification", "quality judge", "verbatim", "line IDs", "last accepted generation"],
+    selectors: [".vp-doc .custom-block.info"],
+    tokens: [
+      "retain every approved role and achievement",
+      "select one approved wording per achievement",
+      "Person fit remains separate from document coverage",
+      "advisory coherence review",
+      "Baseline-copy mode makes no resume model calls",
+      "failed refresh preserves the last accepted resume",
+      "integration verification are in progress",
+    ],
   },
   {
     path: "/user/outcomes-and-feedback",
     heading: "#how-email-becomes-an-outcome-suggestion",
-    labels: ["A user-started scan bounds application anchors.", "A model reads bounded headers.", "A second determination classifies the linked body.", "Both decisions are persisted.", "Accept or correct creates an outcome.", "Ignore records only the suggestion decision."],
-    tokens: ["application anchors", "bounded headers", "verbatim span", "prompt/model versions", "blocked reason", "Raw bodies remain local", "applied_at", "discovered_at", "45-day", "five applied", "five response-time"],
+    selectors: ["#retrying-a-manual-record", "#source-of-truth-and-ownership"],
+    tokens: [
+      "20 anchors",
+      "10 results per anchor",
+      "45-day",
+      "before the body is read",
+      "result is a suggestion, not a reviewed outcome",
+      "ignoring records the decision without inventing one",
+      "preserves earlier committed suggestions and reviewed records",
+      "scoped local reads",
+      "sample-gated",
+      "does not erase the original submit intent",
+    ],
   },
   {
     path: "/user/contacts-and-outreach",
@@ -1710,11 +1822,11 @@ try {
     );
   }
 
-  for (const contract of LIFECYCLE_EXPLANATION_CONTRACTS) {
+  for (const contract of EXPLANATION_CONTRACTS) {
     await page.goto(`http://127.0.0.1:${port}${contract.path}`, {
       waitUntil: "networkidle",
     });
-    const lifecycleExplanation = await page.evaluate(
+    const explanation = await page.evaluate(
       ({ heading, labels = [], tokens = [], selectors = [] }) => {
         const doc = document.querySelector(".vp-doc");
         const text = (doc?.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -1735,16 +1847,16 @@ try {
       contract,
     );
     if (
-      !lifecycleExplanation.hasExplanationHeading ||
-      lifecycleExplanation.missingLabels.length > 0 ||
-      lifecycleExplanation.missingTokens.length > 0 ||
-      lifecycleExplanation.missingSelectors.length > 0
+      !explanation.hasExplanationHeading ||
+      explanation.missingLabels.length > 0 ||
+      explanation.missingTokens.length > 0 ||
+      explanation.missingSelectors.length > 0
     ) {
       fail(
-        `${contract.path}: public lifecycle explanation regressed (${JSON.stringify(lifecycleExplanation)})`,
+        `${contract.path}: public explanation regressed (${JSON.stringify(explanation)})`,
       );
     } else {
-      console.log(`ok    ${contract.path} lifecycle explanation`);
+      console.log(`ok    ${contract.path} explanation`);
     }
   }
 
@@ -1889,74 +2001,6 @@ try {
     );
   } else {
     console.log("ok    /user/data-and-safety privacy contract");
-  }
-
-  await page.goto(`http://127.0.0.1:${port}/architecture/runtime`, {
-    waitUntil: "networkidle",
-  });
-  const credentialRuntimeContract = await page.evaluate(() => {
-    const heading = document.querySelector("#provider-credential-boundary");
-    const headingLevel = heading ? Number(heading.tagName.slice(1)) : 7;
-    const sectionElements = heading ? [heading] : [];
-    for (
-      let element = heading?.nextElementSibling;
-      element;
-      element = element.nextElementSibling
-    ) {
-      const level = /^H[1-6]$/.test(element.tagName)
-        ? Number(element.tagName.slice(1))
-        : undefined;
-      if (level !== undefined && level <= headingLevel) break;
-      sectionElements.push(element);
-    }
-    const text = sectionElements
-      .map((element) => element.textContent ?? "")
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-    return {
-      hasBoundary:
-        heading?.textContent?.includes("Provider Credential Boundary") ?? false,
-      hasAtomicBatchBoundary:
-        text.includes("PATCH /v1/credentials/batch") &&
-        text.includes("applies completely"),
-      hasPresenceOnlyBoundary: text.includes("responses return presence only"),
-      hasTriStateBoundary: text.includes("true, false, or null"),
-      hasInspectionFailureBoundary:
-        text.includes("configured=null") &&
-        text.includes("unavailableReason=inspection_failed"),
-      hasSanitizedOperationalFailure: text.includes(
-        "503 credential_store_unavailable",
-      ),
-      hasFixedAllowlist: text.includes("fixed allowlist covers"),
-      hasMissingOrEmptyBoundary: text.includes(
-        "only for a missing or empty value",
-      ),
-      hasProcessLocalBoundary: text.includes(
-        "only into that process's environment",
-      ),
-      hasNoHotReloadBoundary: text.includes("There is no hot reload"),
-      hasPlatformBoundary:
-        text.includes("macOS uses Keychain") &&
-        text.includes("Windows uses Credential Manager") &&
-        text.includes("Linux uses Secret Service") &&
-        text.includes("No adapter persists a plaintext fallback"),
-      hasProviderStatusBoundary:
-        text.includes("GET /v1/providers/status") &&
-        text.includes(
-          "sanitized Codex/Claude/Google configuration and readiness",
-        ),
-      hasRestartRequiredBoundary:
-        text.includes("requires a JobCtrl restart") &&
-        text.includes("before new values become ready"),
-    };
-  });
-  if (Object.values(credentialRuntimeContract).some((present) => !present)) {
-    fail(
-      `/architecture/runtime: credential boundary regressed (${JSON.stringify(credentialRuntimeContract)})`,
-    );
-  } else {
-    console.log("ok    /architecture/runtime credential boundary");
   }
 
   await page.goto(`http://127.0.0.1:${port}/comparison`, {
@@ -2524,9 +2568,6 @@ try {
         for (const route of ["/", "/user/normal-flows", "/guides/at-most-once-job-application-submission"]) {
           await themedPage.goto(`${themeBase}${route}`, { waitUntil: "networkidle" });
           await themedPage.locator("h1").first().waitFor({ state: "visible" });
-          if (route.includes("at-most-once")) {
-            await themedPage.locator(".mermaid svg").first().waitFor({ state: "visible" });
-          }
           const style = await themedPage.evaluate(() => {
             const action = document.querySelector(".VPButton.brand");
             return {
