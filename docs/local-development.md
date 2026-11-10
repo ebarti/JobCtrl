@@ -115,6 +115,10 @@ the source fleet shares workspace ownership controls with a compatible installed
 application. An unverified process or an unexpected listener is not authority
 to stop or replace it.
 
+The launcher waits up to 30 seconds for Temporal's health check before starting
+the worker. If Temporal stays unavailable, startup fails visibly without
+launching the worker; inspect `.dev/logs/temporal.log` before trying again.
+
 The default workspace is `~/.jobctrl`, the API is loopback-only on
 `127.0.0.1:8766`, and Vite requests port `5173`. Use the printed URL if Vite
 chooses a different port. New workspaces use `$JOBCTRL_DIR/temporal.db`; keep
