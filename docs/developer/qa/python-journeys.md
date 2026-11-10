@@ -46,6 +46,62 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
+### Full catalog matching and manual refresh — 10 November 2026
+
+The complete source command `corepack pnpm e2e` on
+`a7e5c73b99f245452f1b12885dcee6d56080f2a8` passed **48/48** journeys in
+`e2e-FcYpDn`: 47 Python application journeys and the browser-local demo. There
+were no retries, skips, unexpected or flaky results. The macOS arm64 runner
+had 12 CPUs and Node 26.13.0. It recorded 124 ms source snapshot, 1,714 ms
+composition preflight, 7,248 ms web build, 303,063 ms journeys and 312,187 ms
+total. The dependency locks and built web assets remained unchanged.
+
+The source candidate SHA-256 was
+`55ef63c80afde9a06fc87d5d52ceca11b52cfcbc5aa418adac4531c28d360a28`;
+the frozen Python package SHA-256 was
+`48db340635bc11f9f3ad16c54a0a7b4cd88b4eb95046992c60a74a17f848b590`;
+the web build SHA-256 was
+`4cf2c179631e8b1ef5c0c6c0e66b3349c8721246eb7769e52fe5b578598ac099`.
+
+The added journeys verified complete-catalog matching and strict response
+validation, unchanged reuse, formerly missing support after a factual edit,
+one grouped proposal for an achievement's requirement set, explicit approval,
+fixed job scope, duplicate admission, cancellation, source changes while queued
+or running, and durable limits across an actual worker replacement. The
+uncertain-authoring journey preserved both original attempts, retried only
+achievement A, kept B visibly pending, then retried B through the UI. Forged
+retry metadata caused no model call. A fresh workspace kept its saved Profile
+version null, returned the minimal `profile_required` readiness response, and
+created no passive refresh action or model call.
+
+The earlier full run `e2e-66BMJV` passed 44/46 and exposed two real regressions:
+the new pending read returned 404 in valid Discovery and Compensation workflows
+before Profile creation. The Fit-owned readiness response repaired both. A
+separate real-demo Profile visit exposed an existing preview HTTP path/query
+contract error; the caller was repaired while retaining the Plate editor.
+The final full run includes both repairs and the demo capability guard. Earlier
+failures remain diagnostic evidence, not passing qualification.
+
+Desktop and 390px screenshots of ready, running, completed, uncertain-wording,
+subset-retry, pre-Profile and demo-unavailable states were inspected. The
+synthetic journeys exercised actual HTTP, Temporal, worker processes, SQLite
+and rendering; only external providers were controlled. They do not establish
+real-provider semantic quality, a hard monetary cap, model token-context
+capacity, or installed-release behavior. Independent source review found no
+remaining scoped findings after recovery, source-fence and lineage repairs.
+The delivery record is [#1464](https://github.com/ebarti/JobCtrl/issues/1464)
+and [PR #1465](https://github.com/ebarti/JobCtrl/pull/1465); the broader visual
+redesign remains separate.
+
+After that full run, the setup link gained only an underline. The real
+pre-Profile journey passed again in `e2e-iJW9Mr` (1/1, 15,808 ms total), with
+unchanged Python sources and locks. Its web SHA-256 was
+`2e741d704d11542302f7e8a8a888df28a7852d763a612be36d3e8c97c1e99391`.
+The revised setup screenshot was inspected; the final combined candidate's
+hosted results belong to the PR checks.
+
+### Earlier transformation qualification
+
 The hosted [Browser job](https://github.com/ebarti/JobCtrl/actions/runs/42289605507/job/128139371277)
 on candidate `09f9d5c` passed **23/23** source journeys, including the demo, in
 `e2e-DUQtlZ`. Its Linux x64 runner had four CPUs and Node 22.21.1. It recorded
