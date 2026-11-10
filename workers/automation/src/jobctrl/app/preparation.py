@@ -251,21 +251,10 @@ class PreparationService:
             value = await self.jobs.analyze(job_id, **inputs, operation_id=op, cancelled=cancelled)
             return {"revision": value["revision"], "postingRevision": value["posting_revision"]}
         if stage == "requirements":
-            while True:
-                if cancelled():
-                    raise asyncio.CancelledError()
-                try:
-                    value = await self.requirements.refresh(job_id, **inputs, operation_id=op,
-                                                           cancelled=cancelled, heartbeat=context.heartbeat)
-                    break
-                except Exception as error:
-                    if getattr(error, "code", None) != "requirements_scan_pending":
-                        raise
-                    progress = getattr(error, "details", None) or {}
-                    context.heartbeat({"jobId": job_id, "stage": stage, "continuationId": progress.get("continuation_id"),
-                                       "requirementsCompleted": progress.get("requirements_completed"),
-                                       "requirementsTotal": progress.get("requirements_total")})
-                    await asyncio.sleep(0)
+            if cancelled():
+                raise asyncio.CancelledError()
+            value = await self.requirements.refresh(job_id, **inputs, operation_id=op,
+                                                   cancelled=cancelled, heartbeat=context.heartbeat)
             if value.get("stale"):
                 raise ConflictError("The accepted requirement snapshot is stale.")
             return {"revision": value["revision"], "postingRevision": value["posting_revision"]}

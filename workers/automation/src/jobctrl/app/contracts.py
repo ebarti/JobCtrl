@@ -41,3 +41,9 @@ class Feature:
     service: object
     routes: tuple[BaseRoute, ...] = ()
     actions: dict[str, ActionHandler] = field(default_factory=dict)
+    # Optional, pure payload validators/keys for actions that must have one
+    # active admission per feature-owned scope, including queued work.
+    action_scopes: dict[str, Callable[[dict], str]] = field(default_factory=dict)
+    # Transport terminalization and its owning feature receipt share a commit.
+    # The callback is a feature adapter, not a domain/database dependency.
+    action_finalizers: dict[str, Callable[[str, str, str | None, Any], None]] = field(default_factory=dict)

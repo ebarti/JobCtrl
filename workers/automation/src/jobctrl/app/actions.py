@@ -35,13 +35,28 @@ class Application:
         self.features = {feature.name: feature for feature in features}
         self.services = {feature.name: feature.service for feature in features}
         self.actions = {}
+        self.action_scopes = {}
+        self.action_finalizers = {}
         for feature in features:
             for name, handler in feature.actions.items():
                 if name in self.actions or not name.startswith(feature.name + "."):
                     raise ValueError(f"Invalid or duplicate action: {name}")
                 self.actions[name] = handler
+            for name, scope in feature.action_scopes.items():
+                if name not in feature.actions or not callable(scope):
+                    raise ValueError(f"Invalid action scope: {name}")
+                self.action_scopes[name] = scope
+            for name, finalizer in feature.action_finalizers.items():
+                if name not in feature.actions or not callable(finalizer):
+                    raise ValueError(f"Invalid action finalizer: {name}")
+                self.action_finalizers[name] = finalizer
         self._temporal = None
         self._temporal_lock = asyncio.Lock()
+
+    def _finalize_feature(self, action, run_id, status, error_code, connection):
+        finalizer = self.action_finalizers.get(action)
+        if finalizer is not None:
+            finalizer(run_id, status, error_code, connection)
 
     async def temporal(self):
         if self._temporal is None:
@@ -80,6 +95,20 @@ class Application:
                 if existing["input_hash"] != digest or existing["action"] != action:
                     raise ConflictError("This action identity already belongs to different input.")
                 return self._run_payload(existing)
+            scope = self.action_scopes.get(action)
+            if scope is not None:
+                requested_scope = scope(payload)
+                active = connection.execute(
+                    "SELECT run_id,payload_json FROM app_action_runs WHERE action=? "
+                    "AND status IN ('pending','start_failed','queued','running')",
+                    (action,),
+                ).fetchall()
+                for candidate in active:
+                    if scope(json.loads(candidate["payload_json"])) == requested_scope:
+                        raise AppError(
+                            "action_scope_busy", "An action for this scope is already pending or running.", 409,
+                            {"runId": candidate["run_id"], "action": action},
+                        )
             created = now()
             connection.execute(
                 "INSERT INTO app_action_runs(run_id,action,request_id,idempotency_key,input_hash,payload_json,status,workflow_id,created_at,updated_at) "
@@ -201,6 +230,7 @@ class Application:
                             (*terminal, result, now(), description.run_id, row["run_id"]),
                         ).rowcount
                         if changed:
+                            self._finalize_feature(row["action"], row["run_id"], *terminal, connection)
                             self.runtime.events.append(
                                 connection, "ActionCompleted" if terminal[0] == "succeeded" else "ActionFailed",
                                 {"runId": row["run_id"], "action": row["action"], "code": terminal[1], "source": "workflow_recovery"},
@@ -278,6 +308,7 @@ class Application:
             refused = bool(current[0]) or current[1] == "cancelled"
             if refused:
                 connection.execute("UPDATE app_action_runs SET status='cancelled',error_code='action_cancelled',updated_at=? WHERE run_id=?", (now(), run_id))
+                self._finalize_feature(action, run_id, "cancelled", "action_cancelled", connection)
             else:
                 connection.execute("UPDATE app_action_runs SET status='running',temporal_run_id=COALESCE(?,temporal_run_id),updated_at=? WHERE run_id=?", (temporal_run_id, now(), run_id))
                 self.runtime.events.append(connection, "ActionStarted", {"runId": run_id, "action": action}, feature=action.split(".")[0])
@@ -298,11 +329,13 @@ class Application:
             code = error.code if isinstance(error, AppError) else "action_cancelled" if cancelled else "action_failed"
             with self.runtime.database.transaction() as connection:
                 connection.execute("UPDATE app_action_runs SET status=?,error_code=?,updated_at=? WHERE run_id=? AND status='running'", ("cancelled" if cancelled else "failed", code, now(), run_id))
+                self._finalize_feature(action, run_id, "cancelled" if cancelled else "failed", code, connection)
                 self.runtime.events.append(connection, "ActionFailed", {"runId": run_id, "action": action, "code": code},
                                            feature=action.split(".")[0], level="warn" if cancelled else "error")
             raise
         with self.runtime.database.transaction() as connection:
             connection.execute("UPDATE app_action_runs SET status='succeeded',result_json=?,error_code=NULL,updated_at=? WHERE run_id=? AND status='running'", (encoded, now(), run_id))
+            self._finalize_feature(action, run_id, "succeeded", None, connection)
             self.runtime.events.append(connection, "ActionCompleted", {"runId": run_id, "action": action}, feature=action.split(".")[0])
         return result
 
@@ -318,6 +351,7 @@ class Application:
             ).rowcount
             if not changed:
                 return self.action_run(run_id, connection)
+            self._finalize_feature(run["action"], run_id, "cancelled", "action_cancelled", connection)
             self.runtime.events.append(connection, "ActionCancellationRequested", {"runId": run_id}, feature=run["action"].split(".")[0])
         try:
             client = await self.temporal()

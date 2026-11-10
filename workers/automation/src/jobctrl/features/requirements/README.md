@@ -17,10 +17,10 @@ coverage belong to Fit.
 
 ## Source and semantic authority
 
-Every new extraction, comparison, novelty decision and correction calls the
+Every new extraction, catalog matching determination and correction calls the
 configured `Runtime.model` gateway in the `requirements` lane. Its persisted
 provider/model/prompt/input receipt accompanies the accepted owner binding.
-Domain checks enforce strict schemas, complete candidate ID inventories,
+Domain checks enforce strict schemas, complete incoming ID inventories,
 revisions and exact contiguous posting spans. The model alone decides support,
 qualified meaning, equivalence and novelty. Unsupported, uncertain or malformed
 output never replaces an accepted snapshot.
@@ -30,36 +30,49 @@ remain part of qualified meaning. Tier/weight belong to an occurrence. A
 paraphrase may reuse a canonical ID only through a recorded model decision.
 Externally authored source labels remain provenance data. Generated
 `posting:<job-id>:<revision>:<hash>` model source IDs cannot alias catalog sources
-or sweep certificates.
+or the catalog inventory source.
 
-SQLite FTS ranks candidates separately for each incoming meaning; it has no semantic authority. A
-candidate match requires an explicit equivalence judgment. A miss requires
-model comparisons against the rest of the revision-fenced catalog in pages of
-at most twelve meanings and 60,000 bytes of meaning text. Only a complete
-negative sweep can reach the separate source-bound novelty decision. The sweep
-certificate records the catalog revision, candidate count/set fingerprint and
-comparison receipt fingerprint. New meanings awaiting publication in the same
-extraction also participate, preventing repeated paraphrases within one source
-from creating additional canonical IDs.
+Extraction remains a separate source-bound call. The complete incoming batch
+and the **entire current canonical catalog**, including each definition, scope
+and qualifier, then enter one `requirements.match_catalog` determination. It
+returns exactly one `equivalent`, `new` or `uncertain` decision per incoming
+local ID. Canonical equivalence names an exact catalog ID/revision. Equivalence
+within the incoming batch points to an earlier, genuinely new representative;
+all occurrences remain recorded while only the representative creates a
+canonical meaning. There is no top-k selection, widening, paging, chunking,
+separate novelty judge or lexical fallback.
 
-The FTS index, canonical heads and catalog epoch update in the same transaction.
-Readers verify index identities/revisions/documents against the canonical heads;
-a stale or damaged index fails explicitly. Each refresh permits at most 128
-**new model calls across the complete extraction**, and 192,000 posting-source
-bytes. There is no permanent catalog-size ceiling. At the work bound, the
-owner reports `requirements_scan_pending`, retains accepted artifacts and saves
-accepted exact-call progress. Retrying the exact refresh inputs resumes that
-progress; cached calls consume zero new-call allowance. A partial sweep cannot
-establish novelty. Model lane, capacity and spend checks apply to every new
-external call.
+Every decision cites the posting, its incoming qualified meaning and the
+catalog inventory. Equivalence also cites its canonical or incoming target.
+The response echoes the exact catalog epoch. The inventory records canonical
+count and ID/revision/meaning fingerprints; it does not claim a prior negative
+sweep. Unknown, missing or duplicate incoming IDs, foreign targets, stale
+revisions, invalid local-reference graphs and non-verbatim citations refuse the
+whole result. Any uncertain decision preserves the previous accepted snapshot.
+
+Matching reads canonical heads and meanings in one read transaction, independent
+of the repairable FTS index. Missing canonical revisions refuse the snapshot.
+The index, canonical heads and catalog epoch still update together on writes;
+the separate index-status reader verifies index documents against those heads.
 Explicit index repair copies current canonical meanings under a catalog-version
 guard and makes zero model calls; it cannot create or change a meaning.
 
-The feature-owned progress cache records one bounded result and immutable
-gateway receipt per exact call, never a copy of the complete catalog per
-requirement. Its key binds the configured provider/model, prompt and output
-schema, every source and the exact context. Comparison/novelty context binds the
-catalog epoch and candidate IDs/revisions; extraction context also binds the
+Each refresh permits at most five new model calls: extraction plus at most four
+whole-catalog attempts when a concurrent publication changes the catalog.
+Posting input remains bounded to 192,000 bytes. The gateway checks its full
+serialized request against a 1 MiB structural limit before provider admission;
+model lane, capacity and spend admission apply to each new external call. That
+byte limit does not establish token-context fit. The current gateway exposes no
+selected-model token-context capacity for a separate token preflight. Known
+context refusals remain explicit when the gateway exposes them; generic
+provider failures retain their actual failure code. Size, work, spend, provider
+or context refusal never triggers smaller requests or an automatic retry and
+never publishes a partial catalog decision.
+
+The feature-owned cache records one bounded result and immutable gateway receipt
+per exact call. Its key binds the configured provider/model, prompt and output
+schema, every source and the exact context. Matching context binds the complete
+incoming inventory, catalog epoch and canonical IDs/revisions; extraction also binds the
 expected accepted snapshot revision and force selection. Source changes,
 semantic revisions, catalog publications, model changes and prompt/schema
 changes therefore cannot reuse unsafe negative judgments. Every reused result
@@ -73,8 +86,8 @@ Failed/invalid calls are never cached as accepted decisions.
 
 Unpublished same-source canonical IDs derive mechanically from the accepted
 extraction receipt, local occurrence ID and qualified meaning fingerprint. This
-keeps bounded comparison keys stable across interrupted multi-requirement
-refreshes; only an actual model equivalence decision can reuse another meaning.
+keeps new identifiers stable across interrupted refreshes; only an actual model
+equivalence decision can reuse another meaning.
 No source-dependent semantic interpretation is replaced by that identifier rule.
 
 ## Concurrency, corrections and recovery
@@ -88,7 +101,9 @@ resolution pass, up to four passes, so simultaneous discoveries reuse the
 winning canonical ID. A changed posting or accepted snapshot refuses the write.
 
 Binding correction records an explicit user reason and a fresh source-bound
-model judgment, then publishes a new immutable job snapshot. Canonical meaning
+model judgment against exactly the user-selected canonical target, then publishes
+a new immutable job snapshot. This targeted correction does not search the
+catalog or establish newness. Canonical meaning
 correction adds a revision and updates the retrieval index. Readers retain the
 old accepted snapshot with `stale=true`; they never silently reinterpret an old
 binding under a new meaning revision. Fit and Resumes use `assert_current` in
@@ -100,9 +115,10 @@ shared action receipt reuses that result without another model call. A later
 source/artifact revision marks the returned historical result stale. Reusing an
 action ID with another input conflicts. Failed, cancelled and interrupted
 attempts retain accepted artifacts and the shared model gateway's real spend
-uncertainty. A pending scan may retain the same durable operation ID: accepted
-call progress is separate from accepted Requirements publication, and no final
-artifact binding is created before the complete fenced transaction succeeds.
+uncertainty. Cached model results are separate from accepted Requirements
+publication; no final artifact binding exists before the complete fenced
+transaction succeeds. Requirement writes emit invalidations and do not schedule
+Fit reassessment or wording-coverage refreshes.
 
 Permanent Job deletion calls `delete_job_data(job_id, connection=...)` through
 the reviewed Jobs owner transaction. It removes only per-job requirement
@@ -128,6 +144,19 @@ Reads return fresh JSON DTO copies and make no model calls:
   explicit staleness. They make no model calls or per-job sibling queries.
 - `get_requirement(requirement_id, revision=None, connection=None)` reads the
   current or exact historical canonical revision.
+- `catalog_snapshot(connection=None)` returns the complete current catalog in
+  stable canonical-ID order, with `catalog_revision`, `meanings_fingerprint`
+  and `requirements`. Every row contains `requirement_id`, `revision`,
+  `definition`, `qualifiers` and `scope`; there is no pagination, filtering,
+  model work or search-index dependency. The returned JSON values are detached
+  from the immutable canonical revision records. Passing a connection joins the
+  caller's read transaction so Profile/catalog snapshots share one source view.
+- `assert_current_catalog(snapshot, connection=None)` re-reads the catalog and
+  checks its exact epoch, complete ID/revision inventory, semantic contents and
+  fingerprint. Consumers retain the unmodified public snapshot and pass their
+  publication connection to fence the complete operation atomically. Any added,
+  revised, missing or changed meaning refuses publication; this guard never
+  widens the original work set or schedules model work.
 - `assert_current(snapshot, connection=None)` fences accepted snapshot identity,
   posting revision/hash and every canonical meaning revision. Consumers pass
   their existing write connection to make publication atomic.
@@ -169,14 +198,12 @@ Events are `RequirementsUpdated`, `RequirementBindingCorrected` and
 The HTTP layer exposes safe failure codes; private posting/model prose never
 enters exception messages. Provider/spend failures retain their gateway status,
 source/schema validation failures are 422, and revision/index/cancellation
-conflicts are 409. Bounded scans return 409 `requirements_scan_pending` with a
-saved-progress message and safe `details`: `continuation_id`, new/reused model
-call counts and maximum, Job/posting/catalog revisions, completed/total incoming
-requirements, local requirement ID and examined/total candidates. Continue by
-resending the original refresh body and operation ID; do not advance expected
-versions or change force selection. The UI can offer explicit continuation, and
-Preparation can continue bounded steps with cancellation/heartbeats. No previous
-artifact is cleared on a failed or pending refresh.
+conflicts are 409. Complete-input or work refusal returns 503
+`requirements_catalog_unavailable` with a safe reason and relevant catalog/count
+metadata. It has no continuation or chunk fallback. A missing canonical revision
+returns 503 `catalog_snapshot_invalid`. Provider/spend refusal keeps the actual
+gateway status. The user can retry explicitly after changing the limiting
+condition; no previous artifact is cleared by a failed or unavailable refresh.
 
 ## Verification boundary
 

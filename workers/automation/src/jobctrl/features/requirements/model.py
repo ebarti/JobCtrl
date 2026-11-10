@@ -31,7 +31,14 @@ class RequirementModelAdapter:
             lane="requirements",
             model=model_spec,
         )
-        input_fingerprint = self.gateway.fingerprint(**arguments)
+        try:
+            # The gateway validates the complete payload, including schema and
+            # context, before cache lookup or external-call admission. No
+            # source/catalog text may be truncated to get through this check.
+            input_fingerprint = self.gateway.fingerprint(**arguments)
+        except AppError as failure:
+            self._raise_catalog_refusal(failure, kind, context)
+            raise
         cached = self.store.model_call(input_fingerprint)
         if cached is not None:
             parsed, provenance = self._checked(cached, input_fingerprint, kind, schema, validate)
@@ -40,7 +47,11 @@ class RequirementModelAdapter:
             return parsed, provenance
         if budget is not None:
             budget.consume()
-        result = await self.gateway.determine(**arguments)
+        try:
+            result = await self.gateway.determine(**arguments)
+        except AppError as failure:
+            self._raise_catalog_refusal(failure, kind, context)
+            raise
         try:
             parsed = schema.model_validate(result.value)
         except ValidationError:
@@ -65,6 +76,20 @@ class RequirementModelAdapter:
             posting_guard=self.jobs.assert_posting_current,
         )
         return self._checked(accepted, input_fingerprint, kind, schema, validate)
+
+    @staticmethod
+    def _raise_catalog_refusal(failure, kind, context):
+        if kind != "requirements.match_catalog":
+            return
+        reasons = {"model_input_too_large": "structural_payload_too_large",
+                   "context_window_exceeded": "context_window_exceeded"}
+        if failure.code not in reasons:
+            return
+        raise RequirementError("requirements_catalog_unavailable", details={
+            "reason": reasons[failure.code], "model_failure_code": failure.code,
+            "catalog_revision": context["catalog_revision"],
+            "candidate_count": len(context["candidates"]), "incoming_count": len(context["incoming"]),
+        }) from None
 
     def _checked(self, cached, input_fingerprint, kind, schema, validate):
         if cached.get("input_fingerprint") != input_fingerprint or cached.get("operation") != kind:

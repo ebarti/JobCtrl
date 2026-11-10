@@ -2,7 +2,6 @@ import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { z } from "zod";
-import { JobCtrlApiError } from "@jobctrl/api-client";
 
 import type { DomainEventEnvelope } from "../../shared/ports/EventStreamPort.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -118,26 +117,8 @@ export function RequirementsPanel({ jobId, postingRevision }: { jobId: string; p
   const availability = getApiCapabilityAvailability(featureFlags, "rescoreJob");
   const query = useJobRequirements(jobId);
   const extract = useExtractRequirements(jobId);
-  const [continuation, setContinuation] = useState<{ jobId: string; body: { expected_posting_revision: number; expected_revision: number; force?: boolean }; progress: string } | null>(null);
-  const currentContinuation = continuation?.jobId === jobId ? continuation : null;
   const snapshot = query.data;
   const revision = postingRevision ?? snapshot?.posting_revision ?? null;
-  const extractWith = (body: { expected_posting_revision: number; expected_revision: number; force?: boolean }) => {
-    if (!availability.available) return;
-    extract.mutate(body, {
-      onSuccess: () => setContinuation(null),
-      onError: (error) => {
-        const payload = error instanceof JobCtrlApiError && error.status === 409
-          ? z.object({ error: z.object({ code: z.literal("requirements_scan_pending"), details: z.object({
-            continuation_id: z.string(), new_model_calls: z.number().optional(), reused_model_calls: z.number().optional(),
-          }).passthrough() }) }).safeParse(error.responseBody) : null;
-        if (payload?.success) {
-          const detail = payload.data.error.details;
-          setContinuation({ jobId, body, progress: `Continuation ${detail.continuation_id}${detail.new_model_calls === undefined ? "" : ` · ${detail.new_model_calls} new calls`}${detail.reused_model_calls === undefined ? "" : ` · ${detail.reused_model_calls} reused calls`}` });
-        } else setContinuation(null);
-      },
-    });
-  };
   return <section className="section" aria-labelledby="requirements-title">
     <h3 id="requirements-title">Requirements</h3>
     <p>Requirements are bound to the captured posting and their recorded source spans.</p>
@@ -157,15 +138,12 @@ export function RequirementsPanel({ jobId, postingRevision }: { jobId: string; p
         {revision !== null ? <BindingCorrection jobId={jobId} postingRevision={revision} snapshot={snapshot} occurrenceId={requirement.occurrence_id} /> : null}
       </li>)}</ul> : <p>No requirements were recorded in this snapshot.</p>}
     </> : !query.isPending && !query.error ? <p>No requirements have been extracted for this posting.</p> : null}
-    {currentContinuation ? <div role="status"><p>Extraction paused after a bounded batch. {snapshot ? "The accepted snapshot remains available." : "No snapshot has been accepted yet."} {currentContinuation.progress}</p>
-      <Button type="button" disabled={!availability.available || extract.isPending} onClick={() => extractWith(currentContinuation.body)}>{extract.isPending ? "Continuing extraction…" : "Continue extraction"}</Button>
-      <Button type="button" variant="outline" disabled={extract.isPending} onClick={() => { setContinuation(null); extract.reset(); }}>Stop continuation</Button></div>
-      : <Button type="button" disabled={!availability.available || revision === null || extract.isPending || query.isPending} onClick={() => {
-        if (revision !== null) extractWith({ expected_posting_revision: revision, expected_revision: snapshot?.revision ?? 0 });
-      }}>{extract.isPending ? "Extracting requirements…" : snapshot ? "Refresh requirements" : "Extract requirements"}</Button>}
+    <Button type="button" disabled={!availability.available || revision === null || extract.isPending || query.isPending} onClick={() => {
+      if (availability.available && revision !== null) extract.mutate({ expected_posting_revision: revision, expected_revision: snapshot?.revision ?? 0 });
+    }}>{extract.isPending ? "Extracting requirements…" : snapshot ? "Refresh requirements" : "Extract requirements"}</Button>
     {!availability.available ? <p>{availability.reason}</p> : null}
     {revision === null ? <p>Posting revision is unavailable; reload the job before extracting.</p> : null}
-    {extract.error && !currentContinuation ? <p role="alert">{extract.error.message} {snapshot ? "The last accepted snapshot remains available above." : "No snapshot is shown."}</p> : null}
+    {extract.error ? <p role="alert">{extract.error.message} {snapshot ? "The last accepted snapshot remains available above." : "No snapshot is shown."}</p> : null}
   </section>;
 }
 

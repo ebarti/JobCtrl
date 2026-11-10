@@ -6,16 +6,29 @@ import {
   type ApplicationStack,
   type ExternalCall,
 } from "../harness/fixtures.js";
+import {
+  catalogMatching,
+  citeSources,
+  type CatalogContext,
+} from "./requirements-data.js";
 
 type Source = { source_id: string; text: string };
-type Candidate = { requirement_id: string; revision: number };
 type Posting = { job_id: string; revision: number };
 type Requirements = {
   revision: number;
   stale: boolean;
   requirements: {
     requirement_id: string;
-    provenance: { extraction: { provider: string; determination_id: string } };
+    provenance: {
+      extraction: { provider: string; receipt_id: string };
+      resolution: {
+        receipt_id: string;
+        provider: string;
+        model: string;
+        lane: string;
+      }[];
+      catalog_matching: { candidate_count: number; catalog_revision: number };
+    };
   }[];
   latest_attempt: { state: string };
 };
@@ -47,39 +60,9 @@ function extraction(
   };
 }
 
-function comparisons(call: ExternalCall, equivalentId?: string) {
-  const context = call.body["context"] as { candidates: Candidate[] };
-  return {
-    decisions: context.candidates.map((candidate) => ({
-      requirement_id: candidate.requirement_id,
-      requirement_revision: candidate.revision,
-      relation:
-        candidate.requirement_id === equivalentId ? "equivalent" : "distinct",
-      reason:
-        "Explicit qualified-meaning decision, bound to the recorded canonical ID.",
-      citations: sources(call)
-        .filter(
-          (row, index) =>
-            index === 0 ||
-            row.source_id ===
-              `requirement:${candidate.requirement_id}:${candidate.revision}`,
-        )
-        .map((row) => ({ source_id: row.source_id, quote: row.text })),
-    })),
-  };
-}
-
 async function novel(app: ApplicationStack) {
-  const call = await modelCall(app, "requirements.novelty");
-  call.reply({
-    verdict: "new",
-    reason:
-      "The explicit complete catalog sweep supports a new qualified meaning.",
-    citations: sources(call).map((row) => ({
-      source_id: row.source_id,
-      quote: row.text,
-    })),
-  });
+  const call = await modelCall(app, "requirements.match_catalog");
+  call.reply(catalogMatching(call, { leadership: { verdict: "new" } }));
 }
 
 test("requirement meanings reuse recorded IDs and reject invalid or stale refreshes", async ({
@@ -127,8 +110,12 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
   });
   const same = await modelCall(app, "requirements.extract");
   same.reply(extraction(same, "at least five years"));
-  const compare = await modelCall(app, "requirements.compare");
-  compare.reply(comparisons(compare, originalId));
+  const compare = await modelCall(app, "requirements.match_catalog");
+  compare.reply(
+    catalogMatching(compare, {
+      leadership: { verdict: "equivalent", requirementId: originalId },
+    }),
+  );
   const reused = await pendingReuse;
   expect(reused.status(), await reused.text()).toBe(200);
   expect(
@@ -136,7 +123,7 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
   ).toBe(originalId);
   expect(
     app.external.calls.slice(beforeReuse).map((call) => call.body["operation"]),
-  ).toEqual(["requirements.extract", "requirements.compare"]);
+  ).toEqual(["requirements.extract", "requirements.match_catalog"]);
 
   const qualified = await capture(
     "ten",
@@ -153,8 +140,6 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
   );
   const ten = await modelCall(app, "requirements.extract");
   ten.reply(extraction(ten, "at least ten years"));
-  const distinct = await modelCall(app, "requirements.compare");
-  distinct.reply(comparisons(distinct));
   await novel(app);
   const qualifiedResponse = await pendingQualified;
   expect(qualifiedResponse.status(), await qualifiedResponse.text()).toBe(200);
@@ -230,4 +215,430 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
   );
   expect(retained.requirements).toEqual(accepted.requirements);
   expect(retained.stale).toBe(true);
+});
+
+test("one catalog determination resolves the full posting batch and more than twelve canonical meanings", async ({
+  api,
+  app,
+}) => {
+  const clauses = Array.from(
+    { length: 15 },
+    (_, index) => `Lead engineering teams for at least ${index + 1} years.`,
+  );
+  const seed = await json<Posting>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/full-catalog",
+    title: "Synthetic Engineering Leader",
+    company: "Synthetic Catalog Company",
+    description: clauses.join("\n"),
+  });
+  const pending = api.post(`/v1/jobs/${seed.job_id}/requirements`, {
+    data: { expected_posting_revision: seed.revision, expected_revision: 0 },
+  });
+  const extracting = await modelCall(app, "requirements.extract");
+  const source = sources(extracting)[0]!;
+  extracting.reply({
+    status: "complete",
+    requirements: clauses.map((text, index) => ({
+      local_id: `duration-${index + 1}`,
+      text,
+      definition: "Lead engineering teams",
+      qualifiers: [
+        { dimension: "duration", value: `at least ${index + 1} years` },
+      ],
+      scope: "resume",
+      tier: "must_have",
+      weight: 1,
+      support: "supported",
+      spans: [
+        {
+          start: source.text.indexOf(text),
+          end: source.text.indexOf(text) + text.length,
+          quote: text,
+        },
+      ],
+    })),
+    reason:
+      "The complete authored source contains fifteen separately qualified requirements.",
+    citations: citeSources(extracting, [source.source_id]),
+  });
+  const seedMatching = await modelCall(app, "requirements.match_catalog");
+  expect(
+    (seedMatching.body["context"] as CatalogContext).incoming,
+  ).toHaveLength(15);
+  seedMatching.reply(
+    catalogMatching(
+      seedMatching,
+      Object.fromEntries(
+        clauses.map((_, index) => [
+          `duration-${index + 1}`,
+          { verdict: "new" as const },
+        ]),
+      ),
+    ),
+  );
+  const seedResponse = await pending;
+  expect(seedResponse.status(), await seedResponse.text()).toBe(200);
+  const initial: Requirements = await seedResponse.json();
+  expect(initial.requirements).toHaveLength(15);
+  const targetId = initial.requirements[14]!.requirement_id;
+  const catalog = await json<{ total: number; requirements: unknown[] }>(
+    api,
+    "get",
+    "/v1/requirements?limit=5&offset=10",
+  );
+  expect(catalog.total).toBe(15);
+  expect(catalog.requirements).toHaveLength(5);
+
+  const descriptions = [
+    "A minimum of fifteen years managing engineering teams.",
+    "Own the incident recovery program for a global service.",
+    "Be accountable for the same global service incident recovery program.",
+  ];
+  const posting = await json<Posting>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/full-batch-reuse",
+    title: "Synthetic Engineering Leader",
+    company: "Synthetic Batch Company",
+    description: descriptions.join("\n"),
+  });
+  const before = app.external.calls.length;
+  const updating = api.post(`/v1/jobs/${posting.job_id}/requirements`, {
+    data: { expected_posting_revision: posting.revision, expected_revision: 0 },
+  });
+  const batch = await modelCall(app, "requirements.extract");
+  const batchSource = sources(batch)[0]!;
+  batch.reply({
+    status: "complete",
+    requirements: descriptions.map((text, index) => ({
+      local_id: ["existing", "new-primary", "new-paraphrase"][index],
+      text,
+      definition:
+        index === 0
+          ? "Lead engineering teams"
+          : "Own global service incident recovery",
+      qualifiers:
+        index === 0
+          ? [{ dimension: "duration", value: "at least 15 years" }]
+          : [],
+      scope: "resume",
+      tier: "must_have",
+      weight: 1,
+      support: "supported",
+      spans: [
+        {
+          start: batchSource.text.indexOf(text),
+          end: batchSource.text.indexOf(text) + text.length,
+          quote: text,
+        },
+      ],
+    })),
+    reason: "Explicit source-bound incoming meanings for the complete batch.",
+    citations: citeSources(batch, [batchSource.source_id]),
+  });
+  const matching = await modelCall(app, "requirements.match_catalog");
+  const context = matching.body["context"] as CatalogContext;
+  expect(context.candidates).toHaveLength(15);
+  expect(context.incoming).toHaveLength(3);
+  for (const candidate of context.candidates) {
+    expect(
+      sources(matching).find(
+        (row) =>
+          row.source_id ===
+          `requirement:${candidate.requirement_id}:${candidate.revision}`,
+      ),
+    ).toBeTruthy();
+  }
+  matching.reply(
+    catalogMatching(matching, {
+      existing: { verdict: "equivalent", requirementId: targetId },
+      "new-primary": { verdict: "new" },
+      "new-paraphrase": {
+        verdict: "equivalent",
+        incomingLocalId: "new-primary",
+      },
+    }),
+  );
+  const response = await updating;
+  expect(response.status(), await response.text()).toBe(200);
+  const accepted: Requirements = await response.json();
+  expect(accepted.requirements.map((row) => row.requirement_id)).toEqual([
+    targetId,
+    accepted.requirements[1]!.requirement_id,
+    accepted.requirements[1]!.requirement_id,
+  ]);
+  expect(accepted.requirements[1]!.requirement_id).not.toBe(targetId);
+  const receiptIds = accepted.requirements.flatMap((row) =>
+    row.provenance.resolution.map((receipt) => receipt.receipt_id),
+  );
+  expect(receiptIds).toHaveLength(3);
+  expect(new Set(receiptIds).size).toBe(1);
+  expect(receiptIds[0]).toBeTruthy();
+  for (const row of accepted.requirements) {
+    expect(row.provenance.catalog_matching).toMatchObject({
+      candidate_count: 15,
+      catalog_revision: context.catalog_revision,
+    });
+    expect(row.provenance.resolution[0]).toMatchObject({
+      provider: matching.body["provider"],
+      model: matching.body["model"],
+      lane: matching.body["lane"],
+    });
+  }
+  expect(
+    (await json<{ total: number }>(api, "get", "/v1/requirements")).total,
+  ).toBe(16);
+  expect(
+    app.external.calls.slice(before).map((call) => call.body["operation"]),
+  ).toEqual(["requirements.extract", "requirements.match_catalog"]);
+  const beforeRetry = app.external.calls.length;
+  const unchanged = await json<Requirements>(
+    api,
+    "post",
+    `/v1/jobs/${posting.job_id}/requirements`,
+    {
+      expected_posting_revision: posting.revision,
+      expected_revision: accepted.revision,
+    },
+  );
+  expect(unchanged.requirements).toEqual(accepted.requirements);
+  expect(app.external.calls).toHaveLength(beforeRetry);
+});
+
+for (const defect of [
+  "unknown field",
+  "unknown verdict",
+  "foreign source",
+  "non-verbatim quote",
+  "uncertain",
+  "stale revision",
+  "provider unavailable",
+] as const) {
+  test(`catalog ${defect} preserves the accepted requirement IDs without fallback`, async ({
+    api,
+    app,
+  }) => {
+    const posting = await json<Posting>(api, "post", "/v1/jobs/capture", {
+      url: `https://example.com/jobs/catalog-${defect.replaceAll(" ", "-")}`,
+      title: "Synthetic Engineering Leader",
+      company: "Synthetic Validation Company",
+      description: "At least five years leading engineering teams.",
+    });
+    const first = api.post(`/v1/jobs/${posting.job_id}/requirements`, {
+      data: {
+        expected_posting_revision: posting.revision,
+        expected_revision: 0,
+      },
+    });
+    const initial = await modelCall(app, "requirements.extract");
+    initial.reply(extraction(initial, "at least five years"));
+    await novel(app);
+    const initialResponse = await first;
+    expect(initialResponse.status(), await initialResponse.text()).toBe(200);
+    const accepted: Requirements = await initialResponse.json();
+    const before = app.external.calls.length;
+    const refresh = api.post(`/v1/jobs/${posting.job_id}/requirements`, {
+      data: {
+        expected_posting_revision: posting.revision,
+        expected_revision: accepted.revision,
+        force: true,
+      },
+    });
+    const refreshed = await modelCall(app, "requirements.extract");
+    refreshed.reply(extraction(refreshed, "at least five years"));
+    const matching = await modelCall(app, "requirements.match_catalog");
+    const value = catalogMatching(matching, {
+      leadership: {
+        verdict: "equivalent",
+        requirementId: accepted.requirements[0]!.requirement_id,
+      },
+    });
+    const decision = value.decisions[0]!;
+    if (defect === "unknown field")
+      matching.reply({ ...value, unrequested: true });
+    if (defect === "unknown verdict")
+      matching.reply({
+        ...value,
+        decisions: [{ ...decision, verdict: "approximately_equivalent" }],
+      });
+    if (defect === "foreign source")
+      matching.reply({
+        ...value,
+        decisions: [
+          {
+            ...decision,
+            citations: [
+              { ...decision.citations[0]!, source_id: "unrecorded:foreign" },
+              ...decision.citations.slice(1),
+            ],
+          },
+        ],
+      });
+    if (defect === "non-verbatim quote")
+      matching.reply({
+        ...value,
+        decisions: [
+          {
+            ...decision,
+            citations: [
+              {
+                ...decision.citations[0]!,
+                quote:
+                  "Invented source statement absent from the saved posting.",
+              },
+              ...decision.citations.slice(1),
+            ],
+          },
+        ],
+      });
+    if (defect === "uncertain")
+      matching.reply({
+        ...value,
+        decisions: [
+          {
+            ...decision,
+            verdict: "uncertain",
+            requirement_id: null,
+            requirement_revision: null,
+          },
+        ],
+      });
+    if (defect === "stale revision")
+      matching.reply({
+        ...value,
+        catalog_revision: value.catalog_revision - 1,
+      });
+    if (defect === "provider unavailable")
+      matching.respond({ error: "synthetic_provider_unavailable" }, 503);
+    const result = await refresh;
+    expect(result.status(), await result.text()).toBe(
+      defect === "unknown field" ||
+        defect === "unknown verdict" ||
+        defect === "provider unavailable"
+        ? 502
+        : defect === "stale revision"
+          ? 409
+          : 422,
+    );
+    const retained = await json<Requirements>(
+      api,
+      "get",
+      `/v1/jobs/${posting.job_id}/requirements`,
+    );
+    expect(retained.requirements).toEqual(accepted.requirements);
+    expect(retained.revision).toBe(accepted.revision);
+    expect(
+      (await json<{ total: number }>(api, "get", "/v1/requirements")).total,
+    ).toBe(1);
+    expect(
+      app.external.calls.slice(before).map((call) => call.body["operation"]),
+    ).toEqual(["requirements.extract", "requirements.match_catalog"]);
+  });
+}
+
+test("an oversized complete catalog request refuses without truncation or automatic continuation and preserves acceptance", async ({
+  api,
+  app,
+}) => {
+  const posting = await json<Posting>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/full-input-refusal",
+    title: "Synthetic Engineering Leader",
+    company: "Synthetic Payload Company",
+    description: "At least five years leading engineering teams.",
+  });
+  const first = api.post(`/v1/jobs/${posting.job_id}/requirements`, {
+    data: { expected_posting_revision: posting.revision, expected_revision: 0 },
+  });
+  const initial = await modelCall(app, "requirements.extract");
+  initial.reply(extraction(initial, "at least five years"));
+  await novel(app);
+  const initialResponse = await first;
+  expect(initialResponse.status(), await initialResponse.text()).toBe(200);
+  const accepted: Requirements = await initialResponse.json();
+
+  // A bounded valid extraction can still exceed the model's input boundary
+  // once every incoming qualified meaning and the entire catalog are supplied.
+  // All common qualifications are authored in this posting; no internal state
+  // or model payload limit is replaced to create the refusal.
+  const qualifiers = Array.from({ length: 24 }, (_, index) => ({
+    dimension: `operating-condition-${index + 1}`,
+    value: `Condition ${index + 1}: ${"Maintain documented ownership, reviewed recovery procedures, explicit source records and supervised operational changes. ".repeat(2)}`,
+  }));
+  const clauses = Array.from(
+    { length: 100 },
+    (_, index) =>
+      `Own operational responsibility ${index + 1} under every stated operating condition.`,
+  );
+  const revised = await json<Posting>(
+    api,
+    "patch",
+    `/v1/jobs/${posting.job_id}`,
+    {
+      expectedRevision: posting.revision,
+      description: [
+        "Every responsibility below requires all of these conditions:",
+        ...qualifiers.map((row) => row.value),
+        ...clauses,
+      ].join("\n"),
+    },
+  );
+  const before = app.external.calls.length;
+  const refresh = api.post(`/v1/jobs/${posting.job_id}/requirements`, {
+    data: {
+      expected_posting_revision: revised.revision,
+      expected_revision: accepted.revision,
+      force: true,
+    },
+  });
+  const extracting = await modelCall(app, "requirements.extract");
+  const source = sources(extracting)[0]!;
+  const result = {
+    status: "complete",
+    requirements: clauses.map((text, index) => ({
+      local_id: `responsibility-${index + 1}`,
+      text,
+      definition: text,
+      qualifiers,
+      scope: "resume",
+      tier: "must_have",
+      weight: 1,
+      support: "supported",
+      spans: [
+        {
+          start: source.text.indexOf(text),
+          end: source.text.indexOf(text) + text.length,
+          quote: text,
+        },
+      ],
+    })),
+    reason:
+      "Each authored responsibility has the complete common qualifications stated in this source.",
+    citations: citeSources(extracting, [source.source_id]),
+  };
+  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(1024 * 1024);
+  extracting.reply(result);
+  const response = await refresh;
+  expect(response.status(), await response.text()).toBe(503);
+  expect(await response.json()).toMatchObject({
+    error: {
+      code: "requirements_catalog_unavailable",
+      details: {
+        reason: "structural_payload_too_large",
+        candidate_count: 1,
+        incoming_count: 100,
+      },
+    },
+  });
+  const retained = await json<Requirements>(
+    api,
+    "get",
+    `/v1/jobs/${posting.job_id}/requirements`,
+  );
+  expect(retained.requirements).toEqual(accepted.requirements);
+  expect(retained.revision).toBe(accepted.revision);
+  expect(retained.stale).toBe(true);
+  expect(
+    (await json<{ total: number }>(api, "get", "/v1/requirements")).total,
+  ).toBe(1);
+  expect(
+    app.external.calls.slice(before).map((call) => call.body["operation"]),
+  ).toEqual(["requirements.extract"]);
 });
