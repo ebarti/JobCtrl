@@ -337,6 +337,10 @@ application boundaries as the local command above. Inspect the actual run and
 candidate identity before reporting a pass; legacy unit, component, snapshot,
 Fastify and JSON-RPC test lanes do not establish target behavior.
 
+The Support lane also builds the documentation and runs `docs:check:runtime`
+in Chromium, so client rendering and documentation contracts are checked before
+merge as well as before the main-branch Docs Site publication.
+
 ## Test And Documentation Workspaces
 
 The recurring journey runner creates a new owned run directory and independent
