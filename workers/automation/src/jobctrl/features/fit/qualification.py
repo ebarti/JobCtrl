@@ -9,14 +9,13 @@ from pydantic import ValidationError
 from jobctrl.app.errors import AppError
 
 from .models import (
-    IMPACT_INSTRUCTIONS, QUALIFICATION_INSTRUCTIONS, ProfileImpactDecision, QualificationDecision,
+    QUALIFICATION_INSTRUCTIONS, QualificationDecision,
 )
 from .sources import (
-    achievement_inventory, achievements, citations_still_bound, dto, evidence_refs, fact_fingerprint,
+    achievement_inventory, achievements, dto, evidence_refs, fact_fingerprint,
     fact_sources, fingerprint,
     semantic_sources, source_id, validate_citations,
 )
-from .serialization import encoded
 
 
 def now() -> str:
@@ -58,17 +57,22 @@ class Qualification:
         current = self.store.latest_assessment(*binding, source_fingerprint=source_hash)
         if current is not None and not force:
             return current, True
-        previous = self.store.latest_assessment(*binding)
-        if previous is not None and not force:
-            revalidated = await self._revalidate(previous, profile, facts, requirement)
-            if revalidated is not None:
-                return self.store.publish_assessment(revalidated, facts, profile_snapshot, requirements_snapshot,
-                    current["assessment_id"] if current else None, cancelled=cancelled), True
+        previous = self.store.latest_requirement_assessment(profile["profile_id"], requirement["requirement_id"])
+        if previous is not None:
+            raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
+        record = await self.candidate(profile_snapshot, requirement)
+        return self.store.publish_assessment(record, facts, profile_snapshot, requirements_snapshot,
+            current["assessment_id"] if current else None, cancelled=cancelled), False
 
+    async def candidate(self, profile_snapshot, requirement: dict, *, model=None):
+        """Prepare one source-bound result; the caller owns atomic publication."""
+        profile = dto(profile_snapshot)
+        facts = fact_sources(profile)
+        source_hash = fact_fingerprint(profile, facts)
         sources = semantic_sources(requirement, facts)
         inventory = achievements(profile)
         result, provenance = await decide(
-            self.model, operation="fit.qualification", schema=QualificationDecision,
+            model or self.model, operation="fit.qualification", schema=QualificationDecision,
             instructions=QUALIFICATION_INSTRUCTIONS, sources=sources,
             context={
                 "binding": {"requirement_id": requirement["requirement_id"],
@@ -99,8 +103,7 @@ class Qualification:
             "determination_id": provenance["receipt_id"], "provenance": provenance,
             "origin": "model", "created_at": now(),
         }
-        return self.store.publish_assessment(record, facts, profile_snapshot, requirements_snapshot,
-            current["assessment_id"] if current else None, cancelled=cancelled), False
+        return record
 
     @staticmethod
     def validate(result, requirement, facts, inventory, sources):
@@ -130,63 +133,3 @@ class Qualification:
             raise AppError("fit_eligibility_binding_invalid", "The Fit eligibility verdict and category disagree.", 422)
         if (result.eligibility == "blocked" or result.kind == "blocked") and not result.evidence:
             raise AppError("fit_blocker_evidence_missing", "A hard mismatch requires cited factual or explicit user evidence.", 422)
-
-    async def _revalidate(self, previous, profile, facts, requirement):
-        before = self.store.assessment_sources(previous["assessment_id"])
-        before_index = {row["source_id"]: row for row in before}
-        after_index = {row["source_id"]: row for row in facts}
-        changed = {ident for ident in set(before_index) | set(after_index)
-                   if before_index.get(ident) != after_index.get(ident)}
-        current_inventory = achievement_inventory(profile)
-        if not changed and previous.get("achievement_inventory") == current_inventory:
-            return previous
-        sources = [semantic_sources(requirement, [])[0]]
-        comparison_ids = set()
-        for prefix, entries in (("before", before), ("after", facts)):
-            for source in entries:
-                ident = f"{prefix}:{source['source_id']}"
-                sources.append({**source, "source_id": ident})
-                if source["source_id"] in changed:
-                    comparison_ids.add(ident)
-        if previous.get("achievement_inventory") != current_inventory:
-            for prefix, value in (("before", previous.get("achievement_inventory", {})),
-                                  ("after", current_inventory)):
-                ident = f"{prefix}:achievement-structure"
-                sources.append({"source_id": ident, "revision": "1", "text": encoded(value)})
-                comparison_ids.add(ident)
-            changed.add("achievement-structure")
-        result, provenance = await decide(
-            self.model, operation="fit.profile-impact", schema=ProfileImpactDecision,
-            instructions=IMPACT_INSTRUCTIONS, sources=sources,
-            context={"requirement_id": requirement["requirement_id"],
-                     "requirement_revision": str(requirement["requirement_revision"]),
-                     "saved_assessment": previous, "changed_source_ids": sorted(changed)},
-        )
-        validate_citations(result.citations, sources)
-        if not comparison_ids.intersection(cite.source_id for cite in result.citations):
-            raise AppError("fit_change_citation_missing", "The source-impact decision did not cite a changed source.", 422)
-        if result.verdict != "unchanged":
-            return None
-        # An unchanged semantic verdict cannot authorize nonexistent current
-        # evidence. Reassessment must establish a new exact source binding.
-        if not citations_still_bound(previous["evidence_refs"], facts):
-            return None
-        inventory = achievements(profile)
-        if any(ident not in inventory for ident in previous["achievement_ids"]):
-            return None
-        cited = {ref["source_id"] for ref in previous["evidence_refs"]}
-        if any(not cited.intersection(source_id(ref) for ref in inventory[ident].get("source_refs", []))
-               for ident in previous["achievement_ids"]):
-            return None
-        source_hash = fact_fingerprint(profile, facts)
-        record = {**previous, "assessment_id": "fit-assessment-" + fingerprint({
-            "previous": previous["assessment_id"], "sources": source_hash,
-            "impact_receipt": provenance["receipt_id"],
-        }), "origin": "revalidated", "source_fingerprint": source_hash,
-            "fact_semantics_version": profile["fact_semantics_version"],
-            "revalidated_from": previous["assessment_id"], "revalidation_provenance": provenance,
-            "revalidation_rationale": result.rationale, "created_at": now()}
-        record["achievement_inventory"] = current_inventory
-        record["evidence_refs"] = [{**ref, "revision": after_index[ref["source_id"]]["revision"]}
-                                   for ref in previous["evidence_refs"]]
-        return record

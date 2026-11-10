@@ -6,6 +6,35 @@ owns document choice. The Python transformation is **in progress**; the source
 contract below must still be verified in the integrated product and does not
 assert real-provider judgment quality.
 
+## Requirements catalog matching
+
+Requirements extracts the complete posting inventory, then sends that entire
+incoming batch and every current canonical catalog definition, scope and
+qualifier to one source-bound matching determination. The same response decides
+equivalence, genuine novelty or uncertainty. Incoming paraphrases share an
+explicitly selected representative; each posting occurrence remains recorded.
+There are no retrieval subsets, catalog pages, chunk loops or separate novelty
+judge. Citations, full incoming-ID cardinality, exact canonical revisions and
+the catalog epoch are validated before an atomic publication.
+
+The complete serialized input must pass the gateway's structural payload limit
+and lane/spend admission. A byte bound does not prove token-context fit; the
+current gateway has no selected-model context-capacity metadata. Input/context
+or provider refusal preserves accepted state and never falls back to chunks.
+A concurrent catalog publication fences a stale result and requires a fresh
+whole-catalog determination, within the refresh's bounded work allowance.
+Catalog writes do not automatically schedule Fit reassessment. The feature
+[reference](../../workers/automation/src/jobctrl/features/requirements/README.md)
+owns the exact schema, cache and failure contracts.
+
+Manual Fit work captures Requirements' public `catalog_snapshot(connection)`
+inside its source-read transaction. The snapshot contains the complete sorted
+canonical ID/revision inventory, definitions, qualifiers, scopes, catalog epoch
+and semantic fingerprint. Its publication transaction calls the public
+`assert_current_catalog(snapshot, connection)` guard; any catalog change refuses
+the captured operation instead of expanding its work. Fit never reads
+Requirements' private tables to assemble or validate that inventory.
+
 ## Inputs and semantic authority
 
 For each qualified requirement, Fit records a source-bound model determination
@@ -23,13 +52,42 @@ Resumes consumes the recorded coverage for composition.
 
 ## Profile Edits And Explicit Refresh
 
-Saving Profile does not itself schedule a score. An explicit Fit refresh
-compares source versions and uses a source-bound impact determination to decide
-which recorded requirement assessments remain applicable. It reuses unchanged
-semantic receipts with current-source revalidation and reassesses affected
-requirements. Source changes during inference or a failed impact determination
-must not overwrite the accepted score. User corrections create history and are
-bound to the exact requirement, source and revision.
+Saving Profile facts, sources, wording, approvals or requirement definitions
+does not schedule assessment, authoring or resume regeneration. The manual
+`fit.refresh` action uses the last saved inputs. A read-only pending summary
+supplies the expected input fingerprint; the action refuses if those reviewed
+inputs change while it is queued. It freezes the complete catalog, factual and
+approved-wording inventories, guidance, prior assessments, selected scored jobs
+and operation limits. Pending proposal bookkeeping is separate from the
+approved inventory, so the operation does not invalidate itself.
+
+When factual qualification needs review, one source-bound `fit.catalog-impact`
+determination partitions the complete catalog into affected and unchanged
+requirements. It sees each prior assessment's own before-sources and the current
+facts. Newly added evidence can support requirements previously missing or
+unlinked. Missing exact dependencies require reassessment; literal unchanged
+dependencies alone cannot prove that new evidence is irrelevant. There are no
+per-requirement impact calls. Affected requirements receive qualification once;
+unaffected decisions retain original semantic authority with a shared impact
+receipt and current-source revalidation.
+
+Candidates publish atomically after checking Profile, guidance, the complete
+catalog, selected job/posting snapshots and prior assessment/score heads.
+Concurrent input changes refuse the captured operation instead of widening it.
+One active admission per profile includes queued work. Durable call reservations,
+completed checkpoints, item counts and a deadline survive worker retries; an
+external call with an uncertain result does not silently receive a fresh budget.
+Cancellation also seals the feature receipt through the application lifecycle.
+Lane and workspace spend admission remains in the model gateway; these work
+limits do not guarantee a hard external monetary charge ceiling.
+
+Coverage then directly reuses exact current approved-wording relations and
+groups remaining expression work by achievement. One source-bound group decision
+considers the relevant requirement set and existing wordings before requesting
+new text. A new proposal never approves itself or triggers another refresh.
+If expression preparation fails after factual publication, the operation reports
+that partial boundary explicitly; the factual result remains independent of
+wording. User corrections retain history and exact source/revision authority.
 
 ## Deterministic Score Resolution
 

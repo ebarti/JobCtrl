@@ -3013,6 +3013,10 @@ change source access policy or imply that a denied request will be accepted.
 
 ## 2026-10-23: Profile Saves Do Not Admit Scoring
 
+Refined by [Full Catalog Matching and Manual Affected-Match Refresh](#_2026-11-10-full-catalog-matching-and-manual-affected-match-refresh).
+The per-job significance step below is historical; the current refresh uses
+one complete-catalog impact decision and shared requirement assessments.
+
 Profile edits persist a version and audit event without starting Score or material
 preparation. Explicit score refresh first uses a strict source-bound LLM
 determination to assess changed-profile significance for the selected job.
@@ -3222,3 +3226,56 @@ Moving files or declaring routes alone is not delivery. The accepted
 [foundation contract](plans/2026-11-06-python-contracts.md) record the
 workstream interfaces and acceptance gates. No real-user reset, release or
 deployment follows from this decision.
+
+## 2026-11-10: Full Catalog Matching and Manual Affected-Match Refresh
+
+**Decision.** At the current product scale, Requirements sends every incoming
+qualified requirement and the entire canonical catalog in one source-bound
+matching request after extraction. Stable IDs, revisions, definitions, scopes
+and qualifiers remain explicit. That response identifies equivalent existing
+meanings, new meanings or uncertainty, including equivalence inside the incoming
+batch. Search indexes serve browsing only; retrieval subsets, chunk/widen loops
+and a separate novelty judge do not belong to this path. A complete input or
+valid complete response that cannot be processed is refused without truncation
+or fallback. Catalog and posting changes fence publication.
+
+Profile and requirement saves record changes without starting model work.
+Post-edit intelligence refresh is an explicit Fit-owned action over saved
+inputs. Its input stamp, complete catalog, source and approved-wording versions,
+explicit job selection and work limits are fixed. One source-bound impact
+decision considers the full catalog, prior assessments and changed evidence,
+including new support for requirements previously missing or unlinked. Only
+affected requirements receive new qualification. Unaffected authority retains
+its original semantic receipt with a recorded current-source revalidation;
+jobs sharing a qualified requirement reuse that authority.
+
+Current requirement/achievement/approved-wording bindings are direct reuse.
+Expression gaps are collected by achievement with their relevant requirement
+set. Prefer approved wording reuse and a coherent consolidation before adding
+another maintained alternative. New text requires its exact sources, coverage
+and remaining gaps to be available for explicit Profile review. A rejected or
+deferred proposal remains a retained decision. Factual qualification and fit
+are independent of whether approved text already expresses the evidence.
+
+Admission prevents overlapping refreshes for one profile, including queued
+actions. Operation identity, finite call/item/deadline limits and completed work
+survive worker retries. Lane and spend admission remains in the model gateway;
+work limits do not imply a guaranteed maximum external monetary charge. No
+operation may expand itself after an edit, repeat until every gap is covered,
+or be scheduled by its own coverage/proposal writes or a subsequent approval.
+Stale input, refusal, cancellation and failure retain previously accepted
+records. Initial assessment of a newly admitted job remains part of its
+authorized preparation task; it cannot trigger retroactive profile-wide work.
+
+**Scope.** This refines the 2026-10-23 save policy and supersedes catalog paging,
+per-requirement post-edit impact calls and per-requirement wording generation.
+It leaves the current full-baseline composition rule intact. Whether a resume
+may use multiple occurrences of one achievement remains a separate open design
+question in [#1129](https://github.com/ebarti/JobCtrl/issues/1129).
+
+**Owning references.** [Scoring architecture](architecture/scoring.md),
+[Profile workflow](user/candidate-profile.md),
+[Fit API](../workers/automation/src/jobctrl/features/fit/README.md), and
+[auditability checks](developer/qa/regression-catalog.md#auditability-checks).
+[#1464](https://github.com/ebarti/JobCtrl/issues/1464) tracks implementation and
+integrated verification; this decision alone does not establish released behavior.

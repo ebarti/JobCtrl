@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { CardHeader } from "../../../shared/ui/card-header.js";
@@ -35,9 +35,10 @@ type ProfileWorkspaceView = "profile-data" | "resume-editor" | "split-view";
 
 export interface ProfileEditorProps {
   section?: "profile" | "preferences";
+  affectedMatches?: ReactNode;
 }
 
-export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
+export function ProfileEditor({ section = "profile", affectedMatches }: ProfileEditorProps) {
   const { storage } = usePorts();
   const profileQuery = useProfileQuery();
   const resumeTemplatesQuery = useResumeTemplatesQuery();
@@ -201,8 +202,9 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
     <div className="profile-workspace">
       <ProfileImportReview />
       <p className="muted" role="note">
-        Profile edits are saved without rescoring jobs or regenerating materials. Jobs show when your profile changed since scoring. Request a score update to check whether those edits affect that job.
+        Profile edits are saved without rescoring jobs or regenerating materials. Jobs show when your profile changed since scoring.
       </p>
+      {affectedMatches}
       <ToggleGroup
         aria-label="Profile workspace views"
         className="profile-workspace-tabs"

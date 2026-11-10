@@ -9,9 +9,10 @@ from contextlib import contextmanager
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
 from .serialization import encoded
+from .refresh_storage import RefreshStorage
 
 
-class FitStore:
+class FitStore(RefreshStorage):
     def __init__(self, database, events, profile, requirements, settings=None):
         if events is None or profile is None or requirements is None:
             raise RuntimeError("Fit requires committed events and public Profile/Requirements ports.")
@@ -38,14 +39,22 @@ class FitStore:
                 owned.rollback()
 
     def _assert_profile(self, connection, snapshot, *, full_profile=False):
-        self.profile.assert_current(snapshot, connection=connection, facts_only=not full_profile)
+        if getattr(snapshot, "manual_refresh", False):
+            if getattr(snapshot, "refresh_operation_id", None):
+                self._running_refresh(connection, snapshot.refresh_operation_id)
+            self._assert_frozen_profile(connection, snapshot)
+        else:
+            self.profile.assert_current(snapshot, connection=connection, facts_only=not full_profile)
         guidance = self.settings.snapshot(connection).get("scoreCriteria", "") if self.settings is not None else ""
         if guidance != snapshot.scoring_guidance:
             raise ConflictError("The user scoring guidance changed during assessment.")
 
     def _assert_sources(self, connection, profile_snapshot, requirements_snapshot, *, full_profile=False):
         self._assert_profile(connection, profile_snapshot, full_profile=full_profile)
-        self.requirements.assert_current(requirements_snapshot, connection=connection)
+        if "meanings_fingerprint" in requirements_snapshot and "job_id" not in requirements_snapshot:
+            self.requirements.assert_current_catalog(requirements_snapshot, connection=connection)
+        else:
+            self.requirements.assert_current(requirements_snapshot, connection=connection)
 
     def _assert_assessment(self, connection, assessment, *, expected_id=None):
         latest = self.latest_assessment(
@@ -156,7 +165,8 @@ class FitStore:
         with self._database.transaction() as connection:
             self._check_cancelled(cancelled)
             self._assert_sources(connection, profile_snapshot, requirements_snapshot)
-            self._assert_assessment(connection, assessment)
+            for item in assessment if isinstance(assessment, list) else [assessment]:
+                self._assert_assessment(connection, item)
             self.save_wording_request(connection, binding)
 
     def _read(self, callback, connection=None):
@@ -252,13 +262,24 @@ class FitStore:
         )], connection)
 
     def wording_requests(self, profile_id, requirement_id, requirement_revision, connection=None) -> list[dict]:
-        return self._read(lambda conn: [json.loads(row[0]) for row in conn.execute(
-            """SELECT binding_json FROM fit_wording_requests
-            WHERE profile_id=? AND requirement_id=? AND requirement_revision=? ORDER BY rowid DESC""",
-            (profile_id, requirement_id, str(requirement_revision)),
-        )], connection)
+        def load(conn):
+            bindings = []
+            for row in conn.execute("SELECT binding_json FROM fit_wording_requests WHERE profile_id=? ORDER BY rowid DESC", (profile_id,)):
+                binding = json.loads(row[0])
+                members = binding.get("requirements", [binding])
+                for member in members:
+                    if (member["requirement_id"] == requirement_id
+                            and str(member["requirement_revision"]) == str(requirement_revision)):
+                        bindings.append({**binding, **member})
+                        break
+            return bindings
+        return self._read(load, connection)
 
     def save_wording_request(self, conn, binding: dict) -> None:
+        if "requirements" in binding:
+            if not binding["requirements"]:
+                raise ConflictError("A grouped wording request requires its exact requirement bindings.")
+            binding = {**binding["requirements"][0], **binding}
         row = conn.execute("SELECT binding_json FROM fit_wording_requests WHERE origin_key=?",
                            (binding["origin_key"],)).fetchone()
         if row:
@@ -397,6 +418,9 @@ class FitStore:
                 return self.delete_job_data(job_id, conn)
         for table in ("fit_operation_receipts", "fit_correction_anchors", "fit_score_versions"):
             connection.execute(f"DELETE FROM {table} WHERE job_id=?", (job_id,))
+        connection.execute(
+            "DELETE FROM fit_refresh_operations WHERE EXISTS(SELECT 1 FROM json_each(state_json,'$.job_ids') WHERE value=?)", (job_id,),
+        )
 
 
 class SqliteFitReadSession:
@@ -460,6 +484,25 @@ class SqliteFitReadSession:
 
     def requirement(self, requirement_id, revision=None):
         return self._store.requirements.get_requirement(requirement_id, revision=revision, connection=self._connection)
+
+    def catalog_snapshot(self):
+        return self._store.requirements.catalog_snapshot(connection=self._connection)
+
+    def latest_requirement_assessment(self, profile_id, requirement_id):
+        return self._store.latest_requirement_assessment(profile_id, requirement_id, self._connection)
+
+    def completed_refresh(self, profile_id):
+        return self._store.completed_refresh(profile_id, self._connection)
+
+    def latest_refresh(self, profile_id):
+        return self._store.latest_refresh(profile_id, self._connection)
+
+    def authoring_proposals(self, profile_id="default"):
+        return self._store.profile.library(profile_id, connection=self._connection)["proposals"]
+
+    def authoring_proposal(self, proposal_id, profile_id="default", *, include_brief=False, follow_retry=False):
+        return self._store.profile.get_authoring_proposal(proposal_id, profile_id=profile_id,
+            connection=self._connection, include_brief=include_brief, follow_retry=follow_retry)
 
     def authoring_request(self, origin_key, profile_id="default"):
         return self._store.profile.get_authoring_request(origin_key, profile_id=profile_id, connection=self._connection)

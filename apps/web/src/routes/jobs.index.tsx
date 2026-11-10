@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import { RefreshAllCompensationButton } from "../contexts/compensation/index.js";
+import { AffectedMatchesPanel } from "../contexts/fit/index.js";
 import type { JobGridQuery } from "../contexts/jobs/index.js";
 import { PipelineBulkActions } from "../contexts/pipeline/index.js";
 import { useMountedFeatures } from "../contexts/runtime/index.js";
@@ -42,5 +43,8 @@ function JobsComposition() {
   }, [navigate, search]);
   return <JobsView navigation={gridQuery(search)} onNavigationChange={navigateGrid}
     optionalGlobalActions={features.has("compensation") ? <RefreshAllCompensationButton /> : null}
-    optionalBulkActions={(jobIds) => features.has("preparation") ? <PipelineBulkActions jobIds={jobIds} /> : null} />;
+    optionalBulkActions={(jobIds) => <>
+      {features.has("fit") ? <details><summary>Update affected matches for selected jobs</summary><AffectedMatchesPanel jobIds={jobIds} /></details> : null}
+      {features.has("preparation") ? <PipelineBulkActions jobIds={jobIds} /> : null}
+    </>} />;
 }

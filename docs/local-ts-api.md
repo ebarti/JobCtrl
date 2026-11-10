@@ -32,6 +32,15 @@ retained optional capabilities. Their owners validate input and publish exact
 DTOs. Missing optional features remove their routes; unknown API paths return an
 explicit 404, including when static frontend assets are served.
 
+`fit.refresh` declares one active admission per profile. A different idempotency
+key for an already pending, queued or running scope receives
+`action_scope_busy` with the existing `runId`; an exact retry uses its original
+identity. Its required saved-input stamp prevents queued work from absorbing
+later edits. Cancellation and transport recovery finalize the feature's
+operation receipt in the same transaction as the action transition. See the
+[Fit reference](../workers/automation/src/jobctrl/features/fit/README.md) for
+scope, progress and limit fields.
+
 ## Action and error semantics
 
 Synchronous operations return 200/201. A durable command returns, for example:

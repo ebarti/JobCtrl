@@ -22,9 +22,10 @@ export interface JobDetailDrawerProps {
   readonly onClose: () => void;
   readonly optionalSections?: readonly JobDetailOptionalSection[];
   readonly optionalHeaderActions?: ReactNode;
+  readonly affectedMatches?: ReactNode;
 }
 
-export function JobDetailDrawer({ jobId, onClose, optionalSections = [], optionalHeaderActions }: JobDetailDrawerProps) {
+export function JobDetailDrawer({ jobId, onClose, optionalSections = [], optionalHeaderActions, affectedMatches }: JobDetailDrawerProps) {
   const { featureFlags } = usePorts();
   const postingRefresh = getApiCapabilityAvailability(featureFlags, "importJobUrl");
   const job = useJob(jobId);
@@ -52,6 +53,7 @@ export function JobDetailDrawer({ jobId, onClose, optionalSections = [], optiona
       <RoleAnalysisPanel jobId={jobId} postingRevision={posting.revision} />
       <RequirementsPanel jobId={jobId} postingRevision={posting.revision} />
       <PersonFitPanel jobId={jobId} sources={sources.data?.sources ?? []} achievements={wording.data?.roles.flatMap((role) => role.achievements) ?? []} defaultMode={settings.data?.resumeMode ?? null} />
+      {affectedMatches}
       {profile.error ? <p role="alert">Profile unavailable: {profile.error.message}</p> : null}
       <ResumePanel jobId={jobId} profileVersion={profile.data?.profileVersion ?? null} defaultMode={settings.data?.resumeMode ?? null} onProfileChanged={() => { void profile.refetch(); void wording.refetch(); }} />
       {settings.error ? <p role="alert">Saved resume mode unavailable: {settings.error.message}. Choose an explicit resume mode or reload settings.</p> : null}

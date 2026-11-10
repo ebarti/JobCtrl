@@ -4,7 +4,7 @@ description: "See how JobCtrl scores job fit from versioned profile evidence, re
 
 # Scoring
 
-Scoring compares Discovery's canonical, evidence-linked employer analysis with
+Fit compares Requirements' canonical, evidence-linked qualified meanings with
 a versioned Candidate Profile. It produces an applicant-side fit score,
 confidence, blockers, gaps, and requirement-level evidence for your own triage.
 Discovery owns how the employer analysis is generated and which perspectives
@@ -29,16 +29,35 @@ if data is damaged, preserve the workspace and consult
 Reusing an existing score does not need to read those settings; posting
 availability and work ownership are still checked.
 
+## Shared requirement meanings
+
+The Requirements owner preserves each posting's requirement text, priority and
+source evidence while linking it to a reusable qualified meaning. After
+extraction, one model request receives every incoming requirement and the
+entire current catalog, including definitions, scopes and qualifiers. That
+request decides whether each meaning already exists, is genuinely new or is
+uncertain. Paraphrases within the same posting can share one canonical meaning
+without dropping their individual occurrences.
+
+Catalog matching does not use retrieval subsets or a separate novelty judge.
+If the complete input is too large, the provider refuses it, or a decision is
+uncertain, accepted requirements remain available and the refresh reports the
+problem. It does not silently split the catalog or publish an incomplete
+replacement. Saving or correcting a requirement does not itself refresh Fit
+or wording coverage; those remain explicit actions. See the
+[catalog architecture](../architecture/scoring.md#requirements-catalog-matching)
+for the source and revision checks.
+
 ## How The Score Is Calculated
 
 JobCtrl does not ask a model for one opaque number and save it. The model
 classifies the evidence for each posting requirement; versioned, deterministic
 code turns those classifications into the persisted 1–10 score.
 
-Each distinct saved job has its own assessment and recorded evidence, even if
-another job has similar posting text. Repeating an unchanged assessment for the
-same job can reuse its recorded decision; scoring a different job can require
-another model call.
+Each saved job retains its own requirement occurrences, priorities and score.
+Jobs that reference the same qualified requirement reuse a current person
+assessment against the same saved facts. Similar text alone does not establish
+that shared identity. Exact approved wording coverage is reused as recorded.
 
 When Discovery supplies explicit requirements, the calculation works like
 this:
@@ -196,9 +215,11 @@ decision; re-score runs the current scoring pipeline and creates a new model-
 derived version.
 Manual corrections carry the existing requirement evidence forward to the new
 score version, preserving its original profile and employer-analysis provenance.
-They do not reassess that evidence. You can re-tailor with your current profile
-at any time even when the saved score is stale; re-tailoring does not require or
-start a score refresh.
+They do not reassess that evidence. Post-edit preparation that needs updated
+qualification asks for **Update affected matches** first; it cannot bypass the
+manual boundary by silently refreshing from a tailoring request. Existing
+accepted resumes remain available, and opening their editor does not start a
+score refresh.
 Resetting stale scores prepares their stages for another run; it does not run
 scoring. The suggested `jobctrl score --rescore` command starts the scoring
 queue for eligible enriched jobs, including jobs with existing scores; it is not
@@ -233,11 +254,18 @@ does not rewrite historical score versions.
 scoring work. It supplements the target-search titles owned by Discovery; it
 does not add, remove, or rename those search targets.
 
-A profile change can start preparation while other jobs are still running.
-Those jobs keep their current execution; the continuation processes other
-eligible work. If you cancel or reset a job, the older execution cannot replace
-its successor's result. A real scoring failure stays visible while accepted
-results for other jobs remain saved.
+A profile change records pending work without starting preparation. Use
+**Update affected matches** after saving the changes you want included. The
+action reviews the saved requirement catalog, updates only affected person
+assessments and recomputes scores for the selected jobs. New evidence is also
+considered for requirements previously missing support. A wording proposal
+requires your explicit approval and does not lower your factual fit score.
+
+The action displays its work limits, progress and cancellation control. Edits
+made while it is queued or running remain pending for another deliberate update.
+It does not restart itself when it saves results or when you approve wording.
+Previously accepted records remain available on failure. If factual updates
+completed but wording preparation did not, the result reports that boundary.
 
 ## Source Of Truth And Ownership
 
@@ -302,14 +330,13 @@ not for an employer ranking people.
    a job, or wait until the posting is active again, before retrying its reset.
    A manual correction also retains any existing warning.
 7. **Review profile edits on request.** Saving your profile does not update scores
-   or regenerate materials. Jobs indicate when your saved score predates the
-   profile. **Update score** first asks your configured scoring model whether the
-   edits could affect this job. If they are insignificant, the score and original
-   date stay unchanged and the model's reason is available in score controls.
-   Significant edits trigger normal scoring. A failed comparison preserves the
-   saved score and reports the failure; older scores without comparison inputs
-   cannot be declared current. A scoring-policy change separately requires a new
-   assessment.
+   or regenerate materials. **Update affected matches** uses one impact decision
+   across the requirement catalog when saved factual inputs changed. Shared
+   requirements are not reassessed separately for every job. Current decisions
+   and approved-wording bindings are reused; actual expression gaps are grouped
+   by achievement for reviewable wording preparation. A failed or stale operation
+   retains accepted records and reports the remaining work. Initial assessment
+   of a newly captured job remains part of its explicitly started preparation.
 
 ## Implementation And API Pointers
 
@@ -317,7 +344,7 @@ not for an employer ranking people.
 | --- | --- |
 | User workflow | [Daily Workflow → Review Jobs](normal-flows.md) and [Discovery → Employer Analysis Perspectives](discovery.md#employer-analysis-perspectives). |
 | HTTP contract | Jobs list/detail reads, `GET /v1/scoring/keywords`, `POST /v1/jobs/:key/score-correction`, per-job current-policy re-score, and bulk/stale-score actions; see [Jobs & Materials API](../api/jobs-and-materials.md#jobs-and-evidence) and the [complete lifecycle contract](../api/complete-contract.md#jobs-read-model-and-lifecycle). |
-| Worker implementation | `workers/automation/src/jobctrl/scoring/` (`employer_analysis.py`, `scorer.py`) and `workers/automation/src/jobctrl/domain/scoring/`; canonical analysis gates and persistence live under `workers/automation/src/jobctrl/domain/materials/analysis*` and `workers/automation/src/jobctrl/infrastructure/materials/employer_analysis_repository.py`. |
+| Worker implementation | `workers/automation/src/jobctrl/features/fit/` owns qualification, coverage and manual refresh. `features/requirements/` owns qualified meanings and occurrences; `features/profile/` owns facts and wording approval. |
 | Product components | `apps/web/src/contexts/scoring/`, `apps/web/src/contexts/materials/components/EmployerAnalysisPanel.tsx`, and the Jobs detail/triage views. |
 | Deep architecture | [Scoring](../architecture/scoring.md), [Materials → Canonical Employer Analysis](../architecture/materials.md#canonical-employer-analysis), and [Stage Walkthrough → Score](../architecture/pipeline/stages.md#score). |
 

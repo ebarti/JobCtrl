@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { PersonFitPanel } from "../contexts/fit/index.js";
+import { AffectedMatchesPanel, PersonFitPanel } from "../contexts/fit/index.js";
 import { useJobs } from "../contexts/jobs/index.js";
 import { CareerLearningPanel } from "../contexts/learning/index.js";
 import { ProfileEvidencePanel } from "../contexts/profile/index.js";
@@ -47,6 +47,7 @@ function EvidenceMapComposition() {
       }} />
     </label>
     <ProfileEvidencePanel search={routeSearch.q} focusSourceId={routeSearch.entry} />
+    {features.has("fit") ? <AffectedMatchesPanel /> : null}
     <EvidenceMapConnections search={routeSearch.q} focusSourceId={routeSearch.entry} jobId={routeSearch.job} />
     {features.has("learning") ? <CareerLearningPanel jobs={choices} /> : null}
     <section className="card" aria-labelledby="evidence-job-title">

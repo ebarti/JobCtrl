@@ -52,12 +52,15 @@ must be checked in the Discovery adapter and real product journey.
 
 Requirements exposes qualified meanings, source occurrences and corrections;
 Fit exposes person qualification and approved-wording coverage as distinct
-records. Retrieval narrows candidates; model determinations decide meaning and
-must retain source versions and provenance. A wording gap does not lower
+records. One model determination compares the full incoming batch with the
+complete canonical catalog and retains source versions and provenance. A wording gap does not lower
 person fit. Source or revision changes invalidate stale authority. The Fit
-work-in-progress adapter declares `/v1/jobs/{job_id}/fit`, assessment,
-correction, history and coverage routes; its exact methods and DTOs live in
-`features/fit/http.py` and are not yet integrated E2E evidence.
+adapter declares `/v1/jobs/{job_id}/fit`, assessment, correction, history and
+coverage routes. Post-edit reassessment uses the durable `fit.refresh` action,
+an expected saved-input stamp, explicit job scope and finite work limits.
+Read-only pending and operation routes never start model work. Exact methods,
+DTOs and failure boundaries live in the [Fit reference](../../workers/automation/src/jobctrl/features/fit/README.md).
+Route declarations alone do not establish integrated E2E or released behavior.
 
 ## Artifacts and tailoring audit
 

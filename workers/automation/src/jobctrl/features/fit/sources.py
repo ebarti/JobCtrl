@@ -91,6 +91,7 @@ def requirement_source(requirement: dict) -> dict:
     # to a hand-written meaning classifier.
     text = encoded({
         "definition": requirement["definition"], "qualifiers": requirement.get("qualifiers", {}),
+        "scope": requirement["scope"],
     })
     return {"source_id": "requirement", "revision": str(requirement["requirement_revision"]), "text": text}
 
@@ -128,3 +129,23 @@ def citations_still_bound(refs: list[dict], facts: list[dict]) -> bool:
     index = {source["source_id"]: source for source in facts}
     return all(ref["source_id"] in index and ref["quote"].strip()
                and ref["quote"] in index[ref["source_id"]]["text"] for ref in refs)
+
+
+def approved_fingerprint(profile: dict) -> str:
+    """Exact accepted expression inventory, excluding proposal bookkeeping."""
+    return fingerprint(sorted(profile["approved_variants"], key=lambda row: row["variant_id"]))
+
+
+class FrozenFitProfileSnapshot:
+    """Durable Fit-owned copy of a public Profile snapshot and its guidance."""
+
+    def __init__(self, value: dict, guidance: str, operation_id=None):
+        self.refresh_operation_id = operation_id
+        self._value = deepcopy(value)
+        self.scoring_guidance = guidance
+        self.manual_refresh = True
+        for name in ("profile_id", "profile_revision", "fact_semantics_version", "fingerprint"):
+            setattr(self, name, value[name])
+
+    def to_dict(self):
+        return deepcopy(self._value)

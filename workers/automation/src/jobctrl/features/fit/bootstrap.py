@@ -1,9 +1,12 @@
 """Explicit dependency composition; no optional legacy writer or SQL bridge."""
 
-from jobctrl.app.contracts import Feature, Runtime
+from pydantic import ValidationError
 
-from .http import AssessInput, CorrectInput, CoverageInput, routes
-from .schema import SCHEMA
+from jobctrl.app.contracts import Feature, Runtime
+from jobctrl.app.errors import AppError
+
+from .http import AssessInput, CorrectInput, CoverageInput, RefreshInput, routes
+from .schema import REFRESH_SCHEMA, SCHEMA
 from .service import FitService
 from .storage import FitStore
 
@@ -12,6 +15,7 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
     profile = ports["profile"]
     requirements = ports["requirements"]
     runtime.database.initialize_feature("fit", SCHEMA)
+    runtime.database.initialize_feature("fit_refresh", REFRESH_SCHEMA)
     store = FitStore(runtime.database, runtime.events, profile, requirements, runtime.settings)
     service = FitService(store=store, model=runtime.model,
                          profile=profile, requirements=requirements, settings=runtime.settings)
@@ -39,6 +43,20 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         arguments = CoverageInput.model_validate(values).model_dump()
         return await service.refresh_coverage(job_id, **arguments, cancelled=context.cancelled)
 
+    async def refresh(context, payload):
+        arguments = RefreshInput.model_validate(payload).model_dump()
+        return await service.refresh(operation_id=context.run_id, **arguments,
+                                     cancelled=context.cancelled, heartbeat=context.heartbeat)
+
+    def refresh_scope(payload):
+        try:
+            return RefreshInput.model_validate(payload).profile_id
+        except (ValueError, TypeError, ValidationError):
+            raise AppError("fit_invalid_request", "The Fit request has missing or invalid fields.", 422) from None
+
+    def finalize_refresh(run_id, status, error_code, connection):
+        service.interrupt_refresh(run_id, status, error_code, connection=connection)
+
     return Feature(name="fit", service=service, routes=routes(service), actions={
-        "fit.assess": assess, "fit.correct": correct, "fit.refresh_coverage": refresh_coverage,
-    })
+        "fit.assess": assess, "fit.correct": correct, "fit.refresh_coverage": refresh_coverage, "fit.refresh": refresh,
+    }, action_scopes={"fit.refresh": refresh_scope}, action_finalizers={"fit.refresh": finalize_refresh})

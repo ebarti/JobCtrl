@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
-from .models import AuthoringBrief, ProfileSnapshot, SemanticPort, SourceRef, canonical, fingerprint, profile_identity, validate_transfer_bundle
+from .models import AuthoringBrief, ProfileSnapshot, SemanticPort, SourceRef, authoring_request_summary, canonical, fingerprint, profile_identity, validate_transfer_bundle
 from .ports import ProfileStore, ResumeImportPort
 from .shape import DEFAULT_STYLE, canonical_profile
 
@@ -229,10 +229,33 @@ class ProfileService:
             row = self.repository.authoring_row(conn, profile_id, origin_key=origin_key)
             return self._proposal(row) if row else None
 
-    def get_authoring_proposal(self, proposal_id, profile_id="default", connection=None):
-        with self.repository.reader(connection) as conn:
+    def get_authoring_proposal(self, proposal_id, profile_id="default", connection=None, *,
+                               include_brief=False, recover_interrupted=False, follow_retry=False):
+        scope = self.repository.transaction() if recover_interrupted else self.repository.reader(connection)
+        with scope as conn:
             row = self.repository.authoring_row(conn, profile_id, proposal_id=proposal_id)
-            return self._proposal(row) if row else None
+            if row is None:
+                return None
+            if follow_retry:
+                seen = set()
+                while row["proposal_id"] not in seen:
+                    seen.add(row["proposal_id"])
+                    successor = self.repository.authoring_retry_successor(conn, profile_id, row["proposal_id"])
+                    if successor is None:
+                        break
+                    row = successor
+                else:
+                    raise AppError("authoring_retry_lineage_invalid", "The retained authoring retry lineage is invalid.", 409)
+            if recover_interrupted:
+                row = self.repository.recover_interrupted_authoring(conn, profile_id, row)
+            result = self._proposal(row)
+            interrupted = self.repository.authoring_interrupted(row)
+            if interrupted:
+                result.update({"recorded_status": row["status"], "status": "failed", "failure_code": "authoring_interrupted"})
+            result.update({"interrupted": interrupted, "retryable": result["status"] in {"failed", "uncertain"}})
+            if include_brief:
+                result["brief"] = AuthoringBrief.from_dict(json.loads(row["brief_json"])).to_dict()
+            return result
 
     def list_sources(self, profile_id="default"):
         with self.repository.reader() as conn:
@@ -523,9 +546,59 @@ class ProfileService:
         self.repository.record_determination(conn, snapshot=snapshot, kind=kind, sources=sources, context=context,
                                              result=result.model_dump(), determination_id=determination_id, provenance=provenance)
 
-    async def request_authoring(self, brief: AuthoringBrief | dict, *, cancelled=lambda: False):
+    @staticmethod
+    def _assert_authoring_wording(snapshot, expected_approved_variants):
+        if expected_approved_variants is not None and canonical(sorted(
+                snapshot.approved_variants, key=lambda row: row["variant_id"])) != canonical(sorted(
+                expected_approved_variants, key=lambda row: row["variant_id"])):
+            raise ConflictError("The approved wording inventory changed during authoring.", reason="stale_approved_wording")
+
+    def _assert_authoring_retry(self, conn, brief, retry_of_proposal_id, expected=None):
+        metadata = json.loads(brief.origin_metadata_json)
+        if retry_of_proposal_id is None:
+            if {"retry_of_proposal_id", "retry_of_origin_key", "prior_remote_outcome"}.intersection(metadata):
+                raise AppError("invalid_authoring_retry", "Retry lineage requires an explicit validated prior proposal.")
+            return None
+        if not isinstance(retry_of_proposal_id, str) or not retry_of_proposal_id:
+            raise AppError("invalid_authoring_retry", "Choose the exact failed or uncertain authoring proposal.")
+        prior = self.repository.authoring_row(conn, brief.profile_id, proposal_id=retry_of_proposal_id)
+        if prior is None or prior["status"] not in {"failed", "uncertain"}:
+            raise ConflictError("Only a retained failed or uncertain authoring proposal can be retried.",
+                                reason="authoring_retry_not_allowed")
+        before = AuthoringBrief.from_dict(json.loads(prior["brief_json"]))
+        def refs(value):
+            return sorted((ref.source_id, ref.revision) for ref in value.evidence_refs)
+        if (before.achievement_id != brief.achievement_id or refs(before) != refs(brief)
+                or before.origin_key == brief.origin_key):
+            raise ConflictError("The retry must retain the exact achievement and source revisions under a new origin.",
+                                reason="stale_authoring_retry")
+        self._refs(conn, [ref.to_dict() for ref in before.evidence_refs], brief.profile_id)
+        old_metadata = json.loads(before.origin_metadata_json)
+        if (metadata.get("retry_of_proposal_id") != retry_of_proposal_id
+                or metadata.get("retry_of_origin_key") != before.origin_key
+                or metadata.get("prior_remote_outcome") != ("unknown" if prior["status"] == "failed" else "semantic_uncertain")
+                or old_metadata.get("group_key") != metadata.get("group_key")
+                or old_metadata.get("gap_requirement_ids") != metadata.get("gap_requirement_ids")):
+            raise ConflictError("The retry lineage or expression binding changed.", reason="stale_authoring_retry")
+        successor = self.repository.authoring_retry_successor(conn, brief.profile_id, retry_of_proposal_id)
+        if successor is not None and successor["origin_key"] != brief.origin_key:
+            raise ConflictError("This proposal already has a retained retry. Inspect that attempt before retrying it.",
+                                reason="authoring_retry_superseded", proposalId=successor["proposal_id"])
+        binding = {key: prior[key] for key in ("proposal_id", "origin_key", "status", "failure_code", "brief_json")}
+        if expected is not None and binding != expected:
+            raise ConflictError("The prior authoring attempt changed during the retry.", reason="stale_authoring_retry")
+        return binding
+
+    async def request_authoring(self, brief: AuthoringBrief | dict, *, cancelled=lambda: False,
+                                expected_approved_variants=None, retry_of_proposal_id=None):
         if cancelled():
             raise AppError("action_cancelled", "Profile authoring was cancelled.", 409)
+        if expected_approved_variants is not None:
+            if not isinstance(expected_approved_variants, (list, tuple)) or any(
+                    not isinstance(row, dict) or not isinstance(row.get("variant_id"), str)
+                    for row in expected_approved_variants):
+                raise AppError("invalid_authoring_brief", "The approved wording inventory cannot be bound.")
+            expected_approved_variants = deepcopy(expected_approved_variants)
         try:
             brief = AuthoringBrief.from_dict(brief) if isinstance(brief, dict) else AuthoringBrief.from_dict(brief.to_dict())
         except (ValueError, AttributeError):
@@ -536,6 +609,7 @@ class ProfileService:
             if prior:
                 return self._proposal(self.repository.recover_interrupted_authoring(conn, profile_id, prior))
             snapshot = self.snapshot(profile_id, conn)
+            self._assert_authoring_wording(snapshot, expected_approved_variants)
             if (snapshot.profile_revision != brief.profile_revision or snapshot.fact_semantics_version != brief.fact_semantics_version):
                 raise ConflictError("The authoring brief uses an older Profile.", reason="stale_profile_version")
             refs = self._refs(conn, [item.to_dict() for item in brief.evidence_refs], profile_id)
@@ -544,6 +618,7 @@ class ProfileService:
                 raise ConflictError("The achievement is no longer current.", reason="stale_achievement")
             refs = list({item["source_id"]: item for item in [*refs, *achievement["source_refs"]]}.values())
             self._refs(conn, refs, profile_id)
+            retry_binding = self._assert_authoring_retry(conn, brief, retry_of_proposal_id)
             proposal_id = self.repository.start_authoring(conn, profile_id=profile_id, origin_key=brief.origin_key, brief=brief.to_dict())
         allowed = {item["source_id"] for item in refs}
         sources = [{"source_id": item["source_id"], "text": item["text"], "revision": item["revision"]}
@@ -560,6 +635,8 @@ class ProfileService:
             with self.repository.transaction() as conn:
                 if cancelled():
                     raise AppError("action_cancelled", "Profile authoring was cancelled before publication.", 409)
+                self._assert_authoring_wording(self.snapshot(profile_id, conn), expected_approved_variants)
+                self._assert_authoring_retry(conn, brief, retry_of_proposal_id, expected=retry_binding)
                 self._record_determination(conn, snapshot=snapshot, kind="wording_authoring", sources=sources, context=context,
                                            result=result, determination_id=determination_id, provenance=provenance, facts_only=True)
                 variant = self._new_variant(conn, profile_id=profile_id, achievement_id=brief.achievement_id, text=result.text,
@@ -580,7 +657,7 @@ class ProfileService:
 
     @staticmethod
     def _proposal(row):
-        return {key: row[key] for key in ("proposal_id", "origin_key", "status", "variant_id", "failure_code")}
+        return authoring_request_summary(row)
 
     async def coach_required_bullets(self, payload, profile_id="default"):
         snapshot = self.snapshot(profile_id)

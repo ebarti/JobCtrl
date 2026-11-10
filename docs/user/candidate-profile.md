@@ -146,8 +146,52 @@ moves below the editor and the resize handle disappears. Evidence Map follows
 the same rule: its entry list, selected evidence, and gaps/reusable-stories
 inspector stack instead of compressing the three-pane desktop workspace.
 
-Saving your edits does not call a model. Choose **Get suggestions for target
-roles** in Discovery when you want evidence-backed suggestions.
+Saving facts, adding or reviewing sources, and editing or approving wording do
+not run matching, scoring, authoring, or resume regeneration. Existing matches
+can become out of date and stay available with their recorded source versions.
+Choose **Get suggestions for target roles** in Discovery when you want
+evidence-backed suggestions.
+
+### Update affected matches
+
+Choose **Update affected matches** on Profile, Evidence Map, or beside Person
+fit in Job Detail when you want JobCtrl to review the saved changes. The action
+uses the last **saved** Profile, sources and approved wording; save any edits you
+want included before starting. Opening these pages or checking the status does
+not start the action. A changed source or wording remains pending review rather
+than becoming a current match merely because it was saved.
+
+The action considers the complete saved requirement catalog and the selected
+scored jobs. It can use your configured model to check affected qualifications
+and wording coverage and prepare wording proposals. Proposals still require your
+explicit approval. Each request is bounded to 100 affected requirements, 40
+model call attempts, 20 wording proposals and 10 minutes. Attempts are counted
+before provider and configured budget checks; the request does not impose a hard
+monetary cap. When more than 100 scored jobs
+are available, select up to 100 in **Jobs** and open **Update affected matches
+for selected jobs**. Starting another request for
+remaining jobs is a separate decision. Existing approved wording and accepted
+scores and documents remain available during the update and if it fails or is
+cancelled.
+
+The panel shows the recorded phase, counts, and outcome, including a partial
+result when qualification was published before later work stopped. **Request cancellation**
+asks the worker to stop; wait for the recorded result rather than assuming that
+the request has already stopped. A changed input can make an update stale, and
+reaching a limit can leave work pending. Failed or uncertain wording requests
+appear in the result; after reviewing and dismissing the completed request,
+**Retry failed wording** explicitly retries the eligible listed proposals with
+the current saved inputs. If several retained failures belong to one achievement,
+choose one proposal for that achievement. Retrying one does not clear other
+eligible failures. A still-running or unresolved request is not retried
+automatically. A confirmed interrupted request can be retried explicitly; any
+unknown outcome of its earlier provider call remains recorded. Review these
+states before choosing a new update. If the start
+response is lost, check the earlier request; an absent
+record at one instant does not prove it could not still arrive. Retrying the
+same request uses its original identity. If the saved inputs changed, the panel
+offers a separate request for the current inputs and retains the earlier
+identity for status checks.
 
 The baseline records your authored roles and achievements. Update that source
 deliberately when your experience changes; tailoring does not change Profile as

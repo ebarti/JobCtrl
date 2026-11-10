@@ -5,6 +5,7 @@ import {
   modelCall,
   type ApplicationStack,
 } from "../harness/fixtures.js";
+import { catalogMatching } from "./requirements-data.js";
 
 /** Authored synthetic data submitted through the public Profile action. These
  * are not persisted model outputs, labels, or an internal repository seed. */
@@ -225,14 +226,8 @@ export async function qualifyPosting(
       "Explicit source-bound admission for the application preparation journey.",
     citations: [{ source_id: source.source_id, quote: source.text }],
   });
-  const novelty = await modelCall(app, "requirements.novelty");
-  novelty.reply({
-    verdict: "new",
-    reason: "The complete catalog sweep supports this explicit new meaning.",
-    citations: (
-      novelty.body["sources"] as { source_id: string; text: string }[]
-    ).map((row) => ({ source_id: row.source_id, quote: row.text })),
-  });
+  const matching = await modelCall(app, "requirements.match_catalog");
+  matching.reply(catalogMatching(matching, { recovery: { verdict: "new" } }));
   const extracted = await extracting;
   expect(extracted.status(), await extracted.text()).toBe(200);
   const assessing = api.post(`/v1/jobs/${posting.job_id}/fit/assess`, {

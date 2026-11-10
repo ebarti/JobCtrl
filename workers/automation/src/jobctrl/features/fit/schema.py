@@ -72,3 +72,20 @@ CREATE TABLE fit_operation_receipts (
     created_at TEXT NOT NULL
 );
 """
+
+REFRESH_SCHEMA = """
+CREATE TABLE fit_refresh_operations (
+    operation_id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL,
+    input_fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX fit_refresh_active_profile ON fit_refresh_operations(profile_id) WHERE status='running';
+CREATE TABLE fit_wording_group_decisions (
+    group_key TEXT PRIMARY KEY,
+    decision_json TEXT NOT NULL
+);
+"""

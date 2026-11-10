@@ -21,6 +21,22 @@ class AssessInput(Input):
     prepare_coverage: StrictBool = True
 
 
+class RefreshLimits(Input):
+    max_model_calls: StrictInt = Field(default=40, ge=1, le=200)
+    max_requirements: StrictInt = Field(default=100, ge=0, le=500)
+    max_wording_proposals: StrictInt = Field(default=20, ge=0, le=100)
+    max_duration_seconds: StrictInt = Field(default=600, ge=1, le=3600)
+
+
+class RefreshInput(Input):
+    profile_id: StrictStr = Field(default="default", min_length=1, max_length=120)
+    job_ids: list[StrictStr] = Field(default_factory=list, max_length=100)
+    expected_input_fingerprint: StrictStr = Field(min_length=64, max_length=64)
+    retry_wording_proposal_ids: list[StrictStr] = Field(default_factory=list, max_length=100)
+    prepare_wording: StrictBool = True
+    limits: RefreshLimits = Field(default_factory=RefreshLimits)
+
+
 class CorrectInput(Input):
     expected_revision: StrictInt = Field(ge=1)
     score: StrictInt = Field(ge=1, le=10)
@@ -108,7 +124,18 @@ def routes(service) -> tuple:
         return JSONResponse({"formula_version": "requirement-fit-v2-scoped",
                              "correction_anchors": service.store.anchors()})
 
+    async def refresh_pending(request):
+        return JSONResponse(service.refresh_pending(request.query_params.get("profile_id", "default")))
+
+    async def refresh_operation(request):
+        allow_pending = request.query_params.get("allow_pending", "false")
+        if allow_pending not in {"true", "false"}:
+            raise AppError("fit_invalid_request", "allow_pending must be true or false.", 422)
+        return JSONResponse(service.refresh_operation(request.path_params["operation_id"], allow_pending=allow_pending == "true"))
+
     return (
+        Route("/v1/fit/refresh/pending", refresh_pending, methods=["GET"]),
+        Route("/v1/fit/refresh/operations/{operation_id}", refresh_operation, methods=["GET"]),
         Route("/v1/jobs/{job_id}/fit", get_fit, methods=["GET"]),
         Route("/v1/jobs/{job_id}/fit/assess", assess, methods=["POST"]),
         Route("/v1/jobs/{job_id}/fit/correct", correct, methods=["POST"]),
