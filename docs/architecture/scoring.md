@@ -2,9 +2,10 @@
 
 Fit assesses the person against qualified job requirements. Requirements owns
 the meanings and occurrences, Profile owns facts and evidence, and Resumes
-owns document choice. The Python transformation is **in progress**; the source
-contract below must still be verified in the integrated product and does not
-assert real-provider judgment quality.
+owns document choice. This page describes the Python source contract. The
+[journey ledger](../developer/qa/python-journeys.md) records observed integration
+evidence; source behavior does not establish an installed release or
+real-provider judgment quality.
 
 ## Requirements catalog matching
 
@@ -56,7 +57,10 @@ Saving Profile facts, sources, wording, approvals or requirement definitions
 does not schedule assessment, authoring or resume regeneration. The manual
 `fit.refresh` action uses the last saved inputs. A read-only pending summary
 supplies the expected input fingerprint; the action refuses if those reviewed
-inputs change while it is queued. It freezes the complete catalog, factual and
+inputs change while it is queued. Before a Profile exists, that passive read
+returns `readiness: profile_required` without a fingerprint or currentness
+claim. Jobs remain usable, and refreshing matches requires saving a Profile.
+It freezes the complete catalog, factual and
 approved-wording inventories, guidance, prior assessments, selected scored jobs
 and operation limits. Pending proposal bookkeeping is separate from the
 approved inventory, so the operation does not invalidate itself.
@@ -91,7 +95,7 @@ wording. User corrections retain history and exact source/revision authority.
 
 ## Deterministic Score Resolution
 
-The in-progress `features/fit/domain.py` implements the versioned
+`features/fit/domain.py` implements the versioned
 `requirement-fit-v2-scoped` arithmetic over qualified capability assessments:
 
 1. For each resume-capability requirement, maximum points are its weight times
@@ -117,7 +121,7 @@ while retaining the calculated score and underlying evidence. A qualification
 correction is independently source- and revision-bound. Changing either must
 not silently rewrite prior artifacts or acceptance decisions.
 
-The current work-in-progress adapter declares `GET /v1/jobs/{job_id}/fit`,
+The adapter declares `GET /v1/jobs/{job_id}/fit`,
 `/fit/history`, `/fit/coverage`, and explicit assessment/correction/coverage
 commands, plus `/v1/fit/evidence-map`. Exact request fields live in
 `features/fit/http.py`; route declarations alone do not prove an integrated

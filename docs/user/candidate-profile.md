@@ -161,6 +161,10 @@ want included before starting. Opening these pages or checking the status does
 not start the action. A changed source or wording remains pending review rather
 than becoming a current match merely because it was saved.
 
+Before your first Profile is saved, the panel links to Profile setup and keeps
+the update disabled. You can still browse and manage jobs. The browser-local
+demo explains that updating matches requires the local application.
+
 The action considers the complete saved requirement catalog and the selected
 scored jobs. It can use your configured model to check affected qualifications
 and wording coverage and prepare wording proposals. Proposals still require your

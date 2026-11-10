@@ -97,6 +97,41 @@ test("demo tour retains local exact wording approval, durable edits and a real a
     page.getByRole("button", { name: "Open demo guide", exact: true }),
   ).toBeVisible();
 
+  // The demo registers Fit but cannot execute model-backed manual updates.
+  // Opening Profile must keep that unavailable capability quiet and must not
+  // turn an unsupported pending read into a product error.
+  await page.goto("/profile");
+  await expect(
+    page.getByRole("heading", { name: "Profile", level: 1, exact: true }),
+  ).toBeVisible();
+  const affectedMatches = page.getByRole("region", {
+    name: "Affected matches",
+    exact: true,
+  });
+  await expect(affectedMatches).toBeVisible();
+  await expect(affectedMatches).toContainText(
+    "Updating matches is unavailable in the demo.",
+  );
+  await expect(
+    affectedMatches.getByText("Checking saved match state…", { exact: true }),
+  ).toHaveCount(0);
+  await affectedMatches.scrollIntoViewIfNeeded();
+  await testInfo.attach("demo-profile-refresh-unavailable", {
+    contentType: "image/png",
+    body: await page.screenshot(),
+  });
+  await expect(affectedMatches.getByRole("alert")).toHaveCount(0);
+  await expect(
+    affectedMatches.getByRole("button", {
+      name: "Update affected matches",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await expect(affectedMatches).not.toContainText(
+    "Saved changes may affect matches.",
+  );
+  await page.goto("/");
+
   await page
     .getByRole("button", { name: "Open demo guide", exact: true })
     .click();

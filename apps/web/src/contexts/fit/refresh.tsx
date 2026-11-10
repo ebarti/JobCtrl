@@ -30,11 +30,12 @@ const operationSchema = z.object({
   created_at: z.string(), deadline_at: z.string(), updated_at: z.string(),
 }).passthrough();
 const pendingSchema = z.object({
-  profile_id: z.string(), pending: z.boolean(), pending_reasons: z.array(z.string()), stale_job_ids: z.array(z.string()),
+  profile_id: z.string(), readiness: z.literal("ready"), pending: z.boolean(), pending_reasons: z.array(z.string()), stale_job_ids: z.array(z.string()),
   available_job_ids: z.array(z.string()), catalog_revision: z.number().int().nonnegative(),
   requirement_count: z.number().int().nonnegative(), expected_input_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   pending_wording_failures: z.array(wordingFailureSchema), latest_operation: operationSchema.nullable(),
 }).passthrough();
+const profileRequiredSchema = z.object({ profile_id: z.string(), readiness: z.literal("profile_required") }).strict();
 const receiptSchema = z.object({ runId: z.string().min(1), workflowId: z.string().min(1),
   status: z.enum(["pending", "queued", "running", "succeeded", "failed", "cancelled", "start_failed"]) }).passthrough();
 const scopeBusySchema = z.object({ error: z.object({ code: z.literal("action_scope_busy"),
@@ -68,7 +69,18 @@ function operationMessage(operation: Operation): string {
 }
 
 /** Fit owns this read and action; hosts compose it without importing Profile internals. */
-export function AffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly string[] } = {}) {
+export function AffectedMatchesPanel(props: { readonly jobIds?: readonly string[] } = {}) {
+  const { featureFlags } = usePorts();
+  const availability = getApiCapabilityAvailability(featureFlags, "updateAffectedMatches");
+  if (availability.isDemo && !availability.available) return <section className="card grid gap-1 p-4" aria-label="Affected matches">
+    <h2>Affected matches</h2>
+    <p>Updating matches is unavailable in the demo. {availability.reason}</p>
+    <div><Button type="button" disabled>Update affected matches</Button></div>
+  </section>;
+  return <AvailableAffectedMatchesPanel {...props} />;
+}
+
+function AvailableAffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly string[] }) {
   const tenantId = useTenantId();
   const { http, featureFlags, requestIdentity, sessionStorage } = usePorts();
   const client = useQueryClient();
@@ -112,13 +124,13 @@ export function AffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly st
     queryKey: ["tenant", tenantId, "fit", "refresh", "pending"],
     queryFn: async () => {
       const workspace = await requestWorkspace(http);
-      const parsed = pendingSchema.safeParse(await http.json<unknown>("GET", "/v1/fit/refresh/pending", {
+      const parsed = z.union([pendingSchema, profileRequiredSchema]).safeParse(await http.json<unknown>("GET", "/v1/fit/refresh/pending", {
         query: { profile_id: "default" }, expectedDatabaseInstanceId: workspace.databaseInstanceId,
       }));
       if (!parsed.success) throw new Error("Pending match changes could not be read safely.");
       return { ...parsed.data, workspace };
     },
-    refetchInterval: (query) => query.state.data?.latest_operation?.status === "running" ? 3000 : false,
+    refetchInterval: (query) => query.state.data?.readiness === "ready" && query.state.data.latest_operation?.status === "running" ? 3000 : false,
     meta: { suppressGlobalErrorToast: true },
   });
   const requestStatus = useQuery({
@@ -132,9 +144,10 @@ export function AffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly st
       || (query.state.error instanceof JobCtrlApiError && query.state.error.status === 404) ? 3000 : false,
     meta: { suppressGlobalErrorToast: true },
   });
-  const operationId = identity.record ? requestStatus.data?.runId : pending.data?.latest_operation?.operation_id;
+  const pendingReady = pending.data?.readiness === "ready" ? pending.data : undefined;
+  const operationId = identity.record ? requestStatus.data?.runId : pendingReady?.latest_operation?.operation_id;
   const operationWorkspace = identity.record ?? pending.data?.workspace;
-  const visibleRunId = pending.data?.latest_operation?.operation_id;
+  const visibleRunId = pendingReady?.latest_operation?.operation_id;
   const visibleRun = useQuery({ queryKey: ["tenant", tenantId, "fit", "refresh", "visible-run", visibleRunId ?? "", pending.data?.workspace.databaseInstanceId ?? ""],
     enabled: Boolean(visibleRunId && pending.data?.workspace), retry: false,
     queryFn: async () => {
@@ -178,15 +191,15 @@ export function AffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly st
     refetchInterval: (query) => query.state.data?.status === "running" || (query.state.data === null && activeAction(requestStatus.data?.status)) ? 3000 : false,
     meta: { suppressGlobalErrorToast: true },
   });
-  const availableIds = pending.data?.available_job_ids ?? [];
+  const availableIds = pendingReady?.available_job_ids ?? [];
   const selectedIds = [...new Set(jobIds ?? (availableIds.length <= 100 ? availableIds : []))].filter((id) => availableIds.includes(id)).sort();
   const selectionRequired = !jobIds && availableIds.length > 100;
   const selectionInvalid = selectionRequired || Boolean(jobIds && (selectedIds.length === 0 || selectedIds.length > 100));
-  const latest = pending.data?.latest_operation;
+  const latest = pendingReady?.latest_operation;
   const notRecorded = requestStatus.error instanceof JobCtrlApiError && requestStatus.error.status === 404;
   const operation = operationQuery.data ?? (!identity.record || notRecorded ? latest : null);
   const publishedScores = operation ? Object.keys(operation.accepted_score_revisions).length : 0;
-  const wordingFailures = pending.data?.pending_wording_failures ?? [];
+  const wordingFailures = pendingReady?.pending_wording_failures ?? [];
   const retryRows = wordingFailures.filter((item) => item.status === "failed" || item.status === "uncertain");
   const owners = retryRows.map((item) => item.achievement_id);
   const needsWordingChoice = retryRows.length > 1 && (owners.some((id) => !id) || new Set(owners).size !== owners.length);
@@ -195,11 +208,11 @@ export function AffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly st
     .map((item) => item.proposal_id).sort();
   const recoveryRetryIds = retryIds;
   const makeBody = (kind: StartKind, ids: readonly string[]) => ({ profile_id: "default", job_ids: kind === "wording" ? [] : selectedIds,
-    prepare_wording: true, limits: LIMITS, expected_input_fingerprint: pending.data!.expected_input_fingerprint,
+    prepare_wording: true, limits: LIMITS, expected_input_fingerprint: pendingReady!.expected_input_fingerprint,
     retry_wording_proposal_ids: kind === "wording" ? [...ids] : [] });
   const fingerprintQuery = useQuery({
-    queryKey: ["tenant", tenantId, "fit", "refresh", "current-fingerprint", selectedIds, recoveryRetryIds, pending.data?.expected_input_fingerprint ?? ""],
-    enabled: Boolean(identity.record && pending.data), retry: false,
+    queryKey: ["tenant", tenantId, "fit", "refresh", "current-fingerprint", selectedIds, recoveryRetryIds, pendingReady?.expected_input_fingerprint ?? ""],
+    enabled: Boolean(identity.record && pendingReady), retry: false,
     queryFn: async () => ({
       matches: await requestIdentity.fingerprint(JSON.stringify({ action: ACTION, body: makeBody("matches", []) })),
       wording: recoveryRetryIds.length ? await requestIdentity.fingerprint(JSON.stringify({ action: ACTION, body: makeBody("wording", recoveryRetryIds) })) : null,
@@ -214,14 +227,14 @@ export function AffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly st
 
   const start = useMutation({
     mutationFn: async ({ kind, proposalIds }: { kind: StartKind; proposalIds: readonly string[] }) => {
-      if (!identity.ready || !archive.isSuccess || !busyIdentity.isSuccess || !pending.data || pending.isError) throw new Error("Refresh the saved match state and recovery storage before starting an update.");
+      if (!identity.ready || !archive.isSuccess || !busyIdentity.isSuccess || !pendingReady || pending.isError) throw new Error("Refresh the saved match state and recovery storage before starting an update.");
       if (kind === "matches" && selectionInvalid) throw new Error("Select between 1 and 100 scored jobs.");
       if (kind === "wording" && (!proposalIds.length || proposalIds.length > 100
           || proposalIds.some((id) => !recoveryRetryIds.includes(id)))) throw new Error("Review the failed wording before retrying.");
       const body = makeBody(kind, proposalIds);
       const fingerprint = await requestIdentity.fingerprint(JSON.stringify({ action: ACTION, body }));
       const workspace = await requestWorkspace(http);
-      if (pending.data.workspace.workspaceId !== workspace.workspaceId || pending.data.workspace.databaseInstanceId !== workspace.databaseInstanceId) {
+      if (pendingReady.workspace.workspaceId !== workspace.workspaceId || pendingReady.workspace.databaseInstanceId !== workspace.databaseInstanceId) {
         throw new Error("The saved match state belongs to a different workspace or database. Refresh it before starting an update.");
       }
       const previous = identity.current();
@@ -314,9 +327,9 @@ export function AffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly st
   };
   const status = requestStatus.data?.status;
   const scopeBlocked = Boolean(busy && (!busyRun.data || activeAction(busyRun.data.status)));
-  const canStart = availability.available && identity.ready && archive.isSuccess && busyIdentity.isSuccess && !pending.isPending && !pending.isError && !start.isPending && !scopeBlocked
+  const canStart = availability.available && identity.ready && archive.isSuccess && busyIdentity.isSuccess && Boolean(pendingReady) && !pending.isPending && !pending.isError && !start.isPending && !scopeBlocked
     && !otherActive && (!identity.record || mayRetry) && (exactKind === "wording" || !selectionInvalid);
-  const canRetryWording = availability.available && identity.ready && archive.isSuccess && busyIdentity.isSuccess && !pending.isPending
+  const canRetryWording = availability.available && identity.ready && archive.isSuccess && busyIdentity.isSuccess && Boolean(pendingReady) && !pending.isPending
     && !pending.isError && !start.isPending && !scopeBlocked && !otherActive && !identity.record && operation?.status !== "running"
     && retryIds.length > 0 && retryIds.length <= 100;
   const cancellableRun = identity.record && activeAction(status) && !requestStatus.data?.cancellationRequested
@@ -326,18 +339,19 @@ export function AffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly st
 
   return <section className="card grid gap-1 p-4" aria-label="Affected matches">
     <h2>Affected matches</h2>
-    <p>Uses your last saved Profile. An update may use your model and prepare wording proposals for review.</p>
+    {pending.data?.readiness === "profile_required" ? <p>Save a Profile before updating matches. <Link to="/profile">Open Profile</Link></p>
+      : <p>Uses your last saved Profile. An update may use your model and prepare wording proposals for review.</p>}
     <details><summary>Work limits</summary><p>Each update can reserve up to 40 model call attempts over 10 minutes, with at most 100 affected requirements, 100 scored jobs and 20 wording proposals. Attempts are counted before provider and budget checks. This request does not impose a hard monetary cap. Saving or opening this page does not start work. Approved wording and accepted artifacts remain available.</p></details>
     {pending.isPending ? <p>Checking saved match state…</p> : null}
     {pending.error ? <p role="alert">Match state could not be refreshed: {pending.error.message}{pending.data ? " The last loaded state remains below." : ""} <Button type="button" variant="outline" onClick={() => void pending.refetch()}>Check match state</Button></p> : null}
-    {pending.data ? <p role="status">{pending.data.pending
-      ? `${pending.data.pending_reasons.some((reason) => ["saved_job_inputs_changed", "catalog_qualification_pending", "saved_catalog_or_wording_changed"].includes(reason)) ? "Saved changes may affect matches." : "Some match work remains unfinished."} ${pending.data.stale_job_ids.length} scored ${pending.data.stale_job_ids.length === 1 ? "job is" : "jobs are"} marked out of date.`
+    {pendingReady ? <p role="status">{pendingReady.pending
+      ? `${pendingReady.pending_reasons.some((reason) => ["saved_job_inputs_changed", "catalog_qualification_pending", "saved_catalog_or_wording_changed"].includes(reason)) ? "Saved changes may affect matches." : "Some match work remains unfinished."} ${pendingReady.stale_job_ids.length} scored ${pendingReady.stale_job_ids.length === 1 ? "job is" : "jobs are"} marked out of date.`
       : "No pending changes are recorded."} {!jobIds && !selectionRequired
         ? selectedIds.length ? `Includes ${selectedIds.length} available scored ${selectedIds.length === 1 ? "job" : "jobs"}.` : "This update checks the catalog without updating job scores."
         : `${availableIds.length} scored jobs are available.`}</p> : null}
-    {pending.data?.stale_job_ids.some((id) => !availableIds.includes(id)) ? <p>Some out-of-date jobs are unavailable for this update. Check their saved posting and requirements.</p> : null}
+    {pendingReady?.stale_job_ids.some((id) => !availableIds.includes(id)) ? <p>Some out-of-date jobs are unavailable for this update. Check their saved posting and requirements.</p> : null}
     {selectionRequired ? <p>More than 100 scored jobs are available. <Link to="/jobs">Select up to 100 jobs in Jobs</Link> to update their matches.</p> : null}
-    {jobIds ? <p>{selectedIds.length} selected {selectedIds.length === 1 ? "job has" : "jobs have"} a recorded score and will be included.{jobIds.length > selectedIds.length ? ` ${jobIds.length - selectedIds.length} selected ${jobIds.length - selectedIds.length === 1 ? "job is" : "jobs are"} unavailable for this update.` : ""}{selectedIds.length > 100 ? " Select at most 100 scored jobs." : ""}</p> : null}
+    {jobIds && pendingReady ? <p>{selectedIds.length} selected {selectedIds.length === 1 ? "job has" : "jobs have"} a recorded score and will be included.{jobIds.length > selectedIds.length ? ` ${jobIds.length - selectedIds.length} selected ${jobIds.length - selectedIds.length === 1 ? "job is" : "jobs are"} unavailable for this update.` : ""}{selectedIds.length > 100 ? " Select at most 100 scored jobs." : ""}</p> : null}
     {!identity.ready ? <p role="alert">{identity.error ? "Update recovery storage is unavailable or invalid. Restore it before starting work." : "Checking update recovery storage…"}</p> : null}
     {archive.error ? <p role="alert">{archive.error.message}</p> : null}
     {busyIdentity.error ? <p role="alert">{busyIdentity.error.message}</p> : null}
@@ -346,7 +360,7 @@ export function AffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly st
       : "Checking the previous update request before starting different work."}</p>
       <Button type="button" variant="outline" disabled={requestStatus.isFetching} onClick={() => void requestStatus.refetch()}>Check previous update</Button>
       {notRecorded && !exactInputs && fingerprintQuery.data ? <><p>The earlier request may still arrive. The saved inputs now differ, so it cannot be retried with its original key. A new request uses a new key; the earlier identity is retained for status checks.</p>
-        <Button type="button" variant="outline" disabled={!availability.available || pending.isError || start.isPending || !archive.isSuccess || !busyIdentity.isSuccess || otherActive || scopeBlocked || selectionInvalid} onClick={() => void startCurrentAfterUnconfirmed("matches")}>Start a refresh for current saved changes</Button></> : null}
+        <Button type="button" variant="outline" disabled={!availability.available || !pendingReady || pending.isError || start.isPending || !archive.isSuccess || !busyIdentity.isSuccess || otherActive || scopeBlocked || selectionInvalid} onClick={() => void startCurrentAfterUnconfirmed("matches")}>Start a refresh for current saved changes</Button></> : null}
       {requestStatus.error && !notRecorded ? <p role="alert">The previous request could not be checked: {requestStatus.error.message}</p> : null}
     </div> : null}
     {archive.data?.length ? <div><p>Earlier unconfirmed updates are retained for status checks. An absent admission does not establish that a request cannot still arrive.</p>
@@ -409,7 +423,7 @@ export function AffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly st
       })}</fieldset> : null}
       {identity.record && terminalAction(status) && retryRows.length ? <p>Dismiss the completed update before retrying.</p> : null}
       {retryRows.length ? <Button type="button" variant="outline" disabled={!canRetryWording} onClick={() => void startUpdate("wording", retryIds)}>Retry failed wording</Button> : null}
-      {identity.record && notRecorded && !exactInputs && fingerprintQuery.data && retryIds.length ? <Button type="button" variant="outline" disabled={!availability.available || pending.isError || start.isPending || !archive.isSuccess || !busyIdentity.isSuccess || otherActive || scopeBlocked || retryIds.length > 100} onClick={() => void startCurrentAfterUnconfirmed("wording", retryIds)}>Retry failed wording for current saved changes</Button> : null}
+      {identity.record && notRecorded && !exactInputs && fingerprintQuery.data && retryIds.length ? <Button type="button" variant="outline" disabled={!availability.available || !pendingReady || pending.isError || start.isPending || !archive.isSuccess || !busyIdentity.isSuccess || otherActive || scopeBlocked || retryIds.length > 100} onClick={() => void startCurrentAfterUnconfirmed("wording", retryIds)}>Retry failed wording for current saved changes</Button> : null}
     </div> : null}
     {operationQuery.error ? <p role="alert">Update progress could not be refreshed: {operationQuery.error.message}{operation ? " The last recorded state remains above." : ""} <Button type="button" variant="outline" onClick={() => void operationQuery.refetch()}>Check update progress</Button></p> : null}
     {requestStatus.data?.cancellationRequested || visibleRun.data?.cancellationRequested ? <p role="status">Cancellation requested; waiting for the recorded outcome.</p> : null}

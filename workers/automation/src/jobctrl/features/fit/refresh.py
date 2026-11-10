@@ -150,8 +150,9 @@ class ManualRefresh:
     def __init__(self, service):
         self.service, self.store = service, service.store
 
-    def _inputs(self, read, profile_id):
-        profile_snapshot = read.profile_snapshot(profile_id)
+    def _inputs(self, read, profile_id, *, profile_snapshot=None):
+        if profile_snapshot is None:
+            profile_snapshot = read.profile_snapshot(profile_id)
         profile = dto(profile_snapshot)
         catalog = read.catalog_snapshot()
         requirements = normalize_catalog(catalog)
@@ -186,7 +187,13 @@ class ManualRefresh:
 
     def pending(self, profile_id="default"):
         with self.store.read_snapshot() as read:
-            snapshot, stamp, stale = self._inputs(read, profile_id)
+            try:
+                profile_snapshot = read.profile_snapshot(profile_id)
+            except NotFoundError:
+                # Jobs and optional features are usable before Profile exists.
+                # Absence is readiness, not a fabricated current source stamp.
+                return {"profile_id": profile_id, "readiness": "profile_required"}
+            snapshot, stamp, stale = self._inputs(read, profile_id, profile_snapshot=profile_snapshot)
             latest = read.latest_refresh(profile_id)
             wording_failures = pending_wording_failures(read, snapshot)
             facts_hash = fact_fingerprint(snapshot["profile"], snapshot["facts"])
@@ -207,7 +214,7 @@ class ManualRefresh:
                     and (latest["snapshot"]["catalog"] != snapshot["catalog"]
                          or approved_fingerprint(latest["snapshot"]["profile"]) != approved_fingerprint(snapshot["profile"]))):
                 reasons.append("saved_catalog_or_wording_changed")
-            return {"profile_id": profile_id, "pending": bool(reasons), "pending_reasons": reasons,
+            return {"profile_id": profile_id, "readiness": "ready", "pending": bool(reasons), "pending_reasons": reasons,
                     "stale_job_ids": stale, "available_job_ids": [row["job_id"] for row in snapshot["jobs"] if "source_error" not in row],
                     "catalog_revision": snapshot["catalog"]["catalog_revision"],
                     "requirement_count": len(snapshot["catalog"]["requirements"]),

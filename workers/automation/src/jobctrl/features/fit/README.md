@@ -60,9 +60,18 @@ Post-edit qualification through older assessment/coverage commands returns
 `fit_refresh_required`; initial missing qualification remains available to
 explicit job preparation. Manual refresh uses:
 
-- `GET /v1/fit/refresh/pending?profile_id=default`: saved-input stamp, recorded
-  pending reasons, available/stale scored-job IDs and latest operation. It makes
-  no model call and does not claim the affected requirement set before selection.
+- `GET /v1/fit/refresh/pending?profile_id=default`: returns HTTP 200 with
+  `readiness: "ready"`, a saved-input stamp, recorded pending reasons,
+  available/stale scored-job IDs and latest operation when Profile exists.
+  Before Profile creation it returns only
+  `{ "profile_id": "default", "readiness": "profile_required" }` (using the
+  requested Profile ID), also with HTTP 200. This state supplies no input stamp,
+  counts or invented currentness; callers show Profile setup and cannot start
+  new refresh work. Only absence at the public Profile snapshot boundary gets
+  this readiness result; catalog, job and other source failures remain errors.
+  Existing operation/status reads remain available independently, and refresh
+  execution still requires a real saved Profile. The pending read makes no
+  model call and does not claim the affected requirement set before selection.
   `pending_wording_failures` follows current canonical retry successors and
   source bindings independently of the latest operation, so retrying one failed
   proposal cannot hide another unresolved proposal.
