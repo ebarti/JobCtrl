@@ -7,10 +7,16 @@ description: "See how JobCtrl scores job fit from versioned profile evidence, re
 Fit compares Requirements' canonical, evidence-linked qualified meanings with
 a versioned Candidate Profile. It produces an applicant-side fit score,
 confidence, blockers, gaps, and requirement-level evidence for your own triage.
-Discovery owns how the employer analysis is generated and which perspectives
-participate; this page owns how that accepted input becomes a fit decision.
+Requirements owns reusable meanings and posting occurrences; Fit owns how those
+requirements and saved candidate evidence become a fit decision. Discovery's
+employer analysis supplies separate role and company context.
 For a shorter conceptual introduction, read
 [Evidence-based Job Fit Scoring](../guides/evidence-based-job-fit-scoring.md).
+
+This page describes the Python source build. The
+[published release](https://github.com/ebarti/JobCtrl/releases/latest) determines
+installed-version availability; a synthetic walkthrough or source verification
+does not establish what has been released or deployed.
 
 Before a new scoring attempt, JobCtrl reuses a posting observation or a
 trustworthy, source-bound canonical capture from the last six hours. Missing,
@@ -47,6 +53,25 @@ replacement. Saving or correcting a requirement does not itself refresh Fit
 or wording coverage; those remain explicit actions. See the
 [catalog architecture](../architecture/scoring.md#requirements-catalog-matching)
 for the source and revision checks.
+
+## Person Fit And Approved Wording
+
+**Person fit** answers what your saved factual evidence supports. **Approved
+wording coverage** answers whether exact approved text expresses a supported
+requirement. A missing or unapproved expression remains a wording gap and does
+not lower factual fit. Approving a better expression creates no new capability.
+
+Saving facts, reviewing sources, editing requirements or approving wording does
+not launch a reassessment or regenerate a resume. Choose **Update affected
+matches** on Profile, Evidence Map or beside Person fit in Job Detail, or select
+scored jobs in Jobs and open **Update affected matches for selected jobs**. The
+action uses saved inputs and a fixed complete catalog. It reuses current
+assessments, reviews affected factual support, reuses exact wording relations
+and groups remaining expression work by achievement. Proposals require your
+approval; accepted documents keep their recorded content. The
+[Profile update guide](candidate-profile.md#update-affected-matches) owns
+selection, work limits, the monetary-cost caveat, partial results and explicit
+retry/cancellation behavior.
 
 ## How The Score Is Calculated
 
@@ -136,12 +161,12 @@ explanation instead of being attributed to the earlier requirement report.
 
 ### When Requirement Rows Are Unavailable
 
-The requirement-led formula runs only when the scorer returns at least one
-valid requirement-assessment row for the current employer-analysis generation.
-Otherwise JobCtrl uses its versioned compatibility rubric: **45% technical
-fit, 30% experience fit, and 25% role fit**. It takes the weighted average of
-those three 0–10 values, rounds halves up, clamps the final score to 1–10, and
-applies the same score bands.
+The current Python source does not create a replacement score from missing,
+stale or incoherent qualified requirements. Job Detail keeps the prior accepted
+score with its stale status, or shows that no assessment is recorded yet. There
+is no word-overlap or opaque dimension-score fallback. Historical reports retain
+their recorded policy and evidence until an explicit refresh successfully
+publishes a current requirement-led score.
 
 ### Score, Confidence, And Eligibility Are Different
 

@@ -15,3 +15,9 @@
   text-align: left;
   border-radius: var(--radius);
 }
+
+/* Keep the illustrative walkthrough and its backdrop above the guide itself. */
+[data-slot="dialog-portal"]:has(.demo-matching-dialog) {
+  position: relative;
+  z-index: 110;
+}

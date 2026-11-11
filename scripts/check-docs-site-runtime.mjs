@@ -1782,19 +1782,23 @@ try {
       "A correction is not a hidden weight change.",
     ];
     const requiredTokens = [
-      "requirement-fit-v1",
+      "requirement-fit-v2-scoped",
       "Direct match",
       "Strong match",
       "Transferable evidence",
       "1.25×",
       "score = 1 + round(9 × coverage)",
-      "45% technical fit",
-      "30% experience fit",
-      "25% role fit",
+      "zero contribution to both the numerator and denominator",
+      "prior accepted score",
+      "no word-overlap or opaque dimension-score fallback",
       "evidence ID",
       "capped at 4",
       "Unavailable evidence",
-      "0–10",
+    ];
+    // The Python Fit owner refuses missing weighted capability inputs. The
+    // retired dimension fallback must not return as current user guidance.
+    const retiredFallbackTokens = [
+      "45% technical fit", "30% experience fit", "25% role fit",
     ];
     return {
       missingHeadings: [
@@ -1806,12 +1810,14 @@ try {
         (label) => !strongLabels.includes(label),
       ),
       missingTokens: requiredTokens.filter((token) => !text.includes(token)),
+      retiredFallbackTokens: retiredFallbackTokens.filter((token) => text.includes(token)),
     };
   });
   if (
     scoringExplanationContract.missingHeadings.length > 0 ||
     scoringExplanationContract.missingLabels.length > 0 ||
-    scoringExplanationContract.missingTokens.length > 0
+    scoringExplanationContract.missingTokens.length > 0 ||
+    scoringExplanationContract.retiredFallbackTokens.length > 0
   ) {
     fail(
       `/user/scoring-and-employer-analysis: public scoring explanation regressed (${JSON.stringify(scoringExplanationContract)})`,

@@ -46,6 +46,54 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
+### Matching walkthrough and user guides — 11 November 2026
+
+The documentation/demo follow-up to `7ebd3da987c802256611130d33b03854cb873cdb`
+passed `corepack pnpm e2e -- --project=demo-chromium` **1/1** in `e2e-Jj7zOl`.
+This extends the existing demo case; the complete suite still contains 48
+journeys with unchanged budgets and zero retries. The macOS arm64 runner had
+12 CPUs and Node 22.21.1. It recorded 174 ms snapshot, 1,602 ms preflight,
+7,797 ms build, 20,300 ms journey orchestration and 29,912 ms total. The test
+body took 9.1 seconds. Python, runtime-policy and source-candidate hashes match
+the full-catalog qualification below. The new web build SHA-256 is
+`581d63547e0ccff14d514a146fd1386bbfd426e5cb7c3406f1cc431155f92d5b`.
+Build files and dependency locks remained unchanged during the run.
+
+The real demo bundle, consent Worker and browser exercised all four illustrative
+matching steps, both edit examples, completed/stopped/partial outcomes, grouped
+wording and approval/deferral examples. Keyboard entry, modal containment,
+Escape/close focus restoration, reopening and example reset passed. Profile
+fields, run identities and simulation receipts were unchanged by the walkthrough;
+the actual model-backed update remained unavailable. The retained resume edit,
+exact wording approval, reload, accepted PDF bytes/text/render and artifact
+catalog also passed. Cancelling the real demo reset preserved the edit;
+confirming reset restored synthetic seeds without resetting consent.
+
+There were no product `/v1` requests, unexpected external requests, authored-text
+leaks or browser errors. Owned runtime cleanup was corroborated by process and
+listener checks. Desktop 1440px and mobile 390px dialog captures were inspected,
+including both scroll positions of the dense two-requirement wording example.
+The full-page opening-fade capture is not used as settled visual evidence.
+The walkthrough is a fixed teaching example, not a model determination or a
+replacement for the real Python qualification journeys.
+
+The first mobile assertion sampled the existing 150 ms `max-width` transition
+immediately after resizing. Computed styles established the interpolation;
+normal retrying full-viewport visibility followed by the same geometry bounds
+passed with unchanged production sizing. A separate reload assertion was
+corrected to the existing in-memory guide preference: reload returns to the
+launcher while durable demo data remains. Neither repair added sleeps, retries,
+timeouts or new production persistence.
+
+Frontend type/boundary checks passed with zero violations. The documentation
+build resolved 15,941 references across 477 emitted files, and the fresh browser
+runtime check passed in desktop/mobile and light/dark configurations. Its first
+run exposed a stale expectation for the retired 45/30/25 dimension fallback;
+the gate now checks the actual scoped requirement policy and refuses that old
+current-behavior claim. The same formula/credit/headings and other runtime gates
+remain. Source review is clear. This evidence qualifies the source-built guide
+and demo, not a hosted deployment or the pending whole-app redesign.
+
 ### Full catalog matching and manual refresh — 10 November 2026
 
 The complete source command `corepack pnpm e2e` on
@@ -119,6 +167,21 @@ bounded room for composition, build, teardown and evidence collection. The
 worker, zero retries, assertions and owned-process cleanup are unchanged.
 This is a measured harness-budget correction; the timed-out run remains
 non-passing, and product behavior was not changed to accommodate it.
+
+The subsequent [CI run on `7ebd3da987c802256611130d33b03854cb873cdb`](https://github.com/ebarti/JobCtrl/actions/runs/42920853796)
+passed all 11 jobs. Its [Browser job](https://github.com/ebarti/JobCtrl/actions/runs/42920853796/job/130195135601)
+passed **48/48** journeys on Linux x64, four CPUs and Node 22.21.1. The run
+`e2e-PcNdAV` recorded 328 ms snapshot, 3,825 ms preflight, 21,815 ms build,
+612,612 ms journeys and 638,664 ms total. The Python source hash matched the
+complete local run; the web hash matched the underlined-link follow-up above.
+Build files and dependency locks remained unchanged. This qualifies that source
+candidate, not a later documentation/demo revision or a hosted deployment.
+
+The Product Tour's `affected-matches.png` is the unchanged desktop-ready capture
+from `e2e-FcYpDn`, inspected at its original 1440 × 1000 size. Its Profile fields
+are synthetic. It shows the implemented source-build control and its saved-input
+warning, not the proposed whole-app redesign. The image is an illustration;
+the journey results above establish the exercised behavior.
 
 ### Earlier transformation qualification
 

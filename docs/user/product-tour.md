@@ -11,6 +11,11 @@ local workspace. Click or tap an image to zoom. Follow the
 [Daily Workflow](normal-flows.md) for the sequence and safety gates that connect
 these surfaces.
 
+This tour describes the maintained application and captured source-build UI.
+The [published release](https://github.com/ebarti/JobCtrl/releases/latest)
+establishes what an installed version includes; a source screenshot or synthetic
+demo walkthrough does not establish release or hosted-deployment status.
+
 Detailed work uses full route workspaces. Selecting a job, artifact, contact,
 run, or activity event opens a bookmarkable page with its facts, evidence,
 actions, and history together; it does not depend on a detached drawer. Each
@@ -121,6 +126,12 @@ band, confidence, eligibility, requirement fit, and must-have coverage together;
 missing assessments remain explicit. Requirement evidence starts visible and
 can be collapsed independently. Links hand off to Apply Review and Evidence
 without losing the job context.
+
+**Person fit** records what your saved evidence supports. **Approved wording
+coverage** records whether exact approved text expresses those requirements.
+A wording gap does not reduce factual fit. Use the nearby **Update affected
+matches** panel when you want saved changes reviewed for this job; opening the
+page or saving an edit does not start that work.
 
 ### Job Run Timeline
 
@@ -257,10 +268,31 @@ single-event timeline.
 ![JobCtrl Profile workspace with canonical candidate fields and the real editable baseline resume](../assets/screenshots/profile.png)
 
 Profile keeps canonical personal, experience, education, skills, evidence, and
-voluntary EEO fields beside the real baseline resume editor. The resizable
+voluntary EEO fields beside the real Plate baseline resume editor. The resizable
 preview is the visual feedback surface for the same data, not a second profile
 source. Below its working desktop width, the preview stacks after the editor
 instead of shrinking the document or leaving an unusable resize gutter.
+
+### Affected Matches
+
+![Synthetic source-build Profile page with the Affected matches panel and explicit update controls](../assets/screenshots/affected-matches.png)
+*Synthetic source-build UI: the Affected matches panel adds an explicit saved-input update to the existing Profile workspace.*
+
+Save the facts, sources or wording you want included, then choose **Update
+affected matches** on Profile, Evidence Map or Job Detail. In Jobs, select a
+cohort and open **Update affected matches for selected jobs**. The update reviews
+the complete shared requirement catalog, reuses current factual assessments and
+approved wording relations, and prepares grouped wording proposals when needed.
+Each proposal still needs your exact approval. The panel shows progress,
+limits, partial results and cancellation status while accepted work remains
+available. See [Update affected matches](candidate-profile.md#update-affected-matches)
+for selection, work limits, retry and source-change behavior.
+
+In the updated source-built demo, open **Demo guide** → **Explore matching and
+wording** for the **How matching and wording work** walkthrough. Its choices
+change a synthetic example without model calls or saved workspace changes;
+the actual **Update affected matches** action remains unavailable there. The
+[demo boundary](data-and-safety.md#public-demo) explains what is simulated.
 
 ### Resume Import
 

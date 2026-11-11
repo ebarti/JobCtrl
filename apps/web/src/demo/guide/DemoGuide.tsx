@@ -14,6 +14,7 @@ import { useDemoWorkspace } from "../workspace/DemoWorkspaceProvider.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useToastStore } from "../../shared/stores/toasts.js";
 import { Button } from "../../shared/ui/button.js";
+import { MatchingWalkthrough } from "./MatchingWalkthrough.js";
 import {
   Dialog,
   DialogContent,
@@ -157,6 +158,12 @@ export function DemoGuide() {
 
       <nav aria-label="Synthetic demo shortcuts">
         <ul className="grid gap-1">
+          <li>
+            <MatchingWalkthrough jobId={DEMO_JOB_ID} onNavigate={(destination) => {
+              if (destination === "job") recordFeatureShortcut("scoring");
+              else setGuideOpen(false);
+            }} />
+          </li>
           <li>
             <Button
               variant="ghost"

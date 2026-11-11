@@ -18,6 +18,11 @@ baseline, and the preferences that control how those facts may be used. Scoring,
 materials, interview preparation, and Apply consume versioned snapshots of
 this record; they do not rewrite it to suit a job.
 
+The saved-input update controls described here belong to the current Python
+source build. The [published release](https://github.com/ebarti/JobCtrl/releases/latest)
+establishes installed-version availability; the synthetic demo illustrates the
+workflow without running the local update action.
+
 <CandidateProfileFlow />
 
 ## How Profile Data Becomes Runtime Evidence
@@ -162,30 +167,55 @@ not start the action. A changed source or wording remains pending review rather
 than becoming a current match merely because it was saved.
 
 Before your first Profile is saved, the panel links to Profile setup and keeps
-the update disabled. You can still browse and manage jobs. The browser-local
-demo explains that updating matches requires the local application.
+the update disabled. You can still browse and manage jobs. In the updated
+source-built demo, **Demo guide** → **Explore matching and wording** opens a
+synthetic walkthrough; the real update remains unavailable.
 
-The action considers the complete saved requirement catalog and the selected
-scored jobs. It can use your configured model to check affected qualifications
-and wording coverage and prepare wording proposals. Proposals still require your
-explicit approval. Each request is bounded to 100 affected requirements, 40
-model call attempts, 20 wording proposals and 10 minutes. Attempts are counted
-before provider and configured budget checks; the request does not impose a hard
-monetary cap. When more than 100 scored jobs
-are available, select up to 100 in **Jobs** and open **Update affected matches
-for selected jobs**. Starting another request for
-remaining jobs is a separate decision. Existing approved wording and accepted
-scores and documents remain available during the update and if it fails or is
-cancelled.
+The update reviews the **complete saved requirement catalog**. When factual
+inputs need review, one model decision identifies affected assessments, including
+requirements that newly saved evidence may now support. Current assessments are
+reused across jobs. Approved-wording coverage is checked separately: an expression
+gap does not reduce factual fit. Remaining meaningful expression gaps are considered together
+for each achievement before a wording proposal is prepared. Proposals stay in
+the [Approved wording library](#approved-wording-library) until you decide what
+to approve, reject or defer.
 
-The panel shows the recorded phase, counts, and outcome, including a partial
-result when qualification was published before later work stopped. **Request cancellation**
-asks the worker to stop; wait for the recorded result rather than assuming that
-the request has already stopped. A changed input can make an update stale, and
-reaching a limit can leave work pending. Failed or uncertain wording requests
-appear in the result; after reviewing and dismissing the completed request,
-**Retry failed wording** explicitly retries the eligible listed proposals with
-the current saved inputs. If several retained failures belong to one achievement,
+For a chosen cohort, select up to 100 scored jobs in **Jobs** and open **Update
+affected matches for selected jobs**. The Profile and Evidence Map panels
+include their displayed available scored jobs when there are at most 100; Job
+Detail includes that job. More than 100 available jobs requires a selection in
+Jobs. Selection controls which recorded job scores may be updated; it does not
+remove other meanings from the catalog review. With no available scored jobs,
+the update can review catalog relationships without changing job scores.
+
+Open **Work limits** before starting. The web panel permits at most 100 affected
+requirements, 100 scored jobs, 40 model-call attempts, 20 wording proposals and
+10 minutes per update. A work limit does not truncate the catalog or silently
+start another request. Model-call attempts are counted before provider and
+configured budget checks, so the counter does not establish that a provider
+charged for every attempt. These limits and the shared spend checks **do not
+guarantee a hard monetary cap** on an external call. Review
+[provider setup](configuration.md#llm-providers) and
+[spend budgets](configuration.md#llm-spend-budgets) before starting work that may
+use your provider.
+
+The panel shows the recorded phase, assessed/reused/proposal counts and outcome:
+
+- A failure, cancellation or source change before factual publication keeps the
+  last accepted assessments and scores. A stale operation cannot adopt newer
+  inputs or expand its original selection.
+- A **Partial result** means qualification finished, with any listed job-score
+  revisions saved, before later work stopped. Those accepted results remain;
+  the panel reports unfinished wording work separately.
+- Reaching a limit can leave work pending. Review the result before starting
+  another bounded request. **Request cancellation** asks the worker to stop;
+  wait for the recorded outcome before assuming it stopped.
+
+Approved wording and accepted documents remain available throughout. This
+action does not regenerate an accepted resume or approve a wording proposal.
+After reviewing and dismissing a completed request, **Retry failed wording**
+explicitly retries eligible failed or uncertain proposals with the current
+saved inputs. If several retained failures belong to one achievement,
 choose one proposal for that achievement. Retrying one does not clear other
 eligible failures. A still-running or unresolved request is not retried
 automatically. A confirmed interrupted request can be retried explicitly; any
@@ -441,14 +471,20 @@ belongs under that achievement; it does not replace or merge another
 achievement. The library shows exact text, source references, provenance and
 whether the variant is approved, pending, rejected, deferred or stale.
 
-A supported new requirement can request one source-grounded wording proposal
-through an immutable authoring brief. Profile does not compute requirement
-matches or person fit. The proposal's model receipt and source revisions remain
-recorded. Only your explicit **Approve** action authorizes that exact text for
-reuse. **Reject** and **Defer** remain recorded under the original request, so a
-later job does not repeatedly regenerate the same proposal. Manual wording is
-reviewed through the same exact approval boundary. Approving wording changes no
-fact or qualification score.
+A source-grounded wording proposal is prepared only through explicitly
+requested work. Fit first reuses current coverage of exact approved variants,
+then considers remaining supported requirements together for the relevant
+achievement. One coherent proposal can
+address that group's meaningful expression gaps and be reused across jobs.
+This grouping does not merge separate achievements or create a new fact.
+
+Profile owns the proposal's text, model receipt, source revisions and approval;
+it does not compute requirement matches or person fit. **Approve exact wording**
+authorizes that precise variant for reuse. **Reject wording** and **Defer
+wording** remain recorded, so a later job does not repeatedly generate the same
+proposal. **Edit as new wording** creates a separate draft for the same
+achievement; save the draft and approve its exact text before reuse. Approving
+wording changes no fact or qualification score and starts no follow-on work.
 
 A changed source makes dependent wording stale. A failed authoring attempt keeps
 previous approved wording and shows its failure separately. A source-bound
