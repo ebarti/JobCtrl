@@ -1,7 +1,7 @@
 import { Outlet, useBlocker } from "@tanstack/react-router";
-import type { CSSProperties } from "react";
+import { useCallback, useLayoutEffect, useRef, type CSSProperties } from "react";
 
-import { useProfilePrivateDraftStatus } from "../../contexts/profile/index.js";
+import { useProfilePrivateDraftStatus, useWordingRecoveryGuard } from "../../contexts/profile/index.js";
 import { DemoGuide } from "../../demo/guide/DemoGuide.js";
 import { DemoReceiptHistory } from "../../demo/workspace/DemoReceiptHistory.js";
 import { DemoWorkspaceNotice } from "../../demo/workspace/DemoWorkspaceNotice.js";
@@ -58,12 +58,23 @@ export function AppShell() {
 
 function ProfileDraftReloadGuard() {
   const hasPrivateDraft = useProfilePrivateDraftStatus();
+  const wordingRecoveryPending = useWordingRecoveryGuard();
+  const privateDraft = useRef(hasPrivateDraft);
+  useLayoutEffect(() => { privateDraft.current = hasPrivateDraft; }, [hasPrivateDraft]);
+  const shouldWarnOnUnload = useCallback(
+    () => privateDraft.current || wordingRecoveryPending(),
+    [wordingRecoveryPending],
+  );
   useBlocker({
-    disabled: !hasPrivateDraft,
-    enableBeforeUnload: hasPrivateDraft,
-    // In-app navigation retains the draft in session memory. Only leaving or
-    // reloading the browser would discard an unsaved private field.
-    shouldBlockFn: () => false,
+    // Stay registered before a wording edit starts: the recovery write can be
+    // pending before React has another opportunity to render.
+    disabled: false,
+    enableBeforeUnload: shouldWarnOnUnload,
+    // In-app navigation retains drafts; only an unload can interrupt the
+    // recovery write or discard a session-only private field.
+    shouldBlockFn: allowInAppNavigation,
   });
   return null;
 }
+
+function allowInAppNavigation() { return false; }

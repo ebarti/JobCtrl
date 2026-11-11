@@ -51,7 +51,7 @@ behavior primitives, shared wrappers, semantic tokens and Tabler icons.
   selected in Settings → Appearance. Body and data values remain 14px; labels
   use a semibold 14px role, with 12px reserved for supporting metadata. Page
   headings are 28px and section headings 18px. Font and color choices never
-  override the independently owned résumé document template.
+  override the independently owned resume document template.
 - **Shape:** Use restrained 6–8px radii for shared controls and panels, thin
   borders, and minimal resting shadow. Circular shapes are appropriate for
   intrinsically circular controls and swatches.

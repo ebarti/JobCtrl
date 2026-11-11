@@ -208,7 +208,7 @@ function WordingConnections({ library, requirement, achievementId, canLink, cove
         : sourceState === "loading" ? <p>Loading the recorded wording…</p>
         : <HistoricalWording variantId={group.variantId} revision={group.revision} initiallyOpen={group.assignments.length > 0} />}
       {group.coverage.map((relation) => <div className="requirement-wording__coverage" key={relation.relation_id}>
-        <span className="requirement-badge">{relation.current ? "Wording coverage" : "Earlier coverage · needs review"}: {relation.covered ? "covered" : "not covered"}</span>
+        <span className="requirement-badge">{relation.current ? "Wording coverage" : "Earlier coverage · needs review"}: {relation.covered ? "Covered" : "Not covered"}</span>
         <details><summary>Coverage details</summary><p>{relation.rationale}</p><p>Status: {readable(relation.status)} · requirement revision {relation.requirement_revision} · wording revision {relation.variant_revision}</p>
           <p>Determination {relation.determination_id} · approval {relation.approval_id}</p>
           {relation.stale_reasons.length ? <p>Needs review: {relation.stale_reasons.map(readable).join("; ")}</p> : null}

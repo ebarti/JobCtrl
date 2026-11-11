@@ -6,7 +6,7 @@ import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import type { SessionPort } from "../../../shared/ports/SessionPort.js";
 import type { ProfileFormValues } from "../forms/profile-form.js";
-import { isJsonRecord } from "./json-record.js";
+import { isJsonRecord, sameJson } from "./json-record.js";
 
 // Recovery serializes only the explicitly declared editable projection below.
 type Projection =
@@ -391,6 +391,21 @@ function at(
   }
   return { present: true, value };
 }
+/** Mechanical equality of recorded after-values, never meaning or authority. */
+export function profileRecoveryMatchesSaved(
+  record: ProfileSafeRecovery,
+  saved: ProfileFormValues,
+): boolean {
+  const projected = project(recoveryProjection, saved);
+  return record.changes.every((change) => {
+    const current = at(projected, change.path);
+    return (
+      current.present === change.afterPresent &&
+      sameJson(current.value, change.after)
+    );
+  });
+}
+
 function mergePreservingPrivate(previous: unknown, incoming: unknown): unknown {
   if (Array.isArray(incoming))
     return incoming.map((entry, index) => {

@@ -14,6 +14,10 @@ import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvai
 import { useResumeActions, useResumeHtml, useResumes, type Resume, type ResumeDocument } from "./client.js";
 import { resumeEditorDraftKey, useResumeEditorDraftStore } from "./editorDrafts.js";
 
+function reviewStatusLabel(status: string) {
+  return status === "not_applicable" ? "not applicable" : status;
+}
+
 // Renderer IDs are stable source identities. Never infer a field from text.
 function applyTextChanges(document: ResumeDocument, changes: readonly ResumePlateSemanticTextChange[]): ResumeDocument {
   const next = structuredClone(document);
@@ -115,7 +119,7 @@ function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged, managedPrepa
   const renderFailure = revision.render_attempts.at(-1);
   return <div>
     <p>{revision.mode === "baseline_copy" ? "Full baseline" : "Tailored resume"} · revision {revision.number}</p>
-    {session.accepted_revision_id ? <p role="status">Accepted copy {session.accepted_revision_id === session.current_revision ? "matches this document" : "is retained separately"}{acceptance ? `; review ${acceptance.review_status}${acceptance.review_override ? " with explicit override" : ""}` : ""}.</p> : <p>No resume has been accepted yet.</p>}
+    {session.accepted_revision_id ? <p role="status">Accepted copy {session.accepted_revision_id === session.current_revision ? "matches this document" : "is retained separately"}{acceptance ? `; review ${reviewStatusLabel(acceptance.review_status)}${acceptance.review_override ? " with explicit override" : ""}` : ""}.</p> : <p>No resume has been accepted yet.</p>}
     {sourcesChanged ? <p role="status">Recorded profile, coverage or current wording changed. Prepare again when ready. Your saved edits and accepted resume remain available.</p> : null}
     <ResumeTemplateAssignment disabled={busy || dirty || latestChanged} run={run} />
     {latestChanged ? <div role="alert"><p>The saved resume changed while this editor was open. Your local edits remain here; saving against the older version will be rejected.</p><Button type="button" variant="outline" onClick={() => { setSession(latest); setPlate(null); setChanges([]); setRestoredPlate(null); updateDirty(false); setEditError(""); }}>Discard local edits and load saved version</Button></div> : null}
@@ -141,7 +145,7 @@ function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged, managedPrepa
       const row = item as { requirement_id?: string; covered?: boolean; weight?: number };
       return <li key={`${row.requirement_id ?? "requirement"}:${index}`}>{row.requirement_id ?? "Requirement"}: {row.covered ? "covered" : "not covered"}{row.weight === undefined ? "" : `, weight ${row.weight}`}</li>;
     })}</ul> : null}</details>
-    <h4>Advisory coherence review</h4><p>Status: {revision.review.status}{revision.review.failure_code ? ` (${revision.review.failure_code})` : ""}.</p>
+    <h4>Advisory coherence review</h4><p>Status: {reviewStatusLabel(revision.review.status)}{revision.review.failure_code ? ` (${revision.review.failure_code})` : ""}.</p>
     {revision.review.findings.length ? <ul>{revision.review.findings.map((finding, index) => <li key={index}>{finding.detail}</li>)}</ul> : null}
     {managedPreparation && revision.mechanical.status === "valid" && !rendered ? <p role="status">Select Prepare resume above to carry this saved revision through its checks and rendering.</p> : null}
     <details open={!managedPreparation}><summary>Document validation and recovery tools</summary>
@@ -243,6 +247,7 @@ export function ResumePanel({ jobId, profileVersion, defaultMode, onProfileChang
   const tailoring = getApiCapabilityAvailability(featureFlags, "tailorJob");
   const list = useResumes(jobId);
   const { compose } = useResumeActions(jobId);
+  const [creationMode, setCreationMode] = useState<"baseline" | "tailored" | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const selectedRequest = useRef<string | null>(null);
@@ -254,17 +259,23 @@ export function ResumePanel({ jobId, profileVersion, defaultMode, onProfileChang
   const selected = list.data?.find((item) => item.resume_id === selectedId)
     ?? list.data?.find((item) => item.resume_id === restoredDraft?.resume.resume_id) ?? list.data?.at(-1) ?? null;
   const onDirtyChange = useCallback((value: boolean) => setDirty(value), []);
+  const mode = creationMode ?? defaultMode;
+  const creationBlockedByDraft = dirty || Boolean(restoredDraft);
   const start = (mode: "tailored" | "baseline_copy") => {
     if (profileVersion === null || (mode === "tailored" && !tailoring.available)) return;
     compose.mutate({ job_id: jobId, profile_id: "default", expected_profile_revision: profileVersion, mode }, { onSuccess: (saved) => setSelectedId(saved.resume_id) });
   };
   return <section className="section" aria-labelledby="resume-title">
     <h3 id="resume-title">Resume</h3>
-    {!managedPreparation ? <><p>Compose from approved wording, or make an editable copy of the full baseline.</p>
-    <p>Saved default: {defaultMode === null ? "unavailable" : defaultMode === "baseline" ? "copy baseline" : "tailored composition"}.</p>
-    <div className="toolbar"><Button type="button" disabled={profileVersion === null || defaultMode === null || (defaultMode === "tailored" && !tailoring.available) || compose.isPending || dirty} onClick={() => { if (defaultMode) start(defaultMode === "baseline" ? "baseline_copy" : "tailored"); }}>Compose resume</Button>
-      <Button type="button" variant="outline" disabled={!tailoring.available || profileVersion === null || compose.isPending || dirty} onClick={() => start("tailored")}>Compose tailored resume</Button>
-      <Button type="button" variant="outline" disabled={profileVersion === null || compose.isPending || dirty} onClick={() => start("baseline_copy")}>Copy baseline</Button></div></> : null}
+    {!managedPreparation ? <><p>Create an editable draft, then complete its checks and rendering below before acceptance.</p>
+    <div className="toolbar">
+      <label data-typography="label" className="grid gap-1">Resume type<select data-typography="body" aria-label="Resume type" value={mode ?? ""} disabled={compose.isPending} onChange={(event) => setCreationMode(event.currentTarget.value === "baseline" ? "baseline" : "tailored")}>
+        {mode === null ? <option value="" disabled>Choose a resume type</option> : null}
+        <option value="tailored" disabled={!tailoring.available}>Tailored resume</option><option value="baseline">Full baseline</option>
+      </select></label>
+      <Button type="button" disabled={profileVersion === null || mode === null || (mode === "tailored" && !tailoring.available) || compose.isPending || creationBlockedByDraft} onClick={() => { if (mode) start(mode === "baseline" ? "baseline_copy" : "tailored"); }}>{compose.isPending ? "Creating resume…" : "Create resume"}</Button>
+    </div>
+    {creationBlockedByDraft ? <p role="status">Save your unsaved resume edits before creating another draft.</p> : null}</> : null}
     {!tailoring.available ? <p>{tailoring.reason}</p> : null}
     {profileVersion === null ? <p>Save a profile before composing a resume.</p> : null}
     {compose.error ? <p role="alert">{compose.error.message} Previously accepted resumes remain available.</p> : null}

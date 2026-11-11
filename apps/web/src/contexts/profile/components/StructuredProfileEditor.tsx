@@ -176,7 +176,9 @@ function ProfileSection({
         </div>
         {actions}
       </div>
-      {children}
+      <fieldset disabled={hidden} className="profile-editing-boundary">
+        {children}
+      </fieldset>
     </section>
   );
 }
@@ -730,7 +732,10 @@ export function StructuredProfileEditor({
               })
             }
           >
-            <SelectTrigger aria-label={`${controlPrefix} month`} className="w-full">
+            <SelectTrigger
+              aria-label={`${controlPrefix} month`}
+              className="w-full"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -754,7 +759,10 @@ export function StructuredProfileEditor({
               })
             }
           >
-            <SelectTrigger aria-label={`${controlPrefix} year`} className="w-full">
+            <SelectTrigger
+              aria-label={`${controlPrefix} year`}
+              className="w-full"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -777,8 +785,12 @@ export function StructuredProfileEditor({
     return (
       <Field className="field month-field">
         <div className="month-field-body">
-          {monthSelector(label, value, (next) =>
-            updateProfilePath(path, formatProfileMonth(next)), false, controlPrefix,
+          {monthSelector(
+            label,
+            value,
+            (next) => updateProfilePath(path, formatProfileMonth(next)),
+            false,
+            controlPrefix,
           )}
           <Button
             disabled={!value.month && !value.year}
@@ -1627,8 +1639,6 @@ export function StructuredProfileEditor({
               {textField("personal.website_url", "Website URL", "url")}
             </AdaptiveFieldGrid>
           </ProfileSection>
-
-
 
           <ProfileSection
             actions={

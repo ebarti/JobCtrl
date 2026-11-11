@@ -4,6 +4,8 @@ import type { ProfileConfigResponse } from "@jobctrl/contracts";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { Button } from "../../../shared/ui/button.js";
+import { readProfile } from "../client.js";
+import { sameJson } from "../lib/json-record.js";
 import type { ProfileFormValues } from "../forms/profile-form.js";
 import {
   readDraftSlot,
@@ -11,11 +13,11 @@ import {
   discardUnreadableDraft,
   UnreadableDraftError,
   type OwnedDraft,
-  type DraftSlotToken,
 } from "../lib/owned-draft-slot.js";
 import {
   getProfileSessionDraft,
   profileSnapshotValues,
+  profileRecoveryMatchesSaved,
   setProfileSessionDraft,
   safeProfileChanges,
   profileRecoverySchema,
@@ -43,6 +45,7 @@ const legacySchema = z.object({
 });
 interface ProfileDraftRecoveryProps {
   readonly base: ProfileConfigResponse;
+  readonly canonical: ProfileConfigResponse;
   readonly values: ProfileFormValues;
   readonly isDirty: boolean;
   readonly isSubmitting: boolean;
@@ -63,6 +66,7 @@ export function ProfileDraftRecovery(props: ProfileDraftRecoveryProps) {
 }
 function TenantProfileDraftRecovery({
   base,
+  canonical,
   values,
   isDirty,
   isSubmitting,
@@ -71,7 +75,7 @@ function TenantProfileDraftRecovery({
   onDirtyChange,
   onRecoveryPendingChange,
 }: ProfileDraftRecoveryProps) {
-  const { storage, session, requestIdentity } = usePorts();
+  const { storage, session, requestIdentity, http } = usePorts();
   const tenant = useTenantId();
   const key = `profile-editor-recovery:v2:${tenant}:${section}`;
   const legacyKey = `profile-editor-recovery:v1:${tenant}`;
@@ -82,7 +86,7 @@ function TenantProfileDraftRecovery({
     memoryAtMount.current?.ownerId ?? requestIdentity.create(),
   ).current;
   const generation = useRef(profileDraftGeneration(session)).current;
-  const token = useRef<DraftSlotToken | null>(null);
+  const token = useRef<OwnedDraft<ProfileSafeRecovery> | null>(null);
   const writes = useRef(Promise.resolve());
   const [state, setState] = useState<{
     ready: boolean;
@@ -93,8 +97,8 @@ function TenantProfileDraftRecovery({
   const [legacyPresent, setLegacyPresent] = useState(false);
   const [restoreConflict, setRestoreConflict] = useState(false);
   const [message, setMessage] = useState("");
-  const live = useRef({ base, values, isDirty, isSubmitting });
-  live.current = { base, values, isDirty, isSubmitting };
+  const live = useRef({ base, canonical, values, isDirty, isSubmitting });
+  live.current = { base, canonical, values, isDirty, isSubmitting };
   const active = () => generation === profileDraftGeneration(session);
   const load = async () => {
     try {
@@ -162,6 +166,72 @@ function TenantProfileDraftRecovery({
         }
       }
       if (!active()) return;
+      // The edit base stays frozen while dirty and cannot prove canonical
+      // persistence. A newer saved snapshot plus a fresh read can prove that a
+      // retained patch already reached Profile; newer drafts stay untouched.
+      const suppliedCanonical = live.current.canonical;
+      const isNewer = (
+        snapshot: ProfileConfigResponse,
+        baseVersion: number | null,
+      ) =>
+        snapshot.profileVersion !== null &&
+        snapshot.profileVersion > (baseVersion ?? 0);
+      const currentMemory = getProfileSessionDraft(session, tenant, section);
+      const possibleSavedRecord =
+        record &&
+        isNewer(suppliedCanonical, record.data.baseProfileVersion) &&
+        profileRecoveryMatchesSaved(
+          record.data,
+          profileSnapshotValues(suppliedCanonical),
+        );
+      const possibleSavedMemory =
+        currentMemory &&
+        isNewer(suppliedCanonical, currentMemory.base.profileVersion) &&
+        sameJson(
+          currentMemory.values,
+          profileSnapshotValues(suppliedCanonical),
+        );
+      const confirmedCanonical =
+        possibleSavedRecord || possibleSavedMemory
+          ? await readProfile(http)
+          : null;
+      if (!active()) return;
+      if (
+        record &&
+        confirmedCanonical &&
+        isNewer(confirmedCanonical, record.data.baseProfileVersion) &&
+        profileRecoveryMatchesSaved(
+          record.data,
+          profileSnapshotValues(confirmedCanonical),
+        )
+      ) {
+        const cleaned = await writeDraftSlot(
+          storage,
+          key,
+          profileRecoverySchema,
+          record,
+          ownerId,
+          null,
+        );
+        if (!active()) return;
+        record = cleaned.record;
+      }
+      const memory = getProfileSessionDraft(session, tenant, section);
+      if (
+        memory &&
+        confirmedCanonical &&
+        isNewer(confirmedCanonical, memory.base.profileVersion) &&
+        sameJson(memory.values, profileSnapshotValues(confirmedCanonical))
+      ) {
+        setProfileSessionDraft(session, tenant, section, null);
+        if (
+          memoryAtMount.current?.ownerId === memory.ownerId &&
+          sameJson(memoryAtMount.current.values, memory.values)
+        )
+          memoryAtMount.current = undefined;
+      } else if (memory && memoryAtMount.current) {
+        memoryAtMount.current = memory;
+      }
       const retryingOwnedDraft =
         live.current.isDirty &&
         (!record ||
@@ -231,6 +301,27 @@ function TenantProfileDraftRecovery({
           data?.changes.length ? data : null,
         );
         if (!active()) return;
+        if (result.state === "conflict" && result.record === null && !isDirty) {
+          // A reload/another tab may already have removed this exact saved
+          // copy. Absence satisfies cleanup; it does not imply a new draft.
+          token.current = null;
+          const memory = getProfileSessionDraft(session, tenant, section);
+          if (!live.current.isDirty && memory) {
+            const confirmed = await readProfile(http);
+            const unchanged =
+              getProfileSessionDraft(session, tenant, section) === memory;
+            if (
+              active() &&
+              unchanged &&
+              !live.current.isDirty &&
+              confirmed.profileVersion !== null &&
+              confirmed.profileVersion > (memory.base.profileVersion ?? 0) &&
+              sameJson(memory.values, profileSnapshotValues(confirmed))
+            )
+              setProfileSessionDraft(session, tenant, section, null);
+          }
+          return;
+        }
         if (result.state === "conflict") {
           setState({
             ready: true,

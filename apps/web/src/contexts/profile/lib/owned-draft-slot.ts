@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sameJson } from "./json-record.js";
 import type { StoragePort } from "../../../shared/ports/StoragePort.js";
 
 export interface DraftSlotToken {
@@ -58,14 +59,14 @@ export function writeDraftSlot<T>(
   storage: StoragePort,
   key: string,
   schema: z.ZodType<T>,
-  expected: DraftSlotToken | null,
+  expected: OwnedDraft<T> | null,
   ownerId: string,
   data: T | null,
 ): Promise<
   | { state: "written"; record: OwnedDraft<T> | null }
   | { state: "conflict"; record: OwnedDraft<T> | null }
 > {
-  const checked = data === null ? null : schema.parse(data);
+  const checked = data === null ? null : structuredClone(schema.parse(data));
   return storage.transact<{
     state: "written" | "conflict";
     record: OwnedDraft<T> | null;
@@ -73,7 +74,8 @@ export function writeDraftSlot<T>(
     const current = parse(raw, schema);
     if (
       current?.ownerId !== expected?.ownerId ||
-      current?.revision !== expected?.revision
+      current?.revision !== expected?.revision ||
+      !sameJson(current?.data, expected?.data)
     )
       return { result: { state: "conflict" as const, record: current } };
     const next =

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { z } from "zod";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import type { SessionPort } from "../../../shared/ports/SessionPort.js";
 import { Button } from "../../../shared/ui/button.js";
 import {
   discardUnreadableDraft,
@@ -12,7 +13,14 @@ import {
   type OwnedDraft,
 } from "../lib/owned-draft-slot.js";
 import {
+  profileDraftGeneration,
+  profileSessionIdentity,
+  useProfileDraftGeneration,
+} from "../lib/profile-draft-state.js";
+import {
   useWordingActions,
+  clearWordingRecoveryForSession,
+  setWordingRecoveryPending,
   useWordingHistory,
   useWordingLibrary,
   wordingVariantSchema,
@@ -86,7 +94,27 @@ type LegacyRecovery = {
 };
 
 // Keep a losing local edit through a React remount even if browser storage fails.
-const tabDrafts = new Map<string, WordingDraft>();
+type TabDraft = { draft: WordingDraft; owners: string[]; writerId: string };
+const tabDrafts = new Map<string, TabDraft>();
+/** Reset only this session and tenant; other workspaces keep their drafts. */
+export function clearWordingDraftsForSession(
+  session: SessionPort,
+  tenant: string,
+) {
+  const identity = profileSessionIdentity(session);
+  const prefix = `profile-wording-draft:v2:${encodeURIComponent(tenant)}:`;
+  for (const key of tabDrafts.keys()) {
+    const [savedIdentity, , savedRecoveryKey] = JSON.parse(key) as [
+      number,
+      number,
+      string,
+    ];
+    if (savedIdentity === identity && savedRecoveryKey.startsWith(prefix))
+      tabDrafts.delete(key);
+  }
+  clearWordingRecoveryForSession(session, tenant);
+}
+
 function captureBase(
   variant: WordingVariant,
   profileVersion: number,
@@ -120,6 +148,20 @@ function isStaleBase(
       JSON.stringify(variant.source_refs)
   );
 }
+function wordingStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    approved: "Approved",
+    pending: "Draft",
+    rejected: "Rejected",
+    deferred: "Deferred",
+    stale: "Needs review",
+  };
+  const text = status.replaceAll("_", " ");
+  return (
+    labels[status] ??
+    (text ? text[0]!.toLocaleUpperCase() + text.slice(1) : text)
+  );
+}
 function sameEntry(a: DraftEntry | undefined, b: DraftEntry): boolean {
   return !!a && JSON.stringify(a) === JSON.stringify(b);
 }
@@ -143,10 +185,17 @@ function Variant({
   readPending: boolean;
   onRetryRead: () => void;
 }) {
-  const { storage, requestIdentity } = usePorts();
+  const { storage, requestIdentity, session } = usePorts();
   const tenant = useTenantId();
   const legacyKey = `profile-wording-draft:v1:${tenant}:${variant.variant_id}`;
   const recoveryKey = `profile-wording-draft:v2:${encodeURIComponent(tenant)}:${encodeURIComponent(variant.variant_id)}`;
+  const generation = useRef(profileDraftGeneration(session)).current;
+  const active = () => generation === profileDraftGeneration(session);
+  const memoryKey = JSON.stringify([
+    profileSessionIdentity(session),
+    generation,
+    recoveryKey,
+  ]);
   const [ownerId] = useState(() => requestIdentity.create());
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -160,10 +209,13 @@ function Variant({
   );
   const [legacy, setLegacy] = useState<LegacyRecovery | null>(null);
   const [slot, setSlot] = useState<OwnedDraft<RecoverySlot> | null>(null);
-  const [memoryDraft, setMemoryDraft] = useState<WordingDraft | null>(
-    () => tabDrafts.get(recoveryKey) ?? null,
+  const [memoryDraft, setMemoryDraft] = useState<TabDraft | null>(
+    () => tabDrafts.get(memoryKey) ?? null,
   );
   const [editBase, setEditBase] = useState<EditBase | null>(null);
+  const [recoveryPending, setRecoveryPending] = useState(false);
+  const recoveryVersion = useRef(0);
+  const mounted = useRef(true);
   const [undoDraft, setUndoDraft] = useState<WordingDraft | null>(null);
   const slotRef = useRef<OwnedDraft<RecoverySlot> | null>(null);
   const slotEpoch = useRef(0);
@@ -185,6 +237,12 @@ function Variant({
   };
   const { decide, draft, edit } = useWordingActions();
   const history = useWordingHistory(variant.variant_id, historyOpen);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const updateSlot = (record: OwnedDraft<RecoverySlot> | null) => {
     slotEpoch.current += 1;
     slotRef.current = record;
@@ -221,11 +279,11 @@ function Variant({
         readDraftSlot(storage, recoveryKey, recoverySlotSchema),
         inspectLegacy(),
       ]);
-      if (slotEpoch.current !== epoch) return;
+      if (!active() || slotEpoch.current !== epoch) return;
       updateSlot(stored);
       setLegacy(older);
     } catch (error) {
-      if (slotEpoch.current !== epoch) return;
+      if (!active() || slotEpoch.current !== epoch) return;
       if (error instanceof UnreadableDraftError) setUnreadable(error);
       else
         setStorageError(
@@ -259,8 +317,10 @@ function Variant({
     change: (current: RecoverySlot) => RecoverySlot | null,
   ): Promise<boolean> => {
     let expected = slotRef.current;
+    if (!active()) return false;
     try {
       for (let attempt = 0; attempt < 5; attempt += 1) {
+        if (!active()) return false;
         const data = expected?.data ?? { entries: [], legacyFingerprint: null };
         const next = change(data);
         if (!next) {
@@ -277,6 +337,7 @@ function Variant({
           ownerId,
           next,
         );
+        if (!active()) return false;
         updateSlot(result.record);
         if (result.state === "written") {
           setStorageError("");
@@ -295,8 +356,24 @@ function Variant({
     }
     return false;
   };
+  const markPending = (pending: boolean, owner = ownerId) => {
+    setWordingRecoveryPending(session, tenant, generation, owner, pending);
+    if (owner === ownerId && mounted.current) setRecoveryPending(pending);
+  };
+  const clearPendingOwners = (owners: readonly string[]) => {
+    for (const owner of new Set([...owners, ownerId]))
+      markPending(false, owner);
+  };
   const persist = (nextDraft: WordingDraft) => {
-    tabDrafts.set(recoveryKey, nextDraft);
+    if (!active()) return;
+    const version = ++recoveryVersion.current;
+    const owners = [
+      ...new Set([...(tabDrafts.get(memoryKey)?.owners ?? []), ownerId]),
+    ];
+    const memory = { draft: nextDraft, owners, writerId: ownerId };
+    tabDrafts.set(memoryKey, memory);
+    // Register synchronously: the shell reads this even if reload precedes React rendering.
+    markPending(true);
     void enqueue(async () => {
       const previous = entryRef.current;
       if (!previous || previous.ownerId !== ownerId) return;
@@ -314,20 +391,54 @@ function Variant({
             }
           : null,
       );
-      if (ok) entryRef.current = next;
+      if (ok) {
+        entryRef.current = next;
+        if (
+          version === recoveryVersion.current &&
+          tabDrafts.get(memoryKey) === memory
+        )
+          clearPendingOwners(owners);
+      }
     });
   };
-  const openDraft = (next: WordingDraft, entry: DraftEntry) => {
+  const openDraft = (
+    next: WordingDraft,
+    entry: DraftEntry,
+    observedMemory: TabDraft | undefined,
+    version?: number,
+  ) => {
+    // A completed operation may belong to an unmounted editor. It must not
+    // acknowledge or replace a newer editor's in-memory recovery copy.
+    if (
+      !active() ||
+      tabDrafts.get(memoryKey) !== observedMemory ||
+      (version !== undefined && version !== recoveryVersion.current)
+    )
+      return;
+    if (observedMemory) clearPendingOwners(observedMemory.owners);
+    if (!mounted.current) return;
     entryRef.current = entry;
     baseRef.current = next.base;
     setEditBase(next.base);
-    tabDrafts.set(recoveryKey, next);
-    form.reset({ text: next.text });
+    tabDrafts.set(memoryKey, {
+      draft: next,
+      owners: [ownerId],
+      writerId: ownerId,
+    });
+    // Unlike reset(values), this keeps React Form's default-value update from
+    // replacing a restored, untouched draft on the next render.
+    form.setFieldValue("text", next.text);
     setMemoryDraft(null);
     setEditing(true);
   };
   const begin = async (next: WordingDraft) => {
     if (pending || busy || blocked) return;
+    const observedMemory = tabDrafts.get(memoryKey);
+    if (observedMemory) {
+      setMemoryDraft(observedMemory);
+      setMessage("Another unfinished edit is available. Review it first.");
+      return;
+    }
     setBusy(true);
     setMessage("");
     try {
@@ -349,7 +460,7 @@ function Variant({
             ? null
             : { ...data, entries: [entry] },
         );
-        if (ok) openDraft(next, entry);
+        if (ok) openDraft(next, entry, observedMemory);
         else
           setMessage(
             "Resolve the retained recovery copy before starting another edit.",
@@ -364,8 +475,28 @@ function Variant({
       setBusy(false);
     }
   };
-  const restore = async (recovered: WordingDraft, original?: DraftEntry) => {
+  const restore = async (
+    recovered: WordingDraft,
+    original?: DraftEntry,
+    expectedMemory?: TabDraft,
+  ) => {
     if (pending || busy || slotLoading || unreadable) return;
+    const observedMemory = tabDrafts.get(memoryKey);
+    if (observedMemory !== expectedMemory) {
+      setMemoryDraft(observedMemory ?? null);
+      setMessage("Another unfinished edit is available. Review it first.");
+      return;
+    }
+    const memory: TabDraft = {
+      draft: recovered,
+      owners: [...new Set([...(observedMemory?.owners ?? []), ownerId])],
+      writerId: ownerId,
+    };
+    const version = ++recoveryVersion.current;
+    tabDrafts.set(memoryKey, memory);
+    // Undo may follow a queued discard. Protect the restored text immediately,
+    // before that discard's acknowledgement can run.
+    markPending(true);
     setBusy(true);
     setMessage("");
     try {
@@ -390,13 +521,19 @@ function Variant({
             "That recovery copy changed in another tab. Your restored copy retains the version you selected; the newer copy is also retained.",
           );
         // Even a failed durable write leaves this explicit restoration in this tab.
-        if (ok) openDraft(recovered, entry);
+        if (!active()) return;
+        if (ok) openDraft(recovered, entry, memory, version);
         else {
+          if (
+            !mounted.current ||
+            tabDrafts.get(memoryKey) !== memory ||
+            version !== recoveryVersion.current
+          )
+            return;
           entryRef.current = null;
           baseRef.current = recovered.base;
           setEditBase(recovered.base);
-          tabDrafts.set(recoveryKey, recovered);
-          form.reset({ text: recovered.text });
+          form.setFieldValue("text", recovered.text);
           setMemoryDraft(null);
           setEditing(true);
         }
@@ -409,7 +546,7 @@ function Variant({
     if (busy) return;
     setBusy(true);
     try {
-      await enqueue(() =>
+      const removed = await enqueue(() =>
         changeSlot((data) =>
           sameEntry(
             data.entries.find((item) => item.id === target.id),
@@ -422,12 +559,20 @@ function Variant({
             : null,
         ),
       );
+      if (removed && !tabDrafts.get(memoryKey)?.owners.includes(target.ownerId))
+        markPending(false, target.ownerId);
     } finally {
       setBusy(false);
     }
   };
   const resolveLegacy = async (restoreOlder: boolean) => {
     if (!legacy || busy || memoryDraft) return;
+    const observedMemory = tabDrafts.get(memoryKey);
+    if (observedMemory) {
+      setMemoryDraft(observedMemory);
+      setMessage("Another unfinished edit is available. Review it first.");
+      return;
+    }
     setBusy(true);
     try {
       await enqueue(async () => {
@@ -459,7 +604,8 @@ function Variant({
           legacyFingerprint: latest.fingerprint,
           entries: entry ? [...data.entries, entry] : data.entries,
         }));
-        if (ok && recovered && entry) openDraft(recovered, entry);
+        if (ok && recovered && entry)
+          openDraft(recovered, entry, observedMemory);
       });
     } catch (error) {
       if (error instanceof UnreadableDraftError) setUnreadable(error);
@@ -472,7 +618,8 @@ function Variant({
   };
   const removeOwnedEntry = async () => {
     const previous = entryRef.current;
-    if (!previous || previous.ownerId !== ownerId) return;
+    if (!previous) return true;
+    if (previous.ownerId !== ownerId) return false;
     const ok = await changeSlot((data) =>
       sameEntry(
         data.entries.find((item) => item.id === previous.id),
@@ -485,6 +632,7 @@ function Variant({
         : null,
     );
     if (ok) entryRef.current = null;
+    return ok;
   };
   const form = useForm({
     defaultValues: { text: variant.text },
@@ -492,6 +640,10 @@ function Variant({
       const parsed = textSchema.safeParse(value.text);
       if (!parsed.success) {
         setMessage("Enter wording before saving a draft.");
+        return;
+      }
+      if (!active()) {
+        setMessage("The workspace changed. Reload before saving this wording.");
         return;
       }
       const captured = baseRef.current;
@@ -526,10 +678,21 @@ function Variant({
         setMessage("The wording is unchanged.");
         return;
       }
+      const submittedMemory = tabDrafts.get(memoryKey);
+      if (
+        submittedMemory?.writerId === ownerId &&
+        (submittedMemory.draft.text !== parsed.data ||
+          JSON.stringify(submittedMemory.draft.base) !==
+            JSON.stringify(captured))
+      ) {
+        setMessage("The local edit changed. Review it before saving.");
+        return;
+      }
       savingRef.current = true;
       setSaving(true);
       try {
         await queue.current;
+        if (!active()) return;
         const mutation = captured.variant.status === "pending" ? edit : draft;
         await mutation.mutateAsync({
           variant: captured.variant,
@@ -537,7 +700,20 @@ function Variant({
           profileVersion: captured.profileVersion,
         });
         await enqueue(removeOwnedEntry);
-        tabDrafts.delete(recoveryKey);
+        const acknowledgedMemory =
+          submittedMemory?.writerId === ownerId &&
+          tabDrafts.get(memoryKey) === submittedMemory;
+        if (acknowledgedMemory) {
+          clearPendingOwners(submittedMemory.owners);
+          tabDrafts.delete(memoryKey);
+        }
+        if (!active() || !mounted.current) return;
+        if (submittedMemory && !acknowledgedMemory) {
+          setMessage(
+            "The submitted wording was saved. A newer unfinished edit remains available.",
+          );
+          return;
+        }
         setMemoryDraft(null);
         baseRef.current = null;
         setEditBase(null);
@@ -574,7 +750,10 @@ function Variant({
     decide.mutate({ variant, decision: value, profileVersion });
   };
   useEffect(() => {
-    if (!form.state.isDirty && !editing) form.reset({ text: variant.text });
+    // Opening/restoring sets the captured base before React commits editing=true;
+    // an effect from the prior render must not reset the restored draft.
+    if (!form.state.isDirty && !editing && baseRef.current === null)
+      form.reset({ text: variant.text });
   }, [editing, form, variant.text]);
   const title =
     kind === "current"
@@ -589,7 +768,7 @@ function Variant({
       <div className="profile-wording-card__heading">
         <h4>{title}</h4>
         <span className="status-badge" data-state={variant.status}>
-          {variant.status === "pending" ? "Draft" : variant.status}
+          {wordingStatusLabel(variant.status)}
         </span>
       </div>
       {context}
@@ -634,7 +813,9 @@ function Variant({
             type="button"
             variant="outline"
             disabled={busy || slotLoading}
-            onClick={() => void restore(memoryDraft)}
+            onClick={() =>
+              void restore(memoryDraft.draft, undefined, memoryDraft)
+            }
           >
             Restore this tab’s edit
           </Button>
@@ -643,8 +824,16 @@ function Variant({
             variant="ghost"
             disabled={busy}
             onClick={() => {
-              tabDrafts.delete(recoveryKey);
-              setMemoryDraft(null);
+              if (tabDrafts.get(memoryKey) === memoryDraft) {
+                clearPendingOwners(memoryDraft.owners);
+                tabDrafts.delete(memoryKey);
+                setMemoryDraft(null);
+              } else {
+                setMemoryDraft(tabDrafts.get(memoryKey) ?? null);
+                setMessage(
+                  "Another unfinished edit is available. Review it first.",
+                );
+              }
             }}
           >
             Discard this tab’s edit
@@ -812,6 +1001,13 @@ function Variant({
       </div>
       {editing ? (
         <div className="profile-wording-edit">
+          {recoveryPending ? (
+            <p role="status">
+              {storageError
+                ? "Recovery is not confirmed; keep this page open or save the wording."
+                : "Saving recovery copy…"}
+            </p>
+          ) : null}
           {readUnavailable ? (
             <p role="alert">
               The latest saved wording could not be verified. Your draft remains
@@ -924,13 +1120,26 @@ function Variant({
                   ? { text: form.state.values.text, base: baseRef.current }
                   : null;
                 setUndoDraft(old);
-                tabDrafts.delete(recoveryKey);
+                const memory = tabDrafts.get(memoryKey);
+                const ownsMemory = memory?.writerId === ownerId;
+                const owners = ownsMemory ? memory.owners : [ownerId];
+                const version = ++recoveryVersion.current;
+                markPending(true);
+                if (ownsMemory) tabDrafts.delete(memoryKey);
                 setMemoryDraft(null);
                 baseRef.current = null;
                 setEditBase(null);
                 form.reset({ text: variant.text });
                 setEditing(false);
-                void enqueue(removeOwnedEntry);
+                void enqueue(async () => {
+                  const removed = await removeOwnedEntry();
+                  if (
+                    removed &&
+                    version === recoveryVersion.current &&
+                    (!ownsMemory || !tabDrafts.has(memoryKey))
+                  )
+                    clearPendingOwners(owners);
+                });
               }}
             >
               Discard edit
@@ -954,7 +1163,7 @@ function Variant({
         {history.data?.revisions.map((item) => (
           <div key={item.revision}>
             <p>
-              Revision {item.revision} · {item.status}
+              Revision {item.revision} · {wordingStatusLabel(item.status)}
             </p>
             <p>{item.text}</p>
             {item.text !== variant.text ? (
@@ -1018,6 +1227,19 @@ export function AchievementWordings({
   ) => ReactNode;
 }) {
   const tenantId = useTenantId();
+  const { session } = usePorts();
+  const generation = useProfileDraftGeneration(session);
+  useEffect(() => {
+    const identity = profileSessionIdentity(session);
+    for (const key of tabDrafts.keys()) {
+      const [savedIdentity, savedGeneration] = JSON.parse(key) as [
+        number,
+        number,
+      ];
+      if (savedIdentity === identity && savedGeneration !== generation)
+        tabDrafts.delete(key);
+    }
+  }, [session, generation]);
   const library = useWordingLibrary();
   const variants =
     library.data?.variants.filter(
@@ -1055,7 +1277,12 @@ export function AchievementWordings({
   ) =>
     library.data?.profileVersion != null ? (
       <Variant
-        key={JSON.stringify([tenantId, variant.variant_id])}
+        key={JSON.stringify([
+          profileSessionIdentity(session),
+          generation,
+          tenantId,
+          variant.variant_id,
+        ])}
         variant={variant}
         profileVersion={library.data.profileVersion}
         kind={kind}

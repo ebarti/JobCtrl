@@ -2006,6 +2006,7 @@ function TenantProfileForm({
           <>
             <ProfileDraftRecovery
               base={formBaseResponseRef.current}
+              canonical={initial}
               values={values}
               section={section}
               isDirty={isDirty}

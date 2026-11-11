@@ -21,6 +21,11 @@
 .profile-peer-workspace [hidden] {
   display: none !important;
 }
+/* Rebuild the section layout when a retained draft leaves the inert recovery
+ * boundary, without remounting its controlled fields or changing their data. */
+.profile-peer-workspace fieldset.profile-editing-boundary[inert] > .profile-sections {
+  display: block;
+}
 .profile-peer-section {
   margin: 0;
   border: 0;
@@ -98,6 +103,44 @@
   border: 0;
   padding: 0;
 }
+.profile-peer-workspace .experience-entry-legend .experience-order-index {
+  margin-inline-end: 8px;
+}
+.profile-peer-workspace .date-range-body {
+  align-items: end;
+  flex-wrap: wrap;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+.profile-peer-workspace .date-range-body > .month-selector {
+  flex: 0 1 230px;
+  min-width: 0;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+.profile-peer-workspace .date-range-body .month-selector > [data-slot="field-legend"] {
+  margin: 0;
+}
+.profile-peer-workspace .date-range-body .month-selector-controls > button {
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+}
+.profile-peer-workspace .date-range-body > .date-range-present,
+.profile-peer-workspace .date-range-body > button {
+  flex: 0 0 auto;
+  width: auto;
+  align-self: end;
+}
+.profile-peer-workspace .date-range-body > .date-range-present {
+  min-height: var(--jh-control-height);
+  border: 0;
+  padding: 0 6px;
+  background: transparent;
+}
 /* Profile fields remain editable in compact, naturally wrapping groups. */
 .profile-peer-workspace .profile-sections {
   gap: 0;
@@ -152,6 +195,19 @@
 .profile-achievement {
   padding-block: 20px;
   border-bottom: 1px solid var(--border);
+}
+.profile-achievement > .profile-achievement-source {
+  grid-area: text;
+  min-width: 0;
+}
+.profile-achievement > :not(.bullet-row-top, .bullet-row-actions, .profile-achievement-source) {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.profile-achievement .bullet-row-top > .bullet-choice {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
 }
 .profile-achievement:focus {
   outline: 2px solid var(--ring);
@@ -308,5 +364,10 @@
   }
   .profile-wording-card .toolbar {
     flex-wrap: wrap;
+  }
+}
+@media (max-width: 480px) {
+  .profile-peer-workspace .date-range-body > .month-selector {
+    flex-basis: 100%;
   }
 }

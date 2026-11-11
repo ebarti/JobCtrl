@@ -9,7 +9,6 @@ import {
   writeDraftSlot,
   discardUnreadableDraft,
   UnreadableDraftError,
-  type DraftSlotToken,
   type OwnedDraft,
 } from "../lib/owned-draft-slot.js";
 import {
@@ -51,7 +50,7 @@ export function useProfilePlateRecovery(
   const generation = useRef(profileDraftGeneration(session)).current;
   const active = () => generation === profileDraftGeneration(session);
   const sourcePin = useRef<number | null | undefined>(undefined),
-    token = useRef<DraftSlotToken | null>(null);
+    token = useRef<OwnedDraft<PlateData> | null>(null);
   const writes = useRef(Promise.resolve()),
     edited = useRef(false),
     legacyRaw = useRef<string | null>(null);
@@ -209,7 +208,7 @@ export function useProfilePlateRecovery(
     latest.current = data;
     edited.current = true;
     sourcePin.current = data.profileVersion;
-    setInitialDraftValue(data.value);
+    setInitialDraftValue(structuredClone(data.value));
     setRestoredVersion(data.profileVersion);
   };
   const restore = async () => {

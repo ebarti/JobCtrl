@@ -8,6 +8,7 @@ import { clearSettingsDraftsForSession } from "../contexts/settings/index.js";
 import {
   clearSearchPreferencesDraftsForSession,
   clearProfileEditorDraftsForSession,
+  clearWordingDraftsForSession,
 } from "../contexts/profile/index.js";
 import { clearDiscoverySearchSettingsDraftsForSession } from "../contexts/discovery/index.js";
 import { clearResumeEditorDraftsForSession } from "../contexts/resumes/index.js";
@@ -147,6 +148,7 @@ export async function createAppComposition(
       clearLearningDraftsForSession(session, tenant);
       clearSettingsDraftsForSession(session, tenant);
       clearProfileEditorDraftsForSession(session, tenant);
+      clearWordingDraftsForSession(session, tenant);
       clearSearchPreferencesDraftsForSession(session, tenant);
       clearDiscoverySearchSettingsDraftsForSession(session, tenant);
       clearResumeEditorDraftsForSession(session, tenant);

@@ -4,6 +4,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
+import { useCallback } from "react";
 import { z } from "zod";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
@@ -12,7 +13,67 @@ import type { DomainEventEnvelope } from "../../../shared/ports/EventStreamPort.
 import { invalidateQueriesWithOptimisticOwnership } from "../../../shared/lib/createOptimisticMutation.js";
 import { createUnconfirmedWriteError } from "../../../shared/lib/unconfirmed-write.js";
 import type { HttpPort } from "../../../shared/ports/HttpPort.js";
+import type { SessionPort } from "../../../shared/ports/SessionPort.js";
 import { profileKeys } from "../queryKeys.js";
+import { profileDraftGeneration } from "../lib/profile-draft-state.js";
+
+// A native unload can occur before an asynchronous recovery transaction commits.
+// The shell installs its blocker once and reads this registry at unload time.
+const pendingWordingRecovery = new WeakMap<
+  SessionPort,
+  Map<string, Map<number, Set<string>>>
+>();
+
+export function setWordingRecoveryPending(
+  session: SessionPort,
+  tenant: string,
+  generation: number,
+  owner: string,
+  pending: boolean,
+) {
+  if (generation !== profileDraftGeneration(session)) return;
+  let tenants = pendingWordingRecovery.get(session);
+  if (!tenants) {
+    tenants = new Map();
+    pendingWordingRecovery.set(session, tenants);
+  }
+  let generations = tenants.get(tenant);
+  if (!generations) {
+    generations = new Map();
+    tenants.set(tenant, generations);
+  }
+  let owners = generations.get(generation);
+  if (!owners) {
+    owners = new Set();
+    generations.set(generation, owners);
+  }
+  if (pending) owners.add(owner);
+  else owners.delete(owner);
+  if (!owners.size) generations.delete(generation);
+  if (!generations.size) tenants.delete(tenant);
+}
+
+export function clearWordingRecoveryForSession(
+  session: SessionPort,
+  tenant: string,
+) {
+  pendingWordingRecovery.get(session)?.delete(tenant);
+}
+
+export function useWordingRecoveryGuard() {
+  const { session } = usePorts();
+  const tenant = useTenantId();
+  return useCallback(
+    () =>
+      Boolean(
+        pendingWordingRecovery
+          .get(session)
+          ?.get(tenant)
+          ?.get(profileDraftGeneration(session))?.size,
+      ),
+    [session, tenant],
+  );
+}
 
 const sourceRefSchema = z
   .object({ source_id: z.string(), revision: z.number() })

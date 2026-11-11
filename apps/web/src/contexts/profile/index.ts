@@ -9,10 +9,12 @@ export { useProfileQuery } from "./hooks/useProfileQuery.js";
 export {
   useWordingLibrary,
   useWordingHistory,
+  useWordingRecoveryGuard,
   wordingInvalidation,
 } from "./hooks/useWordingLibrary.js";
 export {
   AchievementWordings,
+  clearWordingDraftsForSession,
   type CurrentAchievementWording,
 } from "./components/WordingLibrary.js";
 export { WordingLibrary } from "./components/WordingLibrary.js";

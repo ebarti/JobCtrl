@@ -15,7 +15,7 @@ export function AdvancedJobFilters({ criteria, onApply }: { criteria: GridCriter
     ["postedMinEur", "Posted annual minimum at least (€)"], ["postedMaxEur", "Posted annual maximum at most (€)"],
     ["marketMinEur", "Market annual minimum at least (€)"], ["marketMaxEur", "Market annual maximum at most (€)"],
   ] as const;
-  return <details><summary>Job filters</summary><form className="flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
+  return <form aria-label="Job filters" className="flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
     <form.Field name="jobState">{(field) => <label>Job state<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>
       {field.state.value.includes(",") ? <option value={field.state.value}>{field.state.value}</option> : null}
       <option value="active">Active</option><option value="closed">Closed</option><option value="hidden">Hidden</option><option value="deleted">Deleted</option><option value="all">All</option>
@@ -34,5 +34,5 @@ export function AdvancedJobFilters({ criteria, onApply }: { criteria: GridCriter
     <form.Field name="compensationWarnings">{(field) => <label>Compensation warnings<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value as typeof field.state.value)}><option value="all">All</option><option value="present">Present</option><option value="none">None</option></select></label>}</form.Field>
     {message ? <p role="alert">{message}</p> : null}
     <Button type="submit" variant="outline">Apply filters</Button>
-  </form></details>;
+  </form>;
 }
