@@ -233,6 +233,36 @@ zero; `failure`, `cancelled`, `skipped`, empty and unknown values exit one.
 At this record, hosted qualification is pending; final results are
 tracked in the [PR checks](https://github.com/ebarti/JobCtrl/pull/1467/checks).
 
+#### Hosted APT setup blockage on 7aca2507
+
+Attempts 1 and 2 of
+[CI run 43035593774](https://github.com/ebarti/JobCtrl/actions/runs/43035593774)
+on `7aca2507cd4ba8ccf21ae8a716588f20e75af8bc` were blocked during dependency
+setup. Eight non-APT gates passed; Linux credentials, Support's rendered-docs
+setup and both Browser shards failed on temporary DNS resolution errors for
+`archive.ubuntu.com`, within the unchanged five-/eight-minute setup caps.
+**Zero browser journeys ran in either attempt.** The Browser aggregate correctly
+failed. One bounded rerun of failed jobs reproduced the same setup blockage;
+this was a workflow-job rerun, with no test retries or executed-case pass claim.
+
+Support's documentation build passed in both attempts:
+[attempt 1](https://github.com/ebarti/JobCtrl/actions/runs/43035593774/job/130573745224)
+in 19.72 seconds and
+[attempt 2](https://github.com/ebarti/JobCtrl/actions/runs/43035593774/job/130579230044)
+in 22.30 seconds, each resolving 16,171 references across 473 emitted files.
+Those builds do not qualify the rendered-docs check that dependency setup
+prevented. The successful local 57/57, affected proof and earlier 720-second
+hosted suite timeout retain their original candidates and scope.
+
+The CI-only diagnostic follow-up extends `scripts/ci-apt-timeouts.sh` with an observational
+preflight on the affected runner, under one 25-second diagnostic deadline.
+Six normal-user/`_apt` DNS probes and three bounded GET probes to the same three
+existing mirror URLs run in parallel, with a fixed whitelisted effective APT
+query and proxy-presence flags only. This changes no network/trust configuration,
+mirror selection, installed package, existing setup/test cap, retry policy,
+application or test. These observations do not establish a DNS repair or
+passing hosted qualification; final results remain in the PR checks.
+
 ### Matching walkthrough and user guides — 11 November 2026
 
 The documentation/demo follow-up to `7ebd3da987c802256611130d33b03854cb873cdb`
