@@ -540,6 +540,16 @@ for the Python application. Until a current capture workflow is implemented and
 verified, do not claim that it regenerates the gallery or run it against a real
 workspace. Images illustrate screens; they do not prove multi-step behavior.
 
+For the Original candidate, current imagery is captured from the real browser
+after public application journeys in a fresh owned synthetic Python workspace.
+Keep raw capture/evidence outside the repository. Inspect the image for private
+content, meaningful state, loaded fonts and clipping before copying an approved
+synthetic export into `docs/assets/screenshots/original-*.png`. Captions identify
+source-candidate and blocked/unknown states; a configured provider is not verified
+dispatch. Update the owning guide/tour and rerun documentation build/browser
+checks after changing its assets. This does not revive the retired wrapper or
+establish a hosted deployment.
+
 ### Launch Demo Asset Inventory
 
 Use the [Python journey ledger](developer/qa/python-journeys.md) for observed

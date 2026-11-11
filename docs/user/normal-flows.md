@@ -1,6 +1,6 @@
 ---
 pageClass: jh-visual-doc jh-daily-workflow-page jh-outline-page
-description: "Follow JobCtrl from profile-driven discovery and evidence review through truthful materials, dry runs, approval, and recorded outcomes."
+description: "Compare jobs, maintain your evidence, prepare and edit a resume, review an application, and record its outcome in one supervised workflow."
 ---
 
 <script setup lang="ts">
@@ -9,32 +9,30 @@ import DailyWorkflowJourney from "../.vitepress/theme/DailyWorkflowJourney.vue";
 
 # Daily Workflow
 
-This is your daily loop with JobCtrl: set up once, then repeat Discover →
-review → Apply. The web app is the main way you work; the command line stays
-available for maintenance and diagnostics. For a screen-by-screen walkthrough of
-each page below, see the [Product Tour](product-tour.md).
+Start in **Jobs**: find or capture opportunities, compare them, open a job,
+prepare its resume, review the application and record the outcome. **My profile**
+keeps reusable facts and wording nearby; **Settings** holds shared connections,
+budgets, automation, appearance and diagnostics. The command line remains
+available for deliberate terminal work and maintenance.
 
-For a lifecycle-level view of the records these steps create, read
+This guide describes the Original redesign source candidate. The
+[acceptance ledger](../plans/2026-11-11-original-app-redesign.md) records pending
+implementation and verification. Check the
+[published release](https://github.com/ebarti/JobCtrl/releases/latest) for
+installed-version availability. Source changes, synthetic screenshots and demo
+illustrations do not establish a release or hosted deployment.
+
+For the available workspaces, read the [Product Tour](product-tour.md). For the
+records the loop creates, read
 [Open-source Job Application Tracker](../guides/open-source-job-application-tracker.md).
 
-The saved-input update flow below describes the current Python source build.
-Check the [published release](https://github.com/ebarti/JobCtrl/releases/latest)
-for installed-version availability; source changes and demo illustrations do
-not establish a release or deployment.
-
 ::: info Command spelling
-This guide uses the canonical installed spelling, `jobctrl <command>`. The
-same native executable owns `jobctrl start`, `stop`, and `status`, regardless
-of whether curl or Homebrew acquired it. Contributors running from source can
-use the checkout-prefixed commands documented in
-[Local Development](../local-development.md).
+Commands use `jobctrl <command>`. The same native executable owns installed
+`start`, `stop` and `status` regardless of acquisition method. Contributor
+commands are in [Local Development](../local-development.md).
 :::
 
 <DailyWorkflowJourney />
-
-Under the hood, Discover runs Enrich, Score, Tailor, and PDF work for each
-eligible job. Live submission approval is bound to the current materials,
-profile version, application URL, and dry-run evidence.
 
 <WorkflowSurfaceSelector />
 
@@ -42,841 +40,243 @@ profile version, application URL, and dry-run evidence.
 
 <WorkflowSurfacePanel surface="web">
 
-Use the Profile page or the resume import flow to create structured profile
-data. Profile owns personal details, experience, education, skills, evidence,
-the baseline resume, and optional EEO fields. It is the source of truth every
-later stage scores and tailors against.
+Open **My profile** on **Experience**. Add the roles, position summaries and
+achievements JobCtrl may use. **Skills**, **Education** and **Personal details**
+are peer sections, with independent editable fields. **Resume** opens the real
+Plate baseline editor; **Learning** keeps user-authored development activity
+separate from demonstrated capability.
 
-Use Preferences for application defaults, tailoring and writing rules, resume
-style, and template versions. Use Settings for shared runtime policy,
-credentials, model selection, and browser capabilities. Those policy surfaces
-can constrain work, but they do not create candidate evidence.
+Save a change normally, or let the form autosave. A failed or conflicting save
+keeps your draft visible. Removed roles and achievements have a **Restore removed
+experience** path; restoration preserves identity rather than replacing the
+whole Profile with an old snapshot. Use the PDF import flow when you have a
+baseline to extract and explicitly review.
 
-Profile and settings forms autosave after a short delay. The explicit Save
-buttons use the same save path. Saving facts, source reviews, wording or
-approvals does not start matching, scoring, wording preparation or resume
-regeneration. After saving, use the explicit
-[Update affected matches](#update-matches-after-saved-changes) flow when you
-want existing matches reviewed.
+Wording and factual evidence have separate authority. Inspect the requirement
+tags beside an achievement, its exact current wording, proposed revisions and
+history. Review exact wording deliberately; editing does not transfer approval.
+A failed refresh preserves earlier accepted wording and documents.
 
 </WorkflowSurfacePanel>
 
 <WorkflowSurfacePanel surface="cli">
 
-Use the CLI route only when you want terminal workflows. Initialize and check the
-local workspace first:
+The web app is the full structured Profile and document editor. For an admitted
+fresh command-line workspace, use:
 
 ```bash
 jobctrl init
 jobctrl doctor
 ```
 
-`jobctrl init` creates the local CLI workspace, starter profile, resume, and
-search configuration under `~/.jobctrl/`. The web app remains the full editor
-for structured profile fields and resume review. In a new workspace, the
-wizard's Remote search uses LinkedIn and ZipRecruiter with a 72-hour lookback.
-On rerun, the existing Profile is retained; edit it in the web app. Saved
-Profile target roles and location/work-model rows take precedence over the
-corresponding Discovery rows entered in the wizard.
-Existing resume files, AI settings, and Apply automation settings are retained
-unless you choose to change them. See [Getting Started](getting-started.md) for
-how resume replacements, AI credentials, and Apply approval choices are saved.
-The wizard's location and title inputs replace those Discovery rows while saved
-board and lookback choices remain in place. A saved tier or location-label
-filter that excludes the new search is cleared only with your confirmation.
+The wizard retains existing authored state. Review saved Profile search targets
+before relying on older Discovery targets. Provider setup and source commands
+are listed in the [command reference](#command-reference).
 
 </WorkflowSurfacePanel>
 
-<WorkflowSurfacePanel surface="web">
+[Candidate Profile](candidate-profile.md) owns facts, import, exact wording,
+source confirmation, revision conflicts and restoration.
 
-![JobCtrl Profile workspace with personal information, resume evidence, and the baseline resume editor](../assets/screenshots/profile.png)
-*The Profile route workspace keeps canonical fields beside the real editable baseline resume.*
-
-</WorkflowSurfacePanel>
-
-[Candidate Profile](candidate-profile.md) defines which facts and preferences
-belong to the profile, how versions are used, and which later stages consume it.
-
-## 2. Configure Discovery
+## 2. Set Search Preferences
 
 <WorkflowSurfacePanel surface="web">
 
-Use the Discovery page to set:
+![Synthetic source candidate Search preferences with independent targets and bounded search settings](../assets/screenshots/original-search-preferences.png)
 
-- target roles and role tracks;
-- target locations and work models;
-- source registry controls;
-- minimum fit score and automation preferences;
-- manual capture and quarantined source decisions.
+Open **My profile → Search preferences**, or choose **Edit search preferences**
+from the Jobs search task. Keep target roles, career tracks/levels, locations,
+work arrangements, boards and bounded search limits together. Add another role
+with Enter and continue in the next input. Each location remains an independent
+row with its own work arrangement.
 
-The optional browser extension's **Save job** action also lands here: it records
-the active page as a user-mediated manual capture, then the normal discovery
-import path dedupes, snapshots, and surfaces the job in Jobs.
+Use the explicit place lookup and select an actual result when you want a
+validated location. Typing or opening the page does not query the place service.
+Editing a selected label clears its binding; a legacy text label is unverified.
+Saving preferences does not start discovery.
 
-To add one posting without running Discover, open **Jobs**, choose **Import
-job**, and paste its public HTTP(S) URL. JobCtrl fetches that page through the local worker. Model determinations identify and extract the requested posting. It is ingested by exact canonical identity and opens Job Detail without a separate intake filter; full-posting analysis/scoring assess fit. If the page is blocked,
-login-walled, rate-limited, or cannot be identified safely as a posting, no
-placeholder job is created; the URL is placed in **Discovery → Manual Capture**
-for user-provided content instead. Different URLs can be imported concurrently
-from separate Jobs views; each finishes independently. If a later retry can
-read a URL that previously needed Manual Capture, the successful import closes
-that matching manual task against the canonical job.
-
-Target locations are validated before they can drive discovery. Discovery uses
-exact and broader recall role queries, then filters and scores the results
-downstream.
+If readiness needs a provider or browser remedy, open **Settings → Connections**
+and return to the same search context. Source controls and scheduling remain
+available through contextual details; normal search does not require supervising
+workers, queues or individual stages.
 
 </WorkflowSurfacePanel>
 
 <WorkflowSurfacePanel surface="cli">
-
-For CLI workflows, review configuration and runtime readiness before starting
-work:
 
 ```bash
 jobctrl doctor
 ```
 
-Discovery targets and runtime preferences are normally edited on the Discovery
-page, and every field on that page persists in SQLite. [Discovery](discovery.md)
-explains how target controls compile into queries, when runtime and schedule
-changes activate, and how crawl politeness is enforced. Provider credentials,
-model policy, and the shared spend ceiling remain in
-[Configuration](configuration.md).
+Inspect the rows: a successful diagnostic read does not establish that every
+capability is ready. Search configuration and schedule/source ownership are
+explained in [Discovery & Sources](discovery.md); provider and spend controls are
+in [Configuration](configuration.md).
 
 </WorkflowSurfacePanel>
 
-<WorkflowSurfacePanel surface="web">
-
-![JobCtrl Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
-*The Discovery page configures target search, seniority floors, locations and work models, minimum fit score, job boards, and the source registry.*
-
-</WorkflowSurfacePanel>
-
-## 3. Run Discover
+## 3. Find Or Capture Jobs
 
 <WorkflowSurfacePanel surface="web">
 
-Open Pipelines, choose the `Discover` tab, set the run limit, internal
-concurrency and optional source selection, then start the run. Discover does
-not support a dry run. When no pipeline controls are saved, **Dry run** starts
-off; a saved choice stays unchanged. If it is checked, turn it off to enable an
-ordinary search. If saved controls cannot be read, review the displayed values
-before changing the setting.
-The source picker accepts up to 50 sources; leave it on **All runnable sources**
-to use the complete enabled registry.
+**Filter saved jobs** searches records already in Jobs. **Search for jobs** opens
+the search task beside the table. Review the effective saved criteria, enabled
+source scope, limits and readiness, then choose **Start search**. Merely opening
+or saving the task launches nothing. Discovery has no dry-run mode.
 
-Discovery can start while the extension is offline. Pipelines shows its status
-without disabling launch. To prefer your current signed-in Chrome profile,
-keep the selected paired extension connected. Each acquisition setup chooses
-the connected extension or guarded public HTTP/anonymous Playwright before
-fetching. Neither mode copies a profile, and a site or access failure does not
-switch transport. Worker readiness and stage eligibility still gate launch.
+Progress, results, partial failures, stop requests and same-request recovery
+stay with that search. Queued is not completed; a stop request is not settled
+cancellation. When an acknowledgement is uncertain, reconcile the retained
+request instead of starting a different search.
+
+Use **Import job** for one public URL, or the paired extension's **Save job**
+action for user-mediated capture. If an inaccessible posting needs supplied
+content, use the task's manual-capture recovery. A failed fetch does not create a
+placeholder posting or replace accepted content. Manual Jobs remains useful
+without automatic Discovery.
 
 </WorkflowSurfacePanel>
 
 <WorkflowSurfacePanel surface="cli">
-
-Start the same Discover workflow from the terminal:
 
 ```bash
 jobctrl run discover
 ```
 
-`jobctrl discover --dry-run` and `jobctrl run --dry-run` when Discover is
-selected are rejected before a workflow starts. Omit `--dry-run` to search.
-
-The CLI uses the same optional transport selection. An offline extension does
-not prevent dispatch; public-source restrictions and worker readiness still
-apply. See [Crawl Politeness](discovery.md#crawl-politeness) for source-specific
-limits, including anonymous broad-board proxy restrictions.
-
-Per-stage commands (`jobctrl enrich`, `score`, `tailor`) and the
-single-job path (`jobctrl job <url> --dry-run`) start the same underlying
-workflows when you want a narrower run.
+This explicitly admits the existing bounded discovery/preparation recipe; it
+does not approve or submit applications. Discover with `--dry-run` is refused.
+Use the exact run identity returned by the command to inspect progress.
 
 </WorkflowSurfacePanel>
 
-<WorkflowSurfacePanel surface="web">
+[Discovery & Sources](discovery.md) owns effective search values, transports,
+source consent, capture, schedules and recovery. An offline optional extension
+does not by itself prevent supported anonymous acquisition.
 
-![JobCtrl Pipelines workspace with Discover controls, the live stage flow, and backlog diagnostics](../assets/screenshots/pipelines.png)
-*Pipelines starts bounded work and keeps its execution scope, exact stage outcomes, backlog, capacity, ETA, freshness, and active work visible.*
+## 4. Compare Jobs And Open A Workspace
 
-</WorkflowSurfacePanel>
+The table keeps role/employer, location/work model, recorded compensation, fit,
+application state and useful source/freshness information comparable. Use its
+filters, sorting, pagination, columns, saved views and supported bulk selection.
+Unknown pay, fit or outcome stays unknown; different currencies are not silently
+made comparable. An empty workspace differs from a filtered list with no matches.
 
-Discover owns the preparation path:
+A fresh built-in **Default** view starts with Title, Company, Location, Posted
+pay, Fit and Apply, plus selection. Posted pay uses its recorded display range,
+currency and unit. Granular/source fields remain available in **Columns**, and
+existing custom or persisted layouts keep their saved choices.
 
-- source crawling or ATS/API fetches;
-- detail enrichment;
-- scoring;
-- tailoring eligibility;
-- material generation, or suppression, for eligible jobs.
+Open a job for its nearby task workspace. Return to the same comparison state
+when finished, including after full-size resume editing. Within the job, inspect
+**Person fit** separately from **Approved wording coverage**: a missing expression
+does not lower factual support. Compensation, employer context, interviews,
+contacts and history retain the same job identity.
 
-Keep Pipelines open while the run works. Read its scopes separately:
-
-- **Current execution** is work admitted to the selected Discover execution.
-- **Execution sweep** is eligible pre-existing backlog adopted by that
-  execution.
-- **Global outside execution** is unrelated backlog and is not included in the
-  selected execution's completion claim.
-
-The source-family plan reports intake separately from the two reconciliation
-steps: the enrichment pass and preparation fanout. The live stage cards make
-waiting, processing, terminal, and attention totals visible first; **All stage
-outcomes** expands the exact succeeded, skipped, blocked, failed, canceled,
-needs-verification, stale, and unknown counts. An attempt budget that has run
-out is a failed outcome with **attempt budget exhausted** as its reason, not a
-separate lifecycle state. Retrying that failure resets its attempt budget.
-If a bulk retry reports that a selected job or stage changed, refresh the Jobs
-list and review the selection before retrying.
-During an active source crawl, planned source families that have not entered
-their bounded execution batch appear as **waiting**, not unknown. Unknown is
-reserved for a planned family whose lifecycle is still missing after the
-Discover workflow has ended.
-**Backlog and
-diagnostics** keeps the execution sweep and unrelated global backlog separate
-from that current-execution flow. Capacity details include configured and active
-slots, internal parallelism when applicable, and approximate task-queue pollers,
-backlog, age, add rate, and dispatch rate. The execution inspector shows cohort
-membership and remaining work, read-model freshness, and the bounded active-work
-inventory. Treat ETA as an observed range: calibrating, no recent dispatch,
-stale, unavailable, and no-work states are deliberately explicit rather than
-replaced by a guessed finish time. An
-unavailable ETA does not mean that the workflow itself is paused.
-An unknown provider page total prevents a crawl percentage, not necessarily a
-source-family ETA: after at least five recent family completions, Pipelines can
-use whole-family duration history when live capacity and queue observations
-bound the current source lane. A stale worker on that queue leaves contention
-unconfirmed, so Pipelines withholds numeric estimates. If an operations refresh
-fails, cached overall, stage, and source-family estimates are marked stale until
-a later read succeeds.
-For a failed run, a run completed with issues, a closed workflow still shown as
-draining, or an incomplete historical run, **Set up a new Discover run** may
-become available when reporting workers show zero occupied slots and their
-active-work inventory is complete and empty. If other worker reports are stale,
-background activity remains unknown even though the setup option is available.
-In those replacement cases, freshly reported activity or unavailable inventory
-blocks the Discover run control, including when you select the tab directly. A
-failed operations refresh also blocks Discover until a read succeeds.
-
-### Workers, Activity Slots, And Queue Backlog
-
-The capacity strip separates worker processes from the concurrency they offer:
-
-- **Worker processes online** counts fresh JobCtrl worker heartbeats for the
-  selected Temporal task queue. One online process can provide several activity
-  slots. Stale heartbeat records are historical registrations outside the
-  freshness window; they are excluded from online capacity.
-- **Activity slots in use** reports concurrent Temporal activities across all
-  online worker processes as `active of configured`. For example, `0 of 4`
-  means the reporting workers have four available slots and report none in use.
-  If other worker reports are stale, their activity remains unknown. Stage-work
-  and short-control admission are reported separately: a worker may refuse new
-  stage work while canceled calls are still running, even when slots are free.
-  Short cancellation, budget, and lifecycle controls have their own bounded
-  capacity. Slot and admission counts describe reporting workers only; stale
-  workers' activity and admission remain unconfirmed. Slots are execution
-  capacity, not workers or jobs.
-- **Active work** counts occupied worker activity slots. Its details are a
-  bounded, privacy-safe inventory and can omit activities or show only part of
-  the list. A count with unavailable details still means work is running; an
-  unavailable inventory means its status is unknown. If a worker report is
-  stale, JobCtrl cannot confirm its activity and shows fresh-worker activity as
-  a minimum rather than a global total. You may review and start Discover when
-  reporting workers are idle; an already-running Discover workflow is reused.
-  This does not confirm that detached activity from an older run has stopped.
-- **Queue backlog** is the combined approximate count of tasks waiting in
-  Temporal's workflow and activity queues. Workflow tasks wait for workflow
-  pollers, while activity tasks wait for activity workers and their available
-  slots. It is infrastructure pressure, not the selected execution's job total.
-  An unavailable observation means unknown, not zero.
-
-Configured slots are summed across the fresh worker processes, and available
-slots are configured slots minus active slots. The expanded **Freshness and
-capacity** inspector shows the underlying worker, slot, executor-thread, and
-task-queue observations. For the exact API semantics, see
-[Operations & Events](../api/operations-and-events.md#capacity-active-work-and-task-queue).
-The inspector reports unfinished calls in retired worker pools. Cancellation
-does not prove those calls or their child processes have stopped. If admission
-is refused, capacity returns after a retired pool's calls actually finish;
-already accepted results are not replaced by the refusal.
-
-Selected-run tracking is reconstructed automatically after an upgrade or worker
-restart when an older execution predates native lineage. Pipelines labels that
-transition **Restoring pipeline history**, continues to show fresh worker, queue,
-and active-stage telemetry, and withholds exact selected-run counts, percentages,
-and ETAs until the worker verifies the complete membership and stage-key sets.
-
-Use **Stop discovery** while the selected Discover workflow is actively
-discovering or draining. Cancellation refreshes Pipelines as well as Runs and
-Dashboard. After a failed execution, Pipelines reports observed active work or
-states that the runtime inventory is unavailable; stale worker reports leave
-global occupancy unconfirmed. It never turns missing inventory into "no work."
-If the exact history cannot be read or mapped safely
-on one pass, the repair remains in automatic retry instead of becoming a
-permanent tracking mode. Reconnecting to its authoritative history restores that
-run or records its real terminal outcome. The same repair closes native activity
-rows when exact Temporal history proves that a closed workflow timed out or
-failed after its worker stopped reporting; those proven terminal activities no
-longer appear as processing. If immutable legacy history ended
-before recording every target, the run is labeled **Historical run incomplete**;
-JobCtrl preserves all exact recovered evidence and does not fabricate or
-continuously retry the unknown remainder. When reporting workers show no
-activity and their inventory is complete and empty, you can use **Set up a new
-Discover run** to review the Discover controls, including when stale reports
-leave other background activity unknown.
-The option does not start a run until you submit it. If a Discover workflow is
-already running, JobCtrl reuses it; this does not prove that detached work from
-an older run has stopped. Workflow identifiers and bounded reason codes remain
-under **Technical details**.
-
-Internal stages such as Enrich and Score, and material generation (the `tailor`
-command), stay visible in job detail and diagnostics, but the
-user-facing preparation stage is Discover.
-
-[Enrichment & Extraction](enrichment-and-extraction.md) explains how captured
-postings become normalized, provenance-bearing job records before scoring.
-
-## 4. Review Jobs
-
-Open Job Detail's **Posting availability** to compare the latest attempt with
-the last successful verification. **Check availability** requests a bounded
-worker check; **Inspect employer posting** opens the source for your own
-inspection. Stopped/offline workers leave evidence overdue. Preparation refreshes
-evidence after six hours and can proceed with unknown availability. Rehearsals and
-bound human-reviewed/manual Apply also remain available while unknown; unattended
-Apply needs active evidence from the last 15 minutes. Confirmed closure stops work. Failed checks preserve saved descriptions, materials and approvals.
-The [enrichment guide](enrichment-and-extraction.md#saved-posting-availability)
-owns the complete background-check policy.
-
-<WorkflowSurfacePanel surface="web">
-
-The Jobs view supports filters, sorting, pagination, deep links, job-state and
-fit-score filters, stage state, source provenance, compensation evidence, and
-route-level job workspaces.
-
-In Job Detail, **Person fit** explains factual support and **Approved wording
-coverage** explains the expression of those facts in exact approved text. A
-missing expression does not lower factual fit. Shared requirements reuse their
-current assessments across jobs; each job retains its own priorities and score.
-
-In Job Detail, retrying a failed Discover stage resets it to pending without
-starting another run. Retrying a supported preparation stage also requests the
-remaining preparation work; its progress is reconciled with the recorded state.
-
-</WorkflowSurfacePanel>
-
-<WorkflowSurfacePanel surface="cli">
-
-Use the CLI to inspect workflow health, then review the jobs themselves in the
-web app:
-
-```bash
-jobctrl pipeline-status
-jobctrl runs --failed-only
-```
-
-The Jobs table and Job Detail workspace are the review surfaces for score
-evidence, source provenance, artifacts, readiness, and per-job actions.
-
-</WorkflowSurfacePanel>
-
-<WorkflowSurfacePanel surface="web">
-
-![JobCtrl single-table Jobs workspace with the Active Job state filter and distinct stage progress](../assets/screenshots/jobs.png)
-*The Jobs table keeps lifecycle state and pipeline stage distinct while preserving filters, saved views, and bulk triage actions.*
-
-</WorkflowSurfacePanel>
-
-Use the **Job state** column filter to show **Active**, **Deleted**, **Hidden**,
-or any combination of those values in one table. The default view selects
-**Active** only. The options remain available even when the current page has no
-row in that state, and the server applies them before totals and pagination.
-Hidden takes precedence if a job has both hide and delete tombstones. **Closed**
-is not a normal user-facing state; old links that use it remain compatible.
-Active postings do not repeat an `OPEN` label beside every title. The default
-view keeps **Sources** and **Warnings** available in column controls but hides
-them until needed. Mixed-state selections expose only the actions eligible for
-each state: delete or hide active jobs, restore deleted jobs, unhide hidden jobs,
-and permanently remove deleted or hidden jobs. Delete and permanent-delete
-actions use destructive styling, while restore and unhide remain recovery
-actions. Opening a row uses its keyboard-focusable row action, so the table does
-not add a redundant visible **Open** control to every record.
-
-Permanent deletion confirms a fixed set of removed jobs from the observed list.
-If their lifecycle state changes before confirmation finishes, the app refuses
-the entire deletion and asks you to refresh and select again. The selection
-expires after one minute; existing jobs and materials remain intact when a
-selection is refused. Unrelated workspace changes do not invalidate it.
-
-At 900px and below, the Jobs, Artifacts, Contacts, Discovery, and Settings data
-tables reflow into labelled record cards. Their sorting and filtering controls
-remain available, and at phone width each card becomes a single readable
-column rather than forcing a multi-viewport horizontal scroll.
-
-Open the Job Detail route workspace to inspect:
-
-- score, confidence, blockers, gaps, and score policy metadata;
-- the requirement-fit report when present;
-- audit history;
-- source and enrichment evidence;
-- generated artifacts;
-- apply readiness and blockers.
-
-Accepted artifacts appear first, newest recorded generation first. Older
-approved artifacts remain visible. Canonically superseded artifacts are
-available under **Superseded artifacts**; expand it to inspect or open them.
-
-The sections below the Job Detail header form one full-width column at desktop
-and phone widths. **Description** is first, and every section starts collapsed
-when opening a job. Open **Sections** to jump to any section in reading order;
-the destination expands, scrolls into view, and receives keyboard focus. The
-same menu offers **Expand all** and **Collapse all**. Each section can also be
-collapsed from its heading without losing a draft form entry or live update.
-
-The question-mark buttons beside Job Detail labels open short explanations of
-the saved value, its source, and important limits. Press Enter or Space on a
-focused button to open its help, then Escape to return focus to the button.
-Use them when reading:
-
-| Area | Help available for |
-| --- | --- |
-| Overview | fit, posting metadata, apply readiness, workflow and application state |
-| Fit & evidence | score, band, confidence, eligibility, requirement fit, must-haves, concerns and diagnostics |
-| Compensation | posted and market ranges, source evidence, reliability and benchmark lineage |
-| Role analysis | seniority, model agreement, ensemble, generation, framing, requirements, keywords and candidate evidence |
-| Preparation | stage states and diagnostics, artifacts, description, application target and interview prep |
-| Follow-up | apply history, outcomes, contacts and audit history |
-
-A cited model agreement determination compares surviving employer-analysis
-drafts. It reports agreement and divergence with source spans; text equality and
-keyword overlap do not establish agreement or candidate fit.
-When a fit score was manually corrected, its help identifies the correction and
-reason. The displayed band, confidence, and eligibility remain from the saved
-scoring breakdown; correcting the score does not recalculate them.
-
-<WorkflowSurfacePanel surface="web">
-
-![JobCtrl Job Detail route workspace showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)
-*Job Detail keeps audit triage, requirement evidence, compensation, materials, actions, progress, contacts, outcomes, and history on one bookmarkable route.*
-
-</WorkflowSurfacePanel>
-
-Failed preparation work can be retried per job or in bulk without automatically
-starting apply automation.
-
-[Scoring](scoring-and-employer-analysis.md) owns the fit
-decision model; [Compensation Evidence](compensation-evidence.md) owns the
-salary evidence shown alongside it.
+Open **Jobs → Requirements**, or a Profile requirement tag, to inspect a reusable
+meaning, its linked achievements and original occurrences. Your manual links are
+unassessed intent; they do not establish fit or coverage. The
+[Requirements library](requirements-library.md) owns that distinction.
 
 ### Update Matches After Saved Changes
 
-After editing Profile facts, reviewing sources, changing a requirement, or
-approving wording, choose when to review the effect on existing matches:
-
-1. Save the inputs you want included. **Update affected matches** reads saved
-   Profile, sources and approved wording; unsaved edits stay outside the request.
-2. For a cohort, select scored jobs in **Jobs** and open **Update affected
-   matches for selected jobs**. You can also start from Profile, Evidence Map,
-   or the panel beside **Person fit** in Job Detail. Review the displayed job
-   scope and **Work limits** before choosing **Update affected matches**.
-3. Inspect the recorded result. The update reviews the complete catalog,
-   reuses current factual and wording decisions, reassesses affected support and
-   groups remaining expression gaps by achievement. Review any proposals in
-   Profile's **Approved wording** section and approve exact text explicitly.
-
-Opening the panel or checking match state makes no model call. The update's
-finite job, requirement, model-attempt, proposal and time allowances do not impose a
-hard monetary cap on a provider call. A failed, stale, cancelled or limited
-request keeps accepted work; a partial result identifies factual work saved
-before later wording work stopped. Requesting cancellation is separate from a
-recorded cancelled outcome. Retry eligible failed wording explicitly and check
-an unconfirmed earlier request before starting different work. The
-[Profile update guide](candidate-profile.md#update-affected-matches) owns the
-exact limits, selection and recovery rules.
-
-## 5. Inspect The Evidence Map
-
-<WorkflowSurfacePanel surface="web">
-
-Open Evidence from the main navigation, the Profile page, or a Job Detail
-workspace. The Evidence map shows the canonical profile achievements and declared
-skills currently reused by generated resume bullets, requirement-fit decisions,
-verifier-recorded requirement coverage, and recorded gaps. Links in the usage lists return to the
-owning artifact or job detail so you can audit the source before editing profile
-evidence or re-running materials. Its entry list, selected evidence, and gaps
-inspector stack in reading order when the three-pane desktop workspace no
-longer fits.
-
-</WorkflowSurfacePanel>
-
-<WorkflowSurfacePanel surface="cli">
-
-The Evidence map is a web app audit surface. Use the CLI to check run health,
-then inspect evidence usage and gaps in the Evidence view.
-
-</WorkflowSurfacePanel>
-
-## 6. Generate And Inspect Materials
-
-<WorkflowSurfacePanel surface="web">
-
-Eligible jobs receive tailored resumes during Discover. You
-can also generate materials for a single job from the Job Detail workspace.
-
-</WorkflowSurfacePanel>
-
-<WorkflowSurfacePanel surface="cli">
-
-Run a narrower material-generation path from the terminal when you do not want a
-full Discover run:
-
-```bash
-jobctrl tailor
-```
-
-Inspect the generated records, validation, and accepted artifact history in the
-web app before using anything.
-
-</WorkflowSurfacePanel>
-
-Generated material records are kept as audit history. Re-generation does not
-destroy the accepted material already in use; a replacement becomes active only
-after it validates and you approve it.
-
-Artifact Detail presents the human-readable audit first—summary, evidence,
-tailoring explanation, and comparison—then places the full-width PDF preview
-below those details. Raw artifact, job, path, evidence, and requirement keys are
-diagnostic facts under **Technical details**, not the primary labels shown to
-the reviewer.
-
-In **Job Detail → Artifacts → Editable DOCX**, choose A4 or Letter and export an
-accepted resume. Retained exports can be downloaded again without
-regeneration; failed exports preserve the accepted materials. See
-[Editable DOCX Export](materials-and-tailoring.md#editable-docx-export) for limits.
-
-[Materials & Tailoring](materials-and-tailoring.md) explains provenance,
-validation, accepted-artifact history, and the boundary between generation and
-human approval.
-
-## 7. Generate Interview Prep (Beta)
-
-::: warning Beta maturity boundary
-The question library and its criteria remain a research draft. Grounding and
-fabrication gates do not establish coaching quality, hiring outcomes, readiness,
-or validated grading. Review personal claims against their linked evidence.
-:::
-
-<WorkflowSurfacePanel surface="web">
-
-Open **Interviews** to browse the full local library without a job or provider
-call. Explore topics and authors through the **Questions** and **Sources**
-graph perspectives, or use **List**. Search and filter cards, inspect a selected
-question, and bookmark its URL or a filtered view. Cards expose guidance, responsibility-based adaptation,
-alternatives, probes, draft criteria, source-reading coverage, and synthetic
-examples where available.
-
-For personal preparation, choose a job or follow its Job Detail **Interview
-prep** link. Set the interview stage/format when known, role responsibilities,
-and known employer criteria. Review the selection rationale, add or remove
-questions, and choose the order. For each question, keep automatic evidence
-selection, choose up to eight accepted profile evidence records, or explicitly
-choose none. A changed profile requires reselection while retaining your draft
-choices. Generate a bounded set of at most 16 questions with format-appropriate
-outlines; missing details and explicit empty evidence choices remain questions
-and gaps.
-
-</WorkflowSurfacePanel>
-
-<WorkflowSurfacePanel surface="cli">
-
-The Interviews explorer and personal preparation controls are web surfaces.
-Use the CLI for workflow status checks around an explicitly started run.
-
-</WorkflowSurfacePanel>
-
-Inspect each outline's evidence excerpts and original input bindings. Current
-profile, job-analysis, catalog, or approved-material changes mark older prep
-stale and leave regeneration under your control. Legacy themes, STAR drafts,
-gap drills, and company notes remain readable without invented card bindings.
-Regeneration keeps the last accepted prep visible until a replacement is
-accepted, including during provider failure or gate rejection.
-
-Save personal notes separately from generated prep. Notes have their own
-revision and factual-support label; new recollections remain unverified, and
-edits do not inherit a passed generation audit. Failed saves preserve your
-draft, and a conflicting revision requires reconciliation. Preparation does
-not change Profile, fit, or Apply decisions.
-
-After the interview, record a reflection from the prep panel. It remains a
-manual `interview` outcome linked to a prep generation and appears in the job's
-application outcome timeline.
-
-[Interview preparation](materials-and-tailoring.md#interview-preparation) owns
-the detailed flow, sources, history, and note boundaries. Reusable preparation
-without a job, typed rehearsal, calibrated feedback, and live assistance remain
-future phases; this release has no microphone, transcript, answer grading, or
-in-session answer surface.
-
-## 8. Review And Edit The Resume
-
-<WorkflowSurfacePanel surface="web">
-
-Apply Review opens the generated resume in an in-browser rich-text editor, not a
-static preview. You can edit the resume text, adjust formatting, and add or
-remove hyperlinks before rendering a replacement PDF. The editor keeps the final
-PDF link, the source behind each line, risk flags, JobCtrl's line comments, and
-your draft together.
-
-</WorkflowSurfacePanel>
-
-<WorkflowSurfacePanel surface="cli">
-
-The resume review editor is a web app surface. Use CLI commands to generate or
-check workflow progress, but edit, validate, render, compare, and approve
-resumes in Apply Review.
-
-</WorkflowSurfacePanel>
-
-<WorkflowSurfacePanel surface="web">
-
-![JobCtrl Apply Review with tailored resume preview, requirement evidence, and approval controls](../assets/screenshots/apply-review.png)
-*Apply Review pairs requirement evidence and the verbatim job post with the tailored resume preview, JobCtrl line comments, and approve or dry-run controls.*
-
-</WorkflowSurfacePanel>
-
-On working desktop widths, the review queue remains a left rail and the
-selected application's decision, evidence, and materials occupy one full-width
-sequence. On narrower screens, the queue moves above that sequence and decision
-actions wrap below their approval context without dropping or hiding audit
-content.
-
-Typical review actions:
-
-- edit the generated resume text, formatting, and hyperlinks;
-- reply to JobCtrl line comments;
-- save or autosave a draft revision;
-- validate and render an edited draft into replacement artifacts;
-- compare the accepted artifact with the rendered draft using stored coverage,
-  validation, judge, template, and risk-label rows;
-- approve only after the edited draft is saved, valid, and rendered.
-
-Persisted comments stay attached to their rendered resume line when their
-anchor resolves. A comment whose line no longer exists or whose anchor cannot
-be resolved remains visible under **Comments without a rendered line** rather
-than being dropped, so its status, replies, and source identifiers stay
-inspectable.
-
-Failed validation stays as audit history and does not hide the last accepted
-artifact.
-
-## 9. Rehearse With A Dry Run
-
-Apply automation can submit real applications, so start with dry runs:
-
-<WorkflowSurfacePanel surface="web">
-
-Use Apply Review to run and inspect a dry run before approving any live
-submission. The approval ledger shows whether the dry run was complete,
-partial, or blocked.
-
-</WorkflowSurfacePanel>
-
-<WorkflowSurfacePanel surface="cli">
-
-```bash
-jobctrl apply --dry-run --limit 1
-jobctrl apply --url https://example.com/job/123 --dry-run
-jobctrl apply --recover-stopped
-```
-
-The first dry-runs Apply for one eligible job; the second dry-runs a specific job
-by URL. The third checks stopped Apply custody without starting an application or
-resetting Skip. A dry run never submits — it shows what would happen without
-sending anything. A finite `--limit` bounds the number of jobs claimed by that batch,
-including jobs skipped after claim. A URL-targeted batch stays on that job even
-if more workers are configured. Use `--continuous` to keep polling instead.
-
-</WorkflowSurfacePanel>
-
-Auto apply is separate from a one-off dry run. When the Apply automation
-setting `autoApply` is on, a running worker keeps one continuous Apply workflow
-active only after you explicitly enable `auto-apply-browser`. In **Settings →
-Browser & extension**, JobCtrl can list a supported local Chrome or Chromium by
-label. Detection is read-only: it does not launch, enable, or persist the
-browser. Click Enable to adopt the selected installation, or use the advanced
-manual path. If a detected installation disappears before confirmation, enable
-fails without changing capability state. The CLI remains an equivalent manual
-path:
-
-```bash
-jobctrl capability enable auto-apply-browser --browser-path /path/to/Chrome
-```
-
-Otherwise the reconciler leaves the loop stopped and reports the capability as
-disabled. Browser adoption does not pair the Discovery extension or copy an
-authenticated profile; those remain separate explicit actions. The Runs page
-shows the standing apply loop. With
-`applyApprovalRequired` still on, that loop claims only jobs already approved
-in Apply Review and parks the rest as awaiting approval. Turning approval off
-removes that claim-time wait, but does not grant the model final browser-submit
-authority. Browser-form runs stop for manual completion; only the owned Gmail
-sender can submit automatically, and only for the exact approved
-recipient/attachment candidate.
-
-Inspect the dry run, final materials, field mapping, blockers, and apply-run
-history before completing a browser form manually or approving an email
-application. Approval is valid only for the materials generation, profile
-version, and application URL shown in Apply Review, and requires full dry-run
-evidence unless you explicitly accept a listed partial dry-run with its blocked
-channels. [Apply](apply.md) owns the application fields, material policy,
-automation modes, browser capability, and Gmail setup. The full approval model
-is on the [Security](security.md) page.
-
-## 10. Inspect Progress
-
-<WorkflowSurfacePanel surface="web">
-
-Useful web app views:
-
-- Dashboard for high-level counts, source health, pending learning
-  recommendations, and the versioned Materials policy history.
-- Pipelines for the selected execution, execution sweep, unrelated global
-  backlog, source-family intake, reconciliation, stage outcomes, capacity,
-  approximate task-queue pressure, ETA, freshness, and active work.
-- Analytics for recorded outcome counts and sample-gated rates by source, score
-  band, fit band, Apply mode, template, and policy. The page reads canonical
-  application outcome rows and projections only; groups below the minimum
-  sample count stay count-only.
-- Jobs for triage and the bookmarkable Job Detail workspace.
-- Runs for the shared Discover, preparation, and Apply history, using one status
-  vocabulary, terminal-state contract, cancellation control, and route-level
-  timeline. A run's heading and **Selected stages** field identify the exact
-  stage scope recorded in its workflow input. The timeline separates recorded
-  attempts, labels the current attempt, and keeps its failure details with that
-  attempt. Repeated start notifications appear once per identified attempt.
-- Evidence for profile-evidence reuse, generated-material usage, and gaps.
-- Artifacts for generated files and same-job artifact comparisons.
-- Apply Review for approval and resume edits.
-- Debug for event-level inspection and Activity Detail payloads.
-
-</WorkflowSurfacePanel>
-
-<WorkflowSurfacePanel surface="cli">
-
-```bash
-jobctrl pipeline-status
-jobctrl digest
-jobctrl runs
-jobctrl runs --failed-only
-```
-
-These print your pipeline status, show the local daily digest, list recent
-apply runs, and list only failed apply runs, respectively. The digest is read-only unless
-you pass `--acknowledge`, which marks the displayed digest as reviewed.
-
-</WorkflowSurfacePanel>
-
-<WorkflowSurfacePanel surface="web">
-
-![JobCtrl Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
-*The Runs page lists workflow runs with status, mode, timing, and a link into the web interface of Temporal, the workflow engine. Filter the complete history by status, exact workflow type, or an inclusive date range before opening a run timeline. Run detail names the exact selected stage scope from the workflow input.*
-
-</WorkflowSurfacePanel>
-
-A cancel request is cooperative and asynchronous. Repeating it is harmless;
-the projected run remains inspectable and an already completed, failed,
-canceled, timed-out, or terminated result is never overwritten by a synthetic
-canceled state. The same contract applies whether cancellation starts in
-Pipelines or Runs.
-
-[Outcomes & Feedback](outcomes-and-feedback.md) explains which application and
-interview facts become canonical outcomes, how analytics read them, and how
-explicit reviewed feedback can produce a pending recommendation without
-changing behavior automatically.
-
-## 11. Keep Contacts (Optional)
-
-<WorkflowSurfacePanel surface="web">
-
-Keep contact records for the people behind an application — a recruiter, hiring
-manager, or referrer — attached to a company or a specific job:
-
-- Open the **Contacts** page (the "Contacts" nav entry) or the **Contacts** panel
-  in a Job Detail workspace, and add a contact with a role (recruiter, hiring
-  manager, referrer, warm intro, or other), a link to the employer and/or the
-  application, and facts like name, title, email, phone, or a note.
-- Or open **Import contacts**, choose CSV or vCard, and paste the file contents
-  with its filename. Review the parsed facts, duplicates, and skipped records,
-  then explicitly confirm the import. Each imported fact retains the filename
-  as its source. See [supported contact imports](contacts-and-outreach.md#contact-import).
-- Every fact you store shows its **provenance** — where it came from — in the list
-  and detail views, so you can always see the source of a name or email.
-
-You can also run **supervised research** from a job's Contacts panel to propose
-contacts:
-
-- Click **run research** (optionally pasting one public source URL, such as a
-  company team page). JobCtrl starts a supervised run; with no URL it simply
-  records which sources it could and could not use.
-- Research **proposes** candidates for review — it never stores them automatically
-  (supervised, INV-4). Each proposed candidate shows its provenance (the page it
-  came from, the capture method, and a confidence), and the run shows the
-  per-source outcomes (fetched, rate-limited, historically blocked by `robots.txt`, or routed
-  to manual capture because the page needs a login).
-- Review each candidate and click **confirm contact** to promote it into your
-  contacts. Only then does it become a stored fact — with its research provenance
-  preserved and marked confirmed by you. No public page is fetched unless you
-  supply its URL, and login-walled pages are never fetched automatically.
-
-Once you have a contact, you can **draft an outreach message** to them — a
-truthful, reviewable message that you send yourself:
-
-- In the Contact Detail workspace's **Outreach** thread, click **generate draft**.
-  JobCtrl writes a short message grounded only in your profile and the confirmed
-  contact facts, then runs it through the **same anti-fabrication gates as your
-  resumes**: a model claim-verification determination, a content
-  validator, an LLM judge, and a claim-to-fact provenance record.
-- Review the **gate results** and the **claim → fact** bindings shown beside the
-  draft. A draft that invents a metric, an employer, or a relationship it cannot
-  support is blocked — you cannot approve it until the gates pass.
-- **Edit** the draft if you want; saving your edit creates a new version and
-  **re-runs the gates** on your edited text. Earlier versions stay in the
-  generation history, and your last approved message is never overwritten until a
-  replacement is approved.
-- **Approve** the message once the gates pass, then **copy** it and send it
-  yourself through your own channel (your email client, and so on).
-- After you have sent it, **log the send**: record the date you sent it and the
-  channel you used (for example "email"). This is a record you enter — JobCtrl
-  never sends the message and has no way to; logging simply marks the thread as
-  sent so your history is honest. A send can only be logged against an approved
-  draft, and approving a draft is a separate action that never sends anything.
-- Optionally **schedule a follow-up**. JobCtrl suggests a conservative date —
-  7 days after the application was submitted for the first nudge, 14 days for a
-  later one if you have had no reply — which you can edit freely. Due follow-ups
-  surface in a **Follow-ups** list and a badge so you remember to reach out; you
-  then send the follow-up yourself, exactly like the first message. Follow-ups are
-  reminders only: they are never sent for you, and any optional recurring reminder
-  is off by default.
-
-You send every message yourself. JobCtrl drafts, previews, and records; it
-never sends anything to a contact — there is no email, message, or outreach send
-transport of any kind, drafts terminate at copy/export, a thread only becomes
-"sent" through a send you log yourself, and contact, research, draft, send, or
-follow-up data never affects scoring or apply decisions.
-
-</WorkflowSurfacePanel>
-
-[Contacts & Outreach](contacts-and-outreach.md) defines contact provenance,
-research confirmation, draft ownership, and the boundary around sending.
-
-<WorkflowSurfacePanel surface="cli">
-
-Contacts, supervised contact research, outreach drafts, send logs, and
-follow-up reminders are web app workflows. The CLI can check overall status, but
-it does not send messages or replace the review surfaces.
-
-</WorkflowSurfacePanel>
+Saving facts, sources, requirement edits, wording or approvals makes no automatic
+matching, scoring, authoring or regeneration request. When you want saved changes
+reviewed:
+
+1. Save the inputs you want included.
+2. Choose **Update affected matches** beside Profile/job evidence, or select a
+   scored Jobs cohort and use **Update affected matches for selected jobs**.
+3. Review the fixed job scope and **Work limits**, then start the update.
+4. Inspect factual results and grouped wording work separately. Current approved
+   links are reused; actual gaps are grouped by achievement. A wording proposal
+   still requires your exact review.
+
+The update fixes saved versions, identity and limits. Changes during the run stay
+pending for a later action. Duplicate/uncertain requests retain their original
+identity, cancellation stays explicit, and failures preserve accepted records.
+[Update affected matches](candidate-profile.md#update-affected-matches) owns the
+complete work-limit and recovery contract.
+
+## 5. Prepare And Edit A Resume
+
+Open the job's resume task. Choose **Tailored resume** or **Full baseline**, then
+**Prepare resume**. This one bounded task sequences the existing requirement,
+fit, composition, review and rendering owners. Read the blocker/remedy at the
+action when work is unavailable. Individual maintenance tools remain under
+**Preparation options and history**; ordinary preparation does not need a tour of
+operations pages.
+
+If the task needs a saved Profile, its setup link retains the selected job,
+comparison context and chosen resume mode. Complete the Profile work, then use
+**Return to job**; navigation does not change Settings or start model work.
+
+Preparation produces a candidate for review. Open the actual Plate editor to
+edit text, formatting and hyperlinks, compare source/coverage information, and
+save a draft. Render and inspect the replacement before document acceptance.
+The editor's direct PDF export is a local export of its current document; it
+does not by itself register an accepted artifact or approve an application.
+
+The complete authored baseline, exact approvals, accepted versions, template
+geometry and supported PDF/DOCX/locale exports retain their owning contracts.
+A failed generation, review, render or export leaves the last accepted artifact
+available. See [Materials & Tailoring](materials-and-tailoring.md) and
+[Reviewed Locale Variants](locale-variants.md).
+
+## 6. Review An Application And Record Its Outcome
+
+Use the selected job's review/application task, or **Jobs → Applications** for
+the cross-job queue. Inspect the exact outgoing packet, accepted resume,
+screening answers, source bindings and rehearsal result. Document acceptance and
+application approval are different decisions. Any changed bound input requires
+fresh review of the exact candidate.
+
+A browser dry rehearsal submits nothing. Final submission on an employer website
+is manual. Only an exact-approved email application may use JobCtrl's owned
+Gmail sender, subject to its existing checks and at-most-once intent. An uncertain
+external result remains **Needs verification**; a restart, reset or retry cannot
+authorize a second send. [Apply](apply.md) owns the full boundary.
+
+Record manual application/interview outcomes with their actual evidence and
+correction history. **Jobs → Outcomes** summarizes recorded results; small or
+unknown samples remain explicit. Email lookup proposes outcomes for review
+rather than inventing confirmed history. [Outcomes & Feedback](outcomes-and-feedback.md)
+explains which records are canonical.
+
+## 7. Use Independent Resources
+
+These tasks remain available without forcing a selected job:
+
+| Task | Entry and authority |
+| --- | --- |
+| Browse requirements and source history | **Jobs → Requirements**; canonical meanings, recorded assessment/coverage and your separate unassessed links. |
+| Browse interview guidance | **Jobs → Interview library**; local graph/list catalog without a provider call. Job-specific Beta preparation keeps evidence, retained inputs, notes and stale history separate. Research-draft criteria do not establish readiness or hiring outcomes. |
+| Keep people and outreach drafts | **Jobs → Contacts**; import/edit facts with provenance, review supervised proposals, draft/approve/copy, log your own send and follow-ups. JobCtrl does not send contact outreach. |
+| Review learning and career evidence | **My profile → Learning**; activity, aspirations, posting demand and demonstrated capability remain different records. Completing activity proves no skill. |
+| Inspect retained documents | **Jobs → Materials**, or the job itself; accepted versions, provenance, comparison and supported exports. |
+| Review compensation or an actual offer | The job's compensation/offer controls; unknown terms stay unknown and recorded decisions never submit an application. |
+
+The owning [materials](materials-and-tailoring.md#interview-preparation),
+[contacts](contacts-and-outreach.md), [scoring](scoring-and-employer-analysis.md),
+[screening answers](screening-answers.md) and [compensation](compensation-evidence.md)
+guides state their detailed limits.
+
+## 8. Settings And Task Recovery {#settings-and-task-recovery}
+
+**Settings → Connections** brings provider credentials, live model choices and
+browser/extension capability together. **Budgets** owns shared spend policy;
+**Automation** owns deliberate standing behavior and runtime policy.
+**Appearance** offers light/dark, density, ten color schemes and ten real font
+schemes, initially Graphite + Geist. Appearance saves in this browser and does
+not change resume-template typography.
+
+Progress, pending/partial/error state and recovery belong beside each task.
+
+<a id="workers-activity-slots-and-queue-backlog"></a>
+
+**Settings → Data & diagnostics** retains technical history and diagnostic entry
+points when needed. A connected event stream describes connection freshness; it
+does not prove that a provider or action is ready. Neither navigation nor a
+read-only diagnostic grants permission to spend, enable a source or send.
 
 ## Stopping And Restarting
 

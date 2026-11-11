@@ -54,6 +54,16 @@ or wording coverage; those remain explicit actions. See the
 [catalog architecture](../architecture/scoring.md#requirements-catalog-matching)
 for the source and revision checks.
 
+In the Original source candidate, **Jobs → Requirements** opens the independent
+canonical library; achievement tags in **My profile → Experience** open the same
+meaning. Inspect definition, scope, qualifiers, linked achievements, exact
+wording and posting history. Your explicit associations remain **unassessed** and
+cannot change fit or coverage. Current maintained wording, proposed revisions
+and earlier approval history are separate; a new maintained expression requires
+recorded distinct coverage that cannot reuse or consolidate the existing one.
+See [Requirements Library](requirements-library.md) and the
+[current-wording decision](../decisions.md#_2026-11-11-requirement-led-current-wording-and-proposed-revisions).
+
 ## Person Fit And Approved Wording
 
 **Person fit** answers what your saved factual evidence supports. **Approved

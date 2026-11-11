@@ -76,6 +76,9 @@ has one defining page; other pages summarize it briefly and link to that owner.
   fit evidence, shared requirement matching, factual support versus wording
   coverage, policy, corrections, and ranking; it consumes the employer analysis
   owned by Discovery.
+- [`user/requirements-library.md`](user/requirements-library.md): canonical
+  meanings, linked achievements, exact wording coverage, unassessed user links
+  and source/revision history in the redesign candidate.
 - [`user/company-briefings.md`](user/company-briefings.md): optional public-source company context, explicit identity links, bounded CLI refresh and shared job/interview/digest reads.
 - [`user/materials-and-tailoring.md`](user/materials-and-tailoring.md): generated
   materials, provenance, validation, review, and accepted-artifact history.

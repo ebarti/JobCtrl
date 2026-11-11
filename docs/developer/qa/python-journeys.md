@@ -46,12 +46,157 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
+### Original redesign inventory — 11 November 2026
+
+The current source inventory has **57 journeys in 25 spec files**: 56 Python
+application journeys and the existing offline-demo journey. It retains the
+previous 48 cases and adds the nine below. Expanded assertions inside existing
+cases do not count as new cases. This is an inventory of authored coverage,
+with observed qualification on `88e97a53d` recorded below. The later Materials
+visual repair has its own affected proof; hosted qualification of the exact
+delivery commit is tracked in the [PR checks](https://github.com/ebarti/JobCtrl/pull/1467/checks).
+Neither a listed case nor a focused pass substitutes for that scope distinction.
+
+The limits are unchanged: one worker, zero retries, 90 seconds per ordinary
+case, 150 seconds for the existing demo, 60 seconds for fixture setup and a
+720-second aggregate suite cap. Existing action/navigation/assertion deadlines
+also remain. A focused pass, screenshot inventory, test listing or static check
+cannot qualify all 57, and earlier failures remain part of the evidence.
+
+| Added journey | Authored assertions and boundary |
+| --- | --- |
+| [Appearance](../../../apps/web/e2e/journeys/appearance.spec.ts) | Exercise all ten color and ten font choices through the UI, verify actual font loading and persistence, restore Graphite + Geist, and compare the real Plate document geometry and accepted PDF bytes before/after. App presentation cannot change the document template or accepted export. |
+| [Jobs attention](../../../apps/web/e2e/journeys/jobs-attention.spec.ts) | Preserve deliberate inactive-source intent while showing quarantined or repeatedly failing sources as actionable. Inspect actual saved registry state and model/action counts; viewing attention cannot enable or rewrite sources. |
+| [Profile workspace](../../../apps/web/e2e/journeys/profile-workspace.spec.ts) | Exercise peer sections, individual role/summary/date/skill/education fields, canonical saves/reload, exact wording proposals and decisions, and role/achievement remove/restore with original IDs and retained history. UI recovery, not direct database reconstruction, must preserve drafts and accepted work. |
+| [Whole-product surfaces](../../../apps/web/e2e/journeys/redesign-surfaces.spec.ts) | Load 26 retained surfaces at 1440 × 1000, 1860 × 1227, 2943 × 1227 and 390 × 844: 104 settled captures within one journey. Check mounted navigation, headings, meaningful loaded/explicit-empty content and page overflow, plus real saved-material search/clear/state, control geometry and Plate/PDF access. This does not judge visual craft: earlier passing inventory checks still exposed inner Profile and Materials control defects during image inspection. |
+| [Requirement associations](../../../apps/web/e2e/journeys/requirement-associations.spec.ts) | Create/revise/remove/restore many-to-many user intent through the real library/Profile flow. Keep exact requirement/source/optional-wording pins, stale history, achievement-based grouping and selected/filter/return context. Manual links never create assessment, coverage, score or model work. |
+| [Search preferences](../../../apps/web/e2e/journeys/search-preferences.spec.ts) | Enter adds/focuses independent role inputs; save/reload canonical targets and source/limit settings; make no lookup while typing. Explicit controlled Photon results bind exact row/place identity, duplicate display labels remain independent, edits clear stale bindings, and invalid responses remain unverified. Deliberate search retains its saved Profile-version fence. |
+| [Settings workspace](../../../apps/web/e2e/journeys/settings-workspace.spec.ts) | Save a budget before model setup, retain another pane's invalid draft, distinguish configured/unverified readiness and probe providers only on explicit request. Exercise real revision conflicts, uncertain acknowledgements and credential leave/discard protection without changing unrelated saved policy. |
+| [Maintained-assignment race](../../../apps/web/e2e/journeys/wording-assignment-integrity.spec.ts) | Hold the external grouped determination for a manual Fit refresh, change an unrelated maintained assignment through its public write, and require the admitted whole-Profile fingerprint to refuse stale publication. Preserve accepted score/assignment state and the original bounded operation rather than absorbing the concurrent change. |
+| [Composition freshness](../../../apps/web/e2e/journeys/wording-assignment-integrity.spec.ts) | Read job-relevant maintained-wording freshness, including missing-to-present changes; unrelated requirement assignments do not stale composition. Relevant changes preserve draft/accepted pointers and actual accepted PDF bytes. Baseline follows Profile freshness without borrowing Fit authority, and reads dispatch no model or preparation work. |
+
+The retained cases also expand these boundaries:
+
+- **Profile concurrency and browser recovery:** independent writer tabs, stale
+  exact approval, pending-wording revision conflicts, explicit restore/discard,
+  storage/ownership failures and version-fenced recovery. Non-secret version-2
+  patches exclude saved/unsaved credential values; secret edits stay in scoped
+  session memory, warn before reload/close and cannot be silently cleared by a
+  safe restore. An unresolved copy pauses competing editing. Native invalid-form
+  and application-console errors remain failures, not allowed transport noise.
+- **Preparation, Jobs and applications:** the shared mode + Prepare task,
+  first-Profile setup returning to the selected job/mode/comparison context,
+  fresh Default column order, retained custom layouts, and actual one-request
+  admission recovery. Genuine first-party writes are forwarded; only their
+  acknowledgements are severed for uncertainty tests. Rehearsal/approval and
+  external-send intent retain their existing authority.
+- **Matching and tailoring:** direct current-assignment reuse, full supported
+  achievement groups, source-bound consolidation and exact replacement lineage,
+  approval alone making no Fit change, atomic current activation and accepted
+  PDF preservation. Fixed operation inputs, caps, cancellation and worker-restart
+  checks remain; a covered historical relation alone cannot skip current-choice
+  reconciliation.
+- **Offline demo:** the actual consent Worker/D1 and browser-local bundle now
+  exercise peer Profile edits/reload, proposed wording review, unassessed
+  requirement-link remove/restore, search input focus/persistence, unavailable
+  map lookup and appearance persistence/explicit reset. Real Plate editing,
+  accepted PDF bytes/text/render, reset cancellation/confirmation and consent
+  retention remain. No product `/v1` request, model call, unexpected external
+  request or authored-text telemetry leak is admitted. Synthetic teaching
+  examples do not become semantic determinations or live-provider proof.
+
+The observed records below distinguish complete-run results from affected
+follow-up proof. The [whole-product ledger](../../plans/2026-11-11-original-app-redesign.md)
+tracks acceptance and inherited/source-only boundaries separately. No
+participant, accessibility-certification, installed-release or deployment
+result is inferred from these source-built journeys.
+
+The first combined attempt, `e2e-3003zl` on `8fef91a6c`, finished **55 passed /
+2 failed**. An obsolete Jobs-filter selector needed a harness correction; the
+managed Applications preparation wrapper also caused real 897-pixel overflow
+at the 390-pixel viewport. Those failures remain part of the record. Final
+combined qualification then used repaired candidate `88e97a53d`, with the same
+57 cases, caps, one worker and zero retries. The first run recorded
+7.662 seconds for the build, 450.418 seconds for journeys and 459.781 seconds
+total. Passing Profile/Resume captures
+from that attempt do not turn its failed whole-product surface case into a pass.
+
+### Source qualification on 88e97a53d
+
+`corepack pnpm e2e` on `88e97a53d` passed **57/57** in `e2e-0S91Lx`: 56 real
+Python application cases and the browser-local demo. The actual result record
+contains 57 passed bodies at retry zero, with no skips, flaky results,
+unexpected results or global errors. The macOS arm64 runner had 12 CPUs and
+Node 22.21.1. Snapshotting took 161 ms, composition preflight 1,606 ms, web build
+7,782 ms, journey orchestration 441,372 ms and the complete command 450,971 ms.
+Dependency locks and built web assets stayed unchanged during the run.
+
+| Recorded boundary | SHA-256 |
+| --- | --- |
+| Frozen Python package | `745b47421cf6d3a6e006198e1a162612311401447aaf3a78958584a34bbe9194` |
+| Runtime capability policy | `7d360eeba42582a39895f98b5596eaf26621be4b8061fc3067918cd33dafa8fd` |
+| Combined Python/policy snapshot | `064930cce00cd0bcd34c21761b7e7cd54f9b3317339f762e5203c86dc41bc1a0` |
+| Web build | `9d21a18fa51fa7177cd1125a668302a93eddb6a9568cc02d81f306b3d9fe340d` |
+
+The whole-product matrix case passed in 26.4 seconds, producing all 104 settled
+viewport captures plus full-height Profile/Requirements evidence. The repaired
+Profile concurrency/CRUD and current-wording journeys passed in the same full
+run. Actual baseline/job Plate, registered PDF preview/download, accepted-byte
+preservation, manual requirement association, grouped assignment integrity,
+search/preferences and Settings behavior were exercised under the boundaries
+listed above. Source-bound model replies test authority and failure handling;
+they do not measure semantic accuracy or prove live-provider compatibility.
+
+Image inspection still found a Materials defect after that automated pass:
+at 390 pixels, its search input was 24 pixels wide and its button was clipped.
+Page-level overflow checks had not detected it. Candidate `fcf9e7f09` contains
+the bounded class/CSS repair and strengthens the existing matrix case with
+actual material search/clear, state preservation and control geometry. Its
+affected run `e2e-fGjTmn` finished **2 passed / 1 failed**: production
+baseline/export and demo Plate/PDF passed. The matrix's real search, clear,
+filter and geometry checks passed, then an unscoped `Accepted` assertion
+matched the native option plus mobile/hidden-desktop badges. The harness
+correction scopes status readback to the visible Materials list and exact
+select value. No production repair was added
+for that assertion failure. This adds no new case, retry or time allowance.
+The affected web build SHA-256 is
+`b1365861bcdb3983eafba5c7949de7be6d47faaf31741db8708dc7c01f24dabf`.
+The final matrix command, `e2e-imUbCE` on `8a917b23f`, then passed **1/1**:
+all 104 frames plus actual Materials search/clear/status/geometry. The case
+body took 25.4 seconds, with a 7,592 ms build, 30,975 ms journey orchestration
+and 40,251 ms total. There were zero retries, skips or global errors. The web
+hash above was unchanged from the baseline/export and demo Plate/PDF passes;
+the final E2E tree SHA-256 was
+`af436bc46299a4222cf7f710484a2bf50fed33b9549029c273c34b6d7e34f078`
+before and after the command. The three affected cases have passing
+observations across two commands, while the failed first matrix attempt remains
+recorded separately.
+The full 57-case result above remains attached to `88e97a53d`; hosted checks own
+all 57 on the exact final delivery commit.
+
+Independent `ps`/`lsof` corroboration passed for `e2e-0S91Lx`: all 56 recorded
+initial workers were absent, all 56 recorded API ports had no listener, and
+all 56 owned workspaces and 56 isolated homes were removed. This supplements
+the harness's strict process-group close and teardown checks. The final
+`e2e-imUbCE` worker and API port, its two log-derived ports and all owned process
+paths were absent; successful workspaces/homes and Temporal state were removed.
+The failed `e2e-fGjTmn` attempt had both workers absent, both API ports and four
+log-derived ports closed, and no owned process-path match. Its one synthetic
+workspace/home and one Temporal history directory remain deliberately retained
+for diagnosis; its demo home was removed. These are actual `ps`/`lsof` checks
+of run-owned resources, independent of the harness teardown. Temporary synthetic
+evidence stays outside the repository;
+published screenshots contain synthetic state only. Agent image review and
+these browser checks do not establish participant usability, a full accessibility
+audit, a new installed/native qualification, release or deployment.
+
 ### Matching walkthrough and user guides — 11 November 2026
 
 The documentation/demo follow-up to `7ebd3da987c802256611130d33b03854cb873cdb`
 passed `corepack pnpm e2e -- --project=demo-chromium` **1/1** in `e2e-Jj7zOl`.
-This extends the existing demo case; the complete suite still contains 48
-journeys with unchanged budgets and zero retries. The macOS arm64 runner had
+At that candidate, this extended the existing demo case and the inventory
+remained 48 journeys with unchanged budgets and zero retries; the current
+redesign inventory is recorded above. The macOS arm64 runner had
 12 CPUs and Node 22.21.1. It recorded 174 ms snapshot, 1,602 ms preflight,
 7,797 ms build, 20,300 ms journey orchestration and 29,912 ms total. The test
 body took 9.1 seconds. Python, runtime-policy and source-candidate hashes match

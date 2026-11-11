@@ -55,7 +55,7 @@
                 <span>Uses the value you last saved in the relevant product surface.</span>
                 <span class="settings-precedence__source">
                   <IconDatabase aria-hidden="true" />
-                  SQLite or <code>config.json</code>
+                  Owning feature's revisioned SQLite settings
                 </span>
               </span>
             </div>

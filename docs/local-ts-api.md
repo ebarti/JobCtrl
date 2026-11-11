@@ -32,6 +32,40 @@ retained optional capabilities. Their owners validate input and publish exact
 DTOs. Missing optional features remove their routes; unknown API paths return an
 explicit 404, including when static frontend assets are served.
 
+The reusable requirement library reads `/v1/requirements`,
+`/v1/requirements/{id}` and bounded `/v1/requirements/{id}/history` pages
+(`kind=revisions|occurrences`, `limit` up to 200, `offset`). Original posting
+occurrences remain distinct from canonical meanings and expose accepted-snapshot
+and current-source status separately. `/v1/fit/requirement-library` joins the
+catalog to recorded achievement assessments and exact approved-wording coverage;
+it also lists explicit user associations labeled unassessed. An absent Profile
+returns `readiness: "profile_required"` without hiding the catalog.
+
+`POST /v1/fit/associations` requires a stable client association ID, expected
+Profile revision, exact requirement revision, achievement source pins and any
+optional exact wording binding. The same ID and payload reuse the saved result.
+`POST /v1/fit/associations/{id}/state` soft-removes or restores under
+`expected_revision`; restoration retains original pins and may remain stale.
+Only one active association per achievement/requirement pair is allowed;
+`POST /v1/fit/associations/{id}/revisions` changes its optional wording or exact
+source pins with a fresh Profile/association revision fence. The bounded
+`/{id}/history` reader preserves earlier revisions. These are
+user-intent records, never qualification, coverage, wording approval or model
+admission. See the [Fit owner reference](../workers/automation/src/jobctrl/features/fit/README.md)
+and [Requirements owner reference](../workers/automation/src/jobctrl/features/requirements/README.md)
+for exact fields and source-authority boundaries.
+
+Maintained wording is separately exposed in the Fit library's `current_wordings`
+and `wording_assignments`. `POST /v1/fit/current-wordings` selects an exact
+approved variant with a current positive coverage receipt under Profile and
+assignment revision fences. Each achievement/requirement pair has one head.
+Manual changes cannot introduce multiple maintained alternatives; the existing
+manual affected-matches workflow must record a complete grouped justification.
+`/{id}/state` removes or source-validates restoration, and bounded `/{id}/history`
+retains earlier assignment revisions. Selection changes invalidate their
+fingerprint without changing Profile approvals, coverage receipts or accepted
+document bytes.
+
 `fit.refresh` declares one active admission per profile. A different idempotency
 key for an already pending, queued or running scope receives
 `action_scope_busy` with the existing `runId`; an exact retry uses its original

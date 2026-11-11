@@ -26,6 +26,24 @@ Durable preparation, Discovery and Interview recovery bind the saved action key 
 
 Profile transfer uses a separate browser port to inspect the existing legacy IndexedDB and local-storage records without creating or changing them. It reports inaccessible or malformed records separately and hashes valid preserved PDF bytes without logging their contents. The feature owns the transfer manifest, provenance and user-initiated download; the adapter does not infer that historical bytes are factual authority.
 
+The explicit place-search port sends only the selected location query after a
+user action and validates provider results at its boundary. Profile joins a
+selected place by recorded row index and exact saved text; editing/removing a row
+invalidates or reindexes that binding. A read, keystroke or autosave cannot
+perform place lookup or semantic assessment.
+
+Private editor recovery uses a different storage purpose from minimal durable
+request metadata. Profile/preference version-2 recovery stores non-secret
+changed-field patches; direct password/credential edits use only session/tenant/
+section-scoped memory and a native reload guard. Safe restores preserve saved
+credentials. Valid older copies project safely before removal; malformed data
+keeps a generic paused retry/discard barrier without a raw JSON disclosure.
+Owner/revision CAS prevents cross-tab overwrite, and explicit ownership recovery
+handles a retained peer-tab draft. Profile/Plate editing pauses until explicit
+restore/discard. Recovery resets with tenant changes and demo copies have a
+separate workspace/reset epoch. Restored document content remains distinct from
+its saved baseline and accepted artifact.
+
 ### 6.5 Canonical DTOs And Frontend Input Refinements
 
 Feature API owners define public DTOs. Consume an existing shared DTO only when it is the actual Python endpoint contract; do not create a transparent central DTO facade or assume legacy response shapes. Validate data at the boundary and retain frontend-specific form refinements locally. Identity strings remain compatible with route parameters.

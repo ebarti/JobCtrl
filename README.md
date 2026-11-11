@@ -12,16 +12,24 @@
 [![Release Privacy Gate](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml/badge.svg)](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-<img src="docs/assets/screenshots/dashboard.png" alt="JobCtrl dashboard with pipeline health, active work, review queues, and recent activity (synthetic data)" width="880" />
+<img src="docs/assets/screenshots/original-jobs.png" alt="Original source candidate Jobs comparison table with synthetic data and explicit unknown values" width="880" />
 
-<sub>The screenshot uses synthetic data.</sub>
+<sub>Original source candidate. Synthetic data; published-version availability is separate.</sub>
 
 </div>
 
-JobCtrl finds job postings, scores each one against your profile, writes a
-tailored resume and PDF, and prepares the application for your review.
+JobCtrl finds job postings, explains fit against your saved evidence, composes a
+resume from approved wording, and prepares the application for your review.
 Your data lives in `~/.jobctrl/` on your machine; there is no account and no
 hosted backend.
+
+The current source candidate uses **Jobs**, **My profile** and **Settings**, with
+comparison, preparation, the real Plate editor and application review connected
+to the selected job. The [redesign ledger](docs/plans/2026-11-11-original-app-redesign.md)
+records implementation and verification; the
+[published release](https://github.com/ebarti/JobCtrl/releases/latest) establishes
+what installed users receive. Source documentation and the offline demo do not
+establish a release or hosted deployment.
 
 ## Install
 
@@ -35,38 +43,43 @@ curl -fsSL https://jobctrl.dev/install.sh | sh
 
 In a new terminal, run `jobctrl start` to start the local services and open the
 app. Create your profile, then connect an LLM provider (Codex, Claude, or
-Google) under **Settings → Credentials**; JobCtrl uses your own provider
-account. After saving Claude or Google credentials, restart with `jobctrl stop`
-and `jobctrl start`. Then run `jobctrl setup` and fix any `MISSING` rows in its
-report.
+Google) under **Settings → Connections**; JobCtrl uses your own provider
+account. In the Python source candidate, saved native credentials are resolved
+for new provider work. Run `jobctrl setup` and fix any `MISSING` rows in its
+report. An active environment-owned credential remains authoritative until you
+remove that override and restart the affected process.
 
-To get your first jobs, set target roles on the **Discovery** page and start a
-run from **Pipelines**. [Getting Started](https://jobctrl.dev/user/getting-started)
+In the source candidate, set roles, locations, sources and limits in **My profile
+→ Search preferences**, then open **Jobs → Search for jobs** and explicitly
+choose **Start search**. [Getting Started](https://jobctrl.dev/user/getting-started)
 covers first-run setup in detail. `jobctrl uninstall` removes JobCtrl and keeps
 `~/.jobctrl/` unless you add `--remove-data`.
 
 ## What It Does
 
-1. **Discover:** searches job boards and configured company sources for your
-   target roles, locations, and seniority.
-2. **Enrich:** fetches the full posting and its apply link. While the local
+1. **Find:** explicitly search configured sources or import a known posting.
+   Saved search preferences show what the next search will use.
+2. **Compare:** keep roles, location, pay, fit and application state together in
+   the Jobs table. Open a job and return to the same comparison context.
+   JobCtrl fetches the full posting and its apply link. While the local
    worker runs, it also rechecks saved postings and shows overdue or uncertain
    availability without replacing saved descriptions or materials.
-3. **Score:** rates fit from 1 to 10 by checking each requirement against your
-   profile evidence.
-4. **Tailor:** writes a resume from your profile. Each resume bullet links to
-   the profile fact behind it. Drafts that invent a metric,
-   date, title, or employer fail validation.
-5. **Review:** you edit the resume on the **Apply review** page and approve the
-   exact version for that application.
-6. **Apply:** a dry run inspects the application form and submits nothing; it
+3. **Understand fit:** inspect source-bound requirement assessments and the
+   resulting 1–10 score. Factual support and exact wording coverage stay separate.
+4. **Prepare and edit:** choose a tailored or full-baseline resume in one bounded
+   task, edit it in the existing Plate editor, then review/accept the exact
+   rendered document. Failed refreshes preserve earlier accepted materials.
+5. **Review:** inspect the exact application packet and rehearsal before its
+   separate approval. Saved Profile/wording edits launch no automatic matching
+   or regeneration; **Update affected matches** is explicit.
+6. **Apply and record:** a dry run inspects the application form and submits nothing; it
    needs Claude and a Chrome or Chromium browser enabled in Settings. You fill
    in and submit browser forms yourself. The only applications JobCtrl submits
    itself are emails from your Gmail, with the recipient and attachment you
    approved, sent at most once.
 
-Steps 1–4 run on Temporal, a workflow engine, and resume after a crash or
-restart.
+Admitted discovery and preparation run on Temporal, a workflow engine, and
+retain their durable identity through interruptions.
 
 JobCtrl also shows posted salaries and market estimates with their evidence,
 records application outcomes, keeps contacts, and drafts outreach for you to
@@ -113,6 +126,8 @@ worker rechecks due saved postings:
 - **Google Maps** (address autocomplete), **CapSolver** (CAPTCHA solving), and
   **Langfuse** (metadata-only traces by default; prompt/completion capture requires
   an additional explicit debugging opt-in): only if you configure them.
+- **Photon place lookup:** only when you explicitly request a location lookup;
+  it receives that location query. Typing or navigating makes no lookup request.
 
 Details: [Data, Privacy & Safety](https://jobctrl.dev/user/data-and-safety) ·
 [Security](https://jobctrl.dev/user/security)
@@ -133,7 +148,7 @@ Details: [Data, Privacy & Safety](https://jobctrl.dev/user/data-and-safety) ·
 git clone https://github.com/ebarti/JobCtrl.git && cd JobCtrl
 scripts/install        # install the toolchain and dependencies
 corepack pnpm check    # typecheck and lint
-corepack pnpm test     # run the test suites
+corepack pnpm e2e      # run the real application journeys
 corepack pnpm dev      # run the full stack; keep this terminal open
 ```
 

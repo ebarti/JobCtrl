@@ -26,6 +26,7 @@ integrated parity.
 
 **Product strategy & repository shape**
 
+- [Requirement-Led Current Wording And Proposed Revisions](#_2026-11-11-requirement-led-current-wording-and-proposed-revisions) · 2026-11-11
 - [Python Modular Application And Approved-Wording Composition](#_2026-11-06-python-modular-application-and-approved-wording-composition) · 2026-11-06
 
 - [Local-First Before SaaS Hardening](#_2026-05-01-local-first-before-saas-hardening) · 2026-05-01
@@ -3279,3 +3280,46 @@ question in [#1129](https://github.com/ebarti/JobCtrl/issues/1129).
 [auditability checks](developer/qa/regression-catalog.md#auditability-checks).
 [#1464](https://github.com/ebarti/JobCtrl/issues/1464) tracks implementation and
 integrated verification; this decision alone does not establish released behavior.
+
+## 2026-11-11: Requirement-Led Current Wording And Proposed Revisions
+
+**Decision.** Maintain one current wording for an achievement that serves one
+canonical requirement. An edit proposes a revision and retains exact earlier
+text, source pins, approval and history. Do not maintain another wording merely
+for a different editorial focus or presentation label. Additional maintained
+wording requires distinct requirement coverage that cannot reuse or consolidate
+the existing expression. Its label names the canonical requirement or
+requirements it serves, rather than an arbitrary alternative number.
+
+Profile owns the proposed revision, lineage and exact approval. Fit owns the
+recorded requirement/achievement/current-wording relationship and semantic
+coverage authority. Requirements owns the definition, scope, qualifiers and
+revision. User-authored intended-requirement IDs and manual associations remain
+unassessed intent; exact wording approval alone cannot establish coverage.
+Meaning, support and coverage continue to require source-bound determinations
+with persisted provenance, structural source/version fences and no lexical
+fallback.
+
+A current wording may serve several requirements. Preserve prior alternatives
+and rejected/deferred proposals as history instead of flattening them into one
+mutable record or silently deleting them. A proposed revision is not current
+until the owning exact review and recorded coverage/current-assignment rules
+permit it. Failed refresh, authoring, review or rendering preserves the last
+accepted wording and resume bytes. Ordinary saves, approvals and reads launch no
+model work; the explicit bounded affected-match refresh remains the admission
+path.
+
+**Scope and precedence.** This is the owner's 11 November correction to the
+Original redesign. It supersedes the earlier private-preview treatment of
+independently maintained editorial alternatives. It refines the reuse and
+consolidation policy in the 10 November decision; it does not itself change the
+complete-baseline resume occurrence rule, authorize data deletion, transfer
+approval or choose a new global preferred wording. The existing composer keeps
+its documented cardinality until an explicit composition decision changes it.
+
+**Delivery evidence.** The [whole-product redesign ledger](plans/2026-11-11-original-app-redesign.md)
+tracks implementation and integrated verification. This accepted contract alone
+establishes no current-wording migration result, provider quality, release or
+hosted deployment. See [Profile](user/candidate-profile.md#approved-wording-library),
+[Requirements Library](user/requirements-library.md) and
+[Fit/scoring ownership](architecture/scoring.md#requirements-library-and-user-intent).
