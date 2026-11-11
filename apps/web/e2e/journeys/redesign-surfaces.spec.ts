@@ -712,8 +712,13 @@ test("Original redesign renders all twenty-six primary workspace surfaces at nor
           }),
         ).toBeVisible();
         await recordedState.selectOption("accepted");
+        await expect(recordedState).toHaveValue("accepted");
         await expect(artifact).toHaveCount(1);
-        await expect(page.getByText("Accepted", { exact: true })).toBeVisible();
+        await expect(
+          page
+            .getByRole("list", { name: "Materials", exact: true })
+            .getByText("Accepted", { exact: true }),
+        ).toBeVisible();
         await recordedState.selectOption("all");
         await expect(artifact).toHaveCount(1);
       }
