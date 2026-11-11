@@ -70,9 +70,23 @@ labeled corpus, baseline grading or recorded model-output replay.
 Exercise opposing supported/unsupported determinations, invalid schema/enums,
 foreign source IDs, non-verbatim spans, stale revisions, unavailable providers,
 budget refusal and cancellation. Require canonical receipt/source/model/lane IDs
-and failed-refresh preservation. Retrieval may narrow candidates; a top-k miss
-cannot prove novelty. Person qualification remains independent of approved
+and failed-refresh preservation. Requirement matching supplies the complete
+incoming batch and current catalog in one determination; a partial catalog,
+missing decision or uncertain response cannot authorize novelty. Exercise
+explicit size/refusal handling without truncation or automatic chunking.
+Person qualification remains independent of approved
 wording and document selection. A completed learning activity proves no skill.
+
+Post-edit Fit refresh is manually admitted. Prove that saves, approvals, reads
+and the operation's own writes make no additional model calls or queued work.
+Exercise the complete-catalog impact decision, previously unsupported
+requirements made relevant by new evidence, reuse of unaffected decisions,
+and grouped wording preparation. Check fixed input versions and job selection,
+duplicate admission, persisted call/item/deadline limits, cancellation and real
+worker restart. Changes while queued or running must refuse stale work without
+expanding the operation. Report recorded monetary spend separately from work
+limits; ordinary lane/daily spend admission is not a guaranteed per-operation
+maximum charge.
 
 A controlled boundary proves authority and failure handling. Real SDK/provider
 compatibility, authentication, a provider/model change and pre-release readiness

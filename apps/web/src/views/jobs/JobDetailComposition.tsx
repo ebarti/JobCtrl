@@ -1,5 +1,6 @@
 import { ApplicationPanel, JobOutcomePanel, ScreeningAnswerLibrary } from "../../contexts/apply/index.js";
 import { CompanyBriefingForJob } from "../../contexts/companies/index.js";
+import { AffectedMatchesPanel } from "../../contexts/fit/index.js";
 import { CompensationPanel, OfferCompensationComparison } from "../../contexts/compensation/index.js";
 import { OfferPanel } from "../../contexts/offers/index.js";
 import { JobContactsPanel, OfferCommunication } from "../../contexts/outreach/index.js";
@@ -11,7 +12,7 @@ import { JobDetailDrawer } from "./JobDetailDrawer.js";
 /** Shell-owned contributions keep the core job workspace independently usable. */
 export function JobDetailComposition({ jobId, onClose }: { readonly jobId: string; readonly onClose: () => void }) {
   const features = useMountedFeatures();
-  return <JobDetailDrawer jobId={jobId} onClose={onClose} optionalHeaderActions={features.has("preparation") ? <JobActions jobId={jobId} /> : null} optionalSections={[
+  return <JobDetailDrawer jobId={jobId} onClose={onClose} affectedMatches={features.has("fit") ? <AffectedMatchesPanel jobIds={[jobId]} /> : null} optionalHeaderActions={features.has("preparation") ? <JobActions jobId={jobId} /> : null} optionalSections={[
     ...(features.has("companies") ? [{ id: "company", title: "Company briefing", description: "Review saved company context.", content: <CompanyBriefingForJob jobId={jobId} /> }] : []),
     ...(features.has("contacts") ? [{ id: "contacts", title: "Contacts", description: "Review people associated with this job.", content: <JobContactsPanel jobId={jobId} /> }] : []),
     ...(features.has("compensation") ? [{ id: "compensation", title: "Compensation", description: "Review saved compensation evidence.", content: <CompensationPanel jobId={jobId} /> }] : []),

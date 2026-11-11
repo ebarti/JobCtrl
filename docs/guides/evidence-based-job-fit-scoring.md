@@ -29,8 +29,8 @@ history beside the score instead of treating the number as self-explanatory.
 The scoring boundary deliberately separates employer claims from candidate
 claims:
 
-- the captured posting and accepted employer analysis own requirements,
-  priorities, and evidence about the role;
+- the captured posting supplies employer evidence, while Requirements owns
+  reusable qualified meanings, job-specific priorities and source occurrences;
 - the versioned Candidate Profile owns experience, skills, achievements,
   preferences, and evidence about the job seeker.
 
@@ -40,13 +40,16 @@ must point back to profile data; if that reference cannot be resolved, JobCtrl
 labels it unavailable rather than displaying it as proof.
 
 Read [Candidate Profile](../user/candidate-profile.md) for candidate evidence
-ownership and [Discovery](../user/discovery.md) for the canonical employer
-analysis.
+ownership and [shared requirement meanings](../user/scoring-and-employer-analysis.md#shared-requirement-meanings)
+for the complete-catalog matching boundary. Every incoming requirement and the
+entire catalog, including qualifiers and scope, enter one matching request.
+The model decides existing identity, genuine novelty or uncertainty; a retrieval
+miss or word overlap cannot establish a new meaning.
 
 ## Score Requirements Before Resolving The Number
 
-When an accepted employer analysis contains explicit requirements, JobCtrl asks
-the scorer for a structured assessment of each one. A row records the
+For accepted qualified requirements, Fit records a structured assessment of
+each meaning against the saved factual sources. A row records the
 requirement identity, importance, posting evidence, fit classification, and
 supporting Candidate Profile evidence.
 
@@ -107,17 +110,42 @@ version, model execution, or human judgment.
 The Evidence Map provides the reverse view: start from a profile achievement or
 skill and inspect where scoring and generated materials used it.
 
+## Review Saved Changes When You Choose
+
+Saving facts, reviewing sources, changing a requirement or approving wording
+does not automatically start Fit reassessment, wording preparation or resume
+regeneration. An explicit Requirements correction performs its own source-bound
+model check and catalog comparison; it does not start follow-on Fit work. In the
+current Python source,
+**Update affected matches** deliberately reviews saved inputs against the
+complete shared catalog. Newly saved evidence can affect previously missing
+support; current assessments are reused across jobs that reference the same
+qualified meaning. A selected job cohort controls which saved scores may be
+updated without narrowing the catalog used for that review.
+
+Factual support and approved expression remain separate. Exact current wording
+relations can be reused; remaining supported expression gaps are grouped by
+achievement for a reviewable proposal. Missing wording does not lower factual
+fit, and approving wording does not prove a new capability or regenerate an
+accepted resume. The [Profile update guide](../user/candidate-profile.md#update-affected-matches)
+owns the finite work limits, provider-cost caveat, partial results and explicit
+retry/cancellation steps. The source flow does not establish installed-release
+availability.
+
 ## What The Audit Trail Can And Cannot Prove
 
 The current requirement-led resolver is deterministic over the structured
-response it accepts. The parser validates shapes and requires evidence
-identifiers for matched rows, but it does not yet prove that every returned
-identifier exists in the saved profile or reconcile every returned requirement
-field against the accepted analysis before resolving the score.
+response it accepts. Strict validation checks the supplied requirement and
+source identities, revisions, schema and verbatim citations. Accepted records
+retain the model determination and exact source bindings; changed inputs cannot
+silently replace a current accepted result. A failed factual refresh preserves
+the accepted score, and later wording failure is reported separately from any
+factual results already saved.
 
-That limit is visible in the product contract. An unresolved reference is
-shown as unavailable, and its storage key remains under technical details. You
-should not treat it as supporting evidence merely because the numeric score was
+These checks establish which sources and model decision were accepted. They do
+not independently establish that an authored fact is true or that a model's
+semantic judgment is correct. An unresolved historical reference remains
+unavailable rather than becoming evidence merely because a numeric score was
 saved.
 
 Evidence-based scoring improves auditability; it does not eliminate model
@@ -127,8 +155,11 @@ high-value jobs and correct the record when the evidence is weak.
 ## Review Fit In JobCtrl
 
 Use the [synthetic live demo](https://demo.jobctrl.dev) to open a Job Detail
-workspace and inspect requirement rows without connecting a provider. In a
-local installation, start with a reviewed Candidate Profile and a bounded
+workspace and inspect requirement rows without connecting a provider. In the
+updated source-built demo, choose **Demo guide** →
+**Explore matching and wording** for a synthetic illustration; its choices make
+no model calls or saved workspace changes, and the real update is unavailable.
+In a local installation, start with a reviewed Candidate Profile and a bounded
 Discover run, then filter the Jobs workspace by score or fit band.
 
 For exact behavior, read [Scoring](../user/scoring-and-employer-analysis.md)

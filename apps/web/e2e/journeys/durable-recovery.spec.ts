@@ -10,6 +10,7 @@ import {
   type ExternalCall,
 } from "../harness/fixtures.js";
 import { acceptBaseline, createBaseline, createPosting } from "./core-data.js";
+import { catalogMatching } from "./requirements-data.js";
 
 type Source = { source_id: string; text: string };
 type Requirements = {
@@ -52,12 +53,8 @@ test("cancellation survives an actual worker kill and its replacement resumes du
   });
   const extraction = await modelCall(app, "requirements.extract");
   extraction.reply(extracted(extraction));
-  const novelty = await modelCall(app, "requirements.novelty");
-  novelty.reply({
-    verdict: "new",
-    reason: "The complete sweep is explicitly distinct.",
-    citations: citations(sources(novelty)),
-  });
+  const matching = await modelCall(app, "requirements.match_catalog");
+  matching.reply(catalogMatching(matching, { recovery: { verdict: "new" } }));
   const initialResponse = await first;
   expect(initialResponse.status(), await initialResponse.text()).toBe(200);
   const accepted: Requirements = await initialResponse.json();
@@ -159,20 +156,15 @@ test("cancellation survives an actual worker kill and its replacement resumes du
   expect(resumed.runId).not.toBe(denied.runId);
   const refreshed = await modelCall(app, "requirements.extract");
   refreshed.reply(extracted(refreshed));
-  const comparison = await modelCall(app, "requirements.compare");
-  const context = comparison.body["context"] as {
-    candidates: { requirement_id: string; revision: number }[];
-  };
-  comparison.reply({
-    decisions: context.candidates.map((candidate) => ({
-      requirement_id: candidate.requirement_id,
-      requirement_revision: candidate.revision,
-      relation: "equivalent",
-      reason:
-        "The unchanged qualified requirement retains its canonical identity.",
-      citations: citations(sources(comparison)),
-    })),
-  });
+  const comparison = await modelCall(app, "requirements.match_catalog");
+  comparison.reply(
+    catalogMatching(comparison, {
+      recovery: {
+        verdict: "equivalent",
+        requirementId: accepted.requirements[0]!.requirement_id,
+      },
+    }),
+  );
   const completedRun = await completed(api, resumed.runId);
   expect(completedRun["runId"]).toBe(resumed.runId);
   const final = await json<Requirements>(

@@ -42,16 +42,16 @@ class RebuildRequest(RequestValue):
 
 
 def raise_application_error(failure: RequirementError):
-    if failure.code in {"catalog_changed", "cancelled", "retrieval_index_stale", "requirements_scan_pending"}:
+    if failure.code in {"catalog_changed", "cancelled", "stale_catalog_revision", "retrieval_index_stale"}:
         status = 409
-    elif failure.code in {"model_provenance_missing"}:
+    elif failure.code in {"model_provenance_missing", "requirements_catalog_unavailable", "catalog_snapshot_invalid"}:
         status = 503
     else:
         status = 422
     raise AppError(
         failure.code,
-        ("Requirements scan progress is saved. Continue the same refresh to finish; accepted work remains available."
-         if failure.code == "requirements_scan_pending" else
+        ("The complete requirement catalog could not be assessed in one call. Accepted work remains available."
+         if failure.code == "requirements_catalog_unavailable" else
          "Requirements were not replaced. Review the source or retry the blocked determination."),
         status,
         details=failure.details,

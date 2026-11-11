@@ -5,6 +5,7 @@ import {
   expect,
   json,
   modelCall,
+  completed,
   type ExternalCall,
 } from "../harness/fixtures.js";
 import {
@@ -16,6 +17,11 @@ import {
   type Library,
   type Resume,
 } from "./core-data.js";
+import { catalogMatching } from "./requirements-data.js";
+import {
+  groupedCoverageDecision,
+  type GroupedCoverageContext,
+} from "./fit-data.js";
 
 type Source = { source_id: string; text: string };
 type Fit = {
@@ -71,12 +77,8 @@ test("approved wording composes the full baseline and failed model or render ref
     reason: "The posting expressly requires durable workflow recovery.",
     citations: citations([postingSource]),
   });
-  const novelty = await modelCall(app, "requirements.novelty");
-  novelty.reply({
-    verdict: "new",
-    reason: "The complete catalog sweep has no equivalent qualified meaning.",
-    citations: citations(sources(novelty)),
-  });
+  const matching = await modelCall(app, "requirements.match_catalog");
+  matching.reply(catalogMatching(matching, { recovery: { verdict: "new" } }));
   await expect(
     page.getByRole("button", { name: "Assess person fit", exact: true }),
   ).toBeEnabled();
@@ -123,21 +125,17 @@ test("approved wording composes the full baseline and failed model or render ref
     blocker_category: null,
     warning_category: null,
   });
-  const baselineCoverage = await modelCall(app, "fit.wording-coverage");
-  baselineCoverage.reply({
-    ...(baselineCoverage.body["context"] as { binding: Record<string, string> })
-      .binding,
-    status: "not_covered",
-    rationale:
-      "The person qualifies; this approved baseline expression does not express the complete requested emphasis.",
-    citations: citations(
-      sources(baselineCoverage).filter((source) =>
-        ["requirement", "approved-variant", evidenceId].includes(
-          source.source_id,
-        ),
-      ),
-    ),
-  });
+  const baselineCoverage = await modelCall(app, "fit.wording-coverage-grouped");
+  baselineCoverage.reply(
+    groupedCoverageDecision(baselineCoverage, {
+      evidenceSourceId: evidenceId,
+      status: "not_covered",
+      action: "propose_wording",
+      gapRequirementIds: (
+        baselineCoverage.body["context"] as GroupedCoverageContext
+      ).binding.requirements.map((row) => row.requirement_id),
+    }),
+  );
   await expect(page.getByText("Score 10/10", { exact: true })).toBeVisible();
   const beforeWording = await json<Fit>(
     api,
@@ -148,9 +146,20 @@ test("approved wording composes the full baseline and failed model or render ref
   expect(beforeWording.score.score).toBe(10);
   expect(beforeWording.coverage.wording_gaps).not.toHaveLength(0);
 
+  const firstManualAdmission = page.waitForResponse(
+    (response) =>
+      response.url() === `${app.baseURL}/v1/actions/fit.refresh` &&
+      response.request().method() === "POST",
+  );
   await page
-    .getByRole("button", { name: "Prepare wording", exact: true })
+    .getByRole("region", { name: "Affected matches", exact: true })
+    .getByRole("button", { name: "Update affected matches", exact: true })
     .click();
+  const firstManualResponse = await firstManualAdmission;
+  expect(firstManualResponse.status()).toBe(202);
+  const firstManualRun = (await firstManualResponse.json()) as {
+    runId: string;
+  };
   const authoring = await modelCall(app, "profile.wording_authoring");
   const alternative =
     "Built durable workflow recovery with documented operational ownership.";
@@ -161,6 +170,7 @@ test("approved wording composes the full baseline and failed model or render ref
       "The proposed expression stays within the cited authored achievement.",
     citations: citations(sources(authoring)),
   });
+  await completed(api, firstManualRun.runId);
   let proposed: Library | undefined;
   await expect
     .poll(async () => {
@@ -203,24 +213,34 @@ test("approved wording composes the full baseline and failed model or render ref
 
   const beforeRefresh = app.external.calls.length;
   await page.goto(`/jobs/${posting.job_id}`);
-  await page
-    .getByRole("button", { name: "Refresh wording coverage", exact: true })
-    .click();
-  const approvedCoverage = await modelCall(app, "fit.wording-coverage");
-  approvedCoverage.reply({
-    ...(approvedCoverage.body["context"] as { binding: Record<string, string> })
-      .binding,
-    status: "covered",
-    rationale:
-      "This exact approved expression covers the requirement using the same person evidence.",
-    citations: citations(
-      sources(approvedCoverage).filter((source) =>
-        ["requirement", "approved-variant", evidenceId].includes(
-          source.source_id,
-        ),
-      ),
-    ),
+  const refreshPanel = page.getByRole("region", {
+    name: "Affected matches",
+    exact: true,
   });
+  await refreshPanel
+    .getByRole("button", { name: "Dismiss completed update", exact: true })
+    .click();
+  const coverageAdmission = page.waitForResponse(
+    (response) =>
+      response.url() === `${app.baseURL}/v1/actions/fit.refresh` &&
+      response.request().method() === "POST",
+  );
+  await refreshPanel
+    .getByRole("button", { name: "Update affected matches", exact: true })
+    .click();
+  const coverageResponse = await coverageAdmission;
+  expect(coverageResponse.status()).toBe(202);
+  const coverageRun = (await coverageResponse.json()) as { runId: string };
+  const approvedCoverage = await modelCall(app, "fit.wording-coverage-grouped");
+  approvedCoverage.reply(
+    groupedCoverageDecision(approvedCoverage, {
+      evidenceSourceId: evidenceId,
+      status: "covered",
+      action: "reuse_approved",
+      reusableVariantId: proposedVariant.variant_id,
+    }),
+  );
+  await completed(api, coverageRun.runId);
   await expect
     .poll(
       async () =>
@@ -233,7 +253,7 @@ test("approved wording composes the full baseline and failed model or render ref
       .slice(beforeRefresh)
       .filter((call) => call.path === "/model")
       .map((call) => call.body["operation"]),
-  ).toEqual(["fit.wording-coverage"]);
+  ).toEqual(["fit.wording-coverage-grouped"]);
   expect(
     (await json<Fit>(api, "get", `/v1/jobs/${posting.job_id}/fit`)).score.score,
   ).toBe(10);

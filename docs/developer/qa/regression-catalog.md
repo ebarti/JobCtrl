@@ -35,8 +35,11 @@ provider/model/effort, lane/spend preflight and persisted receipt. Exercise
 opposing valid choices for identical sources and failures for invalid schema,
 unknown enums, forbidden fields, foreign IDs, non-verbatim quotes and stale
 versions. An external test response is an explicit choice, never a lexical
-matcher or a recorded replay corpus. Retrieval/indexing is candidate selection;
-all relevant catalog pages must be resolved before novelty is asserted.
+matcher or a recorded replay corpus. Requirement matching must include the
+complete incoming batch and canonical catalog in one determination, independent
+of search-index freshness. Validate a complete decision partition and exact
+catalog revisions before publication. Oversize, uncertainty and provider refusal
+preserve accepted state without chunking or a separate novelty judge.
 
 Profile owns facts, attachments, confirmations, authored baseline and wording
 approval. Requirements owns qualified meanings and source occurrences. Fit
@@ -46,6 +49,19 @@ cannot prove a candidate fact; a wording proposal cannot approve itself; a
 learning milestone cannot prove capability. Unknowns and correction history
 remain visible. Rejected/deferred proposals are deduplicated rather than
 regenerated for every posting.
+
+Post-edit refresh requires explicit manual admission. One source-bound impact
+selection sees the complete catalog and saved evidence changes, including
+previously missing/unlinked requirements. Only selected requirements require
+new qualification; unaffected receipts retain their original semantic authority.
+Exact current approved-wording bindings are direct reuse. Group actual wording
+gaps by achievement and retain rejection/defer decisions across equivalent jobs.
+Saves, approval and the refresh's own writes never recursively admit work.
+Race distinct action keys for the same profile, edits while queued/running,
+catalog additions, cancellation and real worker replacement. Input snapshots,
+scope and work counters survive retries; stale completion cannot silently widen
+the task or consume a fresh allowance. Observe actual call counts and explicit
+partial/refused results, not only the final score.
 
 Race independent writers and mutate the posting/Profile during model inference.
 A stale completion cannot publish over accepted current state. Retrying unchanged

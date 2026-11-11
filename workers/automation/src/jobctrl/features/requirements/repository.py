@@ -85,50 +85,23 @@ class SqliteRequirementStore:
             "created_at": row["created_at"],
         }
 
-    def catalog_snapshot(self, query):
-        with self.database.connect() as connection:
-            # A read transaction binds index, heads and epoch to one snapshot.
-            connection.execute("BEGIN")
-            meta = connection.execute("SELECT revision,indexed_revision FROM requirements_catalog WHERE singleton=1").fetchone()
-            if meta[0] != meta[1]:
-                raise RequirementError("retrieval_index_stale")
-            rows = connection.execute(
-                "SELECT m.* FROM requirements_heads h JOIN requirements_meanings m "
-                "ON m.requirement_id=h.requirement_id AND m.revision=h.revision ORDER BY m.requirement_id"
-            ).fetchall()
-            meanings = [self._meaning(row) for row in rows]
-            index = connection.execute("SELECT requirement_id,revision,document FROM requirements_retrieval").fetchall()
-            expected = {(m["requirement_id"], m["revision"]): self._document(m) for m in meanings}
-            actual = {(r[0], int(r[1])): r[2] for r in index}
-            if len(index) != len(actual) or actual != expected:
-                raise RequirementError("retrieval_index_stale")
-            # FTS is ONLY a retrieval order. Every non-retrieved candidate is
-            # still scanned before newness; no score or cutoff decides meaning.
-            preferred = []
-            if query.strip():
-                literal_phrase = '"' + query.replace('"', '""') + '"'
-                preferred = [r[0] for r in connection.execute(
-                    "SELECT requirement_id FROM requirements_retrieval WHERE requirements_retrieval MATCH ? "
-                    "ORDER BY bm25(requirements_retrieval), requirement_id LIMIT 16", (literal_phrase,),
-                )]
-            rank = {ident: index for index, ident in enumerate(preferred)}
-            meanings.sort(key=lambda m: (rank.get(m["requirement_id"], len(rank)), m["requirement_id"]))
-            return int(meta[0]), meanings
-
-    def retrieval_ids(self, query, catalog_revision):
-        with self.read_session() as connection:
-            meta = connection.execute("SELECT revision,indexed_revision FROM requirements_catalog WHERE singleton=1").fetchone()
-            if meta[0] != catalog_revision:
-                raise RequirementError("catalog_changed")
-            if meta[1] != meta[0]:
-                raise RequirementError("retrieval_index_stale")
-            if not query.strip():
-                return []
-            literal_phrase = '"' + query.replace('"', '""') + '"'
-            return [row[0] for row in connection.execute(
-                "SELECT requirement_id FROM requirements_retrieval WHERE requirements_retrieval MATCH ? "
-                "ORDER BY bm25(requirements_retrieval),requirement_id LIMIT 16", (literal_phrase,),
-            )]
+    def catalog_snapshot(self, connection=None):
+        if connection is None:
+            with self.read_session() as connection:
+                return self.catalog_snapshot(connection)
+        # Read every canonical head and its full meaning under one epoch.
+        # A caller's existing transaction can bind this inventory to its other
+        # public source reads and eventual publication guard.
+        # A repairable FTS index is never the semantic source inventory.
+        meta = connection.execute("SELECT revision FROM requirements_catalog WHERE singleton=1").fetchone()
+        rows = connection.execute(
+            "SELECT h.requirement_id,h.revision,m.meaning_json,m.provenance_json,m.created_at "
+            "FROM requirements_heads h LEFT JOIN requirements_meanings m "
+            "ON m.requirement_id=h.requirement_id AND m.revision=h.revision ORDER BY h.requirement_id"
+        ).fetchall()
+        if meta is None or any(row["meaning_json"] is None for row in rows):
+            raise RequirementError("catalog_snapshot_invalid")
+        return int(meta[0]), [self._meaning(row) for row in rows]
 
     def model_call(self, input_fingerprint):
         with self.database.connect() as connection:
@@ -165,7 +138,7 @@ class SqliteRequirementStore:
         return canonical_json({k: meaning[k] for k in ("definition", "qualifiers", "scope")})
 
     def catalog(self, *, limit=50, offset=0, query=""):
-        revision, meanings = self.catalog_snapshot(query)
+        revision, meanings = self.catalog_snapshot()
         # q is a literal catalog filter, never equivalence or novelty authority.
         if query:
             meanings = [row for row in meanings if query.casefold() in self._document(row).casefold()]

@@ -118,7 +118,21 @@ consent gate, retention, or deletion behavior described above.
 After entry, the compact **Demo guide** links to seeded scoring evidence,
 tailored-material review, Apply Review/dry-run, and run history. Every shortcut
 and action is simulated; it does not contact employers, send messages, or make
-external changes. **Reset synthetic demo data** asks for confirmation, then
+external changes.
+
+The updated source-built demo also offers **Explore matching and wording**,
+which opens **How matching and wording work**, an interactive illustration with
+synthetic catalog, evidence and
+wording choices. Those choices change only the example: they make no model calls
+and do not save Profile, match or approval changes to the browser-local workspace.
+The actual **Update affected matches** action remains unavailable in the demo
+and requires the local application. See the
+[Product Tour](product-tour.md#affected-matches) for the entry path and the
+[Profile update guide](candidate-profile.md#update-affected-matches) for the
+real action's limits and recovery behavior. Source changes do not establish a
+hosted deployment.
+
+**Reset synthetic demo data** asks for confirmation, then
 replaces the browser-local workspace with the original examples.
 Stage retry and rescoring are unavailable in the demo, including for retained
 synthetic histories that recorded a retryable failure.

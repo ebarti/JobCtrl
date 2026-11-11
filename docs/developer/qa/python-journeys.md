@@ -46,6 +46,145 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
+### Matching walkthrough and user guides — 11 November 2026
+
+The documentation/demo follow-up to `7ebd3da987c802256611130d33b03854cb873cdb`
+passed `corepack pnpm e2e -- --project=demo-chromium` **1/1** in `e2e-Jj7zOl`.
+This extends the existing demo case; the complete suite still contains 48
+journeys with unchanged budgets and zero retries. The macOS arm64 runner had
+12 CPUs and Node 22.21.1. It recorded 174 ms snapshot, 1,602 ms preflight,
+7,797 ms build, 20,300 ms journey orchestration and 29,912 ms total. The test
+body took 9.1 seconds. Python, runtime-policy and source-candidate hashes match
+the full-catalog qualification below. The new web build SHA-256 is
+`581d63547e0ccff14d514a146fd1386bbfd426e5cb7c3406f1cc431155f92d5b`.
+Build files and dependency locks remained unchanged during the run.
+
+The real demo bundle, consent Worker and browser exercised all four illustrative
+matching steps, both edit examples, completed/stopped/partial outcomes, grouped
+wording and approval/deferral examples. Keyboard entry, modal containment,
+Escape/close focus restoration, reopening and example reset passed. Profile
+fields, run identities and simulation receipts were unchanged by the walkthrough;
+the actual model-backed update remained unavailable. The retained resume edit,
+exact wording approval, reload, accepted PDF bytes/text/render and artifact
+catalog also passed. Cancelling the real demo reset preserved the edit;
+confirming reset restored synthetic seeds without resetting consent.
+
+There were no product `/v1` requests, unexpected external requests, authored-text
+leaks or browser errors. Owned runtime cleanup was corroborated by process and
+listener checks. Desktop 1440px and mobile 390px dialog captures were inspected,
+including both scroll positions of the dense two-requirement wording example.
+The full-page opening-fade capture is not used as settled visual evidence.
+The walkthrough is a fixed teaching example, not a model determination or a
+replacement for the real Python qualification journeys.
+
+The first mobile assertion sampled the existing 150 ms `max-width` transition
+immediately after resizing. Computed styles established the interpolation;
+normal retrying full-viewport visibility followed by the same geometry bounds
+passed with unchanged production sizing. A separate reload assertion was
+corrected to the existing in-memory guide preference: reload returns to the
+launcher while durable demo data remains. Neither repair added sleeps, retries,
+timeouts or new production persistence.
+
+Frontend type/boundary checks passed with zero violations. The documentation
+build resolved 15,941 references across 477 emitted files, and the fresh browser
+runtime check passed in desktop/mobile and light/dark configurations. Its first
+run exposed a stale expectation for the retired 45/30/25 dimension fallback;
+the gate now checks the actual scoped requirement policy and refuses that old
+current-behavior claim. The same formula/credit/headings and other runtime gates
+remain. Source review is clear. This evidence qualifies the source-built guide
+and demo, not a hosted deployment or the pending whole-app redesign.
+
+### Full catalog matching and manual refresh — 10 November 2026
+
+The complete source command `corepack pnpm e2e` on
+`a7e5c73b99f245452f1b12885dcee6d56080f2a8` passed **48/48** journeys in
+`e2e-FcYpDn`: 47 Python application journeys and the browser-local demo. There
+were no retries, skips, unexpected or flaky results. The macOS arm64 runner
+had 12 CPUs and Node 26.13.0. It recorded 124 ms source snapshot, 1,714 ms
+composition preflight, 7,248 ms web build, 303,063 ms journeys and 312,187 ms
+total. The dependency locks and built web assets remained unchanged.
+
+The source candidate SHA-256 was
+`55ef63c80afde9a06fc87d5d52ceca11b52cfcbc5aa418adac4531c28d360a28`;
+the frozen Python package SHA-256 was
+`48db340635bc11f9f3ad16c54a0a7b4cd88b4eb95046992c60a74a17f848b590`;
+the web build SHA-256 was
+`4cf2c179631e8b1ef5c0c6c0e66b3349c8721246eb7769e52fe5b578598ac099`.
+
+The added journeys verified complete-catalog matching and strict response
+validation, unchanged reuse, formerly missing support after a factual edit,
+one grouped proposal for an achievement's requirement set, explicit approval,
+fixed job scope, duplicate admission, cancellation, source changes while queued
+or running, and durable limits across an actual worker replacement. The
+uncertain-authoring journey preserved both original attempts, retried only
+achievement A, kept B visibly pending, then retried B through the UI. Forged
+retry metadata caused no model call. A fresh workspace kept its saved Profile
+version null, returned the minimal `profile_required` readiness response, and
+created no passive refresh action or model call.
+
+The earlier full run `e2e-66BMJV` passed 44/46 and exposed two real regressions:
+the new pending read returned 404 in valid Discovery and Compensation workflows
+before Profile creation. The Fit-owned readiness response repaired both. A
+separate real-demo Profile visit exposed an existing preview HTTP path/query
+contract error; the caller was repaired while retaining the Plate editor.
+The final full run includes both repairs and the demo capability guard. Earlier
+failures remain diagnostic evidence, not passing qualification.
+
+Desktop and 390px screenshots of ready, running, completed, uncertain-wording,
+subset-retry, pre-Profile and demo-unavailable states were inspected. The
+synthetic journeys exercised actual HTTP, Temporal, worker processes, SQLite
+and rendering; only external providers were controlled. They do not establish
+real-provider semantic quality, a hard monetary cap, model token-context
+capacity, or installed-release behavior. Independent source review found no
+remaining scoped findings after recovery, source-fence and lineage repairs.
+The delivery record is [#1464](https://github.com/ebarti/JobCtrl/issues/1464)
+and [PR #1465](https://github.com/ebarti/JobCtrl/pull/1465); the broader visual
+redesign remains separate.
+
+After that full run, the setup link gained only an underline. The real
+pre-Profile journey passed again in `e2e-iJW9Mr` (1/1, 15,808 ms total), with
+unchanged Python sources and locks. Its web SHA-256 was
+`2e741d704d11542302f7e8a8a888df28a7852d763a612be36d3e8c97c1e99391`.
+The revised setup screenshot was inspected; the final combined candidate's
+hosted results belong to the PR checks.
+
+The first hosted run on `6d876ff9e`,
+[CI 42917881590](https://github.com/ebarti/JobCtrl/actions/runs/42917881590),
+passed ten jobs but did not qualify the browser suite: its 480-second aggregate
+deadline stopped execution after 40 passed cases and left eight incomplete.
+There was no assertion failure; the next case was interrupted during setup.
+For the same 39 completed cases, workspace startup took 295,485 ms versus
+185,094 ms in the earlier hosted run, while test bodies took 141,025 ms versus
+112,854 ms. Web build time also rose from 14,957 ms to 24,181 ms. Startup
+continued steadily (7.79 seconds median, 8.28 seconds maximum), rather than
+stalling in one journey.
+
+Those measurements project roughly 610–630 seconds for all 48 cases on the
+slower runner. The aggregate suite allowance is now 720 seconds, with a
+14-minute CI build/suite step and the existing 20-minute job limit. This leaves
+bounded room for composition, build, teardown and evidence collection. The
+90-second ordinary test, 150-second demo and 60-second fixture limits, one
+worker, zero retries, assertions and owned-process cleanup are unchanged.
+This is a measured harness-budget correction; the timed-out run remains
+non-passing, and product behavior was not changed to accommodate it.
+
+The subsequent [CI run on `7ebd3da987c802256611130d33b03854cb873cdb`](https://github.com/ebarti/JobCtrl/actions/runs/42920853796)
+passed all 11 jobs. Its [Browser job](https://github.com/ebarti/JobCtrl/actions/runs/42920853796/job/130195135601)
+passed **48/48** journeys on Linux x64, four CPUs and Node 22.21.1. The run
+`e2e-PcNdAV` recorded 328 ms snapshot, 3,825 ms preflight, 21,815 ms build,
+612,612 ms journeys and 638,664 ms total. The Python source hash matched the
+complete local run; the web hash matched the underlined-link follow-up above.
+Build files and dependency locks remained unchanged. This qualifies that source
+candidate, not a later documentation/demo revision or a hosted deployment.
+
+The Product Tour's `affected-matches.png` is the unchanged desktop-ready capture
+from `e2e-FcYpDn`, inspected at its original 1440 × 1000 size. Its Profile fields
+are synthetic. It shows the implemented source-build control and its saved-input
+warning, not the proposed whole-app redesign. The image is an illustration;
+the journey results above establish the exercised behavior.
+
+### Earlier transformation qualification
+
 The hosted [Browser job](https://github.com/ebarti/JobCtrl/actions/runs/42289605507/job/128139371277)
 on candidate `09f9d5c` passed **23/23** source journeys, including the demo, in
 `e2e-DUQtlZ`. Its Linux x64 runner had four CPUs and Node 22.21.1. It recorded

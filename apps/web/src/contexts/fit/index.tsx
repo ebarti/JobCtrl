@@ -11,6 +11,7 @@ import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/creat
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import type { HttpPort } from "../../shared/ports/HttpPort.js";
+export { AffectedMatchesPanel } from "./refresh.js";
 
 const evidenceSchema = z.object({ source_id: z.string(), revision: z.union([z.number(), z.string()]), quote: z.string() }).passthrough();
 const assessmentSchema = z.object({
@@ -115,16 +116,12 @@ function useFitActions(jobId: string) {
       writeFit(http, `/v1/jobs/${encodeURIComponent(jobId)}/fit/correct`, body),
     onSuccess: accept,
   });
-  const refreshCoverage = useMutation({
-    mutationFn: async (prepare_wording: boolean) => writeFit(http, `/v1/jobs/${encodeURIComponent(jobId)}/fit/coverage/refresh`, { profile_id: "default", prepare_wording }),
-    onSuccess: accept,
-  });
   const correctRequirement = useMutation({
     mutationFn: ({ requirementId, body }: { requirementId: string; body: Record<string, unknown> }) =>
       http.json<unknown>("POST", `/v1/fit/requirements/${encodeURIComponent(requirementId)}/correct`, { body }),
     onSuccess: () => client.invalidateQueries({ queryKey: fitKeys.job(tenantId, jobId) }),
   });
-  return { assess, correct, refreshCoverage, correctRequirement };
+  return { assess, correct, correctRequirement };
 }
 
 function CorrectionForm({ score, revision, onSave, pending }: {
@@ -185,7 +182,7 @@ function RequirementCorrection({ assessment, factVersion, sources, achievements,
       warning_category: parsed.data.eligibility === "warning" ? parsed.data.warning : null, profile_id: "default" });
   } });
   return <details><summary>Correct this requirement assessment</summary>
-    <p>Choose a determination and cite the exact saved evidence. This records your correction; refresh person fit afterward to recalculate the score.</p>
+    <p>Choose a determination and cite the exact saved evidence. This records your correction; use Update affected matches afterward to recalculate the score.</p>
     {unavailableReason ? <p>{unavailableReason}</p> : null}
     <form onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
       <form.Field name="kind">{(field) => <label>Qualification<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>{["matched", "transferable", "missing", "blocked", "not_assessed"].map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>}</form.Field>
@@ -209,11 +206,10 @@ function RequirementCorrection({ assessment, factVersion, sources, achievements,
 export function PersonFitPanel({ jobId, sources = [], achievements = [], defaultMode = null }: { jobId: string; sources?: readonly EvidenceOption[]; achievements?: readonly AchievementOption[]; defaultMode?: "baseline" | "tailored" | null }) {
   const { featureFlags } = usePorts();
   const assessmentAvailability = getApiCapabilityAvailability(featureFlags, "rescoreJob");
-  const wordingAvailability = getApiCapabilityAvailability(featureFlags, "tailorJob");
   const query = useJobFit(jobId);
-  const { assess, correct, refreshCoverage, correctRequirement } = useFitActions(jobId);
+  const { assess, correct, correctRequirement } = useFitActions(jobId);
   const fit = query.data;
-  const busy = assess.isPending || correct.isPending || refreshCoverage.isPending || correctRequirement.isPending;
+  const busy = assess.isPending || correct.isPending || correctRequirement.isPending;
   const runAssessment = () => { if (assessmentAvailability.available) assess.mutate({ profile_id: "default", expected_revision: fit?.score?.revision ?? 0,
     prepare_wording: false, prepare_coverage: defaultMode === "tailored" }); };
   return <section className="section" aria-labelledby="person-fit-title">
@@ -239,18 +235,14 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
       </li>)}</ul>
       <CorrectionForm key={fit.score.revision} score={fit.score.score} revision={fit.score.revision} pending={busy} onSave={(body) => correct.mutate(body)} />
     </> : fit ? <p>No person-fit assessment has been recorded yet.</p> : null}
-    <div className="toolbar">
-      <Button type="button" disabled={!assessmentAvailability.available || busy || query.isPending} onClick={runAssessment}>{assess.isPending ? "Assessing…" : fit?.score ? "Refresh person fit" : "Assess person fit"}</Button>
-      <Button type="button" variant="outline" disabled={!wordingAvailability.available || busy || !fit?.score || !fit.current} onClick={() => refreshCoverage.mutate(true)}>Prepare wording</Button>
-    </div>
+    {fit && !fit.score ? <div className="toolbar">
+      <Button type="button" disabled={!assessmentAvailability.available || busy || query.isPending} onClick={runAssessment}>{assess.isPending ? "Assessing…" : "Assess person fit"}</Button>
+    </div> : null}
     {!assessmentAvailability.available ? <p>{assessmentAvailability.reason}</p> : null}
-    {!wordingAvailability.available ? <p>{wordingAvailability.reason}</p> : null}
-    <p className="muted">Preparing wording may request a grounded proposal for your review. Approve it in Profile before it can be reused.</p>
-    {assess.error || correct.error || refreshCoverage.error || correctRequirement.error ? <p role="alert">{(assess.error ?? correct.error ?? refreshCoverage.error ?? correctRequirement.error)?.message} {fit?.score ? "The previously loaded assessment remains available above." : "No assessment is shown."}</p> : null}
-    {correctRequirement.isSuccess ? <p role="status">Requirement correction recorded. Refresh person fit to recalculate this job's score.</p> : null}
+    {assess.error || correct.error || correctRequirement.error ? <p role="alert">{(assess.error ?? correct.error ?? correctRequirement.error)?.message} {fit?.score ? "The previously loaded assessment remains available above." : "No assessment is shown."}</p> : null}
+    {correctRequirement.isSuccess ? <p role="status">Requirement correction recorded. Use Update affected matches to recalculate this job's score.</p> : null}
     <h4>Approved wording coverage</h4>
     <p>This records whether approved wording expresses requirements; it is separate from your person-fit score.</p>
-    <Button type="button" variant="outline" disabled={!assessmentAvailability.available || busy || !fit?.score || !fit.current} onClick={() => refreshCoverage.mutate(false)}>Refresh wording coverage</Button>
     {fit?.coverage ? <>
       <p>Status: {fit.coverage.status}</p>
       {fit.coverage.wording_gaps.length ? <ul>{fit.coverage.wording_gaps.map((gap) => <li key={gap.requirement_id}>Requirement {gap.requirement_id}: {gap.status.replaceAll("_", " ")}{gap.proposal_status ? `; proposal ${gap.proposal_status}` : ""}</li>)}</ul> : <p>No wording gaps recorded.</p>}
@@ -260,6 +252,6 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
 }
 
 export const fitInvalidation = {
-  eventTypes: ["FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "JobCaptured", "JobSourceObserved", "JobUpdated", "RequirementBindingCorrected", "RequirementsUpdated", "RequirementMeaningRevised"] as const,
+  eventTypes: ["FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated", "FitRefreshUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "JobCaptured", "JobSourceObserved", "JobUpdated", "RequirementBindingCorrected", "RequirementsUpdated", "RequirementMeaningRevised"] as const,
   handle(event: DomainEventEnvelope, client: QueryClient) { void invalidateQueriesWithOptimisticOwnership(client, fitKeys.all(event.tenantId)); },
 };

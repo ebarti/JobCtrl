@@ -17,6 +17,11 @@ each page below, see the [Product Tour](product-tour.md).
 For a lifecycle-level view of the records these steps create, read
 [Open-source Job Application Tracker](../guides/open-source-job-application-tracker.md).
 
+The saved-input update flow below describes the current Python source build.
+Check the [published release](https://github.com/ebarti/JobCtrl/releases/latest)
+for installed-version availability; source changes and demo illustrations do
+not establish a release or deployment.
+
 ::: info Command spelling
 This guide uses the canonical installed spelling, `jobctrl <command>`. The
 same native executable owns `jobctrl start`, `stop`, and `status`, regardless
@@ -48,7 +53,11 @@ credentials, model selection, and browser capabilities. Those policy surfaces
 can constrain work, but they do not create candidate evidence.
 
 Profile and settings forms autosave after a short delay. The explicit Save
-buttons use the same save path.
+buttons use the same save path. Saving facts, source reviews, wording or
+approvals does not start matching, scoring, wording preparation or resume
+regeneration. After saving, use the explicit
+[Update affected matches](#update-matches-after-saved-changes) flow when you
+want existing matches reviewed.
 
 </WorkflowSurfacePanel>
 
@@ -346,6 +355,11 @@ The Jobs view supports filters, sorting, pagination, deep links, job-state and
 fit-score filters, stage state, source provenance, compensation evidence, and
 route-level job workspaces.
 
+In Job Detail, **Person fit** explains factual support and **Approved wording
+coverage** explains the expression of those facts in exact approved text. A
+missing expression does not lower factual fit. Shared requirements reuse their
+current assessments across jobs; each job retains its own priorities and score.
+
 In Job Detail, retrying a failed Discover stage resets it to pending without
 starting another run. Retrying a supported preparation stage also requests the
 remaining preparation work; its progress is reconciled with the recorded state.
@@ -454,6 +468,32 @@ starting apply automation.
 [Scoring](scoring-and-employer-analysis.md) owns the fit
 decision model; [Compensation Evidence](compensation-evidence.md) owns the
 salary evidence shown alongside it.
+
+### Update Matches After Saved Changes
+
+After editing Profile facts, reviewing sources, changing a requirement, or
+approving wording, choose when to review the effect on existing matches:
+
+1. Save the inputs you want included. **Update affected matches** reads saved
+   Profile, sources and approved wording; unsaved edits stay outside the request.
+2. For a cohort, select scored jobs in **Jobs** and open **Update affected
+   matches for selected jobs**. You can also start from Profile, Evidence Map,
+   or the panel beside **Person fit** in Job Detail. Review the displayed job
+   scope and **Work limits** before choosing **Update affected matches**.
+3. Inspect the recorded result. The update reviews the complete catalog,
+   reuses current factual and wording decisions, reassesses affected support and
+   groups remaining expression gaps by achievement. Review any proposals in
+   Profile's **Approved wording** section and approve exact text explicitly.
+
+Opening the panel or checking match state makes no model call. The update's
+finite job, requirement, model-attempt, proposal and time allowances do not impose a
+hard monetary cap on a provider call. A failed, stale, cancelled or limited
+request keeps accepted work; a partial result identifies factual work saved
+before later wording work stopped. Requesting cancellation is separate from a
+recorded cancelled outcome. Retry eligible failed wording explicitly and check
+an unconfirmed earlier request before starting different work. The
+[Profile update guide](candidate-profile.md#update-affected-matches) owns the
+exact limits, selection and recovery rules.
 
 ## 5. Inspect The Evidence Map
 

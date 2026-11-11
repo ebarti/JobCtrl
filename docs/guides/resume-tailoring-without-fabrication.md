@@ -38,6 +38,31 @@ The [accepted transformation target](../user/materials-and-tailoring.md#how-jobc
 retains the full approved baseline and separates factual fit from document
 coverage. It is an implementation target pending integration verification.
 
+## Reuse Approved Expression Deliberately
+
+The current Python source keeps factual support separate from approved wording
+coverage. A person can meet a requirement while no approved variant expresses
+it; that document gap does not lower factual fit. Requirements with the same
+qualified meaning can reuse their recorded assessment and exact current wording
+relations across jobs.
+
+Saving Profile facts, sources or wording approval starts no follow-on work.
+After saving, choose **Update affected matches** when you want those changes
+reviewed. Fit considers an achievement's relevant requirement set together and
+prepares a grouped proposal only for meaningful supported expression gaps.
+Profile's **Approve exact wording** action authorizes that precise text for
+reuse; rejected and deferred proposals remain recorded rather than being
+regenerated for each job. See the
+[wording library](../user/candidate-profile.md#approved-wording-library) for
+editing and approval, and the [update guide](../user/candidate-profile.md#update-affected-matches)
+for finite limits, costs, partial outcomes and explicit retries.
+
+The real Plate baseline editor remains part of Profile. Reviewing a wording
+proposal does not replace that editor or rewrite an accepted resume. Document
+composition, rendering and acceptance remain separate actions with their own
+recorded inputs. Source behavior and the synthetic walkthrough do not establish
+installed-release availability or a hosted deployment.
+
 ## Missing Evidence Stays Missing
 
 Suppose a posting requires Kubernetes production operations but the Candidate
@@ -90,6 +115,9 @@ Use the [synthetic live demo](https://demo.jobctrl.dev) to inspect requirement
 evidence and generated materials without connecting a provider. To tailor your
 own profile, follow [Getting Started](../user/getting-started.md), create and
 review a versioned Candidate Profile, then run a bounded Discover workflow.
+The updated source-built **Demo guide** → **Explore matching and wording** walkthrough
+illustrates requirement reuse and grouped proposals without model calls or
+saved workspace changes; the actual update action is unavailable there.
 Always read the rendered resume and its evidence before using it.
 
 Related reading:

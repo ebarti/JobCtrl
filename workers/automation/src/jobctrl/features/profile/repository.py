@@ -9,7 +9,7 @@ import json
 from uuid import uuid4
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
-from .models import ProfileSnapshot, canonical, fingerprint, profile_identity
+from .models import ProfileSnapshot, authoring_request_summary, canonical, fingerprint, profile_identity
 from .shape import DEFAULT_STYLE, DEFAULT_TEMPLATE, empty_profile
 
 
@@ -87,19 +87,30 @@ class ProfileRepository:
             return conn.execute("SELECT * FROM profile_authoring_requests WHERE profile_id=? AND origin_key=?", (profile_id, origin_key)).fetchone()
         return conn.execute("SELECT * FROM profile_authoring_requests WHERE profile_id=? AND proposal_id=?", (profile_id, proposal_id)).fetchone()
 
-    def recover_interrupted_authoring(self, conn, profile_id, row):
+    def authoring_retry_successor(self, conn, profile_id, proposal_id):
+        return conn.execute("""SELECT * FROM profile_authoring_requests WHERE profile_id=?
+            AND json_extract(brief_json,'$.origin_metadata.retry_of_proposal_id')=? ORDER BY rowid DESC LIMIT 1""",
+            (profile_id, proposal_id)).fetchone()
+
+    @staticmethod
+    def authoring_interrupted(row):
         import os
         if row["status"] != "generating":
-            return row
+            return False
         owner = json.loads(row["brief_json"]).get("_authoring_owner", {}).get("pid")
         if type(owner) is int:
             try:
                 os.kill(owner, 0)
             except ProcessLookupError:
-                self.fail_authoring(conn, profile_id, row["origin_key"], "authoring_interrupted")
-                return self.authoring_row(conn, profile_id, origin_key=row["origin_key"])
+                return True
             except PermissionError:
                 pass
+        return False
+
+    def recover_interrupted_authoring(self, conn, profile_id, row):
+        if self.authoring_interrupted(row):
+            self.fail_authoring(conn, profile_id, row["origin_key"], "authoring_interrupted")
+            return self.authoring_row(conn, profile_id, origin_key=row["origin_key"])
         return row
 
     def start_authoring(self, conn, *, profile_id, origin_key, brief):
@@ -411,6 +422,7 @@ class ProfileRepository:
             for item in variants:
                 if item["achievement_id"] not in active or not self.current_refs(conn, item["source_refs"], profile_id):
                     item["status"] = "stale"
-            proposals = [dict(row) for row in conn.execute("SELECT proposal_id,origin_key,status,variant_id,failure_code FROM profile_authoring_requests WHERE profile_id=? ORDER BY proposal_id", (profile_id,))]
+            proposals = [authoring_request_summary(row) for row in conn.execute(
+                "SELECT * FROM profile_authoring_requests WHERE profile_id=? ORDER BY proposal_id", (profile_id,))]
             return {"ok": True, "profileVersion": snapshot.profile_revision, "wordingRevision": snapshot.wording_revision,
                     "roles": list(snapshot.roles), "variants": variants, "proposals": proposals}

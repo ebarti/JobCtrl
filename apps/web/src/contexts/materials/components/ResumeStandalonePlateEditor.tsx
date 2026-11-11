@@ -126,7 +126,13 @@ function useResumeHtmlState(
     let active = true;
     setHtmlState({ status: "loading", html: null, message: null });
     const url = new URL(htmlUrl, "http://jobctrl.local");
-    http.text("GET", `${url.pathname}${url.search}`)
+    let request: Promise<string>;
+    try {
+      request = http.text("GET", url.pathname, { query: Object.fromEntries(url.searchParams) });
+    } catch (error) {
+      request = Promise.reject(error);
+    }
+    void request
       .then((html) => {
         if (active) {
           setHtmlState({ status: "ready", html: htmlTransform ? htmlTransform(html) : html, message: null });

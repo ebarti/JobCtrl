@@ -272,6 +272,16 @@ in the MVP. The receipt history stays inspectable in the demo shell. The demo
 never falls back to the product API, SSE, an external origin, or a host-OS
 opener.
 
+**Demo guide → Explore matching and wording** opens a separate illustrative
+walkthrough of canonical requirement matching, saved changes, manual refresh
+outcomes and reusable wording. Its examples and choices live only in the dialog;
+they do not edit the synthetic workspace, create action receipts, assess a
+requirement or approve wording. The actual **Update affected matches** action
+remains unavailable in the public demo because it needs the local model-backed
+runtime. The walkthrough explains the implemented feature; it is not the
+pending whole-app redesign. Follow [Candidate Profile](user/candidate-profile.md)
+for the local application's control and recovery behavior.
+
 `DemoSeedValue.seedVersion` is the fixture-revision boundary, separate from the
 IndexedDB/workspace schema versions. Changing the canonical seed must bump this
 value. When a seed refresh changes the destructive writer contract, also advance

@@ -15,8 +15,9 @@ from .domain import FORMULA_VERSION, calculate_score, fit_band
 from .models import QualificationDecision
 from .ports import FitStorePort, ModelPort, ProfilePort, RequirementsPort, SettingsPort
 from .qualification import Qualification, now
+from .refresh import ManualRefresh
 from .sources import (
-    achievements, dto, fact_fingerprint, fact_sources, fingerprint, requirement_source,
+    achievements, approved_fingerprint, dto, fact_fingerprint, fact_sources, fingerprint, requirement_source,
     semantic_sources,
 )
 
@@ -51,6 +52,45 @@ class FitService:
         self.profile, self.requirements, self.settings = profile, requirements, settings
         self.qualification = Qualification(model=model, store=store)
         self.coverage = Coverage(model=model, profile=profile, store=store, qualification=self.qualification)
+        self.manual_refresh = ManualRefresh(self)
+
+    def refresh_pending(self, profile_id="default"):
+        return self.manual_refresh.pending(profile_id)
+
+    def refresh_operation(self, operation_id, *, allow_pending=False):
+        return self.manual_refresh.operation(operation_id, allow_pending=allow_pending)
+
+    async def refresh(self, *, operation_id, cancelled=lambda: False, heartbeat=lambda details: None, **request):
+        if len(request["job_ids"]) != len(set(request["job_ids"])) or any(not value for value in request["job_ids"]):
+            raise AppError("fit_refresh_job_scope_invalid", "Select each saved job once.", 422)
+        retry_ids = request.get("retry_wording_proposal_ids", [])
+        if len(retry_ids) != len(set(retry_ids)) or any(not value for value in retry_ids):
+            raise AppError("fit_refresh_retry_invalid", "Select each failed wording proposal once.", 422)
+        if retry_ids and (not request["prepare_wording"] or request["job_ids"]):
+            raise AppError("fit_refresh_retry_invalid", "An explicit wording retry prepares only the selected proposals; use an empty job selection.", 422)
+        return await self.manual_refresh.run(operation_id=operation_id, request=request, cancelled=cancelled, heartbeat=heartbeat)
+
+    def interrupt_refresh(self, operation_id, status, failure_code=None, *, connection=None):
+        return self.manual_refresh.interrupt(operation_id, status, failure_code, connection=connection)
+
+    @staticmethod
+    def _wording_inventory_current(read, profile, score):
+        current = approved_fingerprint(profile)
+        if score["source_binding"].get("approved_variants_fingerprint") == current:
+            return True
+        completed = read.completed_refresh(profile["profile_id"])
+        return bool(completed and approved_fingerprint(completed["snapshot"]["profile"]) == current
+                    and fact_fingerprint(completed["snapshot"]["profile"]) == fact_fingerprint(profile))
+
+    def _require_manual_refresh(self, read, job_id, profile_id, *, force=False):
+        previous = read.latest_score(job_id)
+        if previous is None:
+            return
+        profile = dto(read.profile_snapshot(profile_id))
+        current = self._get_job_fit(read, job_id, profile_id, include_coverage=False)
+        if (force or not current["current"]
+                or not self._wording_inventory_current(read, profile, previous)):
+            raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
 
     async def assess_job(self, job_id: str, *, expected_revision: int, profile_id="default", force=False,
                          prepare_wording=True, prepare_coverage=True, cancelled: Callable[[], bool] = lambda: False,
@@ -72,6 +112,13 @@ class FitService:
         with self.store.read_snapshot() as read:
             read.validate_sources(profile_snapshot, requirements_snapshot)
             self._assert_score_revision(read, job_id, expected_revision)
+            self._require_manual_refresh(read, job_id, profile_id, force=force)
+            source_hash = fact_fingerprint(profile)
+            for requirement in rows:
+                previous = read.latest_requirement_assessment(profile_id, requirement["requirement_id"])
+                if previous is not None and (force or previous["source_fingerprint"] != source_hash
+                        or str(previous["requirement_revision"]) != str(requirement["requirement_revision"])):
+                    raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
         qualifications = []
         reused = 0
         for requirement in rows:
@@ -97,6 +144,7 @@ class FitService:
             "fact_semantics_version": profile["fact_semantics_version"],
             "source_fingerprint": fact_fingerprint(profile),
             "scoring_guidance_fingerprint": fingerprint(profile_snapshot.scoring_guidance),
+            "approved_variants_fingerprint": approved_fingerprint(profile),
             "requirements_revision": requirements_snapshot["revision"],
             "posting_revision": requirements_snapshot["posting_revision"],
             "posting_hash": requirements_snapshot["posting_hash"],
@@ -300,6 +348,8 @@ class FitService:
 
     async def refresh_coverage(self, job_id: str, *, profile_id="default", prepare_wording=True,
                                cancelled=lambda: False) -> dict:
+        with self.store.read_snapshot() as read:
+            self._require_manual_refresh(read, job_id, profile_id)
         profile_snapshot = self.qualification.snapshot(profile_id)
         requirements_snapshot = self.requirements.get_job_requirements(job_id)
         result = await self.coverage.refresh(profile_snapshot, requirements_snapshot,

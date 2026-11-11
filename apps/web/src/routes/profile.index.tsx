@@ -2,6 +2,8 @@ import { prefetchProfileEditor } from "../contexts/profile/readQueries.js";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { ProfileEditor } from "../contexts/profile/components/ProfileEditor.js";
+import { AffectedMatchesPanel } from "../contexts/fit/index.js";
+import { useMountedFeatures } from "../contexts/runtime/index.js";
 import { PageHead } from "../shared/ui/page-head.js";
 
 export const Route = createFileRoute("/profile/")({
@@ -10,6 +12,7 @@ export const Route = createFileRoute("/profile/")({
 });
 
 function ProfilePage() {
+  const features = useMountedFeatures();
   return (
     <>
       <PageHead
@@ -17,7 +20,7 @@ function ProfilePage() {
         title="Profile"
         subtitle="Baseline resume, evidence, and personal details"
       />
-      <ProfileEditor />
+      <ProfileEditor affectedMatches={features.has("fit") ? <AffectedMatchesPanel /> : null} />
     </>
   );
 }

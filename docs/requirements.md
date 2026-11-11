@@ -119,10 +119,27 @@ documentation, not the historical plan that first proposed it.
 
 Profile-save clarification (2026-10-23): saving or autosaving candidate facts must
 not schedule scoring or material regeneration. Jobs disclose when the recorded
-score profile predates the saved profile. An explicitly requested score update
-uses a source-bound LLM significance check before recomputing for profile changes;
-insignificant edits retain the original score and recorded provenance. Failed or
-unavailable checks never become an insignificant verdict. See [Scoring](architecture/scoring.md#profile-edits-and-explicit-refresh).
+score profile predates the saved profile. The 2026-11-10 owner refinement makes
+post-edit reassessment an explicit, bounded manual operation. One source-bound
+decision considers the entire requirement catalog and changed saved evidence,
+including requirements previously missing support. Only affected requirements
+are reassessed; unchanged authority is reused with recorded revalidation.
+Saving facts, wording, approvals or requirement definitions must not start or
+restart that work. Each operation fixes its input versions, explicit job scope,
+identity and limits; concurrent changes remain pending for a later user action.
+Failures preserve accepted records. See [Scoring](architecture/scoring.md#profile-edits-and-explicit-refresh).
+
+Catalog-matching clarification (2026-11-10): after source extraction, send the
+complete incoming requirement batch and current canonical catalog, including
+qualified meanings and exact revisions, in one matching request. The same
+determination identifies existing, new or uncertain meanings. Do not use
+retrieval subsets, paged comparisons, separate novelty calls or truncation as a
+fallback. A refusal retains the last accepted catalog/posting binding. Current
+approved wording coverage is reused directly; actual expression gaps are grouped
+by achievement for bounded preparation and exact user review. This changes
+refresh and wording preparation, not the current resume composition cardinality
+rule in BR-049. The broader cardinality question remains open in
+[#1129](https://github.com/ebarti/JobCtrl/issues/1129).
 
 ## Technical Requirements
 
