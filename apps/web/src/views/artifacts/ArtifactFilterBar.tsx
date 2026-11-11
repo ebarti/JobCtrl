@@ -54,7 +54,7 @@ export function ArtifactFilterBar({ search }: ArtifactFilterBarProps) {
     >
       <form.Field name="q">
         {(field) => (
-          <label htmlFor={`${id}-q`}>
+          <label className="artifact-search-field" htmlFor={`${id}-q`}>
             Search saved materials
             <Input
               id={`${id}-q`}

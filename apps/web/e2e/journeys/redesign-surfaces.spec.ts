@@ -211,6 +211,88 @@ test("Original redesign renders all twenty-six primary workspace surfaces at nor
     },
   ];
   const afterAuthoredSetup = app.external.calls.length;
+  const materialControlGeometry = async (state: string, width: number) => {
+    const geometry = await page
+      .getByRole("form", { name: "Material filters", exact: true })
+      .evaluate((form) => {
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d")!;
+        const bounds = (element: Element) => {
+          const box = element.getBoundingClientRect();
+          return {
+            left: box.left,
+            right: box.right,
+            top: box.top,
+            bottom: box.bottom,
+            width: box.width,
+          };
+        };
+        return {
+          form: bounds(form),
+          controls: Array.from(
+            form.querySelectorAll<HTMLElement>("input, select, button"),
+          ).map((element) => {
+            const style = getComputedStyle(element);
+            context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+            const displayedText =
+              element instanceof HTMLInputElement
+                ? element.placeholder
+                : element instanceof HTMLSelectElement
+                  ? element.selectedOptions[0]!.text
+                  : "";
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            return {
+              tag: element.tagName,
+              text: element.textContent?.trim(),
+              box: bounds(element),
+              minimumReadableWidth: displayedText
+                ? context.measureText(displayedText).width +
+                  Number.parseFloat(style.paddingLeft) +
+                  Number.parseFloat(style.paddingRight) +
+                  Number.parseFloat(style.borderLeftWidth) +
+                  Number.parseFloat(style.borderRightWidth)
+                : 0,
+              textBoxes:
+                element instanceof HTMLButtonElement
+                  ? Array.from(range.getClientRects()).map((box) => ({
+                      left: box.left,
+                      right: box.right,
+                      top: box.top,
+                      bottom: box.bottom,
+                    }))
+                  : [],
+            };
+          }),
+        };
+      });
+    expect(geometry.controls.length).toBeGreaterThanOrEqual(3);
+    for (const [index, control] of geometry.controls.entries()) {
+      expect(control.box.width).toBeGreaterThanOrEqual(
+        control.minimumReadableWidth - 1,
+      );
+      expect(control.box.left).toBeGreaterThanOrEqual(geometry.form.left - 1);
+      expect(control.box.right).toBeLessThanOrEqual(geometry.form.right + 1);
+      for (const text of control.textBoxes) {
+        expect(text.left).toBeGreaterThanOrEqual(control.box.left - 1);
+        expect(text.right).toBeLessThanOrEqual(control.box.right + 1);
+        expect(text.top).toBeGreaterThanOrEqual(control.box.top - 1);
+        expect(text.bottom).toBeLessThanOrEqual(control.box.bottom + 1);
+      }
+      for (const other of geometry.controls.slice(index + 1))
+        expect(
+          Math.min(control.box.right, other.box.right) <=
+            Math.max(control.box.left, other.box.left) ||
+            Math.min(control.box.bottom, other.box.bottom) <=
+              Math.max(control.box.top, other.box.top),
+          "Material filter controls must not overlap",
+        ).toBe(true);
+    }
+    await testInfo.attach(`material-controls-${width}-${state}`, {
+      contentType: "application/json",
+      body: JSON.stringify(geometry),
+    });
+  };
   for (const viewport of viewports) {
     await page.setViewportSize(viewport);
     for (const [index, route] of routes.entries()) {
@@ -386,6 +468,8 @@ test("Original redesign renders all twenty-six primary workspace surfaces at nor
       await page.evaluate(async () => {
         await document.fonts.ready;
       });
+      if (route.name === "materials")
+        await materialControlGeometry("all", viewport.width);
       const activeSection = activeSections[route.name];
       if (activeSection) {
         const navigation = page.getByRole("navigation", {
@@ -564,6 +648,74 @@ test("Original redesign renders all twenty-six primary workspace surfaces at nor
         await expect(
           page.getByRole("region", { name: "Captured jobs", exact: true }),
         ).toContainText("Synthetic Reliability Engineer");
+      }
+      if (route.name === "materials" && viewport.width === 390) {
+        const filters = page.getByRole("form", {
+          name: "Material filters",
+          exact: true,
+        });
+        const search = filters.getByRole("textbox", {
+          name: "Search saved materials",
+          exact: true,
+        });
+        const artifact = page.getByRole("link", {
+          name: "Synthetic Reliability Engineer",
+          exact: true,
+        });
+        await expect(artifact).toHaveCount(1);
+        await search.fill("Reliability");
+        await filters
+          .getByRole("button", { name: "Search", exact: true })
+          .click();
+        await expect(page).toHaveURL(
+          (url) => url.searchParams.get("q") === "Reliability",
+        );
+        await expect(artifact).toHaveCount(1);
+        await expect(
+          filters.getByRole("button", { name: "Clear search", exact: true }),
+        ).toBeVisible();
+        await materialControlGeometry("search-and-clear", viewport.width);
+        const searchedPath = testInfo.outputPath(`${name}-search-results.png`);
+        await page.screenshot({ path: searchedPath });
+        await testInfo.attach(`${name}-search-results`, {
+          contentType: "image/png",
+          path: searchedPath,
+        });
+        await search.fill("no-synthetic-artifact-matches-this-literal");
+        await filters
+          .getByRole("button", { name: "Search", exact: true })
+          .click();
+        await expect(
+          page.getByText("No recorded PDF files match these filters.", {
+            exact: true,
+          }),
+        ).toBeVisible();
+        await expect(artifact).toHaveCount(0);
+        await filters
+          .getByRole("button", { name: "Clear search", exact: true })
+          .click();
+        await expect(search).toHaveValue("");
+        await expect(page).toHaveURL((url) => url.searchParams.get("q") === "");
+        await expect(artifact).toHaveCount(1);
+        const recordedState = filters.getByRole("combobox", {
+          name: "Recorded state",
+          exact: true,
+        });
+        await recordedState.selectOption("candidate");
+        await expect(page).toHaveURL(
+          (url) => url.searchParams.get("status") === "candidate",
+        );
+        await expect(artifact).toHaveCount(0);
+        await expect(
+          page.getByText("No recorded PDF files match these filters.", {
+            exact: true,
+          }),
+        ).toBeVisible();
+        await recordedState.selectOption("accepted");
+        await expect(artifact).toHaveCount(1);
+        await expect(page.getByText("Accepted", { exact: true })).toBeVisible();
+        await recordedState.selectOption("all");
+        await expect(artifact).toHaveCount(1);
       }
     }
   }
