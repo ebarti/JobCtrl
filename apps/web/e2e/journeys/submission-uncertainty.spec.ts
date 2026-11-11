@@ -230,7 +230,7 @@ test("uncertain submission keeps one durable intent and never sends twice after 
       )
       .digest("hex"),
   ).toBe(createHash("sha256").update(pdf).digest("hex"));
-  await page.goto(`/jobs/${posting.job_id}`);
+  await page.goto(`/jobs/${posting.job_id}?jobTab=application`);
   await expect(
     page.getByText(/needs.verification|Needs verification/i).first(),
   ).toBeVisible();

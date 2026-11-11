@@ -127,7 +127,7 @@ test("a lost preparation admission is reconciled after reload without starting i
     .getByRole("button", { name: "Check previous preparation" })
     .click();
   await expect(controls.getByRole("status")).toContainText(
-    `Previous request ${runId} is recorded as running. Its admission has been reconciled.`,
+    "Previous preparation is recorded as running. Its admission has been reconciled.",
   );
   expect(
     await page.evaluate((key) => sessionStorage.getItem(key), storageKey),

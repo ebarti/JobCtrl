@@ -35,6 +35,7 @@ export type ApplicationStack = {
   external: {
     calls: ExternalCall[];
     sends: ExternalCall[];
+    setCatalog(value: { providers: Record<string, unknown>[] }): void;
     next(options?: { timeout?: number }): Promise<ExternalCall>;
   };
   restartWorker(): Promise<{ previous: number; current: number }>;
@@ -98,10 +99,16 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       expectedResponseErrors.push(response);
     });
   },
-  allowRequestFailure: async ({ expectedTransportFailures }, use) => {
+  allowRequestFailure: async ({ app, expectedTransportFailures }, use) => {
     await use((request, errorText) => {
       expect(errorText).toBe("net::ERR_FAILED");
-      expect(request.method()).toBe("POST");
+      expect(
+        request.method() === "POST" ||
+          (request.method() === "PATCH" &&
+            new URL(request.url()).origin === app.baseURL &&
+            new URL(request.url()).pathname === "/v1/credentials/batch"),
+        "Only an observed admitted POST or credential batch acknowledgement may be severed",
+      ).toBe(true);
       expect(
         request.failure()?.errorText,
         "Only an actually failed browser Request may allow its native transport console entry",
