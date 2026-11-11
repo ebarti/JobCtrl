@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "@tanstack/react-form";
 import { useQuery } from "@tanstack/react-query";
 import type { Value } from "platejs";
@@ -12,6 +12,7 @@ import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import { useResumeActions, useResumeHtml, useResumes, type Resume, type ResumeDocument } from "./client.js";
+import { resumeEditorDraftKey, useResumeEditorDraftStore } from "./editorDrafts.js";
 
 // Renderer IDs are stable source identities. Never infer a field from text.
 function applyTextChanges(document: ResumeDocument, changes: readonly ResumePlateSemanticTextChange[]): ResumeDocument {
@@ -41,15 +42,25 @@ function applyTextChanges(document: ResumeDocument, changes: readonly ResumePlat
   return next;
 }
 
-function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged }: { latest: Resume; onDirtyChange: (dirty: boolean) => void; onProfileChanged?: () => void }) {
-  const { featureFlags } = usePorts();
+function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged, managedPreparation = false }: { latest: Resume; onDirtyChange: (dirty: boolean) => void; onProfileChanged?: () => void; managedPreparation?: boolean }) {
+  const { featureFlags, session: owner } = usePorts();
+  const tenant = useTenantId();
+  const draftKey = resumeEditorDraftKey(tenant, latest.resume_id);
+  const resetVersion = useResumeEditorDraftStore((state) => state.resetVersions.get(owner)?.get(tenant) ?? 0);
+  const [editGeneration, setEditGeneration] = useState(resetVersion);
+  const restoredGeneration = useRef(resetVersion);
+  const [retained] = useState(() => {
+    const draft = useResumeEditorDraftStore.getState().drafts.get(draftKey);
+    return draft?.owner === owner && draft.tenant === tenant ? draft : null;
+  });
   const tailoring = getApiCapabilityAvailability(featureFlags, "tailorJob");
   const translation = getApiCapabilityAvailability(featureFlags, "materialLocaleVariants");
   const docx = getApiCapabilityAvailability(featureFlags, "downloadMaterialDocx");
-  const [session, setSession] = useState(latest);
-  const [dirty, setDirty] = useState(false);
-  const [plate, setPlate] = useState<Value | null>(null);
-  const [changes, setChanges] = useState<readonly ResumePlateSemanticTextChange[]>([]);
+  const [session, setSession] = useState(retained?.resume ?? latest);
+  const [dirty, setDirty] = useState(Boolean(retained));
+  const [plate, setPlate] = useState<Value | null>(retained?.plate ?? null);
+  const [changes, setChanges] = useState<readonly ResumePlateSemanticTextChange[]>(retained?.changes ?? []);
+  const [restoredPlate, setRestoredPlate] = useState<Value | null>(retained?.plate ?? null);
   const [editError, setEditError] = useState("");
   const { action, exportFile } = useResumeActions(latest.job_id);
   const revision = session.revisions.find((item) => item.revision_id === session.current_revision);
@@ -62,14 +73,26 @@ function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged }: { latest: 
   const updateDirty = useCallback((value: boolean) => { setDirty(value); onDirtyChange(value); }, [onDirtyChange]);
   useEffect(() => {
     if (!dirty && !busy && latest.version > session.version) {
-      setSession(latest); setPlate(null); setChanges([]); setEditError("");
+      setSession(latest); setPlate(null); setChanges([]); setRestoredPlate(null); setEditError("");
     }
   }, [busy, dirty, latest, session.version]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
+  useEffect(() => {
+    if (editGeneration === resetVersion) return;
+    setSession(latest); setPlate(null); setChanges([]); setRestoredPlate(null); setDirty(false); setEditError("");
+    setEditGeneration(resetVersion);
+  }, [editGeneration, resetVersion, latest]);
+  useEffect(() => {
+    if (editGeneration !== resetVersion) return;
+    onDirtyChange(dirty);
+    useResumeEditorDraftStore.getState().save(draftKey, dirty ? { owner, tenant, resume: session, plate, changes } : null);
+  }, [draftKey, dirty, owner, tenant, session, plate, changes, onDirtyChange, editGeneration, resetVersion]);
   if (!revision) return <p role="alert">The current resume revision was not found.</p>;
   const latestChanged = latest.version > session.version;
   const rendered = revision.renders.at(-1);
-  const readyToAccept = revision.mechanical.status === "valid" && Boolean(rendered) && !(rendered?.layout_conflicts?.length);
+  const freshness = latest.current_revision === session.current_revision ? latest.composition_freshness : session.composition_freshness;
+  const sourcesChanged = Boolean(freshness && (!freshness.current || freshness.revision_id !== session.current_revision));
+  const readyToAccept = !sourcesChanged && revision.mechanical.status === "valid" && Boolean(rendered) && !(rendered?.layout_conflicts?.length);
   const changedBullets = revision.document.experience.flatMap((role) => role.bullets.filter((bullet) => {
     const selected = revision.selected_variants.find((variant) => variant.achievement_id === (bullet.achievement_id ?? bullet.id));
     return !selected || selected.text !== bullet.text;
@@ -77,7 +100,7 @@ function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged }: { latest: 
   const actionError = action.error?.message ?? exportFile.error?.message ?? editError;
   const run = (name: string, body: Record<string, unknown>) => {
     action.mutate({ resumeId: session.resume_id, action: name, body: { expected_version: session.version, ...body } }, {
-      onSuccess: (next) => { setSession((current) => current.version > next.version ? current : next); setPlate(null); setChanges([]); updateDirty(false); setEditError(""); if (name === "approve-edits") onProfileChanged?.(); },
+      onSuccess: (next) => { setSession((current) => current.version > next.version ? current : next); setPlate(null); setChanges([]); setRestoredPlate(null); updateDirty(false); setEditError(""); if (name === "approve-edits") onProfileChanged?.(); },
     });
   };
   const save = () => {
@@ -91,16 +114,17 @@ function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged }: { latest: 
   const acceptance = session.acceptances.findLast((item) => item.revision_id === session.accepted_revision_id);
   const renderFailure = revision.render_attempts.at(-1);
   return <div>
-    <p>Revision {revision.number} · {revision.mode === "baseline_copy" ? "Baseline copy" : "Composed resume"} · profile revision {revision.profile_revision}</p>
-    {revision.mode === "baseline_copy" ? <p>Baseline copy retains the complete saved profile. Creating and reviewing this copy makes no resume model calls.</p> : <p>Composition keeps every baseline role and achievement and chooses one approved wording for each.</p>}
-    {session.accepted_revision_id ? <p role="status">Accepted revision {session.accepted_revision_id === session.current_revision ? "is current" : "is retained separately"}{acceptance ? `; review ${acceptance.review_status}${acceptance.review_override ? " with explicit override" : ""}` : ""}.</p> : <p>No resume has been accepted yet.</p>}
+    <p>{revision.mode === "baseline_copy" ? "Full baseline" : "Tailored resume"} · revision {revision.number}</p>
+    {session.accepted_revision_id ? <p role="status">Accepted copy {session.accepted_revision_id === session.current_revision ? "matches this document" : "is retained separately"}{acceptance ? `; review ${acceptance.review_status}${acceptance.review_override ? " with explicit override" : ""}` : ""}.</p> : <p>No resume has been accepted yet.</p>}
+    {sourcesChanged ? <p role="status">Recorded profile, coverage or current wording changed. Prepare again when ready. Your saved edits and accepted resume remain available.</p> : null}
     <ResumeTemplateAssignment disabled={busy || dirty || latestChanged} run={run} />
-    {latestChanged ? <div role="alert"><p>The saved resume changed while this editor was open. Your local edits remain here; saving against the older version will be rejected.</p><Button type="button" variant="outline" onClick={() => { setSession(latest); setPlate(null); setChanges([]); updateDirty(false); setEditError(""); }}>Discard local edits and load saved version</Button></div> : null}
+    {latestChanged ? <div role="alert"><p>The saved resume changed while this editor was open. Your local edits remain here; saving against the older version will be rejected.</p><Button type="button" variant="outline" onClick={() => { setSession(latest); setPlate(null); setChanges([]); setRestoredPlate(null); updateDirty(false); setEditError(""); }}>Discard local edits and load saved version</Button></div> : null}
+    {retained && dirty && restoredGeneration.current === resetVersion ? <p role="status">Your unsaved resume edits were restored.</p> : null}
     <div inert={busy} aria-busy={busy}>
       {html.isPending ? <p>Loading the saved resume editor…</p> : null}
       {html.error ? <p role="alert">{html.error.message}</p> : null}
-      {html.data ? <ResumeStandalonePlateEditor key={revision.revision_id}
-        html={html.data} htmlUrl={null} savedPlateValue={savedPlate} enableLocalPdfExport={false}
+      {html.data ? <ResumeStandalonePlateEditor key={`${revision.revision_id}:${resetVersion}`}
+        html={html.data} htmlUrl={null} savedPlateValue={savedPlate} initialDraftValue={restoredPlate} enableLocalPdfExport={false}
         pdfFilename="resume.pdf" title="Resume" onDirtyChange={updateDirty}
         onPlateValueChange={setPlate} onSemanticTextChange={setChanges} /> : null}
     </div>
@@ -112,16 +136,19 @@ function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged }: { latest: 
       <ul>{changedBullets.map((bullet) => <li key={bullet.id}>{bullet.text}</li>)}</ul>
       <Button type="button" disabled={busy || dirty || latestChanged} onClick={() => run("approve-edits", { user_confirmed: true })}>Approve these exact edits</Button>
     </section> : null}
-    <h4>Document coverage</h4><p>Status: {revision.coverage_manifest.status ?? "recorded"}. Coverage describes the chosen document wording, not person fit.</p>
+    <details><summary>Document coverage and source version</summary><p>Profile revision {revision.profile_revision}. Coverage: {revision.coverage_manifest.status ?? "recorded"}. This describes document wording, separately from person fit.</p>
     {revision.coverage_manifest.requirements?.length ? <ul>{revision.coverage_manifest.requirements.map((item, index) => {
       const row = item as { requirement_id?: string; covered?: boolean; weight?: number };
       return <li key={`${row.requirement_id ?? "requirement"}:${index}`}>{row.requirement_id ?? "Requirement"}: {row.covered ? "covered" : "not covered"}{row.weight === undefined ? "" : `, weight ${row.weight}`}</li>;
-    })}</ul> : null}
+    })}</ul> : null}</details>
     <h4>Advisory coherence review</h4><p>Status: {revision.review.status}{revision.review.failure_code ? ` (${revision.review.failure_code})` : ""}.</p>
     {revision.review.findings.length ? <ul>{revision.review.findings.map((finding, index) => <li key={index}>{finding.detail}</li>)}</ul> : null}
-    {revision.mode !== "baseline_copy" ? <><Button type="button" variant="outline" disabled={!tailoring.available || busy || dirty || latestChanged || revision.mechanical.status !== "valid" || revision.review.status !== "pending"} onClick={() => run("review", {})}>Review coherence</Button>{!tailoring.available ? <p>{tailoring.reason}</p> : null}</> : null}
-    <div className="toolbar">
+    {managedPreparation && revision.mechanical.status === "valid" && !rendered ? <p role="status">Select Prepare resume above to carry this saved revision through its checks and rendering.</p> : null}
+    <details open={!managedPreparation}><summary>Document validation and recovery tools</summary>
+      {revision.mode !== "baseline_copy" ? <><Button type="button" variant="outline" disabled={!tailoring.available || busy || dirty || latestChanged || revision.mechanical.status !== "valid" || revision.review.status !== "pending"} onClick={() => run("review", {})}>Review coherence</Button>{!tailoring.available ? <p>{tailoring.reason}</p> : null}</> : null}
       <Button type="button" variant="outline" disabled={busy || dirty || latestChanged || revision.mechanical.status !== "valid"} onClick={() => run("render", {})}>Render resume</Button>
+    </details>
+    <div className="toolbar">
       <Button type="button" disabled={busy || dirty || latestChanged || !readyToAccept || !["pass", "not_applicable"].includes(revision.review.status)} onClick={() => run("accept", { override_review: false })}>Accept resume</Button>
       {["findings", "timeout", "failed"].includes(revision.review.status) ? <Button type="button" variant="outline" disabled={busy || dirty || latestChanged || !readyToAccept} onClick={() => run("accept", { override_review: true })}>Accept with review override</Button> : null}
       <Button type="button" variant="outline" disabled={busy || !session.accepted_revision_id} onClick={() => { if (session.accepted_revision_id) exportFile.mutate({ resumeId: session.resume_id, revisionId: session.accepted_revision_id, format: "pdf" }); }}>Export accepted PDF</Button>
@@ -209,14 +236,23 @@ function TranslatedResume({ document }: { document: ResumeDocument }) {
   </article>;
 }
 
-export function ResumePanel({ jobId, profileVersion, defaultMode, onProfileChanged }: { jobId: string; profileVersion: number | null; defaultMode: "baseline" | "tailored" | null; onProfileChanged?: () => void }) {
-  const { featureFlags } = usePorts();
+export function ResumePanel({ jobId, profileVersion, defaultMode, onProfileChanged, managedPreparation = false, reviewSelection }: { jobId: string; profileVersion: number | null; defaultMode: "baseline" | "tailored" | null; onProfileChanged?: () => void; managedPreparation?: boolean; reviewSelection?: { resumeId: string; requestId: string } | null }) {
+  const { featureFlags, session: owner } = usePorts();
+  const tenant = useTenantId();
+  const restoredDraft = useResumeEditorDraftStore((state) => [...state.drafts.values()].find((draft) => draft.owner === owner && draft.tenant === tenant && draft.resume.job_id === jobId));
   const tailoring = getApiCapabilityAvailability(featureFlags, "tailorJob");
   const list = useResumes(jobId);
   const { compose } = useResumeActions(jobId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const selected = list.data?.find((item) => item.resume_id === selectedId) ?? list.data?.[0] ?? null;
+  const selectedRequest = useRef<string | null>(null);
+  useEffect(() => {
+    if (!reviewSelection || selectedRequest.current === reviewSelection.requestId || dirty) return;
+    selectedRequest.current = reviewSelection.requestId;
+    setSelectedId(reviewSelection.resumeId);
+  }, [reviewSelection, dirty]);
+  const selected = list.data?.find((item) => item.resume_id === selectedId)
+    ?? list.data?.find((item) => item.resume_id === restoredDraft?.resume.resume_id) ?? list.data?.at(-1) ?? null;
   const onDirtyChange = useCallback((value: boolean) => setDirty(value), []);
   const start = (mode: "tailored" | "baseline_copy") => {
     if (profileVersion === null || (mode === "tailored" && !tailoring.available)) return;
@@ -224,19 +260,21 @@ export function ResumePanel({ jobId, profileVersion, defaultMode, onProfileChang
   };
   return <section className="section" aria-labelledby="resume-title">
     <h3 id="resume-title">Resume</h3>
-    <p>Compose from approved wording, or make an editable copy of the full baseline.</p>
+    {!managedPreparation ? <><p>Compose from approved wording, or make an editable copy of the full baseline.</p>
     <p>Saved default: {defaultMode === null ? "unavailable" : defaultMode === "baseline" ? "copy baseline" : "tailored composition"}.</p>
     <div className="toolbar"><Button type="button" disabled={profileVersion === null || defaultMode === null || (defaultMode === "tailored" && !tailoring.available) || compose.isPending || dirty} onClick={() => { if (defaultMode) start(defaultMode === "baseline" ? "baseline_copy" : "tailored"); }}>Compose resume</Button>
       <Button type="button" variant="outline" disabled={!tailoring.available || profileVersion === null || compose.isPending || dirty} onClick={() => start("tailored")}>Compose tailored resume</Button>
-      <Button type="button" variant="outline" disabled={profileVersion === null || compose.isPending || dirty} onClick={() => start("baseline_copy")}>Copy baseline</Button></div>
+      <Button type="button" variant="outline" disabled={profileVersion === null || compose.isPending || dirty} onClick={() => start("baseline_copy")}>Copy baseline</Button></div></> : null}
     {!tailoring.available ? <p>{tailoring.reason}</p> : null}
     {profileVersion === null ? <p>Save a profile before composing a resume.</p> : null}
     {compose.error ? <p role="alert">{compose.error.message} Previously accepted resumes remain available.</p> : null}
     {list.isPending ? <p>Loading resumes…</p> : null}
     {list.error ? <p role="alert">{list.error.message}</p> : null}
     {list.data && list.data.length > 1 ? <label>Saved resume<select disabled={dirty} value={selected?.resume_id ?? ""} onChange={(event) => setSelectedId(event.currentTarget.value)}>
-      {list.data.map((item) => <option value={item.resume_id} key={item.resume_id}>{item.resume_id}{item.accepted_revision_id ? " · accepted" : " · draft"}</option>)}
+      {list.data.map((item) => { const current = item.revisions.find((revision) => revision.revision_id === item.current_revision);
+        return <option value={item.resume_id} key={item.resume_id}>{current?.mode === "baseline_copy" ? "Full baseline" : "Tailored resume"} · revision {current?.number ?? "unknown"}{item.accepted_revision_id ? " · accepted copy available" : " · draft"}</option>;
+      })}
     </select></label> : null}
-    {selected ? <ResumeWorkspace key={selected.resume_id} latest={selected} onDirtyChange={onDirtyChange} {...(onProfileChanged ? { onProfileChanged } : {})} /> : !list.isPending && !list.error ? <p>No resume has been composed for this job.</p> : null}
+    {selected ? <ResumeWorkspace key={selected.resume_id} latest={selected} managedPreparation={managedPreparation} onDirtyChange={onDirtyChange} {...(onProfileChanged ? { onProfileChanged } : {})} /> : !list.isPending && !list.error ? <p>{managedPreparation ? "Choose a resume type above and select Prepare resume. Your document will open here for review." : "No resume has been composed for this job."}</p> : null}
   </section>;
 }

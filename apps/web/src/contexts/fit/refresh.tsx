@@ -1,7 +1,7 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { z } from "zod";
 
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
@@ -69,7 +69,7 @@ function operationMessage(operation: Operation): string {
 }
 
 /** Fit owns this read and action; hosts compose it without importing Profile internals. */
-export function AffectedMatchesPanel(props: { readonly jobIds?: readonly string[] } = {}) {
+export function AffectedMatchesPanel(props: { readonly jobIds?: readonly string[]; readonly profileSetup?: ReactNode } = {}) {
   const { featureFlags } = usePorts();
   const availability = getApiCapabilityAvailability(featureFlags, "updateAffectedMatches");
   if (availability.isDemo && !availability.available) return <section className="card grid gap-1 p-4" aria-label="Affected matches">
@@ -80,7 +80,7 @@ export function AffectedMatchesPanel(props: { readonly jobIds?: readonly string[
   return <AvailableAffectedMatchesPanel {...props} />;
 }
 
-function AvailableAffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly string[] }) {
+function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobIds?: readonly string[]; readonly profileSetup?: ReactNode }) {
   const tenantId = useTenantId();
   const { http, featureFlags, requestIdentity, sessionStorage } = usePorts();
   const client = useQueryClient();
@@ -339,7 +339,7 @@ function AvailableAffectedMatchesPanel({ jobIds }: { readonly jobIds?: readonly 
 
   return <section className="card grid gap-1 p-4" aria-label="Affected matches">
     <h2>Affected matches</h2>
-    {pending.data?.readiness === "profile_required" ? <p>Save a Profile before updating matches. <Link className="underline" to="/profile">Open Profile</Link></p>
+    {pending.data?.readiness === "profile_required" ? <p>Save a Profile before updating matches. {profileSetup ?? <Link className="underline" to="/profile">Open Profile</Link>}</p>
       : <p>Uses your last saved Profile. An update may use your model and prepare wording proposals for review.</p>}
     <details><summary>Work limits</summary><p>Each update can reserve up to 40 model call attempts over 10 minutes, with at most 100 affected requirements, 100 scored jobs and 20 wording proposals. Attempts are counted before provider and budget checks. This request does not impose a hard monetary cap. Saving or opening this page does not start work. Approved wording and accepted artifacts remain available.</p></details>
     {pending.isPending ? <p>Checking saved match state…</p> : null}

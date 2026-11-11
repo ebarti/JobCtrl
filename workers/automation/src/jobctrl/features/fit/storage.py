@@ -10,9 +10,11 @@ from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
 from .serialization import encoded
 from .refresh_storage import RefreshStorage
+from .association_storage import AssociationStorage
+from .current_wording_storage import CurrentWordingStorage
 
 
-class FitStore(RefreshStorage):
+class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
     def __init__(self, database, events, profile, requirements, settings=None):
         if events is None or profile is None or requirements is None:
             raise RuntimeError("Fit requires committed events and public Profile/Requirements ports.")
@@ -487,6 +489,27 @@ class SqliteFitReadSession:
 
     def catalog_snapshot(self):
         return self._store.requirements.catalog_snapshot(connection=self._connection)
+
+    def wording_library(self, profile_id="default"):
+        return self._store.profile.library(profile_id, connection=self._connection)
+
+    def library_records(self, profile_id="default"):
+        return self._store.library_records(profile_id, connection=self._connection)
+
+    def current_wording_heads(self, profile_id, achievement_ids=None):
+        return self._store.current_wording_heads(profile_id, achievement_ids, self._connection)
+
+    def current_wordings(self, profile_id, achievement_ids=None):
+        return self._store.current_wordings(profile_id, achievement_ids, self._connection)
+
+    def current_wordings_fingerprint(self, profile_id, achievement_ids=None):
+        return self._store.current_wordings_fingerprint(profile_id, achievement_ids, self._connection)
+
+    def wording_group_decision(self, group_key):
+        return self._store.wording_group_decision(group_key, self._connection)
+
+    def current_wording_history(self, assignment_id, profile_id, *, limit, offset):
+        return self._store._current_wording_history(assignment_id, profile_id, limit=limit, offset=offset, connection=self._connection)
 
     def latest_requirement_assessment(self, profile_id, requirement_id):
         return self._store.latest_requirement_assessment(profile_id, requirement_id, self._connection)

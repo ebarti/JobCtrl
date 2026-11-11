@@ -1,0 +1,21 @@
+/* The palette changes shared semantic roles; Graphite lives in tokens.css. */
+:root[data-color-scheme="cobalt"] { --scheme-accent: #2454c6; --scheme-tint: #edf2ff; --scheme-canvas: #f6f8fc; --scheme-ink: #172238; --scheme-muted: #59677c; --scheme-line: #d9e1ed; }
+:root[data-color-scheme="teal"] { --scheme-accent: #077975; --scheme-tint: #e6f5f1; --scheme-canvas: #f4f9f7; --scheme-ink: #18302e; --scheme-muted: #546d68; --scheme-line: #d3e3de; }
+:root[data-color-scheme="forest"] { --scheme-accent: #356536; --scheme-tint: #edf4e7; --scheme-canvas: #f7f9f4; --scheme-ink: #243024; --scheme-muted: #606c59; --scheme-line: #dce3d3; }
+:root[data-color-scheme="indigo"] { --scheme-accent: #5146bc; --scheme-tint: #f0edff; --scheme-canvas: #f8f7fc; --scheme-ink: #25213e; --scheme-muted: #68617c; --scheme-line: #e1ddef; }
+:root[data-color-scheme="plum"] { --scheme-accent: #813e8b; --scheme-tint: #f8eefa; --scheme-canvas: #fbf7fc; --scheme-ink: #352339; --scheme-muted: #77617a; --scheme-line: #e9dceb; }
+:root[data-color-scheme="rose"] { --scheme-accent: #b13862; --scheme-tint: #fdeef3; --scheme-canvas: #fcf8fa; --scheme-ink: #3b2530; --scheme-muted: #7b606c; --scheme-line: #eddde3; }
+:root[data-color-scheme="terracotta"] { --scheme-accent: #a3442c; --scheme-tint: #fceee7; --scheme-canvas: #fbf8f4; --scheme-ink: #3b2b24; --scheme-muted: #79665b; --scheme-line: #eaddd3; }
+:root[data-color-scheme="amber"] { --scheme-accent: #936000; --scheme-tint: #fff4d6; --scheme-canvas: #fcfaf4; --scheme-ink: #382f1b; --scheme-muted: #766a4e; --scheme-line: #e8dfc8; }
+:root[data-color-scheme="ocean"] { --scheme-accent: #076c94; --scheme-tint: #e7f5fc; --scheme-canvas: #f4f9fc; --scheme-ink: #18313f; --scheme-muted: #56707e; --scheme-line: #d4e5ed; }
+
+/* Font schemes affect workspace chrome only. Document templates own their type. */
+:root[data-font-scheme="inter"] { --jh-font-sans: "Inter", ui-sans-serif, system-ui, sans-serif; }
+:root[data-font-scheme="manrope"] { --jh-font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif; }
+:root[data-font-scheme="dm"] { --jh-font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif; }
+:root[data-font-scheme="plex"] { --jh-font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif; }
+:root[data-font-scheme="source"] { --jh-font-sans: "Source Sans 3", ui-sans-serif, system-ui, sans-serif; }
+:root[data-font-scheme="work"] { --jh-font-sans: "Work Sans", ui-sans-serif, system-ui, sans-serif; }
+:root[data-font-scheme="lato"] { --jh-font-sans: "Lato", ui-sans-serif, system-ui, sans-serif; }
+:root[data-font-scheme="literary"] { --jh-font-sans: "Inter", ui-sans-serif, system-ui, sans-serif; --jh-font-heading: "Merriweather", Georgia, serif; }
+:root[data-font-scheme="editorial"] { --jh-font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif; --jh-font-heading: "Newsreader", Georgia, serif; }

@@ -7,6 +7,7 @@ import { ResumePanel } from "../../contexts/resumes/index.js";
 import { useProfileQuery } from "../../contexts/profile/index.js";
 import { useApplicationSettings } from "../../contexts/settings/index.js";
 import { Button } from "../../shared/ui/button.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 
 export interface ApplyReviewViewProps {
   readonly targetJobKey?: string | null;
@@ -21,15 +22,10 @@ export function ApplyReviewView({
   const profile = useProfileQuery();
   const settings = useApplicationSettings();
   const selected = targetJobKey ?? queue.data?.[0]?.jobId ?? null;
+  const selectedJob = queue.data?.find((item) => item.jobId === selected)?.job;
   return (
     <main className="page apply-review-page grid gap-6">
-      <header className="page-header">
-        <h1>Application review</h1>
-        <p>
-          Review the accepted resume, screening answers and exact outgoing
-          application before approving a bound payload.
-        </p>
-      </header>
+      <PageHead eyebrow="Jobs" title="Applications" subtitle="Review your resume, screening answers and the exact application before approving it." />
       <section
         className="section grid gap-3"
         aria-label="Application review queue"
@@ -79,7 +75,14 @@ export function ApplyReviewView({
       </section>
       {selected ? (
         <div key={selected} className="grid gap-6">
-          <h2>Application for {selected}</h2>
+          <div className="grid gap-1">
+            <h2>{selectedJob?.title ? `Application for ${selectedJob.title}` : "Selected application"}</h2>
+            {selectedJob?.employer ? <p className="text-muted-foreground">{selectedJob.employer}</p> : null}
+            <details className="text-sm text-muted-foreground">
+              <summary>Record details</summary>
+              <p className="break-all">Job ID: {selected}</p>
+            </details>
+          </div>
           {profile.error ? (
             <p role="alert">
               Profile unavailable. Resume composition requires the current saved

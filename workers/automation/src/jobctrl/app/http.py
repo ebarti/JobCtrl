@@ -52,7 +52,7 @@ class FrontendFiles(StaticFiles):
             response = await super().get_response("index.html", scope)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
+            "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://photon.komoot.io; "
             "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
         )
         return response

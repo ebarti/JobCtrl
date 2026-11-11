@@ -74,6 +74,7 @@ class ResumesService:
 
     def get(self, resume_id, *, connection=None):
         state = self.repository.get(resume_id, connection=connection)
+        state["composition_freshness"] = self._composition_freshness(current(state), connection=connection)
         if self.jobs is not None:
             job = self.jobs.get_job_snapshots([state["job_id"]], connection=connection, include_deleted=True).get(state["job_id"])
             state["job"] = {"jobId": job["job_id"], "title": job["title"], "company": job["company"],
@@ -85,6 +86,8 @@ class ResumesService:
 
     def list(self, job_id=None):
         states = self.repository.list(job_id=job_id)
+        for state in states:
+            state["composition_freshness"] = self._composition_freshness(current(state))
         if self.jobs is not None and states:
             ids = list(dict.fromkeys(row["job_id"] for row in states))
             jobs = {}
@@ -95,6 +98,29 @@ class ResumesService:
                 state["job"] = {"jobId": job["job_id"], "title": job["title"], "company": job["company"],
                                 "source": "current_jobs_label"} if job else None
         return states
+
+    def _composition_freshness(self, revision, connection=None):
+        """Inspect source pins without changing a draft, acceptance or model state."""
+        reasons = []
+        try:
+            latest = self._snapshot(revision["profile_snapshot"]["profile_id"], connection)
+            if latest["profile_revision"] != revision["profile_revision"]:
+                reasons.append("profile_changed")
+        except Exception:
+            reasons.append("profile_unavailable")
+        if revision["mode"] != "baseline_copy":
+            if revision["requirements_snapshot"] is None or revision["fit_snapshot"] is None:
+                reasons.append("coverage_not_recorded")
+            else:
+                try:
+                    self.requirements.assert_current(revision["requirements_snapshot"], connection=connection)
+                except Exception:
+                    reasons.append("requirements_changed")
+                try:
+                    self.fit.assert_current(revision["fit_snapshot"], connection=connection)
+                except Exception:
+                    reasons.append("fit_coverage_changed")
+        return {"current": not reasons, "stale_reasons": reasons, "revision_id": revision["revision_id"]}
 
     def job_summaries(self, job_ids, connection=None):
         if not isinstance(job_ids, (list, tuple)) or len(job_ids) > 1000 or any(not isinstance(item, str) for item in job_ids):

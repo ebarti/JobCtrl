@@ -33,7 +33,7 @@ const demoSeed = {
         title: "Platform systems lead",
         state: "accepted",
         at: minutes(-1440),
-        detail: "A strong match with grounded evidence and reviewable materials.",
+        detail: "A bundled illustrative strong-match result with reviewable synthetic materials.",
       },
       {
         id: "job-contoso-reliability",
@@ -69,10 +69,10 @@ const demoSeed = {
     evidence: [
       {
         id: "evidence-delivery-improvement",
-        title: "Delivery improvement evidence",
-        state: "grounded",
+        title: "Delivery improvement relationship",
+        state: "unassessed",
         at: minutes(-360),
-        detail: "A reusable proof point is linked to a requirement and resume bullet.",
+        detail: "A user-authored synthetic link records intent; it does not prove factual support or wording coverage.",
       },
       {
         id: "evidence-risk-management-gap",
@@ -184,10 +184,10 @@ const demoSeed = {
       },
       {
         id: "profile-bundled-import",
-        title: "Bundled sample resume",
-        state: "bundled_import",
+        title: "Resume import requires the local app",
+        state: "unavailable",
         at: minutes(-1440),
-        detail: "The demo accepts the bundled sample only, not an arbitrary upload.",
+        detail: "The seeded synthetic Profile is editable. Resume extraction needs a configured model in the local app.",
       },
     ],
     settings: [

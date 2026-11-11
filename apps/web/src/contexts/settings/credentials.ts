@@ -135,7 +135,9 @@ export function useCredentialEditFence() {
 export function useProviderStatusQuery() {
   const tenant = useTenantId();
   const { http } = usePorts();
-  return useQuery({ queryKey: credentialKeys.status(tenant),
+  // Provider inspection may contact a provider (including in controlled
+  // synthetic workspaces). Only the explicit check button should run it.
+  return useQuery({ queryKey: credentialKeys.status(tenant), enabled: false,
     queryFn: async () => parsed(statusSchema, await http.json<unknown>("GET", "/v1/providers/status"), "Provider readiness returned an invalid response."),
     meta: { suppressGlobalErrorToast: true },
   });

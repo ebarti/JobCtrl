@@ -57,6 +57,46 @@ class ProfileRepository:
                       canonical(provenance or {"kind": "user_authored"}), now()))
         return self.variant(self.variant_row(conn, profile_id, variant_id))
 
+    def update_pending_variant(self, conn, *, profile_id, row, text):
+        # Retain the exact earlier draft using the existing transferable decision
+        # ledger. Accepted variants are immutable and never enter this path.
+        self.decision(conn, profile_id=profile_id, kind="wording_revision", subject_id=row["variant_id"],
+                      revision=row["revision"], decision="retain", exact=self.variant(row))
+        previous_provenance = json.loads(row["provenance_json"])
+        provenance = {"kind": "user_edited", "previous_revision": row["revision"],
+                      "original_provenance": previous_provenance.get("original_provenance", previous_provenance),
+                      **{key: previous_provenance[key] for key in (
+                          "replaces_variant_id", "replaces_variant_revision", "replaces_variant_ids", "intended_requirement_ids", "authoring_action",
+                      ) if key in previous_provenance}}
+        conn.execute("UPDATE profile_variants SET text=?,revision=revision+1,provenance_json=? WHERE profile_id=? AND variant_id=?",
+                     (text, canonical(provenance), profile_id, row["variant_id"]))
+
+    def wording_history(self, conn, profile_id, variant_id):
+        rows = conn.execute("SELECT exact_content_json FROM profile_decisions WHERE profile_id=? "
+                            "AND subject_kind='wording_revision' AND subject_id=? ORDER BY subject_revision",
+                            (profile_id, variant_id))
+        return [json.loads(row[0]) for row in rows]
+
+    def recovery(self, profile_id="default", connection=None):
+        with self.reader(connection) as conn:
+            current = self.config(profile_id, conn)
+            active_roles = {row["id"]: row for row in current["profile"]["resume"]["experience_entries"]}
+            active_achievements = {ident for role in active_roles.values() for ident in role.get("achievement_ids", [])}
+            roles, achievements = {}, {}
+            for version in conn.execute("SELECT revision,snapshot_json FROM profile_versions WHERE profile_id=? ORDER BY revision DESC", (profile_id,)):
+                document = json.loads(version["snapshot_json"])["document"]
+                for role in document["resume"]["experience_entries"]:
+                    role_id = role["id"]
+                    if role_id not in active_roles and role_id not in roles:
+                        roles[role_id] = {"role_id": role_id, "profile_revision": version["revision"], "role": role}
+                    if role_id in active_roles:
+                        for index, achievement_id in enumerate(role.get("achievement_ids", [])):
+                            if achievement_id not in active_achievements and achievement_id not in achievements:
+                                achievements[achievement_id] = {"role_id": role_id, "achievement_id": achievement_id,
+                                    "profile_revision": version["revision"], "text": role["bullets"][index], "position": index}
+            return {"ok": True, "profileVersion": current["profileVersion"],
+                    "roles": list(roles.values()), "achievements": list(achievements.values())}
+
     def set_variant_decision(self, conn, *, profile_id, variant_id, status, approval_id, origin_key):
         conn.execute("UPDATE profile_variants SET status=?,approval_id=? WHERE profile_id=? AND variant_id=?",
                      (status, approval_id, profile_id, variant_id))

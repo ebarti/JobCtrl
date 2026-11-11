@@ -9,6 +9,8 @@ from .http import AssessInput, CorrectInput, CoverageInput, RefreshInput, routes
 from .schema import REFRESH_SCHEMA, SCHEMA
 from .service import FitService
 from .storage import FitStore
+from .association_storage import SCHEMA as ASSOCIATION_SCHEMA
+from .current_wording_storage import SCHEMA as CURRENT_WORDING_SCHEMA
 
 
 def build_feature(runtime: Runtime, **ports) -> Feature:
@@ -16,6 +18,8 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
     requirements = ports["requirements"]
     runtime.database.initialize_feature("fit", SCHEMA)
     runtime.database.initialize_feature("fit_refresh", REFRESH_SCHEMA)
+    runtime.database.initialize_feature("fit_associations", ASSOCIATION_SCHEMA)
+    runtime.database.initialize_feature("fit_current_wordings", CURRENT_WORDING_SCHEMA)
     store = FitStore(runtime.database, runtime.events, profile, requirements, runtime.settings)
     service = FitService(store=store, model=runtime.model,
                          profile=profile, requirements=requirements, settings=runtime.settings)

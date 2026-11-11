@@ -387,7 +387,10 @@ class DiscoveryService:
                     "invalid_discovery_overrides", "The action-scoped Discovery controls are invalid."
                 ) from None
             if not settings["queries"] and self.profile is not None:
-                target_plan = await self.targets.refresh(operation_id=context.run_id + ":query-plan")
+                expected_profile = payload.get("expectedProfileVersion")
+                if expected_profile is not None and (type(expected_profile) is not int or expected_profile < 1):
+                    raise AppError("invalid_profile_version", "The saved Search preferences revision is invalid.")
+                target_plan = await self.targets.refresh(operation_id=context.run_id + ":query-plan", expected_profile_revision=expected_profile)
                 if target_plan["accepted"] is not None and target_plan["current"]:
                     settings = {
                         **settings,

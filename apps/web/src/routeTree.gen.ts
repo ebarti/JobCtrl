@@ -19,10 +19,12 @@ import { Route as DiscoveryRouteImport } from "./routes/discovery";
 import { Route as EvidenceMapRouteImport } from "./routes/evidence-map";
 import { Route as InterviewsRouteImport } from "./routes/interviews";
 import { Route as JobsRouteImport } from "./routes/jobs";
+import { Route as LearningRouteImport } from "./routes/learning";
 import { Route as OutreachRouteImport } from "./routes/outreach";
 import { Route as PipelinesRouteImport } from "./routes/pipelines";
 import { Route as PreferencesRouteImport } from "./routes/preferences";
 import { Route as ProfileRouteImport } from "./routes/profile";
+import { Route as RequirementsRouteImport } from "./routes/requirements";
 import { Route as RunsRouteImport } from "./routes/runs";
 import { Route as SettingsRouteImport } from "./routes/settings";
 import { Route as ActivityEventIdRouteImport } from "./routes/activity.$eventId";
@@ -37,8 +39,12 @@ import { Route as ProfileImportRouteImport } from "./routes/profile.import";
 import { Route as RunsIndexRouteImport } from "./routes/runs.index";
 import { Route as RunsRunIdRouteImport } from "./routes/runs.$runId";
 import { Route as SettingsIndexRouteImport } from "./routes/settings.index";
+import { Route as SettingsAppearanceRouteImport } from "./routes/settings.appearance";
+import { Route as SettingsAutomationRouteImport } from "./routes/settings.automation";
 import { Route as SettingsBrowserRouteImport } from "./routes/settings.browser";
+import { Route as SettingsBudgetsRouteImport } from "./routes/settings.budgets";
 import { Route as SettingsCredentialsRouteImport } from "./routes/settings.credentials";
+import { Route as SettingsDataRouteImport } from "./routes/settings.data";
 import { Route as SettingsModelsRouteImport } from "./routes/settings.models";
 import { Route as SpikesTableFiltersRouteImport } from "./routes/spikes.table-filters";
 import { Route as ProfileImportIndexRouteImport } from "./routes/profile.import.index";
@@ -97,6 +103,11 @@ const JobsRoute = JobsRouteImport.update({
   path: "/jobs",
   getParentRoute: () => rootRouteImport,
 } as any);
+const LearningRoute = LearningRouteImport.update({
+  id: "/learning",
+  path: "/learning",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const OutreachRoute = OutreachRouteImport.update({
   id: "/outreach",
   path: "/outreach",
@@ -115,6 +126,11 @@ const PreferencesRoute = PreferencesRouteImport.update({
 const ProfileRoute = ProfileRouteImport.update({
   id: "/profile",
   path: "/profile",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const RequirementsRoute = RequirementsRouteImport.update({
+  id: "/requirements",
+  path: "/requirements",
   getParentRoute: () => rootRouteImport,
 } as any);
 const RunsRoute = RunsRouteImport.update({
@@ -187,14 +203,34 @@ const SettingsIndexRoute = SettingsIndexRouteImport.update({
   path: "/",
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
+  id: "/appearance",
+  path: "/appearance",
+  getParentRoute: () => SettingsRoute,
+} as any);
+const SettingsAutomationRoute = SettingsAutomationRouteImport.update({
+  id: "/automation",
+  path: "/automation",
+  getParentRoute: () => SettingsRoute,
+} as any);
 const SettingsBrowserRoute = SettingsBrowserRouteImport.update({
   id: "/browser",
   path: "/browser",
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsBudgetsRoute = SettingsBudgetsRouteImport.update({
+  id: "/budgets",
+  path: "/budgets",
+  getParentRoute: () => SettingsRoute,
+} as any);
 const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
   id: "/credentials",
   path: "/credentials",
+  getParentRoute: () => SettingsRoute,
+} as any);
+const SettingsDataRoute = SettingsDataRouteImport.update({
+  id: "/data",
+  path: "/data",
   getParentRoute: () => SettingsRoute,
 } as any);
 const SettingsModelsRoute = SettingsModelsRouteImport.update({
@@ -244,10 +280,12 @@ export interface FileRoutesByFullPath {
   "/evidence-map": typeof EvidenceMapRoute;
   "/interviews": typeof InterviewsRoute;
   "/jobs": typeof JobsRouteWithChildren;
+  "/learning": typeof LearningRoute;
   "/outreach": typeof OutreachRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
   "/profile": typeof ProfileRouteWithChildren;
+  "/requirements": typeof RequirementsRoute;
   "/runs": typeof RunsRouteWithChildren;
   "/settings": typeof SettingsRouteWithChildren;
   "/activity/$eventId": typeof ActivityEventIdRoute;
@@ -256,8 +294,12 @@ export interface FileRoutesByFullPath {
   "/outreach/$contactId": typeof OutreachContactIdRoute;
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
+  "/settings/appearance": typeof SettingsAppearanceRoute;
+  "/settings/automation": typeof SettingsAutomationRoute;
   "/settings/browser": typeof SettingsBrowserRoute;
+  "/settings/budgets": typeof SettingsBudgetsRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
+  "/settings/data": typeof SettingsDataRoute;
   "/settings/models": typeof SettingsModelsRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts/": typeof ArtifactsIndexRoute;
@@ -281,15 +323,21 @@ export interface FileRoutesByTo {
   "/discovery": typeof DiscoveryRoute;
   "/evidence-map": typeof EvidenceMapRoute;
   "/interviews": typeof InterviewsRoute;
+  "/learning": typeof LearningRoute;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
+  "/requirements": typeof RequirementsRoute;
   "/activity/$eventId": typeof ActivityEventIdRoute;
   "/artifacts/$artifactId": typeof ArtifactsArtifactIdRoute;
   "/jobs/$jobId": typeof JobsJobIdRouteWithChildren;
   "/outreach/$contactId": typeof OutreachContactIdRoute;
   "/runs/$runId": typeof RunsRunIdRoute;
+  "/settings/appearance": typeof SettingsAppearanceRoute;
+  "/settings/automation": typeof SettingsAutomationRoute;
   "/settings/browser": typeof SettingsBrowserRoute;
+  "/settings/budgets": typeof SettingsBudgetsRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
+  "/settings/data": typeof SettingsDataRoute;
   "/settings/models": typeof SettingsModelsRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts": typeof ArtifactsIndexRoute;
@@ -316,10 +364,12 @@ export interface FileRoutesById {
   "/evidence-map": typeof EvidenceMapRoute;
   "/interviews": typeof InterviewsRoute;
   "/jobs": typeof JobsRouteWithChildren;
+  "/learning": typeof LearningRoute;
   "/outreach": typeof OutreachRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
   "/profile": typeof ProfileRouteWithChildren;
+  "/requirements": typeof RequirementsRoute;
   "/runs": typeof RunsRouteWithChildren;
   "/settings": typeof SettingsRouteWithChildren;
   "/activity/$eventId": typeof ActivityEventIdRoute;
@@ -328,8 +378,12 @@ export interface FileRoutesById {
   "/outreach/$contactId": typeof OutreachContactIdRoute;
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
+  "/settings/appearance": typeof SettingsAppearanceRoute;
+  "/settings/automation": typeof SettingsAutomationRoute;
   "/settings/browser": typeof SettingsBrowserRoute;
+  "/settings/budgets": typeof SettingsBudgetsRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
+  "/settings/data": typeof SettingsDataRoute;
   "/settings/models": typeof SettingsModelsRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts/": typeof ArtifactsIndexRoute;
@@ -357,10 +411,12 @@ export interface FileRouteTypes {
     | "/evidence-map"
     | "/interviews"
     | "/jobs"
+    | "/learning"
     | "/outreach"
     | "/pipelines"
     | "/preferences"
     | "/profile"
+    | "/requirements"
     | "/runs"
     | "/settings"
     | "/activity/$eventId"
@@ -369,8 +425,12 @@ export interface FileRouteTypes {
     | "/outreach/$contactId"
     | "/profile/import"
     | "/runs/$runId"
+    | "/settings/appearance"
+    | "/settings/automation"
     | "/settings/browser"
+    | "/settings/budgets"
     | "/settings/credentials"
+    | "/settings/data"
     | "/settings/models"
     | "/spikes/table-filters"
     | "/artifacts/"
@@ -394,15 +454,21 @@ export interface FileRouteTypes {
     | "/discovery"
     | "/evidence-map"
     | "/interviews"
+    | "/learning"
     | "/pipelines"
     | "/preferences"
+    | "/requirements"
     | "/activity/$eventId"
     | "/artifacts/$artifactId"
     | "/jobs/$jobId"
     | "/outreach/$contactId"
     | "/runs/$runId"
+    | "/settings/appearance"
+    | "/settings/automation"
     | "/settings/browser"
+    | "/settings/budgets"
     | "/settings/credentials"
+    | "/settings/data"
     | "/settings/models"
     | "/spikes/table-filters"
     | "/artifacts"
@@ -428,10 +494,12 @@ export interface FileRouteTypes {
     | "/evidence-map"
     | "/interviews"
     | "/jobs"
+    | "/learning"
     | "/outreach"
     | "/pipelines"
     | "/preferences"
     | "/profile"
+    | "/requirements"
     | "/runs"
     | "/settings"
     | "/activity/$eventId"
@@ -440,8 +508,12 @@ export interface FileRouteTypes {
     | "/outreach/$contactId"
     | "/profile/import"
     | "/runs/$runId"
+    | "/settings/appearance"
+    | "/settings/automation"
     | "/settings/browser"
+    | "/settings/budgets"
     | "/settings/credentials"
+    | "/settings/data"
     | "/settings/models"
     | "/spikes/table-filters"
     | "/artifacts/"
@@ -468,10 +540,12 @@ export interface RootRouteChildren {
   EvidenceMapRoute: typeof EvidenceMapRoute;
   InterviewsRoute: typeof InterviewsRoute;
   JobsRoute: typeof JobsRouteWithChildren;
+  LearningRoute: typeof LearningRoute;
   OutreachRoute: typeof OutreachRouteWithChildren;
   PipelinesRoute: typeof PipelinesRoute;
   PreferencesRoute: typeof PreferencesRoute;
   ProfileRoute: typeof ProfileRouteWithChildren;
+  RequirementsRoute: typeof RequirementsRoute;
   RunsRoute: typeof RunsRouteWithChildren;
   SettingsRoute: typeof SettingsRouteWithChildren;
   ActivityEventIdRoute: typeof ActivityEventIdRoute;
@@ -550,6 +624,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof JobsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/learning": {
+      id: "/learning";
+      path: "/learning";
+      fullPath: "/learning";
+      preLoaderRoute: typeof LearningRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/outreach": {
       id: "/outreach";
       path: "/outreach";
@@ -576,6 +657,13 @@ declare module "@tanstack/react-router" {
       path: "/profile";
       fullPath: "/profile";
       preLoaderRoute: typeof ProfileRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/requirements": {
+      id: "/requirements";
+      path: "/requirements";
+      fullPath: "/requirements";
+      preLoaderRoute: typeof RequirementsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/runs": {
@@ -676,6 +764,20 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsIndexRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    "/settings/appearance": {
+      id: "/settings/appearance";
+      path: "/appearance";
+      fullPath: "/settings/appearance";
+      preLoaderRoute: typeof SettingsAppearanceRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
+    "/settings/automation": {
+      id: "/settings/automation";
+      path: "/automation";
+      fullPath: "/settings/automation";
+      preLoaderRoute: typeof SettingsAutomationRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     "/settings/browser": {
       id: "/settings/browser";
       path: "/browser";
@@ -683,11 +785,25 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsBrowserRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    "/settings/budgets": {
+      id: "/settings/budgets";
+      path: "/budgets";
+      fullPath: "/settings/budgets";
+      preLoaderRoute: typeof SettingsBudgetsRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     "/settings/credentials": {
       id: "/settings/credentials";
       path: "/credentials";
       fullPath: "/settings/credentials";
       preLoaderRoute: typeof SettingsCredentialsRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
+    "/settings/data": {
+      id: "/settings/data";
+      path: "/data";
+      fullPath: "/settings/data";
+      preLoaderRoute: typeof SettingsDataRouteImport;
       parentRoute: typeof SettingsRoute;
     };
     "/settings/models": {
@@ -838,15 +954,23 @@ const RunsRouteChildren: RunsRouteChildren = {
 const RunsRouteWithChildren = RunsRoute._addFileChildren(RunsRouteChildren);
 
 interface SettingsRouteChildren {
+  SettingsAppearanceRoute: typeof SettingsAppearanceRoute;
+  SettingsAutomationRoute: typeof SettingsAutomationRoute;
   SettingsBrowserRoute: typeof SettingsBrowserRoute;
+  SettingsBudgetsRoute: typeof SettingsBudgetsRoute;
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute;
+  SettingsDataRoute: typeof SettingsDataRoute;
   SettingsModelsRoute: typeof SettingsModelsRoute;
   SettingsIndexRoute: typeof SettingsIndexRoute;
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsAppearanceRoute: SettingsAppearanceRoute,
+  SettingsAutomationRoute: SettingsAutomationRoute,
   SettingsBrowserRoute: SettingsBrowserRoute,
+  SettingsBudgetsRoute: SettingsBudgetsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
+  SettingsDataRoute: SettingsDataRoute,
   SettingsModelsRoute: SettingsModelsRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 };
@@ -866,10 +990,12 @@ const rootRouteChildren: RootRouteChildren = {
   EvidenceMapRoute: EvidenceMapRoute,
   InterviewsRoute: InterviewsRoute,
   JobsRoute: JobsRouteWithChildren,
+  LearningRoute: LearningRoute,
   OutreachRoute: OutreachRouteWithChildren,
   PipelinesRoute: PipelinesRoute,
   PreferencesRoute: PreferencesRoute,
   ProfileRoute: ProfileRouteWithChildren,
+  RequirementsRoute: RequirementsRoute,
   RunsRoute: RunsRouteWithChildren,
   SettingsRoute: SettingsRouteWithChildren,
   ActivityEventIdRoute: ActivityEventIdRoute,

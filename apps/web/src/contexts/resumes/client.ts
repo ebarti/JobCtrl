@@ -1,9 +1,7 @@
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
-import type { DomainEventEnvelope } from "../../shared/ports/EventStreamPort.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
 
@@ -29,6 +27,7 @@ const locale = z.object({ locale_id: z.string(), source_locale: z.string(), targ
   document: documentSchema.nullable(),
 }).passthrough();
 const resume = z.object({ resume_id: z.string(), job_id: z.string(), version: z.number(), current_revision: z.string(),
+  composition_freshness: z.object({ current: z.boolean(), stale_reasons: z.array(z.string()), revision_id: z.string() }).optional(),
   accepted_revision_id: z.string().nullable(), revisions: z.array(revision),
   acceptances: z.array(z.object({ revision_id: z.string(), review_status: z.string(), review_override: z.boolean() }).passthrough()),
   locales: z.array(locale),
@@ -94,7 +93,7 @@ export function useResumeActions(jobId: string) {
   const save = (result: Resume) => {
     client.setQueryData<Resume[]>(resumeKeys.list(tenantId, jobId), (previous = []) => {
       const current = previous.find((item) => item.resume_id === result.resume_id);
-      return current && current.version > result.version ? previous : [result, ...previous.filter((item) => item.resume_id !== result.resume_id)];
+      return current && current.version > result.version ? previous : [...previous.filter((item) => item.resume_id !== result.resume_id), result];
     });
   };
   const compose = useMutation({ mutationFn: async (body: { job_id: string; profile_id: string; expected_profile_revision: number; mode: "tailored" | "baseline_copy" }) =>
@@ -110,7 +109,3 @@ export function useResumeActions(jobId: string) {
   } });
   return { compose, action, exportFile };
 }
-export const resumesInvalidation = {
-  eventTypes: ["ResumeComposed", "ResumeEdited", "ResumeReviewStarted", "ResumeReviewed", "ResumeRendered", "ResumeAccepted", "ResumeLocaleUpdated", "ResumeTemplateUpdated", "ResumeCommentUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "JobSourceObserved", "JobUpdated", "RequirementsUpdated", "RequirementBindingCorrected", "RequirementMeaningRevised", "FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated"] as const,
-  handle(event: DomainEventEnvelope, client: QueryClient) { void invalidateQueriesWithOptimisticOwnership(client, resumeKeys.all(event.tenantId)); },
-};

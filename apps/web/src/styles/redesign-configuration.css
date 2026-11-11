@@ -1205,6 +1205,25 @@
   justify-content: flex-end;
 }
 
+.config-layout .configuration-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.config-layout :is(.provider-setup-shell, .credential-privacy-disclosure, .settings-application-panel, .settings-data-links) {
+  width: 100%;
+  max-width: 840px;
+}
+
+.config-layout .configuration-section__trigger {
+  padding: 12px 16px;
+}
+
+.config-layout .configuration-section__actions {
+  padding-right: 16px;
+}
+
 .config-layout .provider-card-list {
   gap: 0;
   padding: 0;
@@ -1212,23 +1231,29 @@
 
 .config-layout .provider-card {
   border: 0;
-  border-top: 1px solid var(--configuration-rule);
+  border-top: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
   padding: 0;
 }
 
-.config-layout .provider-disclosure {
-  border-top: 0;
+.config-layout .provider-card .provider-disclosure {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.config-layout .provider-card .configuration-section__trigger {
+  padding-block: 10px;
 }
 
 .config-layout .provider-disclosure .configuration-section__body {
-  padding: 0 20px 18px;
+  padding: 0 16px 16px;
 }
 
 .config-layout .provider-setup-disclosure > .configuration-section__body,
 .config-layout .model-selection-settings > .configuration-section__body {
-  padding-bottom: 20px;
+  padding: 0 16px 16px;
 }
 
 .config-layout .provider-card-header {
@@ -1965,20 +1990,11 @@
   }
 }
 
-/* Timetable section ink: strong subject boundaries, quiet internal dividers. */
+/* Profile sections use the same restrained borders as the workspace. */
 .profile-layout .profile-sections > .form-section,
 .profile-layout .profile-sections.profile-sections--card-stack > .form-section {
-  border-color: var(--foreground);
-  border-top-width: 2px;
-}
-
-.config-layout .configuration-section,
-.config-layout .provider-card {
-  border-top: 2px solid var(--foreground);
-}
-
-.config-layout .provider-disclosure {
-  border-top: 0;
+  border-color: var(--border);
+  border-top-width: 1px;
 }
 
 .profile-import-review {
@@ -2014,3 +2030,50 @@
   padding: 0;
   white-space: pre-wrap;
 }
+
+/* Appearance preferences use the same quiet section rhythm as configuration. */
+.appearance-settings {
+  display: grid;
+  grid-template-columns: minmax(170px, 210px) minmax(0, 1fr);
+  gap: 32px;
+  max-width: 980px;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border);
+}
+.appearance-settings__intro h2 { margin: 0; }
+.appearance-settings__intro p { max-width: 30ch; margin: 8px 0 0; color: var(--muted-foreground); }
+.appearance-settings__content { display: grid; gap: 20px; min-width: 0; }
+.appearance-settings__fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.appearance-settings__field { display: grid; align-content: start; gap: 7px; min-width: 0; }
+.appearance-settings__field [data-slot="select-trigger"] { width: 100%; }
+.appearance-settings__sample { display: grid; justify-items: start; gap: 10px; padding: 24px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.appearance-settings__sample h3, .appearance-settings__sample p { margin: 0; }
+.appearance-settings__sample p { max-width: 55ch; }
+.appearance-settings__eyebrow { color: var(--primary); font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.appearance-settings__sample-meta, .appearance-settings__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--muted-foreground); font-size: 12px; }
+.appearance-settings__saved { padding: 3px 8px; border: 1px solid color-mix(in srgb, var(--success) 30%, var(--border)); border-radius: 5px; background: var(--success-muted); color: var(--success-text); font-weight: 600; }
+.appearance-settings__swatch { width: 20px; height: 20px; border-radius: 50%; background: var(--primary); }
+@media (max-width: 900px) { .appearance-settings { grid-template-columns: minmax(0, 1fr); gap: 20px; } .appearance-settings__intro p { max-width: 65ch; } }
+@media (max-width: 680px) { .appearance-settings__fields { grid-template-columns: minmax(0, 1fr); } .appearance-settings__sample { padding: 18px; } }
+
+/* Settings keeps visited sections mounted so edits survive navigation. */
+.settings-pane:not([hidden]) { display: grid; gap: 24px; min-width: 0; }
+.settings-pane[hidden] { display: none; }
+.settings-application-panel, .settings-data-links { padding: var(--jh-panel-padding); }
+.settings-application-panel > h2, .settings-data-links > h2 { margin: 0 0 16px; }
+.settings-application-form fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.settings-application-form fieldset > :is(label, div) { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.settings-application-form fieldset > label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; }
+.settings-application-form fieldset > :is(p, details) { grid-column: 1 / -1; margin: 0; }
+.settings-application-form fieldset > button { justify-self: start; }
+.settings-application-form :is(input:not([type="checkbox"]), textarea, [data-slot="select-trigger"]) { width: 100%; min-width: 0; }
+.settings-application-form textarea { min-height: 100px; }
+.settings-application-form details { padding-top: 12px; border-top: 1px solid var(--border); }
+.settings-application-form details summary { cursor: pointer; font-weight: 600; }
+.settings-application-form details label { display: grid; gap: 6px; margin-top: 12px; }
+.settings-connection-details { padding: 16px 0; border-top: 1px solid var(--border); }
+.settings-connection-details > summary { cursor: pointer; font-weight: 600; }
+.settings-connection-details[open] > :not(summary) { margin-top: 16px; }
+.settings-data-links p { max-width: 75ch; }
+.settings-data-links li + li { margin-top: 8px; }
+@media (max-width: 680px) { .settings-application-form fieldset { grid-template-columns: minmax(0, 1fr); } }

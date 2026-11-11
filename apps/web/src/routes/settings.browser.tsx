@@ -1,16 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { BrowserCapabilitiesPanel, ExtensionPairingPanel } from "../contexts/browser/index.js";
-
-export const Route = createFileRoute("/settings/browser")({
-  component: BrowserSettingsRoute,
-});
-
-function BrowserSettingsRoute() {
-  return (
-    <>
-      <BrowserCapabilitiesPanel />
-      <ExtensionPairingPanel />
-    </>
-  );
-}
+// Retained deep link; the parent opens Browser and extension in Connections.
+export const Route = createFileRoute("/settings/browser")({ component: () => null });

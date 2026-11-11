@@ -96,6 +96,7 @@ function patchDiscoverySettings(
       ...(body.autoApply !== undefined ? { autoApply: body.autoApply } : {}),
       ...(body.boards !== undefined ? { boards: body.boards } : {}),
       ...(body.resultsPerSite !== undefined ? { resultsPerSite: body.resultsPerSite } : {}),
+      ...(body.newJobLimit !== undefined ? { newJobLimit: body.newJobLimit } : {}),
       ...(body.hoursOld !== undefined ? { hoursOld: body.hoursOld } : {}),
       ...(body.schedulingEnabled !== undefined
         ? { schedulingEnabled: body.schedulingEnabled }

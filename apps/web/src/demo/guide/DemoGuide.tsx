@@ -9,7 +9,6 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { classifyDemoRoute } from "../consent/DemoTelemetryAdapter.js";
-import { DEMO_ARTIFACTS } from "../artifacts.js";
 import { useDemoWorkspace } from "../workspace/DemoWorkspaceProvider.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useToastStore } from "../../shared/stores/toasts.js";
@@ -27,7 +26,14 @@ import {
 const GUIDE_STATE_KEY = "demo.guide.state";
 const DEMO_JOB_ID = "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35";
 
-type DemoGuideFeature = "scoring" | "materials" | "apply_review" | "pipeline";
+type DemoGuideFeature =
+  | "profile"
+  | "requirements"
+  | "preferences"
+  | "appearance"
+  | "scoring"
+  | "materials"
+  | "pipeline";
 
 interface DemoGuideState {
   readonly open: boolean;
@@ -91,7 +97,7 @@ export function DemoGuide() {
       setResetStatus(message);
       toast({ title: "Demo data reset", message, variant: "success" });
       setConfirmResetOpen(false);
-      await navigate({ to: "/dashboard" });
+      await navigate({ to: "/jobs" });
     } catch {
       const message = "Demo data could not be reset. Try again.";
       setResetStatus(message);
@@ -134,7 +140,7 @@ export function DemoGuide() {
             className="mt-1"
             data-typography="section-title"
           >
-            Try the synthetic workflow
+            Explore your demo workspace
           </h2>
         </div>
         <Button
@@ -155,14 +161,87 @@ export function DemoGuide() {
         sent to an employer or mailbox. Consented analytics measures coarse demo
         activity without sending job or profile text.
       </p>
+      <p data-typography="body">
+        Use the same navigation as the local app. Profile and requirement links
+        save in this browser. Live searches, model assessments and place lookup
+        are unavailable; a manual link never establishes assessed coverage.
+      </p>
 
       <nav aria-label="Synthetic demo shortcuts">
         <ul className="grid gap-1">
           <li>
-            <MatchingWalkthrough jobId={DEMO_JOB_ID} onNavigate={(destination) => {
-              if (destination === "job") recordFeatureShortcut("scoring");
-              else setGuideOpen(false);
-            }} />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto w-full justify-between px-2 py-2 text-left"
+              nativeButton={false}
+              render={
+                <Link
+                  to="/profile"
+                  search={{ section: "experience" }}
+                  onClick={() => recordFeatureShortcut("profile")}
+                  role="link"
+                />
+              }
+            >
+              <span>Edit synthetic experience and proposed wording</span>
+              <IconArrowRight aria-hidden="true" size={15} />
+            </Button>
+          </li>
+          <li>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto w-full justify-between px-2 py-2 text-left"
+              nativeButton={false}
+              render={
+                <Link
+                  to="/requirements"
+                  search={{ q: "" }}
+                  onClick={() => recordFeatureShortcut("requirements")}
+                  role="link"
+                />
+              }
+            >
+              <span>Browse requirements and linked achievements</span>
+              <IconArrowRight aria-hidden="true" size={15} />
+            </Button>
+          </li>
+          <li>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto w-full justify-between px-2 py-2 text-left"
+              nativeButton={false}
+              render={
+                <Link
+                  to="/preferences"
+                  onClick={() => recordFeatureShortcut("preferences")}
+                  role="link"
+                />
+              }
+            >
+              <span>Adjust search preferences</span>
+              <IconArrowRight aria-hidden="true" size={15} />
+            </Button>
+          </li>
+          <li>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto w-full justify-between px-2 py-2 text-left"
+              nativeButton={false}
+              render={
+                <Link
+                  to="/settings/appearance"
+                  onClick={() => recordFeatureShortcut("appearance")}
+                  role="link"
+                />
+              }
+            >
+              <span>Choose your workspace appearance</span>
+              <IconArrowRight aria-hidden="true" size={15} />
+            </Button>
           </li>
           <li>
             <Button
@@ -190,35 +269,16 @@ export function DemoGuide() {
               className="h-auto w-full justify-between px-2 py-2 text-left"
               nativeButton={false}
               render={
-                <a
-                  href={DEMO_ARTIFACTS.tailoredResumeHtml.url}
-                  target="_blank"
-                  rel="noreferrer"
+                <Link
+                  to="/jobs/$jobId"
+                  params={{ jobId: DEMO_JOB_ID }}
+                  search={{ jobTab: "resume" }}
                   onClick={() => recordFeatureShortcut("materials")}
                   role="link"
                 />
               }
             >
-              <span>Open an illustrative resume sample</span>
-              <IconArrowRight aria-hidden="true" size={15} />
-            </Button>
-          </li>
-          <li>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-auto w-full justify-between px-2 py-2 text-left"
-              nativeButton={false}
-              render={
-                <Link
-                  to="/apply-review"
-                  search={{ jobKey: DEMO_JOB_ID }}
-                  onClick={() => recordFeatureShortcut("apply_review")}
-                  role="link"
-                />
-              }
-            >
-              <span>Open browser-local application review</span>
+              <span>Edit and export a synthetic resume</span>
               <IconArrowRight aria-hidden="true" size={15} />
             </Button>
           </li>
@@ -242,6 +302,21 @@ export function DemoGuide() {
           </li>
         </ul>
       </nav>
+
+      <details>
+        <summary>Learn about model-backed matching</summary>
+        <p data-typography="body">
+          A separate illustration explains the local app's matching process. It
+          does not run a model or save a result.
+        </p>
+        <MatchingWalkthrough
+          jobId={DEMO_JOB_ID}
+          onNavigate={(destination) => {
+            if (destination === "job") recordFeatureShortcut("scoring");
+            else setGuideOpen(false);
+          }}
+        />
+      </details>
 
       <div className="grid gap-2 border-t border-border pt-3">
         <Button

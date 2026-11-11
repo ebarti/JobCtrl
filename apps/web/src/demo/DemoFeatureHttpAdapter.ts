@@ -16,10 +16,18 @@ import { DemoApiClientAdapter } from "./DemoApiClientAdapter.js";
 import { isDemoArtifactUrl } from "./artifacts.js";
 import { DemoCapabilityError } from "./ports.js";
 import { stableDemoStringify } from "./digest.js";
-import { demoEventEnvelope } from "./events.js";
+import { demoEventEnvelope, createResumeComposed, createResumeRendered, createPreparationUpdated } from "./events.js";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { documentHtml, documentText, renderDemoResume } from "./DemoResumeRenderer.js";
 import { evaluateDemoJobQuery, type DemoJobQueryRow } from "./DemoJobQueries.js";
 import { demoWorkspaceIdentity } from "./identity.js";
+import {
+  demoWordingLibrary, demoProfileRecovery, restoreDemoProfile, exactDemoRefs,
+  type DemoProfileVersion, type DemoProfileSourceVersion,
+  type DemoWordingLibrary as WordingLibrary, type DemoWordingVariant as WordingVariant,
+} from "./profile-library.js";
+import { demoCanonicalRequirements, demoRequirementLibrary, demoRequirementAssociations, demoAssociationView,
+  createDemoAssociation, reviseDemoAssociation, changeDemoAssociation, type DemoRequirementAssociations } from "./requirement-library.js";
 import type {
   DemoWorkspaceRepository,
   DemoWorkspaceMutationContext,
@@ -38,33 +46,6 @@ interface ProfileSource extends Data {
   kind: string;
   confirmation: string;
   origin: string;
-}
-interface WordingVariant {
-  variant_id: string;
-  revision: number;
-  achievement_id: string;
-  text: string;
-  status: string;
-  approval_id: string | null;
-  source_refs: SourceRef[];
-  origin_key: string | null;
-  provenance: Data;
-}
-interface WordingRole {
-  role_id: string;
-  achievements: {
-    achievement_id: string;
-    baseline_variant_id: string;
-    source_refs: SourceRef[];
-  }[];
-}
-interface WordingLibrary {
-  ok: true;
-  profileVersion: number;
-  wordingRevision: number;
-  roles: WordingRole[];
-  variants: WordingVariant[];
-  proposals: Data[];
 }
 interface Posting {
   job_id: string;
@@ -120,6 +101,19 @@ interface Resume {
   created_at: string;
   updated_at: string;
 }
+interface DemoPreparationRun {
+  runId: string;
+  status: "succeeded";
+  recipe: "prepare";
+  parentRunId: null;
+  jobIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  steps: { jobId: string; stage: string; status: string; result: Data; errorCode: null; updatedAt: string }[];
+  synthetic: true;
+  transport: "browser_local";
+  externalEffectOccurred: false;
+}
 
 /** Optional additions are reset atomically with the existing browser aggregate. */
 export interface DemoFeatureState {
@@ -128,6 +122,12 @@ export interface DemoFeatureState {
   profileSourcesChanged?: boolean;
   postings?: Record<string, Posting>;
   wording?: WordingLibrary;
+  wordingHistory?: Record<string, WordingVariant[]>;
+  profileVersions?: DemoProfileVersion[];
+  profileSourceVersions?: Record<string, DemoProfileSourceVersion>;
+  requirementAssociations?: DemoRequirementAssociations;
+  preparationRuns?: Record<string, DemoPreparationRun>;
+  preparationCommands?: Record<string, { request: string; runId: string }>;
   resumes?: Record<string, Resume>;
   compensationRevision?: number;
   profileSources?: ProfileSource[];
@@ -217,6 +217,88 @@ export class DemoFeatureHttpAdapter {
   ): Promise<Result> {
     const [, owner, id, action, detail] = path;
     const body = data(options.body);
+    if (owner === "actions" && id === "preparation.run" && method === "POST") return handled(await this.prepareBaseline(body, options));
+    if (owner === "actions" && id === "preparation.retry" && method === "POST") throw new JobCtrlApiError(422, "Demo Action Unavailable",
+      "Browser-local baseline preparation commits only after composition and rendering succeed. There is no unfinished worker run to continue; prepare the baseline again.",
+      { error: { code: "demo_preparation_unavailable" } });
+    if (owner === "preparation" && id === "runs" && method === "GET") {
+      const snapshot = await this.workspace.snapshot();
+      const runs = Object.values(snapshot.state.features?.preparationRuns ?? {}).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      if (path.length === 3) return handled({ runs, synthetic: true, transport: "browser_local" });
+      const run = runs.find((item) => item.runId === action);
+      if (!run || path.length !== 4) throw notFound();
+      return handled(run);
+    }
+    if (owner === "requirements") {
+      if (method === "POST" && id === "index" && action === "rebuild") throw new DemoCapabilityError("rebuildRequirementIndex",
+        "The browser-local demo searches its bundled catalog directly; it has no separate retrieval index to rebuild.");
+      if (method !== "GET") throw new DemoCapabilityError("rescoreJob", "Requirement extraction and meaning corrections require a configured model in the local app. The synthetic catalog is unchanged.");
+      const snapshot = await this.workspace.snapshot();
+      const catalog = demoCanonicalRequirements(snapshot);
+      const limit = integer(options.query?.limit ?? 50, 1, 200);
+      const offset = integer(options.query?.offset ?? 0, 0);
+      if (path.length === 2) {
+        const query = String(options.query?.q ?? "").toLocaleLowerCase();
+        if (query.length > 2500) throw badRequest("The literal catalog query is too long.");
+        const matches = catalog.filter((row) => [row.definition, row.scope, ...row.qualifiers.map((qualifier) => `${qualifier.dimension} ${qualifier.value}`)]
+          .some((value) => value.toLocaleLowerCase().includes(query)));
+        return handled({ catalog_revision: 1, total: matches.length, requirements: matches.slice(offset, offset + limit), synthetic: true });
+      }
+      if (id === "index" && path.length === 3) return handled({ catalog_revision: 1, indexed_revision: 1, meaning_count: catalog.length,
+        indexed_count: catalog.length, fresh: true, synthetic: true });
+      const requirement = catalog.find((row) => row.requirement_id === id);
+      if (!requirement) throw notFound();
+      if (options.query?.revision !== undefined && integer(options.query.revision, 1) !== requirement.revision) throw notFound("This synthetic requirement revision is unavailable.");
+      const occurrences = await this.requirementOccurrences(snapshot, requirement.requirement_id);
+      if (action === "history") {
+        const kind = options.query?.kind ?? "revisions";
+        if (kind !== "revisions" && kind !== "occurrences") throw badRequest("Choose revisions or occurrences.");
+        const rows = kind === "revisions" ? [{ ...requirement, current: true, stale_reasons: [] }] : occurrences.map((row) => ({
+          ...row, accepted: true, snapshot_revision: 1, current: true, stale_reasons: [],
+        }));
+        return handled({ requirement_id: requirement.requirement_id, current_revision: requirement.revision, kind, total: rows.length,
+          limit, offset, rows: rows.slice(offset, offset + limit), synthetic: true });
+      }
+      if (path.length === 3) return handled({ ...requirement, current_revision: requirement.revision, occurrences: occurrences.slice(offset, offset + limit) });
+    }
+    if (owner === "fit" && id === "requirement-library" && method === "GET") {
+      if (options.query?.profile_id && options.query.profile_id !== "default") throw notFound();
+      return handled(demoRequirementLibrary(await this.workspace.snapshot()));
+    }
+    if (owner === "fit" && id === "associations") {
+      if (method === "POST") {
+        let result: unknown;
+        await this.commit((draft) => { result = path.length === 3 ? createDemoAssociation(draft, body) :
+          path.length === 5 && detail === "state" ? changeDemoAssociation(draft, action!, body) :
+          path.length === 5 && detail === "revisions" ? reviseDemoAssociation(draft, action!, body) : undefined;
+          if (result === undefined) throw notFound(); });
+        return handled(result);
+      }
+      if (method === "GET" && path.length === 5 && detail === "history") {
+        if (options.query?.profile_id && options.query.profile_id !== "default") throw notFound();
+        const snapshot = await this.workspace.snapshot();
+        const associations = demoRequirementAssociations(snapshot);
+        const record = associations.rows.find((row) => row.association_id === action);
+        if (!record) throw notFound();
+        const limit = integer(options.query?.limit ?? 50, 1, 200), offset = integer(options.query?.offset ?? 0, 0);
+        const rows = [...(associations.history[action!] ?? []), record].reverse().map((row) => demoAssociationView(snapshot, row));
+        return handled({ association_id: record.association_id, profile_id: "default", current_revision: record.revision,
+          total: rows.length, limit, offset, rows: rows.slice(offset, offset + limit) });
+      }
+    }
+    if (owner === "fit" && id === "current-wordings") {
+      if (method === "GET") throw notFound("No assessed current-wording assignments are recorded in this synthetic demo.");
+      throw new DemoCapabilityError("updateAffectedMatches", "Choosing a current wording for a requirement needs exact approved coverage in the local app. Browser-local manual links remain unassessed.");
+    }
+    if (owner === "profile" && id === "recovery") {
+      if (method === "GET" && path.length === 3) return handled(demoProfileRecovery(await this.workspace.snapshot()));
+      if (method === "POST" && action === "restore" && path.length === 4) {
+        const snapshot = await this.workspace.snapshot();
+        const profile = restoreDemoProfile(snapshot, body);
+        return handled(await this.api.executeHttpLocalCommand("updateProfile", [{ profile, expectedProfileVersion: body.expectedProfileVersion }],
+          (draft) => { restoreDemoProfile(draft, body); }));
+      }
+    }
     if (owner === "fit" && id === "evidence-map" && method === "GET") {
       const snapshot = await this.workspace.snapshot();
       const sources = this.sources(snapshot).sources.map((source) => ({ source_id: source.source_id, usages: [] }));
@@ -261,9 +343,11 @@ export class DemoFeatureHttpAdapter {
         const fit = data(await this.fit(snapshot, jobId)); const score = data(fit.score);
         const savedResume = Object.values(snapshot.state.features?.resumes ?? {}).filter((resume) => resume.job_id === jobId).sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0];
         const nativeApplication = snapshot.state.features?.applications?.[jobId];
+        const localPreparation = Object.values(snapshot.state.features?.preparationRuns ?? {}).filter((run) => run.jobIds.includes(jobId))
+          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
         return { job: { ...posting, created_at: legacy?.job.discoveredAt ?? posting.observed_at },
           fit: { ...fit, score: fit.score === null ? null : { ...score, created_at: legacy?.job.scoredAt ?? null }, normalized_keywords: legacy?.job.scoreKeywords ?? [] },
-          preparation: legacy ? { stage: legacy.job.currentStage ?? null, state: legacy.job.currentState ?? null, updated_at: [...legacy.stages].map((stage) => stage.updatedAt).filter((value): value is string => typeof value === "string").sort().at(-1) ?? legacy.job.scoredAt ?? legacy.job.discoveredAt } : null,
+          preparation: localPreparation ? { stage: "render", state: localPreparation.status, updated_at: localPreparation.updatedAt } : legacy ? { stage: legacy.job.currentStage ?? null, state: legacy.job.currentState ?? null, updated_at: [...legacy.stages].map((stage) => stage.updatedAt).filter((value): value is string => typeof value === "string").sort().at(-1) ?? legacy.job.scoredAt ?? legacy.job.discoveredAt } : null,
           compensation: { summary: legacy?.job.compensationSummary ?? null, audit: legacy?.compensationAudit ?? null, refresh: null },
           application: nativeApplication ? { stage: "apply", state: nativeApplication.status ?? null, apply_status: nativeApplication.status ?? null, updated_at: nativeApplication.updatedAt } : legacy?.job.applyStatus ? { apply_status: legacy.job.applyStatus } : null,
           resume: savedResume ? { template: revisionOf(savedResume).template, revision: savedResume.version, resume_id: savedResume.resume_id } : null,
@@ -272,6 +356,10 @@ export class DemoFeatureHttpAdapter {
       return handled(await evaluateDemoJobQuery(rows, options.query));
     }
     if (owner === "action-runs" && id === "by-idempotency-key" && method === "GET") {
+      const snapshot = await this.workspace.snapshot();
+      const command = options.query?.action === "preparation.run" && options.idempotencyKey ? snapshot.state.features?.preparationCommands?.[options.idempotencyKey] : undefined;
+      const run = command ? this.actionRuns(snapshot).find((item) => item.runId === command.runId) : undefined;
+      if (run) return handled(run);
       throw notFound("No durable provider action was admitted in this browser demo workspace.");
     }
     if (owner === "discovery" && id === "target-search" && method === "GET") {
@@ -549,6 +637,7 @@ export class DemoFeatureHttpAdapter {
       if (method === "POST" && id && action === "cancel" && path.length === 4) {
         const original = runs.find((run) => run.runId === id);
         if (!original) throw notFound();
+        if (snapshot.state.features?.preparationRuns?.[id]) throw conflict("This browser-local baseline is already ready for review. There is no running worker action to cancel.");
         const key = options.idempotencyKey ?? `demo:cancel:${id}`;
         const request = stableDemoStringify({ runId: id, body });
         const prior = snapshot.state.features?.runCancellationCommands?.[key];
@@ -1041,6 +1130,7 @@ export class DemoFeatureHttpAdapter {
           "requirements",
           "fit",
           "resumes",
+          "preparation",
           "discovery",
           "companies",
           "contacts",
@@ -1503,7 +1593,13 @@ export class DemoFeatureHttpAdapter {
     if (owner === "profile" && id === "wording") {
       if (method === "GET" && path.length === 3)
         return handled(this.library(await this.workspace.snapshot()));
-      if (method === "POST") {
+      if (method === "GET" && path.length === 5 && detail === "history") {
+        const snapshot = await this.workspace.snapshot();
+        const current = this.library(snapshot).variants.find((variant) => variant.variant_id === action);
+        if (!current) throw notFound();
+        return handled({ ok: true, revisions: [...structuredClone(snapshot.state.features?.wordingHistory?.[action!] ?? []), current] });
+      }
+      if (method === "POST" || method === "PATCH") {
         let accepted: WordingLibrary | undefined;
         await this.commit((draft) => {
           const library = this.library(draft);
@@ -1511,7 +1607,7 @@ export class DemoFeatureHttpAdapter {
             throw conflict(
               "The Profile changed. Review its current version before saving wording.",
             );
-          if (path.length === 3) {
+          if (method === "POST" && path.length === 3) {
             const achievement = library.roles
               .flatMap((role) => role.achievements)
               .find((item) => item.achievement_id === body.achievementId);
@@ -1520,19 +1616,19 @@ export class DemoFeatureHttpAdapter {
             const refs = refsFrom(body.sourceRefs);
             if (
               !refs.length ||
-              refs.some(
-                (ref) =>
-                  !achievement.source_refs.some(
-                    (current) =>
-                      current.source_id === ref.source_id &&
-                      current.revision === ref.revision,
-                  ),
-              )
+              !exactDemoRefs(refs, achievement.source_refs)
             ) {
               throw conflict(
                 "The wording sources changed. Review the current source revisions.",
               );
             }
+            let parent: WordingVariant | undefined;
+            if (body.replacesVariantId !== undefined || body.replacesVariantRevision !== undefined) {
+              parent = library.variants.find((variant) => variant.variant_id === body.replacesVariantId);
+              if (!parent || parent.achievement_id !== achievement.achievement_id || parent.revision !== body.replacesVariantRevision || parent.status === "stale")
+                throw conflict("The wording being revised changed. Review its current text before proposing a revision.");
+            }
+            const intendedRequirementIds = body.intendedRequirementIds === undefined ? undefined : jobIds(body.intendedRequirementIds, true);
             library.variants.push({
               variant_id: `wording:${crypto.randomUUID()}`,
               revision: 1,
@@ -1543,11 +1639,26 @@ export class DemoFeatureHttpAdapter {
               approval_id: null,
               origin_key: null,
               provenance: {
-                kind: "user_authored_browser_demo",
+                kind: parent ? "proposed_revision" : "user_authored_browser_demo",
                 synthetic: true,
+                assessment_status: "unassessed",
+                ...(parent ? { replaces_variant_id: parent.variant_id, replaces_variant_revision: parent.revision } : {}),
+                ...(intendedRequirementIds ? { intended_requirement_ids: intendedRequirementIds } : {}),
               },
             });
-          } else if (path.length === 5 && detail === "decision") {
+          } else if (method === "PATCH" && path.length === 4) {
+            const variant = library.variants.find((item) => item.variant_id === action);
+            if (!variant) throw notFound();
+            if (variant.revision !== body.expectedVariantRevision || variant.text !== body.exactText)
+              throw conflict("The wording draft changed. Review its current text.");
+            if (variant.status !== "pending") throw conflict("Create a separate draft to edit reviewed wording.");
+            const nextText = text(body.text);
+            if (nextText === variant.text) { accepted = library; return; }
+            ((features(draft).wordingHistory ??= {})[variant.variant_id] ??= []).push(structuredClone(variant));
+            variant.text = nextText;
+            variant.revision += 1;
+            variant.provenance = { kind: "user_edited", original_provenance: variant.provenance, synthetic: true, assessment_status: "unassessed" };
+          } else if (method === "POST" && path.length === 5 && detail === "decision") {
             const variant = library.variants.find(
               (item) => item.variant_id === action,
             );
@@ -1771,7 +1882,7 @@ export class DemoFeatureHttpAdapter {
   }
 
   private actionRuns(snapshot: DemoWorkspaceSnapshot) {
-    return snapshot.state.readModel.runs.list.items
+    const legacy = snapshot.state.readModel.runs.list.items
       .map((run) => {
         if (!run.startedAt)
           throw conflict("A saved synthetic run has no recorded start time.");
@@ -1802,8 +1913,15 @@ export class DemoFeatureHttpAdapter {
           synthetic: true,
           externalEffectOccurred: false,
         };
-      })
-      .sort(
+      });
+    const local = Object.values(snapshot.state.features?.preparationRuns ?? {}).map((run) => ({
+      runId: run.runId, action: "preparation.run", status: run.status,
+      workflowId: `demo-browser:${run.runId}`, temporalRunId: null,
+      result: { resume_id: run.steps.find((step) => step.stage === "compose")?.result.resume_id ?? null },
+      errorCode: null, createdAt: run.createdAt, updatedAt: run.updatedAt, cancellationRequested: false,
+      synthetic: true, externalEffectOccurred: false, transport: "browser_local",
+    }));
+    return [...legacy, ...local].sort(
         (left, right) =>
           right.createdAt.localeCompare(left.createdAt) ||
           left.runId.localeCompare(right.runId),
@@ -1829,61 +1947,7 @@ export class DemoFeatureHttpAdapter {
   }
 
   private library(snapshot: DemoWorkspaceSnapshot): WordingLibrary {
-    const profileVersion =
-      snapshot.state.readModel.profile.config.profileVersion ?? 1;
-    const saved = snapshot.state.features?.wording;
-    if (saved?.profileVersion === profileVersion) return structuredClone(saved);
-    const profile = ProfileSchema.parse(
-      snapshot.state.readModel.profile.config.profile,
-    );
-    const variants: WordingVariant[] = [];
-    const roles = profile.resume.experience_entries.map((role) => ({
-      role_id: role.id,
-      achievements: role.bullets.map((bullet, index) => {
-        const achievementId = `demo:achievement:${role.id}:${index}`;
-        const source_refs = [
-          {
-            source_id: `achievement:${achievementId}`,
-            revision: profileVersion,
-          },
-        ];
-        const variant_id = `baseline:${achievementId}:${profileVersion}`;
-        variants.push({
-          variant_id,
-          revision: 1,
-          achievement_id: achievementId,
-          text: bullet,
-          status: "approved",
-          approval_id: `demo:authored-baseline:${variant_id}`,
-          source_refs,
-          origin_key: null,
-          provenance: {
-            kind: "authored_baseline",
-            authority: "authored_save",
-            synthetic: true,
-          },
-        });
-        return {
-          achievement_id: achievementId,
-          baseline_variant_id: variant_id,
-          source_refs,
-        };
-      }),
-    }));
-    return {
-      ok: true,
-      profileVersion,
-      wordingRevision: (saved?.wordingRevision ?? 0) + 1,
-      roles,
-      variants: [
-        ...variants,
-        ...(saved?.variants ?? []).map((variant) => ({
-          ...variant,
-          status: "stale",
-        })),
-      ],
-      proposals: saved?.proposals ?? [],
-    };
+    return demoWordingLibrary(snapshot);
   }
 
   private async requirements(snapshot: DemoWorkspaceSnapshot, id: string) {
@@ -1895,42 +1959,64 @@ export class DemoFeatureHttpAdapter {
       throw conflict(
         "The saved synthetic requirement does not belong to this posting revision.",
       );
+    const catalog = demoCanonicalRequirements(snapshot);
+    const sourceExamples = [{ text: example.requirement, requirementId: example.requirementId }];
+    if (id === "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35") sourceExamples.push({
+      text: "Coordinate incident response with the engineering team.", requirementId: "requirement-incident-response",
+    });
     return {
       job_id: id,
       revision: 1,
       posting_revision: posting.revision,
       posting_hash: posting.source_hash,
       catalog_revision: 1,
-      requirements: [
-        {
-          occurrence_id: `demo:occurrence:${id}`,
-          requirement_id: example.requirementId,
+      requirements: sourceExamples.map((sourceExample, index) => {
+        const canonical = catalog.find((requirement) => requirement.requirement_id === sourceExample.requirementId)!;
+        const spanStart = posting.description.indexOf(sourceExample.text);
+        if (spanStart < 0) throw conflict("The saved synthetic occurrence does not belong to this posting revision.");
+        return {
+          occurrence_id: `demo:occurrence:${id}${index ? `:${index}` : ""}`,
+          requirement_id: canonical.requirement_id,
           requirement_revision: 1,
-          text: example.requirement,
-          definition: example.requirement,
-          scope: "role",
+          job_id: id,
+          posting_revision: posting.revision,
+          text: sourceExample.text,
+          definition: canonical.definition,
+          scope: canonical.scope,
           tier: "must_have",
           weight: 1,
-          qualifiers: [],
+          qualifiers: canonical.qualifiers,
           source_id: posting.source_id,
           source_revision: posting.source_revision,
           source_hash: posting.source_hash,
           spans: [
             {
-              start,
-              end: start + example.requirement.length,
-              quote: example.requirement,
+              start: spanStart,
+              end: spanStart + sourceExample.text.length,
+              quote: sourceExample.text,
             },
           ],
           extraction_determination_id: `demo:bundled-synthetic:${id}`,
           equivalence_determination_ids: [],
+          provenance: { kind: "bundled_synthetic_occurrence", synthetic: true, model_called: false },
           synthetic: true,
-        },
-      ],
+        };
+      }),
       stale: false,
       latest_attempt: null,
       synthetic: true,
     };
+  }
+
+  private async requirementOccurrences(snapshot: DemoWorkspaceSnapshot, requirementId: string) {
+    const occurrences: Data[] = [];
+    for (const jobId of Object.keys(postingExamples)) {
+      const job = snapshot.state.readModel.jobs.details[jobId]?.job;
+      if (!job || job.deletedAt) continue;
+      const requirements = await this.requirements(snapshot, jobId);
+      if (requirements) occurrences.push(...requirements.requirements.filter((row) => row.requirement_id === requirementId));
+    }
+    return occurrences;
   }
 
   private async fit(snapshot: DemoWorkspaceSnapshot, id: string) {
@@ -1950,10 +2036,6 @@ export class DemoFeatureHttpAdapter {
       snapshot.state.features?.fitProfileSourceSignature ===
         stableDemoStringify(snapshot.state.readModel.profile.config.profile);
     const current = factsCurrent && !job.scoreStaleness.isStale;
-    const library = this.library(snapshot);
-    const baseline = library.variants.find(
-      (variant) => variant.status === "approved",
-    );
     return {
       job_id: id,
       current,
@@ -1982,7 +2064,7 @@ export class DemoFeatureHttpAdapter {
             requirement_revision: 1,
             text: example.requirement,
             definition: example.requirement,
-            scope: "role",
+            scope: "resume",
             tier: "must_have",
             weight: 1,
             kind: example.kind,
@@ -2025,7 +2107,6 @@ export class DemoFeatureHttpAdapter {
               ]
             : [],
         synthetic: true,
-        approved_baseline_variant_id: baseline?.variant_id ?? null,
       },
       synthetic: true,
     };
@@ -2360,6 +2441,81 @@ export class DemoFeatureHttpAdapter {
       };
     }, snapshot.resetEpoch);
     return handled(response);
+  }
+
+  /** Compose and verify real bytes before one atomic browser-local publication. */
+  private async prepareBaseline(body: Data, options: HttpRequestOptions) {
+    const unavailable = (message: string) => new JobCtrlApiError(422, "Demo Action Unavailable", message,
+      { error: { code: "demo_preparation_unavailable" } });
+    if (body.recipe !== "prepare" || body.resume_mode !== "baseline") throw unavailable(
+      "The public demo can prepare a full baseline in this browser. Tailoring, assessment and other preparation recipes need the local worker and a configured model.");
+    const parsed = z.object({ recipe: z.literal("prepare"), resume_mode: z.literal("baseline"),
+      job_ids: z.array(z.string().min(1).max(120)).length(1), scope: z.literal("selected").optional(),
+      limit: z.number().int().min(1).max(1000).optional(), force: z.boolean().optional(),
+      allow_below_threshold: z.boolean().optional(), min_fit_score: z.number().int().min(1).max(10).optional(),
+    }).strict().safeParse(body);
+    if (!parsed.success || !options.idempotencyKey || options.idempotencyKey.length > 200) throw new JobCtrlApiError(400, "Bad Request",
+      "Choose one synthetic job and use a stable request identity for browser-local baseline preparation.");
+    const key = options.idempotencyKey;
+    const request = stableDemoStringify({ action: "preparation.run", body });
+    const snapshot = await this.workspace.snapshot();
+    const receipt = (runId: string) => ({ runId, workflowId: `demo-browser:${runId}`, status: "succeeded" as const,
+      synthetic: true, transport: "browser_local", externalEffectOccurred: false, temporalRunId: null });
+    const existing = snapshot.state.features?.preparationCommands?.[key];
+    if (existing) {
+      if (existing.request !== request) throw conflict("This preparation identity already records different inputs.");
+      return receipt(existing.runId);
+    }
+    const jobId = parsed.data.job_ids[0]!;
+    const posting = await this.posting(snapshot, jobId);
+    if (posting.deleted) throw conflict("Restore this synthetic job before preparing its baseline.");
+    const library = this.library(snapshot);
+    const document = this.baselineDocument(snapshot, library);
+    const revision = this.newRevision(snapshot, library, document, 1);
+    let rendered: Awaited<ReturnType<typeof renderDemoResume>>;
+    try { rendered = await renderDemoResume(document, undefined, revision.theme, data(revision.template?.layout).plateDocument); }
+    catch { throw unavailable("The browser could not verify the baseline PDF. No preparation result was published; earlier documents and accepted PDFs remain available."); }
+    const now = new Date().toISOString();
+    const runId = `demo-preparation:${crypto.randomUUID()}`;
+    const resumeId = crypto.randomUUID(), artifactId = crypto.randomUUID();
+    const blobId = `resume:${resumeId}:${revision.revision_id}:${artifactId}`;
+    revision.renders.push({ artifact_id: artifactId, resume_id: resumeId, revision_id: revision.revision_id, filename: "resume.pdf", format: "pdf",
+      sha256: rendered.sha256, size_bytes: rendered.blob.size, page_count: rendered.pageCount, layout_boxes: rendered.layoutBoxes,
+      layout_conflicts: rendered.layoutConflicts, layout_metadata: rendered.layoutMetadata, text_verified: rendered.textVerified,
+      blob_id: blobId, content_type: "application/pdf", byte_count: rendered.blob.size, synthetic: true });
+    revision.render_attempts.push({ status: "succeeded", created_at: now, artifact_id: artifactId });
+    const resume: Resume = { resume_id: resumeId, job_id: jobId, profile_id: "default", version: 2,
+      current_revision: revision.revision_id, accepted_revision_id: null, revisions: [revision], acceptances: [], locales: [], comments: [], created_at: now, updated_at: now };
+    const step = (stage: string, status: string, result: Data): DemoPreparationRun["steps"][number] => ({
+      jobId, stage, status, result, errorCode: null, updatedAt: now,
+    });
+    const run: DemoPreparationRun = { runId, status: "succeeded", recipe: "prepare", parentRunId: null, jobIds: [jobId], createdAt: now, updatedAt: now,
+      steps: [step("requirements", "skipped", { skip: "browser_local_baseline_no_model" }), step("fit", "skipped", { skip: "browser_local_baseline_no_model" }),
+        step("compose", "succeeded", { resume_id: resumeId, revision_id: revision.revision_id, version: resume.version, mode: "baseline_copy" }),
+        step("review", "skipped", { skip: "baseline_copy", review_status: "not_applicable" }),
+        step("render", "succeeded", { resume_id: resumeId, version: resume.version, artifact_id: artifactId })],
+      synthetic: true, transport: "browser_local", externalEffectOccurred: false };
+    let acceptedRunId = runId;
+    await this.commit((draft, context) => {
+      const state = features(draft);
+      const prior = state.preparationCommands?.[key];
+      if (prior) {
+        if (prior.request !== request) throw conflict("This preparation identity already records different inputs.");
+        acceptedRunId = prior.runId;
+        return;
+      }
+      const currentJob = this.jobState(draft, jobId);
+      if (this.library(draft).profileVersion !== library.profileVersion || currentJob.revision !== posting.revision || currentJob.deleted)
+        throw conflict("The saved Profile or posting changed while the browser rendered this baseline. Earlier documents remain available.");
+      (state.resumes ??= {})[resumeId] = resume;
+      (state.preparationRuns ??= {})[runId] = run;
+      (state.preparationCommands ??= {})[key] = { request, runId };
+      context.putBlob(blobId, rendered.blob);
+      context.appendDomainEvent(createResumeComposed(LOCAL_TENANT, { jobId, resumeId, revisionId: revision.revision_id, synthetic: true }));
+      context.appendDomainEvent(createResumeRendered(LOCAL_TENANT, { jobId, resumeId, revisionId: revision.revision_id, artifactId, synthetic: true }));
+      context.appendDomainEvent(createPreparationUpdated(LOCAL_TENANT, { jobId, runId, status: "succeeded", transport: "browser_local", synthetic: true }));
+    }, snapshot.resetEpoch);
+    return receipt(acceptedRunId);
   }
 
   private async resume(

@@ -174,14 +174,18 @@ class ManualRefresh:
                 stale.append(job_id)
                 jobs.append({"job_id": job_id, "score_revision": score["revision"], "source_error": error.code})
         source_hash = fact_fingerprint(profile)
+        maintained_wordings = read.current_wordings(profile_id)
+        maintained_fingerprint = read.current_wordings_fingerprint(profile_id)
         stamp = fingerprint({
             "profile_id": profile_id, "facts": source_hash, "approved": approved_fingerprint(profile),
             "guidance": profile_snapshot.scoring_guidance, "catalog": catalog, "jobs": jobs,
             "assessment_ids": {ident: row["assessment_id"] if row else None for ident, row in prior.items()},
+            "current_wordings_fingerprint": maintained_fingerprint,
         })
         return {"profile": profile, "guidance": profile_snapshot.scoring_guidance,
                 "facts": fact_sources(profile), "catalog": catalog, "jobs": jobs,
-                "prior_assessments": prior,
+                "prior_assessments": prior, "current_wordings": maintained_wordings,
+                "current_wordings_fingerprint": maintained_fingerprint,
                 "prior_sources": {row["assessment_id"]: read.assessment_sources(row["assessment_id"])
                                   for row in prior.values() if row is not None}}, stamp, stale
 
@@ -259,7 +263,7 @@ class ManualRefresh:
             if (owner not in inventory or metadata.get("owner") != "fit"
                     or not isinstance(metadata.get("group_key"), str) or not metadata["group_key"]
                     or not metadata.get("requirements") or not isinstance(metadata.get("gap_requirement_ids"), list)
-                    or not metadata["gap_requirement_ids"]
+                    or not metadata["gap_requirement_ids"] and metadata.get("authoring_action") != "propose_consolidation"
                     or any(not isinstance(ident, str) or not ident for ident in metadata["gap_requirement_ids"])):
                 raise AppError("fit_refresh_retry_invalid", "This proposal has no exact grouped Fit source binding.", 409)
             for ref in brief.get("evidence_refs", []):

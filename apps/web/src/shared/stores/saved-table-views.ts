@@ -26,10 +26,13 @@ export const JOBS_TABLE_ID = "jobs" satisfies TableId;
 export const PYTHON_JOBS_SORT_FIELDS = [...JOB_SORT_FIELDS, "job_state", "resume_template", "scored_at"] as const;
 export const JOBS_TABLE_COLUMN_IDS = [
   "select",
-  "fit_score",
-  "eligibility",
   "title",
   "company",
+  "location",
+  "posted_compensation",
+  "fit_score",
+  "apply_status",
+  "eligibility",
   "job_state",
   "source",
   "compensation_min_eur",
@@ -37,16 +40,16 @@ export const JOBS_TABLE_COLUMN_IDS = [
   "compensation_market",
   "compensation_confidence",
   "compensation_warnings",
-  "location",
   "current_stage",
   "current_state",
   "resume_template",
   "discovered_at",
   "scored_at",
-  "apply_status",
 ] as const;
 
 export const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
+  "eligibility",
+  "job_state",
   "source",
   "compensation_min_eur",
   "compensation_max_eur",
@@ -54,6 +57,8 @@ export const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
   "compensation_confidence",
   "compensation_warnings",
   "resume_template",
+  "current_stage",
+  "current_state",
   "discovered_at",
   "scored_at",
 ] as const;
@@ -383,6 +388,12 @@ function normalizeColumns(
       : config.defaultHiddenColumnIds,
     knownIds,
   );
+  // A newly introduced presentation column must not change an existing saved
+  // layout. The fresh built-in Default has no source order and opts into it.
+  if (config.tableId === JOBS_TABLE_ID && Array.isArray(source["order"])
+      && !source["order"].includes("posted_compensation") && !hidden.includes("posted_compensation")) {
+    hidden.push("posted_compensation");
+  }
   if (hidden.length >= config.columnIds.length) {
     hidden.shift();
   }

@@ -37,4 +37,4 @@ def links(since):
         jobs.update(discoveredSince=since, scoredSince=since)
     return {"newMatches": "/jobs?" + urlencode(jobs), "blockedSources": "/discovery",
             "reviewNeededMaterials": "/apply-review", "staleScores": "/jobs?" + urlencode({"deleted": "active", "state": "stale", "sort": "fit_score", "dir": "desc"}),
-            "pendingApprovals": "/apply-review", "followUpsDue": "/jobs?applyStatus=applied", "budget": "/settings"}
+            "pendingApprovals": "/apply-review", "followUpsDue": "/jobs?applyStatus=applied", "budget": "/settings/budgets"}

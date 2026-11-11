@@ -58,8 +58,14 @@ class DigestService:
             blocked = []
             for source in summary["sources"]:
                 state = source.get("recommendedState", source.get("state", "normal"))
+                saved_state = source.get("state", state)
                 failures = source.get("consecutiveFailures", source.get("consecutive_failures", 0))
-                if state in {"quarantined", "disabled"} or failures >= 3:
+                # Disabled is saved user intent, including after a failed run.
+                # Only quarantine or repeated failures of enabled sources need attention.
+                if saved_state != "disabled" and (
+                    state == "quarantined"
+                    or (saved_state in {"active", "experimental", "normal"} and failures >= 3)
+                ):
                     item = {"sourceId": source.get("sourceId", source.get("source_id")),
                             "recommendedState": state, "consecutiveFailures": failures}
                     display = source.get("displayName") or source.get("name")

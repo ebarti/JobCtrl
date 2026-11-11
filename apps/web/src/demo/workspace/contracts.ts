@@ -96,6 +96,9 @@ export interface DemoWorkspaceSnapshot {
    */
   readonly blobIds: readonly string[];
   readonly state: {
+    /** Recovery CAS slots are separate from accepted feature revisions/events. */
+    draftSlots?: Record<string, string>;
+    draftSlotsRevision?: number;
     features?: DemoFeatureState;
     actionReceipts?: Record<string, { occurredAtOmitted: boolean; outcomeId: string }>;
     suggestionDecisionReceipts?: Record<string, DemoSuggestionDecisionReceipt>;

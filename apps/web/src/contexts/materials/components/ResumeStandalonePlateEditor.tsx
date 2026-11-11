@@ -163,6 +163,7 @@ export function ResumeStandalonePlateEditor({
   transformKey,
   workspaceControls,
   savedPlateValue,
+  initialDraftValue,
   onDirtyChange,
   onPlateValueChange,
   onSemanticTextChange,
@@ -178,6 +179,7 @@ export function ResumeStandalonePlateEditor({
   readonly transformKey?: string;
   readonly workspaceControls?: ReactNode;
   readonly savedPlateValue?: Value | null;
+  readonly initialDraftValue?: Value | null;
   readonly onDirtyChange?: (dirty: boolean) => void;
   readonly onPlateValueChange?: (value: Value) => void;
   readonly onSemanticTextChange?: (changes: readonly ResumePlateSemanticTextChange[]) => void;
@@ -198,7 +200,11 @@ export function ResumeStandalonePlateEditor({
       : (htmlState.status === "ready" ? resumePlateValueFromHtml(htmlState.html) : null),
     [htmlState, savedPlateValue],
   );
-  const [currentPlateValue, setCurrentPlateValue] = useState<Value | null>(initialPlateValue);
+  const initialCurrentValue = useMemo<Value | null>(
+    () => initialDraftValue && isPlateValue(initialDraftValue) ? normalizeResumePlateValue(initialDraftValue) : initialPlateValue,
+    [initialDraftValue, initialPlateValue],
+  );
+  const [currentPlateValue, setCurrentPlateValue] = useState<Value | null>(initialCurrentValue);
   const [selectedLine, setSelectedLine] = useState<PdfAuditLineSelection | null>(null);
   const [resetVersion, setResetVersion] = useState(0);
   const [editorVersion, setEditorVersion] = useState(0);
@@ -207,10 +213,10 @@ export function ResumeStandalonePlateEditor({
   const exportSourceRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    setCurrentPlateValue(initialPlateValue);
+    setCurrentPlateValue(initialCurrentValue);
     setSelectedLine(null);
     setResetVersion((currentVersion) => currentVersion + 1);
-  }, [initialPlateValue]);
+  }, [initialCurrentValue]);
 
   const initialSignature = useMemo(
     () => resumePlateValueSignature(initialPlateValue),

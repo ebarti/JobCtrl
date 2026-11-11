@@ -11,6 +11,7 @@ from .coverage_groups import (
     owned_support, relation_key, validate_group_decision,
 )
 from .coverage_retries import prepare_wording_retries
+from .coverage_current import current_mapping, expand_groups, publish_selection, rebind_mapping
 from .qualification import decide, now
 from .serialization import encoded
 from .sources import (
@@ -48,6 +49,7 @@ class Coverage:
         variants = profile["approved_variants"]
         inventory = achievements(profile)
         groups = {}
+        original_requirements_snapshot = requirements_snapshot
         self._check_cancelled(cancelled, operation)
         with self.store.read_snapshot() as read:
             read.validate_sources(profile_snapshot, requirements_snapshot, facts_only=False)
@@ -66,6 +68,9 @@ class Coverage:
                     if ident not in inventory or not owned_support(inventory[ident], assessment):
                         raise AppError("fit_achievement_binding_invalid", "The accepted achievement support is unavailable.", 409)
                     groups.setdefault(ident, []).append((requirement, assessment))
+            requirements_snapshot, maintained = expand_groups(read, profile, groups, inventory, source_hash)
+            group_fingerprints = {ident: read.current_wordings_fingerprint(profile["profile_id"], achievement_ids=[ident])
+                                  for ident in groups}
 
         prepared = []
         assessed = reused = assessed_groups = reused_groups = 0
@@ -75,27 +80,35 @@ class Coverage:
             self._check_cancelled(cancelled, operation)
             entries.sort(key=lambda item: item[0]["requirement_id"])
             approved = [row for row in variants if row["achievement_id"] == achievement_id]
+            heads = [row for row in maintained if row["achievement_id"] == achievement_id]
             relations, reused_count = self._current_relations(
                 profile, entries, approved, facts, profile_snapshot, requirements_snapshot, cancelled, operation,
+                maintained=heads,
             )
             reused += reused_count
-            current_groups.append((achievement_id, entries, approved, relations))
+            current_groups.append((achievement_id, entries, approved, relations, heads))
 
         # Restore every unchanged exact relation before finding gaps. A binding
         # under another supported achievement can satisfy the requirement too.
-        for achievement_id, entries, approved, relations in current_groups:
+        for achievement_id, entries, approved, relations, heads in current_groups:
             self._check_cancelled(cancelled, operation)
-            if all(self._has_covered(profile, requirement, assessment, variants) for requirement, assessment in entries):
+            rebound = rebind_mapping(self, profile=profile, entries=entries, variants=approved, relations=relations,
+                heads=heads, profile_snapshot=profile_snapshot, requirements_snapshot=requirements_snapshot,
+                achievement_id=achievement_id, expected_fingerprint=group_fingerprints[achievement_id],
+                cancelled=cancelled, operation=operation)
+            if rebound:
+                reused_groups += 1
+                continue
+            if current_mapping(entries, approved, relations, heads):
+                reused_groups += 1
                 continue
             retained_ids, retained = self._retained_requests(profile, inventory[achievement_id], entries)
             missing = {(requirement["requirement_id"], variant["variant_id"])
                        for requirement, _ in entries for variant in approved
                        if relation_key(requirement, variant) not in relations}
-            outstanding = {requirement["requirement_id"] for requirement, assessment in entries
-                           if not self._has_covered(profile, requirement, assessment, variants)}
-            if not missing and (not prepare_wording or outstanding.issubset(retained_ids)):
-                proposals.extend(retained if prepare_wording else [])
-                continue
+            outstanding = {requirement["requirement_id"] for requirement, _ in entries
+                           if not any(relation.get("covered") for (ident, _), relation in relations.items()
+                                      if ident == requirement["requirement_id"])}
             group_facts, sources, bindings, group_key = self._group_inputs(
                 profile, inventory[achievement_id], entries, approved, facts,
             )
@@ -118,6 +131,7 @@ class Coverage:
                         "accepted_qualifications": [assessment for _, assessment in entries],
                         "missing_relations": requested_relations,
                         "current_relations": list(relations.values()),
+                        "current_wordings": heads,
                         "covered_requirement_ids": sorted(set(row["requirement_id"] for row, _ in entries) - outstanding),
                         "retained_requirement_ids": sorted(retained_ids), "retained_requests": retained,
                     },
@@ -127,6 +141,7 @@ class Coverage:
                 record = {
                     "group_key": group_key, "profile_id": profile["profile_id"], "achievement_id": achievement_id,
                     "requirements": bindings, "source_fingerprint": fingerprint(sources),
+                    "current_wordings": heads,
                     "requested_relations": requested_relations,
                     "approved_variant_fingerprints": [{"variant_id": row["variant_id"], "revision": row["revision"],
                                                       "fingerprint": variant_fingerprint(row)} for row in approved],
@@ -172,7 +187,11 @@ class Coverage:
                 self.store.publish_coverage(relation, profile_snapshot, requirements_snapshot, assessment, cancelled=cancelled)
                 assessed += int(inferred)
                 reused += int(not inferred)
-            if prepare_wording and result.action == "propose_wording":
+            publish_selection(self, result=result, record=record, profile=profile,
+                profile_snapshot=profile_snapshot, requirements_snapshot=requirements_snapshot,
+                achievement_id=achievement_id, entries=entries, variants=approved, heads=heads,
+                expected_fingerprint=group_fingerprints[achievement_id], cancelled=cancelled, operation=operation)
+            if prepare_wording and result.action in {"propose_wording", "propose_consolidation"}:
                 prepared.append((achievement_id, entries, record))
             proposals.extend(retained if prepare_wording else [])
 
@@ -190,6 +209,7 @@ class Coverage:
         self._current_profile(profile_snapshot)
         with self.store.read_snapshot() as read:
             read.validate_sources(profile_snapshot, requirements_snapshot)
+            read.validate_sources(profile_snapshot, original_requirements_snapshot)
         return self._result(proposals, operation, assessed_relations=assessed, reused_relations=reused,
                             assessed_groups=assessed_groups, reused_groups=reused_groups)
 
@@ -212,7 +232,7 @@ class Coverage:
         sources = group_sources(entries, variants, group_facts)
         bindings = [self._requirement_binding(requirement, assessment, achievement) for requirement, assessment in entries]
         group_key = "fit-wording-group-" + fingerprint({
-            "format": "fit-wording-group-v1", "profile_id": profile["profile_id"],
+            "format": "fit-wording-group-v2", "profile_id": profile["profile_id"],
             "achievement_id": achievement["achievement_id"], "achievement": achievement, "sources": sources,
             "requirements": [{key: row[key] for key in row if key not in {
                 "assessment_id", "support_receipt_id", "support_rationale",
@@ -251,7 +271,7 @@ class Coverage:
                 "accepted_evidence_refs": assessment["evidence_refs"]}
 
     def _current_relations(self, profile, entries, variants, facts, profile_snapshot, requirements_snapshot,
-                           cancelled, operation):
+                           cancelled, operation, *, maintained=()):
         relations = {}
         for requirement, assessment in entries:
             for variant in variants:
@@ -263,7 +283,10 @@ class Coverage:
                     assessment["assessment_id"], variant["variant_id"], variant["revision"],
                 )
                 if relation is None or relation["variant_fingerprint"] != variant_fingerprint(variant):
-                    relation = self._reuse_revalidated(profile, requirement, assessment, variant, facts)
+                    previous = next((row for row in maintained if row["requirement_id"] == requirement["requirement_id"]
+                                     and row["variant_id"] == variant["variant_id"]), None)
+                    relation = self._reuse_revalidated(profile, requirement, assessment, variant, facts,
+                        preferred_relation_id=previous["relation_id"] if previous else None)
                     if relation is not None:
                         self.store.publish_coverage(relation, profile_snapshot, requirements_snapshot, assessment,
                                                     cancelled=cancelled)
@@ -283,11 +306,13 @@ class Coverage:
                 return True
         return False
 
-    def _reuse_revalidated(self, profile, requirement, assessment, variant, facts):
-        for relation in self.store.prior_coverage(
+    def _reuse_revalidated(self, profile, requirement, assessment, variant, facts, *, preferred_relation_id=None):
+        retained = self.store.prior_coverage(
             profile["profile_id"], requirement["requirement_id"], requirement["requirement_revision"],
             variant["variant_id"], variant["revision"],
-        ):
+        )
+        retained.sort(key=lambda row: row["relation_id"] != preferred_relation_id)
+        for relation in retained:
             if (relation["qualification_determination_id"] != assessment["determination_id"]
                     or relation["variant_fingerprint"] != variant_fingerprint(variant)
                     or not citations_still_bound(relation["source_refs"], facts)):
@@ -347,15 +372,24 @@ class Coverage:
                                cancelled, operation, retry_proposal=None):
         profile = dto(profile_snapshot)
         retained_ids, _ = self._retained_requests(profile, achievement, entries) if retry_proposal is None else (set(), [])
+        action = record["decision"]["action"]
+        consolidation = action == "propose_consolidation"
         requested_gaps = (record["decision"]["gap_requirement_ids"] if retry_proposal is None
                           else retry_proposal["brief"]["origin_metadata"]["gap_requirement_ids"])
         gaps = [ident for ident in requested_gaps if ident not in retained_ids
-                and not any(requirement["requirement_id"] == ident
-                            and self._has_covered(profile, requirement, assessment, profile["approved_variants"])
-                            for requirement, assessment in entries)]
-        if not gaps:
+                and not any(requirement["requirement_id"] == ident and any(
+                    variant["achievement_id"] == achievement["achievement_id"]
+                    and self._has_covered(profile, requirement, assessment, [variant])
+                    for variant in profile["approved_variants"]) for requirement, assessment in entries)]
+        if not gaps and not consolidation:
             return None
         bindings = [self._requirement_binding(requirement, assessment, achievement) for requirement, assessment in entries]
+        replacement_ids = set(record["decision"].get("replacement_variant_ids", []))
+        if not replacement_ids:
+            replacement_ids.update(row["variant_id"] for row in record.get("current_wordings", []))
+            replacement_ids.update(row["variant_id"] for row in record["decision"].get("selected_relations", []))
+        replacement_variants = [{"variant_id": row["variant_id"], "variant_revision": row["revision"]}
+                                for row in profile["approved_variants"] if row["variant_id"] in replacement_ids]
         accepted = {ref["source_id"]: ref for _, assessment in entries for ref in assessment["evidence_refs"]}
         chosen = [accepted[cite["source_id"][len("evidence:"):]] for cite in record["decision"]["citations"]
                   if cite["source_id"].startswith("evidence:") and cite["source_id"][len("evidence:"):] in accepted]
@@ -363,6 +397,8 @@ class Coverage:
         origin = "fit-wording-" + fingerprint({
             "profile_id": profile["profile_id"], "achievement_id": achievement["achievement_id"],
             "gap_requirement_ids": sorted(gaps),
+            **({"authoring_action": action, "replacement_variant_ids": record["decision"]["replacement_variant_ids"]}
+               if consolidation else {}),
             "requirements": [{"requirement_id": row["requirement_id"], "requirement_revision": row["requirement_revision"],
                               "evidence_refs": self._source_refs(row["evidence_refs"])} for row in bindings],
         })
@@ -388,14 +424,19 @@ class Coverage:
             "requested_expression": (
                 "Prepare at most one reviewable wording alternative for this achievement's COMPLETE relevant "
                 "requirement set. Preserve supported meaning already present in approved wording, and address "
-                "the meaningful new expression gaps together. Preserve factual support levels and remaining "
+                "the meaningful new expression gaps together, or consolidate the specified exact existing "
+                "wordings into one faithful wording when this is a consolidation request. Preserve factual support levels and remaining "
                 "qualification gaps. Do not transfer another achievement's claims, add facts, or make separate "
                 "variants per requirement. Retained rejected/deferred requests must not be regenerated. "
-                + encoded({"requirements": bindings, "new_gap_requirement_ids": gaps})
+                + encoded({"requirements": bindings, "new_gap_requirement_ids": gaps,
+                           "authoring_action": action, "replacement_variant_ids": record["decision"]["replacement_variant_ids"]})
             ),
             "origin_metadata": {"owner": "fit", "group_key": record["group_key"], "requirements": bindings,
                                 "gap_requirement_ids": gaps, "group_determination_id": record["provenance"]["receipt_id"],
                                 "group_rationale": record["decision"]["rationale"],
+                                "authoring_action": action,
+                                "intended_requirement_ids": [row["requirement_id"] for row in bindings],
+                                "replaces_variant_ids": replacement_variants,
                                 "existing_approved_variants": [row for row in profile["approved_variants"]
                                                                if row["achievement_id"] == achievement["achievement_id"]],
                                 **retry_metadata},
@@ -418,11 +459,13 @@ class Coverage:
         binding = {"origin_key": origin, "profile_id": profile["profile_id"], "requirements": bindings,
                    "proposal_id": proposal_id, "achievement_id": achievement["achievement_id"],
                    "evidence_refs": refs, "group_key": record["group_key"], "gap_requirement_ids": gaps,
+                   "authoring_action": action,
+                   "intended_requirement_ids": [row["requirement_id"] for row in bindings],
                    **retry_metadata, "created_at": now()}
         self.store.publish_wording_request(binding, profile_snapshot, requirements_snapshot,
                                            [assessment for _, assessment in entries], cancelled=cancelled)
         return {**proposal, "proposal_id": proposal_id, "achievement_id": achievement["achievement_id"],
-                "requirement_ids": gaps}
+                "requirement_ids": [row["requirement_id"] for row in bindings] if consolidation else gaps}
 
     @staticmethod
     def _check_cancelled(cancelled, operation=None):

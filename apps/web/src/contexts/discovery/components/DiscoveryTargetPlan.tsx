@@ -1,5 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ModelReceiptSchema } from "@jobctrl/contracts";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { z } from "zod";
 
@@ -9,23 +8,15 @@ import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { Button } from "../../../shared/ui/button.js";
 import { discoveryKeys } from "../queryKeys.js";
 import { useDiscoveryActionRecovery } from "../hooks/useDiscoveryActionRecovery.js";
+import { useDiscoveryTargetPlanQuery } from "../hooks/useDiscoveryTargetPlanQuery.js";
 
-const Query = z.object({ query: z.string(), tier: z.number(), source_scope: z.array(z.string()),
-  authority: z.string().optional(), rationale: z.string().optional(),
-  citations: z.array(z.object({ source_id: z.string(), quote: z.string() }).passthrough()).optional() }).passthrough();
-const TargetPlan = z.object({ ok: z.literal(true), current: z.boolean(), accepted: z.object({
-  planId: z.string(), profileRevision: z.number(), profileFingerprint: z.string(), queries: z.array(Query),
-  locations: z.array(z.object({ location: z.string(), remote: z.boolean() }).passthrough()),
-  provenance: ModelReceiptSchema.nullable(), createdAt: z.string(),
-}).passthrough().nullable(), targets: z.record(z.string(), z.unknown()), profileRevision: z.number().int().positive().optional() }).passthrough();
 const RunReceipt = z.object({ runId: z.string().min(1), workflowId: z.string().min(1), status: z.string().min(1) });
 
 export function DiscoveryTargetPlan() {
   const tenantId = useTenantId(); const { http } = usePorts(); const client = useQueryClient();
   const [runId, setRunId] = useState<string | null>(null);
   const recovery = useDiscoveryActionRecovery("discovery.refresh_targets");
-  const query = useQuery({ queryKey: discoveryKeys.targetPlan(tenantId),
-    queryFn: async () => TargetPlan.parse(await http.json<unknown>("GET", "/v1/discovery/target-search")) });
+  const query = useDiscoveryTargetPlanQuery();
   const refresh = useMutation({ mutationFn: async (profileRevision: number) => {
     const body = { force: true, expectedProfileVersion: profileRevision };
     const { requestId, databaseInstanceId } = await recovery.begin(body, profileRevision);

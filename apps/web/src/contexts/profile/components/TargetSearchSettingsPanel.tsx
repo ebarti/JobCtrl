@@ -10,8 +10,8 @@ export function TargetSearchSettingsPanel() {
     <DisclosureSection
       className="target-search-settings"
       collapsedSummary="Roles, locations, seniority, and work models"
-      description="Roles, locations, work models, and target search defaults"
-      title="Target search"
+      description="Suggest roles and locations, then review your Search preferences before saving"
+      title="Search preference suggestions"
     >
       {profileQuery.error ? <div className="banner inline">{profileQuery.error.message}</div> : null}
       {profileQuery.data ? (

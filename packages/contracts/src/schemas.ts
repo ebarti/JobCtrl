@@ -1791,6 +1791,19 @@ const ProfileAvailabilitySchema = z
   .passthrough()
   .partial();
 
+export const TargetLocationBindingSchema = z.object({
+  rowIndex: z.number().int().nonnegative().max(99),
+  text: z.string().trim().min(1).max(300),
+  provider: z.literal("photon"),
+  placeId: z.string().min(1).max(200),
+  displayName: z.string().trim().min(1).max(1000),
+  latitude: z.number().finite().min(-90).max(90),
+  longitude: z.number().finite().min(-180).max(180),
+  selectedAt: z.string().datetime({ offset: true }),
+  provenance: z.literal("user_selected"),
+}).strict();
+export type TargetLocationBinding = z.infer<typeof TargetLocationBindingSchema>;
+
 const ProfileExperienceMetadataSchema = z
   .object({
     years_of_experience_total: z.string().default(""),
@@ -1803,6 +1816,7 @@ const ProfileExperienceMetadataSchema = z
     target_functions: z.string().default(""),
     target_specializations: z.string().default(""),
     target_locations: z.string().default(""),
+    target_location_bindings: z.array(TargetLocationBindingSchema).max(100).optional(),
     target_work_models: z.string().default(""),
   })
   .passthrough()
@@ -4983,6 +4997,7 @@ export const DiscoverySettingsUpdateRequestSchema = z
     applyApprovalRequired: z.literal(true).optional(),
     boards: z.array(z.string().refine((value) => value.trim().length > 0)).optional(),
     resultsPerSite: z.coerce.number().int().min(1).max(1000).optional(),
+    newJobLimit: z.coerce.number().int().min(1).max(10000).optional(),
     hoursOld: z.coerce.number().int().min(0).max(8760).optional(),
     schedulingEnabled: z.boolean().optional(),
     scheduleCron: z.string().min(1).optional(),

@@ -39,7 +39,7 @@ def _error_code(error: BaseException) -> str:
 
 
 def _validate(raw: dict) -> dict:
-    if not isinstance(raw, dict) or set(raw) - {"recipe", "job_ids", "scope", "discovery", "limit", "force", "min_fit_score", "allow_below_threshold"}:
+    if not isinstance(raw, dict) or set(raw) - {"recipe", "job_ids", "scope", "discovery", "limit", "force", "min_fit_score", "allow_below_threshold", "resume_mode"}:
         raise AppError("invalid_preparation", "Choose a supported preparation recipe and options.")
     recipe = raw.get("recipe")
     if not isinstance(recipe, str) or recipe not in RECIPES:
@@ -59,6 +59,9 @@ def _validate(raw: dict) -> dict:
     force, override = raw.get("force", False), raw.get("allow_below_threshold", False)
     if type(force) is not bool or type(override) is not bool:
         raise AppError("invalid_preparation_option", "Preparation options must be boolean.")
+    resume_mode = raw.get("resume_mode")
+    if "resume_mode" in raw and (not isinstance(resume_mode, str) or resume_mode not in {"baseline", "tailored"}):
+        raise AppError("invalid_resume_mode", "Choose a full baseline or tailored resume.")
     minimum = raw.get("min_fit_score")
     if minimum is not None and (type(minimum) is not int or not 1 <= minimum <= 10):
         raise AppError("invalid_fit_threshold", "Use a fit threshold from 1 to 10.")
@@ -66,7 +69,8 @@ def _validate(raw: dict) -> dict:
     if not isinstance(discovery, dict) or set(discovery) - DISCOVERY_KEYS or discovery and recipe not in {"run", "discover"}:
         raise AppError("invalid_discovery_options", "Choose supported Discovery options.")
     return {"recipe": recipe, "job_ids": ids, "scope": scope, "limit": limit, "force": force,
-            "min_fit_score": minimum, "allow_below_threshold": override, "discovery": discovery}
+            "min_fit_score": minimum, "allow_below_threshold": override, "discovery": discovery,
+            **({"resume_mode": resume_mode} if resume_mode is not None else {})}
 
 
 class PreparationService:
@@ -158,6 +162,9 @@ class PreparationService:
 
 
     def _inputs(self, job_id, stage, request, prior):
+        baseline_only = request["resume_mode"] == "baseline" and request["recipe"] in {"prepare", "tailor"}
+        if baseline_only and stage in {"requirements", "fit"}:
+            return {"skip": "full_baseline_needs_no_job_assessment"}
         if stage == "enrich":
             posting = self.jobs.snapshot(job_id)
             if request["recipe"] in {"run", "discover"} and not posting.get("needs_enrichment", True):
@@ -194,21 +201,35 @@ class PreparationService:
                     "force": request["force"] and request["recipe"] != "tailor", "prepare_wording": request["resume_mode"] != "baseline",
                     "prepare_coverage": request["resume_mode"] != "baseline"}
         if stage == "compose":
-            fit = self.fit.get_job_fit(job_id, include_coverage=False)
-            score = fit.get("score")
-            if not fit.get("current") or not score:
-                raise AppError("fit_not_current", "Current person fit is required before resume preparation.", 409)
-            expected_fit = (prior.get("fit", {}).get("result") or {}).get("revision")
-            if expected_fit is not None and score["revision"] != expected_fit:
-                raise ConflictError("Person fit changed before resume preparation.")
-            if score["eligibility"]["status"] == "blocked":
-                raise AppError("eligibility_blocked", "Resolve the recorded eligibility blocker first.", 409)
-            if score["score"] < request["min_fit_score"] and not request["allow_below_threshold"]:
-                return {"skip": "below_fit_threshold", "score": score["score"], "threshold": request["min_fit_score"]}
+            if not baseline_only:
+                fit = self.fit.get_job_fit(job_id, include_coverage=False)
+                score = fit.get("score")
+                if not fit.get("current") or not score:
+                    raise AppError("fit_not_current", "Current person fit is required before resume preparation.", 409)
+                expected_fit = (prior.get("fit", {}).get("result") or {}).get("revision")
+                if expected_fit is not None and score["revision"] != expected_fit:
+                    raise ConflictError("Person fit changed before resume preparation.")
+                if score["eligibility"]["status"] == "blocked":
+                    raise AppError("eligibility_blocked", "Resolve the recorded eligibility blocker first.", 409)
+                if score["score"] < request["min_fit_score"] and not request["allow_below_threshold"]:
+                    return {"skip": "below_fit_threshold", "score": score["score"], "threshold": request["min_fit_score"]}
             documents = self.resumes.list(job_id)
-            if documents and not request["force"]:
+            requested_mode = "baseline_copy" if request["resume_mode"] == "baseline" else "tailored"
+            existing_revision = next((item for item in documents[-1]["revisions"]
+                                      if item["revision_id"] == documents[-1]["current_revision"]), None) if documents else None
+            compatible = bool(existing_revision and existing_revision["mode"] == requested_mode
+                              and existing_revision["profile_revision"] == self.profile.snapshot().profile_revision)
+            if compatible and not baseline_only:
+                try:
+                    if existing_revision.get("requirements_snapshot") is not None:
+                        self.requirements.assert_current(existing_revision["requirements_snapshot"])
+                    if existing_revision.get("fit_snapshot") is not None:
+                        self.fit.assert_current(existing_revision["fit_snapshot"])
+                except AppError:
+                    compatible = False
+            if documents and not request["force"] and compatible:
                 existing = documents[-1]
-                if existing.get("accepted_revision_id"):
+                if existing.get("accepted_revision_id") == existing["current_revision"]:
                     return {"skip": "resume_already_accepted", "resume_id": existing["resume_id"]}
                 return {"reuse_resume_id": existing["resume_id"], "expected_version": existing["version"],
                         "revision_id": existing["current_revision"]}
@@ -373,7 +394,10 @@ class PreparationService:
                     raise NotFoundError("The prior preparation run does not exist.")
                 request["resume_mode"] = parent_request["resume_mode"]
             else:
-                request["resume_mode"] = settings.get("resumeMode", "tailored")
+                # An explicit task choice is already part of the durable action
+                # payload admitted by Actions. Never replace it with a later
+                # global preference while a queued action starts or replays.
+                request["resume_mode"] = request.get("resume_mode", settings.get("resumeMode", "tailored"))
             request["min_fit_score"] = request["min_fit_score"] or settings.get("minFitScore", 7)
         self.checkpoints.open_run(context.run_id, request, parent)
         if parent:
@@ -454,6 +478,7 @@ class PreparationService:
             raise AppError("nothing_to_retry", "There are no failed preparation jobs to retry.", 409)
         recipe = original["recipe"]
         raw = {key: original[key] for key in ("recipe", "job_ids", "scope", "discovery", "limit", "force", "min_fit_score", "allow_below_threshold")}
+        raw["resume_mode"] = original["resume_mode"]
         raw.update(recipe=recipe, job_ids=selected, scope="selected" if selected else "pending")
         if recipe not in {"run", "discover"}:
             raw["discovery"] = {}

@@ -167,8 +167,8 @@ export function MatchingWalkthrough({ jobId, onNavigate }: {
               : <p data-typography="body">Select a decision to see the example outcome.</p>}
           </div>
           <div><Button variant="ghost" size="sm" className="h-auto whitespace-normal px-0 text-left" nativeButton={false}
-            render={<Link to="/evidence-map" search={{ q: "", entry: "", job: "" }} onClick={() => navigate("evidence")} role="link" />}>
-            Open demo evidence map <IconArrowRight aria-hidden="true" size={15} />
+            render={<Link to="/requirements" search={{ q: "" }} onClick={() => navigate("evidence")} role="link" />}>
+            Open demo requirements library <IconArrowRight aria-hidden="true" size={15} />
           </Button></div>
         </> : null}
       </section>

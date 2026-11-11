@@ -1,0 +1,100 @@
+/* Reusable requirement definitions and their achievement relationships. */
+.requirements-library,
+.requirements-library *,
+.achievement-requirements,
+.requirement-picker {
+  min-width: 0;
+}
+
+.requirements-library {
+  width: 100%;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.requirements-library__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px 16px;
+  margin: 20px 0;
+}
+.requirements-library__toolbar label { display: grid; gap: 6px; flex: 1 1 340px; max-width: 620px; font-weight: 600; }
+.requirements-library__toolbar > span { align-self: center; margin-left: auto; }
+.requirements-library__layout { display: grid; grid-template-columns: minmax(250px, 340px) minmax(0, 1fr); gap: 28px; align-items: start; }
+.requirements-list, .requirements-detail { border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.requirements-list { padding: 18px; }
+.requirements-list ul, .requirement-history__list { list-style: none; padding: 0; margin: 0; }
+.requirements-list li + li { margin-top: 7px; }
+.requirements-list li button { display: grid; gap: 7px; width: 100%; padding: 13px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--foreground); text-align: left; overflow-wrap: anywhere; }
+.requirements-list li button:hover { background: var(--muted); }
+.requirements-list li button[aria-pressed="true"] { border-color: var(--border); background: var(--accent); }
+.requirements-list li button span, .requirements-list li button small { color: var(--muted-foreground); font-size: 14px; }
+.requirements-library__detail:focus { outline: 2px solid var(--ring); outline-offset: 3px; }
+.requirements-detail { padding: clamp(18px, 2vw, 28px); }
+.requirements-definition { padding-bottom: 22px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
+.requirements-definition h2 { margin: 8px 0 10px; font-size: 22px; line-height: 1.35; overflow-wrap: anywhere; }
+.requirements-definition p { margin: 8px 0; max-width: 110ch; }
+.requirements-definition__eyebrow { color: var(--muted-foreground); font-weight: 600; }
+.requirement-section-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px 16px; margin: 0 0 15px; }
+.requirement-section-heading h2, .requirement-section-heading h3, .requirement-section-heading h5 { margin: 0; font-size: 16px; line-height: 1.4; font-weight: 650; }
+.requirement-count { color: var(--muted-foreground); font-weight: 500; }
+.requirement-empty { padding: 20px; border: 1px dashed var(--border); border-radius: 7px; background: var(--background); }
+.requirement-empty p { margin: 6px 0 0; color: var(--muted-foreground); }
+.requirements-achievements { display: grid; gap: 16px; }
+.requirement-achievement { display: grid; gap: 14px; border: 1px solid var(--border); border-radius: 7px; padding: 20px; }
+.requirement-achievement__heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 8px 16px; }
+.requirement-achievement__heading h4 { margin: 0; font-size: 16px; line-height: 1.4; }
+.requirement-achievement__heading p { margin: 3px 0 0; }
+.requirement-achievement__fact, .requirement-wording__text { margin: 0; max-width: 110ch; white-space: pre-wrap; overflow-wrap: anywhere; }
+.requirement-achievement .requirement-section-heading { margin: 8px 0 0; }
+.requirement-wording-groups { display: grid; gap: 10px; }
+.requirement-wording-groups details > .requirement-wordings { margin-top: 10px; }
+.requirement-wordings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.requirement-wording { display: grid; gap: 12px; align-content: start; padding: 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); }
+.requirement-wording__heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.requirement-wording h5 { margin: 0; font-size: 14px; }
+.requirement-badge { display: inline-flex; align-items: center; width: fit-content; max-width: 100%; padding: 3px 8px; border-radius: 5px; background: var(--muted); color: var(--foreground); font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.requirement-assessment, .requirement-wording__coverage, .requirement-association-record { display: grid; gap: 7px; }
+.requirement-association-action { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.requirement-association-action p { flex-basis: 100%; }
+.requirement-history { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.requirements-library details summary, .requirement-picker details summary { cursor: pointer; color: var(--primary); font-weight: 600; }
+.requirement-history__content { display: grid; gap: 12px; padding-top: 14px; overflow-wrap: anywhere; }
+.requirement-history__list { display: grid; gap: 12px; }
+.requirement-history__list > li, .requirement-removed { display: grid; gap: 7px; padding: 14px; border: 1px solid var(--border); border-radius: 6px; }
+.requirement-history__list p, .requirement-history__list blockquote, .requirement-removed p { margin: 0; }
+.requirement-history__list span { color: var(--muted-foreground); }
+.requirement-history__line, .requirement-history__pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.requirement-history__line { justify-content: space-between; }
+.requirement-history__pagination span { margin-right: auto; }
+.requirements-library pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.requirements-library blockquote { padding-left: 12px; border-left: 3px solid var(--border); white-space: pre-wrap; }
+.requirements-library blockquote footer { color: var(--muted-foreground); }
+.requirement-error { color: var(--destructive-text); overflow-wrap: anywhere; }
+.achievement-requirements { display: grid; gap: 8px; padding: 0 0 16px; border-bottom: 1px solid var(--border); font-size: 14px; line-height: 1.5; }
+.achievement-requirements__heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.achievement-requirements__tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.achievement-requirements__tag { display: inline-grid; gap: 2px; max-width: 100%; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted); color: var(--foreground); text-align: left; line-height: 1.4; overflow-wrap: anywhere; }
+.achievement-requirements__tag:hover { border-color: var(--primary); }
+.achievement-requirements__tag small { color: var(--muted-foreground); font-size: 12px; }
+.requirement-picker { width: min(680px, calc(100vw - 32px)); max-width: 680px; max-height: min(85dvh, 900px); overflow: auto; font-size: 14px; line-height: 1.5; }
+.requirement-picker p { margin: 5px 0; overflow-wrap: anywhere; }
+.requirement-picker__section, .requirement-picker__select { display: grid; gap: 8px; }
+.requirement-picker__section label { display: grid; gap: 6px; font-weight: 600; }
+.requirement-picker__options { display: grid; gap: 6px; max-height: 240px; overflow: auto; }
+.requirement-picker__options button { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); text-align: left; overflow-wrap: anywhere; }
+.requirement-picker__options button:hover, .requirement-picker__options button[aria-pressed="true"] { border-color: var(--primary); background: var(--accent); }
+.requirement-picker__options button span { color: var(--muted-foreground); }
+.requirement-picker__select select { width: 100%; min-height: 40px; padding: 8px; border: 1px solid var(--input); border-radius: 6px; background: var(--card); color: var(--foreground); }
+.requirement-picker__wording { padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); white-space: pre-wrap; }
+.requirement-picker__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+@media (max-width: 800px) {
+  .requirements-library__layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .requirements-library__toolbar > span { margin-left: 0; }
+  .requirements-list, .requirements-detail, .requirement-achievement { padding: 16px; }
+  .requirement-history__pagination span { flex-basis: 100%; }
+}
+.achievement-wording-workspace { display: grid; gap: 12px; }
+.achievement-wording-workspace__notice { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--warning-muted); }

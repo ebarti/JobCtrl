@@ -9,6 +9,7 @@ import {
 import { createInterviewQuestionNoteSaved } from "./events.js";
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import { demoContactFingerprint } from "./contact-fingerprint.js";
+import { demoProfileDocument } from "./profile-library.js";
 import {
   ActivityListQuerySchema,
   InterviewCatalogSchema,
@@ -90,8 +91,9 @@ export class DemoApiClientAdapter implements DemoApiClientPort {
   constructor(
     private readonly workspace: DemoWorkspaceRepository,
     private readonly options: DemoApiClientAdapterOptions = {},
+    commands?: DemoLocalCommandExecutor,
   ) {
-    this.localCommands = new DemoLocalCommandExecutor(workspace, options);
+    this.localCommands = commands ?? new DemoLocalCommandExecutor(workspace, options);
     this.telemetry = options.telemetry;
     this.externalRehearsals = new DemoExternalRehearsalExecutor(
       workspace,
@@ -121,7 +123,7 @@ export class DemoApiClientAdapter implements DemoApiClientPort {
   }
 
   forRequest(workspace: DemoWorkspaceRepository): DemoApiClientAdapter {
-    return new DemoApiClientAdapter(workspace, this.options);
+    return new DemoApiClientAdapter(workspace, this.options, this.localCommands.forWorkspace(workspace));
   }
 
   /** HTTP-owned revision fences execute inside the same IndexedDB transaction. */
@@ -640,7 +642,7 @@ export class DemoApiClientAdapter implements DemoApiClientPort {
   }
 
   profile() {
-    return this.read((model) => model.profile.config);
+    return this.read((model) => ({ ...model.profile.config, profile: demoProfileDocument(model.profile.config.profile) }));
   }
 
   targetRoleSuggestions = this.unsupported("targetRoleSuggestions");

@@ -46,7 +46,7 @@ export function ArtifactFilterBar({ search }: ArtifactFilterBarProps) {
   return (
     <form
       className="artifact-filter-toolbar flex flex-wrap items-end gap-3"
-      aria-label="Artifact filters"
+      aria-label="Material filters"
       onSubmit={(event) => {
         event.preventDefault();
         void form.handleSubmit();
@@ -55,7 +55,7 @@ export function ArtifactFilterBar({ search }: ArtifactFilterBarProps) {
       <form.Field name="q">
         {(field) => (
           <label htmlFor={`${id}-q`}>
-            Literal search
+            Search saved materials
             <Input
               id={`${id}-q`}
               value={field.state.value}
