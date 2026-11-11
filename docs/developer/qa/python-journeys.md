@@ -358,6 +358,36 @@ the E2E tree was `dd8f08ce8417337be4d6a20c3b4b6faa434a6f037ef6e8c9dd96c966eaa4b6
 This is affected proof, not 57/57 on the corrected head; full qualification is
 tracked in the PR checks.
 
+#### Hosted Profile reload error classification on dfde0c08
+
+[CI run 43052989422](https://github.com/ebarti/JobCtrl/actions/runs/43052989422)
+on `dfde0c08def60644b6058e2095d5c95e4b615a7f` executed exactly 57 cases in
+25 files: **56 passed / 1 failed**, with zero retries, skips, flaky results or
+global errors. [Shard 1](https://github.com/ebarti/JobCtrl/actions/runs/43052989422/job/130635023746)
+passed 35/35 (456.712 seconds journeys / 483.223 total);
+[shard 2](https://github.com/ebarti/JobCtrl/actions/runs/43052989422/job/130635023937)
+passed 21/22 (405.229 seconds journeys / 427.139 total). Tailoring and demo
+passed; the Browser aggregate correctly failed.
+
+The sole Profile failure rejected a 20-second `TimeoutError` because its abort
+regex accepted only other reload-error forms. The old trace showed a real
+`beforeunload` prompt, dismissal acknowledgement, no document request and exact
+unsaved text still visible; it did not directly measure Document identity.
+The reviewed test-only correction captures the real Document before typing,
+awaits dismissal and requires same-Document/editor/durable-text proof before
+accepting a known abort or concrete `TimeoutError`; unguarded errors and failed
+dismissal rethrow. Subsequent reload and all recovery/CRUD assertions remain.
+
+The whole Profile journey passed **1/1** in `e2e-Ew1NjA`: body 5.2 seconds,
+build/journeys/total 8,609 / 11,285 / 21,566 ms, with zero retries, skips or
+global errors. Its attachment observed **prompt-free ordinary navigation**
+(`promptCount: 0`), validating ordinary reload/recovery and full Restore/Undo/save/CRUD.
+The new guarded-timeout branch is source-reviewed and was **not runtime
+exercised by this local run**. Production hashes/locks stayed unchanged and
+independent owned cleanup passed. The E2E tree was
+`cc06ad98d5fb6f391e5bfe64f2e4f6c2619d5ea577984d306edef5017aa5b824`.
+Full corrected-head qualification remains tracked in the PR checks.
+
 ### Matching walkthrough and user guides — 11 November 2026
 
 The documentation/demo follow-up to `7ebd3da987c802256611130d33b03854cb873cdb`

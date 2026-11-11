@@ -1,3 +1,4 @@
+import { errors, type Dialog } from "@playwright/test";
 import { test, expect, json } from "../harness/fixtures.js";
 import { browserStorage } from "../harness/browser-storage.js";
 import { createBaseline, type Library, type Profile } from "./core-data.js";
@@ -177,41 +178,76 @@ test("Profile peer sections save complete role, summary, skills and education ed
     "Established a versioned recovery practice and kept its reviewed operating record.";
   const finalDraft =
     "Established a versioned recovery practice with a reviewed operating record.";
-  await authored
-    .getByRole("textbox", { name: "Wording text", exact: true })
-    .fill(firstDraft);
-  let blockedReload = false;
-  const protectPendingCopy = async (
-    dialog: import("@playwright/test").Dialog,
-  ) => {
-    expect(dialog.type()).toBe("beforeunload");
-    blockedReload = true;
-    await dialog.dismiss();
-  };
-  page.on("dialog", protectPendingCopy);
+  // Capture identity before typing so the immediate edit/reload race stays real.
+  const guardedDocument = await page.evaluateHandle(() => document);
   try {
-    await page.reload();
-  } catch (error) {
-    expect(
-      blockedReload,
-      "Only an actual before-unload prompt may interrupt this reload",
-    ).toBe(true);
-    expect(String(error)).toMatch(/net::ERR_ABORTED|Navigation.*interrupted/);
+    const dismissals: Promise<
+      | { type: string; acknowledged: true }
+      | { type: string; acknowledged: false; error: unknown }
+    >[] = [];
+    const protectPendingCopy = (dialog: Dialog) => {
+      const type = dialog.type();
+      dismissals.push(dialog.dismiss().then(
+        () => ({ type, acknowledged: true as const }),
+        (error: unknown) => ({ type, acknowledged: false as const, error }),
+      ));
+    };
+    await authored
+      .getByRole("textbox", { name: "Wording text", exact: true })
+      .fill(firstDraft);
+    let reloadFailed = false;
+    let reloadFailure: unknown;
+    page.on("dialog", protectPendingCopy);
+    try {
+      await page.reload();
+    } catch (error) {
+      reloadFailed = true;
+      reloadFailure = error;
+    } finally {
+      page.off("dialog", protectPendingCopy);
+    }
+    const dismissed = await Promise.all(dismissals);
+    if (dismissed.length === 0 && reloadFailed) throw reloadFailure;
+    const blockedReload = dismissed.length > 0;
+    if (blockedReload) {
+      expect(dismissed).toHaveLength(1);
+      const dismissal = dismissed[0]!;
+      if (!dismissal.acknowledged) throw dismissal.error;
+      expect(dismissal.type).toBe("beforeunload");
+      expect(
+        await page.evaluate((original) => original === document, guardedDocument),
+        "Acknowledged cancellation must preserve the original document",
+      ).toBe(true);
+      await expect(
+        authored.getByRole("textbox", { name: "Wording text", exact: true }),
+      ).toHaveValue(firstDraft);
+      await expect(
+        authored.getByText("Saving recovery copy…", { exact: true }),
+      ).toHaveCount(0);
+      expect(
+        await browserStorage(page),
+        "The real durable copy contains the latest text before a confirmed reload",
+      ).toContain(firstDraft);
+      if (reloadFailed) {
+        expect(
+          reloadFailure instanceof errors.TimeoutError ||
+            /net::ERR_ABORTED|Navigation.*interrupted/.test(String(reloadFailure)),
+          "Only the proven canceled reload may report an abort or navigation timeout",
+        ).toBe(true);
+      }
+    }
+    await testInfo.attach("wording-reload-protection", {
+      contentType: "application/json",
+      body: JSON.stringify({
+        promptCount: dismissed.length,
+        dismissalAcknowledged: blockedReload,
+        originalDocumentPreserved: blockedReload ? true : null,
+        reloadErrorName: reloadFailure instanceof Error ? reloadFailure.name : null,
+      }),
+    });
+    if (blockedReload) await page.reload();
   } finally {
-    page.off("dialog", protectPendingCopy);
-  }
-  if (blockedReload) {
-    await expect(
-      authored.getByRole("textbox", { name: "Wording text", exact: true }),
-    ).toHaveValue(firstDraft);
-    await expect(
-      authored.getByText("Saving recovery copy…", { exact: true }),
-    ).toHaveCount(0);
-    expect(
-      await browserStorage(page),
-      "The real durable copy contains the latest text before a confirmed reload",
-    ).toContain(firstDraft);
-    await page.reload();
+    await guardedDocument.dispose();
   }
   await authored
     .getByRole("button", { name: "Restore unfinished edit", exact: true })
