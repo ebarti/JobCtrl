@@ -263,6 +263,45 @@ mirror selection, installed package, existing setup/test cap, retry policy,
 application or test. These observations do not establish a DNS repair or
 passing hosted qualification; final results remain in the PR checks.
 
+#### Conditional transport recovery after 1d79df1b
+
+[CI run 43040489820](https://github.com/ebarti/JobCtrl/actions/runs/43040489820)
+on `1d79df1ba719a5513df6cc5ca204bf2cf34b405c` again passed eight other gates
+while all four APT-dependent jobs failed before runtime tests. The Browser
+aggregate failed and **zero browser journeys ran**. Each affected job recorded
+all six normal-user/`_apt` DNS probes hitting their five-second deadline and
+being killed (raw return code `-9`). All three original
+mirror GETs exited `28` after about five seconds, with HTTP `0` and DNS/connect
+timings `0`. Effective APT transport was 15 seconds/one retry and proxy-presence
+flags were false. These observations locate a timed-out transport boundary;
+they do not establish a completed DNS answer. Support's
+[docs build](https://github.com/ebarti/JobCtrl/actions/runs/43040489820/job/130593630400)
+passed in 17.76 seconds, resolving 16,171 references across 473 emitted files;
+its rendered check remained blocked.
+
+The conditional transport candidate is the fixed HTTPS endpoint
+`https://mirrors.edge.kernel.org/ubuntu/`.
+[Ubuntu's package-download page](https://packages.ubuntu.com/noble/all/pppconfig/download)
+lists its parent `mirrors.kernel.org/ubuntu`; the
+[operator's index](https://mirrors.kernel.org/) lists Ubuntu and the
+[HTTPS parent](https://mirrors.kernel.org/ubuntu/) redirects to that edge
+endpoint. This is Ubuntu-listed/operator-verified provenance; Launchpad
+registration was not verified. Four local Noble `InRelease` GETs returned HTTP
+200, which proves neither signature verification nor hosted reachability.
+
+The recovery may prefer that candidate only when exactly three parsed,
+completed original HTTP results are failed and the candidate's bounded Noble
+`InRelease` GET exits zero with HTTP 200. Any exit-zero original response in
+HTTP 200–399, including a redirect, or any indeterminate/missing/malformed
+result retains the originals. The candidate GET has five-second connect and
+eight-second total limits, with zero retries. Promotion appends only the fixed
+HTTPS candidate at priority zero to a regular, nonsymlink mirror file; original
+bytes remain and unexpected state refuses promotion. All original mirrors,
+suites, `Signed-By`, keys, signature/hash/freshness checks, setup/test caps and
+required cases remain. Actual APT installation and every
+required test gate must still pass. At this record, hosted recovery is
+unqualified; final results are tracked in the PR checks.
+
 ### Matching walkthrough and user guides — 11 November 2026
 
 The documentation/demo follow-up to `7ebd3da987c802256611130d33b03854cb873cdb`

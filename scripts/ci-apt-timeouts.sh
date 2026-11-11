@@ -37,10 +37,12 @@ Acquire::https::Timeout "30";
 Acquire::Retries "2";
 CONFIG
 
-# Evidence only: keep the existing APT installation path and its failures.
+# Admit only the fixed HTTPS fallback after the existing archive probes fail.
+# APT still verifies signatures, package hashes and archive freshness.
 if ! timeout --kill-after=1s 25s python3 -I - <<'PY'
 import concurrent.futures
 import json
+import math
 import os
 import shlex
 import subprocess
@@ -111,7 +113,7 @@ def dns(host, identity):
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=7, check=False)
         outcome = json.loads(result.stdout) if result.returncode == 0 else {
-            "status": "timeout" if result.returncode in (124, 137) else "identity_or_probe_unavailable",
+            "status": "timeout" if result.returncode in (-9, 124, 137) else "identity_or_probe_unavailable",
             "exit_code": result.returncode,
         }
         report("dns", host=host, identity=identity, **outcome)
@@ -127,27 +129,100 @@ def http(host, url):
             "%{http_code} %{time_namelookup} %{time_connect} %{time_total}", url,
         ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=9, check=False)
         fields = result.stdout.split()
+        if len(fields) != 4 or not fields[0].isdigit():
+            raise ValueError("Unrecognized probe metrics")
         metrics = {"http_status": int(fields[0]), "dns_seconds": float(fields[1]),
                    "connect_seconds": float(fields[2]), "total_seconds": float(fields[3])}
+        if not 0 <= metrics["http_status"] <= 599 or any(
+            not math.isfinite(metrics[key]) or metrics[key] < 0
+            for key in ("dns_seconds", "connect_seconds", "total_seconds")
+        ):
+            raise ValueError("Unrecognized probe metrics")
         # Never echo curl stderr: malformed proxy errors can contain credentials.
         error = {0: "none", 5: "proxy_resolution_failed", 6: "host_resolution_failed",
                  7: "connection_failed", 28: "timeout", 35: "tls_handshake_failed",
                  60: "tls_verification_failed"}.get(result.returncode, "curl_failed")
-        report("http_get", host=host, url=url, identity="runner", exit_code=result.returncode,
-               error=error, **metrics)
+        state = "usable" if result.returncode == 0 and 200 <= metrics["http_status"] < 400 else (
+            "failed" if result.returncode != 0 or metrics["http_status"] >= 400 else "indeterminate"
+        )
+        outcome = {"exit_code": result.returncode, "error": error, "state": state, **metrics}
+        report("http_get", host=host, url=url, identity="runner", **outcome)
+        return outcome
     except (OSError, subprocess.SubprocessError, ValueError, IndexError):
         report("http_get", host=host, identity="runner", error="probe_unavailable_or_timed_out")
+        return {"state": "indeterminate"}
+
+
+# No remote content or selected URL is passed to this privileged append.
+append_fallback = """
+import os, stat
+path = "/etc/apt/apt-mirrors.txt"
+originals = {"https://archive.ubuntu.com/ubuntu/", "https://security.ubuntu.com/ubuntu/",
+             "http://azure.archive.ubuntu.com/ubuntu/"}
+fallback = "https://mirrors.edge.kernel.org/ubuntu/"
+row = b"https://mirrors.edge.kernel.org/ubuntu/\\tpriority:0\\n"
+fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_NOFOLLOW)
+try:
+    identity = os.fstat(fd)
+    if not stat.S_ISREG(identity.st_mode) or identity.st_size > 65536:
+        raise SystemExit(2)
+    data = os.read(fd, 65537)
+    if len(data) > 65536 or (data and not data.endswith(b"\\n")):
+        raise SystemExit(2)
+    present = {line.split()[0] for line in data.decode("utf-8").splitlines()
+               if line.strip() and not line.lstrip().startswith("#")}
+    if not originals <= present:
+        raise SystemExit(2)
+    current = os.stat(path, follow_symlinks=False)
+    if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+        raise SystemExit(2)
+    if fallback in present:
+        if row.rstrip(b"\\n") not in data.splitlines():
+            raise SystemExit(2)
+        print("already_present")
+    else:
+        if os.write(fd, row) != len(row):
+            raise SystemExit(2)
+        os.fsync(fd)
+        print("appended")
+finally:
+    os.close(fd)
+"""
 
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=9) as pool:
     futures = []
+    http_futures = []
     for host, url in archives:
         futures.extend(pool.submit(dns, host, identity) for identity in ("runner", "_apt"))
-        futures.append(pool.submit(http, host, url))
+        request = pool.submit(http, host, url)
+        http_futures.append(request)
+        futures.append(request)
     for future in concurrent.futures.as_completed(futures):
         future.result()
+original_results = [future.result() for future in http_futures]
+if len(original_results) == 3 and all(result["state"] == "failed" for result in original_results):
+    candidate = http("mirrors.edge.kernel.org", "https://mirrors.edge.kernel.org/ubuntu/dists/noble/InRelease")
+    if candidate.get("exit_code") == 0 and candidate.get("http_status") == 200:
+        try:
+            added = subprocess.run(["sudo", "-n", "timeout", "--signal=KILL", "2s",
+                                    sys.executable, "-I", "-c", append_fallback],
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                   text=True, timeout=3, check=False)
+            decision = added.stdout.strip()
+            if added.returncode == 0 and decision in ("appended", "already_present"):
+                report("mirror_decision", decision=decision, mirror="https://mirrors.edge.kernel.org/ubuntu/",
+                       reason="all_existing_http_probes_failed_and_fallback_http_200")
+            else:
+                report("mirror_decision", decision="append_refused", exit_code=added.returncode)
+        except (OSError, subprocess.SubprocessError):
+            report("mirror_decision", decision="append_unavailable_or_timed_out")
+    else:
+        report("mirror_decision", decision="keep_existing", reason="fallback_not_http_200")
+else:
+    report("mirror_decision", decision="keep_existing", reason="existing_usable_or_probe_indeterminate")
 report("complete")
 PY
 then
-  echo 'APT diagnostics did not complete; continuing with the existing package installation.' >&2
+  echo 'APT archive preflight did not complete; continuing with the existing package installation.' >&2
 fi
