@@ -82,7 +82,10 @@ function SavedDiscoverySearchSettings({ initial, onStateChange, workspaceIdentit
       const submitted = structuredClone(value); setMessage("Saving search settings…");
       try {
         const result = await save.mutateAsync(parsed.data); const current = formApi.state.values;
-        base.current = result; setBaseRevision(result.revision); formApi.reset(submitted);
+        // Keep the hook's defaults aligned with reset() before touched state
+        // is cleared, then put any newer in-flight edits back on that baseline.
+        defaults.current = submitted;
+        base.current = result; formApi.reset(defaults.current); setBaseRevision(result.revision);
         if (!equal(current, submitted)) { for (const key of ["boards", "newJobLimit", "resultsPerSite", "hoursOld"] as const) { if (key === "boards") formApi.setFieldValue("boards", current.boards); else formApi.setFieldValue(key, current[key]); } }
         remember(current); setMessage(equal(current, submitted) ? "Search settings saved." : "Saved. Newer settings are waiting to save.");
       } catch (error) { if (isUnconfirmedWrite(error)) setUncertain(true); setMessage(isUnconfirmedWrite(error) ? "Saving could not be confirmed. Check the saved settings before continuing." : "Search settings could not be saved. Your draft is retained."); }
@@ -90,18 +93,20 @@ function SavedDiscoverySearchSettings({ initial, onStateChange, workspaceIdentit
   });
   useEffect(() => {
     if (save.isPending || settingsChanged(base.current, form.state.values) || uncertain || initial.revision <= baseRevision) return;
-    base.current = initial; setBaseRevision(initial.revision); form.reset(toInputs(initial)); setResetToken((token) => token + 1);
+    defaults.current = toInputs(initial);
+    base.current = initial; setBaseRevision(initial.revision); form.reset(defaults.current); setResetToken((token) => token + 1);
   }, [baseRevision, form, initial, save.isPending, uncertain]);
   useEffect(() => () => { remember(latest.current); }, [remember]);
   const check = async () => {
     const fresh = await query.refetch(); if (!fresh.data || fresh.error) { setMessage("Saved settings are unavailable. Your draft is retained."); return; }
     const current = form.state.values; const saved = toInputs(fresh.data);
-    base.current = fresh.data; setBaseRevision(fresh.data.revision); setUncertain(false); save.reset(); form.reset(saved);
+    defaults.current = saved;
+    base.current = fresh.data; setBaseRevision(fresh.data.revision); setUncertain(false); save.reset(); form.reset(defaults.current);
     if (!equal(current, saved)) { form.setFieldValue("boards", current.boards); form.setFieldValue("newJobLimit", current.newJobLimit); form.setFieldValue("resultsPerSite", current.resultsPerSite); form.setFieldValue("hoursOld", current.hoursOld); }
     remember(current); setResetToken((token) => token + 1);
     setMessage(equal(current, saved) ? "Saved search settings checked." : `Saved settings: ${saved.boards.join(", ") || "no boards"}, ${saved.newJobLimit} new jobs, ${saved.resultsPerSite} results per board, ${saved.hoursOld} posting-age hours. Your draft is retained for review.`);
   };
-  const useSaved = () => { base.current = initial; setBaseRevision(initial.revision); setUncertain(false); save.reset(); const values = toInputs(initial); form.reset(values); remember(values); setResetToken((token) => token + 1); setMessage("Using saved search settings."); };
+  const useSaved = () => { base.current = initial; setBaseRevision(initial.revision); setUncertain(false); save.reset(); const values = toInputs(initial); defaults.current = values; form.reset(defaults.current); remember(values); setResetToken((token) => token + 1); setMessage("Using saved search settings."); };
   return <form className="search-settings-form" ref={formRef} onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }}>
     <FieldGroup>
       <form.Field name="boards">{(field) => <FieldSet className="search-choice-group"><FieldLegend variant="label">Job boards</FieldLegend><FieldGroup className="search-choices">{[...BOARD_OPTIONS, ...field.state.value.filter((value) => !BOARD_OPTIONS.some(([code]) => value === code)).map((value) => [value, value] as const)].map(([value, label]) => <Field key={value} orientation="horizontal"><Checkbox id={`search-board-${value}`} checked={field.state.value.includes(value)} disabled={!initial.effectiveSettings.boards.editable} onCheckedChange={(checked) => field.handleChange(checked ? [...field.state.value, value] : field.state.value.filter((board) => board !== value))} /><FieldLabel htmlFor={`search-board-${value}`}>{label}</FieldLabel></Field>)}</FieldGroup><FieldDescription>Employer sources you enabled are searched alongside these boards.</FieldDescription></FieldSet>}</form.Field>

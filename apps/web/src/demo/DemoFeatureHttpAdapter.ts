@@ -366,12 +366,14 @@ export class DemoFeatureHttpAdapter {
       const snapshot = await this.workspace.snapshot();
       return handled({
         ok: true,
-        current: null,
+        current: false,
         accepted: null,
-        targets: [],
+        targets: {},
         profileRevision: snapshot.state.readModel.profile.config.profileVersion,
       });
     }
+    if (owner === "discovery" && id === "runs" && path.length === 3 && method === "GET")
+      return handled({ ok: true, runs: [] });
     if (
       owner === "discovery" &&
       id === "sources" &&

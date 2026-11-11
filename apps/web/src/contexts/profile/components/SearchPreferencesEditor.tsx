@@ -154,7 +154,7 @@ function SavedSearchPreferences({ initial, onStateChange, workspaceIdentity }: {
       const profile = withPreferences(base.current, parsed.data);
       const validated = ProfileSchema.safeParse(profile);
       if (!validated.success) { setMessage(validated.error.issues[0]?.message ?? "Check your Profile before saving."); return; }
-      if (sameJson(profile.experience, canonicalPreferences(base.current, readPreferences(base.current)))) { formApi.reset({ preferences: value.preferences }); remember(value.preferences); setMessage("Search preferences saved."); return; }
+      if (sameJson(profile.experience, canonicalPreferences(base.current, readPreferences(base.current)))) { defaults.current = { preferences: value.preferences }; formApi.reset(defaults.current); remember(value.preferences); setMessage("Search preferences saved."); return; }
       const submitted = structuredClone(parsed.data);
       setMessage("Saving search preferences…");
       try {
@@ -163,9 +163,14 @@ function SavedSearchPreferences({ initial, onStateChange, workspaceIdentity }: {
           setUncertain(true); setMessage("The response did not confirm your preferences. Check the saved values before continuing."); return;
         }
         const latest = formApi.state.values.preferences;
-        base.current = result; setBaseVersion(result.profileVersion);
-        formApi.reset({ preferences: submitted });
+        // reset() clears touched state and changes FormApi's defaults. Keep
+        // useForm's caller-owned defaults in sync so its next options update
+        // cannot reapply the old seed over this acknowledged save.
+        defaults.current = { preferences: submitted };
+        base.current = result;
+        formApi.reset(defaults.current);
         if (!sameJson(latest, submitted)) formApi.setFieldValue("preferences", latest);
+        setBaseVersion(result.profileVersion);
         remember(latest);
         setMessage(sameJson(latest, submitted) ? "Search preferences saved." : "Saved. Newer changes are waiting to save.");
       } catch (error) {
@@ -177,8 +182,9 @@ function SavedSearchPreferences({ initial, onStateChange, workspaceIdentity }: {
 
   useEffect(() => {
     if (save.isPending || preferencesChanged(base.current, form.state.values.preferences) || uncertain || initial.profileVersion === null || initial.profileVersion <= (baseVersion ?? -1)) return;
+    defaults.current = { preferences: readPreferences(initial) };
     base.current = initial; setBaseVersion(initial.profileVersion);
-    form.reset({ preferences: readPreferences(initial) }); setResetToken((value) => value + 1);
+    form.reset(defaults.current); setResetToken((value) => value + 1);
   }, [baseVersion, form, initial, save.isPending, uncertain]);
   useEffect(() => () => { remember(latestDraft.current); }, [remember]);
 
@@ -195,15 +201,16 @@ function SavedSearchPreferences({ initial, onStateChange, workspaceIdentity }: {
     const merged = { ...remote };
     for (const key of keys) if (!sameJson(local[key], before[key])) merged[key] = local[key];
     const next = readPreferences({ ...fresh.data, profile: { ...(fresh.data.profile as Record<string, unknown>), experience: merged } });
+    defaults.current = { preferences: readPreferences(fresh.data) };
     base.current = fresh.data; setBaseVersion(fresh.data.profileVersion); setUncertain(false); save.reset();
-    form.reset({ preferences: readPreferences(fresh.data) });
+    form.reset(defaults.current);
     if (!sameJson(merged, remote)) form.setFieldValue("preferences", next);
     remember(next); setResetToken((value) => value + 1);
     setMessage(sameJson(merged, remote) ? "Saved preferences checked." : "Your draft now uses the latest saved Profile. Review it and save changes.");
   };
   const useSaved = () => {
     base.current = initial; setBaseVersion(initial.profileVersion); setUncertain(false); save.reset();
-    const values = readPreferences(initial); form.reset({ preferences: values }); remember(values); setResetToken((value) => value + 1); setMessage("Using saved search preferences.");
+    const values = readPreferences(initial); defaults.current = { preferences: values }; form.reset(defaults.current); remember(values); setResetToken((value) => value + 1); setMessage("Using saved search preferences.");
   };
 
   return <form className="search-preferences-editor" ref={formRef} onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }}>
