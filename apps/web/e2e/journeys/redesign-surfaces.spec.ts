@@ -134,7 +134,7 @@ test("Original redesign renders all twenty-six primary workspace surfaces at nor
     {
       name: "search-for-jobs",
       path: "/discovery",
-      heading: "Search preferences",
+      heading: "Search for jobs",
       workspace: "Jobs",
     },
     {

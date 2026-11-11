@@ -84,8 +84,8 @@ source confirmation, revision conflicts and restoration.
 
 ![Synthetic source candidate Search preferences with independent targets and bounded search settings](../assets/screenshots/original-search-preferences.png)
 
-Open **My profile → Search preferences**, or choose **Edit search preferences**
-from the Jobs search task. Keep target roles, career tracks/levels, locations,
+Open **My profile → Search preferences**, or edit the same saved preferences
+from **Jobs → Search for jobs**. Keep target roles, career tracks/levels, locations,
 work arrangements, boards and bounded search limits together. Add another role
 with Enter and continue in the next input. Each location remains an independent
 row with its own work arrangement.
@@ -120,9 +120,11 @@ in [Configuration](configuration.md).
 <WorkflowSurfacePanel surface="web">
 
 **Filter saved jobs** searches records already in Jobs. **Search for jobs** opens
-the search task beside the table. Review the effective saved criteria, enabled
-source scope, limits and readiness, then choose **Start search**. Merely opening
-or saving the task launches nothing. Discovery has no dry-run mode.
+the search task with **Start search** and its readiness message at the top.
+Review the saved criteria, enabled sources and limits below it, resolve any
+named blocker, then choose **Start search**. **Back to jobs** returns to the
+same table context. Merely opening or saving the task launches nothing.
+Discovery has no dry-run mode.
 
 Progress, results, partial failures, stop requests and same-request recovery
 stay with that search. Queued is not completed; a stop request is not settled

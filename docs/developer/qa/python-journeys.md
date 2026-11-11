@@ -46,6 +46,39 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
+### Search workspace layout correction — 11 November 2026
+
+The shared Search workspace now places its explicit launch and readiness before
+preference authoring, uses compact ordinary settings, and gives each retained
+contextual tool an independent disclosure. The old Discovery form layout depended
+on an ancestor absent from the new composition; this caused oversized controls,
+poor grouping and duplicate settings editors. The repair changes presentation,
+not search admission, autosave authority or source execution.
+
+The final affected Search preferences journey passed **1/1** in `e2e-RUIxND`
+(38.5 seconds for the case; 53.572 seconds total). It additionally checks launch
+placement at 1643, 1440 and 390 pixels, collapsed draft retention, suggestion
+action bounds, and a runtime draft saved after ordinary posting-age autosave
+without overwriting hidden canonical fields. Saving still starts no search.
+
+The 26-surface/four-width journey passed **1/1** in `e2e-KrCmcQ` (104 settled
+captures; 26.4 seconds for the case; 42.642 seconds total). Both runs used the
+same final web bundle, SHA256
+`5b463cacf96cd1eaf635da540d42476bd0c0dcffad697b7f2ced9dabbdc0e562`,
+with unchanged source/build inputs and dependency locks. Web type/boundary
+checks passed. Desktop and phone screenshots were inspected, including the
+opened contextual tools and suggestions card; document-overflow checks alone
+had missed that card's original internal clipping. The refreshed guide image
+comes only from the owned synthetic surface journey.
+
+These focused passes do not replace the complete hosted suite for the pushed
+head. Separate live operational verification exposed a combined-board failure
+when ZipRecruiter authorization is absent; LinkedIn alone completed through the
+normal application flow. [Issue #1469](https://github.com/ebarti/JobCtrl/issues/1469)
+owns source failure isolation and actionable credential readiness. That backend
+finding remains open and is not fixed by this layout correction. Private search
+criteria, results and runtime artifacts are excluded from this record.
+
 ### Original redesign inventory — 11 November 2026
 
 The current source inventory has **57 journeys in 25 spec files**: 56 Python

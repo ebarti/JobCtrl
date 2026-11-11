@@ -9,6 +9,7 @@ import { requireRequestWorkspace } from "../../../shared/lib/useSessionRequestId
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { Button } from "../../../shared/ui/button.js";
+import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { Field, FieldLabel } from "../../../shared/ui/field.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
 import { discoveryKeys } from "../queryKeys.js";
@@ -105,7 +106,7 @@ export function DiscoveryRunsPanel({
   const activeRunId = recovery.status?.runId ?? runId;
   const activeRun = runs.data?.runs.find((run) => run.runId === activeRunId);
   const [showOverrides, setShowOverrides] = useState(!compact);
-  return <section className={compact ? "search-preferences-section search-launch-section" : "card full p-4"} aria-label="Search for jobs">
+  return <section className={compact ? "search-preferences-section search-launch-section" : "card full p-4 discovery-runs-panel"} aria-label="Search for jobs">
     <header><h2>{compact ? "Search for jobs" : "Discovery runs"}</h2>
     <p>{compact ? "Search with the preferences and settings you've saved." : "Run a search using your saved targets. Optional lines below apply only to this run; they do not replace saved targets."}</p></header>
     {!compact ? readiness : null}
@@ -113,9 +114,9 @@ export function DiscoveryRunsPanel({
       {compact && recovery.record && !pending?.body ? <Button type="button" size="sm" variant="ghost" aria-expanded={showOverrides} onClick={() => setShowOverrides((open) => !open)}>{showOverrides ? "Hide previous search inputs" : "Re-enter previous search inputs"}</Button> : null}
       <div hidden={!showOverrides} className="search-run-overrides">
       <p>These overrides apply only to this search. Your saved preferences stay available.</p>
-      <form.Field name="queries">{(field) => <Field><FieldLabel htmlFor="discovery-run-queries">Search queries, one per line (optional)</FieldLabel><Textarea id="discovery-run-queries" rows={3} value={field.state.value} disabled={Boolean(unconfirmed)} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></Field>}</form.Field>
-      <form.Field name="locations">{(field) => <Field><FieldLabel htmlFor="discovery-run-locations">Locations, one per line (optional)</FieldLabel><Textarea id="discovery-run-locations" rows={2} value={field.state.value} disabled={Boolean(unconfirmed)} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></Field>}</form.Field>
-      <form.Field name="remoteOnly">{(field) => <label><input type="checkbox" checked={field.state.value} disabled={Boolean(unconfirmed)} onChange={(event) => field.handleChange(event.target.checked)} /> Remote only for this run</label>}</form.Field>
+      <form.Field name="queries">{(field) => <Field><FieldLabel htmlFor={compact ? "search-previous-queries" : "discovery-run-queries"}>Search queries, one per line (optional)</FieldLabel><Textarea id={compact ? "search-previous-queries" : "discovery-run-queries"} rows={3} value={field.state.value} disabled={Boolean(unconfirmed)} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></Field>}</form.Field>
+      <form.Field name="locations">{(field) => <Field><FieldLabel htmlFor={compact ? "search-previous-locations" : "discovery-run-locations"}>Locations, one per line (optional)</FieldLabel><Textarea id={compact ? "search-previous-locations" : "discovery-run-locations"} rows={2} value={field.state.value} disabled={Boolean(unconfirmed)} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></Field>}</form.Field>
+      <form.Field name="remoteOnly">{(field) => <Field orientation="horizontal" className="search-tool-choice"><Checkbox id={compact ? "search-previous-remote" : "discovery-run-remote"} checked={field.state.value} disabled={Boolean(unconfirmed)} onCheckedChange={field.handleChange} /><FieldLabel htmlFor={compact ? "search-previous-remote" : "discovery-run-remote"}>Remote only for this run</FieldLabel></Field>}</form.Field>
       </div>
       <form.Subscribe selector={(state) => state.errors}>{(errors) => errors.length ? <p role="alert">{errors.join(" ")}</p> : null}</form.Subscribe>
       <div className="search-launch-action"><Button type="submit" disabled={start.isPending || !recovery.ready || Boolean(recovery.record && !recovery.canRetry) || Boolean(disabledReason && !recovery.record)}>{start.isPending ? "Queueing search…" : recovery.record ? "Retry the same request" : compact ? "Start search" : "Run discovery"}</Button>{compact ? readiness : null}</div>

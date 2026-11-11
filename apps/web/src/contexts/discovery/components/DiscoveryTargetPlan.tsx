@@ -6,13 +6,14 @@ import { createUnconfirmedWriteError } from "../../../shared/lib/unconfirmed-wri
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { Button } from "../../../shared/ui/button.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { discoveryKeys } from "../queryKeys.js";
 import { useDiscoveryActionRecovery } from "../hooks/useDiscoveryActionRecovery.js";
 import { useDiscoveryTargetPlanQuery } from "../hooks/useDiscoveryTargetPlanQuery.js";
 
 const RunReceipt = z.object({ runId: z.string().min(1), workflowId: z.string().min(1), status: z.string().min(1) });
 
-export function DiscoveryTargetPlan() {
+export function DiscoveryTargetPlan({ defaultOpen = true }: { readonly defaultOpen?: boolean } = {}) {
   const tenantId = useTenantId(); const { http } = usePorts(); const client = useQueryClient();
   const [runId, setRunId] = useState<string | null>(null);
   const recovery = useDiscoveryActionRecovery("discovery.refresh_targets");
@@ -26,8 +27,7 @@ export function DiscoveryTargetPlan() {
   }, onSuccess: (result) => setRunId(result.runId), onSettled: () => { recovery.refresh(); void client.invalidateQueries({ queryKey: discoveryKeys.targetPlan(tenantId) }); } });
   const plan = query.data?.accepted;
   const status = recovery.status?.status;
-  return <section className="card full p-4" aria-label="Profile search plan">
-    <h2>Profile search plan</h2>
+  return <DisclosureSection className="discovery-target-plan" aria-label="Profile search plan" title="Profile search plan" defaultOpen={defaultOpen} description="Inspect the saved queries, locations and source provenance for your preferences.">
     <p>These queries use the target fields you saved. A query expands search recall; it does not establish job fit.</p>
     {query.error ? <p role="alert">Search plan could not be refreshed. {plan ? "The last loaded plan remains below." : ""}</p> : null}
     {refresh.error ? <p role="alert">Search plan refresh could not be confirmed: {refresh.error.message}.{plan ? " The previous plan remains available." : ""}</p> : null}
@@ -50,5 +50,5 @@ export function DiscoveryTargetPlan() {
       const revision = recovery.record?.sourceRevision ?? query.data?.profileRevision;
       if (revision) refresh.mutate(revision);
     }}>{refresh.isPending ? "Queueing refresh…" : recovery.record ? "Retry the same refresh request" : "Refresh search plan"}</Button>
-  </section>;
+  </DisclosureSection>;
 }

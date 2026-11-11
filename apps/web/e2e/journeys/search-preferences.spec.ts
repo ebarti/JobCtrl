@@ -76,6 +76,20 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
     name: "Target roles 1",
     exact: true,
   });
+  await test.step("the primary search action precedes authoring at desktop and phone widths", async () => {
+    for (const width of [1643, 1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const launch = await page.getByRole("button", { name: "Start search", exact: true }).boundingBox();
+      const authoring = await roles.boundingBox();
+      expect(launch).not.toBeNull();
+      expect(authoring).not.toBeNull();
+      expect(launch!.y).toBeGreaterThanOrEqual(0);
+      expect(launch!.y + launch!.height).toBeLessThan(750);
+      expect(launch!.y + launch!.height).toBeLessThan(authoring!.y);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
   await roles.fill("Synthetic Reliability Engineer");
   await roles.press("Enter");
   const secondRole = page.getByRole("textbox", {
@@ -166,6 +180,64 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
   await expect(
     page.getByRole("button", { name: "Save search settings", exact: true }),
   ).toHaveCount(0);
+
+  await test.step("context tools preserve drafts and save only their own changed settings", async () => {
+    const settingsBefore = await json<{ settings: { boards: string[]; hoursOld: number; resultsPerSite: number; maxParallelFamilies: number } }>(api, "get", "/v1/discovery/settings");
+    await page.getByText("Search plans, schedules and source behavior", { exact: true }).click();
+    const tools = page.locator(".search-context-tools");
+    const targets = tools.getByRole("region", { name: "Explicit discovery targets", exact: true });
+    const targetsToggle = targets.getByRole("button", { name: /Explicit search targets/ });
+    await expect(targetsToggle).toHaveAttribute("aria-expanded", "false");
+    await targetsToggle.click();
+    const literal = targets.getByRole("textbox", { name: "Add literal query", exact: true });
+    await literal.fill("Synthetic independent query draft");
+    await targetsToggle.click();
+    await expect(literal).not.toBeVisible();
+    await targetsToggle.click();
+    await expect(literal).toHaveValue("Synthetic independent query draft");
+    await literal.clear();
+
+    const suggestions = tools.locator(".target-search-settings");
+    const suggestionsToggle = suggestions.getByRole("button", { name: /Search preference suggestions/ });
+    await suggestionsToggle.click();
+    for (const width of [1643, 1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const action = suggestions.getByRole("button", { name: "Get suggestions for target roles", exact: true });
+      const actionBounds = await action.boundingBox();
+      const panelBounds = await suggestions.boundingBox();
+      expect(actionBounds).not.toBeNull();
+      expect(panelBounds).not.toBeNull();
+      expect(actionBounds!.x).toBeGreaterThanOrEqual(panelBounds!.x);
+      expect(actionBounds!.x + actionBounds!.width).toBeLessThanOrEqual(panelBounds!.x + panelBounds!.width);
+      if (width === 390) {
+        const heading = await suggestions.getByText("Evidence-backed target search suggestions", { exact: true }).boundingBox();
+        expect(heading!.width).toBeGreaterThan(panelBounds!.width * .7);
+      }
+    }
+    await suggestionsToggle.click();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+
+    const runtime = tools.locator(".discovery-runtime-settings");
+    const runtimeToggle = runtime.getByRole("button", { name: /Source behavior and schedules/ });
+    await expect(runtimeToggle).toHaveAttribute("aria-expanded", "false");
+    await runtimeToggle.click();
+    await expect(runtime.getByRole("spinbutton", { name: "Results per board", exact: true })).toHaveCount(0);
+    await expect(runtime.getByRole("spinbutton", { name: "Posting lookback hours", exact: true })).toHaveCount(0);
+    await expect(runtime.getByRole("group", { name: "Job boards", exact: true })).toHaveCount(0);
+    const parallel = settingsBefore.settings.maxParallelFamilies === 2 ? 1 : 2;
+    await runtime.getByRole("spinbutton", { name: "Parallel source families", exact: true }).fill(String(parallel));
+    const age = settingsBefore.settings.hoursOld === 48 ? 72 : 48;
+    await page.getByRole("spinbutton", { name: "Posting age", exact: true }).fill(String(age));
+    await expect.poll(async () => (await json<{ settings: { hoursOld: number } }>(api, "get", "/v1/discovery/settings")).settings.hoursOld).toBe(age);
+    await runtime.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect.poll(async () => (await json<{ settings: { maxParallelFamilies: number } }>(api, "get", "/v1/discovery/settings")).settings.maxParallelFamilies).toBe(parallel);
+    const current = await json<{ settings: { boards: string[]; hoursOld: number; resultsPerSite: number } }>(api, "get", "/v1/discovery/settings");
+    expect(current.settings).toMatchObject({ boards: settingsBefore.settings.boards, hoursOld: age, resultsPerSite: settingsBefore.settings.resultsPerSite });
+    expect((await json<{ runs: unknown[] }>(api, "get", "/v1/discovery/runs")).runs).toEqual([]);
+    await runtimeToggle.click();
+    await targetsToggle.click();
+    await page.getByText("Search plans, schedules and source behavior", { exact: true }).click();
+  });
 
   const location = page.getByRole("group", { name: "Location 1", exact: true });
   const text = location.getByRole("textbox", {

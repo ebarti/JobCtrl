@@ -7,7 +7,9 @@ import { createUnconfirmedWriteError, isUnconfirmedWrite } from "../../../shared
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { Button } from "../../../shared/ui/button.js";
-import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Checkbox } from "../../../shared/ui/checkbox.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
+import { Field, FieldGroup, FieldLabel } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
 import { discoveryKeys } from "../queryKeys.js";
 
@@ -18,7 +20,7 @@ const Settings = z.object({ ok: z.literal(true), revision: z.number().int().nonn
 const NewTarget = z.object({ query: z.string().trim().max(300), location: z.string().trim().max(300), remote: z.boolean() });
 type SavedTargets = z.infer<typeof Settings>;
 
-export function DiscoveryExplicitTargets() {
+export function DiscoveryExplicitTargets({ defaultOpen = true }: { readonly defaultOpen?: boolean } = {}) {
   const tenantId = useTenantId(); const { http } = usePorts(); const client = useQueryClient();
   const id = useId();
   const [uncertain, setUncertain] = useState(false);
@@ -60,32 +62,35 @@ export function DiscoveryExplicitTargets() {
     save.mutate({ current, queries: kind === "queries" ? current.settings.queries.filter((_, i) => i !== index) : current.settings.queries,
       locations: kind === "locations" ? current.settings.locations.filter((_, i) => i !== index) : current.settings.locations });
   };
-  return <section className="card full p-4" aria-label="Explicit discovery targets">
-    <h2>Explicit search targets</h2>
-    <p>Optional literal queries and locations override the Profile-derived search plan. Existing source-specific settings are retained.</p>
+  return <DisclosureSection className="discovery-explicit-targets" aria-label="Explicit discovery targets" title="Explicit search targets" defaultOpen={defaultOpen} description="Saved literal queries and locations for independent discovery and scheduled work.">
+    <p>These targets remain separate from Search preferences. Existing source-specific settings are retained.</p>
     {query.error ? <p role="alert">Saved targets could not be refreshed. {query.data ? "The last loaded targets remain visible." : ""}</p> : null}
     {save.error ? <p role="alert">Target change could not be confirmed: {save.error.message}. Refresh before retrying.</p> : null}
-    {uncertain ? <div role="group" aria-label="Unconfirmed target change">
+    {uncertain ? <div className="search-preferences-recovery" role="group" aria-label="Unconfirmed target change">
       <p>The earlier change may have been saved. Refresh and review the current targets before making another change; your typed input remains below.</p>
       <Button type="button" variant="outline" disabled={query.isFetching} onClick={() => { void query.refetch().then((result) => setFreshForReview(result.isSuccess)); }}>Refresh saved targets</Button>
       <Button type="button" variant="outline" disabled={!freshForReview || query.isFetching} onClick={() => { setUncertain(false); setFreshForReview(false); }}>I reviewed the saved targets</Button>
     </div> : null}
     {query.data ? <>
-      <h3>Saved queries</h3><ul>{query.data.settings.queries.map((item, index) => <li key={index}>
-        {typeof item === "string" ? item : item.query}{typeof item !== "string" && item.source_scope?.length ? ` · sources: ${item.source_scope.join(", ")}` : ""}
-        <Button type="button" variant="outline" disabled={save.isPending || uncertain} aria-label={`Remove query ${index + 1}`} onClick={() => remove("queries", index)}>Remove</Button>
-      </li>)}</ul>
-      <h3>Saved locations</h3><ul>{query.data.settings.locations.map((item, index) => <li key={index}>
-        {typeof item === "string" ? item : `${item.location || "Any location"}${item.remote ? " · remote" : ""}`}
-        <Button type="button" variant="outline" disabled={save.isPending || uncertain} aria-label={`Remove location ${index + 1}`} onClick={() => remove("locations", index)}>Remove</Button>
-      </li>)}</ul>
-      <form onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }}>
+      <div className="search-explicit-saved">
+      <section aria-label="Saved explicit queries"><h3>Saved queries</h3>{query.data.settings.queries.length ? <ul>{query.data.settings.queries.map((item, index) => <li key={index}>
+        <span>{typeof item === "string" ? item : item.query}{typeof item !== "string" && item.source_scope?.length ? ` · sources: ${item.source_scope.join(", ")}` : ""}</span>
+        <Button type="button" size="sm" variant="ghost" disabled={save.isPending || uncertain} aria-label={`Remove query ${index + 1}`} onClick={() => remove("queries", index)}>Remove</Button>
+      </li>)}</ul> : <p>No saved queries.</p>}</section>
+      <section aria-label="Saved explicit locations"><h3>Saved locations</h3>{query.data.settings.locations.length ? <ul>{query.data.settings.locations.map((item, index) => <li key={index}>
+        <span>{typeof item === "string" ? item : `${item.location || "Any location"}${item.remote ? " · remote" : ""}`}</span>
+        <Button type="button" size="sm" variant="ghost" disabled={save.isPending || uncertain} aria-label={`Remove location ${index + 1}`} onClick={() => remove("locations", index)}>Remove</Button>
+      </li>)}</ul> : <p>No saved locations.</p>}</section>
+      </div>
+      <form className="search-explicit-form" onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }}>
+        <FieldGroup className="search-explicit-fields">
         <form.Field name="query">{(field) => <Field><FieldLabel htmlFor={`${id}-query`}>Add literal query</FieldLabel><Input id={`${id}-query`} value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></Field>}</form.Field>
         <form.Field name="location">{(field) => <Field><FieldLabel htmlFor={`${id}-location`}>Add location</FieldLabel><Input id={`${id}-location`} value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></Field>}</form.Field>
-        <form.Field name="remote">{(field) => <label><input type="checkbox" checked={field.state.value} onChange={(event) => field.handleChange(event.target.checked)} /> Remote location</label>}</form.Field>
+        </FieldGroup>
+        <form.Field name="remote">{(field) => <Field orientation="horizontal" className="search-tool-choice"><Checkbox id={`${id}-remote`} checked={field.state.value} onCheckedChange={field.handleChange} /><FieldLabel htmlFor={`${id}-remote`}>Remote location</FieldLabel></Field>}</form.Field>
         <form.Subscribe selector={(state) => state.errors}>{(errors) => errors.length ? <p role="alert">{errors.join(" ")}</p> : null}</form.Subscribe>
-        <Button type="submit" disabled={save.isPending || uncertain}>{save.isPending ? "Saving…" : "Add targets"}</Button>
+        <Button type="submit" size="sm" variant="outline" disabled={save.isPending || uncertain}>{save.isPending ? "Saving…" : "Add targets"}</Button>
       </form>
     </> : query.isPending ? <p>Loading saved targets.</p> : null}
-  </section>;
+  </DisclosureSection>;
 }

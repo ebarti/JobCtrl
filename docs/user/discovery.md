@@ -4,8 +4,10 @@ import DiscoveryPipeline from "../.vitepress/theme/DiscoveryPipeline.vue";
 
 # Discovery & Sources
 
-Use **Jobs → Search for jobs** to launch and observe a bounded search beside the
-comparison table. **My profile → Search preferences** keeps roles, career
+Use **Jobs → Search for jobs** to launch and observe a bounded search, then
+**Back to jobs** to return to the same comparison-table context.
+The launch control and its readiness message appear before the preference forms.
+**My profile → Search preferences** keeps roles, career
 tracks/levels, locations/work arrangements, boards and limits together.
 **Filter saved jobs** only filters existing records; it starts no acquisition.
 
@@ -76,11 +78,18 @@ reload. The offline demo clears those transient drafts on reset.
 
 ## Launch And Observe Discovery
 
-Review the effective saved roles/locations, board/source scope, limits and real
-readiness in the Jobs search task. Use **Edit search preferences** or the precise
-**Connections** remedy and return to the same context. Then choose **Start
-search**. Discovery has no dry-run mode; the CLI rejects Discover with
+Review the saved roles/locations, board/source scope and limits below the launch
+panel. The **Start search** panel at the top shows a specific blocker when the
+search cannot start. Correct the named field or use the **Connections** remedy,
+then return to the same context. Choose **Start search** to launch.
+Discovery has no dry-run mode; the CLI rejects Discover with
 `--dry-run` before admission.
+
+The contextual **Search plans, schedules and source behavior** section keeps
+independent targets, query-plan review, one-off searches, automation and source
+execution controls available as separate disclosures. Job boards, posting age
+and result limits have one ordinary editor in **Search settings**. Opening a
+disclosure preserves its draft and starts no search or model work.
 
 The task invokes the existing `discovery.search` action with a retained
 idempotency key and database identity. Queued means Temporal accepted the request,
