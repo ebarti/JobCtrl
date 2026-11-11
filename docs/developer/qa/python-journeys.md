@@ -57,9 +57,11 @@ visual repair has its own affected proof; hosted qualification of the exact
 delivery commit is tracked in the [PR checks](https://github.com/ebarti/JobCtrl/pull/1467/checks).
 Neither a listed case nor a focused pass substitutes for that scope distinction.
 
-The limits are unchanged: one worker, zero retries, 90 seconds per ordinary
-case, 150 seconds for the existing demo, 60 seconds for fixture setup and a
-720-second aggregate suite cap. Existing action/navigation/assertion deadlines
+The limits are unchanged per invocation: one worker, zero retries, 90 seconds
+per ordinary case, 150 seconds for the existing demo, 60 seconds for fixture
+setup and a 720-second global cap. Hosted CI schedules this inventory in two
+shards as recorded below; the ordinary unsharded command retains the same cap.
+Existing action/navigation/assertion deadlines
 also remain. A focused pass, screenshot inventory, test listing or static check
 cannot qualify all 57, and earlier failures remain part of the evidence.
 
@@ -189,6 +191,47 @@ evidence stays outside the repository;
 published screenshots contain synthetic state only. Agent image review and
 these browser checks do not establish participant usability, a full accessibility
 audit, a new installed/native qualification, release or deployment.
+
+### Hosted scheduling follow-up
+
+Hosted [CI run 43031016511](https://github.com/ebarti/JobCtrl/actions/runs/43031016511)
+on `79bf88b814ec34d546418fa784833aba21b5c78c` did not qualify the full suite.
+Ten other jobs succeeded, while the
+[Browser job](https://github.com/ebarti/JobCtrl/actions/runs/43031016511/job/130557875712)
+hit the unchanged 720-second global deadline. Its actual result record has
+56 passed application cases, one case that did not run, zero individual case
+failures and global suite/teardown deadline errors. The demo did not complete,
+so this is a failed complete-suite result, not 57/57. The Linux x64 runner had
+four CPUs and Node 22.21.1; build, journey orchestration and total were 18,534,
+721,079 and 744,757 ms. The web SHA-256 remained
+`b1365861bcdb3983eafba5c7949de7be6d47faaf31741db8708dc7c01f24dabf`.
+This hosted observation is separate from the successful local 57/57 and affected
+proof above.
+
+The scheduling correction partitions the same complete inventory with standard
+Playwright `--shard=1/2` and `--shard=2/2` on two independent runners. Each
+invocation uses one worker and zero retries, with the existing 90-second case,
+150-second demo, 60-second fixture and 720-second global limits. Existing
+action/navigation/assertion deadlines, the 14-minute journey step and the
+20-minute journey job stay unchanged.
+Each shard checks out the same candidate, builds once, owns its application and
+Temporal processes, and retains evidence under a unique shard/run-attempt name.
+Artifacts use `python-application-journeys-shard-N-of-2-<run_attempt>` with the
+same scoped paths and seven-day retention.
+Matrix fail-fast is disabled. The always-evaluated **Browser / UI checks**
+aggregate passes only when `needs.shards.result == 'success'`; a failed,
+cancelled or skipped shard cannot qualify the suite. This changes scheduling,
+with no removed case, new retry, larger deadline or application/harness behavior
+change.
+
+Native Playwright JSON listing measured shard 1 at **35 cases / 13 files** and
+shard 2 at **22 cases / 12 files**, including the demo. Their union is exactly
+the full **57 cases / 25 files**, with zero overlap, missing cases or extras.
+This is partition-inventory proof, not executed shard qualification. YAML
+parsing and the aggregate's actual shell truth table passed: `success` exits
+zero; `failure`, `cancelled`, `skipped`, empty and unknown values exit one.
+At this record, hosted qualification is pending; final results are
+tracked in the [PR checks](https://github.com/ebarti/JobCtrl/pull/1467/checks).
 
 ### Matching walkthrough and user guides — 11 November 2026
 

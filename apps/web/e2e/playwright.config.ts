@@ -18,8 +18,7 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   timeout: 90_000,
-  // Measured hosted throughput projects 610-630s for all 48 isolated journeys.
-  // Include fresh Python/worker startup without relaxing individual deadlines.
+  // Standard CI shards retain this ceiling and the individual case deadlines.
   globalTimeout: 720_000,
   expect: { timeout: 10_000 },
   reporter: [

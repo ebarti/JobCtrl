@@ -342,10 +342,17 @@ Maintainer approval remains required for workflow runs from external forks.
 The current CI configuration runs trusted privacy admission, direct static
 checks, and the complete Python/Chromium journey lane defined by
 `.github/workflows/ci-e2e.yml`. Admission examines the candidate before candidate
-code or dependencies run. The journey lane builds once and uses the same real
-application boundaries as the local command above. Inspect the actual run and
-candidate identity before reporting a pass; legacy unit, component, snapshot,
-Fastify and JSON-RPC test lanes do not establish target behavior.
+code or dependencies run. The journey lane uses two fixed Playwright shards,
+`--shard=1/2` and `--shard=2/2`, on separate runners. Each builds once and uses
+the same real application boundaries as the local command above, with one
+worker, zero retries and unchanged case/global deadlines. Both shards run even
+if one fails and retain separately named evidence. The stable **Browser / UI
+checks** aggregate requires both jobs to succeed; one shard cannot qualify the
+full inventory. See [Reliability & QA](local-reliability-qa.md) and the
+[hosted scheduling record](developer/qa/python-journeys.md#hosted-scheduling-follow-up).
+Inspect the actual run and candidate identity before reporting a pass; legacy
+unit, component, snapshot, Fastify and JSON-RPC test lanes do not establish
+target behavior.
 
 The Support lane also builds the documentation and runs `docs:check:runtime`
 in Chromium, so client rendering and documentation contracts are checked before

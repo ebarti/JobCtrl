@@ -254,3 +254,30 @@ above. Participant, full accessibility, installed-runtime, release and deploymen
 acceptance remain outside this proof. Hosted verification of the final delivery
 head lives in the [PR checks](https://github.com/ebarti/JobCtrl/pull/1467/checks),
 with delivery status read back in the owning issues.
+
+## Hosted scheduling follow-up
+
+[CI run 43031016511](https://github.com/ebarti/JobCtrl/actions/runs/43031016511)
+on documentation delivery `79bf88b814ec34d546418fa784833aba21b5c78c` passed ten
+other jobs, while its Browser job reached the unchanged 720-second global
+deadline after all 56 application cases passed. The demo did not complete;
+there were no individual case failures, and the complete hosted result is
+nonpassing. Build, journey orchestration and total were 18.534, 721.079 and
+744.757 seconds on Linux x64 / four CPUs / Node 22.21.1. The unchanged final web
+bundle does not turn this timeout into complete coverage.
+
+CI now schedules two standard disjoint Playwright shards, with one worker,
+zero retries and the same case/global deadlines per invocation. Fail-fast is
+disabled; the stable **Browser / UI checks** aggregate requires both shards to
+succeed and each retains unique evidence. The [owning QA record](../developer/qa/python-journeys.md#hosted-scheduling-follow-up)
+documents the mechanics and observed failure. Native test listing measured
+35 cases in 13 files and 22 cases in 12 files, including the demo: their union
+is exactly all 57 cases in 25 files, with no overlap, missing cases or extras.
+This validates the partition inventory, not hosted execution. At this record, hosted
+qualification is pending; final results are tracked in the
+[PR checks](https://github.com/ebarti/JobCtrl/pull/1467/checks). The earlier local
+57/57 and final affected proof retain their original candidates and scope.
+
+The documentation follow-through passed `corepack pnpm docs:build` in 7.51
+seconds: 16,171 references resolved across 473 emitted files, with install-asset
+and redirect checks passing. Whitespace checks passed.
