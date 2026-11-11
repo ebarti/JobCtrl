@@ -334,6 +334,30 @@ was `7194a27dbd47d258fe778671777bd68390f4a9e5643c2c08e4718c7a0e3f4b30`.
 This focused pass does not establish 57/57 on the repaired head; full hosted
 qualification remains tracked in the PR checks.
 
+#### Hosted application pass and demo navigation follow-up
+
+[CI run 43050218151](https://github.com/ebarti/JobCtrl/actions/runs/43050218151)
+on `2d1d0b6ccb903cf989476849e50f62c46b27dfd8` executed all 57 cases once.
+[Shard 1](https://github.com/ebarti/JobCtrl/actions/runs/43050218151/job/130625075305)
+passed 35/35 (458.911 seconds journeys / 488.045 total);
+[shard 2](https://github.com/ebarti/JobCtrl/actions/runs/43050218151/job/130625075460)
+passed 21/22 (342.911 seconds journeys / 361.941 total). All 56 application
+cases, including repaired Tailoring, and all ten non-Browser gates passed.
+The overall result remained **56/57**, with zero retries, skips, flaky results
+or global errors; the Browser aggregate correctly failed.
+
+Trace review localized the sole demo failure to selecting Tailored on the
+outgoing Applications page while the guide's Job details navigation was still
+in flight. The test-only correction waits for the exact job URL and Job details
+main, then scopes the mode/buttons there, retaining all assertions. Its actual
+focused demo passed **1/1** in `e2e-PSTRGE`: body 29.0 seconds, build/journeys/total
+8,404 / 40,328 / 50,551 ms, with zero retries, skips, flaky results or global
+errors. Complete Plate/PDF/reset/privacy checks passed and owned cleanup was
+independently corroborated. Production hashes, locks and assets stayed unchanged;
+the E2E tree was `dd8f08ce8417337be4d6a20c3b4b6faa434a6f037ef6e8c9dd96c966eaa4b6b8`.
+This is affected proof, not 57/57 on the corrected head; full qualification is
+tracked in the PR checks.
+
 ### Matching walkthrough and user guides — 11 November 2026
 
 The documentation/demo follow-up to `7ebd3da987c802256611130d33b03854cb873cdb`

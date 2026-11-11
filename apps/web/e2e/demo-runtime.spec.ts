@@ -700,16 +700,24 @@ test("demo tour retains local exact wording approval, durable edits and a real a
       exact: true,
     })
     .click();
-  await page
+  await expect(page).toHaveURL(
+    (url) => url.pathname === "/jobs/6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
+  );
+  const resumeJobDetails = page.getByRole("main", {
+    name: "Job details",
+    exact: true,
+  });
+  await expect(resumeJobDetails).toBeVisible();
+  await resumeJobDetails
     .getByRole("combobox", { name: "Resume to prepare", exact: true })
     .selectOption("tailored");
   await expect(
-    page.getByRole("button", { name: "Prepare resume", exact: true }),
+    resumeJobDetails.getByRole("button", { name: "Prepare resume", exact: true }),
   ).toBeDisabled();
-  await page
+  await resumeJobDetails
     .getByRole("combobox", { name: "Resume to prepare", exact: true })
     .selectOption("baseline");
-  await page
+  await resumeJobDetails
     .getByRole("button", { name: "Prepare resume locally", exact: true })
     .click();
   const editor = page.getByRole("textbox", {
