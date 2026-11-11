@@ -7,12 +7,14 @@
  * keeps its template geometry inside the editor's own scroll container. */
 .apply-review-page,
 .apply-review-page > .grid,
+.application-resume-workspace,
 .apply-review-page [aria-label="Application review queue"] > ul {
   min-inline-size: 0;
   grid-template-columns: minmax(0, 1fr);
 }
 
 .apply-review-page > *,
+.application-resume-workspace > *,
 .apply-review-page [aria-label="Application review queue"] li {
   min-inline-size: 0;
 }

@@ -8,6 +8,12 @@ const viewports = [
   { width: 2943, height: 1227 },
   { width: 390, height: 844 },
 ];
+const activeSections: Record<string, readonly [string, string]> = {
+  "search-preferences": ["My profile sections", "Search preferences"],
+  "profile-resume": ["My profile sections", "Resume"],
+  "settings-data": ["Settings sections", "Data & diagnostics"],
+  materials: ["Jobs sections", "Materials"],
+};
 
 test("Original redesign renders all twenty-six primary workspace surfaces at normal, desktop, wide and mobile widths", async ({
   page,
@@ -380,6 +386,94 @@ test("Original redesign renders all twenty-six primary workspace surfaces at nor
       await page.evaluate(async () => {
         await document.fonts.ready;
       });
+      const activeSection = activeSections[route.name];
+      if (activeSection) {
+        const navigation = page.getByRole("navigation", {
+          name: activeSection[0],
+          exact: true,
+        });
+        const active = navigation.getByRole("link", {
+          name: activeSection[1],
+          exact: true,
+        });
+        await expect(active).toHaveAttribute("aria-current", "page");
+        const geometry = await navigation.evaluate((element) => {
+          const selected = element.querySelector('a[aria-current="page"]')!;
+          const strip = element.getBoundingClientRect();
+          const tab = selected.getBoundingClientRect();
+          return {
+            left: strip.left,
+            right: strip.left + element.clientWidth,
+            clientWidth: element.clientWidth,
+            scrollWidth: element.scrollWidth,
+            scrollLeft: element.scrollLeft,
+            activeLeft: tab.left,
+            activeRight: tab.right,
+            pageScrollTop: window.scrollY,
+          };
+        });
+        expect(geometry.activeLeft).toBeGreaterThanOrEqual(geometry.left - 1);
+        expect(geometry.activeRight).toBeLessThanOrEqual(geometry.right + 1);
+        expect(geometry.pageScrollTop).toBe(0);
+        if (viewport.width === 390)
+          expect(geometry.scrollWidth).toBeGreaterThan(geometry.clientWidth);
+        await testInfo.attach(`active-tab-${route.name}-${viewport.width}`, {
+          contentType: "application/json",
+          body: JSON.stringify(geometry),
+        });
+      }
+      if (route.name === "settings-data") {
+        const diagnostics = page.getByRole("region", {
+          name: "Workspace and diagnostics",
+          exact: true,
+        });
+        for (const [label, path] of [
+          ["Dashboard", "/dashboard"],
+          ["Accepted materials", "/artifacts"],
+          ["Career evidence", "/evidence-map"],
+          ["Preparation", "/pipelines"],
+          ["Task history", "/runs"],
+          ["Recorded events", "/debug"],
+        ] as const) {
+          const link = diagnostics.getByRole("link", {
+            name: label,
+            exact: true,
+          });
+          await expect(link).toBeVisible();
+          await expect(link).toHaveAttribute("href", path);
+          expect(
+            await link.evaluate(
+              (element) => getComputedStyle(element).textDecorationLine,
+            ),
+          ).toContain("underline");
+        }
+      }
+      if (route.name === "dashboard") {
+        const captured = page.getByRole("region", {
+          name: "Captured jobs",
+          exact: true,
+        });
+        await expect(captured).toContainText("1 saved postings");
+        const padding = await captured.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return [
+            style.paddingTop,
+            style.paddingRight,
+            style.paddingBottom,
+            style.paddingLeft,
+          ].map(Number.parseFloat);
+        });
+        for (const side of padding) expect(side).toBeGreaterThan(0);
+        for (const label of ["Synthetic Reliability Engineer", "Open jobs"]) {
+          const link = captured.getByRole("link", { name: label, exact: true });
+          await expect(link).toBeVisible();
+          expect(
+            await link.evaluate(
+              (element) => getComputedStyle(element).textDecorationLine,
+            ),
+          ).toContain("underline");
+        }
+      }
       const width = await page.evaluate(
         () => document.documentElement.scrollWidth,
       );
@@ -447,6 +541,29 @@ test("Original redesign renders all twenty-six primary workspace surfaces at nor
           contentType: "image/png",
           path: rolesPath,
         });
+      }
+      if (
+        route.name === "settings-data" &&
+        [1440, 390].includes(viewport.width)
+      ) {
+        await page
+          .getByRole("region", {
+            name: "Workspace and diagnostics",
+            exact: true,
+          })
+          .getByRole("link", { name: "Dashboard", exact: true })
+          .click();
+        await expect(page).toHaveURL(/\/dashboard$/);
+        await expect(
+          page.getByRole("heading", {
+            name: "Dashboard",
+            level: 1,
+            exact: true,
+          }),
+        ).toBeVisible();
+        await expect(
+          page.getByRole("region", { name: "Captured jobs", exact: true }),
+        ).toContainText("Synthetic Reliability Engineer");
       }
     }
   }

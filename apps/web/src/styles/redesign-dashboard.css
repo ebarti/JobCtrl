@@ -147,6 +147,18 @@
   align-self: start;
 }
 
+.dashboard-view .jobs-dashboard-panel {
+  display: grid;
+  gap: 8px;
+  padding: 16px 20px;
+}
+
+.dashboard-view .jobs-dashboard-panel a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
 .dashboard-view .funnel {
   gap: 0;
   padding: 4px 20px 14px;

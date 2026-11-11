@@ -8,6 +8,7 @@ import { DiscoveryAutomationSettingsPanel, DiscoveryRuntimeSettingsPanel } from 
 import { CredentialsPanel } from "../contexts/profile/index.js";
 import { useMountedFeatures } from "../contexts/runtime/index.js";
 import { AppearanceSettingsPanel, ApplicationSettingsPanel } from "../contexts/settings/index.js";
+import { WorkspaceTabs } from "../shared/layout/WorkspaceTabs.js";
 import { PageHead } from "../shared/ui/page-head.js";
 import { Button } from "../shared/ui/button.js";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../shared/ui/dialog.js";
@@ -57,13 +58,13 @@ function SettingsLayout() {
         : search.returnTo === "discovery" ? <Link className="tab" to="/discovery" search={search.returnDiscovery}>← Back to search for jobs</Link>
           : undefined} />
     <div className="config-layout">
-      <nav className="workspace-tabs settings-workspace-tabs" aria-label="Settings sections">
+      <WorkspaceTabs className="settings-workspace-tabs" label="Settings sections" activeKey={pane}>
         <Link to="/settings" search={search} activeOptions={{ exact: true }} aria-current={pane === "connections" ? "page" : undefined}>Connections</Link>
         <Link to="/settings/budgets" search={search} activeOptions={{ exact: true }} aria-current={pane === "budgets" ? "page" : undefined}>Budgets</Link>
         <Link to="/settings/automation" search={search} activeOptions={{ exact: true }} aria-current={pane === "automation" ? "page" : undefined}>Automation</Link>
         <Link to="/settings/appearance" search={search} activeOptions={{ exact: true }} aria-current={pane === "appearance" ? "page" : undefined}>Appearance</Link>
         <Link to="/settings/data" search={search} activeOptions={{ exact: true }} aria-current={pane === "data" ? "page" : undefined}>Data &amp; diagnostics</Link>
-      </nav>
+      </WorkspaceTabs>
       {mounted("connections") ? <div className="settings-pane" hidden={pane !== "connections"}>
         <ConnectionsWorkspace active={pane === "connections"} pathname={pathname} onSecretDraftChange={setHasSecretDraft} />
       </div> : null}

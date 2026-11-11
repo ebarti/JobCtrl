@@ -38,7 +38,7 @@ function ApplicationResumeWorkspace({ jobId, profileVersion, defaultMode, onProf
     resumeRef.current?.scrollIntoView({ block: "start" });
     resumeRef.current?.focus({ preventScroll: true });
   }, []);
-  return <div className="grid gap-4">
+  return <div className="application-resume-workspace grid gap-4">
     {preparationMounted ? <JobActions jobId={jobId} profileVersion={profileVersion} defaultMode={defaultMode}
       blockedByDraft={dirty} onReviewReady={reviewReady}
       renderProfileSetup={(mode) => <Link className="underline" to="/profile" search={{ section: "experience", returnJobId: jobId,

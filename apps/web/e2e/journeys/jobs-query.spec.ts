@@ -597,7 +597,22 @@ test.describe("Jobs without optional read owners", () => {
       table.getByRole("button", { name: "Sort by Person fit", exact: true }),
     ).toHaveCount(0);
 
-    await page.getByText("Job filters", { exact: true }).click();
+    const filterOptions = page.locator("details.jobs-filter-options");
+    const openFilters = async () => {
+      if (
+        !(await filterOptions.evaluate(
+          (element) => (element as HTMLDetailsElement).open,
+        ))
+      )
+        await filterOptions
+          .locator("summary")
+          .filter({ hasText: /^Filter by fit, compensation and job state$/ })
+          .click();
+      await expect(
+        page.getByRole("form", { name: "Job filters", exact: true }),
+      ).toBeVisible();
+    };
+    await openFilters();
     await page
       .getByRole("combobox", { name: "Posted pay", exact: true })
       .selectOption("known");
@@ -716,7 +731,7 @@ test.describe("Jobs without optional read owners", () => {
     await expect(
       table.getByRole("link", { name: target.title, exact: true }),
     ).toHaveCount(0);
-    await page.getByText("Job filters", { exact: true }).click();
+    await openFilters();
     await page
       .getByRole("combobox", { name: "Job state", exact: true })
       .selectOption("deleted");

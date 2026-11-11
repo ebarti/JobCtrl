@@ -2075,5 +2075,6 @@
 .settings-connection-details > summary { cursor: pointer; font-weight: 600; }
 .settings-connection-details[open] > :not(summary) { margin-top: 16px; }
 .settings-data-links p { max-width: 75ch; }
+.settings-data-links li a { color: var(--primary); font-weight: 600; text-decoration: underline; text-underline-offset: 0.16em; }
 .settings-data-links li + li { margin-top: 8px; }
 @media (max-width: 680px) { .settings-application-form fieldset { grid-template-columns: minmax(0, 1fr); } }
