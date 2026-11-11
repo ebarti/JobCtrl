@@ -49,6 +49,14 @@ documentation, not the historical plan that first proposed it.
 
 ### Discovery And Enrichment
 
+Owner correction, 11 November 2026: Jobs exposes **Start search** directly, with
+its actual lifecycle and canonical new/observed counts beside the comparison
+table. Search preferences remains the connected editor. One pending, queued or
+running search may be admitted per workspace, including planning and requests
+from other tabs or clients; exact same-key retries retain their original run.
+An unknown status blocks another launch. Stops refer to the exact run, and
+navigation, ordinary saves and status reads launch no work.
+
 | ID | Added | Requirement | For whom | Why | Related docs |
 | --- | --- | --- | --- | --- | --- |
 | BR-011 | 2026-05-22 | Discovery must prioritize the user's configured target roles, locations, seniority, tracks, and work models. | Job seekers. | Focus results on the user's active search instead of broad generic scraping. | [local API](local-ts-api.md) |

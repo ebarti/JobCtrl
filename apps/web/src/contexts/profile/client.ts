@@ -62,13 +62,13 @@ function parseWrite<T>(method: string, path: string, parse: () => T): T {
   catch (error) { throw createUnconfirmedWriteError(method, path, error); }
 }
 
-export async function readProfile(http: HttpPort): Promise<ProfileConfigResponse> {
-  return profileResponse.parse(await http.json<unknown>("GET", "/v1/profile")) as ProfileConfigResponse;
+export async function readProfile(http: HttpPort, expectedDatabaseInstanceId?: string): Promise<ProfileConfigResponse> {
+  return profileResponse.parse(await http.json<unknown>("GET", "/v1/profile", expectedDatabaseInstanceId ? { expectedDatabaseInstanceId } : {})) as ProfileConfigResponse;
 }
 
-export async function updateProfile(http: HttpPort, body: ProfileUpdateRequest): Promise<ProfileConfigResponse> {
+export async function updateProfile(http: HttpPort, body: ProfileUpdateRequest, expectedDatabaseInstanceId?: string): Promise<ProfileConfigResponse> {
   const path = "/v1/profile";
-  const value = await http.json<unknown>("PATCH", path, { body });
+  const value = await http.json<unknown>("PATCH", path, { body, ...(expectedDatabaseInstanceId ? { expectedDatabaseInstanceId } : {}) });
   return parseWrite("PATCH", path, () => profileResponse.parse(value) as ProfileConfigResponse);
 }
 

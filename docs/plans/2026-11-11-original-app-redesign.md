@@ -37,6 +37,12 @@ navigation change does not retire a business capability, delete records, enable
 a source or launch work. Use `resume` in English copy. Private prototype content
 and previous source-build evidence are not production acceptance for this change.
 
+The later Jobs correction makes **Start search** a direct action on the comparison
+workspace, using confirmed saved preferences. A compact inline progress strip
+shows canonical lifecycle/counts and exact-run stop/recovery. Editing criteria is
+secondary **Search preferences** navigation; progress and duplicate-start guards
+survive navigation and reload. No automatic search is admitted by these reads.
+
 ## Whole-product acceptance ledger
 
 `Verified` means the changed flow passed the source-built application journeys
@@ -281,3 +287,14 @@ qualification is pending; final results are tracked in the
 The documentation follow-through passed `corepack pnpm docs:build` in 7.51
 seconds: 16,171 references resolved across 473 emitted files, with install-asset
 and redirect checks passing. Whitespace checks passed.
+
+### Direct Jobs search follow-through
+
+The final Jobs entry directly starts saved criteria and renders inline progress,
+counts and exact stop/recovery. New admissions serialize across tabs and remain
+bound to the criteria's database incarnation. Eight distinct affected journeys
+passed across the final focused source runs, including the full 104-capture
+matrix and offline demo. Earlier failures and the corrected cancellation race
+remain in the [QA ledger](../developer/qa/python-journeys.md#direct-jobs-search-and-inline-progress-11-november-2026).
+Full qualification of the new 60-case inventory belongs to the pushed PR checks;
+this does not imply merge, deployment or release.

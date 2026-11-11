@@ -53,13 +53,30 @@ export interface SearchPreferencesState {
   readonly locationIssue: string | null;
 }
 
+/** Saved launch criteria and retained local edits, without mounting an editor. */
+export function useSavedSearchPreferencesState(workspaceIdentity?: string) {
+  const tenant = useTenantId();
+  const { session } = usePorts();
+  const query = useProfileQuery(workspaceIdentity);
+  const retained = drafts((state) => workspaceIdentity ? state.read(session, tenant, workspaceIdentity) : undefined);
+  const pending = Boolean(retained && (retained.uncertain || preferencesChanged(retained.base, retained.values)));
+  const state: SearchPreferencesState = query.data
+    ? describeSearchPreferences(readPreferences(query.data), {
+      pending, ready: query.data.profileVersion !== null && !query.error,
+      profileVersion: query.data.profileVersion,
+    })
+    : { ready: false, pending, hasTargets: false, needsModel: false, profileVersion: null,
+      hasSearchLocation: false, hasRemote: false, hasRemoteWithLocation: false, locationIssue: null };
+  return { state, loading: query.isPending || query.isFetching, error: query.error, refetch: query.refetch };
+}
+
 export function SearchPreferencesEditor({ onStateChange, workspaceIdentity }: {
   readonly onStateChange?: (state: SearchPreferencesState) => void;
   readonly workspaceIdentity?: string | undefined;
 }) {
   const tenant = useTenantId(); const { session } = usePorts();
   const resetEpoch = drafts((state) => state.resetEpochs.get(session)?.get(tenant) ?? 0);
-  const query = useProfileQuery();
+  const query = useProfileQuery(workspaceIdentity);
   return <>
     {query.error ? <Alert variant="destructive"><AlertDescription>Search preferences could not be refreshed. {query.error.message}</AlertDescription></Alert> : null}
     {query.data ? <SavedSearchPreferences key={`${workspaceIdentity ?? "unidentified"}:${resetEpoch}`} initial={query.data} onStateChange={onStateChange} workspaceIdentity={workspaceIdentity} /> : <Empty title="Loading search preferences" />}
@@ -124,8 +141,8 @@ function SavedSearchPreferences({ initial, onStateChange, workspaceIdentity }: {
 }) {
   const tenant = useTenantId();
   const { session } = usePorts();
-  const query = useProfileQuery();
-  const save = useUpdateProfileMutation({ optimistic: false });
+  const query = useProfileQuery(workspaceIdentity);
+  const save = useUpdateProfileMutation({ optimistic: false, workspaceIdentity });
   const draftEpoch = useRef(drafts.getState().resetEpochs.get(session)?.get(tenant) ?? 0);
   const retained = useRef(workspaceIdentity ? drafts.getState().read(session, tenant, workspaceIdentity) : undefined);
   const base = useRef(retained.current?.base ?? initial);
@@ -258,7 +275,7 @@ function PreferenceDraftObserver({ values, remember }: { values: Preferences; re
   return null;
 }
 
-function SearchPreferencesStateObserver({ values, pending, ready, profileVersion, onStateChange }: { values: Preferences; pending: boolean; ready: boolean; profileVersion: number | null; onStateChange?: ((state: SearchPreferencesState) => void) | undefined }) {
+function describeSearchPreferences(values: Preferences, lifecycle: Pick<SearchPreferencesState, "pending" | "ready" | "profileVersion">): SearchPreferencesState {
   const hasTargets = values.roles.some((role) => Boolean(role.trim())) || values.tracks.length > 0 || values.levels.length > 0 || values.functions.some((value) => Boolean(value.trim())) || values.specializations.some((value) => Boolean(value.trim()));
   const needsModel = values.tracks.length > 0 || values.levels.length > 0 || values.functions.some((value) => Boolean(value.trim())) || values.specializations.some((value) => Boolean(value.trim()));
   // These are the literal saved work-model enum values accepted by Discovery,
@@ -270,6 +287,11 @@ function SearchPreferencesStateObserver({ values, pending, ready, profileVersion
   const missingLocation = values.locations.some((row) => !row.text.trim() && row.models.some((model) => ["hybrid", "on-site", "onsite", "work_model.hybrid", "work_model.onsite"].includes(model.toLowerCase())));
   const unsupportedModel = values.locations.some((row) => row.models.some((model) => !["remote", "work_model.remote", "hybrid", "on-site", "onsite", "work_model.hybrid", "work_model.onsite"].includes(model.toLowerCase())));
   const locationIssue = missingLocation ? "Hybrid and On-site targets need an explicit location. Add a location or choose only Remote for that row." : unsupportedModel ? "A saved work arrangement is unsupported. Review the Other saved values in Locations before searching." : null;
+  return { ...lifecycle, hasTargets, needsModel, hasSearchLocation, hasRemote, hasRemoteWithLocation, locationIssue };
+}
+
+function SearchPreferencesStateObserver({ values, pending, ready, profileVersion, onStateChange }: { values: Preferences; pending: boolean; ready: boolean; profileVersion: number | null; onStateChange?: ((state: SearchPreferencesState) => void) | undefined }) {
+  const { hasTargets, needsModel, hasSearchLocation, hasRemote, hasRemoteWithLocation, locationIssue } = describeSearchPreferences(values, { pending, ready, profileVersion });
   useEffect(() => { onStateChange?.({ ready, pending, hasTargets, needsModel, profileVersion, hasSearchLocation, hasRemote, hasRemoteWithLocation, locationIssue }); }, [hasRemote, hasRemoteWithLocation, hasSearchLocation, hasTargets, locationIssue, needsModel, onStateChange, pending, profileVersion, ready]);
   return null;
 }

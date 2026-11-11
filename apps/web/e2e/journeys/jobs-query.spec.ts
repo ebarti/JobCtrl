@@ -417,11 +417,11 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
     (call) => call.path === "/model",
   ).length;
   await page
-    .getByRole("link", { name: "Search for jobs", exact: true })
+    .getByRole("link", { name: "Search preferences", exact: true })
     .click();
   await expect(
     page.getByRole("heading", {
-      name: "Search preferences",
+      name: "Search for jobs",
       level: 1,
       exact: true,
     }),

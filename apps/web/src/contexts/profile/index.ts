@@ -28,6 +28,7 @@ export { ResumeImportWizard } from "./components/ResumeImportWizard.js";
 export { TargetSearchSettingsPanel } from "./components/TargetSearchSettingsPanel.js";
 export {
   SearchPreferencesEditor,
+  useSavedSearchPreferencesState,
   clearSearchPreferencesDraftsForSession,
   type SearchPreferencesState,
 } from "./components/SearchPreferencesEditor.js";

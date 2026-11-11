@@ -40,3 +40,12 @@ They cannot initiate semantic assessment or transfer an exact approval.
 ## 9. Evolution Paths (Cloud-Mode Adapters Named, Not Built)
 
 The local application is the active target. Ports keep browser I/O, tenant identity and transport replaceable without introducing speculative hosted infrastructure or changing feature ownership.
+
+The Jobs header composes Discovery's public `SavedDiscoverySearch` action and
+feedback with saved Profile/Discovery readiness. Discovery owns admission,
+exact-key recovery, canonical action/run reads and stop; no route/view acquires
+HTTP or Query authority. Shared compact and one-off controls use the same
+controller. Saved preference readers key and fence their reads by database
+incarnation, retaining editor drafts separately; launch revalidates that same
+incarnation before creating its request identity. The server serializes
+workspace search admission so two simultaneous tabs cannot both enqueue work.

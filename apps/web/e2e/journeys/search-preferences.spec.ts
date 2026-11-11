@@ -1,5 +1,5 @@
-import { test, expect, json } from "../harness/fixtures.js";
-import { createBaseline, type Profile } from "./core-data.js";
+import { test, expect, json, completed, terminal } from "../harness/fixtures.js";
+import { baseline, createBaseline, createPosting, type Profile } from "./core-data.js";
 
 type LocationBinding = {
   rowIndex: number;
@@ -114,6 +114,8 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
     exact: true,
   });
   await main.getByRole("link", { name: "Jobs", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Start search", exact: true })).toBeDisabled();
+  await expect(page.getByText("Wait for your Search preferences and search settings to finish saving.", { exact: true })).toBeVisible();
   await main.getByRole("link", { name: "My profile", exact: true }).click();
   await page
     .getByRole("navigation", { name: "My profile sections", exact: true })
@@ -158,6 +160,8 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
   });
   await searchLimit.fill("7");
   await main.getByRole("link", { name: "Jobs", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Start search", exact: true })).toBeDisabled();
+  await expect(page.getByText("Wait for your Search preferences and search settings to finish saving.", { exact: true })).toBeVisible();
   await main.getByRole("link", { name: "My profile", exact: true }).click();
   await page
     .getByRole("navigation", { name: "My profile sections", exact: true })
@@ -446,4 +450,161 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
       .slice(callsBefore)
       .filter((call) => call.path === "/model"),
   ).toEqual([]);
+});
+
+
+async function savedSearch(api: Parameters<typeof createBaseline>[0]) {
+  const { profile } = await createBaseline(api, {
+    ...baseline,
+    experience: { target_role: "Synthetic Reliability Engineer", target_locations: "Madrid", target_work_models: "remote" },
+  });
+  const before = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+  await json(api, "patch", "/v1/discovery/settings", {
+    expectedRevision: before.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 5, resultsPerSite: 5,
+  });
+  return profile;
+}
+
+function searchPosting(id: string) {
+  return { job_key: id, url: `https://example.com/jobs/${id}`, title: `Synthetic ${id} Engineer`,
+    company: "Synthetic Hiring Company", description: "Maintain durable workflows.", location: "Madrid" };
+}
+
+test("Jobs starts saved searches directly, preserves live progress across navigation and tabs, and displays canonical completion", async ({ api, app, page }, testInfo) => {
+  const profile = await savedSearch(api);
+  await createPosting(api, "previously-saved");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/jobs");
+  const start = page.getByRole("button", { name: "Start search", exact: true });
+  const progress = page.getByRole("region", { name: "Job search progress", exact: true });
+  await expect(start).toBeEnabled();
+  await expect(page.getByRole("link", { name: "Synthetic Reliability Engineer", exact: true })).toBeVisible();
+  const beforeSearch = new URL(page.url()).search;
+  expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=discovery.search")).runs).toEqual([]);
+  await start.evaluate(async (element) => { await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined))); });
+  await testInfo.attach("jobs-search-ready-desktop", { contentType: "image/png", body: await page.screenshot() });
+  const queued = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/v1/actions/discovery.search");
+  await start.click();
+  const receipt = await queued;
+  expect(receipt.status()).toBe(202);
+  expect(receipt.request().postDataJSON()).toEqual({ queries: [], locations: [], expectedProfileVersion: profile.profileVersion });
+  const { runId } = await receipt.json() as { runId: string };
+  const first = await app.external.next();
+  expect(first.path).toBe("/discovery");
+  expect(first.body["request"]).toMatchObject({ query: "Synthetic Reliability Engineer", location: "Madrid", remote_only: true, sites: ["linkedin"] });
+  first.respond({ jobs: [searchPosting("Platform"), searchPosting("Infrastructure")], cursor: "next-page", complete: false });
+  const next = await app.external.next();
+  expect(next.body["runId"]).toBe(runId);
+  await expect(progress.getByRole("progressbar")).toBeVisible();
+  await expect(progress.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+  await expect(progress).toContainText("2 new jobs");
+  await expect(page.getByRole("link", { name: "Synthetic Platform Engineer", exact: true })).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe("/jobs");
+  expect(new URL(page.url()).search).toBe(beforeSearch);
+  await testInfo.attach("jobs-search-running-desktop", { contentType: "image/png", body: await page.screenshot() });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect(progress.getByRole("button", { name: "Request stop", exact: true })).toBeVisible();
+  await testInfo.attach("jobs-search-running-phone", { contentType: "image/png", body: await page.screenshot() });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.reload();
+  await expect(progress).toContainText("2 new jobs");
+  await page.getByRole("link", { name: "Search preferences", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Start search", exact: true })).toBeDisabled();
+  await page.getByRole("link", { name: "Back to jobs", exact: true }).click();
+  await expect(progress.getByRole("progressbar")).toBeVisible();
+  const peer = await page.context().newPage();
+  try {
+    await peer.goto(app.baseURL + "/jobs");
+    await expect(peer.getByRole("region", { name: "Job search progress", exact: true })).toContainText("2 new jobs");
+    await expect(peer.getByRole("button", { name: "Start search", exact: true })).toBeDisabled();
+  } finally { await peer.close(); }
+  expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=discovery.search")).runs.map((row) => row.runId)).toEqual([runId]);
+  next.respond({ jobs: [searchPosting("Systems")], cursor: null, complete: true });
+  await completed(api, runId);
+  await expect(progress).toContainText("Search completed");
+  await expect(progress).toContainText("3 new jobs");
+  await expect(progress.getByRole("progressbar")).toHaveCount(0);
+  await expect(start).toBeEnabled();
+  await expect(page.getByRole("link", { name: "Synthetic Systems Engineer", exact: true })).toBeVisible();
+  await start.evaluate(async (element) => { await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined))); });
+  await testInfo.attach("jobs-search-completed-desktop", { contentType: "image/png", body: await page.screenshot() });
+  expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(0);
+});
+
+test("Jobs reconciles a lost search acknowledgement without duplicate work and stops the exact active search", async ({ api, app, page, allowRequestFailure }) => {
+  await savedSearch(api);
+  await page.goto("/jobs");
+  const start = page.getByRole("button", { name: "Start search", exact: true });
+  await expect(start).toBeEnabled();
+  let admittedId = "";
+  await page.route("**/v1/actions/discovery.search", async (route) => {
+    const response = await route.fetch();
+    expect(response.status()).toBe(202);
+    admittedId = ((await response.json()) as { runId: string }).runId;
+    const failed = page.waitForEvent("requestfailed", { predicate: (request) => request === route.request() });
+    await route.abort("failed");
+    allowRequestFailure(await failed, "net::ERR_FAILED");
+  }, { times: 1 });
+  await start.click();
+  const provider = await app.external.next();
+  await expect.poll(() => admittedId).not.toBe("");
+  expect(provider.body["runId"]).toBe(admittedId);
+  await page.reload();
+  const progress = page.getByRole("region", { name: "Job search progress", exact: true });
+  await expect(progress.getByRole("progressbar")).toBeVisible();
+  await expect(start).toBeDisabled();
+  const stopping = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/v1/action-runs/${admittedId}/cancel`);
+  await progress.getByRole("button", { name: "Request stop", exact: true }).click();
+  const stopped = await stopping;
+  expect(stopped.status()).toBe(200);
+  expect(await stopped.json()).toMatchObject({ runId: admittedId, cancellationRequested: true });
+  // Keep the source pending until cancellation settles; releasing a successful
+  // final page immediately can legitimately win the completion/cancel race.
+  expect((await terminal(api, admittedId)).status).toBe("cancelled");
+  provider.respond({ jobs: [], cursor: null, complete: true });
+  await expect(progress).toContainText("Search cancelled");
+  await expect(start).toBeEnabled();
+  expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=discovery.search")).runs.map((row) => row.runId)).toEqual([admittedId]);
+  expect(app.external.calls.filter((call) => call.path === "/discovery")).toHaveLength(1);
+  expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(0);
+});
+
+test("simultaneous Jobs searches from two tabs admit one run and recover the refused tab", async ({ api, app, page, allowResponseError }) => {
+  await savedSearch(api);
+  await page.goto("/jobs");
+  const peer = await page.context().newPage();
+  try {
+    await peer.goto(app.baseURL + "/jobs");
+    const start = page.getByRole("button", { name: "Start search", exact: true });
+    const peerStart = peer.getByRole("button", { name: "Start search", exact: true });
+    await expect(start).toBeEnabled();
+    await expect(peerStart).toBeEnabled();
+    // Both real preflight reads finish before either genuine admission request
+    // reaches the application. No first-party response or domain state is faked.
+    const held: import("@playwright/test").Route[] = [];
+    await page.context().route("**/v1/actions/discovery.search", async (route) => { held.push(route); });
+    const predicate = (response: import("@playwright/test").Response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/v1/actions/discovery.search";
+    const replies = [page.waitForResponse(predicate), peer.waitForResponse(predicate)];
+    await Promise.all([start.click(), peerStart.click()]);
+    await expect.poll(() => held.length).toBe(2);
+    await Promise.all(held.map((route) => route.continue()));
+    const responses = await Promise.all(replies);
+    expect(responses.map((response) => response.status()).sort()).toEqual([202, 409]);
+    const refused = responses.find((response) => response.status() === 409)!;
+    await allowResponseError(refused, { method: "POST", status: 409, code: "action_scope_busy" });
+    const accepted = responses.find((response) => response.status() === 202)!;
+    const { runId } = await accepted.json() as { runId: string };
+    const provider = await app.external.next();
+    expect(provider.body["runId"]).toBe(runId);
+    await expect(start).toBeDisabled();
+    await expect(peerStart).toBeDisabled();
+    for (const tab of [page, peer]) await expect(tab.getByRole("region", { name: "Job search progress", exact: true }).getByRole("progressbar")).toBeVisible();
+    provider.respond({ jobs: [], cursor: null, complete: true });
+    await completed(api, runId);
+    await expect(start).toBeEnabled();
+    await expect(peerStart).toBeEnabled();
+    expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=discovery.search")).runs.map((row) => row.runId)).toEqual([runId]);
+    expect(app.external.calls.filter((call) => call.path === "/discovery")).toHaveLength(1);
+  } finally { await peer.close(); }
 });

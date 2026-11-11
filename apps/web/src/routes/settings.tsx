@@ -13,12 +13,14 @@ import { PageHead } from "../shared/ui/page-head.js";
 import { Button } from "../shared/ui/button.js";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../shared/ui/dialog.js";
 import { discoverySearchSchema } from "./-discovery.search.js";
+import { jobsSearchSchema } from "./-jobs.search.js";
 
 type SettingsPane = "connections" | "budgets" | "automation" | "appearance" | "data";
 
 const settingsSearchSchema = z.object({
-  returnTo: z.enum(["preferences", "discovery"]).optional().catch(undefined),
+  returnTo: z.enum(["preferences", "discovery", "jobs"]).optional().catch(undefined),
   returnDiscovery: discoverySearchSchema.optional().catch(undefined),
+  returnJobs: jobsSearchSchema.optional().catch(undefined),
 });
 
 export const Route = createFileRoute("/settings")({
@@ -56,6 +58,7 @@ function SettingsLayout() {
     <PageHead eyebrow="Settings" title="Settings" subtitle="Connections, preferences and workspace controls."
       actions={search.returnTo === "preferences" ? <Link className="tab" to="/preferences">← Back to search preferences</Link>
         : search.returnTo === "discovery" ? <Link className="tab" to="/discovery" search={search.returnDiscovery}>← Back to search for jobs</Link>
+          : search.returnTo === "jobs" ? <Link className="tab" to="/jobs" search={search.returnJobs}>← Back to jobs</Link>
           : undefined} />
     <div className="config-layout">
       <WorkspaceTabs className="settings-workspace-tabs" label="Settings sections" activeKey={pane}>

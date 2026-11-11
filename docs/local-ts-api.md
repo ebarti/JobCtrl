@@ -75,6 +75,14 @@ operation receipt in the same transaction as the action transition. See the
 [Fit reference](../workers/automation/src/jobctrl/features/fit/README.md) for
 scope, progress and limit fields.
 
+`discovery.search` also registers one active admission scope per workspace.
+The scope check and insertion share the SQLite write transaction, including
+`pending`, `start_failed`, `queued` and `running`. A competing new identity gets
+409 `action_scope_busy` with the existing `runId`; exact same-key/same-body
+retries return their original run before this check. A lost acknowledgement
+retains its key until exact reconciliation. The Jobs launch pins both the saved
+Profile revision and the database incarnation used to read its preferences.
+
 ## Action and error semantics
 
 Synchronous operations return 200/201. A durable command returns, for example:

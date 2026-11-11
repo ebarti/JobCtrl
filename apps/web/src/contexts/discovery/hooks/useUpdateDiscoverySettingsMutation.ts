@@ -13,7 +13,7 @@ import { createUnconfirmedWriteError } from "../../../shared/lib/unconfirmed-wri
 import { discoveryKeys } from "../queryKeys.js";
 import { DiscoverySettingsPythonSchema } from "../contracts.js";
 
-export function useUpdateDiscoverySettingsMutation(): UseMutationResult<
+export function useUpdateDiscoverySettingsMutation(workspaceIdentity?: string): UseMutationResult<
   DiscoverySettingsResponse,
   Error,
   DiscoverySettingsUpdateRequest
@@ -21,13 +21,14 @@ export function useUpdateDiscoverySettingsMutation(): UseMutationResult<
   const tenantId = useTenantId();
   const { http } = usePorts();
   const queryClient = useQueryClient();
+  const settingsKey = workspaceIdentity ? [...discoveryKeys.settings(tenantId), "workspace", workspaceIdentity] : discoveryKeys.settings(tenantId);
   return useMutation(
     createOptimisticMutation<DiscoverySettingsResponse, DiscoverySettingsUpdateRequest>(queryClient, {
       mutationKey: discoveryKeys.settings(tenantId),
       mutationFn: async (body) => {
-        const current = DiscoverySettingsPythonSchema.safeParse(queryClient.getQueryData(discoveryKeys.settings(tenantId)));
+        const current = DiscoverySettingsPythonSchema.safeParse(queryClient.getQueryData(settingsKey));
         if (!current.success) throw new Error("Refresh Discovery settings before saving.");
-        const response = await http.json<unknown>("PATCH", "/v1/discovery/settings", { body: { ...body, expectedRevision: current.data.revision, expectedPolicyRevision: current.data.policyRevision } });
+        const response = await http.json<unknown>("PATCH", "/v1/discovery/settings", { body: { ...body, expectedRevision: current.data.revision, expectedPolicyRevision: current.data.policyRevision }, ...(workspaceIdentity ? { expectedDatabaseInstanceId: workspaceIdentity } : {}) });
         const parsed = DiscoverySettingsPythonSchema.safeParse(response);
         if (!parsed.success || parsed.data.revision !== current.data.revision + 1
             || Object.entries(body).some(([key, value]) => key !== "expectedRevision" && key !== "expectedPolicyRevision" && JSON.stringify(parsed.data.settings[key]) !== JSON.stringify(value))) {
@@ -36,7 +37,7 @@ export function useUpdateDiscoverySettingsMutation(): UseMutationResult<
         return parsed.data;
       },
       optimisticUpdates: (body) => [{
-        queryKey: discoveryKeys.settings(tenantId),
+        queryKey: settingsKey,
         patch: (current) => patchDiscoverySettings(current, body),
       }],
       settle: () => [

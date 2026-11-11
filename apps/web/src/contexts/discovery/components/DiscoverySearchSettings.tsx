@@ -35,6 +35,21 @@ export interface DiscoverySearchSettingsState {
   readonly hoursOld: number;
 }
 
+/** Read saved launch settings while honoring drafts retained by the editor. */
+export function useSavedDiscoverySearchSettingsState(workspaceIdentity?: string) {
+  const tenant = useTenantId();
+  const { session } = usePorts();
+  const query = useDiscoverySettingsQuery(workspaceIdentity);
+  const retained = drafts((state) => workspaceIdentity ? state.read(session, tenant, workspaceIdentity) : undefined);
+  const state: DiscoverySearchSettingsState = {
+    ready: Boolean(query.data && !query.error),
+    pending: Boolean(retained && (retained.uncertain || settingsChanged(retained.base, retained.values))),
+    boards: query.data?.settings.boards ?? [],
+    hoursOld: query.data?.settings.hoursOld ?? 0,
+  };
+  return { state, loading: query.isPending || query.isFetching, error: query.error, refetch: query.refetch };
+}
+
 export function DiscoverySearchSettings({ onStateChange, onManageSources, workspaceIdentity }: {
   readonly onStateChange?: ((state: DiscoverySearchSettingsState) => void) | undefined;
   readonly onManageSources: () => void;
@@ -42,7 +57,7 @@ export function DiscoverySearchSettings({ onStateChange, onManageSources, worksp
 }) {
   const tenant = useTenantId(); const { session } = usePorts();
   const resetEpoch = drafts((state) => state.resetEpochs.get(session)?.get(tenant) ?? 0);
-  const query = useDiscoverySettingsQuery();
+  const query = useDiscoverySettingsQuery(workspaceIdentity);
   return <section className="search-preferences-section search-settings-section" aria-labelledby="search-settings-heading">
     <header><h2 id="search-settings-heading">Search settings</h2><p>Choose where to search and how many new jobs to bring back.</p></header>
     {query.error ? <Alert variant="destructive"><AlertDescription>Search settings could not be refreshed. {query.error.message}</AlertDescription></Alert> : null}
@@ -64,7 +79,7 @@ function settingsChanged(saved: Saved, values: Inputs): boolean {
 }
 
 function SavedDiscoverySearchSettings({ initial, onStateChange, workspaceIdentity }: { initial: Saved; onStateChange?: ((state: DiscoverySearchSettingsState) => void) | undefined; workspaceIdentity?: string | undefined }) {
-  const tenant = useTenantId(); const { session } = usePorts(); const query = useDiscoverySettingsQuery(); const save = useUpdateDiscoverySettingsMutation();
+  const tenant = useTenantId(); const { session } = usePorts(); const query = useDiscoverySettingsQuery(workspaceIdentity); const save = useUpdateDiscoverySettingsMutation(workspaceIdentity);
   const draftEpoch = useRef(drafts.getState().resetEpochs.get(session)?.get(tenant) ?? 0);
   const retained = useRef(workspaceIdentity ? drafts.getState().read(session, tenant, workspaceIdentity) : undefined); const base = useRef(retained.current?.base ?? initial);
   const defaults = useRef(retained.current?.values ?? toInputs(initial)); const [baseRevision, setBaseRevision] = useState(base.current.revision);

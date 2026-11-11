@@ -7,7 +7,8 @@ export { useSourceRegistryQuery, useSourceLocatorCandidatesQuery, useDiscoverySo
 export { DiscoveryProductControls } from "./components/DiscoveryProductControls.js";
 export { DiscoverySourceHealthPanel } from "./components/DiscoverySourceHealthPanel.js";
 export { DiscoveryRunsPanel } from "./components/DiscoveryRunsPanel.js";
-export { DiscoverySearchSettings, clearDiscoverySearchSettingsDraftsForSession, type DiscoverySearchSettingsState } from "./components/DiscoverySearchSettings.js";
+export { SavedDiscoverySearch } from "./components/SavedDiscoverySearch.js";
+export { DiscoverySearchSettings, clearDiscoverySearchSettingsDraftsForSession, useSavedDiscoverySearchSettingsState, type DiscoverySearchSettingsState } from "./components/DiscoverySearchSettings.js";
 export { DiscoveryExplicitTargets } from "./components/DiscoveryExplicitTargets.js";
 export { DiscoveryTargetPlan } from "./components/DiscoveryTargetPlan.js";
 export { DiscoveryRuntimeSettingsPanel } from "./components/DiscoveryRuntimeSettingsPanel.js";

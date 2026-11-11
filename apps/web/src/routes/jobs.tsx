@@ -1,7 +1,7 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 
 import { buttonVariants } from "../shared/ui/button.js";
-import { PageHead } from "../shared/ui/page-head.js";
+import { JobsSearchHeader } from "../views/search-preferences/JobsSearchHeader.js";
 
 import { jobsSearchSchema } from "./-jobs.search.js";
 import { JobsWorkspace } from "./-jobs.workspace.js";
@@ -12,8 +12,9 @@ function JobsRoute() {
   const search = Route.useSearch();
   const focused = Boolean(activeJobId && search.jobTab === "resume");
   return <div className="route-page jobs-route">
-    <PageHead title="Jobs" subtitle="Compare saved opportunities and choose your next step."
-      actions={<Link className={buttonVariants()} to="/discovery" search={(previous) => ({ ...previous, returnTo: "jobs", jobsReturn: search })}>Search for jobs</Link>} />
+    <JobsSearchHeader
+      preferencesAction={<Link className={buttonVariants({ variant: "outline" })} to="/discovery" search={(previous) => ({ ...previous, returnTo: "jobs", jobsReturn: search })}>Search preferences</Link>}
+      connectionAction={<Link className={buttonVariants({ variant: "outline", size: "sm" })} to="/settings" search={{ returnTo: "jobs", returnJobs: search }}>Review connections</Link>} />
     <div className={`jobs-daily-workspace${activeJobId ? " jobs-daily-workspace--selected" : ""}${focused ? " jobs-daily-workspace--document" : ""}`}>
       <section className="jobs-grid-pane" aria-label="Saved jobs workspace" hidden={focused}><JobsWorkspace activeJobId={activeJobId} activeRunId={activeRunId} /></section>
       <Outlet />

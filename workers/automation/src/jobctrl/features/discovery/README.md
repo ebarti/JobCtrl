@@ -68,6 +68,13 @@ quarantine, feedback, target plans and run/cancel routes live under
 `jobIds` and `newJobIds` for the preparation owner. `schedule_definition()`
 publishes an explicit `discovery.search` schedule to the foundation worker.
 
+Search registers a constant workspace admission scope. The foundation's write
+transaction admits one active search across tabs, CLI and schedules, before
+planning or acquisition. It includes pending, dispatch-failed, queued and running
+states; competing new keys receive `action_scope_busy` with the existing run ID.
+Exact-key retries retain their original identity. This does not serialize source
+families inside that search or alter their shared new-job budget.
+
 Public `get_crawler_settings()` returns the exact neutral request-identity input
 for independently removable consumers. `digest_summary()` returns read-only
 source/run summaries. Cross-feature consumers use those services, never private

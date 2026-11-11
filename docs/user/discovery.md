@@ -4,9 +4,11 @@ import DiscoveryPipeline from "../.vitepress/theme/DiscoveryPipeline.vue";
 
 # Discovery & Sources
 
-Use **Jobs → Search for jobs** to launch and observe a bounded search, then
+Use **Jobs → Start search** to run your saved preferences directly beside the
+comparison table. The inline progress strip shows the actual search state, new
+jobs and observed jobs; your filters and selected table context stay in place.
+Use the secondary **Search preferences** action to edit criteria, then
 **Back to jobs** to return to the same comparison-table context.
-The launch control and its readiness message appear before the preference forms.
 **My profile → Search preferences** keeps roles, career
 tracks/levels, locations/work arrangements, boards and limits together.
 **Filter saved jobs** only filters existing records; it starts no acquisition.
@@ -78,10 +80,21 @@ reload. The offline demo clears those transient drafts on reset.
 
 ## Launch And Observe Discovery
 
-Review the saved roles/locations, board/source scope and limits below the launch
-panel. The **Start search** panel at the top shows a specific blocker when the
-search cannot start. Correct the named field or use the **Connections** remedy,
-then return to the same context. Choose **Start search** to launch.
+![Synthetic Jobs workspace showing a running search, committed new-job counts and Request stop](../assets/screenshots/original-jobs-search-progress.png)
+
+Choose **Start search** directly in **Jobs**. It uses the last confirmed saved
+roles/locations, board/source scope and limits. Pending preference edits block
+launch until confirmed. **Search preferences** opens the connected editor when
+you want to change those criteria. A specific blocker appears beside the search
+when it cannot start; connection remedies return you to the same Jobs context.
+
+The progress strip distinguishes queueing, queued/planning, running, completed,
+partial, failed and stopped searches. An indeterminate indicator shows ongoing
+work; the app does not invent a percentage or ETA when source totals are unknown.
+Canonical counts and newly saved jobs update as work proceeds. Progress is
+restored after navigation or reload, and another tab detects the active search
+before offering another launch. An unavailable status check stays explicit and
+blocks another launch until reconciled.
 Discovery has no dry-run mode; the CLI rejects Discover with
 `--dry-run` before admission.
 

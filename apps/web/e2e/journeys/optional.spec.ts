@@ -1410,6 +1410,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
     page.getByRole("heading", { name: "Explicit search targets" }),
   ).toBeVisible();
   const planPanel = page.getByRole("region", { name: "Profile search plan" });
+  await planPanel.getByRole("button", { name: /Profile search plan/ }).click();
   await expect(
     planPanel.getByText("No search plan has been saved yet."),
   ).toBeVisible();
@@ -1449,7 +1450,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
     complete: true,
   });
   await completed(api, search.runId);
-  await expect(page.getByText(`Run ${search.runId}: succeeded`)).toBeVisible();
+  await expect(page.locator(".discovery-runs-panel").getByRole("region", { name: "Job search progress", exact: true })).toContainText("Search completed");
   const sourceRegistry = await json<{
     sources: { sourceId: string; recommendedState: string }[];
   }>(api, "get", "/v1/discovery/sources");

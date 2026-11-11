@@ -46,6 +46,56 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
+The current source inventory is **60 journeys in 25 spec files**: the earlier
+57 plus three direct-Jobs search journeys. They exercise saved launch and live
+counts across navigation/reload/tabs, lost-acknowledgement recovery and exact-run
+stop, and simultaneous two-tab admission. Historical complete-suite results
+below retain their original 57-case scope; they do not qualify the new inventory.
+
+### Direct Jobs search and inline progress — 11 November 2026
+
+Jobs now launches the confirmed saved Profile/Discovery criteria directly and
+keeps canonical progress above the table. A shared controller owns compact and
+one-off admission, exact recovery, progress and stop. New requests are fenced to
+the same database incarnation as the saved preference reads. Server admission
+serializes search requests across tabs before planning begins; same-key retries
+retain their original action. Unknown reads remain unavailable, and explicit
+terminal partial results outrank stale acquisition history.
+
+Eight distinct affected journeys are qualified across these source runs:
+
+- `e2e-1zdf3j` passed six cases: Jobs filtered-view return, independent Discovery
+  execution, Search preferences/autosave/place binding, direct Jobs search,
+  simultaneous two-tab admission, and all 26 surfaces at four widths (104
+  captures). Its seventh case failed because the cancellation test released a
+  successful final provider page immediately after requesting stop; completion
+  legitimately won that race. This remains a **6/7** run, not a complete pass.
+- The corrected test holds the external source until cancellation settles.
+  `e2e-OhEbaz` passed **2/2**: lost-acknowledgement/exact-run cancellation
+  (25.0 seconds) and the full offline demo/edit/approval/PDF path (29.5 seconds).
+  The command completed in 80.597 seconds. No first-party result was invented.
+- Both used the same production web bundle, SHA256
+  `230fd05cd60ea33a0d868f69dfcc9e0aed756b1bea04a219d15169c90483eb77`,
+  and Python source SHA256
+  `64759894f9d00ea45a334c2b996cde94ca5a7f13eccec4bd297e21d00ae42a6a`.
+  Dependency locks and the built web inputs remained unchanged.
+
+The earlier `e2e-rzcj91` **4/6** attempt identified a premature exact-key lookup
+before admission, fixed by suspending that lookup while sending the request,
+and a test transport-allowance registration before the abort had actually
+failed. The allowance now requires the observed failed request. These attempts
+were not retried automatically; the suite keeps zero retries and its existing
+case/global timeouts.
+
+Fresh desktop and phone captures show ready, running with committed counts and
+settled completion. The synthetic progress image is included in the Discovery
+guide. Web type/boundary lint, scoped Python lint, production build and docs
+build/link/redirect checks passed. Source review additionally covered delayed
+reconciliation and workspace-incarnation changes; those specific races were
+not separately runtime exercised here. The full 60-case hosted qualification
+belongs to the pushed PR checks. This bounded proof does not close the separate
+source-credential isolation finding #1469 or qualify a release.
+
 ### Search workspace layout correction — 11 November 2026
 
 The shared Search workspace now places its explicit launch and readiness before
@@ -81,7 +131,7 @@ criteria, results and runtime artifacts are excluded from this record.
 
 ### Original redesign inventory — 11 November 2026
 
-The current source inventory has **57 journeys in 25 spec files**: 56 Python
+The original redesign inventory at the qualification below had **57 journeys in 25 spec files**: 56 Python
 application journeys and the existing offline-demo journey. It retains the
 previous 48 cases and adds the nine below. Expanded assertions inside existing
 cases do not count as new cases. This is an inventory of authored coverage,
