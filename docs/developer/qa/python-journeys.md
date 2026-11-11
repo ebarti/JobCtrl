@@ -302,6 +302,38 @@ required cases remain. Actual APT installation and every
 required test gate must still pass. At this record, hosted recovery is
 unqualified; final results are tracked in the PR checks.
 
+#### Hosted shard execution and tailoring cleanup on ebc0f07f
+
+Attempt 1 of [CI run 43044610890](https://github.com/ebarti/JobCtrl/actions/runs/43044610890)
+on `ebc0f07f30df14d5e1dd289fc08dd8d30e336b92` passed ten non-Browser gates,
+including Linux credentials and Support's actual rendered-docs check. Browser
+setup ran zero journeys: the candidate HTTPS connection phase timed out at
+five seconds after DNS/TCP completed, so fallback was not admitted. One
+failed-job-only rerun on the unchanged head then executed both shards:
+
+| Attempt 2 job | Result | Build / journeys / total (ms) | Artifact ID |
+| --- | --- | --- | --- |
+| [Shard 1](https://github.com/ebarti/JobCtrl/actions/runs/43044610890/job/130612880917) | 35/35 passed | 14,142 / 289,235 / 306,069 | `13868441385` |
+| [Shard 2](https://github.com/ebarti/JobCtrl/actions/runs/43044610890/job/130612880579) | 21 passed / 1 failed, including a passing demo | 22,568 / 465,932 / 493,224 | `13867457966` |
+
+The combined result is **56/57**, with zero Playwright retries, skips, flaky
+results or global errors. The tailoring case reached its final product
+assertions and `full-baseline-approval` attachment, then failed in cleanup with
+two `route.fulfill: Route is already handled!` errors; its body took 13.080
+seconds. It remains a failed case. Review of pinned Playwright 1.64.1 traced
+handler removal automatically continuing a pending route before the test's
+forwarding-read callbacks had drained.
+
+The test-only repair uses `page.unrouteAll({ behavior: "wait" })` to finish active
+callbacks before removing server interception, retaining the tracked-read drain,
+all assertions and error propagation. Its actual affected journey passed **1/1**
+in `e2e-H9YSIC`: body 6.4 seconds; build/journeys/total 8,404 / 12,728 / 22,914 ms,
+with zero retries, skips or global errors. Production Python/policy/web hashes,
+dependency locks and built assets stayed unchanged. The repaired E2E tree SHA-256
+was `7194a27dbd47d258fe778671777bd68390f4a9e5643c2c08e4718c7a0e3f4b30`.
+This focused pass does not establish 57/57 on the repaired head; full hosted
+qualification remains tracked in the PR checks.
+
 ### Matching walkthrough and user guides — 11 November 2026
 
 The documentation/demo follow-up to `7ebd3da987c802256611130d33b03854cb873cdb`

@@ -554,7 +554,9 @@ test("approved wording composes the full baseline and failed model or render ref
     holdLaterReads = false;
     releaseStaleRead();
     releaseLaterReads();
-    await page.unroute(matchesList, delayList);
+    // Stop admitting callbacks and drain this test's sole route before removing
+    // interception; removing it first auto-continues responses still in flight.
+    await page.unrouteAll({ behavior: "wait" });
     await Promise.all(forwardingReads);
   }
 });
