@@ -136,6 +136,12 @@ The first rendered-docs attempt lost its preview connection after a concurrent
 documentation rebuild replaced that preview's output. That attempt is invalid
 as complete qualification; the final check is run against a fresh preview after
 the build finishes, with no concurrent output changes.
+The subsequent complete rendered run reported two failures: the public homepage
+copy of the Jobs image was stale, and the normal-flow check still required the
+retired Search for jobs control label. The public image now matches the refreshed
+synthetic source image; the check requires both Start search and Search
+preferences. All other interaction, theme, contrast, image and navigation checks
+remain unchanged.
 These checks do not establish live Indeed availability, successful live
 Glassdoor/ZipRecruiter authentication, semantic model accuracy, participant
 usability, installed-release qualification or deployment. Hosted whole-head
