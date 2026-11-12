@@ -106,6 +106,80 @@ live provider semantics. The separately authorized five-job operational pass
 and exact-head hosted qualification are recorded in issue #1472. No release,
 deployment or user acceptance is implied by source verification.
 
+### Hosted capacity follow-up for 77 journeys — 12 November 2026
+
+[CI run 43296217614](https://github.com/ebarti/JobCtrl/actions/runs/43296217614)
+on `a5f923ebe6f983c91deac6bc84a02e4a95d5478d` did not qualify the complete
+inventory. Shard 1 reached the unchanged 720-second global ceiling after
+42 passes, leaving three Optional cases unrun: compensation evidence,
+interview preparation and reduced-composition manual Jobs. Its report has
+zero individual assertion failures and two global suite/teardown timeout
+errors. Shard 2 passed all 32 cases. The combined outcome is **74 passed,
+3 unrun**, not 77/77. Both shards retained the frozen Python tree
+`82e0be6d9cf02995667f44a2797b7970f52c14943fafc4879d3ac6255902eccc`
+and web bundle `13150ebf6a162dd792db753da859fdbe6dfa9294a07a7788822305cd55a74e68`.
+Dependency locks and built web bytes remained unchanged during execution.
+
+The preceding green [CI run 43269824441](https://github.com/ebarti/JobCtrl/actions/runs/43269824441)
+on `9069353d45ebf93330adf7341219610a9024bf03` had only 73 cases. The downloaded
+JSON reports record these suite elapsed times, including fixture setup and
+teardown:
+
+| Candidate / inventory | Shard 1 | Shard 2 |
+| --- | --- | --- |
+| `9069353d` / 73 | 43/43 passed; 687.907 s | 30/30 passed; 558.566 s |
+| `a5f923eb` / 77 | 42 passed, 3 unrun; 720.003 s | 32/32 passed; 660.072 s |
+
+The 40 completed cases shared by shard 1 in both runs consumed 655.530 s
+before and 658.519 s after, measured from successive case start timestamps;
+their median wall-time ratio was 1.004. The new Jobs deletion/SSE and accounting
+actionability cases added 12.426 s and 35.441 s, respectively. Their combined
+47.867 s exceeded the prior shard's 32.093 s remaining budget. This localizes
+the observed failure to cumulative shard capacity; it does not establish a
+general application performance regression or a transient infrastructure fault.
+The unchanged file-level grouping keeps the eight-case Optional file together,
+producing a 45/32 case split as the inventory grows.
+
+The scheduling repair uses standard Playwright `--shard=1/3`, `--shard=2/3`
+and `--shard=3/3` on three independent runners. Native JSON listing measured
+**26 cases / 11 files**, **36 cases / 11 files**, and **15 cases / 7 files**.
+The union equals the complete **77 cases / 29 files**, with zero overlap,
+missing cases or extras. No case, application behavior or fixture changed.
+One worker, zero retries, all existing case/fixture/action/assertion deadlines,
+the 720-second global ceiling, the 14-minute journey step and the 20-minute job
+limit remain unchanged. Matrix fail-fast remains disabled; the stable
+**Browser / UI checks** aggregate requires all three shards to succeed.
+Evidence names now use `python-application-journeys-shard-N-of-3-<run_attempt>`.
+
+This is scheduling and partition-inventory proof. It is not an executed
+three-shard pass: hosted qualification of the repaired candidate remains
+pending in the [PR checks](https://github.com/ebarti/JobCtrl/pull/1470/checks).
+
+### Populated Fit presentation follow-up — 12 November 2026
+
+The first completed live result exposed dense, unspaced requirement explanations
+and repeated empty wording rows. The presentation now separates the saved score,
+literal qualification outcomes, full requirement text and contribution metadata.
+Named native disclosures retain rationale, exact evidence, source revisions,
+determination IDs and correction controls. Empty current coverage describes only
+the current result; it does not infer that wording has never been assessed.
+An already completed job is identified separately while its wider assessment
+run remains active, retaining the same busy guard and whole-run stop scope.
+
+Two existing journeys were extended; the inventory remains 77. The final focused
+run `e2e-jnJYH6` passed 2/2 with zero retries or skips in 21.638 seconds. It compares
+full requirement and rationale text with canonical saved API data, exercises
+gap/evidence/correction disclosures without changing the score, and holds a
+second job's qualification while inspecting the completed first job. Desktop
+and mobile result, audit and correction screenshots were inspected. Dependency
+locks and the built web bundle remained unchanged during execution.
+
+Independent review found and corrected the empty-coverage history inference,
+then cleared the production behavior and screenshots. A subsequent copy-only
+polish calls the remaining cohort "other jobs in this run"; it changes no guard,
+payload or action. Complete candidate qualification is recorded in the
+[PR checks](https://github.com/ebarti/JobCtrl/pull/1470/checks) and issue #1472.
+
 ### Final QA corrections — 12 November 2026
 
 This follow-up to the Original redesign addresses the reported disabled search,

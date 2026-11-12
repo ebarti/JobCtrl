@@ -77,6 +77,23 @@ test("explicit saved-job assessment recovers fit without acquisition and preserv
   expect(operations.some((operation) => operation.startsWith("fit.coverage") || operation.startsWith("profile.wording") || operation.startsWith("resumes."))).toBe(false);
   expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs).toEqual([]);
   expect((await json<{ resumes: unknown[] }>(api, "get", `/v1/resumes?jobId=${posting.job_id}`)).resumes).toEqual([]);
+
+  const cohort: { job_id: string }[] = [];
+  for (const index of [1, 2]) cohort.push(await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: `https://example.com/jobs/completed-cohort-${index}`, title: `Synthetic Cohort Engineer ${index}`,
+    company: "Synthetic Cohort Company", description: `Maintain synthetic cohort ${index} recovery ownership.`,
+  }));
+  const cohortRun = await action(api, "preparation.run", { recipe: "assess", job_ids: cohort.map((row) => row.job_id), scope: "selected" });
+  await serveSavedAssessment(app, library);
+  await serveSavedAssessment(app, library, { beforeQualification: async () => {
+    await page.goto(`/jobs/${cohort[0]!.job_id}`);
+    const assessment = page.getByRole("region", { name: "Assess fit", exact: true });
+    await expect(assessment.getByRole("button", { name: "Fit assessed for this job", exact: true })).toBeDisabled();
+    await expect(assessment).toContainText("This job’s fit assessment is complete. Other jobs in this run are still being assessed.");
+    await expect(assessment.getByRole("button", { name: "Stop fit assessment for 2 jobs", exact: true })).toBeVisible();
+    await testInfo.attach("completed-job-active-fit-cohort", { contentType: "image/png", body: await assessment.screenshot({ animations: "disabled" }) });
+  } });
+  await completed(api, cohortRun.runId);
 });
 
 test("search cancellation after a worker kill during fit seals preparation and retains the exact saved cohort", async ({ api, app }) => {

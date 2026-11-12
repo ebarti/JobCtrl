@@ -71,6 +71,19 @@ wording coverage** answers whether exact approved text expresses a supported
 requirement. A missing or unapproved expression remains a wording gap and does
 not lower factual fit. Approving a better expression creates no new capability.
 
+Job Detail leads with the saved score, fit band, confidence and eligibility.
+Each requirement keeps its full source text, recorded outcome and point
+contribution visible. Open **Assessment details** for its complete rationale,
+**Evidence and provenance**, and **Correct this requirement assessment**. Source
+versions and score corrections remain available beside the result.
+
+When current approved-wording coverage is not recorded, the panel shows one
+empty state. **Wording gap details** retains every requirement's exact status
+and proposal state; **Recorded wording relations** retains the saved identities
+when relations exist. This presentation does not change qualification or the
+saved score. During a multi-job assessment, a completed job is identified
+separately while assessment of the selected jobs remains active.
+
 Saving facts, reviewing sources, editing requirements or approving wording does
 not launch a reassessment or regenerate a resume. Choose **Update affected
 matches** on Profile, Evidence Map or beside Person fit in Job Detail, or select

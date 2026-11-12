@@ -74,6 +74,65 @@ test("Profile manually updates the previously missing match, reuses unaffected a
   const ownershipId = seed.requirements.requirements[1]!.requirement_id;
   const recoveryAchievement = seed.library.roles[0]!.achievements[0]!;
   const ownershipAchievement = seed.library.roles[0]!.achievements[1]!;
+  const savedRequirements = (await json<{ score: { assessments: { text: string; rationale: string }[] } }>(
+    api, "get", `/v1/jobs/${seed.posting.job_id}/fit`,
+  )).score.assessments;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/jobs/${seed.posting.job_id}`);
+  const fitPanel = page.getByRole("region", { name: "Person fit", exact: true });
+  const requirementRows = fitPanel.getByRole("article");
+  await expect(requirementRows).toHaveCount(2);
+  await expect(requirementRows.nth(0)).toContainText("Matched");
+  await expect(requirementRows.nth(1)).toContainText("Missing");
+  for (const [index, assessment] of savedRequirements.entries())
+    await expect(requirementRows.nth(index).getByRole("heading")).toHaveText(assessment.text);
+  const unassessedWording = fitPanel.getByText(
+    "No current approved wording coverage is recorded for this result. Wording assessment or selection may still be needed.",
+    { exact: true },
+  );
+  await expect(unassessedWording).toHaveCount(1);
+  await expect(unassessedWording).toBeVisible();
+  await expect(fitPanel.getByText("Current wording not selected", { exact: true })).toBeHidden();
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await testInfo.attach(`person-fit-result-${viewport.width}`, {
+      contentType: "image/png",
+      body: await fitPanel.screenshot({ animations: "disabled" }),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const coveragePanel = fitPanel.getByRole("region", { name: "Approved wording coverage", exact: true });
+  const gapDetails = coveragePanel.locator("summary").filter({ hasText: /^Wording gap details/ });
+  await gapDetails.click();
+  await expect(coveragePanel.getByText("Current wording not selected", { exact: true })).toBeVisible();
+  await expect(coveragePanel.getByText(savedRequirements[0]!.text, { exact: true })).toBeVisible();
+  await gapDetails.click();
+  const requirement = requirementRows.first();
+  await requirement.locator("summary").filter({ hasText: /^Assessment details$/ }).click();
+  await expect(requirement.locator(".fit-requirement__rationale")).toHaveText(
+    savedRequirements[0]!.rationale,
+  );
+  await requirement.locator("summary").filter({ hasText: /^Evidence and provenance$/ }).click();
+  await expect(requirement).toContainText(recoveryAchievement.source_refs[0]!.source_id);
+  await expect(requirement).toContainText(seed.fit.score.assessments[0]!.determination_id);
+  await testInfo.attach("person-fit-result-expanded", {
+    contentType: "image/png",
+    body: await requirement.screenshot({ animations: "disabled" }),
+  });
+  await requirement.locator("summary").filter({ hasText: /^Correct this requirement assessment$/ }).click();
+  await expect(requirement.getByRole("combobox", { name: "Qualification", exact: true })).toHaveValue("matched");
+  const saveCorrection = requirement.getByRole("button", { name: "Save requirement correction", exact: true });
+  await expect(saveCorrection).toBeEnabled();
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await saveCorrection.scrollIntoViewIfNeeded();
+    await testInfo.attach(`person-fit-correction-${viewport.width}`, {
+      contentType: "image/png",
+      body: await page.screenshot({ animations: "disabled" }),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  expect((await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(seed.fit.score);
   const preparing = api.post(
     `/v1/jobs/${seed.posting.job_id}/fit/coverage/refresh`,
     {
