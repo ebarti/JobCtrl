@@ -10,9 +10,9 @@ from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
 from .domain import (
     CATALOG_MATCHING_INSTRUCTION, COMPARISON_INSTRUCTION, EXTRACTION_INSTRUCTION,
-    CatalogMatching, Comparison, ExtractedRequirement, Extraction, ModelCallBudget, RequirementError, RevisionDecision,
-    canonical_json, fingerprint, meaning_data, now, validate_catalog_matching, validate_citations,
-    validate_comparison, validate_extraction,
+    CatalogMatching, Comparison, ExtractedRequirement, ExtractionSelection, ModelCallBudget, RequirementError, RevisionDecision,
+    bind_extraction, canonical_json, fingerprint, meaning_data, now, validate_catalog_matching, validate_citations,
+    validate_comparison, validate_extraction_selection,
 )
 from .ports import PostingReader, RequirementModel, RequirementStore
 
@@ -425,15 +425,16 @@ class RequirementsService:
             self._check_cancel(cancelled)
             budget = ModelCallBudget(fingerprint({"action": action_fingerprint, "posting": self._posting_identity(posting)}),
                                      MAX_NEW_MODEL_CALLS_PER_REFRESH)
-            extraction, extraction_receipt = await self.model.determine(
-                kind="requirements.extract", schema=Extraction, prompt_version="requirements-extract-v1",
+            selection, extraction_receipt = await self.model.determine(
+                kind="requirements.extract", schema=ExtractionSelection, prompt_version="requirements-extract-v2-quote-selection",
                 instruction=EXTRACTION_INSTRUCTION, sources=sources,
                 context={"posting": self._posting_identity(posting), "refresh_binding": {
                     "expected_revision": expected_revision, "force": force,
                 }}, entity_id=job_id,
-                validate=lambda result: validate_extraction(result, source_id=source_id, text=source_text),
+                validate=lambda result: validate_extraction_selection(result, source_id=source_id, text=source_text),
                 budget=budget,
             )
+            extraction = bind_extraction(selection, source_id=source_id, text=source_text)
             extraction_id = extraction_receipt["receipt_id"]
             for consolidation_attempt in range(MAX_CONSOLIDATION_ATTEMPTS):
                 self._check_cancel(cancelled)

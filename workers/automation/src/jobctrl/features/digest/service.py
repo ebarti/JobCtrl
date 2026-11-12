@@ -89,14 +89,18 @@ class DigestService:
         if materials is None:
             unavailable.append("reviewNeededMaterials")
         spending = self.model.spend()
-        budget = self.settings.snapshot()["dailyBudgetUsd"]
+        budget = spending["dailyBudgetUsd"]
         cost_status = spending["costStatus"]
         amount = spending["costUsd"]
-        needs_attention = cost_status in {"pending", "unresolved"} or (budget > 0 and cost_status == "unavailable")
+        needs_attention = spending["accountingBlocked"]
         budget_data = {"status": "incomplete" if needs_attention else "over_budget"
                        if budget > 0 and amount is not None and amount >= budget else "ok",
                        "estimatedUsd": amount, "knownUsd": spending["knownCostUsd"],
                        "costStatus": cost_status, "tokenStatus": spending["tokenStatus"],
+                       "accountingBlocked": spending["accountingBlocked"],
+                       "monetaryAccountingBlocked": spending["monetaryAccountingBlocked"],
+                       "tokenAccountingBlockedLanes": spending["tokenAccountingBlockedLanes"],
+                       "activeCalls": spending["activeCalls"], "unresolvedCalls": spending["unresolvedCalls"],
                        "dailyBudgetUsd": float(budget),
                        "remainingUsd": max(0.0, budget - amount) if amount is not None and budget > 0 else None,
                        "unlimited": budget <= 0}

@@ -50,8 +50,14 @@ function digestRows(digest: Digest): readonly DigestRow[] {
     .join(", ");
   const budget = digest.budget;
   const costStatus = budget.costStatus ?? (budget.status === "incomplete" ? "unresolved" : "complete");
-  const budgetDetail = costStatus === "unresolved"
-    ? "A model call has not settled. Check its receipt before retrying."
+  const accountingBlocked = budget.accountingBlocked ?? (budget.status === "incomplete" && costStatus !== "pending");
+  const active = (budget.activeCalls ?? 0) > 0 || costStatus === "pending";
+  const budgetDetail = accountingBlocked
+    ? budget.monetaryAccountingBlocked === false
+      ? `Unknown past token usage prevents enforcing limits for: ${budget.tokenAccountingBlockedLanes?.join(", ") ?? "configured lanes"}.`
+      : "Unknown past cost prevents enforcing the daily dollar limit."
+    : costStatus === "unresolved"
+      ? `Some past model usage is unknown. No enabled accounting limit is blocked.${active ? " New model work is running." : ""}`
     : costStatus === "pending"
       ? `Model work is running.${budget.unlimited ? " No daily limit." : ""}`
       : costStatus === "unavailable"
@@ -124,8 +130,9 @@ function digestRows(digest: Digest): readonly DigestRow[] {
     {
       key: "budget",
       label: "Budget",
-      value: costStatus === "pending" ? "In progress"
-        : costStatus === "unresolved" ? "Needs reconciliation"
+      value: active ? "In progress"
+        : accountingBlocked ? "Usage tracking required"
+          : costStatus === "unresolved" ? "Past usage unknown"
           : budget.status === "over_budget" ? "Limit reached"
             : budget.unlimited ? "No daily limit"
               : costStatus === "unavailable" ? "Cost unavailable" : "Within limit",

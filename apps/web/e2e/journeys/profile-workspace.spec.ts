@@ -590,6 +590,59 @@ test("Profile peer sections save complete role, summary, skills and education ed
   await expect(
     page.getByRole("textbox", { name: "Title", exact: true }),
   ).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Label", exact: true }),
+  ).toHaveCount(0);
+  const originalCategory = original.profile.resume.skill_categories[0]!;
+  const groupTitle = page
+    .getByRole("group", { name: originalCategory.label, exact: true })
+    .getByRole("textbox", { name: "Skill group title", exact: true });
+  const renamedTitle = "Engineering & Recovery";
+  const autosavedTitle = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/v1/profile" &&
+      response.request().method() === "PATCH",
+  );
+  await groupTitle.focus();
+  await groupTitle.press("ControlOrMeta+A");
+  await groupTitle.pressSequentially(renamedTitle);
+  const renamedCategory = page.getByRole("group", {
+    name: renamedTitle,
+    exact: true,
+  });
+  await expect(
+    renamedCategory.getByRole("textbox", { name: "Skill group title", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    renamedCategory.getByRole("button", { name: "Remove skill category", exact: true }),
+  ).toBeFocused();
+  const titleResponse = await autosavedTitle;
+  expect(titleResponse.status(), await titleResponse.text()).toBe(200);
+  saved = await canonical();
+  expect(
+    saved.profile.resume.skill_categories.find((item) => item.id === originalCategory.id),
+  ).toEqual({ ...originalCategory, label: renamedTitle });
+  await page.reload();
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(
+      renamedCategory.getByRole("textbox", { name: "Skill group title", exact: true }),
+    ).toHaveValue(renamedTitle);
+    const geometry = await renamedCategory.evaluate((element) => ({
+      width: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.width);
+    await testInfo.attach(`skill-group-title-${viewport.width}`, {
+      contentType: "image/png",
+      body: await page.locator("#profile-skills").screenshot({ animations: "disabled" }),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page
     .getByRole("button", { name: "Add skill category", exact: true })
     .click();
@@ -598,7 +651,7 @@ test("Profile peer sections save complete role, summary, skills and education ed
     exact: true,
   });
   await category
-    .getByRole("textbox", { name: "Label", exact: true })
+    .getByRole("textbox", { name: "Skill group title", exact: true })
     .fill("Synthetic Recovery Skills");
   const namedCategory = page.getByRole("group", {
     name: "Synthetic Recovery Skills",
@@ -618,6 +671,19 @@ test("Profile peer sections save complete role, summary, skills and education ed
   await namedCategory
     .getByRole("textbox", { name: "Skill 1", exact: true })
     .fill("Recovery review and provenance");
+  await namedCategory.getByRole("button", { name: "Add skill", exact: true }).click();
+  await namedCategory
+    .getByRole("textbox", { name: "Skill 2", exact: true })
+    .fill("Synthetic incident protocols");
+  saved = await save();
+  expect(
+    saved.profile.resume.skill_categories.find(
+      (item) => item.id === categoryId,
+    )!.items,
+  ).toEqual(["Recovery review and provenance", "Synthetic incident protocols"]);
+  await namedCategory
+    .getByRole("button", { name: "Remove skill 2", exact: true })
+    .click();
   saved = await save();
   expect(
     saved.profile.resume.skill_categories.find(

@@ -25,6 +25,25 @@ revisions and exact contiguous posting spans. The model alone decides support,
 qualified meaning, equivalence and novelty. Unsupported, uncertain or malformed
 output never replaces an accepted snapshot.
 
+The `requirements-extract-v2-quote-selection` wire asks the model for each
+supporting span as an exact `{source_id, quote}` selection. It does not ask the
+model to calculate numeric character offsets. Requirements verifies the supplied
+source ID and verbatim quote against the frozen posting, requires exactly one
+occurrence (including overlapping matches), and derives Python character
+`start`/`end` positions mechanically. Missing, foreign, blank or ambiguous quotes
+refuse the entire extraction; the application never chooses a first occurrence,
+normalizes text, guesses a nearby match or makes a repair-model call. Meaning,
+support and qualifier selection remain the model's decisions.
+
+Canonical occurrences and the manual correction API retain the existing
+`{start, end, quote}` Span contract and exact source-slice validation. The raw
+v2 quote-selection result remains unchanged in the gateway receipt and feature
+cache. Pure binding also runs during validation; the service uses the bound
+canonical Extraction only after those raw-result authority checks succeed.
+The bumped prompt and schema participate in the cache fingerprint, so an older
+numeric-selection response cannot be replayed as a v2 determination. Existing
+accepted snapshots and failed-attempt history are preserved.
+
 Duration, scale, seniority, domain, logical alternatives, exceptions and scope
 remain part of qualified meaning. Tier/weight belong to an occurrence. A
 paraphrase may reuse a canonical ID only through a recorded model decision.

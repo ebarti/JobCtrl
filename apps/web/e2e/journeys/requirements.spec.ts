@@ -19,6 +19,7 @@ type Requirements = {
   stale: boolean;
   requirements: {
     requirement_id: string;
+    spans: { start: number; end: number; quote: string }[];
     provenance: {
       extraction: { provider: string; receipt_id: string };
       resolution: {
@@ -52,7 +53,7 @@ function extraction(
         tier: "must_have",
         weight: 1,
         support,
-        spans: [{ start: 0, end: source.text.length, quote: source.text }],
+        spans: [{ source_id: source.source_id, quote: source.text }],
       },
     ],
     reason: "Explicit source-bound determination for this controlled journey.",
@@ -217,6 +218,87 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
   expect(retained.stale).toBe(true);
 });
 
+test("quote selections derive canonical Unicode ranges and reuse the exact raw extraction receipt", async ({ api, app }) => {
+  const quote = "Implement durable workflow recovery.";
+  const prefix = "🧭 Authored source context.\n";
+  const description = `${prefix}${quote}\nRetain this final source context.`;
+  const posting = await json<Posting>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/unique-quote-binding",
+    title: "Synthetic Quote Binding Engineer", company: "Synthetic Source Company", description,
+  });
+  const request = { expected_posting_revision: posting.revision, expected_revision: 0 };
+  const first = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: request });
+  const extractionCall = await modelCall(app, "requirements.extract");
+  expect(extractionCall.body["prompt_version"]).toBe("requirements-extract-v2-quote-selection");
+  const schema = extractionCall.body["response_schema"] as { $defs: { Citation: { required: string[]; properties: Record<string, unknown> } } };
+  expect([...schema.$defs.Citation.required].sort()).toEqual(["quote", "source_id"]);
+  expect(Object.keys(schema.$defs.Citation.properties).sort()).toEqual(["quote", "source_id"]);
+  const selected = extraction(extractionCall, "not duration-bound");
+  selected.requirements[0] = { ...selected.requirements[0]!, text: quote, definition: quote, qualifiers: [],
+    spans: [{ source_id: sources(extractionCall)[0]!.source_id, quote }] };
+  extractionCall.reply(selected);
+  const uncertain = await modelCall(app, "requirements.match_catalog");
+  uncertain.reply(catalogMatching(uncertain, { leadership: { verdict: "uncertain" } }));
+  expect((await first).status()).toBe(422);
+
+  // Repeat the exact public command after the explicit refusal. The accepted
+  // extraction is reused through its raw gateway receipt; matching is fresh.
+  const retried = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: request });
+  const matching = await modelCall(app, "requirements.match_catalog");
+  matching.reply(catalogMatching(matching, { leadership: { verdict: "new" } }));
+  const response = await retried;
+  expect(response.status(), await response.text()).toBe(200);
+  const accepted = await response.json() as Requirements;
+  expect(accepted.requirements[0]!.spans).toEqual([{ start: Array.from(prefix).length, end: Array.from(prefix).length + quote.length, quote }]);
+  expect(app.external.calls.filter((call) => call.path === "/model").map((call) => call.body["operation"])).toEqual([
+    "requirements.extract", "requirements.match_catalog", "requirements.match_catalog",
+  ]);
+});
+
+test("foreign missing ambiguous and legacy numeric quote selections preserve accepted requirements without fallback", async ({ api, app }) => {
+  const quote = "Maintain exact workflow recovery.";
+  const posting = await json<Posting>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/quote-selection-refusal",
+    title: "Synthetic Quote Refusal Engineer", company: "Synthetic Source Company",
+    description: `${quote}\nRepeated marker.\nRepeated marker.\naaaa`,
+  });
+  const initial = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: { expected_posting_revision: posting.revision, expected_revision: 0 } });
+  const initialCall = await modelCall(app, "requirements.extract");
+  const initialChoice = extraction(initialCall, "not duration-bound");
+  initialChoice.requirements[0] = { ...initialChoice.requirements[0]!, text: quote, definition: quote, qualifiers: [],
+    spans: [{ source_id: sources(initialCall)[0]!.source_id, quote }] };
+  initialCall.reply(initialChoice);
+  await novel(app);
+  const initialResponse = await initial;
+  expect(initialResponse.status(), await initialResponse.text()).toBe(200);
+  const accepted = await initialResponse.json() as Requirements;
+  const failures = [
+    { quote, source_id: "foreign-unowned-source", status: 422, code: "foreign_source_id" },
+    { quote: "This quote is absent from the authored source.", status: 422, code: "non_verbatim_quote" },
+    { quote: "Repeated marker.", status: 422, code: "source_quote_ambiguous" },
+    { quote: "aaa", status: 422, code: "source_quote_ambiguous" },
+    { quote, start: 0, end: quote.length + 1, status: 502, code: "model_schema_violation" },
+  ];
+  for (const failure of failures) {
+    const before = app.external.calls.length;
+    const refreshing = api.post(`/v1/jobs/${posting.job_id}/requirements`, {
+      data: { expected_posting_revision: posting.revision, expected_revision: accepted.revision, force: true },
+    });
+    const call = await modelCall(app, "requirements.extract");
+    const choice = extraction(call, "not duration-bound");
+    const { status, code, ...selection } = failure;
+    call.reply({ ...choice, requirements: [{ ...choice.requirements[0], text: quote, definition: quote, qualifiers: [],
+      spans: [{ source_id: sources(call)[0]!.source_id, ...selection }] }] });
+    const response = await refreshing;
+    expect(response.status(), await response.text()).toBe(status);
+    expect(await response.json()).toMatchObject({ error: { code } });
+    const retained = await json<Requirements>(api, "get", `/v1/jobs/${posting.job_id}/requirements`);
+    expect(retained.revision).toBe(accepted.revision);
+    expect(retained.requirements).toEqual(accepted.requirements);
+    expect(app.external.calls.slice(before).map((entry) => entry.body["operation"])).toEqual(["requirements.extract"]);
+  }
+});
+
 test("one catalog determination resolves the full posting batch and more than twelve canonical meanings", async ({
   api,
   app,
@@ -251,8 +333,7 @@ test("one catalog determination resolves the full posting batch and more than tw
       support: "supported",
       spans: [
         {
-          start: source.text.indexOf(text),
-          end: source.text.indexOf(text) + text.length,
+          source_id: source.source_id,
           quote: text,
         },
       ],
@@ -325,8 +406,7 @@ test("one catalog determination resolves the full posting batch and more than tw
       support: "supported",
       spans: [
         {
-          start: batchSource.text.indexOf(text),
-          end: batchSource.text.indexOf(text) + text.length,
+          source_id: batchSource.source_id,
           quote: text,
         },
       ],
@@ -603,8 +683,7 @@ test("an oversized complete catalog request refuses without truncation or automa
       support: "supported",
       spans: [
         {
-          start: source.text.indexOf(text),
-          end: source.text.indexOf(text) + text.length,
+          source_id: source.source_id,
           quote: text,
         },
       ],

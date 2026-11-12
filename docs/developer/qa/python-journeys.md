@@ -46,13 +46,65 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current source inventory is **73 journeys in 29 spec files**: the earlier
+The current source inventory is **77 journeys in 29 spec files**: the earlier
 57 plus three direct-Jobs search journeys, five provider-isolation/recovery
 journeys, one native accounting-setup journey and two accounting-classification
-journeys, plus five initial-assessment/recovery journeys. The direct-Jobs cases exercise saved launch and live
+journeys, plus five initial-assessment/recovery journeys, two exact-quote binding
+journeys, one accounting-actionability journey and one Jobs deletion/SSE journey.
+The direct-Jobs cases exercise saved launch and live
 counts across navigation/reload/tabs, lost-acknowledgement recovery and exact-run
 stop, and simultaneous two-tab admission. Historical complete-suite results
 below retain their original 57-case scope; they do not qualify the new inventory.
+
+### Five-job QA follow-up — 12 November 2026
+
+The skill-group heading is now the existing label field itself, with the
+accessible name **Skill group title**. The duplicate Label field is removed.
+The real Profile journey verifies keyboard focus, Tab order, successful autosave,
+unchanged group identity/items after reload, and individual skill/group creation
+and removal. Desktop and mobile images were inspected; the shared heading
+typography and constrained input fit without overflow.
+
+Requirements extraction now asks the external model for an exact source ID and
+verbatim quote. The owner derives canonical offsets only when that quote occurs
+exactly once in the frozen source. This removes model character-count arithmetic
+while preserving strict source binding, the numeric canonical/manual API,
+complete-catalog matching, raw model receipt/cache equality and publication
+fences. Non-verbatim, foreign, repeated, overlapping and old numeric selections
+refuse without replacing accepted requirements. The versioned model schema
+prevents old extraction output from becoming new authority.
+
+Accounting reads separately report current policy blockers and incomplete
+historical usage. Unknown receipts and null totals remain inspectable; they do
+not create an accounting action item when no enabled monetary or affected-lane
+token policy needs those values. Actual finite-policy admission still refuses
+before external dispatch. This makes no claim about the cause of legacy
+uncertainty and does not change canonical workflow recovery or receipt status.
+
+| Focused run | Observed result | Boundary |
+| --- | --- | --- |
+| `e2e-pOoJX8` | 2/2 passed; 58.393 s total | Real Profile editing plus all 104 rendered workspace views; keyboard/autosave/reload identity and 1440/390 skill-heading geometry. |
+| `e2e-smJWGP` | 1/1 passed; 17.568 s total | Genuine stale Fit, then hide/unhide, delete/restore and reviewed permanent deletion. Actual browser `JobUpdated` frames and fresh Digest HTTP responses update counts without document reload. |
+| `e2e-Za4RIF` | 4/4 passed; 84.465 s total | Public cancellation, actual worker kill, continued uncapped work, unrelated finite lane, and opposing finite monetary/affected-token refusals with accepted artifacts retained. |
+| `e2e-g1COJa` | 13/13 passed; 49.452 s total | Exact Unicode quote binding, cache reuse after catalog refusal, malformed/ambiguous selection preservation, existing catalog invariants, and ordinary Start search through three saved fit scores. |
+
+All four runs used zero retries and retained unchanged dependency locks and web
+build outputs during their execution. The final Requirements run used Python
+tree `c8e72d78c39ba1e6f4e2c0ed354164b523e5637d2cd215fc141756aae4cff64a`
+and web bundle `13150ebf6a162dd792db753da859fdbe6dfa9294a07a7788822305cd55a74e68`.
+A subsequent Requirements README clarification changed only documentation, not
+tested Python bytes. TypeScript, frontend boundaries, scoped Python lint and
+diff checks passed. Independent review found no actionable defect in the
+skill-heading, accounting-actionability or exact-quote production patches.
+
+The earlier live tab's stale attention count was not reproduced: the normal
+deletion subscription already existed and the real lifecycle proof passed.
+No speculative production invalidation change is claimed. The failed sandbox
+loopback preflight was an invocation failure, not an application result.
+These focused runs do not claim one complete 77-case execution or successful
+live provider semantics. The separately authorized five-job operational pass
+and exact-head hosted qualification are recorded in issue #1472. No release,
+deployment or user acceptance is implied by source verification.
 
 ### Final QA corrections — 12 November 2026
 

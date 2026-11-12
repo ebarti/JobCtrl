@@ -101,7 +101,7 @@ export async function serveSavedAssessment(
   const source = modelSources(extraction)[0]!;
   extraction.reply({
     status: "complete",
-    requirements: [{ local_id: "capability", text: source.text, definition: source.text, qualifiers: [], scope: "resume", tier: "must_have", weight: 1, support: "supported", spans: [{ start: 0, end: source.text.length, quote: source.text }] }],
+    requirements: [{ local_id: "capability", text: source.text, definition: source.text, qualifiers: [], scope: "resume", tier: "must_have", weight: 1, support: "supported", spans: [{ source_id: source.source_id, quote: source.text }] }],
     reason: "Explicit complete source-bound requirement inventory for this current journey.",
     citations: citeSources(extraction, [source.source_id]),
   });

@@ -23,12 +23,12 @@ function attentionItems(digest: Digest): readonly AttentionItem[] {
   addCount("staleScores", digest.staleScores.count, "fit assessment to update", "fit assessments to update");
   addCount("blockedSources", digest.blockedSources.count, "search source needs attention", "search sources need attention");
   // In-flight work is progress, not an instruction to reconcile a lost call.
-  if (digest.budget.status !== "ok" && digest.budget.costStatus !== "pending") {
+  if (digest.budget.status === "over_budget" || (digest.budget.accountingBlocked ?? (digest.budget.status !== "ok" && digest.budget.costStatus !== "pending"))) {
     items.push({
       key: "budget",
       label: digest.budget.status === "over_budget" ? "Daily budget reached"
-        : digest.budget.costStatus === "unavailable" ? "Daily limit needs cost tracking"
-          : "Model call needs reconciliation",
+        : digest.budget.monetaryAccountingBlocked === false ? "Token limit needs usage tracking"
+          : "Daily limit needs cost tracking",
       href: digest.deepLinks.budget,
     });
   }

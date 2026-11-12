@@ -123,7 +123,13 @@ no monetary amount. Missing terminal cost is unavailable, not an unresolved
 operation; missing tokens cannot invalidate a known monetary total. An unknown
 total remains null, with any known subtotal named separately. Re-enabling a
 finite monetary cap still refuses dispatch against prior missing monetary
-receipts; finite token lanes retain their own missing-token refusal.
+receipts; finite token lanes retain their own missing-token refusal. Read-only accounting
+blockers derive from the same saved policy and receipt snapshot: positive money
+limits require historical monetary evidence; positive token limits require
+historical token evidence only in affected lanes. Unknown history with no
+applicable enabled limit is informational, with null totals and original receipts
+preserved. This does not settle interrupted actions or infer cancellation
+ownership; execution recovery remains with canonical action/run owners.
 
 Provider process reuse is bounded by the shared SDK runtime service. API and
 worker shutdown close that service explicitly and join provider cleanup.

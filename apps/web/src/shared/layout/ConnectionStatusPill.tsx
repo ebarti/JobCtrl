@@ -30,15 +30,17 @@ export function ConnectionStatusPill() {
           : lostForLong ? "Offline" : demo && status === "open" ? "Demo mode" : STATUS_LABEL[status];
   const spend = healthUnavailable || demo ? undefined : health.data?.llmSpend;
   const costStatus = spend?.costStatus ?? (spend?.accountingComplete ? "complete" : "unresolved");
+  const accountingBlocked = spend?.accountingBlocked ?? (costStatus === "unresolved" || (costStatus === "unavailable" && !spend?.unlimited));
+  const active = (spend?.activeCalls ?? 0) > 0 || costStatus === "pending";
   const spendLabel = !spend ? null
-    : costStatus === "unresolved" ? "Model call needs reconciliation"
-      : costStatus === "pending" ? `LLM running${spend.unlimited ? " · No daily limit" : ""}`
+    : active ? `LLM running${spend.unlimited ? " · No daily limit" : ""}`
+      : accountingBlocked ? spend.monetaryAccountingBlocked === false ? "Token limit needs usage tracking" : "Daily limit needs cost tracking"
         : spend.unlimited ? "LLM · No daily limit"
           : costStatus === "unavailable" || spend.costUsd === null ? "LLM cost unavailable"
             : `LLM $${spend.costUsd.toFixed(2)}${spend.costAuthority === "includes_estimates" ? " (includes estimates)" : ""}`;
   return <div className="connection-pill-group">
     <span className="connection-pill" data-status={databaseProblem || workspaceChanged || healthUnavailable || workerUnhealthy || lostForLong ? "lost" : status} aria-live="polite" data-typography="status">{label}</span>
-    {spend ? <span className="connection-spend" data-status={costStatus === "unresolved" || (costStatus === "unavailable" && !spend.unlimited) ? "incomplete" : costStatus === "pending" ? "pending" : "ok"} aria-live="polite" data-typography="metadata">
+    {spend ? <span className="connection-spend" title={costStatus === "unresolved" ? "Some past model usage is unknown. Inspect usage details in Settings → Budgets." : undefined} data-status={active ? "pending" : accountingBlocked ? "incomplete" : "ok"} aria-live="polite" data-typography="metadata">
       {spendLabel}
     </span> : null}
     {databaseProblem ? <div className="connection-banner" data-state="error" role="alert">{databaseProblem.message}</div>

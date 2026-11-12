@@ -141,7 +141,9 @@ class ModelGateway:
         day = now()[:10]
         with self.database.connect() as connection:
             connection.execute("BEGIN")
-            unlimited = self.settings.snapshot(connection)["dailyBudgetUsd"] <= 0
+            settings = self.settings.snapshot(connection)
+            budget = settings["dailyBudgetUsd"]
+            unlimited = budget <= 0
             rows = connection.execute(
                 "SELECT lane,COUNT(*) calls,COALESCE(SUM(CAST(input_tokens AS REAL)),0) input_tokens,"
                 "COALESCE(SUM(CAST(output_tokens AS REAL)),0) output_tokens,SUM(cost_usd) cost_usd,"
@@ -171,7 +173,15 @@ class ModelGateway:
 
         cost_status, token_status = status(missing_cost), status(missing_tokens)
         known_cost = sum(row["cost_usd"] or 0 for row in lanes.values())
-        return {"day": day, "lanes": list(lanes.values()), "unlimited": unlimited,
+        # Knowledge and admission are separate: unknown history is actionable
+        # only for an enabled policy that requires that missing evidence.
+        monetary_blocked = budget > 0 and (unresolved > 0 or missing_cost > 0)
+        blocked_lanes = sorted(name for name, row in lanes.items()
+                               if settings["laneTokenLimits"].get(name, 0) > 0
+                               and (row["unresolved"] > 0 or row["unavailable_tokens"] > 0))
+        return {"day": day, "lanes": list(lanes.values()), "unlimited": unlimited, "dailyBudgetUsd": budget,
+                "accountingBlocked": monetary_blocked or bool(blocked_lanes),
+                "monetaryAccountingBlocked": monetary_blocked, "tokenAccountingBlockedLanes": blocked_lanes,
                 "costUsd": known_cost if cost_status == "complete" else None, "knownCostUsd": known_cost,
                 "costStatus": cost_status, "tokenStatus": token_status,
                 "activeCalls": active, "unresolvedCalls": unresolved,

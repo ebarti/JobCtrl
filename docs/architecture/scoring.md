@@ -18,6 +18,14 @@ There are no retrieval subsets, catalog pages, chunk loops or separate novelty
 judge. Citations, full incoming-ID cardinality, exact canonical revisions and
 the catalog epoch are validated before an atomic publication.
 
+Extraction's v2 model wire selects exact source IDs and unique verbatim quotes.
+Requirements derives their numeric character ranges from the frozen posting;
+missing, foreign or repeated quotes fail without fuzzy matching or another
+model call. The canonical/manual Span contract remains numeric. Raw selections
+stay identical to their immutable model receipt and cache entry; normalization
+is pure validation, and the service uses the canonical spans only after that
+verified boundary succeeds.
+
 The complete serialized input must pass the gateway's structural payload limit
 and lane/spend admission. A byte bound does not prove token-context fit; the
 current gateway has no selected-model context-capacity metadata. Input/context

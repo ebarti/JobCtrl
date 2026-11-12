@@ -2161,10 +2161,31 @@ export function StructuredProfileEditor({
                     {index > 0 ? (
                       <Separator className="repeat-section-separator" />
                     ) : null}
-                    <FieldSet className="repeat-section">
-                      <FieldLegend>
-                        {textFrom(entry["label"]) ||
-                          `Skill category ${index + 1}`}
+                    <FieldSet
+                      className="repeat-section"
+                      aria-label={
+                        textFrom(entry["label"]) ||
+                        `Skill category ${index + 1}`
+                      }
+                    >
+                      <FieldLegend className="profile-skill-group-heading">
+                        <Input
+                          aria-label="Skill group title"
+                          className="profile-skill-group-title"
+                          data-typography="component-title"
+                          id={editorControlId(
+                            "profile",
+                            `resume.skill_categories.${index}.label`,
+                          )}
+                          placeholder={`Skill category ${index + 1}`}
+                          value={textFrom(entry["label"])}
+                          onChange={(event) =>
+                            updateProfilePath(
+                              `resume.skill_categories.${index}.label`,
+                              event.target.value,
+                            )
+                          }
+                        />
                       </FieldLegend>
                       <div className="repeat-controls">
                         <span>Included in every resume</span>
@@ -2179,14 +2200,6 @@ export function StructuredProfileEditor({
                           Remove skill category
                         </Button>
                       </div>
-                      <AdaptiveFieldGrid>
-                        <AdaptiveFieldSpan span="wide">
-                          {textField(
-                            `resume.skill_categories.${index}.label`,
-                            "Label",
-                          )}
-                        </AdaptiveFieldSpan>
-                      </AdaptiveFieldGrid>
                       <Separator />
                       <FieldGroup className="skill-list">
                         {skills.map((skill, skillIndex) => {

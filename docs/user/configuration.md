@@ -425,23 +425,27 @@ solely because the price is unavailable. A finite dollar limit still requires
 monetary evidence before further calls. Token availability is tracked separately:
 a known dollar receipt remains valid even when its token counts are unavailable.
 
-**Model call needs reconciliation** means a provider attempt or its accounting
-commit remains uncertain, including an interrupted worker. Active calls are
-shown as running rather than as reconciliation tasks. The digest retains its
-other sections, and unknown totals and remaining amounts are never guessed.
-When both the global USD budget and the current lane's token limit are `0`,
-unresolved past accounting does not block new model calls: those limits are
-disabled. Spend reporting still shows incomplete totals, and the retained
-receipts are preserved. A positive global budget or current-lane token limit
-still requires the corresponding cost or token evidence before another model
-call. JobCtrl never
-presents unknown usage as a complete zero or automatically repeats an ambiguous
-ledger write. If a usage report
-contains only some token counts, the known values are retained for inspection
-and the missing values stay unknown. `jobctrl doctor`
-reports the condition. Preserve the private `.jobctrl.db.llm-spend-pending`
-receipts in the workspace and compare them with the ledger and provider records;
-there is no automatic reconciliation command for an uncertain commit.
+Past model usage can remain unknown after cancellation or interruption. This
+knowledge state is separate from whether a saved limit blocks new work. With no
+daily dollar limit and no affected finite token lane, the header shows running
+work or **LLM · No daily limit**; unknown history is informational rather than a
+reconciliation task. **Settings → Budgets → Today's model usage** retains the
+unknown total, recorded subtotal, running-call count and unknown-call count.
+The original receipts are preserved. No cancellation cause is inferred from a
+receipt that lacks an exact action link.
+
+**Daily limit needs cost tracking** means unknown historical cost prevents the
+configured dollar limit from being enforced. **Token limit needs usage tracking**
+means unknown tokens prevent an affected lane's finite limit from being enforced;
+other lanes remain available when their policies allow work. Both retain the
+existing admission refusal. Changing a pricing quote does not recover past
+missing usage. A limit can be explicitly changed in its owning settings, but
+JobCtrl never changes it automatically or reports unknown usage as zero.
+Running work remains passive progress, and interrupted actions retain their
+separate canonical execution/recovery status. There is no automatic
+reconciliation action for missing final usage. Provider records may be useful
+for inspection, but account-wide totals do not establish an individual call's
+consumption.
 
 ## Provider sessions
 

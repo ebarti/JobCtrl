@@ -161,6 +161,18 @@
 .profile-peer-workspace .profile-sections--resume-data .repeat-list {
   padding-inline: 0;
 }
+.profile-peer-workspace .profile-skill-group-heading {
+  width: 100%;
+  min-width: 0;
+}
+.profile-peer-workspace .profile-skill-group-title {
+  border-color: transparent;
+  padding-inline: 0;
+  background: transparent;
+}
+.profile-peer-workspace .profile-skill-group-title:is(:hover, :focus-visible) {
+  border-color: var(--input);
+}
 .profile-peer-workspace .skill-list[data-slot="field-group"] {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));

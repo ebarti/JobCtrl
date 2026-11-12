@@ -455,7 +455,7 @@ for (const changedSource of ["Profile", "posting", "catalog"] as const) {
             tier: "must_have",
             weight: 1,
             support: "supported",
-            spans: [{ start: 0, end: source.text.length, quote: source.text }],
+            spans: [{ source_id: source.source_id, quote: source.text }],
           },
         ],
         reason:

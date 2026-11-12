@@ -36,6 +36,14 @@ subtotal. `costAuthority` describes monetary evidence, while
 `unresolvedCalls`, `unavailableCostCalls` and `unavailableTokenCalls` retain the
 distinction; `unlimited` reflects the current zero-dollar-cap setting. These are
 read-only classifications and do not change receipt or admission policy.
+`dailyBudgetUsd`, `accountingBlocked`, `monetaryAccountingBlocked` and
+`tokenAccountingBlockedLanes` derive from the same settings/receipt snapshot.
+The blockers describe historical uncertain or unavailable usage under enabled
+limits, not running-call progress or known usage reaching a ceiling. An empty
+blocked-lane list means no finite token lane lacks the evidence required for
+admission. Digest carries these blockers plus active/unresolved counts; unknown
+history alone no longer makes its budget status incomplete. Exact amounts and
+knowledge statuses remain unchanged even when accounting does not block work.
 
 Feature-owned routes cover Profile, Jobs, Requirements, Fit, Resumes and the
 retained optional capabilities. Their owners validate input and publish exact

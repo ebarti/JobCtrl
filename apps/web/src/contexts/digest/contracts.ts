@@ -11,6 +11,11 @@ export const DigestSchema = z.object({
   budget: z.object({
     status: z.enum(["ok", "over_budget", "incomplete"]), estimatedUsd: z.number().nullable(),
     dailyBudgetUsd: z.number(), remainingUsd: z.number().nullable(), unlimited: z.boolean(),
+    accountingBlocked: z.boolean().optional(),
+    monetaryAccountingBlocked: z.boolean().optional(),
+    tokenAccountingBlockedLanes: z.array(z.string()).optional(),
+    activeCalls: z.number().int().nonnegative().optional(),
+    unresolvedCalls: z.number().int().nonnegative().optional(),
     costStatus: z.enum(["complete", "unavailable", "pending", "unresolved"]).optional(),
     tokenStatus: z.enum(["complete", "unavailable", "pending", "unresolved"]).optional(),
     knownUsd: z.number().nonnegative().optional(),

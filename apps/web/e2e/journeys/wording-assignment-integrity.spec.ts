@@ -270,7 +270,7 @@ async function captureOneExistingRequirement(
         tier: "must_have",
         weight: 1,
         support: "supported",
-        spans: [{ start, end: start + text.length, quote: text }],
+        spans: [{ source_id: source.source_id, quote: text }],
       },
     ],
     reason:

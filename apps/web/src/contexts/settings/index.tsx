@@ -13,6 +13,7 @@ import { Button } from "../../shared/ui/button.js";
 import { AutosaveUndoController } from "../../shared/ui/autosave-undo-controller.js";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../shared/ui/select.js";
 import { useProviderCatalog } from "./credentials.js";
+import { ModelUsageSummary } from "./ModelUsageSummary.js";
 
 const settingsSchema = z.object({
   revision: z.number().int().positive(),
@@ -360,6 +361,7 @@ function SettingsForm({ saved, section, active, refresh }: { readonly saved: App
       <form.Field name="aiEnabled">{(field) => <label><input type="checkbox" checked={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.checked)} /> Enable AI actions</label>}</form.Field>
       </> : <>
       {section === "automation" ? <form.Field name="aiEnabled">{(field) => <label><input type="checkbox" checked={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.checked)} /> Enable AI actions</label>}</form.Field> : null}
+      {section === "budgets" ? <ModelUsageSummary /> : null}
       {numericFields.filter(([name]) => section === "budgets" ? name === "dailyBudgetUsd" || name === "applyMaxBudgetUsd" : section === "automation" ? name === "minFitScore" : name === "dailyBudgetUsd" || name === "applyMaxBudgetUsd" || name === "minFitScore").map(([name, label, min, max]) => <form.Field key={name} name={name}>{(field) => <label>{label}<input type="number" min={min} max={max} step={name.endsWith("Usd") ? "0.01" : "1"} value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></label>}</form.Field>)}
       {section !== "automation" ? <p>A zero daily budget means no daily cap. A zero application budget is a $0 cap.</p> : null}
       {section !== "budgets" ? <>

@@ -4,6 +4,7 @@ import { baseline, createBaseline } from "./core-data.js";
 type Spend = {
   costUsd: number | null; knownCostUsd: number; costStatus: string; tokenStatus: string;
   accountingComplete: boolean; costAuthority: string; unlimited: boolean;
+  accountingBlocked: boolean; monetaryAccountingBlocked: boolean; tokenAccountingBlockedLanes: string[];
   activeCalls: number; unresolvedCalls: number; unavailableCostCalls: number; unavailableTokenCalls: number;
 };
 function plan(call: ExternalCall) {
@@ -97,4 +98,57 @@ test("settled monetary receipts remain complete when token counts are unavailabl
   expect(await terminal(api, refused.runId)).toMatchObject({ status: "failed", errorCode: "spend_accounting_unresolved" });
   expect(app.external.calls).toHaveLength(calls);
   expect(await json(api, "get", "/v1/discovery/target-search")).toEqual(accepted);
+});
+
+
+test("unknown usage after public cancellation is informational without caps while finite money and affected token lanes still refuse", async ({ api, app, page }, testInfo) => {
+  const profile = await profileForPlanning(api);
+  await settings(api, { dailyBudgetUsd: 0 });
+  const cancelled = await action(api, "discovery.refresh_targets", { force: true, expectedProfileVersion: profile.profileVersion });
+  const held = await modelCall(app, "discovery.query_plan");
+  await json(api, "post", `/v1/action-runs/${cancelled.runId}/cancel`, {});
+  expect(await terminal(api, cancelled.runId)).toMatchObject({ status: "cancelled", cancellationRequested: true });
+  await expect.poll(() => held.closed).toBe(true);
+  expect(await spend(api)).toMatchObject({ costStatus: "unresolved", tokenStatus: "unresolved", unresolvedCalls: 1,
+    costUsd: null, accountingComplete: false, accountingBlocked: false, monetaryAccountingBlocked: false, tokenAccountingBlockedLanes: [] });
+  expect((await json<{ budget: Record<string, unknown> }>(api, "get", "/v1/digest")).budget).toMatchObject({ status: "ok", costStatus: "unresolved", estimatedUsd: null, accountingBlocked: false });
+  // A finite unrelated lane is not a global blocker for the enrichment receipt.
+  await settings(api, { laneTokenLimits: { scoring: 1000 } });
+  expect((await spend(api)).tokenAccountingBlockedLanes).toEqual([]);
+  const fresh = await action(api, "discovery.refresh_targets", { force: true, expectedProfileVersion: profile.profileVersion });
+  const next = await modelCall(app, "discovery.query_plan");
+  expect(await spend(api)).toMatchObject({ activeCalls: 1, unresolvedCalls: 1, costStatus: "unresolved", accountingBlocked: false });
+  await Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname === "/v1/digest" && response.ok()),
+    page.goto("/jobs"),
+  ]);
+  await expect(page.locator(".connection-spend")).toHaveText("LLM running · No daily limit");
+  await expect(page.getByRole("heading", { name: "Needs attention", exact: true })).toHaveCount(0);
+  next.respond({ value: plan(next), usage: { input_tokens: 20, output_tokens: 10 } });
+  await completed(api, fresh.runId);
+  const accepted = await json(api, "get", "/v1/discovery/target-search");
+  await page.goto("/settings/budgets");
+  await page.getByText("Today's model usage", { exact: true }).click();
+  await expect(page.getByText("1 past model call has unknown final usage. The original receipts remain unchanged.", { exact: true })).toBeVisible();
+  await expect(page.getByText("No enabled accounting limit is blocked by this history. New work can continue under the saved policies.", { exact: true })).toBeVisible();
+  await expect(page.locator(".connection-spend")).toHaveText("LLM · No daily limit");
+  await testInfo.attach("unknown-usage-informational", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+  const calls = app.external.calls.length;
+  for (const policy of [
+    { dailyBudgetUsd: 25, laneTokenLimits: {}, monetaryAccountingBlocked: true, tokenAccountingBlockedLanes: [], label: "Daily limit needs cost tracking" },
+    { dailyBudgetUsd: 0, laneTokenLimits: { enrichment: 1000 }, monetaryAccountingBlocked: false, tokenAccountingBlockedLanes: ["enrichment"], label: "Token limit needs usage tracking" },
+  ]) {
+    await settings(api, { dailyBudgetUsd: policy.dailyBudgetUsd, laneTokenLimits: policy.laneTokenLimits });
+    const refused = await action(api, "discovery.refresh_targets", { force: true, expectedProfileVersion: profile.profileVersion });
+    expect(await terminal(api, refused.runId)).toMatchObject({ status: "failed", errorCode: "spend_accounting_unresolved" });
+    expect(app.external.calls).toHaveLength(calls);
+    expect(await json(api, "get", "/v1/discovery/target-search")).toEqual(accepted);
+    expect(await spend(api)).toMatchObject({ unresolvedCalls: 1, costUsd: null, accountingBlocked: true,
+      monetaryAccountingBlocked: policy.monetaryAccountingBlocked, tokenAccountingBlockedLanes: policy.tokenAccountingBlockedLanes });
+    await Promise.all([
+      page.waitForResponse((response) => new URL(response.url()).pathname === "/v1/digest" && response.ok()),
+      page.goto("/jobs"),
+    ]);
+    await expect(page.getByRole("link", { name: policy.label, exact: true })).toBeVisible();
+  }
 });
