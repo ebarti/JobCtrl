@@ -3,9 +3,11 @@ import { useMemo, type ReactNode } from "react";
 import type { ComposedJobRow, ComposedJobsResponse, PostingSnapshot } from "../../contexts/jobs/index.js";
 import { PYTHON_JOBS_SORT_FIELDS } from "../../shared/stores/saved-table-views.js";
 import {
-  FilterableDataGrid, type DataGridColumn, type DataGridColorRule, type DataGridColumnWidthsState,
+  FilterableDataGrid, isActiveDataGridFilter, type DataGridColumn, type DataGridColorRule, type DataGridColumnWidthsState,
   type DataGridDensity, type DataGridFilterState, type DataGridGroupingState, type DataGridSortState,
 } from "../../shared/ui/filterable-data-grid.js";
+import { JobColumnFilter, clearJobColumnCriteria, hasJobColumnCriteria, jobColumnFilterSummary } from "./JobColumnFilter.js";
+import type { GridCriteria } from "./jobGridState.js";
 
 export interface ComposedJobsGridProps {
   data: ComposedJobsResponse | undefined;
@@ -16,6 +18,8 @@ export interface ComposedJobsGridProps {
   onSelectionChange: (rows: readonly PostingSnapshot[], selected: boolean) => void;
   filters: DataGridFilterState;
   onFiltersChange: (filters: DataGridFilterState) => void;
+  criteria: GridCriteria;
+  onCriteriaChange: (criteria: GridCriteria, filters: DataGridFilterState) => void;
   sort: DataGridSortState;
   onSortChange: (sort: DataGridSortState) => void;
   page: number;
@@ -131,11 +135,21 @@ export function ComposedJobsGrid(props: ComposedJobsGridProps) {
       id, label, width, ...(id === "title" ? { rowHeader: true } : {}), ...(id === "fit_score" ? { header: "Fit" } : {}),
       sortable: sortable.has(id) && savedSortable.has(id),
       getSortValue: (row) => id === "eligibility" ? (row.fit?.score?.eligibility.status ?? "") : raw(row, id),
-      ...(filterable.has(id) ? { getFilterValue: (row: ComposedJobRow) => raw(row, id),
+      ...(filterable.has(id) || isActiveDataGridFilter(props.filters[id]) ? { getFilterValue: (row: ComposedJobRow) => raw(row, id),
         filterValues: filterMetadata?.facets[id]?.values ?? [], formatFilterValue: (value: string) => value === "" ? "Unknown (no recorded value)" : value, filterValueLimit: 200 } : {}),
+      ...(hasJobColumnCriteria(id) ? {
+        filterDescription: "Filter this column across all saved jobs. Text and exact-value conditions apply as you edit.",
+        filterSummary: jobColumnFilterSummary(id, props.criteria),
+        onClearFilter: () => props.onCriteriaChange(clearJobColumnCriteria(id, props.criteria), { ...props.filters, [id]: undefined }),
+        renderFilter: ({ filter, defaultContent, predicateContent }) => <JobColumnFilter key={JSON.stringify(props.criteria)} columnId={id} criteria={props.criteria} filter={filter} literalContent={defaultContent} literalPredicate={predicateContent}
+          unavailable={id === "fit_score" || id === "scored_at" ? moduleLabel(data, "fit") : id === "posted_compensation" || id.startsWith("compensation_") ? moduleLabel(data, "compensation") : null}
+          onApply={(next, literal) => props.onCriteriaChange(next, literal ? { ...props.filters, [id]: literal } : props.filters)}
+          onClear={() => props.onCriteriaChange(clearJobColumnCriteria(id, props.criteria), { ...props.filters, [id]: undefined })}
+          onClearLiteral={() => props.onFiltersChange({ ...props.filters, [id]: undefined })} />,
+      } : {}),
       render: (row) => valueFor(row, id, data),
     }))];
-  }, [data, filterMetadata, selected, onSelectionChange]);
+  }, [data, filterMetadata, selected, onSelectionChange, props.criteria, props.filters, props.onCriteriaChange, props.onFiltersChange]);
   const visibility = useMemo(() => Object.fromEntries(props.hiddenColumnIds.map((id) => [id, false])), [props.hiddenColumnIds]);
   return <FilterableDataGrid<ComposedJobRow>
     title="Jobs table" data={data?.rows ?? []} columns={columns} getRowId={(row) => row.job.job_id}
@@ -144,7 +158,7 @@ export function ComposedJobsGrid(props: ComposedJobsGridProps) {
     filters={props.filters} onFiltersChange={props.onFiltersChange} manualFiltering
     columnVisibility={visibility} columnOrder={props.columnOrder} onColumnOrderChange={props.onColumnOrderChange}
     columnWidths={props.columnWidths} onColumnWidthsChange={props.onColumnWidthsChange} density={props.density}
-    grouping={props.grouping} colorRules={props.colorRules} toolbarActions={props.toolbarActions(columns)}
+    grouping={props.grouping} colorRules={props.colorRules} toolbarActions={props.toolbarActions(columns)} showColumnFilterMenu
     mobileLayout="cards" tableClassName="jobs-data-grid-table"
     rowAriaSelected={(row) => props.activeJobId === row.job.job_id || Boolean(selected[row.job.job_id])}
     onRowActivate={(row) => void navigate({ to: "/jobs/$jobId", params: { jobId: row.job.job_id }, search: (previous) => ({ ...previous, jobTab: "fit" }) })}

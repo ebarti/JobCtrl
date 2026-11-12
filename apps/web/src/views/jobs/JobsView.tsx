@@ -15,7 +15,6 @@ import { DEFAULT_JOBS_HIDDEN_COLUMN_IDS, DEFAULT_SAVED_TABLE_VIEW_ID, JOBS_TABLE
   usePythonJobsTableViewsStore, type SavedTablePresentation, type SavedTableViewSnapshot } from "../../shared/stores/saved-table-views.js";
 import { SavedTableViewsControl } from "../../shared/ui/saved-table-views-control.js";
 import { isActiveDataGridFilter, type DataGridFilterState, type DataGridSortState } from "../../shared/ui/filterable-data-grid.js";
-import { AdvancedJobFilters } from "./AdvancedJobFilters.js";
 import { ComposedJobsGrid } from "./ComposedJobsGrid.js";
 import { criteriaFromQuery, defaultCriteria, restoreView, savedFilters, type GridCriteria } from "./jobGridState.js";
 
@@ -110,7 +109,6 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
   const [draft, setDraft] = useState(criteria.q);
   const [confirmation, setConfirmation] = useState("");
   const [previewScope, setPreviewScope] = useState<string | null>(null);
-  const [filtersVersion, setFiltersVersion] = useState(0);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const scrollRestored = useRef(false);
   const previousJob = useRef(activeJobId);
@@ -174,7 +172,7 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
   const updateCriteria = (next: GridCriteria) => changeQuery(gridQuery(next, filters, sort, 0, pageSize, null));
   const applyView = (view: SavedTableView) => {
     const next = restoreView(view);
-    if (changeQuery(gridQuery(next.criteria, next.filters, next.sort, 0, next.pageSize, null))) setFiltersVersion((version) => version + 1);
+    changeQuery(gridQuery(next.criteria, next.filters, next.sort, 0, next.pageSize, null));
   };
   const snapshot: SavedTableViewSnapshot = { ...presentation, sort, urlFilters: savedFilters(criteria, pageSize), gridFilters: filters };
   const hasLimitedFacets = Object.values(currentJobs?.facets ?? {}).some((facet) => !facet.complete);
@@ -197,12 +195,6 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
     <section className="card" aria-label="Captured jobs">
       <div className="jobs-table-tools">
       {optionalGlobalActions ? <details><summary>Job maintenance</summary><div className="toolbar" aria-label="Job maintenance">{optionalGlobalActions}</div></details> : null}
-      <form onSubmit={(event) => { event.preventDefault(); updateCriteria({ ...criteria, q: draft }); }}>
-        <label>Filter saved jobs<input aria-label="Filter saved jobs" value={draft} onChange={(event) => setDraft(event.currentTarget.value)} /></label>
-        <Button type="submit" variant="outline">Filter</Button>
-      </form>
-      <details className="jobs-filter-options"><summary>Filter by fit, compensation and job state</summary><AdvancedJobFilters key={`${filtersVersion}:${JSON.stringify({ ...criteria, q: "" })}`} criteria={criteria} onApply={updateCriteria} /></details>
-      {hasFilters ? <Button type="button" variant="outline" onClick={() => { if (changeQuery(gridQuery(defaultCriteria, {}, { columnId: "discovered_at", direction: "desc" }, 0, pageSize, null))) setFiltersVersion((version) => version + 1); }}>Clear all filters</Button> : null}
       {navigationError ? <p role="alert">{navigationError}</p> : null}
       {jobs.isPlaceholderData ? <p role="status">Updating jobs. Filter options reflect the previous results until loading finishes.</p> : null}
       {unavailable.length ? <p role="status">Unavailable features: {unavailable.map(({ name, state }) => `${name} (${state.enabled ? "unavailable" : "disabled"})`).join(", ")}. Their saved criteria remain in effect and can be cleared.</p> : null}
@@ -231,6 +223,7 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
       <ComposedJobsGrid data={currentJobs} filterMetadata={filterMetadata} loading={jobs.isPending || jobs.isFetching} error={Boolean(jobs.error)} selected={selected} activeJobId={activeJobId} emptyMessage={emptyMessage}
         onSelectionChange={(rows, checked) => { updateSelection(session, tenant, selectionScope, rows, checked); previewDelete.reset(); setPreviewScope(null); setConfirmation(""); }}
         filters={filters} onFiltersChange={(next) => { changeQuery(gridQuery(criteria, next, sort, 0, pageSize, null)); }}
+        criteria={criteria} onCriteriaChange={(next, nextFilters) => { changeQuery(gridQuery(next, nextFilters, sort, 0, pageSize, null)); }}
         sort={sort} onSortChange={(next) => { changeQuery(gridQuery(criteria, filters, next, 0, pageSize, null)); }}
         page={Math.floor(offset / pageSize) + 1} pageSize={pageSize} onPageChange={(page) => {
           const revision = page === 1 ? null : currentJobs?.query_revision ?? queryInput.query_revision ?? null;
@@ -242,7 +235,14 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
         onColumnOrderChange={(order) => setPresentation(JOBS_TABLE_ID, { ...presentation, columns: { ...presentation.columns, order: [...order] } })}
         onColumnWidthsChange={(widths) => setPresentation(JOBS_TABLE_ID, { ...presentation, columns: { ...presentation.columns, widths } })}
         density={presentation.density} grouping={presentation.grouping} colorRules={presentation.colorRules}
-        toolbarActions={(columns) => <SavedTableViewsControl tableId={JOBS_TABLE_ID} useViewsStore={usePythonJobsTableViewsStore} columnOptions={columns.map((column) => ({ id: column.id, label: column.label, ...(column.id === "select" ? { locked: true } : {}) }))} snapshot={snapshot} onApplyView={applyView} onPresentationChange={(next) => setPresentation(JOBS_TABLE_ID, next)} />}
+        toolbarActions={(columns) => <>
+          <form className="jobs-table-search" onSubmit={(event) => { event.preventDefault(); updateCriteria({ ...criteria, q: draft }); }}>
+            <label className="sr-only" htmlFor="jobs-table-search">Filter saved jobs</label><input id="jobs-table-search" aria-label="Filter saved jobs" placeholder="Filter saved jobs" value={draft} onChange={(event) => setDraft(event.currentTarget.value)} />
+            <Button type="submit" variant="outline">Filter</Button>
+          </form>
+          {hasFilters ? <Button type="button" variant="ghost" onClick={() => { changeQuery(gridQuery(defaultCriteria, {}, { columnId: "discovered_at", direction: "desc" }, 0, pageSize, null)); }}>Clear all filters</Button> : null}
+          <SavedTableViewsControl tableId={JOBS_TABLE_ID} useViewsStore={usePythonJobsTableViewsStore} columnOptions={columns.map((column) => ({ id: column.id, label: column.label, ...(column.id === "select" ? { locked: true } : {}) }))} snapshot={snapshot} onApplyView={applyView} onPresentationChange={(next) => setPresentation(JOBS_TABLE_ID, next)} />
+        </>}
       />
     </section>
   </div>;

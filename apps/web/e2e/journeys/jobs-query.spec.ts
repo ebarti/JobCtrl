@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { APIRequestContext, Response } from "@playwright/test";
+import type { APIRequestContext, Locator, Page, Response } from "@playwright/test";
 
 import {
   test,
@@ -30,6 +30,19 @@ type Query = {
 const targetTitle = "Synthetic Senior Global Fit Engineer";
 const targetCompany = "Synthetic Grid Target Company";
 const targetLocation = "Madrid, Spain";
+
+async function columnFilter(page: Page, id: string, label: string): Promise<Locator> {
+  await page.getByRole("combobox", { name: "Filter a column", exact: true }).selectOption(id);
+  const dialog = page.getByRole("dialog", { name: `${label} filter`, exact: true });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function applyColumnFilter(page: Page, dialog: Locator) {
+  await dialog.getByRole("button", { name: "Apply filters", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+}
 
 async function capture(api: APIRequestContext, slug: string, title: string) {
   return json<Job>(api, "post", "/v1/jobs/capture", {
@@ -131,6 +144,7 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
   app,
   allowResponseError,
 }, testInfo) => {
+  const desktopViewport = page.viewportSize()!;
   const { library } = await createBaseline(api);
   // This journey records the existing score stage. Tailored preparation has
   // separate wording/coverage prerequisites and is covered in its own journey.
@@ -324,34 +338,128 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
   await expect(backgroundTable.locator("tbody tr")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(table.locator("tbody tr")).toHaveCount(1);
-  await page
-    .getByText("Filter by fit, compensation and job state", { exact: true })
-    .click();
-  await page
+  await expect(page.getByText("Filter by fit, compensation and job state", { exact: true })).toHaveCount(0);
+  // The column header and the compact picker open the same Jobs-owned editor.
+  // Salary, market, reliability, warning and date columns remain hidden here.
+  await table.getByRole("button", { name: "Filter Person fit column", exact: true }).click();
+  let column = page.getByRole("dialog", { name: "Person fit filter", exact: true });
+  await column
     .getByRole("combobox", { name: "Fit assessment", exact: true })
     .selectOption("current");
-  await page
+  await column
     .getByLabel("Minimum person fit (1–10)", { exact: true })
     .fill("10");
-  await page
+  await column.getByLabel("Maximum person fit (1–10)", { exact: true }).fill("9");
+  await column.getByRole("button", { name: "Apply filters", exact: true }).click();
+  await expect(column.getByRole("alert")).toHaveText("Minimum must not exceed maximum.");
+  await column.getByLabel("Maximum person fit (1–10)", { exact: true }).fill("10");
+  await applyColumnFilter(page, column);
+  column = await columnFilter(page, "posted_compensation", "Posted pay");
+  await column
     .getByRole("combobox", { name: "Posted pay", exact: true })
     .selectOption("known");
-  await page
+  await applyColumnFilter(page, column);
+  column = await columnFilter(page, "compensation_market", "Market (€ / year)");
+  await column
     .getByRole("combobox", { name: "Market pay", exact: true })
     .selectOption("known");
-  await page
-    .getByLabel("Posted annual minimum at least (€)", { exact: true })
-    .fill("80000");
-  await page
+  await column
     .getByLabel("Market annual minimum at least (€)", { exact: true })
     .fill("85000");
-  await page
-    .getByRole("button", { name: "Apply filters", exact: true })
-    .click();
+  await column.getByLabel("Market annual maximum at most (€)", { exact: true }).fill("110000");
+  await applyColumnFilter(page, column);
+  await expect(table.locator('thead th[data-column-id="compensation_min_eur"]')).toHaveCount(0);
+  column = await columnFilter(page, "compensation_min_eur", "Salary min (€ / year)");
+  await column
+    .getByLabel("Posted annual minimum at least (€)", { exact: true })
+    .fill("80000");
+  await applyColumnFilter(page, column);
+  column = await columnFilter(page, "compensation_max_eur", "Salary max (€ / year)");
+  await column.getByLabel("Posted annual maximum at most (€)", { exact: true }).fill("100000");
+  await applyColumnFilter(page, column);
+  // A future discovered cutoff excludes this job; the earlier assessed cutoff
+  // brings it back because the two date criteria deliberately use OR.
+  column = await columnFilter(page, "discovered_at", "Discovered");
+  await column.getByLabel("Discovered since", { exact: true }).fill("2099-01-01");
+  await applyColumnFilter(page, column);
+  await expect(table.locator("tbody tr")).toHaveCount(0);
+  column = await columnFilter(page, "scored_at", "Fit assessed");
+  await expect(column.getByText("When both Discovered since and Fit assessed since are set, a job matching either date is included.", { exact: true })).toBeVisible();
+  await column.getByLabel("Fit assessed since", { exact: true }).fill("2000-01-01");
+  await applyColumnFilter(page, column);
   await expect(table.locator("tbody tr")).toHaveCount(1);
   await expect(
     table.getByRole("link", { name: targetTitle, exact: true }),
   ).toBeVisible();
+
+  const scoredRows = await json<Query>(api, "get", "/v1/jobs/query?sort=fit_score&direction=desc");
+  const targetValues = scoredRows.rows.find((row) => row.job.job_id === target.job_id)!.scalars;
+  const reliabilityBand = String(targetValues["compensation_confidence"]);
+  expect(["none", "low", "medium", "high"]).toContain(reliabilityBand);
+  const reliabilityLabel = reliabilityBand === "none" ? "Not assessed" : reliabilityBand.charAt(0).toUpperCase() + reliabilityBand.slice(1);
+  column = await columnFilter(page, "compensation_confidence", "Reliability");
+  await column.getByRole("checkbox", { name: "Unknown (no recorded value)", exact: true }).check();
+  await applyColumnFilter(page, column);
+  await expect(table.locator("tbody tr")).toHaveCount(0);
+  await page.getByLabel("Active table filters").getByRole("button").filter({ hasText: "Reliability" }).click();
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  column = await columnFilter(page, "compensation_confidence", "Reliability");
+  await column.getByRole("checkbox", { name: reliabilityLabel, exact: true }).check();
+  await applyColumnFilter(page, column);
+  expect(typeof targetValues["compensation_warnings"]).toBe("number");
+  const warningState = Number(targetValues["compensation_warnings"]) > 0 ? "present" : "none";
+  column = await columnFilter(page, "compensation_warnings", "Warnings");
+  await column.getByRole("combobox", { name: "Compensation warnings", exact: true }).selectOption(warningState);
+  await applyColumnFilter(page, column);
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+
+  // Direct URLs and older saved column predicates retain their full meaning.
+  // Applying an unchanged date editor must not truncate the recorded instant.
+  const discoveredInstant = "2099-01-01T15:30:45.123Z";
+  const assessedInstant = "2000-01-01T09:10:11.123Z";
+  const deepLink = new URL(page.url());
+  deepLink.searchParams.set("discovered_since", discoveredInstant);
+  deepLink.searchParams.set("scored_since", assessedInstant);
+  deepLink.searchParams.set("column_filters", JSON.stringify({
+    ...JSON.parse(deepLink.searchParams.get("column_filters") ?? "{}"),
+    job_state: { operator: "contains", text: "", selectedValues: ["active"] },
+  }));
+  await page.goto(`${deepLink.pathname}${deepLink.search}`);
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  column = await columnFilter(page, "discovered_at", "Discovered");
+  await expect(column.getByLabel("Discovered since", { exact: true })).toHaveValue("2099-01-01");
+  await applyColumnFilter(page, column);
+  expect(new URL(page.url()).searchParams.get("discovered_since")).toBe(discoveredInstant);
+  expect(new URL(page.url()).searchParams.get("scored_since")).toBe(assessedInstant);
+  column = await columnFilter(page, "job_state", "Job state");
+  await expect(column.getByRole("checkbox", { name: "Active", exact: true })).toBeChecked();
+  await expect(column.getByRole("region", { name: "Saved column constraint", exact: true })).toContainText("active");
+  await applyColumnFilter(page, column);
+  expect(JSON.parse(new URL(page.url()).searchParams.get("column_filters") ?? "{}").job_state.selectedValues).toEqual(["active"]);
+
+  column = await columnFilter(page, "compensation_max_eur", "Salary max (€ / year)");
+  await column.getByRole("button", { name: "Clear column filter", exact: true }).click();
+  await expect(column.getByLabel("Posted annual maximum at most (€)", { exact: true })).toHaveValue("");
+  await applyColumnFilter(page, column);
+  expect(new URL(page.url()).searchParams.has("posted_max_eur")).toBe(false);
+  column = await columnFilter(page, "fit_score", "Person fit");
+  await applyColumnFilter(page, column);
+  expect(new URL(page.url()).searchParams.has("posted_max_eur")).toBe(false);
+  expect(new URL(page.url()).searchParams.get("posted_min_eur")).toBe("80000");
+  column = await columnFilter(page, "compensation_max_eur", "Salary max (€ / year)");
+  await column.getByLabel("Posted annual maximum at most (€)", { exact: true }).fill("100000");
+  await applyColumnFilter(page, column);
+
+  column = await columnFilter(page, "compensation_market", "Market (€ / year)");
+  await testInfo.attach("jobs-column-filter-desktop", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 390, height: 844 });
+  column = await columnFilter(page, "compensation_market", "Market (€ / year)");
+  await expect(column.getByLabel("Market annual maximum at most (€)", { exact: true })).toBeVisible();
+  await testInfo.attach("jobs-column-filter-mobile", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("combobox", { name: "Filter a column", exact: true })).toBeFocused();
+  await page.setViewportSize(desktopViewport);
 
   const customColumnIds = await table
     .locator("thead th")
@@ -400,18 +508,35 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
     "aria-sort",
     "descending",
   );
-  await page
-    .getByText("Filter by fit, compensation and job state", { exact: true })
-    .click();
+  column = await columnFilter(page, "fit_score", "Person fit");
   await expect(
-    page.getByLabel("Minimum person fit (1–10)", { exact: true }),
+    column.getByLabel("Minimum person fit (1–10)", { exact: true }),
   ).toHaveValue("10");
+  await expect(column.getByLabel("Maximum person fit (1–10)", { exact: true })).toHaveValue("10");
+  await page.keyboard.press("Escape");
+  column = await columnFilter(page, "posted_compensation", "Posted pay");
   await expect(
-    page.getByRole("combobox", { name: "Posted pay", exact: true }),
+    column.getByRole("combobox", { name: "Posted pay", exact: true }),
   ).toHaveValue("known");
+  await page.keyboard.press("Escape");
+  column = await columnFilter(page, "compensation_market", "Market (€ / year)");
   await expect(
-    page.getByLabel("Market annual minimum at least (€)", { exact: true }),
+    column.getByLabel("Market annual minimum at least (€)", { exact: true }),
   ).toHaveValue("85000");
+  await expect(column.getByLabel("Market annual maximum at most (€)", { exact: true })).toHaveValue("110000");
+  await page.keyboard.press("Escape");
+  column = await columnFilter(page, "discovered_at", "Discovered");
+  await expect(column.getByLabel("Discovered since", { exact: true })).toHaveValue("2099-01-01");
+  await page.keyboard.press("Escape");
+  expect(new URL(page.url()).searchParams.get("discovered_since")).toBe(discoveredInstant);
+  expect(new URL(page.url()).searchParams.get("scored_since")).toBe(assessedInstant);
+  column = await columnFilter(page, "compensation_confidence", "Reliability");
+  await expect(column.getByRole("checkbox", { name: reliabilityLabel, exact: true })).toBeChecked();
+  await page.keyboard.press("Escape");
+  column = await columnFilter(page, "compensation_warnings", "Warnings");
+  await expect(column.getByRole("combobox", { name: "Compensation warnings", exact: true })).toHaveValue(warningState);
+  await page.keyboard.press("Escape");
+  await expect(page.getByLabel("Active table filters")).toContainText("either date");
   const filteredSearch = new URL(page.url()).search;
   const beforeSearchNavigation = app.external.calls.filter(
     (call) => call.path === "/model",
@@ -504,7 +629,7 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
     }),
   ).toBeChecked();
   expect(new URL(page.url()).search).toBe(filteredSearch);
-  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.setViewportSize(desktopViewport);
 
   // Exercise the real continuation UI: changed sources must not mix page two
   // with the first page's earlier owner snapshot.
@@ -597,23 +722,9 @@ test.describe("Jobs without optional read owners", () => {
       table.getByRole("button", { name: "Sort by Person fit", exact: true }),
     ).toHaveCount(0);
 
-    const filterOptions = page.locator("details.jobs-filter-options");
-    const openFilters = async () => {
-      if (
-        !(await filterOptions.evaluate(
-          (element) => (element as HTMLDetailsElement).open,
-        ))
-      )
-        await filterOptions
-          .locator("summary")
-          .filter({ hasText: /^Filter by fit, compensation and job state$/ })
-          .click();
-      await expect(
-        page.getByRole("form", { name: "Job filters", exact: true }),
-      ).toBeVisible();
-    };
-    await openFilters();
-    await page
+    const postedFilter = await columnFilter(page, "posted_compensation", "Posted pay");
+    await expect(postedFilter.getByRole("status")).toContainText("Feature disabled");
+    await postedFilter
       .getByRole("combobox", { name: "Posted pay", exact: true })
       .selectOption("known");
     const unavailableQuery = {
@@ -643,9 +754,10 @@ test.describe("Jobs without optional read owners", () => {
     };
     page.on("response", observeUnavailable);
     try {
-      await page
+      await postedFilter
         .getByRole("button", { name: "Apply filters", exact: true })
         .click();
+      await page.keyboard.press("Escape");
       await expect(
         page.getByRole("alert").filter({ hasText: "unavailable feature" }),
       ).toBeVisible();
@@ -731,13 +843,10 @@ test.describe("Jobs without optional read owners", () => {
     await expect(
       table.getByRole("link", { name: target.title, exact: true }),
     ).toHaveCount(0);
-    await openFilters();
-    await page
-      .getByRole("combobox", { name: "Job state", exact: true })
-      .selectOption("deleted");
-    await page
-      .getByRole("button", { name: "Apply filters", exact: true })
-      .click();
+    const jobState = await columnFilter(page, "job_state", "Job state");
+    await jobState.getByRole("checkbox", { name: "Active", exact: true }).uncheck();
+    await jobState.getByRole("checkbox", { name: "Deleted", exact: true }).check();
+    await applyColumnFilter(page, jobState);
     await table
       .getByRole("checkbox", { name: `Select ${target.title}`, exact: true })
       .check();

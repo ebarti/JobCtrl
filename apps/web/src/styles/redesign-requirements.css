@@ -73,8 +73,8 @@
 .requirements-library blockquote { padding-left: 12px; border-left: 3px solid var(--border); white-space: pre-wrap; }
 .requirements-library blockquote footer { color: var(--muted-foreground); }
 .requirement-error { color: var(--destructive-text); overflow-wrap: anywhere; }
-.achievement-requirements { display: grid; gap: 8px; padding: 0 0 16px; border-bottom: 1px solid var(--border); font-size: 14px; line-height: 1.5; }
-.achievement-requirements__heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.achievement-requirements { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; line-height: 1.5; }
+.achievement-requirements > :is(.requirement-error, .muted) { flex-basis: 100%; margin: 0; }
 .achievement-requirements__tags { display: flex; flex-wrap: wrap; gap: 8px; }
 .achievement-requirements__tag { display: inline-grid; gap: 2px; max-width: 100%; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted); color: var(--foreground); text-align: left; line-height: 1.4; overflow-wrap: anywhere; }
 .achievement-requirements__tag:hover { border-color: var(--primary); }

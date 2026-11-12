@@ -164,6 +164,12 @@ filters, sorting, pagination, columns, saved views and supported bulk selection.
 Unknown pay, fit or outcome stays unknown; different currencies are not silently
 made comparable. An empty workspace differs from a filtered list with no matches.
 
+Use a column's filter for its values or ranges. The table's **Filters** control
+also reaches filters for columns that are currently hidden. Active filters stay
+visible beside the table and can be cleared there; there is no separate advanced
+filter form above it. Searching saved jobs, column filters and saved views share
+the same table query and survive opening a job and returning.
+
 A fresh built-in **Default** view starts with Title, Company, Location, Posted
 pay, Fit and Apply, plus selection. Posted pay uses its recorded display range,
 currency and unit. Granular/source fields remain available in **Columns**, and

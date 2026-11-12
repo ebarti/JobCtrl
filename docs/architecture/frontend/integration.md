@@ -49,3 +49,12 @@ controller. Saved preference readers key and fence their reads by database
 incarnation, retaining editor drafts separately; launch revalidates that same
 incarnation before creating its request identity. The server serializes
 workspace search admission so two simultaneous tabs cannot both enqueue work.
+
+The Jobs comparison owns one filter state and composes its server criteria into
+the shared table's column dialogs. A narrow `renderFilter` slot, summary and
+atomic-clear callback let Jobs supply its field-specific controls without
+teaching the shared grid about Fit or Compensation. The table's column picker
+reaches hidden columns; active criteria remain visible and removable when an
+optional feature is unavailable. Existing grids retain their ordinary literal
+filter editors. Jobs URL state and saved views retain the canonical criteria,
+literal column predicates, sort and pagination.

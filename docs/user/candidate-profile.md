@@ -161,6 +161,15 @@ achievement deliberately; **Restore removed experience** restores the requested
 original identity into the current Profile and retains associated wording and
 source history. Restore the parent role before its removed achievement.
 
+Each achievement leads with its saved resume wording and linked requirement
+tags. **Edit wording** starts a proposed revision; it preserves the earlier
+approved text until you review the replacement. **Edit facts** opens the
+underlying achievement record: use it to correct what happened, your ownership,
+scope or results. Changing that record can make dependent wording need review;
+it is a different operation from improving its phrasing. **Achievement options**
+keeps coaching, ordering and removal together. Exact source references, approvals
+and earlier text remain available under **Approval and history**.
+
 The [complete synthetic Experience capture](/assets/screenshots/original-profile-wording.png)
 shows the role editor, canonical requirement tags, maintained current wording,
 separate proposed revision and retained history in the implemented candidate.

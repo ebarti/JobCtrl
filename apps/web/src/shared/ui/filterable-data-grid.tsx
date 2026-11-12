@@ -13,6 +13,7 @@ import {
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type RefObject,
   useEffect,
   useId,
   useMemo,
@@ -46,6 +47,12 @@ export type DataGridFilterState = Record<
   DataGridTextFilter | undefined
 >;
 
+export interface DataGridColumnFilterContext {
+  filter: DataGridTextFilter;
+  defaultContent: ReactNode;
+  predicateContent: ReactNode;
+}
+
 export interface DataGridColumn<TData> {
   id: string;
   label: string;
@@ -59,6 +66,12 @@ export interface DataGridColumn<TData> {
   /** Presentation only; selection and filtering continue to use the raw value. */
   formatFilterValue?: (value: string) => string;
   filterText?: boolean;
+  /** Server-owned criteria can share the column's existing filter dialog. */
+  renderFilter?: (context: DataGridColumnFilterContext) => ReactNode;
+  filterDescription?: string;
+  filterSummary?: string;
+  /** Clears server criteria and literal column predicates in one navigation. */
+  onClearFilter?: () => void;
   className?: string;
   headerClassName?: string;
   filterValueLimit?: number;
@@ -137,6 +150,7 @@ export interface FilterableDataGridProps<TData> {
   pagination?: DataGridPaginationState;
   summary?: ReactNode;
   toolbarActions?: ReactNode;
+  showColumnFilterMenu?: boolean;
   tableClassName?: string;
   resizableColumns?: boolean;
   columnVisibility?: DataGridColumnVisibilityState;
@@ -381,6 +395,10 @@ interface ColumnFilterDialogProps<TData> {
   onTextChange: (text: string) => void;
   onValueQueryChange: (text: string) => void;
   onToggleValue: (value: string) => void;
+  trigger?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  finalFocus?: RefObject<HTMLSelectElement | null>;
 }
 
 function ColumnFilterDialog<TData>({
@@ -394,6 +412,10 @@ function ColumnFilterDialog<TData>({
   onTextChange,
   onValueQueryChange,
   onToggleValue,
+  trigger = true,
+  open,
+  onOpenChange,
+  finalFocus,
 }: ColumnFilterDialogProps<TData>) {
   const normalizedQuery = normalize(valueQuery);
   const visibleValues = values
@@ -402,9 +424,29 @@ function ColumnFilterDialog<TData>({
     )
     .slice(0, column.filterValueLimit ?? 80);
 
+  const predicateContent = column.filterText === false ? null : <>
+      <div className="data-grid-filter-operator" role="group" aria-label={`${column.label} text operator`}>
+        {(["contains", "does_not_contain"] as const).map((operator) => <button key={operator} type="button" data-grid-control="filter-operator"
+          aria-pressed={filter.operator === operator} className={filter.operator === operator ? "active" : undefined} onClick={() => onOperatorChange(operator)}>{operatorLabel(operator)}</button>)}
+      </div>
+      <label className="data-grid-filter-field"><span>Text predicate</span><Input aria-label={`${column.label} filter text`} value={filter.text} placeholder={`${column.label} text`} onChange={(event) => onTextChange(event.target.value)} /></label>
+    </>;
+  const defaultContent = <section className="data-grid-filter-condition">
+    <div className="data-grid-filter-condition-head">
+      <strong>{column.label}</strong>
+      <button type="button" data-grid-control="clear-filter" onClick={onClear}>Clear</button>
+    </div>
+    {predicateContent}
+    <label className="data-grid-filter-field"><span>Find values</span><Input aria-label={`${column.label} value search`} value={valueQuery} placeholder="Search values" onChange={(event) => onValueQueryChange(event.target.value)} /></label>
+    <div className="data-grid-value-list" aria-label={`${column.label} values`}>
+      {visibleValues.map((value) => <label key={value} className="data-grid-value-option" data-grid-control="filter-value"><input type="checkbox" checked={filter.selectedValues.includes(value)} onChange={() => onToggleValue(value)} /><span>{column.formatFilterValue?.(value) ?? value}</span></label>)}
+      {values.length > visibleValues.length ? <span className="data-grid-value-overflow">{values.length - visibleValues.length} more values. Use search{column.filterText === false ? "." : " or text predicate."}</span> : null}
+    </div>
+  </section>;
+
   return (
-    <Dialog>
-      <DialogTrigger asChild>
+    <Dialog {...(open !== undefined ? { open } : {})} {...(onOpenChange ? { onOpenChange } : {})}>
+      {trigger ? <DialogTrigger asChild>
         <button
           type="button"
           data-grid-control="filter"
@@ -417,93 +459,17 @@ function ColumnFilterDialog<TData>({
         >
           <IconFilter size={12} aria-hidden="true" />
         </button>
-      </DialogTrigger>
-      <DialogContent className="data-grid-column-filter-dialog">
+      </DialogTrigger> : null}
+      <DialogContent className="data-grid-column-filter-dialog" {...(finalFocus ? { finalFocus } : {})}>
         <DialogHeader>
           <DialogTitle>{column.label} filter</DialogTitle>
           <DialogDescription>
-            {column.filterText === false
+            {column.filterDescription ?? (column.filterText === false
               ? "Choose one or more values. With none selected, all values are shown."
-              : "Show rows where this column matches the selected values and text predicate."}
+              : "Show rows where this column matches the selected values and text predicate.")}
           </DialogDescription>
         </DialogHeader>
-        <section className="data-grid-filter-condition">
-          <div className="data-grid-filter-condition-head">
-            <strong>{column.label}</strong>
-            <button
-              type="button"
-              data-grid-control="clear-filter"
-              onClick={onClear}
-            >
-              Clear
-            </button>
-          </div>
-          {column.filterText === false ? null : (
-            <>
-              <div
-                className="data-grid-filter-operator"
-                role="group"
-                aria-label={`${column.label} text operator`}
-              >
-                {(["contains", "does_not_contain"] as const).map((operator) => (
-                  <button
-                    key={operator}
-                    type="button"
-                    data-grid-control="filter-operator"
-                    aria-pressed={filter.operator === operator}
-                    className={filter.operator === operator ? "active" : undefined}
-                    onClick={() => onOperatorChange(operator)}
-                  >
-                    {operatorLabel(operator)}
-                  </button>
-                ))}
-              </div>
-              <label className="data-grid-filter-field">
-                <span>Text predicate</span>
-                <Input
-                  aria-label={`${column.label} filter text`}
-                  value={filter.text}
-                  placeholder={`${column.label} text`}
-                  onChange={(event) => onTextChange(event.target.value)}
-                />
-              </label>
-            </>
-          )}
-          <label className="data-grid-filter-field">
-            <span>Find values</span>
-            <Input
-              aria-label={`${column.label} value search`}
-              value={valueQuery}
-              placeholder="Search values"
-              onChange={(event) => onValueQueryChange(event.target.value)}
-            />
-          </label>
-          <div
-            className="data-grid-value-list"
-            aria-label={`${column.label} values`}
-          >
-            {visibleValues.map((value) => (
-              <label
-                key={value}
-                className="data-grid-value-option"
-                data-grid-control="filter-value"
-              >
-                <input
-                  type="checkbox"
-                  checked={filter.selectedValues.includes(value)}
-                  onChange={() => onToggleValue(value)}
-                />
-                <span>{column.formatFilterValue?.(value) ?? value}</span>
-              </label>
-            ))}
-            {values.length > visibleValues.length ? (
-              <span className="data-grid-value-overflow">
-                {values.length - visibleValues.length} more values. Use search
-                {column.filterText === false ? "." : " or text predicate."}
-              </span>
-            ) : null}
-          </div>
-        </section>
+        {column.renderFilter ? column.renderFilter({ filter, defaultContent, predicateContent }) : defaultContent}
       </DialogContent>
     </Dialog>
   );
@@ -531,6 +497,7 @@ export function FilterableDataGrid<TData>({
   pagination,
   summary,
   toolbarActions,
+  showColumnFilterMenu = false,
   tableClassName,
   resizableColumns = true,
   columnVisibility,
@@ -557,6 +524,8 @@ export function FilterableDataGrid<TData>({
   const [localPage, setLocalPage] = useState(1);
   const [localPageSize, setLocalPageSize] = useState(initialPageSize);
   const [valueQueries, setValueQueries] = useState<Record<string, string>>({});
+  const [menuFilterColumnId, setMenuFilterColumnId] = useState<string | null>(null);
+  const filterMenuRef = useRef<HTMLSelectElement>(null);
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
   const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
   const [columnDropTarget, setColumnDropTarget] = useState<{
@@ -601,7 +570,7 @@ export function FilterableDataGrid<TData>({
   }, [displayColumns]);
 
   const filterableColumns = useMemo(
-    () => columns.filter((column) => Boolean(column.getFilterValue)),
+    () => columns.filter((column) => Boolean(column.getFilterValue || column.renderFilter)),
     [columns],
   );
   const distinctValues = useMemo(() => {
@@ -712,7 +681,7 @@ export function FilterableDataGrid<TData>({
 
   const activeFilters = filterableColumns
     .map((column) => ({ column, filter: filters[column.id] }))
-    .filter(({ filter }) => isActiveDataGridFilter(filter));
+    .filter(({ column, filter }) => Boolean(column.filterSummary) || isActiveDataGridFilter(filter));
 
   useEffect(() => {
     if (!onPageRowsChange) return;
@@ -779,6 +748,8 @@ export function FilterableDataGrid<TData>({
   };
 
   const clearFilter = (columnId: string) => {
+    const customClear = columnsById.get(columnId)?.onClearFilter;
+    if (customClear) { customClear(); return; }
     setFilters((current) => ({ ...current, [columnId]: emptyFilter() }));
   };
 
@@ -1014,14 +985,27 @@ export function FilterableDataGrid<TData>({
     ? { width: `max(100%, ${columnWidthTotal}px)` }
     : undefined;
 
+  const renderFilterDialog = (column: DataGridColumn<TData>, fromMenu = false) => <ColumnFilterDialog
+    key={fromMenu ? `menu-${column.id}` : column.id}
+    column={column}
+    filter={filters[column.id] ?? emptyFilter()}
+    values={distinctValues.get(column.id) ?? []}
+    valueQuery={valueQueries[column.id] ?? ""}
+    active={Boolean(column.filterSummary) || isActiveDataGridFilter(filters[column.id])}
+    onClear={() => clearFilter(column.id)}
+    onOperatorChange={(operator) => updateFilter(column.id, (current) => ({ ...current, operator }))}
+    onTextChange={(text) => updateFilter(column.id, (current) => ({ ...current, text }))}
+    onValueQueryChange={(text) => setValueQueries((current) => ({ ...current, [column.id]: text }))}
+    onToggleValue={(value) => toggleFilterValue(column.id, value)}
+    {...(fromMenu ? { trigger: false, open: true, onOpenChange: (open: boolean) => { if (!open) setMenuFilterColumnId(null); }, finalFocus: filterMenuRef } : {})}
+  />;
+
   const renderColumnControls = (column: DataGridColumn<TData>) => {
     const active = sort.columnId === column.id;
     const SortIcon =
       sort.direction === "desc" ? IconSortDescending : IconSortAscending;
     const sortable = column.sortable ?? Boolean(column.getSortValue);
-    const filterable = Boolean(column.getFilterValue);
-    const filter = filters[column.id] ?? emptyFilter();
-    const filterActive = isActiveDataGridFilter(filter);
+    const filterable = Boolean(column.getFilterValue || column.renderFilter);
     const header =
       typeof column.header === "function"
         ? column.header(headerContext)
@@ -1051,35 +1035,7 @@ export function FilterableDataGrid<TData>({
         ) : (
           <span className="data-grid-column-title">{header}</span>
         )}
-        {filterable ? (
-          <ColumnFilterDialog
-            column={column}
-            filter={filter}
-            values={distinctValues.get(column.id) ?? []}
-            valueQuery={valueQueries[column.id] ?? ""}
-            active={filterActive}
-            onClear={() => clearFilter(column.id)}
-            onOperatorChange={(operator) =>
-              updateFilter(column.id, (current) => ({
-                ...current,
-                operator,
-              }))
-            }
-            onTextChange={(text) =>
-              updateFilter(column.id, (current) => ({
-                ...current,
-                text,
-              }))
-            }
-            onValueQueryChange={(text) =>
-              setValueQueries((current) => ({
-                ...current,
-                [column.id]: text,
-              }))
-            }
-            onToggleValue={(value) => toggleFilterValue(column.id, value)}
-          />
-        ) : null}
+        {filterable ? renderFilterDialog(column) : null}
       </>
     );
   };
@@ -1088,7 +1044,7 @@ export function FilterableDataGrid<TData>({
     (column) =>
       typeof column.header === "function" ||
       (column.sortable ?? Boolean(column.getSortValue)) ||
-      Boolean(column.getFilterValue),
+      Boolean(column.getFilterValue || column.renderFilter),
   );
   const hasMobileControls =
     (mobileLayout === "cards" || Boolean(renderMobileRow)) &&
@@ -1127,9 +1083,14 @@ export function FilterableDataGrid<TData>({
         </div>
         <div className="data-grid-tools">
           {summary}
+          {showColumnFilterMenu ? <select ref={filterMenuRef} className="data-grid-filter-column-picker" aria-label="Filter a column" value="" onChange={(event) => setMenuFilterColumnId(event.currentTarget.value || null)}>
+            <option value="" disabled>Filter a column…</option>
+            {filterableColumns.map((column) => <option key={column.id} value={column.id}>{column.label}{columnVisibility?.[column.id] === false ? " (hidden)" : ""}{column.filterSummary || isActiveDataGridFilter(filters[column.id]) ? " · active" : ""}</option>)}
+          </select> : null}
           {toolbarActions}
         </div>
       </div>
+      {menuFilterColumnId && columnsById.has(menuFilterColumnId) ? renderFilterDialog(columnsById.get(menuFilterColumnId)!, true) : null}
       {activeFilters.length ? (
         <div
           className="data-grid-filter-chips"
@@ -1145,9 +1106,7 @@ export function FilterableDataGrid<TData>({
             >
               <span>{column.label}</span>
               <span>
-                {filter?.selectedValues.length
-                  ? filter.selectedValues.map((value) => column.formatFilterValue?.(value) ?? value).join(", ")
-                  : `${operatorLabel(filter?.operator ?? "contains")} "${filter?.text.trim()}"`}
+                {[column.filterSummary, isActiveDataGridFilter(filter) ? [filter.selectedValues.length ? filter.selectedValues.map((value) => column.formatFilterValue?.(value) ?? value).join(", ") : "", filter.text.trim() ? `${operatorLabel(filter.operator)} "${filter.text.trim()}"` : ""].filter(Boolean).join("; ") : ""].filter(Boolean).join("; ")}
               </span>
               <IconX size={12} aria-hidden="true" />
             </button>

@@ -197,10 +197,11 @@ function AchievementSource({
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>Achievement source and facts</summary>
+      <summary>Edit facts</summary>
       <p className="muted">
-        Keep the factual record here. Use Propose revision to change its wording
-        while retaining the source and earlier approvals.
+        Record what you did, including scope and results. Saving facts updates
+        this achievement’s source and may require wording review. Earlier
+        wording and approvals remain recorded.
       </p>
       {children}
     </details>
@@ -1839,6 +1840,10 @@ export function StructuredProfileEditor({
                             bullet keeps its own stable identity.
                           </FieldDescription>
                           {bullets.map((bullet, bulletIndex) => {
+                            const achievementIdentity = getPathValue(
+                              profile,
+                              `resume.experience_entries.${index}.achievement_ids.${bulletIndex}`,
+                            );
                             const requiredBulletId = editorControlId(
                               "profile",
                               `experience-${index}-bullet-${bulletIndex}`,
@@ -1847,159 +1852,163 @@ export function StructuredProfileEditor({
                             return (
                               <Field
                                 className="bullet-row profile-achievement"
+                                aria-label={`Achievement ${bulletIndex + 1}`}
                                 key={String(
-                                  getPathValue(
-                                    profile,
-                                    `resume.experience_entries.${index}.achievement_ids.${bulletIndex}`,
-                                  ) ?? `${entryId}-${bulletIndex}`,
+                                  achievementIdentity ??
+                                    `${entryId}-${bulletIndex}`,
                                 )}
                                 tabIndex={-1}
                                 ref={(element) => {
-                                  const id = getPathValue(
-                                    profile,
-                                    `resume.experience_entries.${index}.achievement_ids.${bulletIndex}`,
-                                  );
-                                  if (typeof id === "string") {
+                                  if (typeof achievementIdentity === "string") {
                                     if (element)
                                       achievementTargetsRef.current.set(
-                                        id,
+                                        achievementIdentity,
                                         element,
                                       );
                                     else
-                                      achievementTargetsRef.current.delete(id);
+                                      achievementTargetsRef.current.delete(
+                                        achievementIdentity,
+                                      );
                                   }
                                 }}
                               >
-                                <div className="bullet-row-top">
-                                  <FieldTitle className="bullet-label">
-                                    Achievement {bulletIndex + 1}
-                                  </FieldTitle>
-                                  <Field
-                                    className="choice bullet-choice"
-                                    data-disabled={
-                                      !entryId || !bullet || undefined
-                                    }
-                                    orientation="horizontal"
+                                {typeof achievementIdentity === "string" ? (
+                                  achievementWordings ? (
+                                    achievementWordings(
+                                      achievementIdentity,
+                                      entryId,
+                                    )
+                                  ) : (
+                                    <AchievementWordings
+                                      achievementId={achievementIdentity}
+                                    />
+                                  )
+                                ) : null}
+                                <div className="profile-achievement-tools">
+                                  {typeof achievementIdentity === "string"
+                                    ? achievementContent?.(
+                                        achievementIdentity,
+                                        entryId,
+                                      )
+                                    : null}
+                                  <AchievementSource
+                                    initiallyEmpty={!bullet.trim()}
                                   >
-                                    <Checkbox
-                                      id={requiredBulletId}
-                                      checked={requiredBullets.has(bullet)}
-                                      disabled={!entryId || !bullet}
-                                      onCheckedChange={(checked) =>
-                                        setRequiredBullet(
-                                          entryId,
-                                          bullet,
-                                          checked,
+                                    <Textarea
+                                      aria-label={`Achievement ${bulletIndex + 1}`}
+                                      ref={registerFocusTarget(
+                                        bulletFocusKey(
+                                          index,
+                                          bulletIndex,
+                                          "text",
+                                        ),
+                                      )}
+                                      value={bullet}
+                                      onChange={(event) =>
+                                        updateProfilePath(
+                                          `resume.experience_entries.${index}.bullets.${bulletIndex}`,
+                                          event.target.value,
                                         )
                                       }
                                     />
-                                    <FieldLabel htmlFor={requiredBulletId}>
-                                      Include in coaching
-                                    </FieldLabel>
-                                  </Field>
-                                </div>
-                                <AchievementSource
-                                  initiallyEmpty={!bullet.trim()}
-                                >
-                                  <Textarea
-                                    aria-label={`Achievement ${bulletIndex + 1}`}
-                                    ref={registerFocusTarget(
-                                      bulletFocusKey(
-                                        index,
-                                        bulletIndex,
-                                        "text",
-                                      ),
-                                    )}
-                                    value={bullet}
-                                    onChange={(event) =>
-                                      updateProfilePath(
-                                        `resume.experience_entries.${index}.bullets.${bulletIndex}`,
-                                        event.target.value,
-                                      )
-                                    }
-                                  />
-                                </AchievementSource>
-                                <div
-                                  aria-label={`Actions for bullet ${bulletIndex + 1} in ${entryLabel}`}
-                                  className="bullet-row-actions"
-                                  role="group"
-                                >
-                                  <Button
-                                    aria-label={`Move bullet ${bulletIndex + 1} up`}
-                                    disabled={bulletIndex === 0}
-                                    onClick={() =>
-                                      moveBullet(index, bulletIndex, -1)
-                                    }
-                                    ref={registerFocusTarget(
-                                      bulletFocusKey(index, bulletIndex, "up"),
-                                    )}
-                                    size="icon"
-                                    title="Move bullet up"
-                                    type="button"
-                                    variant="outline"
-                                  >
-                                    <IconArrowUp
-                                      aria-hidden="true"
-                                      data-icon="inline-start"
-                                    />
-                                  </Button>
-                                  <Button
-                                    aria-label={`Move bullet ${bulletIndex + 1} down`}
-                                    disabled={
-                                      bulletIndex === bullets.length - 1
-                                    }
-                                    onClick={() =>
-                                      moveBullet(index, bulletIndex, 1)
-                                    }
-                                    ref={registerFocusTarget(
-                                      bulletFocusKey(
-                                        index,
-                                        bulletIndex,
-                                        "down",
-                                      ),
-                                    )}
-                                    size="icon"
-                                    title="Move bullet down"
-                                    type="button"
-                                    variant="outline"
-                                  >
-                                    <IconArrowDown
-                                      aria-hidden="true"
-                                      data-icon="inline-start"
-                                    />
-                                  </Button>
-                                  <Button
-                                    className="icon-button"
-                                    aria-label={`Remove achievement ${bulletIndex + 1}`}
-                                    size="icon"
-                                    title="Remove achievement"
-                                    type="button"
-                                    variant="ghost"
-                                    onClick={() =>
-                                      removeBullet(index, bulletIndex)
-                                    }
-                                  >
-                                    <IconTrash size={14} aria-hidden="true" />
-                                  </Button>
-                                </div>
-                                {(() => {
-                                  const id = getPathValue(
-                                    profile,
-                                    `resume.experience_entries.${index}.achievement_ids.${bulletIndex}`,
-                                  );
-                                  return typeof id === "string" ? (
-                                    <>
-                                      {achievementContent?.(id, entryId)}
-                                      {achievementWordings ? (
-                                        achievementWordings(id, entryId)
-                                      ) : (
-                                        <AchievementWordings
-                                          achievementId={id}
+                                  </AchievementSource>
+                                  <details className="profile-achievement-options">
+                                    <summary>Achievement options</summary>
+                                    <Field
+                                      className="choice bullet-choice"
+                                      data-disabled={
+                                        !entryId || !bullet || undefined
+                                      }
+                                      orientation="horizontal"
+                                    >
+                                      <Checkbox
+                                        id={requiredBulletId}
+                                        checked={requiredBullets.has(bullet)}
+                                        disabled={!entryId || !bullet}
+                                        onCheckedChange={(checked) =>
+                                          setRequiredBullet(
+                                            entryId,
+                                            bullet,
+                                            checked,
+                                          )
+                                        }
+                                      />
+                                      <FieldLabel htmlFor={requiredBulletId}>
+                                        Include in coaching
+                                      </FieldLabel>
+                                    </Field>
+                                    <div
+                                      aria-label={`Actions for bullet ${bulletIndex + 1} in ${entryLabel}`}
+                                      className="bullet-row-actions"
+                                      role="group"
+                                    >
+                                      <Button
+                                        aria-label={`Move bullet ${bulletIndex + 1} up`}
+                                        disabled={bulletIndex === 0}
+                                        onClick={() =>
+                                          moveBullet(index, bulletIndex, -1)
+                                        }
+                                        ref={registerFocusTarget(
+                                          bulletFocusKey(
+                                            index,
+                                            bulletIndex,
+                                            "up",
+                                          ),
+                                        )}
+                                        size="icon"
+                                        title="Move bullet up"
+                                        type="button"
+                                        variant="outline"
+                                      >
+                                        <IconArrowUp
+                                          aria-hidden="true"
+                                          data-icon="inline-start"
                                         />
-                                      )}
-                                    </>
-                                  ) : null;
-                                })()}
+                                      </Button>
+                                      <Button
+                                        aria-label={`Move bullet ${bulletIndex + 1} down`}
+                                        disabled={
+                                          bulletIndex === bullets.length - 1
+                                        }
+                                        onClick={() =>
+                                          moveBullet(index, bulletIndex, 1)
+                                        }
+                                        ref={registerFocusTarget(
+                                          bulletFocusKey(
+                                            index,
+                                            bulletIndex,
+                                            "down",
+                                          ),
+                                        )}
+                                        size="icon"
+                                        title="Move bullet down"
+                                        type="button"
+                                        variant="outline"
+                                      >
+                                        <IconArrowDown
+                                          aria-hidden="true"
+                                          data-icon="inline-start"
+                                        />
+                                      </Button>
+                                      <Button
+                                        className="icon-button"
+                                        aria-label={`Remove achievement ${bulletIndex + 1}`}
+                                        size="icon"
+                                        title="Remove achievement"
+                                        type="button"
+                                        variant="ghost"
+                                        onClick={() =>
+                                          removeBullet(index, bulletIndex)
+                                        }
+                                      >
+                                        <IconTrash
+                                          size={14}
+                                          aria-hidden="true"
+                                        />
+                                      </Button>
+                                    </div>
+                                  </details>
+                                </div>
                               </Field>
                             );
                           })}
