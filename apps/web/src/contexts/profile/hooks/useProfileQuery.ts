@@ -4,11 +4,14 @@ import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import type { ProfileConfigResponse } from "@jobctrl/contracts";
 import { profileQuery } from "../readQueries.js";
+import { readProfile } from "../client.js";
 
-export function useProfileQuery(): UseQueryResult<ProfileConfigResponse> {
+export function useProfileQuery(workspaceIdentity?: string): UseQueryResult<ProfileConfigResponse> {
   const tenantId = useTenantId();
   const { http } = usePorts();
+  const query = profileQuery({ tenantId, ports: { http } });
   return useQuery({
-    ...profileQuery({ tenantId, ports: { http } }),
+    ...query, queryKey: workspaceIdentity ? [...query.queryKey, "workspace", workspaceIdentity] : query.queryKey,
+    queryFn: () => readProfile(http, workspaceIdentity),
   });
 }

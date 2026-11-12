@@ -76,6 +76,9 @@ has one defining page; other pages summarize it briefly and link to that owner.
   fit evidence, shared requirement matching, factual support versus wording
   coverage, policy, corrections, and ranking; it consumes the employer analysis
   owned by Discovery.
+- [`user/requirements-library.md`](user/requirements-library.md): canonical
+  meanings, linked achievements, exact wording coverage, unassessed user links
+  and source/revision history in the redesign candidate.
 - [`user/company-briefings.md`](user/company-briefings.md): optional public-source company context, explicit identity links, bounded CLI refresh and shared job/interview/digest reads.
 - [`user/materials-and-tailoring.md`](user/materials-and-tailoring.md): generated
   materials, provenance, validation, review, and accepted-artifact history.
@@ -202,6 +205,9 @@ These documents remain in the repository but are not separate site sections:
 - [GitHub Issues](https://github.com/ebarti/JobCtrl/issues): actionable work; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) accounts for the historical backlog.
 - [`claims-ledger.md`](claims-ledger.md): public product claims and supporting references.
 - [`plans/`](plans/): active proposals and immutable implemented-plan history.
+  The active [Original app redesign](plans/2026-11-11-original-app-redesign.md)
+  maps whole-product outcomes, retained independent capabilities and pending
+  candidate verification across the application, demo and documentation.
   The active [sensitive-artifact retention and cleanup
   proposal](plans/sensitive-artifact-retention.md) defines the unshipped local
   inventory, preservation, preview, containment, and recovery contract tracked

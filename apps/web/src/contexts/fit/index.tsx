@@ -1,3 +1,4 @@
+export { AssociationStateAction, RequirementAssociationPicker, requirementQualifierText, achievementChoices, type AchievementChoice, type LibraryRequirement, type UserAssociation } from "./components/RequirementAssociationPicker.js";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -12,6 +13,11 @@ import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import type { HttpPort } from "../../shared/ports/HttpPort.js";
 export { AffectedMatchesPanel } from "./refresh.js";
+export { useRequirementLibrary, useRequirementAssociationActions, useRequirementAssociationHistory,
+  requirementRelationshipKeys, useCurrentWordingActions, useCurrentWordingHistory } from "./requirement-library.js";
+export type { RequirementLibrary, RequirementLibraryEntry, RequirementAssociation, RequirementAssessment,
+  RequirementCoverage, RequirementAssociationHistory, CreateRequirementAssociation, ReviseRequirementAssociation,
+  CurrentWordingAssignment, CurrentWordingHistory, SetCurrentWording } from "./requirement-library.js";
 
 const evidenceSchema = z.object({ source_id: z.string(), revision: z.union([z.number(), z.string()]), quote: z.string() }).passthrough();
 const assessmentSchema = z.object({
@@ -203,7 +209,7 @@ function RequirementCorrection({ assessment, factVersion, sources, achievements,
   </details>;
 }
 
-export function PersonFitPanel({ jobId, sources = [], achievements = [], defaultMode = null }: { jobId: string; sources?: readonly EvidenceOption[]; achievements?: readonly AchievementOption[]; defaultMode?: "baseline" | "tailored" | null }) {
+export function PersonFitPanel({ jobId, sources = [], achievements = [], defaultMode = null, managedPreparation = false }: { jobId: string; sources?: readonly EvidenceOption[]; achievements?: readonly AchievementOption[]; defaultMode?: "baseline" | "tailored" | null; managedPreparation?: boolean }) {
   const { featureFlags } = usePorts();
   const assessmentAvailability = getApiCapabilityAvailability(featureFlags, "rescoreJob");
   const query = useJobFit(jobId);
@@ -223,7 +229,7 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
       {fit.score.eligibility.blockers.length || fit.score.eligibility.warnings.length ? <details><summary>Eligibility reasons</summary>
         {[...fit.score.eligibility.blockers, ...fit.score.eligibility.warnings].map((item, index) => <div key={`${item.requirement_id}:${index}`}><p>{item.requirement_id}: {item.rationale}</p>{item.evidence_refs.map((ref, refIndex) => <blockquote key={`${ref.source_id}:${refIndex}`}>{ref.quote}<footer>{ref.source_id}, revision {ref.revision}</footer></blockquote>)}</div>)}
       </details> : null}
-      <p className="muted">Profile revision {fit.score.source_binding.profile_revision} · requirements revision {fit.score.source_binding.requirements_revision} · posting revision {fit.score.source_binding.posting_revision}</p>
+      <details><summary>Assessment source versions</summary><p className="muted">Profile revision {fit.score.source_binding.profile_revision} · requirements revision {fit.score.source_binding.requirements_revision} · posting revision {fit.score.source_binding.posting_revision}</p></details>
       <ul>{fit.score.assessments.map((assessment) => <li key={assessment.assessment_id}>
         <strong>{assessment.text}</strong> — {assessment.kind}; {assessment.contribution.awarded_points}/{assessment.contribution.max_points} points.
         <p>{assessment.rationale}</p>
@@ -235,7 +241,7 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
       </li>)}</ul>
       <CorrectionForm key={fit.score.revision} score={fit.score.score} revision={fit.score.revision} pending={busy} onSave={(body) => correct.mutate(body)} />
     </> : fit ? <p>No person-fit assessment has been recorded yet.</p> : null}
-    {fit && !fit.score ? <div className="toolbar">
+    {fit && !fit.score && !managedPreparation ? <div className="toolbar">
       <Button type="button" disabled={!assessmentAvailability.available || busy || query.isPending} onClick={runAssessment}>{assess.isPending ? "Assessing…" : "Assess person fit"}</Button>
     </div> : null}
     {!assessmentAvailability.available ? <p>{assessmentAvailability.reason}</p> : null}
@@ -245,13 +251,13 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
     <p>This records whether approved wording expresses requirements; it is separate from your person-fit score.</p>
     {fit?.coverage ? <>
       <p>Status: {fit.coverage.status}</p>
-      {fit.coverage.wording_gaps.length ? <ul>{fit.coverage.wording_gaps.map((gap) => <li key={gap.requirement_id}>Requirement {gap.requirement_id}: {gap.status.replaceAll("_", " ")}{gap.proposal_status ? `; proposal ${gap.proposal_status}` : ""}</li>)}</ul> : <p>No wording gaps recorded.</p>}
+      {fit.coverage.wording_gaps.length ? <ul>{fit.coverage.wording_gaps.map((gap) => <li key={gap.requirement_id}>{fit.score?.assessments.find((assessment) => assessment.requirement_id === gap.requirement_id)?.text ?? "Requirement details unavailable"}: {gap.status.replaceAll("_", " ")}{gap.proposal_status ? `; proposal ${gap.proposal_status}` : ""}</li>)}</ul> : <p>No wording gaps recorded.</p>}
       {fit.coverage.relations.length ? <details><summary>Recorded wording relations</summary><ul>{fit.coverage.relations.map((relation) => <li key={`${relation.requirement_id}:${relation.variant_id}`}>Requirement {relation.requirement_id}: {relation.status}, achievement {relation.achievement_id}, wording {relation.variant_id}{relation.determination_id ? `, determination ${relation.determination_id}` : "; no determination recorded"}</li>)}</ul></details> : null}
     </> : <p>Wording coverage has not been recorded.</p>}
   </section>;
 }
 
 export const fitInvalidation = {
-  eventTypes: ["FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated", "FitRefreshUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "JobCaptured", "JobSourceObserved", "JobUpdated", "RequirementBindingCorrected", "RequirementsUpdated", "RequirementMeaningRevised"] as const,
+  eventTypes: ["FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated", "FitRefreshUpdated", "FitAssociationUpdated", "FitCurrentWordingUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "JobCaptured", "JobSourceObserved", "JobUpdated", "RequirementBindingCorrected", "RequirementsUpdated", "RequirementMeaningRevised"] as const,
   handle(event: DomainEventEnvelope, client: QueryClient) { void invalidateQueriesWithOptimisticOwnership(client, fitKeys.all(event.tenantId)); },
 };

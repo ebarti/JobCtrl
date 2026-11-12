@@ -94,11 +94,17 @@ def _relations(coverage: dict, requirements: list[dict], options: dict[str, list
                    for variants in options.values() for row in variants}
     result: dict[tuple, list[dict]] = {}
     seen = set()
+    maintained = {(row["requirement_id"], str(row["requirement_revision"]), row["achievement_id"],
+                   row["variant_id"], str(row["variant_revision"]), row["relation_id"])
+                  for row in coverage.get("current_wordings", []) if row.get("current") is True}
     for row in coverage.get("relations", []):
         if row.get("covered") is not True:
             continue
         requirement = (row["requirement_id"], row.get("requirement_revision", row.get("revision")))
         variant = (row["achievement_id"], row["variant_id"], row.get("variant_revision", row.get("revision")))
+        if "current_wordings" in coverage and (requirement[0], str(requirement[1]), variant[0], variant[1],
+                str(variant[2]), row.get("relation_id")) not in maintained:
+            raise ResumeError("coverage_relation_not_maintained")
         if (requirement not in requirement_ids or variant not in variant_ids
                 or not row.get("determination_id") or not row.get("source_refs")):
             raise ResumeError("stale_or_unbound_coverage_relation")
@@ -110,6 +116,34 @@ def _relations(coverage: dict, requirements: list[dict], options: dict[str, list
         seen.add(identity)
         result.setdefault(variant, []).append({**deepcopy(row), "requirement_revision": requirement[1],
                                                "variant_revision": variant[2]})
+    return result
+
+
+def maintained_options(achievements: list[dict], options: dict[str, list[dict]], coverage: dict,
+                       requirements: list[dict]) -> dict[str, list[dict]]:
+    """Choose only literal maintained pins; unresolved legacy choices use baseline."""
+    required = {(row["requirement_id"], str(row["revision"])) for row in requirements}
+    selected = {}
+    for assignment in coverage.get("current_wordings", []):
+        if (assignment.get("current") is not True or assignment.get("state") != "active"
+                or (assignment["requirement_id"], str(assignment["requirement_revision"])) not in required):
+            continue
+        selected.setdefault(assignment["achievement_id"], set()).add(
+            (assignment["variant_id"], str(assignment["variant_revision"]), assignment["approval_id"]))
+    result = {}
+    for achievement in achievements:
+        ident = achievement["achievement_id"]
+        pinned = selected.get(ident, set())
+        choices = [row for row in options[ident]
+                   if (row["variant_id"], str(row["revision"]), row["approval_id"]) in pinned]
+        if len(choices) != len(pinned):
+            raise ResumeError("maintained_wording_not_approved")
+        if not choices:
+            baseline = next((row for row in options[ident] if row["variant_id"] == achievement["baseline_variant_id"]), None)
+            if baseline is None:
+                raise ResumeError("baseline_wording_not_approved")
+            choices = [baseline]
+        result[ident] = choices
     return result
 
 
@@ -156,6 +190,7 @@ def choose_variants(snapshot: dict, coverage: dict, *, baseline: bool = False,
     if coverage.get("status") in {"stale", "invalid", "failed"}:
         raise ResumeError("coverage_snapshot_not_current")
     requirements = _requirements(coverage)
+    options = maintained_options(achievements, options, coverage, requirements)
     relations = _relations(coverage, requirements, options)
     indexes = {(row["requirement_id"], row["revision"]): index for index, row in enumerate(requirements)}
     weights = [Decimal(row["weight"]) for row in requirements]
@@ -314,6 +349,10 @@ def coverage_manifest(snapshot: dict, coverage: dict, selected: list[dict], *, r
     return {"status": "recorded", "coverage_snapshot_id": coverage.get("snapshot_id"),
             "profile_revision": snapshot["profile_revision"], "requirements": rows,
             "selected_relations": deepcopy(selected_relations), "objective": None,
+            "current_wordings_fingerprint": coverage.get("source_binding", {}).get("current_wordings_fingerprint"),
+            "current_wordings": [deepcopy(row) for row in coverage.get("current_wordings", []) if any(
+                variant["variant_id"] == row["variant_id"] and str(variant["revision"]) == str(row["variant_revision"])
+                for variant in selected)],
             "qualification": "Person fit is owned by Fit and is unchanged by document coverage."}
 
 

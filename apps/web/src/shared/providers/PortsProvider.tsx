@@ -1,6 +1,7 @@
 import { BrowserRequestIdentityAdapter } from "../adapters/local/BrowserRequestIdentityAdapter.js";
 import { BrowserBlobDownloadAdapter } from "../adapters/local/BrowserBlobDownloadAdapter.js";
 import { BrowserSessionStorageAdapter } from "../adapters/local/BrowserSessionStorageAdapter.js";
+import { PhotonPlacesAdapter } from "../adapters/local/PhotonPlacesAdapter.js";
 import type { RequestIdentityPort } from "../ports/RequestIdentityPort.js";
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 
@@ -11,6 +12,7 @@ import type {
   FeatureFlagPort,
   HttpPort,
   ProfileTransferPort,
+  PlacesPort,
   PdfExportPort,
   SessionPort,
   SessionStoragePort,
@@ -23,6 +25,7 @@ export interface Ports {
   http: HttpPort;
   blobDownload?: BlobDownloadPort;
   profileTransfer?: ProfileTransferPort;
+  places?: PlacesPort;
   eventStream: EventStreamPort;
   storage: StoragePort;
   sessionStorage?: SessionStoragePort;
@@ -33,11 +36,12 @@ export interface Ports {
   featureFlags: FeatureFlagPort;
 }
 
-export type ResolvedPorts = Ports & { requestIdentity: RequestIdentityPort; http: HttpPort; blobDownload: BlobDownloadPort; profileTransfer: ProfileTransferPort; sessionStorage: SessionStoragePort };
+export type ResolvedPorts = Ports & { requestIdentity: RequestIdentityPort; http: HttpPort; blobDownload: BlobDownloadPort; profileTransfer: ProfileTransferPort; places: PlacesPort; sessionStorage: SessionStoragePort };
 const PortsContext = createContext<ResolvedPorts | null>(null);
 const defaultRequestIdentity = new BrowserRequestIdentityAdapter();
 const defaultBlobDownload = new BrowserBlobDownloadAdapter();
 const defaultSessionStorage = new BrowserSessionStorageAdapter();
+const defaultPlaces = new PhotonPlacesAdapter();
 const unavailableProfileTransfer: ProfileTransferPort = {
   async inspect() { return { selectedRaw: null, legacyRaw: null, reviewsRaw: null, errors: ["Profile transfer is unavailable in this workspace."] }; },
   async digestPdf() { throw new Error("Profile transfer is unavailable in this workspace."); },
@@ -49,12 +53,14 @@ export function PortsProvider({ ports, children }: { ports: Ports; children: Rea
     requestIdentity: ports.requestIdentity ?? defaultRequestIdentity,
     blobDownload: ports.blobDownload ?? defaultBlobDownload,
     profileTransfer: ports.profileTransfer ?? unavailableProfileTransfer,
+    places: ports.places ?? defaultPlaces,
     sessionStorage: ports.sessionStorage ?? defaultSessionStorage,
   }), [
     ports,
     ports.http,
     ports.blobDownload,
     ports.profileTransfer,
+    ports.places,
     ports.eventStream,
     ports.storage,
     ports.sessionStorage,

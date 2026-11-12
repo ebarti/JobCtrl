@@ -46,12 +46,438 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
+The current source inventory is **60 journeys in 25 spec files**: the earlier
+57 plus three direct-Jobs search journeys. They exercise saved launch and live
+counts across navigation/reload/tabs, lost-acknowledgement recovery and exact-run
+stop, and simultaneous two-tab admission. Historical complete-suite results
+below retain their original 57-case scope; they do not qualify the new inventory.
+
+### Direct Jobs search and inline progress — 11 November 2026
+
+Jobs now launches the confirmed saved Profile/Discovery criteria directly and
+keeps canonical progress above the table. A shared controller owns compact and
+one-off admission, exact recovery, progress and stop. New requests are fenced to
+the same database incarnation as the saved preference reads. Server admission
+serializes search requests across tabs before planning begins; same-key retries
+retain their original action. Unknown reads remain unavailable, and explicit
+terminal partial results outrank stale acquisition history.
+
+Eight distinct affected journeys are qualified across these source runs:
+
+- `e2e-1zdf3j` passed six cases: Jobs filtered-view return, independent Discovery
+  execution, Search preferences/autosave/place binding, direct Jobs search,
+  simultaneous two-tab admission, and all 26 surfaces at four widths (104
+  captures). Its seventh case failed because the cancellation test released a
+  successful final provider page immediately after requesting stop; completion
+  legitimately won that race. This remains a **6/7** run, not a complete pass.
+- The corrected test holds the external source until cancellation settles.
+  `e2e-OhEbaz` passed **2/2**: lost-acknowledgement/exact-run cancellation
+  (25.0 seconds) and the full offline demo/edit/approval/PDF path (29.5 seconds).
+  The command completed in 80.597 seconds. No first-party result was invented.
+- Both used the same production web bundle, SHA256
+  `230fd05cd60ea33a0d868f69dfcc9e0aed756b1bea04a219d15169c90483eb77`,
+  and Python source SHA256
+  `64759894f9d00ea45a334c2b996cde94ca5a7f13eccec4bd297e21d00ae42a6a`.
+  Dependency locks and the built web inputs remained unchanged.
+
+The earlier `e2e-rzcj91` **4/6** attempt identified a premature exact-key lookup
+before admission, fixed by suspending that lookup while sending the request,
+and a test transport-allowance registration before the abort had actually
+failed. The allowance now requires the observed failed request. These attempts
+were not retried automatically; the suite keeps zero retries and its existing
+case/global timeouts.
+
+Fresh desktop and phone captures show ready, running with committed counts and
+settled completion. The synthetic progress image is included in the Discovery
+guide. Web type/boundary lint, scoped Python lint, production build and docs
+build/link/redirect checks passed. Source review additionally covered delayed
+reconciliation and workspace-incarnation changes; those specific races were
+not separately runtime exercised here. The full 60-case hosted qualification
+belongs to the pushed PR checks. This bounded proof does not close the separate
+source-credential isolation finding #1469 or qualify a release.
+
+### Search workspace layout correction — 11 November 2026
+
+The shared Search workspace now places its explicit launch and readiness before
+preference authoring, uses compact ordinary settings, and gives each retained
+contextual tool an independent disclosure. The old Discovery form layout depended
+on an ancestor absent from the new composition; this caused oversized controls,
+poor grouping and duplicate settings editors. The repair changes presentation,
+not search admission, autosave authority or source execution.
+
+The final affected Search preferences journey passed **1/1** in `e2e-RUIxND`
+(38.5 seconds for the case; 53.572 seconds total). It additionally checks launch
+placement at 1643, 1440 and 390 pixels, collapsed draft retention, suggestion
+action bounds, and a runtime draft saved after ordinary posting-age autosave
+without overwriting hidden canonical fields. Saving still starts no search.
+
+The 26-surface/four-width journey passed **1/1** in `e2e-KrCmcQ` (104 settled
+captures; 26.4 seconds for the case; 42.642 seconds total). Both runs used the
+same final web bundle, SHA256
+`5b463cacf96cd1eaf635da540d42476bd0c0dcffad697b7f2ced9dabbdc0e562`,
+with unchanged source/build inputs and dependency locks. Web type/boundary
+checks passed. Desktop and phone screenshots were inspected, including the
+opened contextual tools and suggestions card; document-overflow checks alone
+had missed that card's original internal clipping. The refreshed guide image
+comes only from the owned synthetic surface journey.
+
+These focused passes do not replace the complete hosted suite for the pushed
+head. Separate live operational verification exposed a combined-board failure
+when ZipRecruiter authorization is absent; LinkedIn alone completed through the
+normal application flow. [Issue #1469](https://github.com/ebarti/JobCtrl/issues/1469)
+owns source failure isolation and actionable credential readiness. That backend
+finding remains open and is not fixed by this layout correction. Private search
+criteria, results and runtime artifacts are excluded from this record.
+
+### Original redesign inventory — 11 November 2026
+
+The original redesign inventory at the qualification below had **57 journeys in 25 spec files**: 56 Python
+application journeys and the existing offline-demo journey. It retains the
+previous 48 cases and adds the nine below. Expanded assertions inside existing
+cases do not count as new cases. This is an inventory of authored coverage,
+with observed qualification on `88e97a53d` recorded below. The later Materials
+visual repair has its own affected proof; hosted qualification of the exact
+delivery commit is tracked in the [PR checks](https://github.com/ebarti/JobCtrl/pull/1467/checks).
+Neither a listed case nor a focused pass substitutes for that scope distinction.
+
+The limits are unchanged per invocation: one worker, zero retries, 90 seconds
+per ordinary case, 150 seconds for the existing demo, 60 seconds for fixture
+setup and a 720-second global cap. Hosted CI schedules this inventory in two
+shards as recorded below; the ordinary unsharded command retains the same cap.
+Existing action/navigation/assertion deadlines
+also remain. A focused pass, screenshot inventory, test listing or static check
+cannot qualify all 57, and earlier failures remain part of the evidence.
+
+| Added journey | Authored assertions and boundary |
+| --- | --- |
+| [Appearance](../../../apps/web/e2e/journeys/appearance.spec.ts) | Exercise all ten color and ten font choices through the UI, verify actual font loading and persistence, restore Graphite + Geist, and compare the real Plate document geometry and accepted PDF bytes before/after. App presentation cannot change the document template or accepted export. |
+| [Jobs attention](../../../apps/web/e2e/journeys/jobs-attention.spec.ts) | Preserve deliberate inactive-source intent while showing quarantined or repeatedly failing sources as actionable. Inspect actual saved registry state and model/action counts; viewing attention cannot enable or rewrite sources. |
+| [Profile workspace](../../../apps/web/e2e/journeys/profile-workspace.spec.ts) | Exercise peer sections, individual role/summary/date/skill/education fields, canonical saves/reload, exact wording proposals and decisions, and role/achievement remove/restore with original IDs and retained history. UI recovery, not direct database reconstruction, must preserve drafts and accepted work. |
+| [Whole-product surfaces](../../../apps/web/e2e/journeys/redesign-surfaces.spec.ts) | Load 26 retained surfaces at 1440 × 1000, 1860 × 1227, 2943 × 1227 and 390 × 844: 104 settled captures within one journey. Check mounted navigation, headings, meaningful loaded/explicit-empty content and page overflow, plus real saved-material search/clear/state, control geometry and Plate/PDF access. This does not judge visual craft: earlier passing inventory checks still exposed inner Profile and Materials control defects during image inspection. |
+| [Requirement associations](../../../apps/web/e2e/journeys/requirement-associations.spec.ts) | Create/revise/remove/restore many-to-many user intent through the real library/Profile flow. Keep exact requirement/source/optional-wording pins, stale history, achievement-based grouping and selected/filter/return context. Manual links never create assessment, coverage, score or model work. |
+| [Search preferences](../../../apps/web/e2e/journeys/search-preferences.spec.ts) | Enter adds/focuses independent role inputs; save/reload canonical targets and source/limit settings; make no lookup while typing. Explicit controlled Photon results bind exact row/place identity, duplicate display labels remain independent, edits clear stale bindings, and invalid responses remain unverified. Deliberate search retains its saved Profile-version fence. |
+| [Settings workspace](../../../apps/web/e2e/journeys/settings-workspace.spec.ts) | Save a budget before model setup, retain another pane's invalid draft, distinguish configured/unverified readiness and probe providers only on explicit request. Exercise real revision conflicts, uncertain acknowledgements and credential leave/discard protection without changing unrelated saved policy. |
+| [Maintained-assignment race](../../../apps/web/e2e/journeys/wording-assignment-integrity.spec.ts) | Hold the external grouped determination for a manual Fit refresh, change an unrelated maintained assignment through its public write, and require the admitted whole-Profile fingerprint to refuse stale publication. Preserve accepted score/assignment state and the original bounded operation rather than absorbing the concurrent change. |
+| [Composition freshness](../../../apps/web/e2e/journeys/wording-assignment-integrity.spec.ts) | Read job-relevant maintained-wording freshness, including missing-to-present changes; unrelated requirement assignments do not stale composition. Relevant changes preserve draft/accepted pointers and actual accepted PDF bytes. Baseline follows Profile freshness without borrowing Fit authority, and reads dispatch no model or preparation work. |
+
+The retained cases also expand these boundaries:
+
+- **Profile concurrency and browser recovery:** independent writer tabs, stale
+  exact approval, pending-wording revision conflicts, explicit restore/discard,
+  storage/ownership failures and version-fenced recovery. Non-secret version-2
+  patches exclude saved/unsaved credential values; secret edits stay in scoped
+  session memory, warn before reload/close and cannot be silently cleared by a
+  safe restore. An unresolved copy pauses competing editing. Native invalid-form
+  and application-console errors remain failures, not allowed transport noise.
+- **Preparation, Jobs and applications:** the shared mode + Prepare task,
+  first-Profile setup returning to the selected job/mode/comparison context,
+  fresh Default column order, retained custom layouts, and actual one-request
+  admission recovery. Genuine first-party writes are forwarded; only their
+  acknowledgements are severed for uncertainty tests. Rehearsal/approval and
+  external-send intent retain their existing authority.
+- **Matching and tailoring:** direct current-assignment reuse, full supported
+  achievement groups, source-bound consolidation and exact replacement lineage,
+  approval alone making no Fit change, atomic current activation and accepted
+  PDF preservation. Fixed operation inputs, caps, cancellation and worker-restart
+  checks remain; a covered historical relation alone cannot skip current-choice
+  reconciliation.
+- **Offline demo:** the actual consent Worker/D1 and browser-local bundle now
+  exercise peer Profile edits/reload, proposed wording review, unassessed
+  requirement-link remove/restore, search input focus/persistence, unavailable
+  map lookup and appearance persistence/explicit reset. Real Plate editing,
+  accepted PDF bytes/text/render, reset cancellation/confirmation and consent
+  retention remain. No product `/v1` request, model call, unexpected external
+  request or authored-text telemetry leak is admitted. Synthetic teaching
+  examples do not become semantic determinations or live-provider proof.
+
+The observed records below distinguish complete-run results from affected
+follow-up proof. The [whole-product ledger](../../plans/2026-11-11-original-app-redesign.md)
+tracks acceptance and inherited/source-only boundaries separately. No
+participant, accessibility-certification, installed-release or deployment
+result is inferred from these source-built journeys.
+
+The first combined attempt, `e2e-3003zl` on `8fef91a6c`, finished **55 passed /
+2 failed**. An obsolete Jobs-filter selector needed a harness correction; the
+managed Applications preparation wrapper also caused real 897-pixel overflow
+at the 390-pixel viewport. Those failures remain part of the record. Final
+combined qualification then used repaired candidate `88e97a53d`, with the same
+57 cases, caps, one worker and zero retries. The first run recorded
+7.662 seconds for the build, 450.418 seconds for journeys and 459.781 seconds
+total. Passing Profile/Resume captures
+from that attempt do not turn its failed whole-product surface case into a pass.
+
+### Source qualification on 88e97a53d
+
+`corepack pnpm e2e` on `88e97a53d` passed **57/57** in `e2e-0S91Lx`: 56 real
+Python application cases and the browser-local demo. The actual result record
+contains 57 passed bodies at retry zero, with no skips, flaky results,
+unexpected results or global errors. The macOS arm64 runner had 12 CPUs and
+Node 22.21.1. Snapshotting took 161 ms, composition preflight 1,606 ms, web build
+7,782 ms, journey orchestration 441,372 ms and the complete command 450,971 ms.
+Dependency locks and built web assets stayed unchanged during the run.
+
+| Recorded boundary | SHA-256 |
+| --- | --- |
+| Frozen Python package | `745b47421cf6d3a6e006198e1a162612311401447aaf3a78958584a34bbe9194` |
+| Runtime capability policy | `7d360eeba42582a39895f98b5596eaf26621be4b8061fc3067918cd33dafa8fd` |
+| Combined Python/policy snapshot | `064930cce00cd0bcd34c21761b7e7cd54f9b3317339f762e5203c86dc41bc1a0` |
+| Web build | `9d21a18fa51fa7177cd1125a668302a93eddb6a9568cc02d81f306b3d9fe340d` |
+
+The whole-product matrix case passed in 26.4 seconds, producing all 104 settled
+viewport captures plus full-height Profile/Requirements evidence. The repaired
+Profile concurrency/CRUD and current-wording journeys passed in the same full
+run. Actual baseline/job Plate, registered PDF preview/download, accepted-byte
+preservation, manual requirement association, grouped assignment integrity,
+search/preferences and Settings behavior were exercised under the boundaries
+listed above. Source-bound model replies test authority and failure handling;
+they do not measure semantic accuracy or prove live-provider compatibility.
+
+Image inspection still found a Materials defect after that automated pass:
+at 390 pixels, its search input was 24 pixels wide and its button was clipped.
+Page-level overflow checks had not detected it. Candidate `fcf9e7f09` contains
+the bounded class/CSS repair and strengthens the existing matrix case with
+actual material search/clear, state preservation and control geometry. Its
+affected run `e2e-fGjTmn` finished **2 passed / 1 failed**: production
+baseline/export and demo Plate/PDF passed. The matrix's real search, clear,
+filter and geometry checks passed, then an unscoped `Accepted` assertion
+matched the native option plus mobile/hidden-desktop badges. The harness
+correction scopes status readback to the visible Materials list and exact
+select value. No production repair was added
+for that assertion failure. This adds no new case, retry or time allowance.
+The affected web build SHA-256 is
+`b1365861bcdb3983eafba5c7949de7be6d47faaf31741db8708dc7c01f24dabf`.
+The final matrix command, `e2e-imUbCE` on `8a917b23f`, then passed **1/1**:
+all 104 frames plus actual Materials search/clear/status/geometry. The case
+body took 25.4 seconds, with a 7,592 ms build, 30,975 ms journey orchestration
+and 40,251 ms total. There were zero retries, skips or global errors. The web
+hash above was unchanged from the baseline/export and demo Plate/PDF passes;
+the final E2E tree SHA-256 was
+`af436bc46299a4222cf7f710484a2bf50fed33b9549029c273c34b6d7e34f078`
+before and after the command. The three affected cases have passing
+observations across two commands, while the failed first matrix attempt remains
+recorded separately.
+The full 57-case result above remains attached to `88e97a53d`; hosted checks own
+all 57 on the exact final delivery commit.
+
+Independent `ps`/`lsof` corroboration passed for `e2e-0S91Lx`: all 56 recorded
+initial workers were absent, all 56 recorded API ports had no listener, and
+all 56 owned workspaces and 56 isolated homes were removed. This supplements
+the harness's strict process-group close and teardown checks. The final
+`e2e-imUbCE` worker and API port, its two log-derived ports and all owned process
+paths were absent; successful workspaces/homes and Temporal state were removed.
+The failed `e2e-fGjTmn` attempt had both workers absent, both API ports and four
+log-derived ports closed, and no owned process-path match. Its one synthetic
+workspace/home and one Temporal history directory remain deliberately retained
+for diagnosis; its demo home was removed. These are actual `ps`/`lsof` checks
+of run-owned resources, independent of the harness teardown. Temporary synthetic
+evidence stays outside the repository;
+published screenshots contain synthetic state only. Agent image review and
+these browser checks do not establish participant usability, a full accessibility
+audit, a new installed/native qualification, release or deployment.
+
+### Hosted scheduling follow-up
+
+Hosted [CI run 43031016511](https://github.com/ebarti/JobCtrl/actions/runs/43031016511)
+on `79bf88b814ec34d546418fa784833aba21b5c78c` did not qualify the full suite.
+Ten other jobs succeeded, while the
+[Browser job](https://github.com/ebarti/JobCtrl/actions/runs/43031016511/job/130557875712)
+hit the unchanged 720-second global deadline. Its actual result record has
+56 passed application cases, one case that did not run, zero individual case
+failures and global suite/teardown deadline errors. The demo did not complete,
+so this is a failed complete-suite result, not 57/57. The Linux x64 runner had
+four CPUs and Node 22.21.1; build, journey orchestration and total were 18,534,
+721,079 and 744,757 ms. The web SHA-256 remained
+`b1365861bcdb3983eafba5c7949de7be6d47faaf31741db8708dc7c01f24dabf`.
+This hosted observation is separate from the successful local 57/57 and affected
+proof above.
+
+The scheduling correction partitions the same complete inventory with standard
+Playwright `--shard=1/2` and `--shard=2/2` on two independent runners. Each
+invocation uses one worker and zero retries, with the existing 90-second case,
+150-second demo, 60-second fixture and 720-second global limits. Existing
+action/navigation/assertion deadlines, the 14-minute journey step and the
+20-minute journey job stay unchanged.
+Each shard checks out the same candidate, builds once, owns its application and
+Temporal processes, and retains evidence under a unique shard/run-attempt name.
+Artifacts use `python-application-journeys-shard-N-of-2-<run_attempt>` with the
+same scoped paths and seven-day retention.
+Matrix fail-fast is disabled. The always-evaluated **Browser / UI checks**
+aggregate passes only when `needs.shards.result == 'success'`; a failed,
+cancelled or skipped shard cannot qualify the suite. This changes scheduling,
+with no removed case, new retry, larger deadline or application/harness behavior
+change.
+
+Native Playwright JSON listing measured shard 1 at **35 cases / 13 files** and
+shard 2 at **22 cases / 12 files**, including the demo. Their union is exactly
+the full **57 cases / 25 files**, with zero overlap, missing cases or extras.
+This is partition-inventory proof, not executed shard qualification. YAML
+parsing and the aggregate's actual shell truth table passed: `success` exits
+zero; `failure`, `cancelled`, `skipped`, empty and unknown values exit one.
+At this record, hosted qualification is pending; final results are
+tracked in the [PR checks](https://github.com/ebarti/JobCtrl/pull/1467/checks).
+
+#### Hosted APT setup blockage on 7aca2507
+
+Attempts 1 and 2 of
+[CI run 43035593774](https://github.com/ebarti/JobCtrl/actions/runs/43035593774)
+on `7aca2507cd4ba8ccf21ae8a716588f20e75af8bc` were blocked during dependency
+setup. Eight non-APT gates passed; Linux credentials, Support's rendered-docs
+setup and both Browser shards failed on temporary DNS resolution errors for
+`archive.ubuntu.com`, within the unchanged five-/eight-minute setup caps.
+**Zero browser journeys ran in either attempt.** The Browser aggregate correctly
+failed. One bounded rerun of failed jobs reproduced the same setup blockage;
+this was a workflow-job rerun, with no test retries or executed-case pass claim.
+
+Support's documentation build passed in both attempts:
+[attempt 1](https://github.com/ebarti/JobCtrl/actions/runs/43035593774/job/130573745224)
+in 19.72 seconds and
+[attempt 2](https://github.com/ebarti/JobCtrl/actions/runs/43035593774/job/130579230044)
+in 22.30 seconds, each resolving 16,171 references across 473 emitted files.
+Those builds do not qualify the rendered-docs check that dependency setup
+prevented. The successful local 57/57, affected proof and earlier 720-second
+hosted suite timeout retain their original candidates and scope.
+
+The CI-only diagnostic follow-up extends `scripts/ci-apt-timeouts.sh` with an observational
+preflight on the affected runner, under one 25-second diagnostic deadline.
+Six normal-user/`_apt` DNS probes and three bounded GET probes to the same three
+existing mirror URLs run in parallel, with a fixed whitelisted effective APT
+query and proxy-presence flags only. This changes no network/trust configuration,
+mirror selection, installed package, existing setup/test cap, retry policy,
+application or test. These observations do not establish a DNS repair or
+passing hosted qualification; final results remain in the PR checks.
+
+#### Conditional transport recovery after 1d79df1b
+
+[CI run 43040489820](https://github.com/ebarti/JobCtrl/actions/runs/43040489820)
+on `1d79df1ba719a5513df6cc5ca204bf2cf34b405c` again passed eight other gates
+while all four APT-dependent jobs failed before runtime tests. The Browser
+aggregate failed and **zero browser journeys ran**. Each affected job recorded
+all six normal-user/`_apt` DNS probes hitting their five-second deadline and
+being killed (raw return code `-9`). All three original
+mirror GETs exited `28` after about five seconds, with HTTP `0` and DNS/connect
+timings `0`. Effective APT transport was 15 seconds/one retry and proxy-presence
+flags were false. These observations locate a timed-out transport boundary;
+they do not establish a completed DNS answer. Support's
+[docs build](https://github.com/ebarti/JobCtrl/actions/runs/43040489820/job/130593630400)
+passed in 17.76 seconds, resolving 16,171 references across 473 emitted files;
+its rendered check remained blocked.
+
+The conditional transport candidate is the fixed HTTPS endpoint
+`https://mirrors.edge.kernel.org/ubuntu/`.
+[Ubuntu's package-download page](https://packages.ubuntu.com/noble/all/pppconfig/download)
+lists its parent `mirrors.kernel.org/ubuntu`; the
+[operator's index](https://mirrors.kernel.org/) lists Ubuntu and the
+[HTTPS parent](https://mirrors.kernel.org/ubuntu/) redirects to that edge
+endpoint. This is Ubuntu-listed/operator-verified provenance; Launchpad
+registration was not verified. Four local Noble `InRelease` GETs returned HTTP
+200, which proves neither signature verification nor hosted reachability.
+
+The recovery may prefer that candidate only when exactly three parsed,
+completed original HTTP results are failed and the candidate's bounded Noble
+`InRelease` GET exits zero with HTTP 200. Any exit-zero original response in
+HTTP 200–399, including a redirect, or any indeterminate/missing/malformed
+result retains the originals. The candidate GET has five-second connect and
+eight-second total limits, with zero retries. Promotion appends only the fixed
+HTTPS candidate at priority zero to a regular, nonsymlink mirror file; original
+bytes remain and unexpected state refuses promotion. All original mirrors,
+suites, `Signed-By`, keys, signature/hash/freshness checks, setup/test caps and
+required cases remain. Actual APT installation and every
+required test gate must still pass. At this record, hosted recovery is
+unqualified; final results are tracked in the PR checks.
+
+#### Hosted shard execution and tailoring cleanup on ebc0f07f
+
+Attempt 1 of [CI run 43044610890](https://github.com/ebarti/JobCtrl/actions/runs/43044610890)
+on `ebc0f07f30df14d5e1dd289fc08dd8d30e336b92` passed ten non-Browser gates,
+including Linux credentials and Support's actual rendered-docs check. Browser
+setup ran zero journeys: the candidate HTTPS connection phase timed out at
+five seconds after DNS/TCP completed, so fallback was not admitted. One
+failed-job-only rerun on the unchanged head then executed both shards:
+
+| Attempt 2 job | Result | Build / journeys / total (ms) | Artifact ID |
+| --- | --- | --- | --- |
+| [Shard 1](https://github.com/ebarti/JobCtrl/actions/runs/43044610890/job/130612880917) | 35/35 passed | 14,142 / 289,235 / 306,069 | `13868441385` |
+| [Shard 2](https://github.com/ebarti/JobCtrl/actions/runs/43044610890/job/130612880579) | 21 passed / 1 failed, including a passing demo | 22,568 / 465,932 / 493,224 | `13867457966` |
+
+The combined result is **56/57**, with zero Playwright retries, skips, flaky
+results or global errors. The tailoring case reached its final product
+assertions and `full-baseline-approval` attachment, then failed in cleanup with
+two `route.fulfill: Route is already handled!` errors; its body took 13.080
+seconds. It remains a failed case. Review of pinned Playwright 1.64.1 traced
+handler removal automatically continuing a pending route before the test's
+forwarding-read callbacks had drained.
+
+The test-only repair uses `page.unrouteAll({ behavior: "wait" })` to finish active
+callbacks before removing server interception, retaining the tracked-read drain,
+all assertions and error propagation. Its actual affected journey passed **1/1**
+in `e2e-H9YSIC`: body 6.4 seconds; build/journeys/total 8,404 / 12,728 / 22,914 ms,
+with zero retries, skips or global errors. Production Python/policy/web hashes,
+dependency locks and built assets stayed unchanged. The repaired E2E tree SHA-256
+was `7194a27dbd47d258fe778671777bd68390f4a9e5643c2c08e4718c7a0e3f4b30`.
+This focused pass does not establish 57/57 on the repaired head; full hosted
+qualification remains tracked in the PR checks.
+
+#### Hosted application pass and demo navigation follow-up
+
+[CI run 43050218151](https://github.com/ebarti/JobCtrl/actions/runs/43050218151)
+on `2d1d0b6ccb903cf989476849e50f62c46b27dfd8` executed all 57 cases once.
+[Shard 1](https://github.com/ebarti/JobCtrl/actions/runs/43050218151/job/130625075305)
+passed 35/35 (458.911 seconds journeys / 488.045 total);
+[shard 2](https://github.com/ebarti/JobCtrl/actions/runs/43050218151/job/130625075460)
+passed 21/22 (342.911 seconds journeys / 361.941 total). All 56 application
+cases, including repaired Tailoring, and all ten non-Browser gates passed.
+The overall result remained **56/57**, with zero retries, skips, flaky results
+or global errors; the Browser aggregate correctly failed.
+
+Trace review localized the sole demo failure to selecting Tailored on the
+outgoing Applications page while the guide's Job details navigation was still
+in flight. The test-only correction waits for the exact job URL and Job details
+main, then scopes the mode/buttons there, retaining all assertions. Its actual
+focused demo passed **1/1** in `e2e-PSTRGE`: body 29.0 seconds, build/journeys/total
+8,404 / 40,328 / 50,551 ms, with zero retries, skips, flaky results or global
+errors. Complete Plate/PDF/reset/privacy checks passed and owned cleanup was
+independently corroborated. Production hashes, locks and assets stayed unchanged;
+the E2E tree was `dd8f08ce8417337be4d6a20c3b4b6faa434a6f037ef6e8c9dd96c966eaa4b6b8`.
+This is affected proof, not 57/57 on the corrected head; full qualification is
+tracked in the PR checks.
+
+#### Hosted Profile reload error classification on dfde0c08
+
+[CI run 43052989422](https://github.com/ebarti/JobCtrl/actions/runs/43052989422)
+on `dfde0c08def60644b6058e2095d5c95e4b615a7f` executed exactly 57 cases in
+25 files: **56 passed / 1 failed**, with zero retries, skips, flaky results or
+global errors. [Shard 1](https://github.com/ebarti/JobCtrl/actions/runs/43052989422/job/130635023746)
+passed 35/35 (456.712 seconds journeys / 483.223 total);
+[shard 2](https://github.com/ebarti/JobCtrl/actions/runs/43052989422/job/130635023937)
+passed 21/22 (405.229 seconds journeys / 427.139 total). Tailoring and demo
+passed; the Browser aggregate correctly failed.
+
+The sole Profile failure rejected a 20-second `TimeoutError` because its abort
+regex accepted only other reload-error forms. The old trace showed a real
+`beforeunload` prompt, dismissal acknowledgement, no document request and exact
+unsaved text still visible; it did not directly measure Document identity.
+The reviewed test-only correction captures the real Document before typing,
+awaits dismissal and requires same-Document/editor/durable-text proof before
+accepting a known abort or concrete `TimeoutError`; unguarded errors and failed
+dismissal rethrow. Subsequent reload and all recovery/CRUD assertions remain.
+
+The whole Profile journey passed **1/1** in `e2e-Ew1NjA`: body 5.2 seconds,
+build/journeys/total 8,609 / 11,285 / 21,566 ms, with zero retries, skips or
+global errors. Its attachment observed **prompt-free ordinary navigation**
+(`promptCount: 0`), validating ordinary reload/recovery and full Restore/Undo/save/CRUD.
+The new guarded-timeout branch is source-reviewed and was **not runtime
+exercised by this local run**. Production hashes/locks stayed unchanged and
+independent owned cleanup passed. The E2E tree was
+`cc06ad98d5fb6f391e5bfe64f2e4f6c2619d5ea577984d306edef5017aa5b824`.
+Full corrected-head qualification remains tracked in the PR checks.
+
 ### Matching walkthrough and user guides — 11 November 2026
 
 The documentation/demo follow-up to `7ebd3da987c802256611130d33b03854cb873cdb`
 passed `corepack pnpm e2e -- --project=demo-chromium` **1/1** in `e2e-Jj7zOl`.
-This extends the existing demo case; the complete suite still contains 48
-journeys with unchanged budgets and zero retries. The macOS arm64 runner had
+At that candidate, this extended the existing demo case and the inventory
+remained 48 journeys with unchanged budgets and zero retries; the current
+redesign inventory is recorded above. The macOS arm64 runner had
 12 CPUs and Node 22.21.1. It recorded 174 ms snapshot, 1,602 ms preflight,
 7,797 ms build, 20,300 ms journey orchestration and 29,912 ms total. The test
 body took 9.1 seconds. Python, runtime-policy and source-candidate hashes match

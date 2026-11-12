@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .coverage import variant_fingerprint
+from .current_wording import assignment_view
 from .sources import achievements, fact_fingerprint
 
 
@@ -33,6 +34,7 @@ def pending_wording_failures(read, snapshot):
             continue
         current[proposal["proposal_id"]] = proposal
     failures = []
+    maintained = read.current_wordings(profile_id)
     for proposal in current.values():
         if proposal["status"] not in {"failed", "uncertain", "generating"}:
             continue
@@ -40,7 +42,8 @@ def pending_wording_failures(read, snapshot):
         metadata = brief.get("origin_metadata", {})
         owner = brief.get("achievement_id")
         if (not isinstance(metadata, dict) or metadata.get("owner") != "fit" or owner not in inventory
-                or not metadata.get("requirements") or not metadata.get("gap_requirement_ids")):
+                or not metadata.get("requirements")
+                or not metadata.get("gap_requirement_ids") and metadata.get("authoring_action") != "propose_consolidation"):
             continue
         if any(ref["source_id"] not in facts or facts[ref["source_id"]]["revision"] != ref["revision"]
                for ref in brief.get("evidence_refs", [])):
@@ -66,11 +69,17 @@ def pending_wording_failures(read, snapshot):
                 or any(not isinstance(ident, str) or ident not in accepted for ident in gaps)):
             continue
         unresolved = []
+        if metadata.get("authoring_action") == "propose_consolidation":
+            selected = [assignment_view(row, read, profile) for row in maintained
+                        if row["achievement_id"] == owner and row["requirement_id"] in accepted]
+            if ({row["requirement_id"] for row in selected if row["current"]} != set(accepted)
+                    or len({row["variant_id"] for row in selected}) != 1):
+                unresolved = list(accepted)
         for ident in gaps:
             assessment = accepted[ident]
             covered = False
             for variant in profile["approved_variants"]:
-                if variant["achievement_id"] not in assessment["achievement_ids"]:
+                if variant["achievement_id"] != owner or variant["achievement_id"] not in assessment["achievement_ids"]:
                     continue
                 relation = read.coverage(profile_id, ident, assessment["requirement_revision"], assessment["assessment_id"],
                                          variant["variant_id"], variant["revision"])

@@ -23,6 +23,9 @@ available for Profile inspection without becoming factual authority.
 | Grounded wording preparation | Achievement-group coverage / Profile public `request_authoring` | Reuse exact current relations first. Consider an achievement's relevant requirement set together, then request one coherent supported proposal only for meaningful expression gaps. Origin excludes the job; rejected/deferred requests remain retained. Only Profile's explicit user action can approve. |
 | Baseline/off composition | `assess_job(prepare_coverage=False)` | Person qualification may run; no wording-coverage or authoring call runs. `prepare_wording=False` alone suppresses proposals while still preparing exact coverage. |
 | Evidence reverse links | `evidence_map` | Public source/requirement/score/determination IDs, exact source excerpts, recorded qualification gaps, exact variant/source relations and current/stale usage. Absent coverage stays `not_recorded`; only complete recorded noncoverage or no approved variant establishes a wording gap. |
+| Independent requirement library | `requirement_library` | The complete canonical catalog, latest recorded assessment with actual achievement IDs, historical exact wording relations and separate user associations. No job traversal, semantic inference or model work. |
+| User requirement associations | `create_association`, `set_association_state`, `association_history` | Revision-bound user intent, always unassessed. Soft removal and restoration preserve original pins and immutable history; they never write qualification, coverage, score or approval. |
+| Maintained wording assignments | `set_current_wording`, `publish_current_wordings` | One exact current wording per Profile/achievement/canonical-requirement pair, with immutable assignment revisions. A wording can serve several requirements; multiple maintained wordings require a complete source-bound grouped exception. |
 | Keyword filters | `keywords` | Latest accepted model-supplied labels, NFKC/whitespace normalization and casefold lookup keys; normalization never decides support. |
 | Jobs and Digest composition | `query_summaries`, `summary_for_jobs`, `digest_summary` | Bounded bulk score/assessment queries and public Requirements binding reads share the caller's snapshot. Stored high-fit values and stale state remain distinct. Cutoffs compare UTC instants at millisecond precision, including equal cutoffs. |
 | Durable restart | `fit_operation_receipts`, `fit_refresh_operations` | Fixed scope, input versions, call reservations, checkpoints and limits survive restart. Exact retries reuse committed work. An interrupted external call stays explicit instead of silently spending a new allowance. Factual publication and failed expression preparation are reported separately. |
@@ -55,6 +58,104 @@ coverage/proposals. `POST /v1/fit/requirements/{id}/correct` records a human
 qualification correction. `POST /v1/fit/summaries` reads at most 1,000 selected
 jobs in one request. `/v1/fit/evidence-map`, `/v1/scoring/keywords`, and
 `/v1/scoring/policy` retain the audit and policy surfaces.
+
+`GET /v1/fit/requirement-library?profile_id=default` returns `catalog_revision`,
+Profile/factual/wording revisions and `requirements`. Each entry contains the
+current canonical meaning, a nullable recorded `assessment` (including
+`achievement_ids`, citations and determination), exact `coverage` rows and
+separate `associations`. `current_wordings` contains active maintained assignment
+heads, including visibly stale ones; `wording_assignments` also retains removed
+heads for recovery. Coverage receipt freshness is not a maintained selection.
+Currentness is determined from recorded canonical
+revisions, factual-source fingerprints, assessment IDs and exact approved
+variant fingerprints. Historical coverage remains labeled stale; a source
+reference or manual association cannot stand in for achievement support. Before
+Profile creation, the catalog remains readable with
+`readiness: "profile_required"` and null Profile versions; absent assessment is
+not a negative qualification judgment.
+
+User associations have separate persistence and explicit endpoints:
+
+- `POST /v1/fit/associations` requires a client-generated `association_id`,
+  `profile_id`, `expected_profile_revision`, `requirement_id`,
+  `requirement_revision`, `achievement_id`, `achievement_source_refs`, and
+  optional `wording`. Wording binds `variant_id`, `variant_revision`,
+  `exact_text` and `source_refs`. The entire creation is fenced against the
+  current public Profile and Requirements snapshots in one write transaction.
+  A repeated identity with the exact original request returns its current
+  saved record; changing the request under that identity conflicts. Only one
+  active association per Profile/achievement/canonical-requirement pair is
+  allowed, independently of its optional wording pin.
+- `POST /v1/fit/associations/{id}/revisions` takes the creation fields plus
+  `expected_revision`. It retains the pair and association identity while
+  explicitly revising the requirement/source pins or optional wording. The
+  current Profile and all new exact pins are checked again before publication;
+  the previous association remains immutable history.
+- `POST /v1/fit/associations/{id}/state` requires `profile_id`,
+  `expected_revision` and `state: "active" | "removed"`. A change adds an
+  immutable association revision. Restore retains original requirement,
+  achievement-source and wording pins; it cannot adopt newer inputs, even if
+  this leaves the restored link stale.
+- `GET /v1/fit/associations/{id}/history` returns retained revisions, including
+  removal/restoration, with `current_revision`, `total`, `limit`, `offset`
+  and `rows`. History pages default to 50 and allow at most 200 records.
+
+Every association records `origin: "user"` and
+`assessment_status: "unassessed"`, independently of its active/removed state
+and current/stale bindings. An optional wording association does not approve
+that wording or assert expression coverage. These writes emit only
+`FitAssociationUpdated` with invalidation IDs/revisions. They do not change a
+Profile version, qualification, coverage relation, score, approval or accepted
+resume, and never admit model work. A user must deliberately run the existing
+affected-matches operation to reassess saved factual inputs; a manual link
+itself is not semantic evidence.
+
+Maintained wording is a different record with `assignment_id`, monotonic
+`revision`, Profile/achievement/requirement IDs, exact requirement and variant
+revisions, `approval_id`, positive coverage `relation_id`, source pins and
+`selection_provenance`. The unique pair excludes requirement revision so a
+meaning correction cannot create a second simultaneous head. The current
+assignment and every earlier revision remain inspectable.
+
+- `POST /v1/fit/current-wordings` requires `profile_id`,
+  `expected_profile_revision`, `expected_revision` (zero before the first
+  assignment), `achievement_id`, `requirement_id`, `requirement_revision`,
+  `variant_id`, `variant_revision`, `approval_id` and `relation_id`. Only a
+  current exact approved variant and its current positive coverage receipt can
+  be selected. Exact no-ops are allowed. A manual change must result in one
+  distinct exact wording for that achievement; otherwise
+  `fit_wording_consolidation_required` directs the user to **Update affected
+  matches**. A partial activation of an approved replacement across its
+  intended/prior requirement set is also refused.
+- `POST /v1/fit/current-wordings/{id}/state` takes `profile_id`,
+  `expected_revision`, and `state: "active" | "removed"`. Removal preserves
+  history. Restoration checks the original exact positive bindings and the
+  same single-wording guard; it cannot restore stale authority.
+- `GET /v1/fit/current-wordings/{id}/history` returns bounded immutable
+  assignment revisions, with the same pagination and freshness fields as
+  association history. Replaying an exact successful set/revise/state request
+  is accepted only when the stored request fingerprint and immediately next
+  revision still agree; intervening writes conflict.
+
+Grouped publication joins its persisted group determination, full supported
+requirement inventory, exact approved-wording inventory and recorded selected
+pairs. Multiple wordings require the persisted consolidation exception. It
+atomically fences and replaces the complete achievement group, refuses dropping
+still-supported or unresolved prior mappings, and retains assignment history.
+Literal qualification revalidation may update a mapping's coverage receipt ID
+only by following its recorded positive `revalidated_from` ancestry with the
+same semantic qualification, meaning and exact variant/approval fingerprints.
+The original selection authority and revision lineage remain recorded. This
+reuses authority without another model selection or a lexical fallback.
+Publication updates a running manual refresh's accepted mapping fingerprint
+in the same transaction, preventing its own commit from looking like an
+unrelated writer while still rejecting concurrent user selections.
+
+These assignment writes emit `FitCurrentWordingUpdated`; they grant no wording
+approval and do not alter historical coverage or accepted resume bytes. No
+old approved variant is globally deleted or relabeled as unapproved. Consumers
+join maintained selections and separately fence their mapping fingerprint;
+historical document acceptance keeps its recorded selection and source rules.
 
 Post-edit qualification through older assessment/coverage commands returns
 `fit_refresh_required`; initial missing qualification remains available to
@@ -112,8 +213,10 @@ admission. Responses explicitly report `hard_monetary_bound: false`; neither a
 model-call count nor a daily spend threshold guarantees a maximum final charge
 for an external provider call. No real-provider spend QA follows from this API.
 
-Events are `FitAssessed`, `FitCorrected`, `FitRequirementCorrected`, and
-`FitCoverageUpdated`, carrying IDs and revisions only. Failure responses never
+Events are `FitAssessed`, `FitCorrected`, `FitRequirementCorrected`,
+`FitCoverageUpdated`, `FitRefreshUpdated`, `FitAssociationUpdated`, and
+`FitCurrentWordingUpdated`, carrying
+IDs and revisions only. Failure responses never
 include private model prose. Failed factual refreshes preserve the last accepted
 score; expression-preparation failures cannot lower a factual score. A stale
 coverage caller receives no positive composition edge. Honest `not_recorded`

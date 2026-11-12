@@ -11,6 +11,7 @@ import { usePreparationRecovery } from "./recovery.js";
 
 export const recipeSchema = z.enum(["run", "discover", "enrich", "analyze", "score", "tailor", "prepare"]);
 export type PreparationRecipe = z.infer<typeof recipeSchema>;
+export type PreparationResumeMode = "baseline" | "tailored";
 export type PreparationRequest = {
   recipe: PreparationRecipe;
   job_ids?: readonly string[];
@@ -19,6 +20,7 @@ export type PreparationRequest = {
   force?: boolean;
   min_fit_score?: number;
   allow_below_threshold?: boolean;
+  resume_mode?: PreparationResumeMode;
 };
 const stepSchema = z.object({
   jobId: z.string().nullable(), stage: z.string(), status: z.string(),
@@ -49,6 +51,26 @@ export function usePreparationRuns() {
       if (!parsed.success) throw new Error("Preparation runs could not be read safely.");
       return parsed.data.runs;
     },
+    meta: { suppressGlobalErrorToast: true },
+    refetchInterval: (query) => query.state.data?.some((run) => ["pending", "queued", "running"].includes(run.status)) ? 3000 : false,
+  });
+}
+
+/** Actions may be queued before Preparation has opened its own checkpoint row. */
+export function usePreparationExecution(runId: string | null) {
+  const tenantId = useTenantId();
+  const { http } = usePorts();
+  const client = useQueryClient();
+  const schema = z.object({ runId: z.string(), status: z.string(), errorCode: z.string().nullable().optional(), cancellationRequested: z.boolean() }).passthrough();
+  return useQuery({
+    queryKey: [...preparationKeys.all(tenantId), "execution", runId] as const,
+    enabled: Boolean(runId),
+    queryFn: async () => {
+      const value = schema.parse(await http.json<unknown>("GET", `/v1/action-runs/${encodeURIComponent(runId ?? "")}`));
+      void client.invalidateQueries({ queryKey: preparationKeys.runs(tenantId) });
+      return value;
+    },
+    refetchInterval: (query) => ["pending", "queued", "running"].includes(query.state.data?.status ?? "pending") ? 3000 : false,
     meta: { suppressGlobalErrorToast: true },
   });
 }
@@ -111,7 +133,13 @@ export function usePreparationCommands() {
     onSettled: () => { recovery.refresh(); void client.invalidateQueries({ queryKey: preparationKeys.all(tenantId) }); },
   });
   const cancel = useMutation({
-    mutationFn: (runId: string) => http.json<unknown>("POST", `/v1/action-runs/${encodeURIComponent(runId)}/cancel`, { body: {} }),
+    mutationFn: async (runId: string) => {
+      const path = `/v1/action-runs/${encodeURIComponent(runId)}/cancel`;
+      const response = await http.json<unknown>("POST", path, { body: {} });
+      const parsed = z.object({ runId: z.literal(runId), cancellationRequested: z.literal(true) }).passthrough().safeParse(response);
+      if (!parsed.success) throw createUnconfirmedWriteError("POST", path, parsed.error);
+      return parsed.data;
+    },
     onSettled: () => client.invalidateQueries({ queryKey: preparationKeys.all(tenantId) }),
   });
   return { submit, cancel, recovery };

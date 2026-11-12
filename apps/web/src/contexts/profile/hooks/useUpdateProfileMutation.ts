@@ -9,7 +9,7 @@ import { patchProfileResponse } from "../lib/profile-patches.js";
 import { profileKeys } from "../queryKeys.js";
 import { updateProfile } from "../client.js";
 
-export function useUpdateProfileMutation(options: { optimistic?: boolean } = {}): UseMutationResult<
+export function useUpdateProfileMutation(options: { optimistic?: boolean; workspaceIdentity?: string | undefined } = {}): UseMutationResult<
   ProfileConfigResponse,
   Error,
   ProfileUpdateRequest
@@ -20,7 +20,7 @@ export function useUpdateProfileMutation(options: { optimistic?: boolean } = {})
   return useMutation(
     createOptimisticMutation<ProfileConfigResponse, ProfileUpdateRequest>(queryClient, {
       mutationKey: profileKeys.profile(tenantId),
-      mutationFn: (body) => updateProfile(http, body),
+      mutationFn: (body) => updateProfile(http, body, options.workspaceIdentity),
       ...(options.optimistic === false ? {} : {
         optimisticUpdates: (body: ProfileUpdateRequest) => [
           {

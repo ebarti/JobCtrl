@@ -1,361 +1,260 @@
 ---
 pageClass: jh-visual-doc jh-product-tour-page jh-outline-page
-description: "Tour JobCtrl's local-first workspace with synthetic screenshots of discovery, scoring, tailoring, review, applications, and durable runs."
+description: "Tour the Original Jobs, My profile and Settings workspaces, from comparison and canonical evidence to the real Plate editor, review and outcomes."
 ---
 
 # Product Tour
 
-This is a route-by-route tour of JobCtrl using synthetic sample data. Nothing
-shown is a real person, resume, employer target, application, credential, or
-local workspace. Click or tap an image to zoom. Follow the
-[Daily Workflow](normal-flows.md) for the sequence and safety gates that connect
-these surfaces.
-
-This tour describes the maintained application and captured source-build UI.
-The [published release](https://github.com/ebarti/JobCtrl/releases/latest)
-establishes what an installed version includes; a source screenshot or synthetic
-demo walkthrough does not establish release or hosted-deployment status.
-
-Detailed work uses full route workspaces. Selecting a job, artifact, contact,
-run, or activity event opens a bookmarkable page with its facts, evidence,
-actions, and history together; it does not depend on a detached drawer. Each
-detail workspace has an explicit path back to its owning list. Jobs, Artifacts,
-Contacts, and Runs carry their URL-backed list state into that return path when
-it is present.
-
-On desktop, the navigation rail groups the product into Overview, Pipeline,
-Library, Activity, and Setup. The desktop rail can collapse to labelled icons
-and remembers that choice across reloads. On mobile, the same destinations move
-into the navigation sheet and each workspace reflows in reading order.
-
-Across routes, the compact page header presents the sidebar section and current
-page as a breadcrumb, keeps a short subtitle or count inline when space allows,
-and preserves a level-1 heading for assistive technology. Body copy uses the
-shared 14px/20px role in compact, regular, and comfy density; density changes
-row and control geometry, not readability.
-
-## Overview And Work Launch
-
-### Dashboard
-
-![JobCtrl Dashboard with pipeline health, active work, source health, queues, and recent activity](../assets/screenshots/dashboard.png)
-
-Dashboard is the starting operational summary: KPI and funnel facts, digest,
-work status, source health, active workflow and Apply runs, outcome conversion,
-and recent activity. Its links take you to the route that owns the underlying
-record instead of duplicating its full audit trail.
-
-### Analytics
-
-![JobCtrl Analytics workspace with outcome filters, sample warnings, and comparative results](../assets/screenshots/analytics.png)
-
-Analytics compares recorded outcome counts and sample-gated rates by source,
-score band, fit band, Apply mode, template, or policy. Small groups remain
-count-only and carry an explicit sample warning rather than implying reliable
-conversion rates.
-
-### Pipelines
-
-![JobCtrl Pipelines workspace with launch controls, live stage flow, execution inspector, and active work](../assets/screenshots/pipelines.png)
-
-Pipelines combines launch controls with a live current-execution flow and
-collapsed backlog diagnostics. The Discover tab
-keeps limit, internal concurrency, source, and dry-run controls; Apply adds
-minimum score, model, headless-browser, continuous, and stop controls where
-applicable. Worker readiness and launch status remain visible in the action
-panel.
-
-The workspace separates three scopes so their numbers are never conflated:
-**Current execution** is work admitted to the selected Discover run,
-**Execution sweep** is eligible backlog that run adopted, and **Global outside
-execution** is unrelated backlog. The execution inspector shows both cohort
-plans and remaining counts. Source-family crawling is reported separately from
-the two reconciliation steps that enrich intake and fan preparation out.
-Current-execution cards show active, waiting, processing, terminal, and
-attention totals first; **All stage outcomes** exposes every exact state.
-**Backlog and diagnostics** holds the sweep/global ledgers, worker slots,
-internal parallelism, approximate task-queue pollers/backlog/age/rates,
-read-model freshness, and the bounded active-work inventory. Calibrating,
-paused, stale, unavailable, and no-work ETA states stay explicit. Active
-discovery can be stopped here; replacement-run setup is offered only after an
-exact zero-active-work inventory, while provisionally missing history continues
-to reconcile automatically.
-
-### Discovery
-
-![JobCtrl Discovery workspace with target search, sources, schedules, runtime, capture, and diagnostics](../assets/screenshots/discovery.png)
-
-Discovery owns target search, source registry, scheduling, runtime and crawl
-policy, manual capture, quarantine decisions, and source diagnostics. These
-controls decide what can enter a Discover execution; Pipelines owns launching
-and observing that execution.
-
-## Jobs And Application Review
-
-### Jobs
-
-![JobCtrl single-table Jobs workspace with a Job state filter, fit evidence, saved views, and bulk actions](../assets/screenshots/jobs.png)
-
-Jobs is the URL-backed triage table. Search, stage/state/apply filters, sorting,
-pagination, saved views, selection, columns, and bulk actions remain available
-before opening one record. The **Job state** column filter shows **Active**,
-**Deleted**, **Hidden**, or a combination in the same table and defaults to
-Active; legacy closed-posting links remain compatible without adding another
-control. The normal Active row omits redundant `OPEN` copy, and deletion is
-destructive. The default view focuses on fit, title, company, Job state,
-location, stage, stage state, and Apply status. Source, compensation detail,
-warnings, resume template, and discovery date remain available through
-**Columns** and saved views. A
-focus-only row action opens the record without filling the table with visible
-**Open** buttons.
-
-### Job Detail
-
-![JobCtrl Job Detail route workspace with fit, provenance, compensation, materials, progress, and history](../assets/screenshots/job-detail.png)
-
-Job Detail keeps identity, score and requirement evidence, source provenance,
-compensation, description, employer analysis, interview prep, per-job actions,
-preparation diagnostics, active artifacts, Apply history, outcomes, contacts,
-and audit history in one route. Below the header, one full-width column keeps
-these sections in reading order on desktop and phone. Use **Sections** to jump
-to a section, or **Expand all** and **Collapse all** to change the level of
-detail. Collapsing a section keeps its forms and live state in place, including
-draft text. Labeled metadata separates company, location,
-salary, posting, and discovery source. The assessment strip keeps fit score,
-band, confidence, eligibility, requirement fit, and must-have coverage together;
-missing assessments remain explicit. Requirement evidence starts visible and
-can be collapsed independently. Links hand off to Apply Review and Evidence
-without losing the job context.
-
-**Person fit** records what your saved evidence supports. **Approved wording
-coverage** records whether exact approved text expresses those requirements.
-A wording gap does not reduce factual fit. Use the nearby **Update affected
-matches** panel when you want saved changes reviewed for this job; opening the
-page or saving an edit does not start that work.
-
-### Job Run Timeline
-
-![JobCtrl job run timeline workspace with workflow facts, status, failures, and events](../assets/screenshots/job-run-timeline.png)
-
-The job-scoped run route shows the selected workflow identity, mode, status,
-timestamps, failure facts, and event timeline, with direct navigation back to
-the owning job.
-
-### Apply Review
-
-![JobCtrl Application Review workspace with review queue, job evidence, resume editor, audit, and approval controls](../assets/screenshots/apply-review.png)
-
-Apply Review pairs its queue with the complete selected application workspace:
-job and requirement evidence, fit rationale, tailoring directives and coverage,
-accepted/current artifacts, editable resume or email, comparison,
-grounding/fabrication/judge warnings, dry-run evidence, and approval actions. A
-failed retry remains audit history and never hides the last accepted artifact.
-On desktop the queue remains a left rail and the selected review reads as
-full-width sections in sequence; narrow screens move the queue above the review
-and wrap its decision actions.
-The **Submit gates** table keeps each gate's state beside its explanation;
-see [Apply](apply.md#approval-and-automation-modes) for the approval boundaries.
-
-## Library And Evidence
-
-### Artifacts
-
-![JobCtrl Artifacts workspace with search, type, status, company, template, size, and open actions](../assets/screenshots/artifacts.png)
-
-Artifacts lists registered generated files with URL-backed search, filtering,
-sorting, and pagination. Open an item for its preview and audit; open the
-related job when the decision needs job-level context.
-
-### Artifact Detail
-
-![JobCtrl Artifact Detail route workspace with audit details, provenance, comparison, and the PDF preview below](../assets/screenshots/artifact-detail.png)
-
-Artifact Detail combines the real in-app PDF preview, when supported, with
-status, ID, job, local-file metadata, tailoring explanation, warnings,
-provenance, and same-job comparison. Historical or unavailable artifacts stay
-explicit instead of masquerading as current material. The audit details come
-first and the full-width preview follows below them. Evidence uses titles and
-bounded excerpts; raw artifact, job, path, evidence, and requirement keys stay
-inside **Technical details**.
-
-### Evidence Map
-
-![JobCtrl Evidence workspace with evidence library, selected usage detail, gaps, and reusable stories](../assets/screenshots/evidence-map.png)
-
-Evidence is a master-detail workspace over canonical achievements and skills.
-The selected entry shows source pins, freshness, resume and requirement uses,
-coverage history, and linked jobs/artifacts; the inspector keeps gaps and
-reusable stories visible. Human-readable labels lead each usage, with raw
-storage identifiers behind **Technical details**. The entry, detail, and
-inspector panes stack when the desktop three-pane layout no longer fits.
-
-### Interviews
-
-Interviews (`/interviews`) browses the full local question library without a job
-or provider call. The **Questions** and **Sources** graph perspectives explore
-topics and authors; **List** offers the same card actions. Search and
-topic/role/format/source filters, graph/list mode, and the selected card are
-bookmarkable. The **Answer**, **Rubric**, and **Sources** inspector separates
-guidance, draft criteria, and source-reading limits.
-
-Choose a job to select questions and accepted profile evidence for Beta
-preparation. Inspect retained inputs, stale warnings, generation history, and
-independently saved notes; failed refreshes keep the last accepted prep visible.
-Notes remain unverified user statements. See
-[Interview preparation](materials-and-tailoring.md#interview-preparation) for
-the workflow and research-draft limits.
-
-### Contacts
-
-![JobCtrl Contacts workspace with filters, provenance, due follow-ups, import, and contact actions](../assets/screenshots/contacts.png)
-
-Contacts lists recruiters, hiring managers, referrers, and other application
-relationships with employer/job links, provenance, due follow-ups, import, and
-create controls. Supervised research remains job-scoped in Job Detail, and only
-proposals you confirm become contacts. JobCtrl records and drafts; it never
-sends outreach.
-
-### Contact Detail
-
-![JobCtrl Contact Detail route workspace with facts, provenance, outreach versions, gates, and follow-ups](../assets/screenshots/contact-detail.png)
-
-Contact Detail keeps confirmed facts and their provenance beside the outreach
-thread. Draft generations, edits, gate results, approval, user-attested send
-logs, and follow-up reminders remain inspectable as separate decisions.
-
-## Workflow And Event History
-
-### Runs
-
-![JobCtrl Runs workspace with workflow filters, identity, status, timing, and progress](../assets/screenshots/runs.png)
-
-Runs is the durable workflow index. Filter by status, inspect start/update/end
-time and progress, cancel eligible work, or open the run route for its complete
-timeline and failure facts. Run detail derives its heading and **Selected
-stages** field from the canonical workflow input, so a targeted maintenance run
-identifies the pipeline stages that actually ran.
-
-### Run Detail
-
-![JobCtrl Run Detail route workspace with workflow facts, failure diagnostics, and lifecycle timeline](../assets/screenshots/run-detail.png)
-
-Run Detail shows workflow and Temporal identities, job relationship, mode,
-selected stage scope, status, timestamps, retryability, failure code/message,
-and lifecycle events. Events are grouped by recorded attempt, with the current
-attempt labeled and its failure details attached there. Events without an
-execution identity stay in a separate history group.
-
-### Debug
-
-![JobCtrl Debug workspace with event filters, levels, stages, references, and evidence links](../assets/screenshots/debug.png)
-
-Debug is the event-level index. Query, level, stage, event type, sorting, and
-pagination stay URL-backed, with direct handoffs to a related job or the full
-event workspace.
-
-### Activity Detail
-
-![JobCtrl Activity Detail route workspace with event facts, projected payload, and timeline](../assets/screenshots/activity-detail.png)
-
-Activity Detail makes the selected event's source explicit: event type, stage,
-level, timestamp, job reference when present, complete projected payload, and a
-single-event timeline.
-
-## Profile And Setup
-
-### Profile
-
-![JobCtrl Profile workspace with canonical candidate fields and the real editable baseline resume](../assets/screenshots/profile.png)
-
-Profile keeps canonical personal, experience, education, skills, evidence, and
-voluntary EEO fields beside the real Plate baseline resume editor. The resizable
-preview is the visual feedback surface for the same data, not a second profile
-source. Below its working desktop width, the preview stacks after the editor
-instead of shrinking the document or leaving an unusable resize gutter.
+The Original redesign starts in **Jobs** and keeps **My profile** and **Settings**
+one step away. The rail stays small; each workspace exposes its related tasks.
+You can compare opportunities, maintain reusable evidence, prepare and edit a
+resume, review an application and record its outcome without supervising
+individual pipeline stages.
+
+This tour describes the implemented source candidate as its feature contracts
+are integrated. The [redesign ledger](../plans/2026-11-11-original-app-redesign.md)
+records actual verification and remaining gates. Check the
+[published release](https://github.com/ebarti/JobCtrl/releases/latest) for
+installed availability; source changes, synthetic screenshots and a demo bundle
+do not establish a release or hosted deployment. Follow the
+[Daily Workflow](normal-flows.md) for the connected task sequence.
+
+## Jobs: Compare And Act
+
+![Original Jobs comparison table with recorded pay, fit, application state and explicit unknowns](../assets/screenshots/original-jobs.png)
+
+*Owned synthetic source workspace. Detailed columns and cross-job resources stay
+reachable around the main comparison table.*
+
+**All jobs** is a comparison table. Search/filter, sorting, pagination, saved
+views, columns and supported selection/bulk actions stay available before
+opening one opportunity. Recorded pay retains currency and source context;
+unknown fit, salary or outcome remains unknown. A fresh workspace explains that
+there are no captures yet, while a filtered zero offers a way to change filters.
+
+The fresh built-in **Default** table leads with Title, Company, Location, Posted
+pay, Fit and Apply, plus selection. Detailed/source columns remain optional
+choices, and custom persisted layouts are retained. Posted pay uses its recorded
+range, currency and unit rather than an invented comparable number.
+
+**Search for jobs** opens the search task; **Filter saved jobs** searches only
+existing records. The search task shows saved criteria, source/limit scope,
+readiness, explicit **Start search**, progress and recovery. **Edit search
+preferences** and connection remedies return to that task. Opening or saving it
+does not launch work. **Import job** and manual capture remain available for
+known postings.
+
+The Jobs workspace also reaches **Requirements**, **Applications**, **Outcomes**,
+**Interview library**, **Contacts** and **Materials** when their features are
+mounted. Those are independent resources as well as contextual job tools.
+A hidden optional registration is not advertised as working.
+
+### Job Workspace
+
+Select a row to keep its overview, fit, resume, application/review, interviews,
+people and history attached to that exact opportunity. Full-size workspaces
+retain an explicit return to the comparison context. Search/filter/order/page,
+selection, scroll and drafts should survive the supported return paths; the
+[acceptance ledger](../plans/2026-11-11-original-app-redesign.md) records the
+actual exercised paths.
+
+**Person fit** explains what saved evidence supports. **Approved wording
+coverage** explains what exact approved text expresses. A missing expression is
+a document gap, not reduced factual fit. Original posting, source availability,
+compensation and employer claims keep their provenance and uncertainty.
+
+### Prepare Resume And Plate
+
+![Selected synthetic job Resume tab with the actual Plate editor and accepted baseline](../assets/screenshots/original-resume.png)
+
+*The existing Plate editor remains inside the selected job. Its accepted copy,
+next preparation choice and exact review are separate records.*
+
+Choose **Tailored resume** or **Full baseline**, then **Prepare resume**. One
+bounded task sequences the existing requirement, person-fit, composition,
+review and rendering stages. Real queued/running/partial/failed state and stop
+requests remain beside the task. **Preparation options and history** retains
+focused maintenance controls without making them the ordinary workflow.
+
+The job resume and Profile baseline use the actual editable Plate component.
+Text editing, formatting, source mapping, drafts and export remain document
+work. A draft, rendered candidate, accepted resume and approved application are
+separate records. Failed preparation or export preserves the last accepted
+artifact and its bytes. See [Materials & Tailoring](materials-and-tailoring.md).
+
+### Applications And Outcomes
+
+The selected job's review controls and **Jobs → Applications** show the exact
+packet, accepted resume, screening answers, rehearsal and separate approval.
+The selected review uses the same mode + **Prepare resume** task as the job;
+unfinished Plate edits block replacement preparation. Without the optional
+Preparation feature, **Resume type → Create resume** keeps direct draft creation
+and explicit checks/rendering, acceptance and export available.
+Final employer-site submission stays manual. Exact-approved email applications
+retain the owned Gmail at-most-once boundary. An uncertain result requires
+verification; approval or a restart cannot manufacture a trusted receipt.
+
+**Outcomes** summarizes actual recorded application/interview results, with
+sample and unknown limits. Manual corrections, email suggestions, offers and
+feedback keep their own provenance rather than silently rewriting history.
+[Apply](apply.md) and [Outcomes & Feedback](outcomes-and-feedback.md) own those
+contracts.
+
+## My Profile: Reusable Facts And Wording
+
+![Original Experience workspace with peer Profile sections and editable stable-identity roles](../assets/screenshots/original-profile.png)
+
+*Owned synthetic Profile. Roles lead the workspace; the
+[complete Experience capture](/assets/screenshots/original-profile-wording.png)
+also shows canonical requirement tags, one current wording and its separate
+proposed revision.*
+
+My profile opens on **Experience**. **Skills**, **Education** and **Personal
+details** are peer sections alongside **Resume**, **Learning** and **Search
+preferences**. There is no duplicate Overview and no global Advanced mode.
+
+Experience exposes editable roles, position summaries and achievements under
+stable IDs. Roles lead the section; **Professional summary** follows the role
+inventory and secondary tools stay nearby. Add/edit/remove controls belong beside
+the record; **Restore removed experience** recovers retained roles or achievements without replacing newer
+Profile edits. Autosave, explicit saves, errors and revision conflicts remain
+visible. Profile edits do not regenerate documents or refresh matches.
+
+### Requirement-Led Wording
+
+An achievement linked to one requirement has one maintained current wording.
+An edit is a proposed revision with exact review and retained history. Additional
+maintained wording needs distinct requirement coverage that cannot reuse or
+consolidate the current text. Its label names the canonical requirement or
+requirements it serves. Editorial-focus alternatives do not create independent
+coverage needs.
+
+Approval binds exact text, sources and revision. Proposed edits do not transfer
+an older approval; rejected/deferred decisions and recovery remain inspectable.
+No global preferred wording is introduced. See
+[Approved wording](candidate-profile.md#approved-wording-library) for the owning
+workflow and the [plan](../plans/2026-11-11-original-app-redesign.md) for the
+current correction's implementation/verification state.
+
+### Requirements Library
+
+![Synthetic canonical requirement with a linked achievement, approved current wording and coverage](../assets/screenshots/original-requirements.png)
+
+*The library groups linked achievements first, then their exact wording. Manual
+links do not create the factual assessment or coverage shown here.*
+
+Click an achievement's reusable requirement tag, or open **Jobs → Requirements**
+without a selected job. Inspect its definition, scope, qualifiers, version and
+source occurrences. **Linked achievements** groups by achievement identity;
+**Wordings for this requirement** shows their exact revisions within that group.
+The link back opens the exact Profile role and achievement and retains the
+library return context.
+
+Your explicit requirement/achievement/wording links remain **unassessed**.
+They are separate from recorded factual assessment and exact approved-wording
+coverage. Remove/restore preserves original revision pins and history; changed
+inputs stay **Needs review**. Neither a manual link nor similar text establishes
+fit, coverage or approval. [Requirements Library](requirements-library.md) owns
+the complete flow.
 
 ### Affected Matches
 
-![Synthetic source-build Profile page with the Affected matches panel and explicit update controls](../assets/screenshots/affected-matches.png)
-*Synthetic source-build UI: the Affected matches panel adds an explicit saved-input update to the existing Profile workspace.*
+Save the facts, sources or wording you want included, then explicitly choose
+**Update affected matches**. For a selected scored cohort, use the corresponding
+Jobs bulk action. Review scope and work limits before starting. The update sees
+the complete requirement catalog, reuses current authority, reassesses affected
+support and groups actual expression gaps by achievement. It does not approve
+its own proposal or expand when inputs change.
 
-Save the facts, sources or wording you want included, then choose **Update
-affected matches** on Profile, Evidence Map or Job Detail. In Jobs, select a
-cohort and open **Update affected matches for selected jobs**. The update reviews
-the complete shared requirement catalog, reuses current factual assessments and
-approved wording relations, and prepares grouped wording proposals when needed.
-Each proposal still needs your exact approval. The panel shows progress,
-limits, partial results and cancellation status while accepted work remains
-available. See [Update affected matches](candidate-profile.md#update-affected-matches)
-for selection, work limits, retry and source-change behavior.
+The panel reports real progress, partial/error/cancellation state and same-request
+recovery. Earlier accepted work remains available. Ordinary saving, approval,
+reading and navigation make no automatic model call. See
+[Update affected matches](candidate-profile.md#update-affected-matches).
 
-In the updated source-built demo, open **Demo guide** → **Explore matching and
-wording** for the **How matching and wording work** walkthrough. Its choices
-change a synthetic example without model calls or saved workspace changes;
-the actual **Update affected matches** action remains unavailable there. The
-[demo boundary](data-and-safety.md#public-demo) explains what is simulated.
+### Search Preferences
 
-### Resume Import
+![Original Search preferences with independent role and location inputs, limits and a blocked launch](../assets/screenshots/original-search-preferences.png)
 
-![JobCtrl resume import upload route with a synthetic PDF selected](../assets/screenshots/profile-import-upload.png)
+*Empty current targets remain empty until explicitly chosen. The source
+candidate keeps criteria, source/limit policy and its blocked launch together.*
 
-![JobCtrl resume import options route selecting profile and style data](../assets/screenshots/profile-import-preview.png)
+Target roles are separate repeatable inputs with Enter-to-add/focus. Career
+tracks and levels use explicit selections. Each location/work-arrangement row
+retains independent validation. Search boards, lookback, results-per-site and
+maximum-new-job limits sit with these targets instead of requiring another setup
+page.
 
-![JobCtrl resume import confirmation route summarizing the selected synthetic file and sections](../assets/screenshots/profile-import-confirm.png)
+Place lookup is an explicit action. Select a real result to bind its stable
+identity and coordinates; editing the displayed text clears that binding.
+Legacy text remains unverified. Save feedback and return from Connections keep
+the distinction between changing preferences and starting a search clear.
+[Discovery & Sources](discovery.md) owns search execution and source policy.
 
-Resume import is a three-route wizard: select a PDF, choose profile data, style
-data, or both, then confirm the exact import. Back and cancel actions keep the
-pending choice explicit before any profile mutation.
+### Resume, Learning And Import
 
-### Preferences
+**Resume** retains the editable baseline, supported templates and direct PDF
+export. Document appearance remains independent from app appearance. The
+three-step PDF import flow records a draft, lets you select the sections, then
+requires exact acceptance before facts change. Import is not automatic
+confirmation of evidence.
 
-![JobCtrl Preferences workspace with application, tailoring, resume style, and template preview controls](../assets/screenshots/preferences.png)
+**Learning** retains career evidence, demand observations and user-authored
+milestones. Activity and aspirations do not prove skill or create a readiness
+score. Existing source/usage inspection remains available contextually and from
+diagnostics.
 
-Preferences organizes the existing application fields, tailoring content and
-voice rules, quality gates, resume style, and template versions into adaptive
-sections and semantic tabs. The template toolbar sits above the full-width
-production resume preview; autosave/undo and every original value, validation,
-locked reason, version, and default action remain available.
+## Independent Resources
 
-### Settings — General
+| Resource | What remains available |
+| --- | --- |
+| Interview library | Full local graph/list browsing, search/filter and source-reading limits without a job or provider call. Job-specific Beta preparation has retained inputs, separate notes and history. Guidance and criteria remain a research draft. |
+| Contacts | Job-independent records, imports, provenance and follow-ups, plus contextual supervised research. Outreach ends at reviewed copy/export and your manual-send attestation; JobCtrl does not send contact messages. |
+| Materials | **Saved materials** includes drafts and history as well as accepted versions. **Search saved materials** and **Refresh materials** retain the cross-job inspection path; source/approval/coverage, same-job comparison and supported downloads remain separate from acceptance. |
+| Compensation and offers | Posted/source-bound pay, neutral calculations and actual terms/decision history. Unknown terms remain unknown. |
+| Screening answers and locales | Deliberate source selection, exact independent review, reuse/history and accepted exports through their owning job/document tasks. |
+| Extension and CLI | Existing capture, pairing, explicit commands, diagnostics and operational controls keep their own permissions and safety fences. |
 
-![JobCtrl General Settings route with runtime, Apply, scoring, and compensation policy sections](../assets/screenshots/settings-general.png)
+## Settings: Shared Choices
 
-General groups shared spend/capacity and runtime settings with Apply runtime,
-scoring guidance, and compensation-source policy. Effective values, defaults,
-overrides, activation timing, validation, autosave/undo, and reset controls stay
-visible at the owning section.
+![Original Connections workspace before an explicit provider readiness check](../assets/screenshots/original-connections.png)
 
-### Settings — Credentials
+*Synthetic source workspace. **Not checked** is explicit; **Check connections**
+may contact providers. Opening the workspace does not verify model access.*
 
-![JobCtrl Credentials Settings route with provider readiness and guided secret setup](../assets/screenshots/settings-credentials.png)
+**Connections** brings credentials, live provider/model choices and browser or
+extension capabilities together. Secrets remain write-only; configured,
+verified, unavailable and unknown states are distinct. Existing credentials,
+models and browser deep links reveal their corresponding connection panel.
 
-Credentials shows provider readiness, supported authentication modes, whether
-a secret is configured, sanitized errors, and add/update/remove/verify actions.
-It never displays stored secret values. A failed provider replacement preserves
-the previous stored configuration; a failed model-catalog read does not change
-credentials. Each credential route keeps status, field, and actions together;
-at narrow widths actions wrap beneath the field and environment-owned controls
-remain visibly read-only.
+**Budgets** holds daily spend and exact-model pricing quotes. **Automation** holds
+deliberate standing behavior, runtime policy and contextual operator detail.
+Saving is different from effective application; follow the owning acknowledgement
+rather than assuming a connection or restart has succeeded.
 
-### Settings — Model Selection
+**Appearance** defaults to Graphite + Geist. It has ten color schemes and ten
+actual font schemes, light/dark mode and density. Changes apply immediately and
+persist in this browser. **Restore Graphite & Geist** restores the appearance
+defaults; resume typography still follows the document template.
 
-![JobCtrl Model Selection Settings route with provider catalogs and AI execution policy](../assets/screenshots/settings-models.png)
+![Original Appearance settings with Graphite and Geist defaults](../assets/screenshots/original-appearance.png)
 
-Model selection shows authenticated provider catalogs, preferred models,
-analysis perspectives, and AI execution policy. Ready, unready, invalid,
-default, and override states remain distinct.
+*App appearance applies immediately in this browser while resume typography
+continues to follow its document template.*
 
-### Settings — Browser & Extension
+### Runs
 
-![JobCtrl Browser and Extension Settings route with capability and pairing ledgers](../assets/screenshots/settings-browser.png)
+**Data & diagnostics** is the explicit technical entry for task history, recorded
+events and retained diagnostic tools. The former Dashboard, Preparation,
+Evidence and operations URLs remain reachable where needed without becoming the
+daily starting point. Run detail reports its own canonical action/workflow
+identity, status, cancellation, failures and events. Missing observations stay
+unknown; a live event connection does not establish action/provider readiness.
 
-Browser & extension shows capability availability and supported local Chrome or
-Chromium candidates by label. Detection is read-only: it does not launch,
-enable, or persist a browser. Explicitly enabling a detected candidate adopts it;
-an advanced manual executable path remains available. If a candidate disappears
-before confirmation, enable fails without changing capability state. Extension
-pairing is a separate explicit action, and Settings does not offer a LinkedIn
-profile-copy flow. A live status reports whether the paired extension is
-currently heartbeating from the user's running Chrome profile; integrated
-Discovery, LinkedIn enrichment, and Enrich retries use that live profile
-directly and never use a copied profile.
+## Offline Demo
+
+The source-built demo uses the same workspace hierarchy with an owned synthetic
+browser-local workspace. It identifies supported local edits, simulations and
+unavailable provider/durable actions. It is an illustration of the candidate,
+not a connection to your local Profile, a real search, a submitted application or
+proof of live-provider behavior. Reading the walkthrough never grants a network
+or mutation permission. See the [demo data boundary](data-and-safety.md#public-demo).

@@ -12,6 +12,11 @@ import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import type { HttpPort } from "../../shared/ports/HttpPort.js";
 
+export { useRequirementCatalog, useRequirementDetail, useRequirementHistory, useRequirementMeaningCorrection,
+  requirementLibraryKeys, canonicalRequirementSchema } from "./library.js";
+export type { CanonicalRequirement, RequirementDetail, RequirementHistory, RequirementHistoryKind,
+  RequirementOccurrence, RequirementCatalog, RequirementMeaningCorrection } from "./library.js";
+
 const requirementSchema = z.object({
   occurrence_id: z.string(), requirement_id: z.string(), requirement_revision: z.number(),
   text: z.string(), definition: z.string(), scope: z.string(), tier: z.string(), weight: z.number(),

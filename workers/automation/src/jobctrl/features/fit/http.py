@@ -7,6 +7,8 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from jobctrl.app.errors import AppError
+from .associations import AssociationState, CreateAssociation, ReviseAssociation
+from .current_wording import CurrentWordingInput, CurrentWordingState
 
 
 class Input(BaseModel):
@@ -82,6 +84,48 @@ async def body(request, schema):
 
 
 def routes(service) -> tuple:
+    async def set_current_wording(request):
+        payload = await body(request, CurrentWordingInput)
+        return JSONResponse(service.set_current_wording(payload.model_dump()))
+
+    async def current_wording_state(request):
+        payload = await body(request, CurrentWordingState)
+        return JSONResponse(service.set_current_wording_state(request.path_params["assignment_id"], payload.model_dump()))
+
+    async def current_wording_history(request):
+        limit, offset = history_pagination(request)
+        return JSONResponse(service.current_wording_history(request.path_params["assignment_id"],
+            request.query_params.get("profile_id", "default"), limit=limit, offset=offset))
+
+    async def requirement_library(request):
+        return JSONResponse(service.requirement_library(request.query_params.get("profile_id", "default")))
+
+    async def create_association(request):
+        payload = await body(request, CreateAssociation)
+        return JSONResponse(service.create_association(payload.model_dump()))
+
+    async def association_state(request):
+        payload = await body(request, AssociationState)
+        return JSONResponse(service.set_association_state(request.path_params["association_id"], payload.model_dump()))
+
+    async def revise_association(request):
+        payload = await body(request, ReviseAssociation)
+        return JSONResponse(service.revise_association(request.path_params["association_id"], payload.model_dump()))
+
+    async def association_history(request):
+        limit, offset = history_pagination(request)
+        return JSONResponse(service.association_history(request.path_params["association_id"],
+            request.query_params.get("profile_id", "default"), limit=limit, offset=offset))
+
+    def history_pagination(request):
+        try:
+            limit, offset = int(request.query_params.get("limit", "50")), int(request.query_params.get("offset", "0"))
+        except ValueError:
+            raise AppError("fit_invalid_pagination", "Supply a valid history limit and offset.") from None
+        if not 1 <= limit <= 200 or offset < 0:
+            raise AppError("fit_invalid_pagination", "Supply a valid history limit and offset.")
+        return limit, offset
+
     async def get_fit(request):
         return JSONResponse(service.get_job_fit(request.path_params["job_id"],
                                                  profile_id=request.query_params.get("profile_id", "default")))
@@ -134,6 +178,14 @@ def routes(service) -> tuple:
         return JSONResponse(service.refresh_operation(request.path_params["operation_id"], allow_pending=allow_pending == "true"))
 
     return (
+        Route("/v1/fit/current-wordings", set_current_wording, methods=["POST"]),
+        Route("/v1/fit/current-wordings/{assignment_id}/state", current_wording_state, methods=["POST"]),
+        Route("/v1/fit/current-wordings/{assignment_id}/history", current_wording_history, methods=["GET"]),
+        Route("/v1/fit/requirement-library", requirement_library, methods=["GET"]),
+        Route("/v1/fit/associations", create_association, methods=["POST"]),
+        Route("/v1/fit/associations/{association_id}/state", association_state, methods=["POST"]),
+        Route("/v1/fit/associations/{association_id}/revisions", revise_association, methods=["POST"]),
+        Route("/v1/fit/associations/{association_id}/history", association_history, methods=["GET"]),
         Route("/v1/fit/refresh/pending", refresh_pending, methods=["GET"]),
         Route("/v1/fit/refresh/operations/{operation_id}", refresh_operation, methods=["GET"]),
         Route("/v1/jobs/{job_id}/fit", get_fit, methods=["GET"]),

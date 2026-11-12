@@ -1,9 +1,13 @@
 import { useForm } from "@tanstack/react-form";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { Button } from "../../../shared/ui/button.js";
-import { recipeSchema, type PreparationRecipe, type PreparationRequest, usePreparationCommands, usePreparationRun, usePreparationRuns } from "../client.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { getApiCapabilityAvailability } from "../../../shared/lib/apiCapabilityAvailability.js";
+import { useRuntimeHealth } from "../../runtime/index.js";
+import { recipeSchema, type PreparationRecipe, type PreparationRequest, type PreparationResumeMode, usePreparationCommands, usePreparationExecution, usePreparationRun, usePreparationRuns } from "../client.js";
 
 const labels: Record<PreparationRecipe, string> = {
   run: "Run Discovery and preparation", discover: "Discover", enrich: "Enrich postings",
@@ -18,7 +22,8 @@ function PreparationRecoveryNotice({ recovery }: { readonly recovery: Preparatio
   if (!recovery.ready) return <p role="alert">{recovery.error ? "Preparation recovery storage is unavailable or invalid. Restore it before starting work." : "Checking preparation recovery storage…"}</p>;
   return <>
     {recovery.record ? <div role="alert">
-      <p>A previous preparation request needs review. {recovery.status ? `Recorded status: ${recovery.status.status} (run ${recovery.status.runId}).` : "Its admission has not been confirmed."} Check it before starting different work. If the exact request can be retried, re-enter the same inputs; request contents are not stored.</p>
+      <p>A previous preparation request needs review. {recovery.status ? `Recorded status: ${recovery.status.status}.` : "Its admission has not been confirmed."} Check it before starting different work. If the exact request can be retried, re-enter the same inputs; request contents are not stored.</p>
+      <details><summary>Recovery identity</summary><p>Request {recovery.record.requestId}{recovery.status ? ` · run ${recovery.status.runId}` : ""}.</p></details>
       <Button type="button" variant="outline" disabled={recovery.checking} onClick={() => void recovery.check()}>Check previous preparation</Button>
       {recovery.statusError ? <p>Its current status could not be confirmed. Only the exact previous command may be retried when reconciliation permits.</p> : null}
     </div> : null}
@@ -85,13 +90,16 @@ export function PreparationRunList({ jobIds }: { readonly jobIds?: readonly stri
 
 function RecipeButtons({ jobIds, commands }: { readonly jobIds: readonly string[]; readonly commands: PreparationCommands }) {
   const { submit, cancel, recovery } = commands;
+  const { featureFlags } = usePorts();
+  const availability = getApiCapabilityAvailability(featureFlags, "runJobStage");
   const [allowBelow, setAllowBelow] = useState(false);
   const recipes: PreparationRecipe[] = ["prepare", "enrich", "analyze", "score", "tailor"];
   return <div role="group" aria-label="Preparation actions" className="flex flex-wrap gap-2">
-    {recipes.map(recipe => <Button key={recipe} type="button" variant="outline" size="sm" disabled={!jobIds.length || submit.isPending || !recovery.permits("preparation.run")}
+    {recipes.map(recipe => <Button key={recipe} type="button" variant="outline" size="sm" disabled={!availability.available || !jobIds.length || submit.isPending || !recovery.permits("preparation.run")}
       onClick={() => submit.mutate({ action: "preparation.run", body: { recipe, job_ids: jobIds, scope: "selected", force: recipe === "tailor", allow_below_threshold: allowBelow } })}>
       {labels[recipe]}
     </Button>)}
+    {!availability.available ? <p>{availability.reason}</p> : null}
     <label><input type="checkbox" checked={allowBelow} disabled={submit.isPending} onChange={event => setAllowBelow(event.target.checked)} /> Prepare selected jobs below the saved fit threshold</label>
     {submit.isError ? <p role="alert">{submit.error.message} Retry the same action to reconcile an uncertain acknowledgement.</p> : null}
     {submit.isSuccess ? <p role="status">Queued preparation run {submit.data.runId}. <Button type="button" variant="outline" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate(submit.data.runId)}>Cancel queued run</Button></p> : null}
@@ -104,9 +112,91 @@ export function PipelineBulkActions({ jobIds }: { readonly jobIds: readonly stri
   return <section aria-label="Selected jobs preparation"><PreparationRecoveryNotice recovery={commands.recovery} /><RecipeButtons jobIds={jobIds} commands={commands} /><PreparationRunListContent jobIds={jobIds} commands={commands} /></section>;
 }
 
-export function JobPreparationActions({ jobId }: { readonly jobId: string }) {
+export function JobPreparationActions({ jobId, defaultMode = null, initialMode = null, onModeChange, renderProfileSetup, profileVersion = null, blockedByDraft = false, onReviewReady }: {
+  readonly jobId: string;
+  readonly defaultMode?: PreparationResumeMode | null;
+  readonly initialMode?: PreparationResumeMode | null;
+  readonly onModeChange?: (mode: PreparationResumeMode) => void;
+  readonly renderProfileSetup?: (mode: PreparationResumeMode | null) => ReactNode;
+  readonly profileVersion?: number | null;
+  readonly blockedByDraft?: boolean;
+  readonly onReviewReady?: (resumeId?: string, runId?: string) => void;
+}) {
   const commands = usePreparationCommands();
-  return <section aria-label="Job preparation"><PreparationRecoveryNotice recovery={commands.recovery} /><RecipeButtons jobIds={[jobId]} commands={commands} /><PreparationRunListContent jobIds={[jobId]} commands={commands} /></section>;
+  const { submit, cancel, recovery } = commands;
+  const runs = usePreparationRuns();
+  const runtime = useRuntimeHealth();
+  const { featureFlags } = usePorts();
+  const tailoring = getApiCapabilityAvailability(featureFlags, "tailorJob");
+  const baselineCapability = getApiCapabilityAvailability(featureFlags, "prepareBaselineResume");
+  const [choice, setChoice] = useState<PreparationResumeMode | null>(initialMode);
+  // Keep same-job history/direct navigation consistent with the route-owned
+  // task choice; local selection still updates immediately before navigation.
+  useEffect(() => { setChoice(initialMode); }, [initialMode]);
+  const [allowBelow, setAllowBelow] = useState(false);
+  const [startedRunId, setStartedRunId] = useState<string | null>(null);
+  const execution = usePreparationExecution(startedRunId);
+  const revealed = useRef<string | null>(null);
+  const mode = choice ?? defaultMode;
+  const localBaseline = mode === "baseline" && baselineCapability.isDemo && baselineCapability.available;
+  const ready = localBaseline || Boolean(runtime.data?.worker.healthy);
+  const jobRuns = (runs.data ?? []).filter((run) => run.jobIds.includes(jobId));
+  const active = jobRuns.find((run) => ["running", "queued", "pending"].includes(run.status));
+  const current = startedRunId ? jobRuns.find((run) => run.runId === startedRunId) : active ?? jobRuns[0];
+  const waiting = Boolean(startedRunId && !jobRuns.some((run) => run.runId === startedRunId)
+    && !["succeeded", "failed", "cancelled"].includes(execution.data?.status ?? ""));
+  const busy = submit.isPending || Boolean(active) || waiting;
+  useEffect(() => {
+    if (current && current.runId === startedRunId && ["succeeded", "partial", "failed"].includes(current.status)
+        && current.steps.some((step) => step.jobId === jobId && step.stage === "compose" && step.result?.resume_id)
+        && revealed.current !== current.runId) {
+      revealed.current = current.runId;
+      const composed = current.steps.find((step) => step.jobId === jobId && step.stage === "compose" && typeof step.result?.resume_id === "string");
+      onReviewReady?.(typeof composed?.result?.resume_id === "string" ? composed.result.resume_id : undefined, current.runId);
+    }
+  }, [current, startedRunId, onReviewReady, jobId]);
+  const jobSteps = current?.steps.filter((step) => step.jobId === jobId) ?? [];
+  const incomplete = jobSteps.find((step) => ["failed", "blocked", "cancelled"].includes(step.status));
+  const belowThreshold = jobSteps.some((step) => step.result?.skip === "below_fit_threshold");
+  const hasResume = jobSteps.some((step) => step.stage === "compose" && step.result?.resume_id);
+  const retryable = current && (incomplete || (current.status === "cancelled" && !hasResume));
+  return <section aria-label="Prepare resume" className="job-preparation-task">
+    <div className="job-preparation-task__controls">
+      <label data-typography="label">Resume to prepare<select data-typography="body" aria-label="Resume to prepare" value={mode ?? ""} disabled={busy || Boolean(recovery.record && !recovery.canRetry)} onChange={(event) => {
+        const next = event.currentTarget.value === "baseline" ? "baseline" : "tailored";
+        setChoice(next);
+        onModeChange?.(next);
+      }}>
+        {mode === null ? <option value="" disabled>Choose a resume</option> : null}
+        <option value="tailored">Tailored resume</option><option value="baseline">Full baseline</option>
+      </select></label>
+      <Button type="button" disabled={busy || blockedByDraft || profileVersion === null || mode === null || (mode === "tailored" && !tailoring.available)
+        || !ready || !recovery.permits("preparation.run")} onClick={() => {
+        if (!mode) return;
+        submit.mutate({ action: "preparation.run", body: { recipe: "prepare", job_ids: [jobId], scope: "selected", limit: 1, resume_mode: mode, allow_below_threshold: allowBelow } }, {
+          onSuccess: (receipt) => { setStartedRunId(receipt.runId); cancel.reset(); },
+        });
+      }}>{submit.isPending ? "Starting preparation…" : busy ? "Preparing resume…" : recovery.record?.operation === "preparation.run" ? "Retry same preparation" : localBaseline ? "Prepare resume locally" : "Prepare resume"}</Button>
+      {active || waiting ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => { const runId = active?.runId ?? startedRunId; if (runId) cancel.mutate(runId); }}>{active && active.jobIds.length > 1 ? `Stop preparation for ${active.jobIds.length} jobs` : "Request stop"}</Button> : null}
+      {current && retryable && ["failed", "partial", "cancelled"].includes(current.status) ? <Button type="button" variant="outline" disabled={busy || blockedByDraft || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: current.runId, job_ids: [jobId] } }, { onSuccess: (receipt) => { setStartedRunId(receipt.runId); cancel.reset(); } })}>Continue unfinished preparation</Button> : null}
+    </div>
+    {profileVersion === null ? <p role="status">Save your profile before preparing a resume. {renderProfileSetup?.(mode) ?? <Link to="/profile">Open My profile</Link>}</p> : null}
+    {blockedByDraft ? <p role="status">Save your unsaved resume edits before preparing another version. <Button type="button" variant="link" onClick={() => onReviewReady?.()}>Review unsaved edits</Button></p> : null}
+    {mode === "tailored" && !tailoring.available ? <p role="status">{tailoring.reason}</p> : null}
+    {!ready ? <p role="status">{runtime.isPending ? "Checking preparation readiness…" : runtime.error ? "Preparation readiness could not be checked." : "Preparation is unavailable while the worker reconnects."} <Link to="/settings">Review connections</Link></p> : null}
+    {localBaseline ? <p role="status">{baselineCapability.reason}</p> : null}
+    <p className="job-preparation-task__scope" data-typography="metadata">{mode === "baseline" ? "Copy the complete saved profile and render it for review. No model calls are needed." : "Assess requirements and fit, compose approved wording, review coherence and render using your saved model and spending limits."} You review and accept the result.</p>
+    {busy ? <p role="status">{waiting ? `Preparation ${execution.error ? "status unavailable" : execution.data?.status ?? "queued"}.` : current ? `Preparation ${current.status}${jobSteps.find((step) => step.status === "running") ? ` · ${jobSteps.find((step) => step.status === "running")?.stage.replaceAll("_", " ")}` : ""}.` : "Starting preparation."}</p> : current ? <p role="status">Preparation {current.status === "succeeded" ? hasResume ? "ready for review" : "complete" : current.status}.{incomplete ? ` ${incomplete.errorCode?.replaceAll("_", " ") ?? "A step needs attention"}.` : ""}</p> : execution.data ? <p role="status">Preparation {execution.data.status}{execution.data.errorCode ? ` · ${execution.data.errorCode.replaceAll("_", " ")}` : ""}.</p> : null}
+    {belowThreshold ? <p role="status">This job is below your saved fit threshold. Choose the explicit exception below to prepare it.</p> : null}
+    {(cancel.isSuccess || execution.data?.cancellationRequested) && busy ? <p role="status">Stop requested. Preparation remains active until it settles.</p> : null}
+    {submit.error || cancel.error ? <p role="alert">{(submit.error ?? cancel.error)?.message} Previously accepted resumes remain available.</p> : null}
+    <PreparationRecoveryNotice recovery={recovery} />
+    <details className="job-preparation-inspection"><summary>Preparation options and history</summary>
+      <label><input type="checkbox" checked={allowBelow} disabled={busy || Boolean(recovery.record && !recovery.canRetry)} onChange={(event) => setAllowBelow(event.currentTarget.checked)} /> Prepare this job below the saved fit threshold</label>
+      <PreparationRunListContent jobIds={[jobId]} commands={commands} />
+      <details><summary>Individual preparation tools</summary><RecipeButtons jobIds={[jobId]} commands={commands} /></details>
+    </details>
+  </section>;
 }
 
 export function PipelineRecipePanel({ stageRunBlockReasons = {} }: { readonly stageRunBlockReasons?: Partial<Record<PreparationRecipe, ReactNode>> }) {

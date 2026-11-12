@@ -115,10 +115,23 @@ is a future design for [#885](https://github.com/ebarti/JobCtrl/issues/885).
 It is **PROPOSED**, awaits owner decisions, and does not change the current
 consent gate, retention, or deletion behavior described above.
 
-After entry, the compact **Demo guide** links to seeded scoring evidence,
-tailored-material review, Apply Review/dry-run, and run history. Every shortcut
-and action is simulated; it does not contact employers, send messages, or make
-external changes.
+After entry, the compact **Demo guide** links to ordinary synthetic workspaces,
+saved evidence, document/application review and history. Supported local edits
+change only the synthetic browser workspace; simulated and unavailable external
+actions are labeled. The demo does not contact employers, send messages or make
+external application changes.
+
+The Original redesign source-built demo also connects **Jobs**, **My profile**
+and **Settings**, including peer Profile fields, local role/achievement removal
+and restore, proposed wording revision/history, the standalone Requirements
+library and Settings appearance. Its requirement meanings and posting
+occurrences are authored synthetic examples. Manual links remain **user /
+unassessed**. No assessed current-wording assignment or coverage is invented;
+the demo retains its authored original wording and pending proposal separately.
+Model refresh, meaning correction, current-assignment decisions, live job search
+and Photon lookup remain unavailable. Typed location text stays unverified.
+Supported real Plate editing/render/export remains browser-local synthetic work.
+These source changes do not establish a hosted deployment.
 
 The updated source-built demo also offers **Explore matching and wording**,
 which opens **How matching and wording work**, an interactive illustration with
@@ -158,7 +171,7 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, import receipt bindings, review drafts, contacts, private offer terms/decisions and sources, and workflows. Treat all three files as one database. |
 | `.jobctrl.db.llm-spend-pending/` | Private pending or unresolved provider-usage receipts. They contain model, lane and reported token counts, without prompts or completions. Keep them with the workspace when investigating incomplete accounting. |
 | `temporal.db` plus `-wal` / `-shm` | Shared Temporal history for new workspaces; earlier source workspaces may retain `temporal/temporal.db`. Treat the history and `jobctrl.db` as one pair. |
-| `config.json` | Non-secret Settings values: general controls, provider configuration metadata, preferred model IDs, compensation source policy, and browser-adoption metadata. No API keys or feed contents. |
+| `jobctrl.db` feature settings | Revisioned shared settings plus Profile, Discovery, Compensation and other feature-owned preferences. The historical `config.json` is not the current Python settings authority. No credential secret belongs in these records. |
 | `.env` | Legacy/plaintext provider credentials used by remaining compatibility paths. Not encrypted at rest. |
 | `codex_home/` | Stable JobCtrl-owned Codex CLI state. `auth.json` is outside the prompt-readable `workspace/` subtree. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated or separately acquired provider runtime state. |
@@ -186,6 +199,24 @@ JSON for inspection and copying; it stays in browser storage until site data is
 cleared.
 The completed request remains in app memory until reload. Removal and failure
 recovery are described in [Candidate Profile](candidate-profile.md#review-an-imported-resume).
+
+The redesigned editor recovery is separate from import-review records and from
+minimal request-recovery metadata. Profile and retained application/resume
+preference editors use version-2 non-secret changed-field patches rather than
+full Profile/base snapshots. Those patches can still contain private experience
+or resume text; protect browser storage and exports. Password/credential edits
+stay only in session/tenant/section-scoped memory, survive ordinary navigation
+and require saving before reload or close. The browser warns before reload/close while
+they are unsaved; no secret-reload durability is promised. Safe restoration
+preserves a canonical saved password.
+
+Editing pauses until a retained copy is restored or discarded. Valid older
+editor recovery migrates to a safe projection before the old key is removed;
+malformed data stays paused with generic retry/explicit discard and is not
+exposed as raw JSON. Owner/revision checks handle conflicting tabs. Plate offers
+its own explicit restore/discard/retry controls. Synthetic demo copies use a
+separate workspace/reset namespace and reset clears them. App appearance is a
+separate presentation preference.
 
 PDFs created with a Plate editor's **Export PDF** control are ordinary browser
 downloads, so their destination is the download location selected by the
@@ -430,6 +461,7 @@ and live interview assistance are not shipped by this integration. See
 | Salary data sources | At the end of a Discover run, only for benchmark slices that are missing or past their seven-day freshness window; Levels.fyi or Glassdoor only when their Settings policy permits | Requests for public benchmark data from Euro Top Tech, ECB exchange rates when a currency conversion is needed, and Eurostat price levels when a slice has no direct benchmark. Levels.fyi public-page URLs name the role and location being benchmarked. |
 | Gmail | Authenticated verification, bounded outcome feedback, or an approved email application | Scoped queries/evidence or the exact approved recipient/attachment. |
 | Google Maps | Profile location autocomplete with a configured key | Address text typed into the location field. |
+| Photon / OpenStreetMap place lookup | Only after **Search map** in Search preferences; unavailable in the offline demo | Only the chosen location query. Typing, navigation and ordinary saves make no lookup request. Selecting a result saves its identity, coordinates and user-selection provenance locally; later label edits clear that binding. |
 | CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the owned local tool. |
 | Langfuse/OpenTelemetry | Explicitly configured telemetry | Metadata-only LLM and workflow spans: provider/model, operation/stage, outcome, token counts, and safe sizes. |
 

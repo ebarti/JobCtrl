@@ -1,0 +1,100 @@
+.jobs-daily-workspace {
+  display: grid;
+  gap: 24px;
+  min-inline-size: 0;
+  align-items: start;
+}
+
+.jobs-grid-pane,
+.jobs-list-workspace,
+.route-page--job-detail,
+.job-workspace-tabs,
+.job-workspace-tabs > [data-slot="tabs-content"] {
+  min-inline-size: 0;
+}
+
+.jobs-grid-pane[hidden] { display: none; }
+
+.jobs-list-workspace:focus { outline: none; }
+.jobs-list-workspace .page-head { margin-block-end: 0; }
+.jobs-table-tools { display: grid; gap: 12px; padding: 16px; }
+.jobs-table-tools > form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.jobs-table-tools > form > label { display: grid; gap: 6px; flex: 1 1 240px; }
+.jobs-data-grid-table .data-grid-column-head { display: flex; align-items: center; gap: 6px; min-inline-size: 0; }
+.jobs-data-grid-table .data-grid-sort-button { display: inline-flex; align-items: center; gap: 6px; flex: 1 1 auto; min-inline-size: 0; overflow: hidden; }
+.jobs-data-grid-table .data-grid-sort-button > span:first-child { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jobs-data-grid-table .data-grid-sort-button > svg,
+.jobs-data-grid-table .data-grid-sort-button > span:last-child,
+.jobs-data-grid-table .data-grid-column-filter-button,
+.jobs-data-grid-table .data-grid-column-reorder-handle { flex-shrink: 0; }
+.jobs-intake,
+.jobs-filter-options,
+.job-workspace-inspection,
+.job-preparation-inspection { border-block-start: 1px solid var(--border); padding-block: 12px; }
+.jobs-intake > summary,
+.jobs-filter-options > summary,
+.job-workspace-inspection > summary,
+.job-preparation-inspection > summary { cursor: pointer; font-weight: 500; }
+.jobs-intake .card { margin-block: 12px 0; }
+.jobs-first-use { padding: 20px; border: 1px solid var(--border); background: var(--muted); }
+.jobs-first-use h2 { margin: 0 0 8px; }
+.jobs-first-use p { margin: 0 0 14px; }
+.job-workspace-header { border-block-end: 1px solid var(--border); padding-block-end: 12px; }
+.job-workspace-header h1 { margin-block: 8px 4px; }
+/* The programmatically focused title keeps a visible, text-sized focus cue
+ * without drawing a full-width frame around the heading. */
+.job-workspace-header h1:focus-visible { outline: 0; text-decoration: underline 2px var(--ring); text-underline-offset: 5px; }
+.job-workspace-header__return { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.job-workspace-header__return a { font-size: 13px; }
+.job-workspace-header__company { color: var(--muted-foreground); margin: 0; }
+.job-workspace-state { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-block: 12px; }
+.job-workspace-state > div { display: grid; gap: 3px; }
+.job-workspace-state dt { color: var(--muted-foreground); font-size: 12px; }
+.job-workspace-state dd { margin: 0; font-size: 14px; font-weight: 500; }
+.job-preparation-task__controls { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.job-preparation-task__controls > label { display: grid; gap: 5px; }
+.job-preparation-task__controls select { inline-size: 190px; max-inline-size: 100%; min-block-size: 36px; }
+.job-preparation-task__scope { max-inline-size: 72ch; color: var(--muted-foreground); font-size: 12px; margin-block: 6px 0; }
+.job-workspace-header .job-preparation-inspection { padding-block: 8px; }
+.job-preparation-task > [role="status"],
+.job-preparation-task > [role="alert"] { font-size: 13px; }
+.job-workspace-tabs__list { display: flex; max-inline-size: 100%; overflow-x: auto; block-size: auto; min-block-size: 40px; }
+.job-workspace-tabs__list > button { flex: 0 0 auto; }
+.job-workspace-section { padding-block: 18px; border-block-end: 1px solid var(--border); }
+.job-workspace-section > h2 { margin-block: 0 12px; }
+.job-workspace-inspection > :not(summary),
+.job-preparation-inspection > :not(summary) { margin-block-start: 12px; }
+
+@media (min-width: 1280px) {
+  .job-workspace-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, .9fr);
+    column-gap: 16px;
+    align-items: start;
+  }
+  .job-workspace-header > :is(.job-workspace-header__return, h1, .job-workspace-header__company) { grid-column: 1 / -1; }
+  .job-workspace-header > .job-workspace-state { grid-column: 1; }
+  .job-workspace-header > .job-preparation-task { grid-column: 2; margin-top: 12px; min-width: 0; }
+  .job-workspace-header > :not(.job-workspace-header__return, h1, .job-workspace-header__company, .job-workspace-state, .job-preparation-task) { grid-column: 1 / -1; }
+  .jobs-daily-workspace--selected { grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 24px; }
+  .jobs-daily-workspace--selected > .jobs-grid-pane,
+  .jobs-daily-workspace--selected > .route-page--job-detail { max-block-size: calc(100dvh - 180px); overflow: auto; }
+  .jobs-daily-workspace--selected .jobs-list-workspace { max-block-size: calc(100dvh - 180px); overflow: auto; padding-inline-end: 4px; }
+  .jobs-daily-workspace--selected .page-head { align-items: start; flex-direction: column; }
+  .jobs-daily-workspace--document { grid-template-columns: minmax(0, 1fr); }
+  .jobs-daily-workspace--document > .route-page--job-detail { max-block-size: none; overflow: visible; }
+}
+
+@media (max-width: 820px) {
+  /* Keep the comparison list mounted so Back restores its complete context. */
+  .jobs-daily-workspace--selected > .jobs-grid-pane { display: none; }
+}
+
+@media (max-width: 640px) {
+  .jobs-table-tools { padding: 12px; }
+  .job-preparation-task__controls > label { flex: 1 1 100%; }
+  .job-preparation-task__controls select { inline-size: 100%; }
+  .job-preparation-task__controls > button { min-block-size: 44px; }
+  .job-workspace-state { gap: 12px 18px; }
+  .job-workspace-tabs__list > button { min-block-size: 44px; padding-inline: 10px; }
+}

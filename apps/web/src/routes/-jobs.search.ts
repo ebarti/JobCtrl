@@ -65,6 +65,10 @@ export const jobsSearchSchema = z.object({
   compensation_warnings: z.enum(["all", "present", "none"]).optional(),
   column_filters: columnFilters.optional(),
   query_revision: z.string().min(1).max(80).optional(),
+  jobTab: z.enum(["fit", "resume", "application", "people", "offer"]).optional(),
+  resumeMode: z.enum(["baseline", "tailored"]).optional(),
+  returnRequirement: z.string().min(1).max(200).optional(),
+  returnRequirementsFilter: z.string().max(10000).optional(),
 }).superRefine((value, context) => {
   if (value.grid === "v1" && (value.offset ?? 0) > 0 && !value.query_revision) {
     context.addIssue({ code: "custom", path: ["query_revision"], message: "Reload the first Jobs page to establish a query revision." });

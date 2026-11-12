@@ -58,8 +58,12 @@ test("Python boundary, real manual capture and one committed event connection", 
     })
     .toBe(1);
 
+  await page
+    .locator("summary")
+    .filter({ hasText: /^Add a job by URL or text$/ })
+    .click();
   await page.getByText("Manual capture", { exact: true }).click();
-  const manual = page.getByRole("group").filter({
+  const manual = page.locator("form").filter({
     has: page.getByRole("button", { name: "Save job", exact: true }),
   });
   await manual
@@ -183,7 +187,10 @@ test("Python boundary, real manual capture and one committed event connection", 
     await untrusted.dispose();
   }
   expect(await json(api, "get", "/v1/events")).toEqual(beforeHeadEvents);
-  await page.getByRole("link", { name: "Profile", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "My profile", exact: true })
+    .click();
   await expect(page).toHaveURL(/\/profile/);
   await expect.poll(() => activeStreams.size).toBe(1);
   expect(maxStreams).toBe(1);

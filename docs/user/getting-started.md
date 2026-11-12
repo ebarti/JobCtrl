@@ -133,7 +133,7 @@ troubleshooting for an unrecoverable cleanup problem, not a normal requirement.
 
 ### Create your profile
 
-Open **Profile** in the web app and add or import the facts JobCtrl may use for
+Open **My profile → Experience** in the source-built web app and add or import the facts JobCtrl may use for
 scoring and tailoring. Your profile is the source of truth for every later
 stage; JobCtrl must not invent experience, skills, or achievements that are
 not recorded there. [Candidate Profile](candidate-profile.md) explains the
@@ -141,7 +141,8 @@ profile's boundaries, versioning, and downstream consumers.
 
 ### Connect an LLM provider
 
-Open **Settings → Credentials** and configure one provider:
+Open **Settings → Connections** and configure one provider. Existing credentials,
+models and browser deep links reveal their corresponding connection panel:
 
 - **Codex:** use an already authenticated Codex CLI, then verify it in JobCtrl.
 - **Claude:** use an Anthropic API key or one of the guided Google Vertex,
@@ -153,13 +154,11 @@ One ready provider is sufficient for scoring, materials, and employer
 analysis. Connecting a second provider can improve ensemble diversity, but it
 is a recommendation, not a requirement.
 
-Claude and Google values saved to the native credential store take effect when the
-relevant Python process next starts. Restart JobCtrl after those edits:
-
-```bash
-jobctrl stop
-jobctrl start
-```
+The Python source candidate resolves saved native credentials for each new
+provider execution. Saving does not require a routine worker restart; an
+in-flight request keeps the credential it started with. Inspect readiness after
+the save rather than assuming that configured credentials establish model
+access. Installed availability remains tied to the published version.
 
 If the active provider route is owned by a non-empty environment variable,
 Settings keeps that active secret and its removal control read-only. You may
@@ -174,7 +173,8 @@ budgets. Apply-specific browser, CAPTCHA, and Gmail setup is in
 
 ### Verify provider readiness
 
-After any required credential-store restart, verify the effective configuration:
+After saving provider configuration, or restarting after a launch-environment
+change, verify the effective configuration:
 
 ```bash
 jobctrl setup
@@ -214,9 +214,18 @@ leaves the Discovery settings unchanged; confirming clears only that filter.
 
 ## 4. Run Your First Workflow
 
-Use the web app to configure discovery targets, inspect jobs and scores, edit
-generated materials, rehearse a dry run, and approve any live submission.
+The Original redesign source candidate starts in **Jobs**. Open **My profile →
+Search preferences** to save roles, locations, work arrangements, boards and
+limits. Return to **Jobs → Search for jobs**, review effective criteria and
+readiness, then choose **Start search**. Filtering saved jobs is a separate
+action. Saving preferences or fixing a connection does not launch work.
+
+Compare the resulting Jobs table, open one job, choose tailored or full-baseline
+**Prepare resume**, edit in the real Plate editor, review/accept the document,
+then rehearse and review its application. Final browser submission stays manual.
 [Daily Workflow](normal-flows.md) walks through the complete supervised loop.
+The [redesign ledger](../plans/2026-11-11-original-app-redesign.md) records exact
+candidate verification; the published release determines installed availability.
 
 For a quick terminal-side readiness check:
 
@@ -226,8 +235,9 @@ jobctrl pipeline-status
 jobctrl runs
 ```
 
-Start with a dry run. JobCtrl does not submit in dry-run mode, and live
-submission remains behind the configured approval gate.
+Start application work with a dry rehearsal. Discovery itself has no dry-run
+mode. JobCtrl does not submit in an application rehearsal, and live submission
+retains its exact approval and ownership gates.
 
 ## Discovery Extension And Optional Managed-Browser Capabilities
 

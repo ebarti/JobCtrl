@@ -49,6 +49,10 @@ test("approved wording composes the full baseline and failed model or render ref
   const posting = await createPosting(api, "tailoring");
   await page.goto(`/jobs/${posting.job_id}`);
   await page
+    .locator("summary")
+    .filter({ hasText: /^Posting, availability and requirement details$/ })
+    .click();
+  await page
     .getByRole("button", { name: "Extract requirements", exact: true })
     .click();
   const extraction = await modelCall(app, "requirements.extract");
@@ -79,9 +83,6 @@ test("approved wording composes the full baseline and failed model or render ref
   });
   const matching = await modelCall(app, "requirements.match_catalog");
   matching.reply(catalogMatching(matching, { recovery: { verdict: "new" } }));
-  await expect(
-    page.getByRole("button", { name: "Assess person fit", exact: true }),
-  ).toBeEnabled();
   // Wait on the public accepted requirements state rather than a UI delay.
   await expect
     .poll(
@@ -96,9 +97,16 @@ test("approved wording composes the full baseline and failed model or render ref
     )
     .toBe(1);
 
-  await page
-    .getByRole("button", { name: "Assess person fit", exact: true })
-    .click();
+  // Prepare the factual state through its real public owner while keeping
+  // wording admission explicit. The primary Prepare resume flow is exercised
+  // below once the reviewed wording has current source-bound coverage.
+  const scoring = api.post(`/v1/jobs/${posting.job_id}/fit/assess`, {
+    data: {
+      expected_revision: 0,
+      prepare_wording: false,
+      prepare_coverage: true,
+    },
+  });
   const qualification = await modelCall(app, "fit.qualification");
   const qualificationContext = qualification.body["context"] as {
     binding: Record<string, string>;
@@ -136,6 +144,7 @@ test("approved wording composes the full baseline and failed model or render ref
       ).binding.requirements.map((row) => row.requirement_id),
     }),
   );
+  expect((await scoring).status()).toBe(200);
   await expect(page.getByText("Score 10/10", { exact: true })).toBeVisible();
   const beforeWording = await json<Fit>(
     api,
@@ -151,6 +160,10 @@ test("approved wording composes the full baseline and failed model or render ref
       response.url() === `${app.baseURL}/v1/actions/fit.refresh` &&
       response.request().method() === "POST",
   );
+  await page
+    .locator("summary")
+    .filter({ hasText: /^Update affected matches$/ })
+    .click();
   await page
     .getByRole("region", { name: "Affected matches", exact: true })
     .getByRole("button", { name: "Update affected matches", exact: true })
@@ -188,9 +201,8 @@ test("approved wording composes the full baseline and failed model or render ref
   ).toBe(10);
 
   await page.goto("/profile");
-  const wording = page.getByRole("article", {
-    name: `Wording ${proposedVariant.variant_id}`,
-    exact: true,
+  const wording = page.getByRole("article").filter({
+    has: page.getByText(alternative, { exact: true }),
   });
   await expect(wording.getByText(alternative, { exact: true })).toBeVisible();
   await wording
@@ -213,6 +225,10 @@ test("approved wording composes the full baseline and failed model or render ref
 
   const beforeRefresh = app.external.calls.length;
   await page.goto(`/jobs/${posting.job_id}`);
+  await page
+    .locator("summary")
+    .filter({ hasText: /^Update affected matches$/ })
+    .click();
   const refreshPanel = page.getByRole("region", {
     name: "Affected matches",
     exact: true,
@@ -258,15 +274,39 @@ test("approved wording composes the full baseline and failed model or render ref
     (await json<Fit>(api, "get", `/v1/jobs/${posting.job_id}/fit`)).score.score,
   ).toBe(10);
 
-  const composedResponse = page.waitForResponse(
+  await page
+    .getByRole("combobox", { name: "Resume to prepare", exact: true })
+    .selectOption("tailored");
+  const preparationAdmission = page.waitForResponse(
     (response) =>
-      response.url() === `${app.baseURL}/v1/resumes` &&
+      new URL(response.url()).pathname === "/v1/actions/preparation.run" &&
       response.request().method() === "POST",
   );
   await page
-    .getByRole("button", { name: "Compose tailored resume", exact: true })
+    .getByRole("button", { name: "Prepare resume", exact: true })
     .click();
-  let resume: Resume = (await (await composedResponse).json()).resume;
+  const preparationResponse = await preparationAdmission;
+  expect(preparationResponse.status()).toBe(202);
+  expect(preparationResponse.request().postDataJSON()).toMatchObject({
+    recipe: "prepare",
+    scope: "selected",
+    job_ids: [posting.job_id],
+    resume_mode: "tailored",
+  });
+  const preparation = (await preparationResponse.json()) as { runId: string };
+  const review = await modelCall(app, "resumes.coherence");
+  review.reply({ verdict: "pass", findings: [] });
+  await completed(api, preparation.runId);
+  let resume: Resume = (
+    await json<{ resumes: Resume[] }>(
+      api,
+      "get",
+      `/v1/resumes?jobId=${posting.job_id}`,
+    )
+  ).resumes[0]!;
+  await expect(
+    page.getByRole("tab", { name: "Resume", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   const composed = current(resume);
   expect(composed.document.experience.map((role) => role.id)).toEqual(
     baseline.resume.experience_entries.map((role) => role.id),
@@ -287,19 +327,11 @@ test("approved wording composes the full baseline and failed model or render ref
   expect(current(repeat).selected_variants).toEqual(composed.selected_variants);
   expect(current(repeat).coverage_manifest).toEqual(composed.coverage_manifest);
 
-  await page
-    .getByRole("button", { name: "Review coherence", exact: true })
-    .click();
-  const review = await modelCall(app, "resumes.coherence");
-  review.reply({ verdict: "pass", findings: [] });
   await expect
     .poll(
       async () => current(await getResume(api, resume.resume_id)).review.status,
     )
     .toBe("pass");
-  await page
-    .getByRole("button", { name: "Render resume", exact: true })
-    .click();
   await expect
     .poll(
       async () =>
@@ -338,6 +370,10 @@ test("approved wording composes the full baseline and failed model or render ref
   await page
     .getByRole("combobox", { name: "Saved resume", exact: true })
     .selectOption(resume.resume_id);
+  await page
+    .locator("summary:visible")
+    .filter({ hasText: /^Document validation and recovery tools$/ })
+    .click();
 
   // Keep a genuine read of the review's intermediate claim in flight while
   // the same browser receives its newer mutation result. Deliver its original
@@ -518,7 +554,9 @@ test("approved wording composes the full baseline and failed model or render ref
     holdLaterReads = false;
     releaseStaleRead();
     releaseLaterReads();
-    await page.unroute(matchesList, delayList);
+    // Stop admitting callbacks and drain this test's sole route before removing
+    // interception; removing it first auto-continues responses still in flight.
+    await page.unrouteAll({ behavior: "wait" });
     await Promise.all(forwardingReads);
   }
 });

@@ -18,10 +18,12 @@ baseline, and the preferences that control how those facts may be used. Scoring,
 materials, interview preparation, and Apply consume versioned snapshots of
 this record; they do not rewrite it to suit a job.
 
-The saved-input update controls described here belong to the current Python
-source build. The [published release](https://github.com/ebarti/JobCtrl/releases/latest)
-establishes installed-version availability; the synthetic demo illustrates the
-workflow without running the local update action.
+The controls described here belong to the Original redesign source candidate.
+The [redesign ledger](../plans/2026-11-11-original-app-redesign.md) records
+implementation and verification. The
+[published release](https://github.com/ebarti/JobCtrl/releases/latest) establishes
+installed-version availability; the synthetic demo illustrates supported local
+behavior without running the local model/durable update action.
 
 <CandidateProfileFlow />
 
@@ -139,22 +141,56 @@ Use the current web routes according to the kind of change you are making:
 
 | Route | What it owns |
 | --- | --- |
-| `/profile` | Personal information, baseline resume content, experience, optional position summaries, education, skills, achievement evidence, and voluntary EEO data. The same page renders the real editable baseline resume beside the editor. |
+| `/profile?section=experience` | Default My profile section: editable roles, position summaries, achievements, nearby wording/revision decisions and canonical requirement tags. |
+| `/profile?section=skills`, `education`, `personal` | Peer sections for independent skill, education and personal/application fields, including voluntary EEO data. |
+| `/profile?section=resume` | The actual Plate baseline editor, document styling and supported export; Profile facts remain the canonical source. |
 | `/profile/import/upload` | The start of the three-step PDF import flow. You choose whether to import profile data, resume style, or both before confirming. |
-| `/preferences` | Application defaults, writing and tailoring controls, resume style, and resume-template selection and editing. |
-| `/evidence-map` | A read-only map from canonical achievements and skills to their uses in scores, requirement fit, generated bullets, and coverage gaps. |
-| `/discovery` | Target search and Discovery controls. These are composed near the workflow that uses them rather than treated as general profile editing. |
+| `/preferences` | **Search preferences** combines saved target roles, career tracks/levels, locations/work arrangements and source/limit controls, alongside retained application/writing/template tools. |
+| `/learning` | User-authored learning/evidence work; activity does not prove capability. |
+| `/requirements?requirement=…` | Independent canonical library; achievement tags open its exact saved requirement, with return context. |
+| `/evidence-map` | Retained source/usage inspection reached contextually or through diagnostics; it is not a mandatory editing stop. |
+| `/discovery` | The same connected search task and contextual Discovery/source/schedule tools, reached from Jobs. |
 
-Profile keeps the canonical editor and the real baseline-resume preview side by
-side only while both remain readable; at narrower working widths the preview
-moves below the editor and the resize handle disappears. Evidence Map follows
-the same rule: its entry list, selected evidence, and gaps/reusable-stories
-inspector stack instead of compressing the three-pane desktop workspace.
+Experience, Skills, Education and Personal details are peer navigation sections,
+not collapsed content under an Overview. Changes retain each entry's stable
+identity and the normal autosave/conflict boundary. Experience leads with the
+role inventory, followed by **Professional summary** and compact secondary tools.
+Role summaries remain
+editable even when empty or when the role has no achievements. Remove a role or
+achievement deliberately; **Restore removed experience** restores the requested
+original identity into the current Profile and retains associated wording and
+source history. Restore the parent role before its removed achievement.
+
+The [complete synthetic Experience capture](/assets/screenshots/original-profile-wording.png)
+shows the role editor, canonical requirement tags, maintained current wording,
+separate proposed revision and retained history in the implemented candidate.
+
+If this browser retains an unfinished Profile/Plate draft, editing pauses until
+you explicitly restore or discard that copy. A recovery read/schema failure also
+stays paused: use **Retry recovery read** or deliberately discard it. Malformed
+recovery is not displayed as raw Profile JSON. Ownership and revision checks keep
+one tab from silently overwriting another's copy; use **Retry recovery ownership**
+or the explicit **Discard retained draft from other tab** control when needed.
+For Plate, use **Restore retained resume draft**, **Discard** or **Retry resume
+recovery**. Loading it does not accept a document or replace saved Profile facts.
+
+Durable editor recovery retains non-secret changed-field patches, not a full
+Profile/base snapshot. Password/credential edits remain only in this session's
+scoped memory: save them before reload or closing the page. Navigation preserves
+that session draft, and the browser warns before reload/close while it is unsaved. Restoring a
+safe patch never clears an existing saved password. Valid older editor recovery
+migrates to the safe projection before its original key is removed; unreadable
+copies remain paused for retry or explicit discard.
+
+The Resume section embeds the real Plate editor. Editing Profile or removing a
+record never silently overwrites a manual document draft or accepted resume.
+Full-width search controls and repeated fields reflow at narrow sizes rather
+than shrinking the document or hiding peer sections.
 
 Saving facts, adding or reviewing sources, and editing or approving wording do
 not run matching, scoring, authoring, or resume regeneration. Existing matches
 can become out of date and stay available with their recorded source versions.
-Choose **Get suggestions for target roles** in Discovery when you want
+Choose **Get suggestions for target roles** in Search preferences when you want
 evidence-backed suggestions.
 
 ### Update affected matches
@@ -468,8 +504,19 @@ See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determ
 
 Each saved baseline bullet has its own achievement identity. Alternative wording
 belongs under that achievement; it does not replace or merge another
-achievement. The library shows exact text, source references, provenance and
-whether the variant is approved, pending, rejected, deferred or stale.
+achievement. The current owner correction maintains **one current wording when
+the achievement is linked to one requirement**. Editing proposes a revision
+with retained history; editorial focus alone is not a reason for another
+maintained alternative. Additional wording needs distinct requirement coverage
+that cannot reuse or consolidate the existing expression. Labels name the
+canonical requirement or requirements it serves. Implementation and integrated
+proof of this correction are tracked in the
+[redesign ledger](../plans/2026-11-11-original-app-redesign.md).
+
+Each current/proposed/history record keeps exact text, source references,
+provenance and approval status visible. There is no global selected/preferred
+wording on the achievement. Proposed edits retain the exact earlier approval and
+accepted document; a decision applies only to the text and revision reviewed.
 
 A source-grounded wording proposal is prepared only through explicitly
 requested work. Fit first reuses current coverage of exact approved variants,
@@ -482,9 +529,22 @@ Profile owns the proposal's text, model receipt, source revisions and approval;
 it does not compute requirement matches or person fit. **Approve exact wording**
 authorizes that precise variant for reuse. **Reject wording** and **Defer
 wording** remain recorded, so a later job does not repeatedly generate the same
-proposal. **Edit as new wording** creates a separate draft for the same
-achievement; save the draft and approve its exact text before reuse. Approving
+proposal. An edit of reviewed wording creates a proposed revision rather than
+mutating its exact approved bytes. Save the proposal and approve its exact text
+before reuse. Pending draft edits retain earlier revisions; comparison is
+literal, and restoring historical text creates a draft for fresh review. Approving
 wording changes no fact or qualification score and starts no follow-on work.
+
+Unfinished wording edits are recoverable through the browser's draft storage.
+If storage cannot retain an edit, keep the page open until it is saved. A source
+or revision conflict preserves the local text and earlier accepted work; load
+the current saved inputs before retrying.
+
+Achievement requirement tags and wording labels use canonical identities, not
+posting snippets or invented editorial categories. The
+[Requirements library](requirements-library.md) groups linked achievements and
+their wordings, with source occurrences/history separate. Your explicit manual
+association remains unassessed; approving wording does not establish coverage.
 
 A changed source makes dependent wording stale. A failed authoring attempt keeps
 previous approved wording and shows its failure separately. A source-bound

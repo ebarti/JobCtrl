@@ -1,11 +1,12 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { z } from "zod";
 
 import { invalidateQueriesWithOptimisticOwnership, retainLaterQueryPublication } from "../../shared/lib/createOptimisticMutation.js";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
+import type { SessionPort } from "../../shared/ports/SessionPort.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
 import { Button } from "../../shared/ui/button.js";
@@ -163,23 +164,78 @@ function parseMap<T>(text: string, schema: z.ZodType<T>): T | null {
   }
 }
 
-function SettingsForm({ saved, section, refresh }: { readonly saved: ApplicationSettings; readonly section: "general" | "models"; readonly refresh: () => void }) {
+type SettingsSection = "general" | "models" | "budgets" | "automation";
+type SettingsFormValues = ReturnType<typeof formValues>;
+type SettingsDraft = { baseline: ApplicationSettings; values: SettingsFormValues };
+// A navigation-surviving, in-memory draft. Never write settings or credentials
+// to browser storage; the baseline revision still governs every later save.
+interface SettingsDraftBucket {
+  drafts: Map<string, SettingsDraft>;
+  generation: number;
+  listeners: Set<() => void>;
+}
+const settingsDrafts = new WeakMap<SessionPort, SettingsDraftBucket>();
+
+function draftsForSession(session: SessionPort): SettingsDraftBucket {
+  let bucket = settingsDrafts.get(session);
+  if (!bucket) {
+    bucket = { drafts: new Map(), generation: 0, listeners: new Set() };
+    settingsDrafts.set(session, bucket);
+  }
+  return bucket;
+}
+
+/** Clear one tenant's drafts and remount open forms when its workspace resets. */
+export function clearSettingsDraftsForSession(session: SessionPort, tenant: string): void {
+  const bucket = settingsDrafts.get(session);
+  if (!bucket) return;
+  for (const section of ["general", "models", "budgets", "automation"] as const) {
+    bucket.drafts.delete(JSON.stringify([tenant, section]));
+  }
+  bucket.generation += 1;
+  for (const listener of bucket.listeners) listener();
+}
+
+function SettingsDraftKeeper({ drafts, draftKey, baseline, values, isDirty }: {
+  readonly drafts: Map<string, SettingsDraft>; readonly draftKey: string; readonly baseline: ApplicationSettings;
+  readonly values: SettingsFormValues; readonly isDirty: boolean;
+}) {
+  useEffect(() => {
+    if (isDirty) drafts.set(draftKey, { baseline, values });
+    else drafts.delete(draftKey);
+  }, [drafts, draftKey, baseline, values, isDirty]);
+  return null;
+}
+
+function SettingsForm({ saved, section, active, refresh }: { readonly saved: ApplicationSettings; readonly section: SettingsSection; readonly active: boolean; readonly refresh: () => void }) {
+  const tenantId = useTenantId();
+  const { session } = usePorts();
+  const drafts = draftsForSession(session).drafts;
+  const draftKey = JSON.stringify([tenantId, section]);
+  const [initialDraft] = useState(() => drafts.get(draftKey));
   const update = useUpdateApplicationSettings();
-  const catalog = useProviderCatalog({ enabled: section === "models" });
-  const [baseline, setBaseline] = useState(saved);
+  // Browsing settings is read-only. Loading models may invoke external providers,
+  // so it only runs after the user explicitly requests a refresh.
+  const catalog = useProviderCatalog({ enabled: false });
+  const [baseline, setBaseline] = useState(initialDraft?.baseline ?? saved);
   const [validation, setValidation] = useState("");
   const [status, setStatus] = useState("");
   const [resetToken, setResetToken] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
   const form = useForm({
-    defaultValues: formValues(saved),
+    defaultValues: formValues(initialDraft?.baseline ?? saved),
     onSubmit: async ({ value }) => {
       const result = formSchema.safeParse(value);
       if (!result.success) { setValidation("Check the model names and numeric limits before saving."); return; }
       const v = result.data;
-      const models = Object.fromEntries(Object.entries({ codex: v.codexModel, claude: v.claudeModel, google: v.googleModel })
-        .filter(([, model]) => model.length > 0));
-      if (!models[v.defaultProvider]) { setValidation("Choose a model for the default provider."); return; }
+      const models = { ...baseline.providerModels };
+      for (const [provider, model] of Object.entries({ codex: v.codexModel, claude: v.claudeModel, google: v.googleModel })) {
+        if (model === (baseline.providerModels[provider] ?? "")) continue;
+        if (model) models[provider] = model;
+        else delete models[provider];
+      }
+      const modelSelectionChanged = v.defaultProvider !== baseline.defaultProvider || JSON.stringify(models) !== JSON.stringify(baseline.providerModels);
+      if (modelSelectionChanged && !models[v.defaultProvider]) { setValidation("Choose a model for the default provider."); return; }
       const tokenLimits = parseMap(v.laneTokenLimits, z.record(z.string(), z.number().int().min(0).max(1000000000)));
       const concurrency = parseMap(v.laneConcurrency, z.record(z.string(), z.number().int().min(1).max(32)));
       const efforts = parseMap(v.codexReasoningEfforts, settingsSchema.shape.codexReasoningEfforts);
@@ -207,12 +263,34 @@ function SettingsForm({ saved, section, refresh }: { readonly saved: Application
           JSON.stringify(baseline[key]) !== JSON.stringify(next))) as ApplicationSettingsPatch;
         if (!Object.keys(patch).length) { setValidation("No settings have changed."); return; }
         const result = await update.mutateAsync({ expectedRevision: baseline.revision, patch });
+        // A later section may already hold a newer draft when this request
+        // settles. Only clear the snapshot that this request actually saved.
+        const pendingDraft = drafts.get(draftKey);
+        if (pendingDraft?.baseline.revision === baseline.revision && JSON.stringify(pendingDraft.values) === JSON.stringify(value)) {
+          drafts.delete(draftKey);
+        }
         setBaseline(result);
         form.reset(formValues(result));
         setStatus("Settings saved.");
       } catch { /* Keep the edited values for review and retry. */ }
     },
   });
+  const restoreDraftValues = (values: SettingsFormValues) => {
+    // reset() clears field dirty state even with keepDefaultValues. Reapply
+    // changed fields so autosave and stale-revision protection see the draft.
+    const original = formValues(baseline);
+    form.reset(original);
+    for (const key of Object.keys(values) as Array<keyof SettingsFormValues>) {
+      if (values[key] !== original[key]) {
+        form.setFieldValue(key, values[key], { dontRunListeners: true, dontValidate: true });
+      }
+    }
+  };
+  useEffect(() => {
+    if (initialDraft) restoreDraftValues(initialDraft.values);
+    // Restore once for this mount; subsequent changes belong to the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (saved.revision !== baseline.revision && !form.state.isDirty && !form.state.isSubmitting) {
       form.reset(formValues(saved));
@@ -221,19 +299,23 @@ function SettingsForm({ saved, section, refresh }: { readonly saved: Application
     }
   }, [saved, baseline.revision, form]);
   const stale = saved.revision !== baseline.revision;
-  return <form ref={formRef} onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
+  return <form className="settings-application-form" ref={formRef} onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
     {stale ? <p role="alert">Settings changed elsewhere. Your edits remain here; load the saved version before editing against it.</p> : null}
     {stale ? <Button type="button" variant="outline" onClick={() => { form.reset(formValues(saved)); setBaseline(saved); setResetToken((token) => token + 1); setStatus(""); }}>Discard draft and load saved settings</Button> : null}
     <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting, values: state.values })}>
-      {({ isDirty, isSubmitting, values }) => <AutosaveUndoController
-        formRef={formRef} isDirty={isDirty} isSubmitting={isSubmitting || stale} resetToken={resetToken}
-        restoreValues={(next) => form.reset(next, { keepDefaultValues: true })}
-        setStatusMessage={setStatus} submit={() => form.handleSubmit()} values={values} />}
+      {({ isDirty, isSubmitting, values }) => <>
+        <SettingsDraftKeeper drafts={drafts} draftKey={draftKey} baseline={baseline} values={values} isDirty={isDirty} />
+        <AutosaveUndoController
+          formRef={formRef} isDirty={isDirty} isSubmitting={isSubmitting || stale || !active} resetToken={resetToken}
+          restoreValues={restoreDraftValues}
+          setStatusMessage={setStatus} submit={() => form.handleSubmit()} values={values} />
+      </>}
     </form.Subscribe>
     {status ? <p role="status">{status}</p> : null}
     <fieldset disabled={update.isPending}>
       {section === "models" ? <>
-      {catalog.isPending ? <p>Loading the live provider catalog…</p> : null}
+      <p>Saved selections are shown below. Refresh the catalog to check the available models with your providers.</p>
+      <Button type="button" variant="outline" disabled={catalog.isFetching} onClick={() => { void catalog.refetch(); }}>{catalog.isFetching ? "Refreshing models…" : "Refresh model catalog"}</Button>
       {catalog.error ? <div role="alert"><p>The live model catalog could not be refreshed: {catalog.error.message}. Saved selections remain unchanged.</p><Button type="button" variant="outline" onClick={() => { void catalog.refetch(); }}>Retry catalog</Button></div> : null}
       <form.Field name="defaultProvider">{(field) => <div><label htmlFor="settings-default-provider">Default provider</label><Select value={field.state.value} disabled={update.isPending} onValueChange={(value) => { if (value) field.handleChange(value as ApplicationSettings["defaultProvider"]); }}>
         <SelectTrigger id="settings-default-provider" onBlur={field.handleBlur}><SelectValue>{({ codex: "Codex", claude: "Claude", google: "Google" } as const)[field.state.value]}</SelectValue></SelectTrigger>
@@ -246,13 +328,13 @@ function SettingsForm({ saved, section, refresh }: { readonly saved: Application
         return <form.Field key={name} name={name}>{(field) => <div>
           <label htmlFor={`settings-${providerId}-model`}>{providerId === "codex" ? "Codex model" : providerId === "claude" ? "Claude model" : "Google model"}</label>
           <Select value={field.state.value} disabled={update.isPending || !provider?.ready || !models.length} onValueChange={(value) => { if (value !== null) field.handleChange(value); }}>
-            <SelectTrigger id={`settings-${providerId}-model`} onBlur={field.handleBlur}><SelectValue>{models.find((model) => model.id === field.state.value)?.displayName ?? (field.state.value ? `${field.state.value} (saved; not in the live catalog)` : "No model configured")}</SelectValue></SelectTrigger>
+            <SelectTrigger id={`settings-${providerId}-model`} onBlur={field.handleBlur}><SelectValue>{models.find((model) => model.id === field.state.value)?.displayName ?? (field.state.value ? `${field.state.value}${catalog.data ? " (saved; not in the catalog)" : " (saved)"}` : "No model configured")}</SelectValue></SelectTrigger>
             <SelectContent><SelectItem value="">No model configured</SelectItem>
               {field.state.value && !models.some((model) => model.id === field.state.value) ? <SelectItem value={field.state.value}>{field.state.value} (saved; not in the live catalog)</SelectItem> : null}
               {models.map((model) => <SelectItem key={model.id} value={model.id}>{model.displayName}{model.isDefault ? " (provider default)" : ""}</SelectItem>)}
             </SelectContent>
           </Select>
-          <p>{provider?.message ?? (provider?.ready ? "Live model catalog available." : "Provider catalog unavailable; saved selection retained.")}</p>
+          <p>{provider?.message ?? (provider?.ready ? "Model catalog available." : catalog.data ? "Provider catalog unavailable; saved selection retained." : "Refresh the catalog to choose a model.")}</p>
           {models.find((model) => model.id === field.state.value)?.supportedReasoningEfforts?.length ? <p>Reported reasoning options: {models.find((model) => model.id === field.state.value)!.supportedReasoningEfforts!.map((effort) => effort.reasoningEffort).join(", ")}.</p> : null}
         </div>}</form.Field>;
       })}
@@ -273,16 +355,23 @@ function SettingsForm({ saved, section, refresh }: { readonly saved: Application
       }}</form.Subscribe>
       <form.Field name="aiEnabled">{(field) => <label><input type="checkbox" checked={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.checked)} /> Enable AI actions</label>}</form.Field>
       </> : <>
-      {numericFields.map(([name, label, min, max]) => <form.Field key={name} name={name}>{(field) => <label>{label}<input type="number" min={min} max={max} step={name.endsWith("Usd") ? "0.01" : "1"} value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></label>}</form.Field>)}
-      <p>Zero daily budget disables the spending cap. Worker activity slot changes take effect after the worker restarts.</p>
+      {section === "automation" ? <form.Field name="aiEnabled">{(field) => <label><input type="checkbox" checked={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.checked)} /> Enable AI actions</label>}</form.Field> : null}
+      {numericFields.filter(([name]) => section === "budgets" ? name === "dailyBudgetUsd" || name === "applyMaxBudgetUsd" : section === "automation" ? name === "minFitScore" : name === "dailyBudgetUsd" || name === "applyMaxBudgetUsd" || name === "minFitScore").map(([name, label, min, max]) => <form.Field key={name} name={name}>{(field) => <label>{label}<input type="number" min={min} max={max} step={name.endsWith("Usd") ? "0.01" : "1"} value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></label>}</form.Field>)}
+      {section !== "automation" ? <p>A zero daily budget means no daily cap. A zero application budget is a $0 cap.</p> : null}
+      {section !== "budgets" ? <>
       <form.Field name="resumeMode">{(field) => <div><label htmlFor="settings-resume-mode">Default resume mode</label><Select value={field.state.value} disabled={update.isPending} onValueChange={(value) => { if (value) field.handleChange(value as ApplicationSettings["resumeMode"]); }}><SelectTrigger id="settings-resume-mode" onBlur={field.handleBlur}><SelectValue>{field.state.value === "baseline" ? "Copy approved baseline" : "Tailored"}</SelectValue></SelectTrigger><SelectContent><SelectItem value="baseline">Copy approved baseline</SelectItem><SelectItem value="tailored">Tailored</SelectItem></SelectContent></Select></div>}</form.Field>
       {(["scoreCriteria", "targetCriteria"] as const).map((name) => <form.Field key={name} name={name}>{(field) => <label>{name === "scoreCriteria" ? "Scoring criteria" : "Target criteria"}<textarea value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></label>}</form.Field>)}
+      </> : null}
       </>}
-      <details><summary>Advanced provider and lane settings</summary>
+      {section !== "budgets" ? <details><summary>Runtime and provider limits</summary>
+        {section !== "models" ? <>
+          <p>Worker activity slot changes take effect after the worker restarts.</p>
+          {numericFields.filter(([name]) => name === "workerActivitySlots" || name === "applyConcurrency" || name === "applyTimeoutSeconds").map(([name, label, min, max]) => <form.Field key={name} name={name}>{(field) => <label>{label}<input type="number" min={min} max={max} step="1" value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></label>}</form.Field>)}
+        </> : null}
         <p>Enter JSON objects. Lane limits and concurrency use numbers; reasoning efforts and provider configuration use strings.</p>
         {(section === "models" ? ["codexReasoningEfforts", "providerConfiguration"] as const : ["laneTokenLimits", "laneConcurrency"] as const).map((name) => <form.Field key={name} name={name}>{(field) => <label>{({ laneTokenLimits: "Lane token limits", laneConcurrency: "Lane concurrency", codexReasoningEfforts: "Codex reasoning by model", providerConfiguration: "Provider configuration (non-secret)" })[name]}<textarea value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></label>}</form.Field>)}
-      </details>
-      {section === "models" ? <details><summary>Model pricing quotes</summary>
+      </details> : null}
+      {section === "models" || section === "budgets" ? <details><summary>Model pricing quotes</summary>
         <p>For a finite daily budget, add a sourced quote for each Codex or Google model you use. Each JSON key is the exact provider:model identifier; each value has inputUsdPerMillion, outputUsdPerMillion, source and revision. Quotes are supplied by you and are not guessed.</p>
         <form.Field name="modelPricingQuotes">{(field) => <label>Model pricing quotes<textarea value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></label>}</form.Field>
       </details> : null}
@@ -293,11 +382,22 @@ function SettingsForm({ saved, section, refresh }: { readonly saved: Application
   </form>;
 }
 
-export function ApplicationSettingsPanel({ section = "general" }: { readonly section?: "general" | "models" }) {
+export function ApplicationSettingsPanel({ section = "general", active = true }: { readonly section?: SettingsSection; readonly active?: boolean }) {
   const query = useApplicationSettings();
-  return <section className="card" aria-labelledby="application-settings-title">
-    <h2 id="application-settings-title">{section === "models" ? "Models and providers" : "Application settings"}</h2>
+  const { session } = usePorts();
+  const bucket = draftsForSession(session);
+  const subscribe = useCallback((listener: () => void) => {
+    bucket.listeners.add(listener);
+    return () => { bucket.listeners.delete(listener); };
+  }, [bucket]);
+  const getGeneration = useCallback(() => bucket.generation, [bucket]);
+  const generation = useSyncExternalStore(subscribe, getGeneration, getGeneration);
+  const titleId = `application-settings-${section}-title`;
+  return <section className="card settings-application-panel" aria-labelledby={titleId}>
+    <h2 id={titleId}>{({ models: "Models and providers", budgets: "Budgets and pricing", automation: "Automation", general: "Application settings" } as const)[section]}</h2>
     {query.error ? <p role="alert">Settings could not be refreshed: {query.error.message}{query.data ? " The last loaded settings remain below." : ""}</p> : null}
-    {query.data ? <SettingsForm saved={query.data} section={section} refresh={() => { void query.refetch(); }} /> : query.isPending ? <p>Loading settings…</p> : null}
+    {query.data ? <SettingsForm key={`${section}:${generation}`} saved={query.data} section={section} active={active} refresh={() => { void query.refetch(); }} /> : query.isPending ? <p>Loading settings…</p> : null}
   </section>;
 }
+
+export { AppearanceSettingsPanel } from "./AppearanceSettingsPanel.js";

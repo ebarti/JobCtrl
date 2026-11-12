@@ -51,6 +51,31 @@ wording coverage relations. An unexpressed or unapproved wording is a document
 gap and does not reduce factual fit. Profile alone owns the words and approval;
 Resumes consumes the recorded coverage for composition.
 
+## Requirements Library And User Intent
+
+The independent library composes Requirements' current canonical meanings,
+Profile's immutable achievement/wording snapshots and Fit's recorded assessments
+and exact coverage. It groups by achievement identity and shows original posting
+occurrences separately. Missing or stale relationships remain explicit.
+
+Fit also owns revisioned manual associations between a requirement, achievement
+and optional exact wording. They retain their original meaning/source/wording
+pins and `origin: user`, `assessment_status: unassessed`. Remove/restore retains
+history and staleness. These records never become qualification, coverage,
+approval or a score and never dispatch a refresh. A stale binding is not repaired
+by matching labels or text. Readers join recorded IDs through the public
+[library/association API](../api/jobs-and-materials.md#requirements-library-and-associations).
+
+The 11 November owner correction keeps one maintained current wording for an
+achievement serving one requirement. Proposed revisions and historical wording
+are separate from current maintained assignments. Additional maintained wording
+requires distinct coverage that cannot reuse/consolidate existing wording;
+canonical requirement names provide its label. Only recorded source-bound
+coverage authority can establish that distinction. Manual intended-requirement
+metadata and exact wording approval do not manufacture it. See the
+[decision](../decisions.md#_2026-11-11-requirement-led-current-wording-and-proposed-revisions)
+and [redesign acceptance](../plans/2026-11-11-original-app-redesign.md).
+
 ## Profile Edits And Explicit Refresh
 
 Saving Profile facts, sources, wording, approvals or requirement definitions
@@ -85,13 +110,29 @@ Cancellation also seals the feature receipt through the application lifecycle.
 Lane and workspace spend admission remains in the model gateway; these work
 limits do not guarantee a hard external monetary charge ceiling.
 
-Coverage then directly reuses exact current approved-wording relations and
-groups remaining expression work by achievement. One source-bound group decision
-considers the relevant requirement set and existing wordings before requesting
-new text. A new proposal never approves itself or triggers another refresh.
+Coverage directly reuses exact current maintained assignments. An absent mapping,
+explicit approved revision or consolidation need still requires bounded grouped
+selection during admitted work, even if historical coverage relations exist for
+every requirement. The group joins supported retained catalog bindings with the
+affected subset; it cannot drop an already served requirement merely because
+that requirement was outside the new affected subset.
+
+One source-bound group decision can reuse approved text for the group, choose
+separate exact relations with cited distinct-coverage rationale, propose new
+wording or propose consolidation. Consolidation names at least two explicit
+existing replacements and preserves the full group until exact approval,
+positive coverage and atomic activation are recorded. Approval alone changes no
+Fit assignment. A new proposal never approves itself or triggers another refresh.
 If expression preparation fails after factual publication, the operation reports
 that partial boundary explicitly; the factual result remains independent of
 wording. User corrections retain history and exact source/revision authority.
+
+Manual refresh also freezes maintained assignment heads and their fingerprint
+at admission. Its own accepted writes advance that captured fingerprint;
+unrelated concurrent edits refuse rather than silently widening the operation.
+An unchanged choice revalidated through a recorded literal ancestor can be
+repinned without another grouped semantic call. Such structural reuse does not
+infer equivalent meaning from new text.
 
 ## Deterministic Score Resolution
 

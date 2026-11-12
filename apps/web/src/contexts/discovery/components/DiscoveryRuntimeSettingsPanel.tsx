@@ -117,15 +117,16 @@ function toFormValues(response: DiscoverySettingsResponse): DiscoverySettingsUpd
   return values;
 }
 
-export function DiscoveryRuntimeSettingsPanel() {
+export function DiscoveryRuntimeSettingsPanel({ defaultOpen = true, includeSearchSettings = true }: { readonly defaultOpen?: boolean; readonly includeSearchSettings?: boolean } = {}) {
   const settingsQuery = useDiscoverySettingsQuery();
 
   return (
     <DisclosureSection
       className="discovery-runtime-settings"
+      defaultOpen={defaultOpen}
       collapsedSummary="Discovery runtime configuration"
-      description="Source execution, lookback, filtering, and schedule"
-      title="Runtime settings"
+      description={includeSearchSettings ? "Source execution, lookback, filtering, and schedule" : "Source concurrency, request identity and optional recurring searches"}
+      title={includeSearchSettings ? "Runtime settings" : "Source behavior and schedules"}
     >
       {settingsQuery.error ? (
         <Alert className="inline" variant="destructive">
@@ -133,7 +134,7 @@ export function DiscoveryRuntimeSettingsPanel() {
         </Alert>
       ) : null}
       {settingsQuery.data ? (
-        <DiscoveryRuntimeSettingsForm initial={settingsQuery.data} />
+        <DiscoveryRuntimeSettingsForm initial={settingsQuery.data} includeSearchSettings={includeSearchSettings} />
       ) : settingsQuery.isPending ? (
         <Empty title="Loading runtime settings." />
       ) : null}
@@ -141,7 +142,7 @@ export function DiscoveryRuntimeSettingsPanel() {
   );
 }
 
-export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySettingsResponse }) {
+export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = true }: { initial: DiscoverySettingsResponse; readonly includeSearchSettings?: boolean }) {
   const updateSettings = useUpdateDiscoverySettingsMutation();
   const tenantId = useTenantId();
   const [statusMessage, setStatusMessage] = useState("");
@@ -227,6 +228,7 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         </div>
       ) : null}
       <div className="field-grid">
+        {includeSearchSettings ? <>
         <form.Field name="boards">
           {(field) => {
             const selected = new Set(field.state.value ?? []);
@@ -271,6 +273,7 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         <form.Field name="hoursOld">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.hoursOld} id="discovery-lookback" name="hoursOld" label="Posting lookback hours" min={0} max={8760} value={field.state.value ?? 72} metadata={effective.hoursOld} onChange={field.handleChange} />}
         </form.Field>
+        </> : null}
         <form.Field name="maxParallelFamilies">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.maxParallelFamilies} id="discovery-max-parallel" name="maxParallelFamilies" label="Parallel source families" min={1} max={4} value={field.state.value ?? initial.settings.maxParallelFamilies} metadata={effective.maxParallelFamilies} onChange={field.handleChange} />}
         </form.Field>

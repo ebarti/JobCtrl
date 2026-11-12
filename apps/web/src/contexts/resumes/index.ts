@@ -1,4 +1,5 @@
 export { ResumePanel } from "./ResumePanel.js";
+export { clearResumeEditorDraftsForSession, useResumeDraftStatus } from "./editorDrafts.js";
 export {
   useResumeArtifactCatalog,
   useResumeArtifactDetail,
@@ -14,10 +15,10 @@ export {
   type ResumeArtifactStatus,
 } from "./artifactCatalog.js";
 export {
-  resumesInvalidation,
   resumeKeys,
   useResumes,
   type Resume,
   type ResumeDocument,
   type ResumeRevision,
 } from "./client.js";
+export { resumesInvalidation } from "./events.js";

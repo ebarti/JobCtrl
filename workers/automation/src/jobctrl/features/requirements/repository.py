@@ -187,6 +187,28 @@ class SqliteRequirementStore:
         ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    def history(self, requirement_id, *, kind, limit, offset, connection):
+        """Read retained owner records, including superseded job snapshots."""
+        if kind == "revisions":
+            total = connection.execute("SELECT count(*) FROM requirements_meanings WHERE requirement_id=?",
+                                       (requirement_id,)).fetchone()[0]
+            rows = [self._meaning(row) for row in connection.execute(
+                "SELECT * FROM requirements_meanings WHERE requirement_id=? ORDER BY revision DESC LIMIT ? OFFSET ?",
+                (requirement_id, limit, offset),
+            )]
+        else:
+            total = connection.execute("SELECT count(*) FROM requirements_occurrences WHERE requirement_id=?",
+                                       (requirement_id,)).fetchone()[0]
+            rows = [{**json.loads(row["occurrence_json"]), "snapshot_revision": row["snapshot_revision"],
+                     "accepted": row["accepted_revision"] == row["snapshot_revision"]}
+                    for row in connection.execute(
+                        "SELECT o.*,a.revision accepted_revision FROM requirements_occurrences o "
+                        "LEFT JOIN requirements_accepted a ON a.job_id=o.job_id "
+                        "WHERE o.requirement_id=? ORDER BY o.snapshot_revision DESC,o.job_id,o.occurrence_id LIMIT ? OFFSET ?",
+                        (requirement_id, limit, offset),
+                    )]
+        return {"total": total, "rows": rows}
+
     def delete_job_data(self, job_id, connection=None):
         if connection is None:
             with self.database.transaction() as connection:

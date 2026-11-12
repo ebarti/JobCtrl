@@ -94,8 +94,8 @@ test("Profile manually updates the previously missing match, reuses unaffected a
   await saveOwnership(api);
 
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("/profile");
-  await expect(page).toHaveURL(/\/profile\/?$/);
+  await page.goto("/profile?section=personal");
+  await expect(page).toHaveURL(/\/profile\/?\?section=personal$/);
   await expect(page).toHaveTitle(/JobCtrl/);
   await page
     .getByLabel("Full name", { exact: true })
@@ -107,6 +107,10 @@ test("Profile manually updates the previously missing match, reuses unaffected a
   );
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   expect((await saved).status()).toBe(200);
+  await page
+    .getByRole("navigation", { name: "My profile sections", exact: true })
+    .getByRole("link", { name: "Experience", exact: true })
+    .click();
   const panel = page.getByRole("region", {
     name: "Affected matches",
     exact: true,
@@ -543,6 +547,7 @@ test("a saved change while a manual refresh is queued refuses before any selecto
 test("one grouped achievement decision proposes one wording for its full requirement set and its own write never starts another run", async ({
   api,
   app,
+  page,
 }) => {
   const seed = await createScoredFit(api, app, "manual-grouped", {
     twoRequirements: true,
@@ -624,5 +629,238 @@ test("one grouped achievement decision proposes one wording for its full require
   expect(modelOperations(app, before)).toEqual([
     "fit.wording-coverage-grouped",
     "profile.wording_authoring",
+  ]);
+
+  // Approval retains the authored source and proposal history. Only the next
+  // explicit grouped determination may maintain this wording for both meanings.
+  const approved = await json<Library>(
+    api,
+    "post",
+    `/v1/profile/wording/${proposed[0]!.variant_id}/decision`,
+    {
+      expectedProfileVersion: library.profileVersion,
+      expectedVariantRevision: proposed[0]!.revision,
+      exactText: proposed[0]!.text,
+      decision: "approve",
+    },
+  );
+  await pendingRefresh(api);
+  expect(modelOperations(app, beforeUnchanged)).toEqual([]);
+  const selecting = await startRefresh(
+    api,
+    refreshPayload(await pendingRefresh(api)),
+    "manual-grouped-select-approved",
+  );
+  const selection = await modelCall(app, "fit.wording-coverage-grouped");
+  expect(
+    (selection.body["context"] as GroupedCoverageContext).binding.requirements
+      .map((row) => row.requirement_id)
+      .sort(),
+  ).toEqual(ids.toSorted());
+  selection.reply(
+    groupedCoverageDecision(selection, {
+      evidenceSourceId: `evidence:${achievement.source_refs[0]!.source_id}`,
+      status: "covered",
+      action: "reuse_approved",
+      reusableVariantId: proposed[0]!.variant_id,
+    }),
+  );
+  await completed(api, selecting.runId);
+  type CurrentWording = {
+    assignment_id: string;
+    revision: number;
+    state: string;
+    current: boolean;
+    variant_id: string;
+    variant_revision: number;
+    approval_id: string;
+    relation_id: string;
+    requirement_id: string;
+    achievement_id: string;
+  };
+  const maintained = await json<{
+    requirements: {
+      requirement_id: string;
+      current_wordings: CurrentWording[];
+    }[];
+  }>(api, "get", "/v1/fit/requirement-library");
+  const selected = maintained.requirements
+    .filter((row) => ids.includes(row.requirement_id))
+    .flatMap((row) =>
+      row.current_wordings.filter((binding) => binding.state === "active"),
+    );
+  expect(selected).toHaveLength(2);
+  expect(
+    new Set(
+      selected.map(
+        (binding) => `${binding.requirement_id}:${binding.achievement_id}`,
+      ),
+    ).size,
+  ).toBe(2);
+  for (const binding of selected)
+    expect(binding).toMatchObject({
+      variant_id: proposed[0]!.variant_id,
+      achievement_id: achievement.achievement_id,
+      current: true,
+    });
+  expect(
+    new Set(selected.map((binding) => binding.variant_id)).size,
+    "Many requirements reuse one maintained exact wording",
+  ).toBe(1);
+  expect(
+    (await json<Library>(api, "get", "/v1/profile/wording")).variants,
+  ).toEqual(approved.variants);
+  const afterSelection = app.external.calls.length;
+  const exactReuse = await startRefresh(
+    api,
+    refreshPayload(await pendingRefresh(api)),
+    "manual-grouped-reuse-selected",
+  );
+  await completed(api, exactReuse.runId);
+  expect((await operation(api, exactReuse.runId)).counters.model_calls).toBe(0);
+  expect(modelOperations(app, afterSelection)).toEqual([]);
+
+  await page.goto("/profile");
+  await expect(
+    page.getByRole("article", { name: "Current wording", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    page
+      .getByRole("article", { name: "Current wording", exact: true })
+      .locator(".profile-wording-text"),
+  ).toHaveText(wording);
+
+  // A proposed exact revision is approval history until complete coverage has
+  // selected it. Partial expression of the intended union cannot activate it.
+  const partialText =
+    "Implemented and documented the durable workflow recovery service.";
+  const newDraft = await json<Library>(api, "post", "/v1/profile/wording", {
+    expectedProfileVersion: approved.profileVersion,
+    achievementId: achievement.achievement_id,
+    text: partialText,
+    sourceRefs: achievement.source_refs,
+    replacesVariantId: proposed[0]!.variant_id,
+    replacesVariantRevision: approved.variants.find(
+      (row) => row.variant_id === proposed[0]!.variant_id,
+    )!.revision,
+    intendedRequirementIds: ids,
+  });
+  const partialVariant = newDraft.variants.find(
+    (row) => row.text === partialText,
+  )!;
+  await json<Library>(
+    api,
+    "post",
+    `/v1/profile/wording/${partialVariant.variant_id}/decision`,
+    {
+      expectedProfileVersion: newDraft.profileVersion,
+      expectedVariantRevision: partialVariant.revision,
+      exactText: partialVariant.text,
+      decision: "approve",
+    },
+  );
+  const oldPins = selected
+    .map((row) => ({
+      assignment_id: row.assignment_id,
+      revision: row.revision,
+      variant_id: row.variant_id,
+      variant_revision: row.variant_revision,
+      approval_id: row.approval_id,
+      relation_id: row.relation_id,
+      requirement_id: row.requirement_id,
+    }))
+    .sort((a, b) => a.requirement_id.localeCompare(b.requirement_id));
+  const readPins = async () =>
+    (
+      await json<{ requirements: { current_wordings: CurrentWording[] }[] }>(
+        api,
+        "get",
+        "/v1/fit/requirement-library",
+      )
+    ).requirements
+      .flatMap((row) => row.current_wordings)
+      .filter(
+        (row) => ids.includes(row.requirement_id) && row.state === "active",
+      )
+      .map((row) => ({
+        assignment_id: row.assignment_id,
+        revision: row.revision,
+        variant_id: row.variant_id,
+        variant_revision: row.variant_revision,
+        approval_id: row.approval_id,
+        relation_id: row.relation_id,
+        requirement_id: row.requirement_id,
+      }))
+      .sort((a, b) => a.requirement_id.localeCompare(b.requirement_id));
+  expect(
+    await readPins(),
+    "Approval does not replace any maintained choice",
+  ).toEqual(oldPins);
+  expect(modelOperations(app, afterSelection)).toEqual([]);
+  const partialRefresh = await startRefresh(
+    api,
+    refreshPayload(await pendingRefresh(api)),
+    "manual-grouped-partial-revision",
+  );
+  const partialChoice = await modelCall(app, "fit.wording-coverage-grouped");
+  const partialDecision = groupedCoverageDecision(partialChoice, {
+    evidenceSourceId: `evidence:${achievement.source_refs[0]!.source_id}`,
+    status: "covered",
+    action: "reuse_approved",
+    reusableVariantId: proposed[0]!.variant_id,
+  });
+  expect(
+    partialDecision.relations
+      .filter((row) => row.variant_id === partialVariant.variant_id)
+      .map((row) => row.requirement_id)
+      .sort(),
+  ).toEqual(ids.toSorted());
+  partialChoice.reply({
+    ...partialDecision,
+    relations: partialDecision.relations.map((row) =>
+      row.variant_id === partialVariant.variant_id &&
+      row.requirement_id === ids[1]
+        ? {
+            ...row,
+            status: "not_covered",
+            rationale:
+              "This exact new text expresses recovery, but does not express reviewed ownership.",
+          }
+        : row,
+    ),
+  });
+  await completed(api, partialRefresh.runId);
+  const afterPartial = await readPins();
+  const choices = (rows: typeof oldPins) =>
+    rows.map(({ revision: _revision, ...pins }) => pins);
+  expect(
+    choices(afterPartial),
+    "Partial replacement preserves every exact prior requirement, wording, approval and relation pin",
+  ).toEqual(choices(oldPins));
+  for (const head of afterPartial) {
+    const prior = oldPins.find(
+      (row) => row.assignment_id === head.assignment_id,
+    )!;
+    expect(head.revision).toBeGreaterThanOrEqual(prior.revision);
+    const history = await json<{
+      current_revision: number;
+      rows: CurrentWording[];
+    }>(
+      api,
+      "get",
+      `/v1/fit/current-wordings/${head.assignment_id}/history?limit=10&offset=0`,
+    );
+    expect(history.current_revision).toBe(head.revision);
+    expect(history.rows).toHaveLength(head.revision);
+    for (const row of history.rows)
+      expect(row).toMatchObject(choices([prior])[0]!);
+  }
+  expect(
+    (await json<Library>(api, "get", "/v1/profile/wording")).variants.find(
+      (row) => row.variant_id === partialVariant.variant_id,
+    ),
+  ).toMatchObject({ status: "approved", text: partialText });
+  expect(modelOperations(app, afterSelection)).toEqual([
+    "fit.wording-coverage-grouped",
   ]);
 });

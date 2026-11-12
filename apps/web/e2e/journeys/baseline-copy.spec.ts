@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { test, expect, json } from "../harness/fixtures.js";
+import { test, expect, json, completed } from "../harness/fixtures.js";
 import {
   baseline,
   createBaseline,
   createPosting,
   current,
   getResume,
+  type Profile,
   type Resume,
 } from "./core-data.js";
 
@@ -18,8 +19,27 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   const posting = await createPosting(api);
   await page.goto(`/jobs/${posting.job_id}`);
   await page
-    .getByRole("button", { name: "Copy baseline", exact: true })
+    .getByRole("combobox", { name: "Resume to prepare", exact: true })
+    .selectOption("baseline");
+  const admission = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/v1/actions/preparation.run" &&
+      response.request().method() === "POST",
+  );
+  await page
+    .getByRole("button", { name: "Prepare resume", exact: true })
     .click();
+  const admitted = await admission;
+  expect(admitted.status()).toBe(202);
+  expect(admitted.request().postDataJSON()).toMatchObject({
+    recipe: "prepare",
+    scope: "selected",
+    job_ids: [posting.job_id],
+    limit: 1,
+    resume_mode: "baseline",
+  });
+  const preparation = (await admitted.json()) as { runId: string };
+  await completed(api, preparation.runId);
   let resume: Resume | undefined;
   await expect
     .poll(async () => {
@@ -31,7 +51,10 @@ test("approved baseline copy preserves every role, requires exact edit approval 
       resume = list.resumes[0];
       return resume?.version;
     })
-    .toBe(1);
+    .toBe(2);
+  await expect(
+    page.getByRole("tab", { name: "Resume", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   const copied = current(resume!);
   expect(copied.mode).toBe("baseline_copy");
   expect(copied.review.status).toBe("not_applicable");
@@ -53,9 +76,6 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   await json(api, "post", `/v1/resumes/${resume!.resume_id}/review`, {
     expected_version: resume!.version,
   });
-  await page
-    .getByRole("button", { name: "Render resume", exact: true })
-    .click();
   await expect
     .poll(
       async () => {
@@ -185,6 +205,10 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   const editedRevision = resume!.current_revision;
   expect(editedRevision).not.toBe(copied.revision_id);
   await page
+    .locator("summary:visible")
+    .filter({ hasText: /^Document validation and recovery tools$/ })
+    .click();
+  await page
     .getByRole("button", { name: "Render resume", exact: true })
     .click();
   await expect
@@ -254,6 +278,88 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   for await (const chunk of stream) downloadedHash.update(chunk);
   expect(await download.failure()).toBeNull();
   expect(downloadedHash.digest("hex")).toBe(firstDigest);
+  // Applications uses the same one-step preparation contract and selects the
+  // exact produced document while retaining the earlier accepted export.
+  const profileForApplication = await json<Profile>(api, "get", "/v1/profile");
+  const applicationName = "Synthetic Application Resume Candidate";
+  await json<Profile>(api, "patch", "/v1/profile", {
+    expectedProfileVersion: profileForApplication.profileVersion,
+    profile: {
+      ...profileForApplication.profile,
+      personal: {
+        ...profileForApplication.profile.personal,
+        full_name: applicationName,
+      },
+    },
+  });
+  await page.goto(`/apply-review?jobKey=${encodeURIComponent(posting.job_id)}`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByRole("combobox", { name: "Resume to prepare", exact: true })
+    .selectOption("baseline");
+  const applicationAdmission = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/v1/actions/preparation.run" &&
+      response.request().method() === "POST",
+  );
+  await page
+    .getByRole("button", { name: "Prepare resume", exact: true })
+    .click();
+  const applicationResponse = await applicationAdmission;
+  expect(applicationResponse.status()).toBe(202);
+  expect(applicationResponse.request().postDataJSON()).toMatchObject({
+    recipe: "prepare",
+    scope: "selected",
+    job_ids: [posting.job_id],
+    resume_mode: "baseline",
+  });
+  await completed(
+    api,
+    ((await applicationResponse.json()) as { runId: string }).runId,
+  );
+  const applicationEditor = page.getByRole("textbox", {
+    name: "Resume editor",
+    exact: true,
+  });
+  await expect(applicationEditor).toContainText(applicationName);
+  resume = await getResume(api, resume!.resume_id);
+  expect(current(resume).document.personal.full_name).toBe(applicationName);
+  expect(current(resume).document.experience.map((role) => role.id)).toEqual(
+    baseline.resume.experience_entries.map((role) => role.id),
+  );
+  expect(resume.accepted_revision_id).toBe(editedRevision);
+  const unchangedAccepted = await api.get(
+    `/v1/resumes/${resume.resume_id}/export?format=pdf&accepted=true`,
+  );
+  expect(unchangedAccepted.status()).toBe(200);
+  expect(
+    createHash("sha256")
+      .update(await unchangedAccepted.body())
+      .digest("hex"),
+  ).toBe(createHash("sha256").update(editedBytes).digest("hex"));
+  await testInfo.attach("applications-prepared-baseline-mobile", {
+    contentType: "image/png",
+    body: await page.screenshot(),
+  });
+  await applicationEditor.getByText(applicationName, { exact: true }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.insertText(" — retained application draft");
+  await expect(
+    page.getByRole("button", { name: "Prepare resume", exact: true }),
+  ).toBeDisabled();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "Jobs", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "Jobs sections", exact: true })
+    .getByRole("link", { name: "Applications", exact: true })
+    .click();
+  await expect(applicationEditor).toContainText("retained application draft");
+  await expect(
+    page.getByRole("button", { name: "Prepare resume", exact: true }),
+  ).toBeDisabled();
   expect(
     app.external.calls.filter((call) => call.path === "/model"),
   ).toHaveLength(0);

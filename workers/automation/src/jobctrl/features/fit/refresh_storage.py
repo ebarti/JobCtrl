@@ -70,6 +70,10 @@ class RefreshStorage:
         snapshot = FrozenFitProfileSnapshot(state["snapshot"]["profile"], state["snapshot"]["guidance"])
         self._assert_profile(connection, snapshot, full_profile=True)
         self.requirements.assert_current_catalog(state["snapshot"]["catalog"], connection=connection)
+        expected_wordings = state.get("accepted_wordings_fingerprint", state["snapshot"].get("current_wordings_fingerprint"))
+        if (expected_wordings is not None
+                and self.current_wordings_fingerprint(state["profile_id"], connection=connection) != expected_wordings):
+            raise ConflictError("The maintained wording assignments changed during the manual Fit refresh.")
         for job in state["snapshot"]["jobs"]:
             self.requirements.assert_current(job["requirements"], connection=connection)
             current = self.latest_score(job["job_id"], connection)

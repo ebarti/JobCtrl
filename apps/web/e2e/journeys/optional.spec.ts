@@ -411,9 +411,6 @@ test("interview notes and learning activity preserve source ownership; the diges
   });
   expect(preview.preview?.analyzedCount).toBe(1);
   const openLearning = async () => {
-    await page
-      .getByText("Selected-job demand and learning milestones", { exact: true })
-      .click();
     await expect(
       page.getByRole("heading", { name: "Review a selected-job cohort" }),
     ).toBeVisible();
@@ -425,7 +422,7 @@ test("interview notes and learning activity preserve source ownership; the diges
       })
       .check();
   };
-  await page.goto("/evidence-map");
+  await page.goto("/learning");
   await openLearning();
   await page.getByLabel("Cohort name").fill("Synthetic cohort");
   await page.getByLabel("Selection date").fill("2026-11-06");
@@ -433,6 +430,27 @@ test("interview notes and learning activity preserve source ownership; the diges
     .getByLabel("Your aspirations (separate from demonstrated capability)")
     .fill("Learn how recovery is designed.");
   await chooseJob();
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "Jobs", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "My profile", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "My profile sections", exact: true })
+    .getByRole("link", { name: "Learning", exact: true })
+    .click();
+  await expect(page.getByLabel("Cohort name")).toHaveValue("Synthetic cohort");
+  await expect(
+    page.getByLabel("Your aspirations (separate from demonstrated capability)"),
+  ).toHaveValue("Learn how recovery is designed.");
+  await expect(
+    page.getByRole("checkbox", {
+      name: "Synthetic Reliability Engineer · Synthetic Hiring Company",
+    }),
+  ).toBeChecked();
   await page.getByRole("button", { name: "Review selected cohort" }).click();
   await expect(
     page.getByText("Review selected cohort before model comparison"),
@@ -680,14 +698,70 @@ test("interview notes and learning activity preserve source ownership; the diges
     fitBefore,
   );
 
-  await page.goto("/evidence-map");
-  await page.getByText("Selected-job demand and learning milestones").click();
+  await page.goto("/learning");
   await expect(
     page.getByRole("heading", { name: "Synthetic cohort" }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Study recovery", level: 4 }),
   ).toBeVisible();
+  const milestoneEditor = page.getByRole("article", {
+    name: "Milestone Study recovery",
+    exact: true,
+  });
+  const completion = milestoneEditor.getByRole("textbox", {
+    name: "Completion evidence or artifact reference",
+    exact: true,
+  });
+  await completion.fill("Unsaved synthetic milestone notes.");
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "Jobs", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "My profile", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "My profile sections", exact: true })
+    .getByRole("link", { name: "Learning", exact: true })
+    .click();
+  await expect(completion).toHaveValue("Unsaved synthetic milestone notes.");
+  const competingActivity = await json<Learning>(api, "post", path, {
+    action: "update",
+    milestoneId: milestone.milestoneId,
+    expectedRevision: updated.milestones[0]!.revision,
+    status: "in_progress",
+    completionEvidence: "Saved activity from another editor.",
+  });
+  await expect(milestoneEditor.getByRole("alert")).toContainText(
+    "This milestone changed since the draft began.",
+  );
+  await expect(completion).toHaveValue("Unsaved synthetic milestone notes.");
+  await expect(
+    milestoneEditor.getByRole("button", {
+      name: "Save milestone activity",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await milestoneEditor
+    .getByRole("button", {
+      name: "Keep my draft against this saved version",
+      exact: true,
+    })
+    .click();
+  await milestoneEditor
+    .getByRole("button", { name: "Save milestone activity", exact: true })
+    .click();
+  await expect
+    .poll(
+      async () =>
+        (await json<Learning>(api, "get", path)).milestones[0]!.revision,
+    )
+    .toBe(competingActivity.milestones[0]!.revision + 1);
+  expect(
+    (await json<Learning>(api, "get", path)).milestones[0]!.completionEvidence,
+  ).toBe("Unsaved synthetic milestone notes.");
 
   // A provider disconnect leaves an unknown model outcome. After a reload the
   // UI must retain only the request identity and refuse a fresh comparison.
@@ -966,7 +1040,7 @@ test("offer terms retain unknowns, corrections and explicit compensation source 
   }>(api, "get", `/v1/jobs/${job.job_id}/compensation`);
   expect(compensation.summary.posted.recordStatus).toBe("not_recorded");
   expect(compensation.summary.market.recordStatus).toBe("not_requested");
-  await page.goto(`/jobs/${job.job_id}`);
+  await page.goto(`/jobs/${job.job_id}?jobTab=offer`);
   await expect(page.getByText("Offer decision: declined")).toBeVisible();
   await page.getByText("Offer history", { exact: true }).click();
   await expect(
@@ -1107,7 +1181,7 @@ test("contact research requires confirmation and distinguishes invalid output fr
     "/v1/contacts?employer=Synthetic%20Research%20Co",
   );
   expect(beforeConfirmation.items).toEqual([]);
-  await page.goto(`/jobs/${job.job_id}`);
+  await page.goto(`/jobs/${job.job_id}?jobTab=people`);
   const researchPanel = page.getByRole("region", { name: "Contact research" });
   await expect(
     researchPanel.getByRole("button", { name: "Confirm contact" }),
@@ -1321,6 +1395,14 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
   });
   expect(staleSettings.status()).toBe(409);
   await page.goto("/discovery");
+  await page
+    .locator("summary")
+    .filter({ hasText: /^Search plans, schedules and source behavior$/ })
+    .click();
+  await page
+    .locator("summary")
+    .filter({ hasText: /^One-off search with temporary criteria$/ })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Discovery runs" }),
   ).toBeVisible();
@@ -1328,6 +1410,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
     page.getByRole("heading", { name: "Explicit search targets" }),
   ).toBeVisible();
   const planPanel = page.getByRole("region", { name: "Profile search plan" });
+  await planPanel.getByRole("button", { name: /Profile search plan/ }).click();
   await expect(
     planPanel.getByText("No search plan has been saved yet."),
   ).toBeVisible();
@@ -1367,7 +1450,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
     complete: true,
   });
   await completed(api, search.runId);
-  await expect(page.getByText(`Run ${search.runId}: succeeded`)).toBeVisible();
+  await expect(page.locator(".discovery-runs-panel").getByRole("region", { name: "Job search progress", exact: true })).toContainText("Search completed");
   const sourceRegistry = await json<{
     sources: { sourceId: string; recommendedState: string }[];
   }>(api, "get", "/v1/discovery/sources");

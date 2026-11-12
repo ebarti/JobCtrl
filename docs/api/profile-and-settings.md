@@ -20,8 +20,12 @@ snapshots and source/revision guards.
 | `POST /v1/profile/sources` | `{expectedProfileVersion, source}` adds or revises owned supporting evidence; attachment bytes require their SHA-256 digest. |
 | `POST /v1/profile/sources/{source_id}/confirmation` | Requires `expectedProfileVersion`, `expectedSourceRevision`, `exactText`, and `decision: confirm\|reject\|defer`. |
 | `GET /v1/profile/wording` | `{ok, profileVersion, wordingRevision, roles, variants, proposals}`. Every role retains ordered achievement IDs and its baseline variant IDs. |
-| `POST /v1/profile/wording` | `{expectedProfileVersion, achievementId, text, sourceRefs}` creates a pending manual variant. |
+| `POST /v1/profile/wording` | `{expectedProfileVersion, achievementId, text, sourceRefs}` creates a pending manual variant. Optional `replacesVariantId`, `replacesVariantRevision` and `intendedRequirementIds` retain a proposed revision's lineage and user intent; intent is not assessed coverage. |
+| `PATCH /v1/profile/wording/{variant_id}` | `{expectedProfileVersion, expectedVariantRevision, exactText, text}` edits only a current pending draft, retains its prior revision and refuses reviewed wording. |
 | `POST /v1/profile/wording/{variant_id}/decision` | Requires `expectedProfileVersion`, `expectedVariantRevision`, `exactText`, and `decision: approve\|reject\|defer`; returns the refreshed library. |
+| `GET /v1/profile/wording/{variant_id}/history` | `{ok,revisions}` joins retained exact wording revisions and the current revision; it does not approve or restore text. |
+| `GET /v1/profile/recovery` | `{ok,profileVersion,roles,achievements}` inventories removed experience from retained Profile versions. |
+| `POST /v1/profile/recovery/restore` | `{expectedProfileVersion,sourceProfileVersion,kind: role\|achievement,id}` restores only the selected absent record into the current Profile with its original identity; a missing parent role must be restored first. |
 | `POST /v1/profile/import-resume` | `{filename, pdfBase64, importProfile?, importStyle?}` extracts a recorded draft with `source.attemptId`, `determinationId`, observed style and the original base Profile version. |
 | `POST /v1/profile/target-role-suggestions` | `{expectedProfileVersion, maximumSuggestions?}` requests 1–5 source-bound, unselected model suggestions; no search consent is inferred. |
 | `POST /v1/profile/required-bullet-suggestions` | `{expectedProfileVersion, maximumSuggestions?}` requests 1–24 source-bound coaching findings, joining actual achievement IDs and saved positions. |
@@ -68,6 +72,12 @@ failed request separately. An immutable authoring brief is deduplicated by its
 caller-owned `origin_key`; rejected and deferred requests are not regenerated
 for each job.
 
+Profile owns revision lineage and exact approval history, not the semantic
+decision to maintain another current wording. Fit joins recorded requirement
+coverage; user-proposed requirement IDs cannot manufacture it. The current
+wording/consolidation contract and its pending integrated proof are recorded in
+[the redesign plan](../plans/2026-11-11-original-app-redesign.md).
+
 PDF extraction uses the configured model with verbatim field spans. Import
 acceptance rejoins the recorded attempt/determination and selected sections in
 the version-fenced Profile transaction. It appends experience/education/skills,
@@ -90,6 +100,24 @@ unavailable references remain explicit. Target export/import preserves every
 Profile-owned row, source/wording/approval ID and supporting attachment byte.
 See [Candidate Profile](../user/candidate-profile.md#preserve-profile-during-the-fresh-state-transition).
 
+## Search Location Bindings
+
+`PATCH /v1/profile` preserves optional
+`profile.experience.target_location_bindings`. Each binding has `rowIndex`
+(integer 0–99), exact `text`, `provider: photon`, `placeId`, `displayName`,
+`latitude`, `longitude`, ISO `selectedAt` and `provenance: user_selected`.
+Readers join recorded row index and exact text; repeated display text does not
+merge distinct places. Removing a location reindexes retained rows, and changed
+text/position drops a stale binding. Older text-only preferences remain
+unverified. An accepted Discovery target plan may carry that full binding as the
+location row's optional `selectedPlace`.
+
+The browser's explicit place port performs lookup only after **Search map**.
+Reads, typing and ordinary saves make no lookup or model request. Structural
+binding validation cannot prove geographic suitability, work authorization or
+semantic support. The [search guide](../user/discovery.md#saved-search-preferences)
+owns the user flow and disclosure.
+
 ## Settings and Credentials
 
 Foundation owns the reserved `/v1/settings` and `/v1/credentials` boundaries.
@@ -98,11 +126,13 @@ failure responses must preserve the [security boundary](../developer/security.md
 The Python HTTP server, CLI and workers must use the same effective settings
 and canonical feature services, rather than independent business writers.
 
-## Config JSON Field Reference
+## Shared Settings Fields {#config-json-field-reference}
 
 Configuration field names and defaults are determined by the integrated Python
-settings adapter. Consult that implementation before relying on an old field or
-restart claim. Settings and credentials have different storage and disclosure
+settings adapter and revisioned `app_settings` in SQLite. The historical anchor
+is retained for deep links; `config.json` is not a second current authority.
+Consult the implementation before relying on an old field or restart claim.
+Settings and credentials have different storage and disclosure
 rules; never put a secret in general settings, events or diagnostic output.
 
 ## Provider Endpoint Compatibility

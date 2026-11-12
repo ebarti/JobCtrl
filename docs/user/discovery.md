@@ -4,88 +4,193 @@ import DiscoveryPipeline from "../.vitepress/theme/DiscoveryPipeline.vue";
 
 # Discovery & Sources
 
-Discovery turns your target search into source queries, checks returned jobs
-against that intent, and prepares admitted leads for scoring and materials. This
-page owns the target-search controls, source/runtime settings, scheduling, crawl
-policy, and supervised contact-research boundary. For the end-to-end loop, start
-with [Daily Workflow](normal-flows.md); for providers and the shared spend
-ceiling, use [Configuration](configuration.md).
+Use **Jobs → Start search** to run your saved preferences directly beside the
+comparison table. The inline progress strip shows the actual search state, new
+jobs and observed jobs; your filters and selected table context stay in place.
+Use the secondary **Search preferences** action to edit criteria, then
+**Back to jobs** to return to the same comparison-table context.
+**My profile → Search preferences** keeps roles, career
+tracks/levels, locations/work arrangements, boards and limits together.
+**Filter saved jobs** only filters existing records; it starts no acquisition.
+
+This guide describes the Original redesign source candidate. The
+[redesign ledger](../plans/2026-11-11-original-app-redesign.md) records actual
+implementation and verification, while the
+[published release](https://github.com/ebarti/JobCtrl/releases/latest) establishes
+installed availability. Source changes and the offline demo do not establish a
+release or hosted deployment. Start with [Daily Workflow](normal-flows.md) for the
+complete task sequence; use [Configuration](configuration.md) for providers and
+shared spend policy.
 
 <DiscoveryPipeline />
 
-Discover does not support a dry run. When no pipeline controls are saved,
-Discover starts with **Dry run** off; a previously saved choice remains
-unchanged. If it is checked, Pipelines explains how to turn it off before
-starting an ordinary search.
-If saved pipeline controls cannot be read, Discover stays in dry-run mode and
-Pipelines asks you to review the displayed values before replacing the unreadable
-controls. If storage is unavailable, changes last only for the current session.
-The CLI likewise rejects Discover with `--dry-run` before initializing the
-workspace or starting a workflow.
+## Saved Search Preferences
 
-::: info One persistence authority
-Discovery settings and source records editable on `/discovery` are stored in
-`~/.jobctrl/jobctrl.db`. SQLite is the sole persistence authority for target
-search, Automation settings, broad-board controls and limits, source-family parallelism, crawler identity, runtime and schedule,
-the source registry, locator candidates, quarantine, manual capture, and other
-Discovery domain state. `config.json` does not own or provide a fallback for any
-of these fields. Source-review table filters and sorting live in the URL;
-named table views and presentation preferences live locally in this browser.
-:::
+Add target roles as independent repeatable inputs; Enter adds a row and moves
+focus to it. Choose career tracks and levels explicitly. Each location row keeps
+its own work-arrangement selections. These are current search choices, not
+preferences inferred from past employment or a suggestion accepted silently.
+Source suggestions and target-role coaching remain explicit, source-bound work.
 
-| Surface | SQLite authority | When a saved change applies |
-| --- | --- | --- |
-| Target search | Candidate Profile rows | Next Discover run |
-| Automation settings | Discovery-owned control rows | Next relevant run or standing-loop poll |
-| Runtime and schedule | `discovery_settings` | Next run or source family; schedule changes require a worker restart |
-| Sources, locator candidates, quarantine, and manual capture | Discovery context tables | Immediately for review state; next use for source execution |
+**Search map** sends only that location query to Photon and shows real results.
+Select a result to bind its place identity, display name, coordinates, selection
+time and user-selection provenance. Editing the label clears the binding;
+existing free text stays unverified. Opening the page or typing makes no lookup
+request. A selected place is not work authorization and does not establish that
+a posting fits your location constraints.
 
-Target search and Automation settings attempt to autosave an edited draft after
-five seconds without an edit. A failed save keeps the draft and error visible,
-without repeatedly submitting the unchanged draft. Choose **Save changes** to
-retry, or edit the draft to schedule another attempt.
+Profile owns target facts/preferences and their optimistic Profile version.
+Discovery owns boards, lookback, result/new-job limits, sources, schedules and
+execution settings in its own SQLite rows. The connected screen composes those
+public owners rather than creating another settings store. An incomplete or
+conflicting save retains the draft; check saved state before retrying.
 
-When no settings or profile targets have been saved, Discovery uses its normal
-first-use defaults. If saved Discovery settings or target-search inputs cannot
-be read or are invalid, Discovery stops before acquisition instead of using
-those defaults. A settings read or save also reports invalid saved settings
-without replacing them. Check workspace access and retry. If data is damaged,
-preserve the workspace and its database companions, then consult
-[Back Up And Restore](data-and-safety.md#back-up-and-restore) for a verified,
-compatible backup. A backup may predate newer changes; inspect it before any
-restore. The installed launcher does not provide a general pair-restore command.
+### How target search controls are used
+
+Literal role queries and location/work-arrangement rows retain their authored
+meaning. Track/function/seniority-based recall plans use explicit source-bound
+model determinations with source IDs, revisions and persisted receipts; a
+failed or stale plan preserves the prior accepted one. Search indexes, word
+lists and token similarity cannot infer meanings or turn suggestions into
+consent.
+
+The ordinary **Start search** path uses the current Profile Search preferences
+and saved Discovery board/limit policy. It explicitly sets empty one-run
+query/location overrides so older explicit Discovery target rows do not take
+precedence in that path. Existing explicit targets are retained for their
+supported contextual/CLI uses, not rewritten. **Search-only overrides** can
+supply literal queries and locations for one request without replacing saved
+preferences. The displayed effective summary names the inputs used.
+
+Search may make model-backed query preparation only after the explicit launch
+admits that work. Preference saves, reads, navigation and connection remedies
+start no query preparation, match refresh, scoring or resume generation.
+Provider-specific board/remote/age constraints can refuse an incompatible search
+unit while compatible units continue. A result limit is a request bound, not a
+promise of that many suitable or newly admitted jobs.
+
+The primary launch also binds the saved `expectedProfileVersion`. Queued or
+replayed planning refuses a changed Profile instead of silently absorbing new
+criteria. A current accepted target plan can be reused without another model
+connection. Otherwise the task shows known local blockers; provider auth,
+lane/spend and dispatch checks run only after deliberate **Start search**, not
+as navigation probes. Unsaved search drafts survive Preferences ↔ Search within
+the same session, tenant and database incarnation; saved values persist through
+reload. The offline demo clears those transient drafts on reset.
+
+## Launch And Observe Discovery
+
+![Synthetic Jobs workspace showing a running search, committed new-job counts and Request stop](../assets/screenshots/original-jobs-search-progress.png)
+
+Choose **Start search** directly in **Jobs**. It uses the last confirmed saved
+roles/locations, board/source scope and limits. Pending preference edits block
+launch until confirmed. **Search preferences** opens the connected editor when
+you want to change those criteria. A specific blocker appears beside the search
+when it cannot start; connection remedies return you to the same Jobs context.
+
+The progress strip distinguishes queueing, queued/planning, running, completed,
+partial, failed and stopped searches. An indeterminate indicator shows ongoing
+work; the app does not invent a percentage or ETA when source totals are unknown.
+Canonical counts and newly saved jobs update as work proceeds. Progress is
+restored after navigation or reload, and another tab detects the active search
+before offering another launch. An unavailable status check stays explicit and
+blocks another launch until reconciled.
+Discovery has no dry-run mode; the CLI rejects Discover with
+`--dry-run` before admission.
+
+The contextual **Search plans, schedules and source behavior** section keeps
+independent targets, query-plan review, one-off searches, automation and source
+execution controls available as separate disclosures. Job boards, posting age
+and result limits have one ordinary editor in **Search settings**. Opening a
+disclosure preserves its draft and starts no search or model work.
+
+The task invokes the existing `discovery.search` action with a retained
+idempotency key and database identity. Queued means Temporal accepted the request,
+not that acquisition completed. Progress distinguishes observed jobs, new jobs,
+partial failures and unknown totals. Accepted captures flow through the canonical
+Jobs writer. Initial preparation remains in the existing preparation owner;
+no view or ordinary save invents completed model work.
+
+If a start reply is uncertain, choose **Check previous search** or **Retry the
+same request** with the same inputs. A missing row is an observation at read
+time, not permission to discard an unresolved request. A workspace identity
+change refuses recovery into the replacement database.
+
+### Stop Or Recover A Discover Run
+
+**Request stop** records cancellation for the exact run. **Stop requested** is
+separate from settled cancellation; source work may still be finishing. Accepted
+jobs, source receipts/checkpoints and earlier materials remain available after
+failure or cancellation. Use **Recent searches** for retained outcomes. Technical
+inspection is available from **Settings → Data & diagnostics → Task history**
+without making it part of ordinary search.
+
+Unknown provider or worker state remains unknown. An event stream connection,
+fresh wrapper process or unavailable probe does not prove provider readiness or
+that all earlier work has stopped. Read the action's actual blocker and remedy.
+
+### Optional live Chrome connection
+
+A selected paired extension can supply bounded acquisition through the user's
+running Chrome session on supported provider-owned hosts. Without it, supported
+sources can use guarded public HTTP or anonymous managed browser acquisition.
+An offline optional extension does not itself block every search. Site policy,
+public destination checks and operation readiness still apply.
+
+Transport is selected before acquisition; a failed site request does not
+silently switch to another authority. Neither mode copies a personal browser
+profile. Extension pairing/rotation, capability adoption and a configured
+provider are separate explicit actions in **Settings → Connections**.
+
+### Resumable Broad-Board Searches
+
+Provider cursor/checkpoint state and the exact saved search fingerprint belong
+to the durable search. Accepted or intentionally filtered receipts commit before
+provider acknowledgement. A retry reuses valid checkpoints; a changed fingerprint
+or invalid cursor/schema fails explicitly. Epoch-fenced writes prevent an
+abandoned activity from publishing after cancellation or retry. Unknown provider
+totals remain unknown rather than becoming an invented completion percentage.
+
+## Capture A Known Posting
+
+Use **Jobs → Import job**, the extension's user-mediated **Save job**, or the
+contextual manual-capture queue for inaccessible content. Manual Jobs remains
+usable when optional Discovery is absent. Exact canonical identity, source
+snapshots, review lifetimes and import receipts prevent duplicate publication.
+A changed submitted body requires a new capture review lifetime; an exact receipt
+replay makes no additional model call.
+
+Blocked/login-walled/unsafe content does not become a placeholder Job. Supply
+reviewed content through the existing recovery path. Source refresh failures
+preserve accepted posting text. [Enrichment & Extraction](enrichment-and-extraction.md)
+owns canonical posting availability and capture provenance.
 
 ## Saved Source Review Views
 
-In **Source controls → Source registry**, use **Save as view** to name the
-current table setup, then choose it from **View** to return to that review.
-Views include column visibility, order and widths, sorting, column filters,
-and a table density override. **Configure table columns** changes visibility,
-order and density; the column headers also support reordering and resizing.
-Use **Save current view** to update a named view, or select **Default** to reset
-the table to its built-in presentation and active-source filter.
-
-Source views are separate from Jobs views. Both use the same browser-local
-saved-view mechanism; they do not change source records or Discovery settings.
-Applying a view updates the URL filters and sort. Reloading or opening a shared
-URL uses that URL's current filters and sort, with this browser's presentation
-preferences, rather than silently reapplying an older named view's filters.
+Source controls retain literal URL-backed filters, sort and saved views for
+review. Registry, locator candidates, quarantine, manual capture and source
+history remain reachable in contextual source tools. Deliberately inactive or
+rejected sources do not become actionable failures merely because they exist.
+Reading a source, a proposal or its diagnostics never enables it.
 
 ## Runtime, Sources, And Schedule
 
-Use **Discovery → Runtime settings** for boards, results per site, posting age,
-schedule, bounded source-family parallelism, and the
-optional browser request headers. Every saved value goes to SQLite. Schedule
-changes need a worker restart; boards, limits, and parallelism apply on the
-next run; user-agent changes apply to the next source family.
+Normal search starts from saved preferences and bounded source policy. Open
+contextual **Source management**, **Search plan**, runtime or schedule detail
+when needed; none requires a separate ordinary Pipelines visit.
 
-If you edit runtime settings while a save is in progress, newer values that
-differ from the saved response remain unsaved. Save again to apply them, or
-discard them to return to the last saved values.
+| Control | Authority and effect |
+| --- | --- |
+| Roles, tracks/levels, locations/work arrangements and optional place bindings | Profile's versioned saved preferences; next explicitly started search. |
+| Boards, result limits, lookback and new-job limit | Discovery settings with `expectedRevision`; captured for the admitted search. |
+| Source enablement, locator, quarantine and capture review | Feature-owned review/registry records; disabled/rejected intent is retained. |
+| Schedule | Explicitly enabled Discovery definition, reconciled by the worker; saving a schedule is not a manual search and does not normally require a restart. Saved and effective acknowledgement remain distinct. |
+| Shared automation/fit policy | Canonical runtime policy with `expectedPolicyRevision`; Discovery has no competing application-approval authority. |
 
-Parallel families are capped at four and should not exceed the worker's active
-activity slots. See
-[Concurrency & Fan-out](../architecture/pipeline/concurrency.md).
+Only the applicable owner's settings may change. Shared provider/model, spend
+and credential controls are in [Configuration](configuration.md). Normal forms
+do not ask you to tune lane JSON, worker slots or inspect queues to decide
+whether to search.
 
 ### Propose sources from saved posting history
 
@@ -138,405 +243,56 @@ decisions remain local source-control history, including after job-data purge.
 
 ### Runtime setting reference
 
-The help control beside each Runtime setting opens a short explanation and a
-deep link to the matching entry below.
+These retained anchors support field help and existing deep links. Exact values
+and editability come from the current feature-owned settings response.
 
 <a id="runtime-setting-job-boards"></a>
-**Job boards.** Choose which broad-board providers run for every generated
-target query. A Discover execution snapshots the selected boards when the run
-starts, so a change affects the next run rather than work already in progress.
+**Job boards.** Selected providers run under their supported query/location/age
+capabilities and saved source policy. Saving a choice does not fetch a page.
 
 <a id="runtime-setting-results-per-board"></a>
-**Results per board.** Set the maximum number of results requested from each
-selected board for one search unit. This is a provider request limit, not a
-promise that every board will return that many admitted leads; provider search/age bounds and exact identity checks still apply. The next Discover run snapshots the
-new value. Admission means a lead is eligible for persistence and enrichment;
-it is not a relevance score or a judgment that the job is suitable.
-
-LinkedIn search keeps cards listing-only instead of downloading every result's
-full description. When an admitted sparse card has the same normalized role and
-genuine employer as another stored job, JobCtrl requests that one
-posting's detail so content evidence can resolve the possible duplicate before
-the new-job budget advances. Other admitted cards enter Detail Enrichment for
-their posting content. If targeted detail is unavailable, JobCtrl preserves the
-sparse lead and safely keeps it separate rather than dropping it or merging on
-title and employer alone.
+**Results per board.** Maximum requested for each query/location unit, not a
+promise of suitable or newly admitted results. The shared new-job limit bounds
+canonical new-job admission across source families.
 
 <a id="runtime-setting-posting-lookback-hours"></a>
-**Posting lookback hours.** Limit broad-board discovery to postings no older
-than this many hours when the provider supports age filtering. The next
-Discover run snapshots the window.
+**Posting lookback hours.** Requested age window where the provider supports it;
+unsupported combinations are reported explicitly.
 
 <a id="runtime-setting-parallel-source-families"></a>
-**Parallel source families.** Limit how many source families may crawl at the
-same time inside a Discover execution. JobCtrl bounds the value to four and to
-the worker's available activity slots. The next run snapshots the limit;
-downstream enrichment remains separately bounded.
+**Parallel source families.** Bounded intake concurrency, separate from shared
+worker capacity and downstream preparation. It cannot bypass budgets or source
+pacing.
 
 <a id="runtime-setting-crawler-product-name"></a>
 <a id="runtime-setting-crawler-contact"></a>
 <a id="runtime-setting-use-browser-headers"></a>
-**Use browser headers.** This checkbox is off by default. Enable it to use
-`ua-generator` for a desktop Chrome User-Agent and matching client hints on
-JobCtrl-managed HTTP and anonymous browser requests. Each new gateway session
-uses one consistent generated identity from the latest versions known to the
-installed package; it does not look up versions online. Saved changes apply to
-new request sessions, including the next source family.
-
-When off, JobCtrl builds its existing `<product>/<version> (+<contact>)` header.
-Previously saved crawler product/contact values are preserved. This checkbox
-replaces those two text fields; it does not change connected Chrome's own
-headers, cookies, or session. It changes request headers, not the HTTP/TLS
-transport, and does not guarantee that a site will accept a request. Pacing,
-request budgets, URL validation, and server rate-limit handling still apply.
+**Crawler identity and browser headers.** Saved non-secret request identity
+applies to new owned acquisition sessions. Connected Chrome keeps its own
+headers/session. Identity selection does not grant access or bypass rate limits.
 
 <a id="runtime-setting-enable-scheduled-discovery"></a>
-**Enable scheduled discovery.** Control whether worker startup reconciles a
-recurring Temporal Discover schedule. This is off by default. Restart the
-worker after changing the setting so it can create or remove the schedule.
-
 <a id="runtime-setting-schedule-cron"></a>
-**Schedule cron.** Define the recurring local schedule with a five-field cron
-expression. JobCtrl uses it only while scheduled discovery is enabled, with
-`SKIP` overlap behavior so one scheduled execution does not overlap the next.
-Restart the worker after changing the expression.
-
-The Discovery page also hosts the **Automation settings** disclosure. Its minimum-fit,
-auto-apply, and approval controls affect Apply eligibility and submission, so
-their behavior is documented in
-[Apply → Approval And Automation Modes](apply.md#approval-and-automation-modes).
-
-### Ashby listing and locations
-
-The Ashby adapter consumes the [official public job posting
-API](https://developers.ashbyhq.com/docs/public-job-posting-api). It excludes
-postings explicitly marked `isListed: false`; `true` and an omitted flag retain
-normal admission. Listed postings proceed to ingestion and downstream analysis/scoring.
-
-Ashby location metadata retains the primary `location` (or the existing
-`locationName` fallback) first, then valid `secondaryLocations[].location`
-names in source order. Names are trimmed, deduplicated without regard to case while retaining the first spelling, and separated by `; `. These are provider location fields, not a local geography classifier. Full-posting interpretation and scoring assess location suitability from the saved targets and source evidence.
+**Scheduled discovery.** Disabled until explicitly enabled. A saved cron/schedule
+change is reconciled by the owning worker. Inspect reported saved/effective
+state rather than assuming a successful acknowledgement; ordinary schedule
+editing is not a worker-restart flow.
 
 ### Canonical identity and repeat applications
 
-Discovery preserves canonical posting identity, source-native identity, source
-observations, and reviewed duplicate links rather than treating every URL as a
-different opening. An accepted duplicate link may therefore prove that an
-alternate URL represents an already-known canonical job. Candidate or rejected
-duplicate links do not establish that relationship.
-
-Identity evidence alone does not claim that an application happened. Repeat
-protection combines it only with a confirmed application fact. A conservative
-same-employer/equivalent-role comparison can require confirmation, but it does
-not merge the jobs or turn either record into application history. See
+Canonical posting/source identities and accepted duplicate decisions identify
+openings; a similar title or employer does not merge them. Identity alone does
+not prove an application happened. Repeat protection joins confirmed application
+facts and current exact approval. See
 [Apply → Repeat-Application Protection](apply.md#repeat-application-protection).
-
-## Launch And Observe Discovery
-
-Explicit source selection uses each retained registry entry's provider identity,
-even when that board is absent from the saved default board list. Planning
-preserves disabled and quarantined choices: disabled entries stay skipped and
-quarantined entries retain their bounded allowance. Built-in JobStreaming boards
-are supported, active sources. Older experimental defaults are upgraded when the
-registry is loaded and seeded; they do not impose a ten-job probe cap. The run's
-result limit bounds new canonical jobs across the selected sources. A runnable
-broad-board entry without a known
-provider identity fails with a configuration error instead of being silently
-omitted from the requested run.
-
-Discovery owns the controls that decide what may enter a run; **Pipelines** owns
-starting and observing that run. In Pipelines, choose the Discover action, set a
-bounded result limit, internal source concurrency, and optional sources. If
-**Dry run** is checked, turn it off to enable an ordinary search, then keep the
-operations workspace open while work proceeds. The source
-picker supports up to 50 selections and labels broad-board adapters as
-JobStreaming; the persisted `jobspy:` prefix remains only a compatibility ID.
-
-<a id="live-chrome-prerequisite"></a>
-
-### Optional live Chrome connection
-
-Discovery and Enrich work with or without the extension. At each acquisition
-setup, JobCtrl prefers the selected, connected extension in your current Chrome
-profile. When it is offline or the status check is unavailable, the worker uses
-the existing public HTTP or anonymous Playwright path. A saved pairing token
-alone does not select the live transport. Pipelines reports connection status
-without blocking a run; the normal worker and stage prerequisites still apply.
-
-LinkedIn job pages captured through the extension open in an active temporary
-tab inside an unfocused window. This lets the job description render without
-switching your current tab or window. JobCtrl closes only its task-owned tab
-when capture finishes, fails, times out or is canceled; any other tabs you add
-to that window remain open. Other rendered sources keep using inactive tabs.
-
-Transport is chosen before fetching. A site, DNS, access, or cancellation
-failure never triggers another transport. A later acquisition setup may choose
-again. Anonymous access cannot use your signed-in session, and integrated
-fallback never opens a copied profile or adopts a system browser.
-
-Open the extension popup in the Chrome profile you want Discovery to use and
-save the pairing token there. That explicit action selects the extension
-installation stored in that profile and replaces any previous selection; an
-extension in another Chrome profile cannot lease work with the same token.
-Settings shows the selected installation's short identifier so the live bridge
-is not confused with token presence.
-
-After rebuilding an unpacked extension, reload its Chrome extension card before
-pairing. If Chrome loads the new popup while retaining the previous background
-worker, the popup reports **Extension update incomplete** and disables its
-actions rather than presenting a false ready state. Once reloaded, a popup that
-already holds the token shows **Use this Chrome profile for Discovery** when the
-installation still needs to be selected; copying the token again is unnecessary.
-
-This choice covers broad-board provider sessions, canonical ATS/API and Workday
-requests, Smart Extract rendering and detail-enrichment pages.
-On the connected path, brokered HTTP/API requests
-run in its service worker; rendered-page work opens bounded temporary
-tabs. Both execute in the Chrome profile where the extension is installed, so
-current cookies, authenticated sessions, browser settings, and later profile
-changes are used directly. JobCtrl does not copy, export, or launch that
-profile. The task bridge is execution-bound and memory-only. It admits at most
-four tasks to four extension executors; additional worker requests wait under
-bounded backpressure instead of expiring behind another task. The queue-wait
-bound is separate from the execution timeout, which begins only when Chrome
-leases the task. Active leases heartbeat independently. Cancellation or the
-hard task timeout aborts the request, closes a temporary tab when one exists,
-and prevents a stale result from being accepted. Response bodies are not added
-to `config.json` or a bridge queue on disk.
-
-The API validates a destination when it is queued and again immediately before
-lease. HTTP/API execution disables redirect following, which is required
-because vendor API roots can be JSON/plain text or redirect away and therefore
-cannot reliably host a content script. Before rendered-page navigation, the
-extension installs a tab-scoped rule pair that allows the task's exact origin
-and blocks all other HTTP(S) main-frame destinations. The page's own fetch/XHR
-requests remain under Chrome's normal policy.
-Cross-origin redirects are therefore blocked before the redirected request is
-sent in either mode. Request bodies are limited to 2 MB of UTF-8 data, and
-response text/HTML is streamed and stopped at 4 MB per field.
-
-A recurring Discovery schedule uses the same choice at acquisition setup.
-Chrome may remain closed for anonymous access. Sites that need your signed-in
-session can remain blocked until you connect the extension or capture them
-manually; JobCtrl does not bypass their restrictions.
-
-The workspace deliberately keeps different scopes and units separate:
-
-- **Current execution** is work admitted to the selected Discover execution.
-- **Execution sweep** is eligible pre-existing backlog that execution adopted.
-- **Global outside execution** is unrelated backlog and is not part of the
-  selected execution's completion claim.
-- **Source-family completion** reports source intake as separate **running**,
-  **waiting**, and **finished** family counts; these are source families, not
-  browser processes or Temporal workers. Enrichment and preparation
-  reconciliation report the downstream drain. A finished crawl can therefore
-  coexist with preparation that is still running. Broad-board progress also
-  reports how many interrupted search units resumed. While a board is active,
-  its latest provider traversal facts show completed pages, raw listings,
-  emitted jobs, and whether more pages are known to exist. When the provider
-  does not publish a total page count, JobCtrl says the total is unavailable
-  instead of inventing a percentage or finish time.
-- **Worker capacity** reports Temporal workers and shared activity slots.
-  Source-family internal concurrency is a separate control, and approximate
-  task-queue depth is not a count of domain jobs.
-
-Per-stage rows expose outcomes, existing backlog, capacity, observation time,
-and ETA. Their completion bar uses an exact **N of M finished** count rather
-than the internal term “terminal” or a percentage that can look like active
-progress. ETA is an observed range with confidence and basis when enough
-evidence exists; calibrating, paused, stale, unavailable, and no-work states
-stay explicit instead of becoming a guessed finish time. Freshness and the
-bounded active-work inventory show whether the operational facts are current.
-The explicit **No work remaining** outcome uses the completed status indicator;
-missing or unavailable telemetry retains its warning or error indicator.
-
-Exact selected-run stage tracking is durable. New executions record their
-membership and stage lineage natively. For an execution created by an older
-JobCtrl version, worker startup and heartbeats rebuild the same lineage from the
-exact Temporal workflow/run history. Pipelines identifies whether it is checking
-the current or previous run, shows how many linked jobs and stage records have
-been stored, and reports the last record update time. Unknown totals and a missing
-update time stay explicit. These record counts describe tracking coverage rather
-than completed job tasks. While a check or retry is pending, the visible page
-refreshes every 15 seconds, including before execution details are available.
-Fresh shared-worker and queue facts remain visible; selected-run completion
-counts and ETAs appear only after the exact record sets have been verified.
-Partial rows or live-worker telemetry never become a false completion claim.
-If no Discover execution has been identified, Pipelines says so instead of
-claiming that a run is being verified. Standalone preparation of imported jobs
-may still occupy workers. Current activity counts remain visible, and a missing
-activity-detail inventory stays unavailable rather than becoming zero work.
-
-### Stop Or Recover A Discover Run
-
-While the selected Discover workflow is actively discovering or draining,
-**Stop discovery** requests Temporal cancellation and refreshes the Pipelines,
-Runs, and Dashboard read models. A closed workflow that is only draining
-already-admitted work is not presented as stoppable.
-
-When an execution fails, Pipelines reports whether the runtime inventory shows
-active work before suggesting another run. A positive total tells you to review
-that work first; unavailable inventory is reported as unknown, never as idle.
-The disabled Discover action reports the occupied worker-slot count and known
-active stages, and links to Runs to inspect progress or cancel work. Saved-posting
-checks and manual URL imports appear in the active-work inventory alongside
-pipeline stages. URL intake is labeled **Import job URL**, including before
-the Job row exists; its private URL is excluded from runtime telemetry. These
-checks use shared worker slots even when the selected Discover run has already
-ended. The selected closed run's end time distinguishes its historical outcomes
-from today's active work. The action refreshes automatically and becomes
-available when fresh runtime observations confirm idle capacity; this does not
-promise a finish time for running work.
-If an authoritative history read is temporarily unavailable or cannot yet be
-mapped unambiguously, JobCtrl says that the run record check will retry
-automatically.
-It does not present permanent missing tracking, infer completion from partial
-rows, or require a manual retry. Reconnecting to the exact history restores that
-run or records its actual closed outcome. If an older run ended before its
-history recorded every target, JobCtrl marks that run **Previous run
-incomplete**, preserves all exact recovered evidence, and does not invent or
-repeatedly retry the missing remainder. **Set up a new Discover run** is
-appropriate only when the prior execution is closed or genuinely absent and
-fresh runtime capacity confirms zero active slots. It selects the Discover
-launch controls but does not dispatch anything until you submit them. Raw
-workflow identifiers, the exact
-Temporal run ID, and the bounded repair reason code remain available under
-**Technical details**.
-
-### Resumable Broad-Board Searches
-
-Broad-board discovery uses JobStreaming 0.0.5. At the beginning of the source
-activity, JobCtrl compiles an immutable unit for every query, target/provider
-location, and board under the exact Discover workflow/run identity. JobCtrl,
-not the provider, owns whether that unit is pending, running, completed, failed,
-skipped, or canceled.
-
-For each posting event, JobCtrl executes only literal saved title exclusions and
-commits the admitted lead, source observation, event records, and an idempotent unit
-receipt before acknowledging the JobStreaming event. The acknowledgement then
-advances the provider checkpoint. If the process stops in that gap, the event
-is delivered again and the durable receipt makes the replay harmless. Results
-excluded by a literal saved whole-title filter get a separate hashed receipt
-before acknowledgement. Accepted new/existing counts, filtered counts, and the
-run-wide new-job limit are therefore read from durable receipts, so a retry
-cannot lose progress or start the limit over. New bounded workflows freeze each
-source's result allowance in their plan and compare cumulative admissions with
-the absolute run limit. Broad boards, canonical ATS APIs, Workday, Smart Extract
-and archived capture recovery share this allowance for the exact tenant and
-Discover execution, including when families run concurrently. Jobs inserted by
-other executions or outside Discovery do not consume it. Canonical insertion,
-its admission receipt, search-unit acceptance when applicable, and execution
-membership commit atomically. Archived captures use the same allowance; existing
-jobs consume none. An exhausted allowance stops new admission; it never becomes
-an unbounded request. An explicitly unbounded run retains its normal behavior.
-Reaching one board's allowance closes
-only that board's remaining units, allowing other selected boards to continue.
-Disabling a board before a retry closes its frozen units without another provider
-request. This intake admission remains separate from the later score and
-relevance decision.
-
-Current runs record their result cap and source allowances locally before
-sources start, then retain that authority across retries. Cancellation after a
-source fetch stops the next admission while keeping jobs already accepted.
-
-After an upgrade, an unfinished older bounded run may lack the current frozen
-execution authority, including runs whose old plan budgeted only broad boards.
-Its next activity refuses with a
-restart message before acquiring or acknowledging more postings. Start a new
-Discover run to continue; existing jobs, retained captures and checkpoints stay
-preserved. Completed workflow history remains replayable.
-
-Temporal retries reclaim only unfinished units with a newer activity-attempt
-fence. Retryable board errors resume from their checkpoint; an expired board
-cursor is reset only after its error event has been acknowledged. Request or
-cursor-schema incompatibility fails explicitly instead of silently starting a
-different search. Healthy boards and already accepted postings remain useful
-when another board fails. Pipelines shows `N resumed` when recovery happened.
-
-JobStreaming page progress is projected separately from JobCtrl acceptance
-counts. The provider payload contains no cursor or resume dictionary, and the
-Pipelines operations view binds it to the exact Discover workflow/run before
-displaying it. These traversal facts explain current crawl activity and never
-become a synthetic provider percentage when the total is unknown. Pipelines may
-still estimate the bounded source-family backlog from recent completed-family
-durations when worker inventory and the Temporal queue are fresh and complete.
-Dormant global job rows do not block that source-only estimate until they are
-actually queued or observed as active work. Selected-run sweep demand withholds
-it only when the unique remaining preparation workflows exceed spare runtime
-capacity; unbounded retry demand or queue contention always withholds it.
-
-**Stop discovery** is different from interruption: cooperative cancellation
-interrupts provider waits and marks active and pending units canceled. Canceled
-units are terminal and are not reclaimed as stale work. Changes to boards,
-queries, or locations apply to the next Discover execution; they cannot rewrite
-the persisted plan of an execution that is retrying. The internal `jobspy:`
-source-ID prefix remains a compatibility identifier for existing local data and
-API selections; it no longer names the provider library.
-
-New Discover plans also retain the resolved board country and the search
-queries and locations for the execution, including an empty search plan.
-Older recorded plans that did not capture a country retain their previous live
-settings fallback; start a new Discover execution to freeze the current country.
-
-### How target search controls are used
-
-Saving Target search is sufficient to authorize those settings. Discovery executes the saved role titles and location/work-model controls literally; it makes no model query plan and asks for no second interpretation or confirmation. Board country parameters and enabled sources keep their saved values. It does not infer aliases, adjacent titles or geographic scope from prose.
-
-Each location row uses only the work models checked in that row. Multiple checked models produce the board's remote and non-remote parameters as needed; a Remote row with no location searches without a place restriction. Invalid saved work-model controls block Discovery planning with an actionable settings error. They do not prevent fetching, scoring or reading saved sources.
-
-For a new CLI workspace, the setup wizard uses LinkedIn and ZipRecruiter for
-Remote searches with its 72-hour lookback. On reruns, it retains the existing
-Profile; saved Profile target roles and location/work-model rows take precedence
-over corresponding wizard-entered Discovery rows. It also retains saved board,
-lookback and other controls while replacing the location and title rows it asks
-you to enter; an incompatible combination is refused before the save. If saved
-tier or location-label filters would exclude all the effective titles or
-locations, the wizard shows each conflicting filter and asks before clearing
-it. Declining leaves the saved Discovery settings unchanged.
-
-Edits that create an unsupported active Remote/board combination or add an active location-free Hybrid or On-site row are refused before saving, with guidance to change the board, target or lookback. Existing saved values and unrelated profile edits are preserved. If a Profile target is cleared, older saved locations may become active and are checked too. Older incompatible settings are checked again before the affected board runs.
-
-JobStreaming executes the saved title, location, remote and lookback parameters supported by each board. Indeed cannot combine Remote with a lookback, and Glassdoor cannot combine Remote with a location. For Remote searches, Glassdoor and ZipRecruiter require a lookback in whole days. Discovery rejects an unsupported board request, lets compatible boards finish, and reports the partial failure with guidance to change the selected boards, target or lookback. The unsaved first-use defaults include Indeed with Remote and a lookback, so they also produce this partial failure until adjusted. A location-free Remote search can use Glassdoor, LinkedIn or ZipRecruiter; the saved board country remains in effect where the provider uses it. JobStreaming may emit other capability warnings, which JobCtrl does not currently display. JobCtrl stores fetched listings under exact canonical identity and sends them to full-posting analysis and scoring. Those structured board and company-ATS results use no separate metadata-only intake model or second search confirmation. Direct company ATS adapters may return a whole company feed; full-posting scoring assesses those jobs too.
-
-Smart Extract treats arbitrary-site cards as links to investigate. Before a link can create a Job, JobCtrl captures the individual posting and records model determinations for page identity, source-bound field extraction, the actual specific role title, description completeness, and compatibility with the saved location/work-model rows. A hiring announcement cannot become a role title merely because it appeared in a feed. The employer comes from the posting, never the source name or URL. Confirmed location mismatches stay outside Jobs with a recorded reason; uncertain identity, missing employer, incomplete content or unknown location compatibility stays in Manual Capture with its original card and determination references. The accepted full capture seeds the posting snapshot and enrichment without a second fetch. Model, spend or validation failures create no unverified Job. Explicit manual URL imports retain their separate user-requested intake behavior.
-
-Broad-board captures are durable before checkpoint acknowledgement and canonical ingestion is idempotent across retry. Limits, leases, source listing flags and literal exact-title exclusions remain mechanical. Historical intake captures and model receipts remain preserved. Each runnable source family recovers up to 100 unconsumed raw posting captures before fetching, using canonical ingestion, current literal exclusions and the remaining new-job limit. Successful ingestion marks a capture consumed; interruption retains it for an idempotent retry. The retired model status, preferences and envelope are never read. Archived Smart Extract cards go through the same current full-posting qualification before consumption; their old verdict cannot admit them. Recovery preserves newer accepted job content and deleted-job state. If an archived Smart Extract capture creates its canonical Job but snapshot publication is interrupted, retry resumes the recorded qualified capture and its model receipts without fetching another page. The capture is consumed only after its snapshot, enrichment and completion receipt commit, or after a newer/deleted owner makes that publication obsolete. Completing an already-admitted capture does not spend another new-job allowance. An older interrupted capture whose original publication evidence is unavailable stays unconsumed with `archived_posting_original_capture_unavailable`; no replacement page is fetched. Use the existing Job's Enrich action for a deliberate current-page refresh, then retry Discovery.
-
-After the run reaches its new-job limit, recovery can finish a previously
-qualified capture. Other archived captures remain pending without opening a
-browser or making another model call.
-
-A structurally invalid archived capture stays stored with its safe failure code
-and a warning in Activity. It is excluded from automatic recovery so valid
-captures and fresh searches continue. Captures for sources that are no longer
-runnable remain archived. Recovery never overwrites newer job data or restores
-an owner's deleted job.
-
-Role-match suggestions use current scoring determinations. A score from an older
-prompt or schema remains in history but contributes no new title-exclusion
-suggestion until a current score is accepted.
-
-Literal user-approved exact-title exclusions remain literal. Saved free-text criteria are supplied verbatim to posting and scoring determinations; they do not create another search-approval step. Historical experience locations do not imply relocation or remote consent. Profile import/save creates pending candidate interpretations. **Target search suggestions** calls the configured model in production; selected suggestions change targets only through a version-fenced user save.
 
 ## Employer Analysis Perspectives
 
-After Discovery accepts a posting, the Discover preparation workflow turns it
-into one structured, inspectable reading of the employer's requirements,
-priorities, and ideal candidate. Each enabled provider first analyzes the
-posting independently and receives source-bound verification. With one admitted
-provider, that verified draft becomes the canonical analysis used by scoring and
-tailoring without another rewrite. With multiple admitted providers, JobCtrl
-compares their drafts, records agreement and failures, and asks a ready provider
-to synthesize the surviving drafts. A partial failure retains that synthesis
-path. Canonical verification and requirement interpretation remain required.
-
-Choose the participating providers under **Settings → Model selection →
-Employer analysis perspectives**. This provider policy is a non-secret Settings
-value stored in `config.json`; it is not a `/discovery` field. One ready
-provider is sufficient. Adding more perspectives can expose disagreements and
-improve the evidence available to synthesis. If an optional perspective fails,
-preparation continues with the successful drafts; it stops only when no draft
-succeeds. Changes apply to the next employer analysis.
+Employer analysis uses shared provider/model policy under **Settings →
+Connections** and retains source-bound selected posting spans, its recorded
+perspectives and determination provenance. A ready provider is not a
+promise that every operation or model is usable. [Scoring](scoring-and-employer-analysis.md)
+owns how the accepted analysis supplies qualified requirements and person fit.
 
 ## Crawl Politeness
 

@@ -111,6 +111,11 @@ def routes(service):
     async def index_status(request):
         return JSONResponse(service.index_status())
 
+    async def history(request):
+        limit, offset = _pagination(request)
+        return JSONResponse(service.requirement_history(request.path_params["requirement_id"],
+            kind=request.query_params.get("kind", "revisions"), limit=limit, offset=offset))
+
     async def rebuild(request):
         body = await parse_request(request, RebuildRequest)
         try:
@@ -145,5 +150,6 @@ def routes(service):
         Route("/v1/requirements/index", index_status, methods=["GET"]),
         Route("/v1/requirements/index/rebuild", rebuild, methods=["POST"]),
         Route("/v1/requirements/{requirement_id}", detail, methods=["GET"]),
+        Route("/v1/requirements/{requirement_id}/history", history, methods=["GET"]),
         Route("/v1/requirements/{requirement_id}/revisions", revise, methods=["POST"]),
     )

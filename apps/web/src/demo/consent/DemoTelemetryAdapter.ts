@@ -25,11 +25,11 @@ const ROUTES = [
   "dashboard", "discovery", "jobs", "job_detail", "evidence", "tailor",
   "artifacts", "artifact_detail", "apply_review", "apply_dry_run", "runs",
   "pipelines", "analytics", "profile", "preferences", "outreach",
-  "contact_detail", "activity", "settings", "docs",
+  "contact_detail", "activity", "settings", "requirements", "learning", "docs",
 ] as const;
 const FEATURES = [
   "discovery", "scoring", "pipeline", "evidence", "materials", "artifacts",
-  "apply_review", "apply", "outreach", "demo_tour",
+  "apply_review", "apply", "outreach", "demo_tour", "profile", "requirements", "preferences", "appearance",
 ] as const;
 const ACTIONS = [
   "open", "start", "complete", "fail", "cancel", "retry", "reset",
@@ -164,7 +164,7 @@ export class DemoTelemetryAdapter implements TelemetryPort {
 
 export function classifyDemoRoute(pathname: string): DemoRouteName {
   const parts = pathname.split("/").filter(Boolean);
-  const root = parts[0] ?? "dashboard";
+  const root = parts[0] ?? "jobs";
   if (root === "jobs") return parts.length > 1 ? "job_detail" : "jobs";
   if (root === "artifacts") return parts.length > 1 ? "artifact_detail" : "artifacts";
   if (root === "outreach") return parts.length > 1 ? "contact_detail" : "outreach";
@@ -178,6 +178,8 @@ export function classifyDemoRoute(pathname: string): DemoRouteName {
     analytics: "analytics",
     profile: "profile",
     preferences: "preferences",
+    requirements: "requirements",
+    learning: "learning",
     activity: "activity",
     settings: "settings",
   };

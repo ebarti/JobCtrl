@@ -57,8 +57,9 @@ integrated verification in the transformation.
 
 ## What You Can See And Control
 
-The target Job Detail and dashboard flows show an outcome timeline and pending
-suggestions, while analytics summarize recorded data. Counts describe the
+The Original source candidate keeps the outcome timeline and pending suggestions
+in the selected job's application context. **Jobs → Outcomes** summarizes
+recorded data without requiring an operations dashboard. Counts describe the
 records present; conversion rates and response-time medians are sample-gated
 and descriptive, not proof that a particular action caused an outcome. A
 suggestion is decided once; a conflicting decision must be reviewed against the

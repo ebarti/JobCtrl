@@ -7,6 +7,8 @@ import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { materializeDemoSeed } from "../clock.js";
 import { DEMO_SEED } from "../seed.js";
 import { stableDemoStringify } from "../digest.js";
+import { demoWordingLibrary, retainDemoProfile } from "../profile-library.js";
+import { demoRequirementAssociations } from "../requirement-library.js";
 import {
   DEMO_WORKSPACE_DATABASE_VERSION,
   DEMO_WORKSPACE_EVENT_LOG_LIMIT,
@@ -295,7 +297,12 @@ export class DemoWorkspaceRepository {
         const next: DemoWorkspaceSnapshot = {
           ...draft,
           revision,
-          ...advanceLifecycleRevisions(current, draft, appendedEvents, revision),
+          ...advanceLifecycleRevisions(
+            current,
+            draft,
+            appendedEvents,
+            revision,
+          ),
           lastEventSequence: current.lastEventSequence + appendedEvents.length,
           eventLog: nextEventLog,
           updatedAt: this.clock.now().toISOString(),
@@ -314,6 +321,73 @@ export class DemoWorkspaceRepository {
         throw new DemoWorkspaceUpgradeRequiredError(upgrade);
       }
       return this.handleCommitStorageFailure(error, confirmed);
+    }
+  }
+
+  /**
+   * Compare recovery drafts inside the same reset transaction authority. Draft
+   * bytes never advance accepted feature revisions or publish domain events.
+   */
+  async transactDraftSlot<T>(
+    key: string,
+    operation: (current: string | null) => { result: T; write?: string },
+    signal?: AbortSignal,
+  ): Promise<T> {
+    this.requireReady();
+    const confirmed = this.snapshotNow();
+    if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
+    try {
+      const completed = await this.store.transact((current, transaction) => {
+        if (!current)
+          throw new Error("Demo workspace disappeared during draft recovery.");
+        throwIfFutureWorkspace(current);
+        if (
+          current.workspaceId !== confirmed.workspaceId ||
+          current.resetEpoch !== confirmed.resetEpoch
+        )
+          throw new DemoWorkspaceStaleEpochError(
+            confirmed.resetEpoch,
+            current.resetEpoch,
+          );
+        if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
+        const change = operation(current.state.draftSlots?.[key] ?? null);
+        if (change.write === undefined)
+          return { result: change.result, snapshot: current };
+        const next = clone(current);
+        (next.state.draftSlots ??= {})[key] = change.write;
+        next.state.draftSlotsRevision =
+          (current.state.draftSlotsRevision ?? 0) + 1;
+        transaction.putSnapshot(next);
+        return { result: change.result, snapshot: next };
+      });
+      const latest = this.authoritativeSnapshot;
+      if (
+        latest &&
+        (latest.workspaceId !== confirmed.workspaceId ||
+          latest.resetEpoch !== confirmed.resetEpoch)
+      )
+        throw new DemoWorkspaceStaleEpochError(
+          confirmed.resetEpoch,
+          latest.resetEpoch,
+        );
+      if (
+        !latest ||
+        (latest.revision <= completed.snapshot.revision &&
+          (latest.state.draftSlotsRevision ?? 0) <=
+            (completed.snapshot.state.draftSlotsRevision ?? 0))
+      )
+        this.authoritativeSnapshot = completed.snapshot;
+      return completed.result;
+    } catch (error) {
+      const upgrade = upgradeFromError(error);
+      if (upgrade) {
+        this.setUpgrade(upgrade);
+        throw error;
+      }
+      await this.handleCommitStorageFailure(error, confirmed);
+      throw new Error(
+        "Browser storage could not confirm the recovery draft. Keep the current text open and retry after checking storage.",
+      );
     }
   }
 
@@ -495,7 +569,8 @@ export class DemoWorkspaceRepository {
       if (stored.schemaVersion >= DEMO_WORKSPACE_SCHEMA_VERSION) {
         return stored;
       }
-      const { pendingScenarios: _discardedOperations, ...savedState } = stored as DemoWorkspaceSnapshot & { pendingScenarios?: unknown };
+      const { pendingScenarios: _discardedOperations, ...savedState } =
+        stored as DemoWorkspaceSnapshot & { pendingScenarios?: unknown };
       const migrated: DemoWorkspaceSnapshot = {
         ...savedState,
         schemaVersion: DEMO_WORKSPACE_SCHEMA_VERSION,
@@ -660,7 +735,8 @@ export class DemoWorkspaceRepository {
     const copiedBlobIds = declaredBlobIds.filter((blobId) =>
       durableBlobs.has(blobId),
     );
-    const { pendingScenarios: _discardedOperations, ...savedState } = snapshot as DemoWorkspaceSnapshot & { pendingScenarios?: unknown };
+    const { pendingScenarios: _discardedOperations, ...savedState } =
+      snapshot as DemoWorkspaceSnapshot & { pendingScenarios?: unknown };
     const memorySnapshot: DemoWorkspaceSnapshot = {
       ...savedState,
       schemaVersion: DEMO_WORKSPACE_SCHEMA_VERSION,
@@ -921,7 +997,7 @@ export class DemoWorkspaceRepository {
     const materialized = materializeDemoSeed(DEMO_SEED, {
       anchor: input.createdAt,
     });
-    return {
+    const snapshot: DemoWorkspaceSnapshot = {
       schemaVersion: DEMO_WORKSPACE_SCHEMA_VERSION,
       seedVersion: DEMO_SEED.seedVersion,
       workspaceId: this.createWorkspaceId(),
@@ -955,6 +1031,11 @@ export class DemoWorkspaceRepository {
         receipts: materialized.receipts,
       },
     };
+    snapshot.state.features!.wording = demoWordingLibrary(snapshot);
+    retainDemoProfile(snapshot);
+    snapshot.state.features!.requirementAssociations =
+      demoRequirementAssociations(snapshot);
+    return snapshot;
   }
 }
 

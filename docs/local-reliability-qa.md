@@ -28,6 +28,29 @@ retries. The run reports build, journey and total elapsed time; the hosted job
 also measures dependency preparation. See the exact scenario and coverage
 ledger in [Python application journeys](developer/qa/python-journeys.md).
 
+Hosted Browser CI schedules that same inventory in two fixed, disjoint
+Playwright shards, `--shard=1/2` and `--shard=2/2`, on separate runners. Each
+invocation keeps one worker, zero retries, the existing case deadlines and the
+720-second global deadline; the ordinary unsharded local command is unchanged.
+Each shard builds once, owns its application/Temporal workspaces and retains
+separately named evidence. Matrix fail-fast is disabled so a failed shard does
+not cancel its peer. The stable **Browser / UI checks** result passes only when
+both shard jobs succeed; failure, cancellation or a skipped shard cannot
+qualify the complete inventory. A shard pass alone is partial proof. Record
+both results and their exact candidate before claiming complete hosted coverage.
+
+Hosted Ubuntu transport recovery may prefer only the fixed Ubuntu-listed,
+operator-verified HTTPS candidate after all three completed original mirror
+HTTP probes fail and a bounded candidate GET exits zero with HTTP 200.
+An exit-zero original HTTP 200–399 response or an indeterminate original result
+retains the originals. Incomplete/unknown results cannot authorize fallback.
+Original mirrors, suites,
+`Signed-By`, archive keys and signature/hash/freshness verification remain, as
+do setup/test caps and required cases. HTTP reachability does not qualify archive
+authenticity or package installation: actual APT verification/install and all
+required test gates must pass. See the [transport recovery record](developer/qa/python-journeys.md#conditional-transport-recovery-after-1d79df1b)
+for provenance and observed hosted limits.
+
 Run the affected type, architecture, Python lint, native vet, packaging or docs
 build as applicable. Invoke pnpm through Corepack and use the candidate's locked
 Python environment. A direct test listing or type check is not an executed

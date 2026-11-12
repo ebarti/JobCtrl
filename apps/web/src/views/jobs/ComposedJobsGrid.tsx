@@ -31,20 +31,25 @@ export interface ComposedJobsGridProps {
   grouping: DataGridGroupingState | null;
   colorRules: readonly DataGridColorRule[];
   toolbarActions: (columns: Array<DataGridColumn<ComposedJobRow>>) => ReactNode;
+  activeJobId?: string | null;
+  emptyMessage?: string;
 }
 const labels: ReadonlyArray<readonly [string, string, number]> = [
-  ["fit_score", "Person fit", 110], ["eligibility", "Eligibility", 120], ["title", "Title", 230], ["company", "Company", 150],
-  ["job_state", "Job state", 120], ["source", "Source", 160],
-  ["compensation_min_eur", "Salary min (€ / year)", 170], ["compensation_max_eur", "Salary max (€ / year)", 170],
-  ["compensation_market", "Market (€ / year)", 180], ["compensation_confidence", "Reliability", 130],
-  ["compensation_warnings", "Warnings", 120], ["location", "Location", 150],
+  ["title", "Title", 220], ["company", "Company", 160], ["location", "Location", 150],
+  ["posted_compensation", "Posted pay", 190], ["fit_score", "Person fit", 130], ["apply_status", "Apply", 130],
+  ["eligibility", "Eligibility", 150],
+  ["job_state", "Job state", 150], ["source", "Source", 160],
+  ["compensation_min_eur", "Salary min (€ / year)", 230], ["compensation_max_eur", "Salary max (€ / year)", 230],
+  ["compensation_market", "Market (€ / year)", 220], ["compensation_confidence", "Reliability", 150],
+  ["compensation_warnings", "Warnings", 120],
   ["current_stage", "Stage", 130], ["current_state", "Stage state", 130], ["resume_template", "Template", 150],
-  ["discovered_at", "Discovered", 150], ["scored_at", "Fit assessed", 150], ["apply_status", "Apply", 130],
+  ["discovered_at", "Discovered", 150], ["scored_at", "Fit assessed", 150],
 ];
 const savedSortable = new Set<string>(PYTHON_JOBS_SORT_FIELDS);
 const euro = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 function raw(row: ComposedJobRow, id: string): string {
+  if (id === "posted_compensation") return row.compensation?.summary?.posted.displayRange ?? "";
   const value = row.scalars[id];
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
@@ -54,7 +59,16 @@ function moduleLabel(data: ComposedJobsResponse | undefined, name: "fit" | "comp
 }
 function valueFor(row: ComposedJobRow, id: string, data: ComposedJobsResponse | undefined): ReactNode {
   const scalar = row.scalars[id];
-  if (id === "title") return <Link to="/jobs/$jobId" params={{ jobId: row.job.job_id }} search={(previous) => previous}>{row.job.title}</Link>;
+  if (id === "posted_compensation") {
+    const unavailable = moduleLabel(data, "compensation");
+    if (unavailable) return unavailable;
+    const range = row.compensation?.summary?.posted.displayRange;
+    const stale = row.compensation?.audit?.posted.sourceCurrent === false;
+    if (stale) return range ? `${range} · earlier posting` : "Stale posted evidence · range unknown";
+    if (range) return range;
+    return row.compensation?.summary?.posted.recordStatus === "unavailable" ? "Unavailable" : "Unknown";
+  }
+  if (id === "title") return <Link to="/jobs/$jobId" params={{ jobId: row.job.job_id }} search={(previous) => ({ ...previous, jobTab: "fit" })}>{row.job.title}</Link>;
   if (id === "fit_score") {
     const unavailable = moduleLabel(data, "fit");
     if (unavailable) return unavailable;
@@ -114,7 +128,7 @@ export function ComposedJobsGrid(props: ComposedJobsGridProps) {
         onChange={(event) => onSelectionChange([row.job], event.currentTarget.checked)} />,
     };
     return [selection, ...labels.map(([id, label, width]): DataGridColumn<ComposedJobRow> => ({
-      id, label, width, ...(id === "title" ? { rowHeader: true } : {}),
+      id, label, width, ...(id === "title" ? { rowHeader: true } : {}), ...(id === "fit_score" ? { header: "Fit" } : {}),
       sortable: sortable.has(id) && savedSortable.has(id),
       getSortValue: (row) => id === "eligibility" ? (row.fit?.score?.eligibility.status ?? "") : raw(row, id),
       ...(filterable.has(id) ? { getFilterValue: (row: ComposedJobRow) => raw(row, id),
@@ -125,15 +139,15 @@ export function ComposedJobsGrid(props: ComposedJobsGridProps) {
   const visibility = useMemo(() => Object.fromEntries(props.hiddenColumnIds.map((id) => [id, false])), [props.hiddenColumnIds]);
   return <FilterableDataGrid<ComposedJobRow>
     title="Jobs table" data={data?.rows ?? []} columns={columns} getRowId={(row) => row.job.job_id}
-    loading={props.loading} loadingMessage="Loading jobs." emptyMessage={props.error ? "Jobs could not be loaded." : "No jobs match."}
+    loading={props.loading} loadingMessage="Loading jobs." emptyMessage={props.error ? "Jobs could not be loaded." : props.emptyMessage ?? "No jobs match."}
     initialSort={{ columnId: "discovered_at", direction: "desc" }} sort={props.sort} onSortChange={props.onSortChange} manualSorting
     filters={props.filters} onFiltersChange={props.onFiltersChange} manualFiltering
     columnVisibility={visibility} columnOrder={props.columnOrder} onColumnOrderChange={props.onColumnOrderChange}
     columnWidths={props.columnWidths} onColumnWidthsChange={props.onColumnWidthsChange} density={props.density}
     grouping={props.grouping} colorRules={props.colorRules} toolbarActions={props.toolbarActions(columns)}
     mobileLayout="cards" tableClassName="jobs-data-grid-table"
-    rowAriaSelected={(row) => Boolean(selected[row.job.job_id])}
-    onRowActivate={(row) => void navigate({ to: "/jobs/$jobId", params: { jobId: row.job.job_id }, search: (previous) => previous })}
+    rowAriaSelected={(row) => props.activeJobId === row.job.job_id || Boolean(selected[row.job.job_id])}
+    onRowActivate={(row) => void navigate({ to: "/jobs/$jobId", params: { jobId: row.job.job_id }, search: (previous) => ({ ...previous, jobTab: "fit" }) })}
     rowActivationLabel={(row) => `Open job ${row.job.title} at ${row.job.company || "unknown company"}`}
     {...(data ? { pagination: { page: props.page, pageSize: props.pageSize, totalPages: Math.max(1, Math.ceil(data.total / props.pageSize)),
       totalRows: data.total, onPageChange: props.onPageChange, onPageSizeChange: props.onPageSizeChange } } : {})}

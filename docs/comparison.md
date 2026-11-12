@@ -198,13 +198,16 @@ evidence, and follows durable runs. Its current lifecycle also includes reviewed
 [offer records](user/outcomes-and-feedback.md#actual-offer-terms-and-decisions),
 and [editable DOCX exports](user/materials-and-tailoring.md#editable-docx-export).
 
-[![JobCtrl dashboard showing pipeline progress, job counts, source health, and apply runs](assets/screenshots/dashboard.png)](user/product-tour.md)
+[![Original source candidate Requirements library showing a synthetic meaning, linked achievement and exact wording](assets/screenshots/original-requirements.png)](user/product-tour.md)
 
 <ComparisonScreenshotCarousel />
 
-All screenshots use synthetic sample data. They illustrate the operator
-experience, not the results of a competitor usability trial. Open the
-[Product Tour](user/product-tour.md) for the complete workflow.
+These screenshots use synthetic sample data from the Original source candidate.
+They illustrate its connected workspaces, not a hosted update or the results of a
+competitor usability trial. Open the current [Product Tour](user/product-tour.md) for the connected Jobs,
+My profile and Settings workflow; its
+[acceptance ledger](plans/2026-11-11-original-app-redesign.md) records candidate
+verification separately.
 
 ## Other source-reviewed alternatives
 

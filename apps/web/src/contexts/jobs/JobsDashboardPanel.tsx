@@ -4,7 +4,7 @@ import { useJobs } from "./client.js";
 
 export function JobsDashboardPanel() {
   const jobs = useJobs("", 0, 5);
-  return <section className="card" aria-labelledby="dashboard-jobs-title">
+  return <section className="card jobs-dashboard-panel" aria-labelledby="dashboard-jobs-title">
     <h2 id="dashboard-jobs-title">Captured jobs</h2>
     {jobs.isPending ? <p>Loading jobs…</p> : null}
     {jobs.error ? <p role="alert">{jobs.error.message}</p> : null}

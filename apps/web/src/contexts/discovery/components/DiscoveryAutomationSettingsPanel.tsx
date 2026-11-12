@@ -34,13 +34,14 @@ function toFormValues(response: DiscoverySettingsResponse): AutomationValues {
   };
 }
 
-export function DiscoveryAutomationSettingsPanel() {
+export function DiscoveryAutomationSettingsPanel({ defaultOpen = true }: { readonly defaultOpen?: boolean } = {}) {
   const settingsQuery = useDiscoverySettingsQuery();
 
   return (
     <DisclosureSection
       className="discovery-automation-settings"
-      collapsedSummary="SQLite-backed scoring and apply controls"
+      defaultOpen={defaultOpen}
+      collapsedSummary="Scoring and supervised application controls"
       description="Scoring threshold and supervised apply policy"
       title="Automation settings"
     >

@@ -224,4 +224,7 @@ def build_feature(runtime, *, jobs, profile=None, browser_port=None, **ports):
             "discovery.refresh_targets": targets_action,
             "discovery.refresh_feedback": feedback_action,
         },
+        # Admission is atomic before planning or acquisition starts. Separate
+        # tabs, schedules and clients share one active search per workspace.
+        action_scopes={"discovery.search": lambda _payload: "workspace"},
     )

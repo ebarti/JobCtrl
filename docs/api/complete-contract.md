@@ -28,6 +28,12 @@ Profile owns facts, sources, evidence, confirmations, preferences, authored
 baseline and wording approval. Reads and writes must preserve source/version
 identity and reject stale edits. See [Profile and Settings](profile-and-settings.md).
 
+The Original candidate adds pending wording edits/history, explicit proposed
+revision lineage and targeted removed-role/achievement recovery. Search place
+bindings retain row identity, selected provider/place metadata and exact text;
+typing invalidates an earlier selection. These writes do not assess meaning or
+start model work. Exact fields remain owned by the focused API reference.
+
 ## Jobs read model and lifecycle
 
 <a id="saved-posting-availability"></a>
@@ -61,6 +67,14 @@ an expected saved-input stamp, explicit job scope and finite work limits.
 Read-only pending and operation routes never start model work. Exact methods,
 DTOs and failure boundaries live in the [Fit reference](../../workers/automation/src/jobctrl/features/fit/README.md).
 Route declarations alone do not establish integrated E2E or released behavior.
+
+The independent library also reads canonical meaning/occurrence history and
+Profile-scoped requirement relationships. Manual association creation/removal/
+restore is revision-fenced, history-preserving and always unassessed. It cannot
+change qualification, coverage, score, approval, current semantic authority or
+an accepted document. See
+[Requirements library and associations](jobs-and-materials.md#requirements-library-and-associations)
+for routes and DTO boundaries.
 
 ## Artifacts and tailoring audit
 

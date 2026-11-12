@@ -187,11 +187,26 @@ a current snapshot.
 | `GET /v1/requirements/index` | Exact catalog/index revision, counts and freshness. |
 | `POST /v1/requirements/index/rebuild` | Mechanical repair guarded by `expected_catalog_revision`; zero model calls. |
 | `GET /v1/requirements/{requirement_id}` | Current meaning and accepted job occurrences; `?revision=N` reads immutable history. |
+| `GET /v1/requirements/{requirement_id}/history?kind=revisions` | Bounded immutable meaning-revision inventory with the current canonical revision and explicit current/stale labels. |
+| `GET /v1/requirements/{requirement_id}/history?kind=occurrences` | Bounded retained occurrence history, including superseded accepted job snapshots, original source spans and exact canonical revisions. |
 | `POST /v1/jobs/{job_id}/requirements/{occurrence_id}/binding` | Explicit target ID/revision, expected posting/snapshot versions and user reason. |
 | `POST /v1/requirements/{requirement_id}/revisions` | Source-bound proposed meaning correction with expected meaning/posting versions and user reason. |
 | `requirements.refresh` | Same refresh action through the durable dispatcher; payload also includes `job_id`. |
 | `requirements.correct_binding` | Same correction action; payload also includes `job_id` and `occurrence_id`. |
 | `requirements.revise` | Same canonical correction; payload also includes `requirement_id`. |
+
+The history endpoint accepts `limit` (default 50, maximum 200) and `offset` and
+returns `requirement_id`, `current_revision`, `kind`, `total`, `limit`, `offset`
+and `rows`. Revision rows retain their original definition, scope, qualifiers
+and provenance. Occurrence rows add `snapshot_revision` and `accepted`; the
+latter means the occurrence belongs to the current accepted job snapshot, not
+that its posting or meaning remains current. `current` and `stale_reasons`
+separately check the recorded canonical revision, accepted snapshot and public
+Jobs posting revision/hash in one read transaction. This is retained accepted
+occurrence history, not a claim that failed extraction attempts published
+requirements. Permanent job deletion removes that job's occurrences under the
+existing retention contract. Reading any catalog/history endpoint makes no
+model call and grants no approval or factual support.
 
 Events are `RequirementsUpdated`, `RequirementBindingCorrected` and
 `RequirementMeaningRevised` and `RequirementIndexRebuilt`. Payloads contain only invalidation IDs/revisions.

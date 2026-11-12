@@ -1,20 +1,22 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { Link } from "@tanstack/react-router";
-
-import { CardHeader } from "../../../shared/ui/card-header.js";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import type { ProfileConfigResponse } from "@jobctrl/contracts";
 import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
-import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { ToggleGroup, ToggleGroupItem } from "../../../shared/ui/toggle-group.js";
 import {
   ResumeStandalonePlateEditor,
   type ResumePlateSemanticTextChange,
 } from "../../materials/components/ResumeStandalonePlateEditor.js";
-import { ProfileForm, type ProfilePlateTextController } from "../forms/profile-form.js";
+import {
+  ProfileForm,
+  type ProfilePlateTextController,
+} from "../forms/profile-form.js";
 import { ProfileImportReview } from "./ProfileImportReview.js";
-import { WordingLibrary } from "./WordingLibrary.js";
 import { ProfileTransferExport } from "./ProfileTransferExport.js";
-import type { ProfileConfigResponse } from "@jobctrl/contracts";
+import { ProfileRecoveryPanel } from "./ProfileRecoveryPanel.js";
+import type { ProfileActiveSection } from "./StructuredProfileEditor.js";
+import { useProfilePlateRecovery } from "../hooks/useProfilePlateRecovery.js";
 import { useProfileHtmlPreviewUrl } from "../hooks/useProfileHtmlPreviewUrl.js";
 import { profileHtmlPreviewPath } from "../client.js";
 import { useProfileQuery } from "../hooks/useProfileQuery.js";
@@ -25,272 +27,327 @@ import {
   resumeTemplatePreviewStyle,
   ResumeTemplatePanel,
 } from "./ResumeTemplatePanel.js";
-
-const SPLIT_STORAGE_KEY = "profile-preview-split-width";
-const DEFAULT_EDITOR_WIDTH = 62;
-const MIN_EDITOR_WIDTH = 38;
-const MAX_EDITOR_WIDTH = 76;
-
-type ProfileWorkspaceView = "profile-data" | "resume-editor" | "split-view";
+import {
+  profileSessionIdentity,
+  useProfileDraftGeneration,
+} from "../lib/profile-draft-state.js";
+import "../../../styles/redesign-profile-workspace.css";
 
 export interface ProfileEditorProps {
   section?: "profile" | "preferences";
+  activeSection?: ProfileActiveSection;
+  roleId?: string;
+  achievementId?: string;
+  achievementContent?: (achievementId: string, roleId: string) => ReactNode;
+  achievementWordings?: (achievementId: string, roleId: string) => ReactNode;
   affectedMatches?: ReactNode;
 }
 
-export function ProfileEditor({ section = "profile", affectedMatches }: ProfileEditorProps) {
-  const { storage } = usePorts();
+export function ProfileEditor(props: ProfileEditorProps) {
+  const tenantId = useTenantId();
+  const { session } = usePorts();
+  const generation = useProfileDraftGeneration(session);
+  return (
+    <TenantProfileEditor
+      key={`${profileSessionIdentity(session)}:${tenantId}:${props.section ?? "profile"}:${generation}`}
+      {...props}
+    />
+  );
+}
+
+function TenantProfileEditor({
+  section = "profile",
+  activeSection = "experience",
+  roleId,
+  achievementId,
+  achievementContent,
+  achievementWordings,
+  affectedMatches,
+}: ProfileEditorProps) {
+  const tenantId = useTenantId();
+  const documentDirtyRef = useRef(false);
+  const [, setDocumentDirty] = useState(false);
+  const [pendingSource, setPendingSource] =
+    useState<ProfileConfigResponse | null>(null);
   const profileQuery = useProfileQuery();
-  const resumeTemplatesQuery = useResumeTemplatesQuery();
-  const { url: profileHtmlPreviewUrl } = useProfileHtmlPreviewUrl();
-  const layoutRef = useRef<HTMLDivElement>(null);
-  const plateTextControllerRef = useRef<ProfilePlateTextController | null>(null);
+
+  const templates = useResumeTemplatesQuery();
+  const { url: previewUrl } = useProfileHtmlPreviewUrl();
+  const controller = useRef<ProfilePlateTextController | null>(null);
+  const [resumeLayout, setResumeLayout] = useState<"document" | "split">(
+    "document",
+  );
+  const [formDirty, setFormDirty] = useState(false);
+  const [profileRecoveryPending, setProfileRecoveryPending] = useState(true);
   const [previewSource, setPreviewSource] = useState<{
     profile: ProfileConfigResponse["profile"];
     profileVersion: number | null;
     revision: number;
   } | null>(null);
-  const [workspaceView, setWorkspaceView] = useState<ProfileWorkspaceView>("profile-data");
-  const [editorWidth, setEditorWidth] = useState(() => {
-    const saved = storage.get<number>(SPLIT_STORAGE_KEY);
-    return clampEditorWidth(typeof saved === "number" ? saved : DEFAULT_EDITOR_WIDTH);
-  });
-  const errorMessage = profileQuery.error?.message ?? "";
-  const effectiveResumeTemplateVersion = resolveEffectiveResumeTemplateVersion(resumeTemplatesQuery.data);
-  const resumePreviewStyle = useMemo(
-    () => effectiveResumeTemplateVersion
-      ? resumeTemplatePreviewStyle(effectiveResumeTemplateVersion.theme)
-      : undefined,
-    [effectiveResumeTemplateVersion],
+  const documentRecovery = useProfilePlateRecovery(
+    previewSource?.profileVersion,
   );
-  const showPreview = section === "profile";
-  // The form advances this snapshot only on a clean save/reset. Query cache
-  // optimism and older save responses must not replace newer Plate typing.
-  const handlePreviewSourceChange = useCallback((saved: ProfileConfigResponse) => {
-    setPreviewSource((previous) => ({ profile: saved.profile, profileVersion: saved.profileVersion, revision: (previous?.revision ?? -1) + 1 }));
-  }, []);
-  const bindPreviewFields = useCallback((html: string) =>
-    bindProfilePreviewFields(html, previewSource?.profile), [previewSource?.profile]);
-  const layoutStyle = {
-    "--profile-editor-width": `${editorWidth}%`,
-  } as CSSProperties;
-  const cardTitle =
-    section === "preferences" ? "Configuration & templates" : "Resume data";
-  const handlePlateTextControllerChange = useCallback((controller: ProfilePlateTextController | null) => {
-    plateTextControllerRef.current = controller;
-  }, []);
-  const handlePlateSemanticTextChange = useCallback((changes: readonly ResumePlateSemanticTextChange[]) => {
-    plateTextControllerRef.current?.apply(changes);
-  }, []);
-
-  const setWidthFromClientX = (clientX: number, persist = false) => {
-    const rect = layoutRef.current?.getBoundingClientRect();
-    if (!rect) {
+  const template = resolveEffectiveResumeTemplateVersion(templates.data);
+  const previewStyle = useMemo(
+    () => (template ? resumeTemplatePreviewStyle(template.theme) : undefined),
+    [template],
+  );
+  const updatePreview = useCallback((saved: ProfileConfigResponse) => {
+    if (documentDirtyRef.current) {
+      setPendingSource(saved);
+      setPreviewSource(
+        (previous) =>
+          previous ?? {
+            profile: saved.profile,
+            profileVersion: saved.profileVersion,
+            revision: 0,
+          },
+      );
       return;
     }
-    const next = clampEditorWidth(((clientX - rect.left) / rect.width) * 100);
-    setEditorWidth(next);
-    if (persist) {
-      storage.set(SPLIT_STORAGE_KEY, next);
-    }
-  };
-
-  const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      setWidthFromClientX(moveEvent.clientX);
-    };
-    const onPointerUp = (upEvent: PointerEvent) => {
-      setWidthFromClientX(upEvent.clientX, true);
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-    };
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp, { once: true });
-  };
-
-  const nudgeResize = (direction: -1 | 1) => {
-    const next = clampEditorWidth(editorWidth + direction * 4);
-    setEditorWidth(next);
-    storage.set(SPLIT_STORAGE_KEY, next);
-  };
-
-  const sectionLinks = section === "profile"
-    ? [
-        ["profile-personal", "Personal"],
-        ["profile-baseline", "Resume baseline"],
-        ["profile-experience", "Experience"],
-        ["profile-education", "Education"],
-        ["profile-skills", "Skills"],
-        ["profile-eeo", "Voluntary EEO"],
-      ]
-    : [
-        ["preferences-application", "Application"],
-        ["preferences-tailoring", "Resume composition"],
-        ["preferences-style", "Resume style"],
-        ["preferences-templates", "Templates"],
-      ];
-
-  const profileData = (
-      <section className="card profile-data-workspace">
-        <CardHeader
-          title={cardTitle}
-          meta={profileQuery.data ? undefined : errorMessage ? "unavailable" : "loading"}
-        />
-        <nav
-          aria-label={`${section === "profile" ? "Profile" : "Preferences"} sections`}
-          className="profile-section-nav"
-        >
-          <span data-typography="label">Jump to</span>
-          <div className="profile-section-nav__links">
-            {sectionLinks.map(([target, label]) => (
-              <a data-typography="control" href={`#${target}`} key={target}>{label}</a>
-            ))}
-          </div>
-        </nav>
-        {section === "profile" ? (
-          <div className="toolbar profile-evidence-toolbar">
-            <Link className="tab" to="/evidence-map">
-              Open evidence map
-            </Link>
-          </div>
-        ) : null}
-        {profileQuery.data ? (
-          section === "preferences" ? (
-            <>
-              <ProfileForm initial={profileQuery.data} section={section} />
-              <div id="preferences-templates" className="profile-template-section">
-                <ResumeTemplatePanel profileHtmlPreviewUrl={profileQuery.data.profileVersion === null ? null : profileHtmlPreviewUrl} />
-              </div>
-            </>
-          ) : (
-            <ProfileForm
-              initial={profileQuery.data}
-              onPlateTextControllerChange={handlePlateTextControllerChange}
-              onPreviewSourceChange={handlePreviewSourceChange}
-              section={section}
-            />
-          )
-        ) : errorMessage ? (
-          <div className="profile-editor-state" role="alert">
-            <Empty
-              title={section === "preferences" ? "Preferences unavailable" : "Profile unavailable"}
-              description={errorMessage}
-              action={
-                <Button type="button" variant="outline" onClick={() => void profileQuery.refetch()}>
-                  Retry
-                </Button>
-              }
-            />
-          </div>
-        ) : (
-          <div className="profile-editor-state" aria-busy="true">
-            <Empty
-              title={section === "preferences" ? "Loading preferences" : "Loading profile"}
-              description="The editor will appear when the saved configuration is ready."
-            />
-          </div>
-        )}
-      </section>
+    setPreviewSource((previous) => ({
+      profile: saved.profile,
+      profileVersion: saved.profileVersion,
+      revision: (previous?.revision ?? -1) + 1,
+    }));
+  }, []);
+  const bindFields = useCallback(
+    (html: string) => bindProfilePreviewFields(html, previewSource?.profile),
+    [previewSource?.profile],
   );
+  const connectController = useCallback(
+    (value: ProfilePlateTextController | null) => {
+      controller.current = value;
+    },
+    [],
+  );
+  const applyDocumentText = useCallback(
+    (changes: readonly ResumePlateSemanticTextChange[]) =>
+      controller.current?.apply(changes),
+    [],
+  );
+  const handleDocumentDirty = useCallback((dirty: boolean) => {
+    documentDirtyRef.current = dirty;
+    setDocumentDirty(dirty);
+  }, []);
 
-  if (!showPreview) {
-    return <div className="profile-layout profile-layout-single">{profileData}</div>;
-  }
-
-  return (
-    <div className="profile-workspace">
-      <ProfileImportReview />
-      <p className="muted" role="note">
-        Profile edits are saved without rescoring jobs or regenerating materials. Jobs show when your profile changed since scoring.
-      </p>
-      {affectedMatches}
-      <ToggleGroup
-        aria-label="Profile workspace views"
-        className="profile-workspace-tabs"
-        spacing={0}
-        type="single"
-        value={workspaceView}
-        variant="outline"
-        onValueChange={(value) => {
-          if (value === "profile-data" || value === "resume-editor" || value === "split-view") {
-            setWorkspaceView(value);
+  if (!profileQuery.data)
+    return (
+      <div className="profile-editor-state" aria-busy={profileQuery.isPending}>
+        <Empty
+          title={profileQuery.error ? "Profile unavailable" : "Loading Profile"}
+          description={
+            profileQuery.error?.message ?? "Loading your saved information."
           }
-        }}
-      >
-        <ToggleGroupItem value="profile-data">Profile data</ToggleGroupItem>
-        <ToggleGroupItem value="resume-editor">Resume editor</ToggleGroupItem>
-        <ToggleGroupItem value="split-view">Split view</ToggleGroupItem>
-      </ToggleGroup>
-      <div
-        className={`profile-layout profile-workspace-content ${
-          workspaceView === "split-view" ? "" : "profile-layout-single"
-        }`}
-        data-view={workspaceView}
-        ref={layoutRef}
-        style={layoutStyle}
-      >
-        <div className="profile-workspace-data" hidden={workspaceView === "resume-editor"}>
-          {profileData}
-        </div>
-        {workspaceView === "split-view" ? (
-          <Button
-            className="profile-resizer"
-            type="button"
-            aria-label="Resize profile and resume editor panes"
-            size="icon"
-            title="Drag to resize profile and resume editor panes"
-            variant="ghost"
-            onPointerDown={startResize}
-            onKeyDown={(event) => {
-              if (event.key === "ArrowLeft") {
-                event.preventDefault();
-                nudgeResize(-1);
+          {...(profileQuery.error
+            ? {
+                action: (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void profileQuery.refetch()}
+                  >
+                    Retry
+                  </Button>
+                ),
               }
-              if (event.key === "ArrowRight") {
-                event.preventDefault();
-                nudgeResize(1);
-              }
-            }}
-          >
-            <span aria-hidden="true" />
-          </Button>
-        ) : null}
-          <aside
-            aria-label="Baseline resume editor workspace"
-            className="preview resume-editor-preview"
-            hidden={workspaceView === "profile-data"}
-            id="profile-resume-editor"
-          >
-            <div className="profile-resume-editor-help">
-              <strong data-typography="component-title">Edit the baseline resume</strong>
-              <span data-typography="body">
-                Select resume text, then use the labelled bold, italic, underline, link, font,
-                size, and alignment controls. Profile text fields follow the normal save and
-                autosave flow. Formatting and link presentation stay in this document;
-                edit professional URLs in Profile data.
-              </span>
-            </div>
-            <ResumeStandalonePlateEditor
-              {...(effectiveResumeTemplateVersion
-                ? { transformKey: effectiveResumeTemplateVersion.versionId }
-                : {})}
-              className="profile-resume-plate-editor"
-              htmlUrl={previewSource?.profileVersion != null ? profileHtmlPreviewPath(previewSource.revision) : null}
-              htmlTransform={bindPreviewFields}
-              pdfFilename="baseline-resume.pdf"
-              previewStyle={resumePreviewStyle}
-              title="Baseline resume editor"
-              onSemanticTextChange={handlePlateSemanticTextChange}
-            />
-          </aside>
+            : {})}
+        />
       </div>
-      <WordingLibrary />
-      <ProfileTransferExport />
+    );
+
+  if (section === "preferences")
+    return (
+      <div className="profile-layout profile-layout-single">
+        <ProfileForm initial={profileQuery.data} section="preferences" />
+        <div id="preferences-templates">
+          <ResumeTemplatePanel
+            profileHtmlPreviewUrl={
+              profileQuery.data.profileVersion === null ? null : previewUrl
+            }
+          />
+        </div>
+      </div>
+    );
+
+  const resumeOpen = activeSection === "resume";
+  return (
+    <div className="profile-workspace profile-peer-workspace">
+      <ProfileImportReview />
+      {resumeOpen ? (
+        <div
+          className="toolbar profile-resume-tools"
+          aria-label="Resume workspace tools"
+        >
+          <Button
+            type="button"
+            variant={resumeLayout === "document" ? "secondary" : "ghost"}
+            aria-pressed={resumeLayout === "document"}
+            onClick={() => setResumeLayout("document")}
+          >
+            Document
+          </Button>
+          <Button
+            type="button"
+            variant={resumeLayout === "split" ? "secondary" : "ghost"}
+            aria-pressed={resumeLayout === "split"}
+            onClick={() => setResumeLayout("split")}
+          >
+            Document and Profile data
+          </Button>
+        </div>
+      ) : null}
+      <div
+        className={`profile-peer-content${resumeOpen && resumeLayout === "split" ? " profile-peer-content--split" : ""}`}
+      >
+        <div
+          className="profile-peer-data"
+          hidden={
+            resumeOpen && resumeLayout === "document" && !profileRecoveryPending
+          }
+        >
+          <ProfileForm
+            initial={profileQuery.data}
+            section="profile"
+            activeSection={resumeOpen ? "experience" : activeSection}
+            {...(roleId ? { roleId } : {})}
+            {...(achievementId ? { achievementId } : {})}
+            {...(achievementContent ? { achievementContent } : {})}
+            {...(achievementWordings ? { achievementWordings } : {})}
+            onPlateTextControllerChange={connectController}
+            onPreviewSourceChange={updatePreview}
+            onDirtyChange={setFormDirty}
+            onRecoveryPendingChange={setProfileRecoveryPending}
+          />
+          {activeSection === "experience" ? (
+            <ProfileRecoveryPanel
+              disabled={formDirty || profileRecoveryPending}
+            />
+          ) : null}
+        </div>
+        <aside
+          className="profile-peer-resume"
+          aria-label="Baseline resume editor workspace"
+          id="profile-resume-editor"
+          hidden={!resumeOpen}
+        >
+          {documentRecovery.restoredVersion !== undefined ? (
+            <p role="status">
+              A resume draft retained in this browser is open
+              {documentRecovery.restoredVersion !==
+              profileQuery.data.profileVersion
+                ? ". Its Profile source has changed; review before using it"
+                : ""}
+              .
+            </p>
+          ) : null}
+          {pendingSource ? (
+            <div className="profile-draft-recovery" role="status">
+              <p>
+                Saved Profile information changed. Your edited resume draft is
+                preserved.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={profileRecoveryPending || documentRecovery.pending}
+                onClick={async () => {
+                  if (!(await documentRecovery.discard())) return;
+                  documentDirtyRef.current = false;
+                  setDocumentDirty(false);
+                  setPreviewSource((previous) => ({
+                    profile: pendingSource.profile,
+                    profileVersion: pendingSource.profileVersion,
+                    revision: (previous?.revision ?? 0) + 1,
+                  }));
+                  setPendingSource(null);
+                }}
+              >
+                Replace draft with saved Profile
+              </Button>
+            </div>
+          ) : null}
+          {documentRecovery.pending ? (
+            <div className="profile-draft-recovery" role="status">
+              <p>
+                {documentRecovery.error ??
+                  (documentRecovery.hasRetainedDraft
+                    ? "A retained resume draft needs a recovery decision before editing."
+                    : "Checking retained resume changes…")}
+              </p>
+              {documentRecovery.hasRetainedDraft &&
+              !documentRecovery.hasLocalEdits ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void documentRecovery.restore()}
+                >
+                  Restore retained resume draft
+                </Button>
+              ) : null}
+              {documentRecovery.hasRetainedDraft || documentRecovery.error ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => void documentRecovery.discard()}
+                >
+                  Discard retained resume draft
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void documentRecovery.retry()}
+              >
+                Retry resume recovery
+              </Button>
+            </div>
+          ) : null}
+          {profileRecoveryPending ? (
+            <p role="status">
+              Restore or discard the retained Profile draft before editing the
+              resume.
+            </p>
+          ) : null}
+          <div
+            inert={profileRecoveryPending || documentRecovery.pending}
+            className="profile-document-editing-boundary"
+          >
+            <ResumeStandalonePlateEditor
+              {...(template ? { transformKey: template.versionId } : {})}
+              className="profile-resume-plate-editor"
+              htmlUrl={
+                previewSource?.profileVersion != null
+                  ? profileHtmlPreviewPath(previewSource.revision)
+                  : null
+              }
+              htmlTransform={bindFields}
+              pdfFilename="baseline-resume.pdf"
+              previewStyle={previewStyle}
+              title="Baseline resume editor"
+              onSemanticTextChange={applyDocumentText}
+              initialDraftValue={documentRecovery.initialDraftValue}
+              onDirtyChange={handleDocumentDirty}
+              onPlateValueChange={documentRecovery.retain}
+            />
+            <details className="profile-resume-template-tools">
+              <summary>Resume template and style</summary>
+              <ResumeTemplatePanel
+                profileHtmlPreviewUrl={
+                  profileQuery.data.profileVersion === null ? null : previewUrl
+                }
+              />
+            </details>
+          </div>
+        </aside>
+      </div>
+      {activeSection === "experience" && affectedMatches ? (
+        <div className="profile-match-tools">{affectedMatches}</div>
+      ) : null}
+      <details className="profile-transfer-tools">
+        <summary>Profile export and transfer</summary>
+        <ProfileTransferExport />
+      </details>
     </div>
   );
-}
-
-function clampEditorWidth(value: number): number {
-  return Math.min(MAX_EDITOR_WIDTH, Math.max(MIN_EDITOR_WIDTH, Math.round(value)));
 }

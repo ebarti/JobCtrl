@@ -75,15 +75,34 @@ Provider and model availability depends on the configured provider and the
 current account. See [model configuration](configuration.md#llm-providers) for
 the available choices.
 
-Eligible jobs receive materials during Discover preparation. You can also
-generate first-time materials for one job, use **Re-tailor** to regenerate its
-resume with your latest saved profile and settings, or run bounded re-tailoring
-from the Jobs toolbar. Use **Re-tailor** after updating your profile even when
-your tailoring settings have not changed. Your accepted materials stay available
-until a replacement is approved, including when a refresh fails.
-Explicit re-tailoring does not require a fresh score and does not re-score the
-job. It uses the current profile and saved requirement evidence. Automatic
-preparation continues to apply scoring readiness and fit thresholds.
+The Original redesign source candidate offers one job-level **Prepare resume**
+action with **Tailored resume** and **Full baseline** choices. It sequences the
+existing requirement, person-fit, composition, advisory review and rendering
+owners under the saved limits. A result is ready for your review, not silently
+accepted. **Request stop**, unfinished-work recovery and task-local progress keep
+the same job and durable request identity. The
+[redesign ledger](../plans/2026-11-11-original-app-redesign.md) records integrated
+verification separately from source implementation and release availability.
+
+Focused **Re-tailor** and other maintenance recipes remain in **Preparation
+options and history** and supported bounded bulk work. They use their own
+explicit scope; ordinary Profile or wording saves trigger no preparation.
+Your accepted materials stay available until a replacement is accepted,
+including when refresh fails. Manual document drafts are preserved before new
+preparation is admitted.
+
+The selected **Applications** review uses the same mode + **Prepare resume**
+controls when Preparation is mounted. In a reduced composition without that
+optional feature, **Resume type → Create resume** retains a direct document draft
+with explicit checks/rendering, acceptance and export. Neither path grants an
+application approval or external execution permission.
+
+Composition freshness is a separate read from document acceptance. Changed
+Profile, requirement or maintained-wording bindings can make the saved
+composition stale while its draft/accepted record remains available. Choose
+**Prepare resume** when you want a current candidate; a freshness read does not
+regenerate it. Full-baseline freshness follows Profile sources without needing
+Fit/requirement coverage to become current.
 
 When you manually correct a score, the existing requirement evidence is carried
 forward to that score version. Its original profile and employer-analysis
@@ -93,12 +112,15 @@ left behind, only when the recorded scoring determination identifies its source.
 
 The user-visible surfaces divide the work:
 
-- `/jobs/:jobId` shows material readiness, accepted artifacts, employer and
-  requirement evidence, stage failures, and the per-job generation/re-tailor
-  controls. Accepted artifacts appear first, newest recorded generation first;
+- The selected job's **Resume** tab (`/jobs/:jobId`) shows the actual Plate
+  editor, readiness, accepted artifacts and per-job preparation/review controls.
+  **Fit & overview**, application, people/interviews and history remain nearby.
+  Accepted artifacts appear first, newest recorded generation first;
   older approved artifacts remain visible. Canonically superseded versions
   remain inspectable in the collapsed **Superseded artifacts** list.
-- `/artifacts` lists registered generations; `/artifacts/:artifactId` opens a
+- **Jobs → Materials** (`/artifacts`) shows **Saved materials**, including drafts,
+  accepted versions and history. Use **Search saved materials** or **Refresh
+  materials** for the cross-job list; `/artifacts/:artifactId` opens a
   route-level inspector with stored validation, provenance, coverage, voice,
   template, risk metadata, and same-job comparison followed by the full-width
   real preview when supported.
@@ -106,8 +128,9 @@ The user-visible surfaces divide the work:
   and excerpts with links back to the owning entry. An unresolved legacy key is
   labeled unavailable and stays accessible under **Technical details** rather
   than being presented as user-facing evidence.
-- **Edit resume** in Job Detail opens that job's editor directly in
-  `/apply-review`. Text edits belong to the position's draft and leave the
+- The job **Resume** tab opens that job's editor directly. The cross-job
+  **Applications** queue (`/apply-review`) remains available for exact outgoing
+  packet review. Text edits belong to the position's document draft and leave the
   Candidate Profile unchanged. The editor, revision,
   replacement-render, submission-approval lifecycle, and distinction between a
   local editor export and an approved artifact are owned by
@@ -119,7 +142,7 @@ The user-visible surfaces divide the work:
   Bullets and short paragraphs stay together when they fit on one page.
   Review comments remain available on long resumes too. If saving comments
   fails, retrying saves the existing findings without running another review.
-- `/preferences` owns tailoring permissions, writing style, resume templates,
+- **My profile → Search preferences** (`/preferences`) retains tailoring permissions, writing style, resume templates,
   and the default template; Apply Review can override the template for one job.
   Template payloads hold style/layout only, not candidate or job facts. An
   unsaved template draft remains available when saved templates refresh or you
@@ -131,7 +154,8 @@ The user-visible surfaces divide the work:
   before retrying **set default**. If templates cannot refresh, the panel labels
   the last read default and offers a retry before changing the default. A later
   successful read that shows the requested version clears the unconfirmed notice.
-- `/settings/models` contains provider and model controls. The current fields
+- **Settings → Connections** contains provider and model controls; `/settings/models`
+  remains a supported deep link to that panel. The current fields
   and fallback rules belong to [Configuration](configuration.md).
 
 **Materials ready** means the accepted resume text and submission PDF are
@@ -155,7 +179,7 @@ or make the exported file eligible for submission.
 
 ## Interview Preparation
 
-Open **Interviews** (`/interviews`) to explore the installed question library.
+Open **Jobs → Interview library** (`/interviews`) to explore the installed question library.
 Browsing works without a job or provider call. Search question text,
 responsibilities, or competencies; filter by topic, role responsibilities, answer format, and source,
 and switch between graph and list. The selected card and filters live in the
@@ -317,7 +341,8 @@ surface.
 
 ## Policy History And Rollback
 
-The Dashboard's **Learning recommendations** card is a review boundary, not an
+The retained **Learning recommendations** card, reachable through workspace
+diagnostics, is a review boundary, not an
 automatic tuning loop. Accepting a pending, active recommendation appends a new
 Materials tailoring-policy revision linked to its recommendation and review;
 rejecting it leaves the current revision unchanged. Recommendations whose

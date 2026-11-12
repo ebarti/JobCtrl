@@ -3,8 +3,18 @@ import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { discoveryKeys } from "./queryKeys.js";
 
 export const discoveryEvents: FeatureEventHandler = {
-  eventTypes: ["DiscoverySettingsUpdated", "SettingsUpdated", "DiscoverySourceUpdated", "SourceProposalUpdated", "DiscoveryCaptureUpdated", "DiscoveryFeedbackUpdated", "DiscoveryRunUpdated", "DiscoveryTargetsUpdated", "ProfileUpdated", "ProfileSourceUpdated", "PostingQuarantined", "PostingQuarantineReviewed"],
+  eventTypes: ["DiscoverySettingsUpdated", "SettingsUpdated", "DiscoverySourceUpdated", "SourceProposalUpdated", "DiscoveryCaptureUpdated", "DiscoveryFeedbackUpdated", "DiscoveryRunUpdated", "DiscoveryTargetsUpdated", "ProfileUpdated", "ProfileSourceUpdated", "PostingQuarantined", "PostingQuarantineReviewed", "ActionQueued", "ActionStarted", "ActionCompleted", "ActionFailed", "ActionCancellationRequested"],
   handle(event, queryClient) {
+    if (["ActionQueued", "ActionStarted", "ActionCompleted", "ActionFailed", "ActionCancellationRequested"].includes(event.eventType)) {
+      const payload = event.payload;
+      const searchAction = payload && typeof payload === "object" && "action" in payload && payload.action === "discovery.search";
+      if (event.feature === "discovery" || searchAction) {
+        void invalidateQueriesWithOptimisticOwnership(queryClient, discoveryKeys.searchActions(event.tenantId));
+        void invalidateQueriesWithOptimisticOwnership(queryClient, [...discoveryKeys.all(event.tenantId), "request-status", "discovery.search"]);
+        void invalidateQueriesWithOptimisticOwnership(queryClient, discoveryKeys.runs(event.tenantId));
+      }
+      return;
+    }
     if (event.eventType === "DiscoverySourceUpdated") {
       void invalidateQueriesWithOptimisticOwnership(queryClient, discoveryKeys.sourceRegistry(event.tenantId));
       const payload = event.payload;

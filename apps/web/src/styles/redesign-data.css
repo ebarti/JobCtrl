@@ -113,6 +113,21 @@
   grid-template-columns: minmax(16rem, 1fr) minmax(10rem, 14rem) auto;
 }
 
+.artifact-filter-toolbar > label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.artifact-filter-toolbar > label > select {
+  width: 100%;
+  min-width: 0;
+}
+
+.artifact-filter-toolbar > button {
+  justify-self: start;
+}
+
 .artifact-filter-actions,
 .runs-filter-actions,
 .debug-filter-actions,

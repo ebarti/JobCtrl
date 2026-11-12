@@ -153,6 +153,31 @@ class RequirementsService:
                 requirement_id, limit=limit, offset=offset, connection=connection,
             )}
 
+    def requirement_history(self, requirement_id, *, kind="revisions", limit=50, offset=0):
+        if kind not in {"revisions", "occurrences"}:
+            raise AppError("invalid_history_kind", "Choose revisions or occurrences.")
+        with self.store.read_session() as connection:
+            head = self.store.get_meaning(requirement_id, connection=connection)
+            page = self.store.history(requirement_id, kind=kind, limit=limit, offset=offset, connection=connection)
+            postings = self.jobs.get_job_snapshots(list(dict.fromkeys(row["job_id"] for row in page["rows"])),
+                                                   connection=connection) if kind == "occurrences" else {}
+            for row in page["rows"]:
+                reasons = []
+                recorded = row["revision"] if kind == "revisions" else row["requirement_revision"]
+                if recorded != head["revision"]:
+                    reasons.append("requirement_revised")
+                if kind == "occurrences":
+                    if not row["accepted"]:
+                        reasons.append("snapshot_superseded")
+                    posting = postings.get(row["job_id"])
+                    if (posting is None or posting.get("deleted")
+                            or posting.get("revision") != row["posting_revision"]
+                            or posting.get("source_hash") != row["source_hash"]):
+                        reasons.append("posting_changed_or_unavailable")
+                row.update(current=not reasons, stale_reasons=reasons)
+            return {"requirement_id": requirement_id, "current_revision": head["revision"],
+                    "kind": kind, "limit": limit, "offset": offset, **page}
+
     async def correct_binding(
         self, job_id: str, occurrence_id: str, *, expected_revision: int,
         expected_posting_revision: int, requirement_id: str, requirement_revision: int,

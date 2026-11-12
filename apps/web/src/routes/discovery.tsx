@@ -3,6 +3,7 @@ import {
   createFileRoute,
   useNavigate,
   useSearch,
+  Link,
 } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
@@ -14,7 +15,8 @@ import {
   type SavedTablePresentation,
   useSavedTableViewsStore,
 } from "../shared/stores/saved-table-views.js";
-import { DiscoveryView } from "../views/discovery/DiscoveryView.js";
+import { SearchPreferencesWorkspace } from "../views/search-preferences/SearchPreferencesWorkspace.js";
+import { jobsSearchSchema } from "./-jobs.search.js";
 import {
   DEFAULT_DISCOVERY_SOURCE_FILTERS,
   discoverySearchSchema,
@@ -115,7 +117,9 @@ function DiscoveryRouteView() {
     ],
   );
 
-  return <DiscoveryView sourceTable={sourceTable} />;
+  return <SearchPreferencesWorkspace purpose="search" sourceTable={sourceTable}
+    connectionAction={<Link to="/settings" search={{ returnTo: "discovery", returnDiscovery: search }}>Review connections</Link>}
+    returnAction={search.returnTo === "jobs" ? <Link to="/jobs" search={search.jobsReturn ?? jobsSearchSchema.parse({})}>Back to jobs</Link> : undefined} />;
 }
 
 export const Route = createFileRoute("/discovery")({

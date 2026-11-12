@@ -16,6 +16,8 @@ from .models import QualificationDecision
 from .ports import FitStorePort, ModelPort, ProfilePort, RequirementsPort, SettingsPort
 from .qualification import Qualification, now
 from .refresh import ManualRefresh
+from .library import requirement_library
+from .current_wording import assignment_view
 from .sources import (
     achievements, approved_fingerprint, dto, fact_fingerprint, fact_sources, fingerprint, requirement_source,
     semantic_sources,
@@ -53,6 +55,43 @@ class FitService:
         self.qualification = Qualification(model=model, store=store)
         self.coverage = Coverage(model=model, profile=profile, store=store, qualification=self.qualification)
         self.manual_refresh = ManualRefresh(self)
+
+    def requirement_library(self, profile_id="default"):
+        return requirement_library(self.store, profile_id)
+
+    def current_wording_assignments(self, profile_id="default", connection=None):
+        with self.store.read_snapshot(connection) as read:
+            try:
+                profile = dto(read.profile_snapshot(profile_id))
+            except NotFoundError:
+                profile = None
+            return [assignment_view(row, read, profile) for row in read.current_wordings(profile_id)]
+
+    def assert_current_wording_assignments(self, expected, profile_id="default", connection=None):
+        current = self.current_wording_assignments(profile_id, connection)
+        if fingerprint(expected) != fingerprint(current):
+            raise ConflictError("The maintained wording assignments changed.")
+
+    def set_current_wording(self, request):
+        return self.store.set_current_wording(request)
+
+    def set_current_wording_state(self, assignment_id, request):
+        return self.store.set_current_wording_state(assignment_id, request)
+
+    def current_wording_history(self, assignment_id, profile_id="default", *, limit=50, offset=0):
+        return self.store.current_wording_history(assignment_id, profile_id, limit=limit, offset=offset)
+
+    def create_association(self, request):
+        return self.store.create_association(request)
+
+    def set_association_state(self, association_id, request):
+        return self.store.set_association_state(association_id, request)
+
+    def revise_association(self, association_id, request):
+        return self.store.revise_association(association_id, request)
+
+    def association_history(self, association_id, profile_id="default", *, limit=50, offset=0):
+        return self.store.association_history(association_id, profile_id, limit=limit, offset=offset)
 
     def refresh_pending(self, profile_id="default"):
         return self.manual_refresh.pending(profile_id)
@@ -366,12 +405,20 @@ class FitService:
         profile = dto(read.profile_snapshot(profile_id))
         source_hash = fact_fingerprint(profile)
         variants = {row["variant_id"]: row for row in profile["approved_variants"]}
+        requirement_ids = sorted({row["requirement_id"] for row in requirements})
+        achievement_ids = sorted({row["achievement_id"] for row in approved_variants})
+        maintained = [row for row in read.current_wordings(profile_id, achievement_ids=achievement_ids)
+                      if row["requirement_id"] in requirement_ids]
+        maintained_scope = {"profile_id": profile_id, "requirement_ids": requirement_ids,
+                            "achievement_ids": achievement_ids, "assignments": maintained}
         result = {"profile_id": profile_id, "profile_revision": profile_revision,
                   "fact_semantics_version": profile["fact_semantics_version"],
                   "status": "current", "requirements": [], "relations": [], "wording_gaps": [],
-                  "approved_variants": [],
+                  "approved_variants": [], "current_wordings": [],
                   "source_binding": {"profile_id": profile_id, "profile_revision": profile_revision,
-                                     "source_fingerprint": source_hash, "relation_ids": [], "assessment_ids": {}}}
+                                     "source_fingerprint": source_hash, "relation_ids": [], "assessment_ids": {},
+                                     "current_wordings_scope": {"requirement_ids": requirement_ids, "achievement_ids": achievement_ids},
+                                     "current_wordings_fingerprint": fingerprint(maintained_scope)}}
         if profile["profile_revision"] != profile_revision:
             result["status"] = "stale"
         selected_variants = []
@@ -403,27 +450,26 @@ class FitService:
                     result["status"] = "not_recorded"
                 result["wording_gaps"].append({"requirement_id": ident, "status": "qualification_not_recorded"})
                 continue
-            covered, complete = False, True
-            for variant in selected_variants:
-                if variant["achievement_id"] not in assessment["achievement_ids"]:
+            current_wordings = [assignment_view(row, read, profile) for row in maintained if row["requirement_id"] == ident]
+            result["current_wordings"].extend(current_wordings)
+            supplied_variant_ids = {row["variant_id"] for row in selected_variants}
+            covered = False
+            for assignment in current_wordings:
+                if (not assignment["current"] or assignment["variant_id"] not in supplied_variant_ids
+                        or assignment["achievement_id"] not in assessment["achievement_ids"]):
                     continue
+                variant = variants[assignment["variant_id"]]
                 relation = read.coverage(profile_id, ident, revision, assessment["assessment_id"],
                                                  variant["variant_id"], variant["revision"])
-                if relation is None or relation["variant_fingerprint"] != variant_fingerprint(variant):
-                    complete = False
-                    if result["status"] != "stale":
-                        result["status"] = "not_recorded"
-                    result["relations"].append({"requirement_id": ident, "requirement_revision": revision,
-                                                "achievement_id": variant["achievement_id"],
-                                                "variant_id": variant["variant_id"], "variant_revision": variant["revision"],
-                                                "covered": False, "status": "not_recorded", "determination_id": None,
-                                                "source_refs": []})
-                else:
-                    result["relations"].append(relation)
+                if relation is not None and relation["relation_id"] == assignment["relation_id"]:
+                    result["relations"].append({**relation, "assignment_id": assignment["assignment_id"],
+                                                "assignment_revision": assignment["revision"]})
                     result["source_binding"]["relation_ids"].append(relation["relation_id"])
                     covered = covered or relation["covered"]
             if assessment["kind"] in {"matched", "transferable"} and not covered:
-                gap = {"requirement_id": ident, "status": "missing_approved_wording" if complete else "not_recorded",
+                if result["status"] != "stale":
+                    result["status"] = "not_recorded"
+                gap = {"requirement_id": ident, "status": "current_wording_not_selected" if not current_wordings else "current_wording_stale",
                        "person_qualification": assessment["kind"]}
                 requests = read.wording_requests(profile_id, ident, revision)
                 for binding in requests:

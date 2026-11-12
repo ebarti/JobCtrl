@@ -39,3 +39,37 @@ not change or erase that history. Fit owns manual retry selection and operation
 budgets, while Profile continues to require user approval of any resulting text.
 The existing wording library read exposes safe attempt and lineage IDs, source
 gap IDs and status; it does not expose the recorded process owner.
+
+## Manual revision and experience recovery
+
+The HTTP adapter exposes `PATCH /v1/profile/wording/{variant_id}` for pending
+drafts only. `expectedProfileVersion`, `expectedVariantRevision` and `exactText`
+fence the new `text`; a reviewed variant is not mutated. Earlier pending
+revisions are retained. `GET .../{variant_id}/history` returns exact retained
+revisions plus the current one without approving or restoring text.
+
+Creating a proposed revision through `POST /v1/profile/wording` can retain
+`replacesVariantId`, `replacesVariantRevision` and `intendedRequirementIds`.
+Source/variant fences preserve lineage and accepted wording; intended requirement
+IDs are user intent, not semantic coverage. Model-authoring provenance retains
+its recorded group/action/replacement IDs separately. Profile owns text and exact
+review; Fit owns recorded current requirement/wording relationships. The
+[11 November decision](../../../../../../docs/decisions.md#_2026-11-11-requirement-led-current-wording-and-proposed-revisions)
+requires reuse/consolidation before another maintained wording and keeps proposed
+revisions/history separate from the current expression.
+
+`GET /v1/profile/recovery` inventories removed roles/achievements from retained
+Profile versions. `POST /v1/profile/recovery/restore` requires
+`expectedProfileVersion`, `sourceProfileVersion`, `kind` and exact original `id`.
+It inserts only that absent record into the latest saved document. Restore a
+removed parent role before its achievement; changed/recovered records refuse a
+stale request. Original identity and retained wording/source history survive,
+without replacing concurrent authored edits or accepted resume bytes.
+
+Search location metadata remains Profile-owned. Optional
+`experience.target_location_bindings` joins each zero-based `rowIndex` and exact
+saved text to its user-selected Photon place identity, coordinates and selection
+provenance. Changed text/position clears stale bindings; old text-only rows remain
+unverified. This is structural/source metadata, not geographic qualification or
+search permission inferred from past employment. Reads/saves perform no lookup,
+assessment, automatic refresh or document regeneration.

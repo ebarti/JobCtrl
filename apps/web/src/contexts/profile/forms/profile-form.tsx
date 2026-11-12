@@ -5,7 +5,13 @@ import {
 } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import type {
   ProfileConfigResponse,
@@ -13,12 +19,30 @@ import type {
 } from "@jobctrl/contracts";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button } from "../../../shared/ui/button.js";
-import { getPathValue, isJsonRecord, setPathValue, type JsonRecord } from "../lib/json-record.js";
-import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
+import {
+  getPathValue,
+  isJsonRecord,
+  setPathValue,
+  type JsonRecord,
+} from "../lib/json-record.js";
+import {
+  StructuredProfileEditor,
+  type ProfileActiveSection,
+} from "../components/StructuredProfileEditor.js";
 import { RequiredBulletSuggestions } from "../components/RequiredBulletSuggestions.js";
 import { TargetRoleSuggestions } from "../components/TargetRoleSuggestions.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
 import { useWordingLibrary } from "../hooks/useWordingLibrary.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import {
+  restoreProfileChanges,
+  restoreSessionPrivateFields,
+  hasPrivateDraftChanges,
+  profileSessionIdentity,
+  useProfileDraftGeneration,
+} from "../lib/profile-draft-state.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { ProfileDraftRecovery } from "../components/ProfileDraftRecovery.js";
 import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
 import {
   isProfileDateRangeChronological,
@@ -35,8 +59,17 @@ export interface ProfileFormValues {
 
 export interface ProfileFormProps {
   initial: ProfileConfigResponse;
-  onPlateTextControllerChange?: (controller: ProfilePlateTextController | null) => void;
+  activeSection?: ProfileActiveSection;
+  roleId?: string;
+  achievementId?: string;
+  achievementContent?: (achievementId: string, roleId: string) => ReactNode;
+  achievementWordings?: (achievementId: string, roleId: string) => ReactNode;
+  onPlateTextControllerChange?: (
+    controller: ProfilePlateTextController | null,
+  ) => void;
   onPreviewSourceChange?: (profile: ProfileConfigResponse) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  onRecoveryPendingChange?: (pending: boolean) => void;
   section?: ProfileSection;
   showSectionHeading?: boolean;
 }
@@ -51,7 +84,9 @@ export interface ProfilePlateTextController {
   readonly apply: (changes: readonly ProfilePlateTextChange[]) => void;
 }
 
-export function toProfileFormValues(profile: ProfileConfigResponse): ProfileFormValues {
+export function toProfileFormValues(
+  profile: ProfileConfigResponse,
+): ProfileFormValues {
   return {
     profile: isJsonRecord(profile.profile) ? profile.profile : null,
     style: isJsonRecord(profile.style) ? profile.style : null,
@@ -75,7 +110,9 @@ function validateProfileForm(values: ProfileFormValues): string | undefined {
 function validateProfileDateRanges(profile: ProfileShape): string | undefined {
   const entries = profile.resume.experience_entries;
   for (const [index, entry] of entries.entries()) {
-    if (!isProfileDateRangeChronological(parseProfileDateRange(entry.date_range))) {
+    if (
+      !isProfileDateRangeChronological(parseProfileDateRange(entry.date_range))
+    ) {
       const label = entry.title || `Experience ${index + 1}`;
       return `${label}: End date must be after start date.`;
     }
@@ -101,18 +138,30 @@ function setRequiredBulletText(
   index: number,
   text: string,
 ): boolean {
-  const required = getPathValue(profile, "resume.tailoring_rules.required_bullets_by_experience_id");
-  if (!isJsonRecord(required) || !Object.hasOwn(required, experienceId)
-    || !Array.isArray(required[experienceId])) return false;
+  const required = getPathValue(
+    profile,
+    "resume.tailoring_rules.required_bullets_by_experience_id",
+  );
+  if (
+    !isJsonRecord(required) ||
+    !Object.hasOwn(required, experienceId) ||
+    !Array.isArray(required[experienceId])
+  )
+    return false;
   const bullets = required[experienceId] as unknown[];
   if (typeof bullets[index] !== "string") return false;
   bullets[index] = text;
   return true;
 }
 
-function ownRequiredBullets(profile: ProfileShape, experienceId: string): string[] | undefined {
+function ownRequiredBullets(
+  profile: ProfileShape,
+  experienceId: string,
+): string[] | undefined {
   const pins = profile.resume.tailoring_rules.required_bullets_by_experience_id;
-  return pins && Object.hasOwn(pins, experienceId) ? pins[experienceId] : undefined;
+  return pins && Object.hasOwn(pins, experienceId)
+    ? pins[experienceId]
+    : undefined;
 }
 
 interface PendingRequiredPinConflict {
@@ -130,11 +179,17 @@ function isProvenBulletReorder(
   sourceIndex: number,
   sourceText: string,
 ): boolean {
-  if (baseline[sourceIndex] !== sourceText || baseline.length !== current.length) return false;
+  if (
+    baseline[sourceIndex] !== sourceText ||
+    baseline.length !== current.length
+  )
+    return false;
   const baselineTexts = new Set(baseline);
-  return baselineTexts.size === baseline.length
-    && new Set(current).size === current.length
-    && current.every((text) => baselineTexts.has(text));
+  return (
+    baselineTexts.size === baseline.length &&
+    new Set(current).size === current.length &&
+    current.every((text) => baselineTexts.has(text))
+  );
 }
 
 function reconcilePendingRequiredPin(
@@ -145,7 +200,11 @@ function reconcilePendingRequiredPin(
   if (!parsed.success) return "blocked";
   const entries = parsed.data.resume.experience_entries;
   const entry = entries[conflict.entryIndex];
-  if (!entry || entry.id !== conflict.experienceId || entries.filter((item) => item.id === entry.id).length !== 1) {
+  if (
+    !entry ||
+    entry.id !== conflict.experienceId ||
+    entries.filter((item) => item.id === entry.id).length !== 1
+  ) {
     return "blocked";
   }
   const required = ownRequiredBullets(parsed.data, entry.id);
@@ -153,20 +212,30 @@ function reconcilePendingRequiredPin(
     return "blocked";
   }
   const pinnedText = required[conflict.requiredBulletIndex];
-  if (typeof pinnedText !== "string" || required.filter((item) => item === pinnedText).length !== 1) {
+  if (
+    typeof pinnedText !== "string" ||
+    required.filter((item) => item === pinnedText).length !== 1
+  ) {
     return "blocked";
   }
   const matchingPinBulletIndexes = entry.bullets.flatMap((text, index) =>
-    text === pinnedText ? [index] : []);
+    text === pinnedText ? [index] : [],
+  );
   // A pin is text-based. If its unique text moved, follow that occurrence
   // before considering the old position; the old position now belongs to a
   // different bullet and must never inherit the pin.
-  if (matchingPinBulletIndexes.length === 1
-    && (matchingPinBulletIndexes[0] === conflict.bulletIndex
-      || isProvenBulletReorder(
-        conflict.baselineBullets, entry.bullets, conflict.bulletIndex, pinnedText,
-      ))
-    && (pinnedText === conflict.previousText || !required.includes(conflict.previousText))) {
+  if (
+    matchingPinBulletIndexes.length === 1 &&
+    (matchingPinBulletIndexes[0] === conflict.bulletIndex ||
+      isProvenBulletReorder(
+        conflict.baselineBullets,
+        entry.bullets,
+        conflict.bulletIndex,
+        pinnedText,
+      )) &&
+    (pinnedText === conflict.previousText ||
+      !required.includes(conflict.previousText))
+  ) {
     conflict.bulletIndex = matchingPinBulletIndexes[0]!;
     conflict.previousText = pinnedText;
     conflict.baselineBullets = [...entry.bullets];
@@ -174,20 +243,32 @@ function reconcilePendingRequiredPin(
   }
   if (matchingPinBulletIndexes.length > 1) return "blocked";
   const bullet = entry.bullets[conflict.bulletIndex];
-  if (pinnedText !== conflict.previousText
-    || !bullet
-    || entry.bullets.filter((item) => item === bullet).length !== 1
-    || entry.bullets.length !== conflict.baselineBullets.length
-    || conflict.baselineBullets[conflict.bulletIndex] !== conflict.previousText
-    || entry.bullets.some((text, index) =>
-      index !== conflict.bulletIndex && text !== conflict.baselineBullets[index])
-    || required.filter((item) => item === bullet).length > 1) {
+  if (
+    pinnedText !== conflict.previousText ||
+    !bullet ||
+    entry.bullets.filter((item) => item === bullet).length !== 1 ||
+    entry.bullets.length !== conflict.baselineBullets.length ||
+    conflict.baselineBullets[conflict.bulletIndex] !== conflict.previousText ||
+    entry.bullets.some(
+      (text, index) =>
+        index !== conflict.bulletIndex &&
+        text !== conflict.baselineBullets[index],
+    ) ||
+    required.filter((item) => item === bullet).length > 1
+  ) {
     return "blocked";
   }
   if (required.includes(bullet)) {
-    const requiredMap = getPathValue(profile, "resume.tailoring_rules.required_bullets_by_experience_id");
-    if (!isJsonRecord(requiredMap) || !Object.hasOwn(requiredMap, entry.id)
-      || !Array.isArray(requiredMap[entry.id])) return "blocked";
+    const requiredMap = getPathValue(
+      profile,
+      "resume.tailoring_rules.required_bullets_by_experience_id",
+    );
+    if (
+      !isJsonRecord(requiredMap) ||
+      !Object.hasOwn(requiredMap, entry.id) ||
+      !Array.isArray(requiredMap[entry.id])
+    )
+      return "blocked";
     const updatedRequired = requiredMap[entry.id] as unknown[];
     updatedRequired.splice(conflict.requiredBulletIndex, 1);
     conflict.requiredBulletIndex = updatedRequired.indexOf(bullet);
@@ -195,7 +276,15 @@ function reconcilePendingRequiredPin(
     conflict.baselineBullets = [...entry.bullets];
     return "updated";
   }
-  if (!setRequiredBulletText(profile, entry.id, conflict.requiredBulletIndex, bullet)) return "blocked";
+  if (
+    !setRequiredBulletText(
+      profile,
+      entry.id,
+      conflict.requiredBulletIndex,
+      bullet,
+    )
+  )
+    return "blocked";
   conflict.previousText = bullet;
   conflict.baselineBullets = [...entry.bullets];
   return "updated";
@@ -206,20 +295,36 @@ function explicitlyRemovedRequiredPin(
   after: JsonRecord,
   conflict: PendingRequiredPinConflict,
 ): boolean {
-  const beforeMap = before && getPathValue(before, "resume.tailoring_rules.required_bullets_by_experience_id");
-  const afterMap = getPathValue(after, "resume.tailoring_rules.required_bullets_by_experience_id");
+  const beforeMap =
+    before &&
+    getPathValue(
+      before,
+      "resume.tailoring_rules.required_bullets_by_experience_id",
+    );
+  const afterMap = getPathValue(
+    after,
+    "resume.tailoring_rules.required_bullets_by_experience_id",
+  );
   if (!isJsonRecord(beforeMap) || !isJsonRecord(afterMap)) return false;
   const oldPins = Object.hasOwn(beforeMap, conflict.experienceId)
-    ? beforeMap[conflict.experienceId] : undefined;
+    ? beforeMap[conflict.experienceId]
+    : undefined;
   const newPins = Object.hasOwn(afterMap, conflict.experienceId)
-    ? afterMap[conflict.experienceId] : undefined;
-  return Array.isArray(oldPins) && Array.isArray(newPins)
-    && oldPins[conflict.requiredBulletIndex] === conflict.previousText
-    && newPins.length === oldPins.length - 1
-    && !newPins.includes(conflict.previousText);
+    ? afterMap[conflict.experienceId]
+    : undefined;
+  return (
+    Array.isArray(oldPins) &&
+    Array.isArray(newPins) &&
+    oldPins[conflict.requiredBulletIndex] === conflict.previousText &&
+    newPins.length === oldPins.length - 1 &&
+    !newPins.includes(conflict.previousText)
+  );
 }
 
-function appendTargetRoles(profile: JsonRecord | null, titles: readonly string[]): JsonRecord | null {
+function appendTargetRoles(
+  profile: JsonRecord | null,
+  titles: readonly string[],
+): JsonRecord | null {
   if (!profile) return profile;
   const next = structuredClone(profile);
   const current = targetRoles(next);
@@ -245,26 +350,42 @@ function targetRoles(profile: JsonRecord | null): string[] {
 
 type TargetPreferenceRow = { location: string; workModel: string };
 
-function targetPreferenceRows(profile: JsonRecord | null): TargetPreferenceRow[] {
+function targetPreferenceRows(
+  profile: JsonRecord | null,
+): TargetPreferenceRow[] {
   const splitRows = (path: string) => {
     const value = String(getPathValue(profile, path) ?? "");
     return value ? value.split(";").map((part) => part.trim()) : [];
   };
   const locations = splitRows("experience.target_locations");
   const models = splitRows("experience.target_work_models");
-  return Array.from({ length: Math.max(locations.length, models.length) }, (_, index) => ({
-    location: locations[index] ?? "",
-    workModel: models[index] ?? "",
-  }));
+  return Array.from(
+    { length: Math.max(locations.length, models.length) },
+    (_, index) => ({
+      location: locations[index] ?? "",
+      workModel: models[index] ?? "",
+    }),
+  );
 }
 
 function preferenceRowKey(row: TargetPreferenceRow): string {
   return `${row.location.trim().toLowerCase()}\u0000${row.workModel.trim().toLowerCase()}`;
 }
 
-function writeTargetPreferenceRows(profile: JsonRecord, rows: readonly TargetPreferenceRow[]): void {
-  setPathValue(profile, "experience.target_locations", rows.map((row) => row.location).join("; "));
-  setPathValue(profile, "experience.target_work_models", rows.map((row) => row.workModel).join("; "));
+function writeTargetPreferenceRows(
+  profile: JsonRecord,
+  rows: readonly TargetPreferenceRow[],
+): void {
+  setPathValue(
+    profile,
+    "experience.target_locations",
+    rows.map((row) => row.location).join("; "),
+  );
+  setPathValue(
+    profile,
+    "experience.target_work_models",
+    rows.map((row) => row.workModel).join("; "),
+  );
 }
 
 function appendTargetPreferences(
@@ -276,7 +397,10 @@ function appendTargetPreferences(
   const rows = targetPreferenceRows(next);
   const seen = new Set(rows.map(preferenceRowKey));
   for (const proposal of proposals) {
-    const row = { location: proposal.location.trim(), workModel: proposal.workModel.trim() };
+    const row = {
+      location: proposal.location.trim(),
+      workModel: proposal.workModel.trim(),
+    };
     const key = preferenceRowKey(row);
     if ((row.location || row.workModel) && !seen.has(key)) {
       rows.push(row);
@@ -294,15 +418,25 @@ function omitTargetPreferences(
   if (!profile || proposals.length === 0) return profile;
   const omitted = new Set(proposals.map(preferenceRowKey));
   const next = structuredClone(profile);
-  writeTargetPreferenceRows(next, targetPreferenceRows(next).filter((row) => !omitted.has(preferenceRowKey(row))));
+  writeTargetPreferenceRows(
+    next,
+    targetPreferenceRows(next).filter(
+      (row) => !omitted.has(preferenceRowKey(row)),
+    ),
+  );
   return next;
 }
 
-function omitTargetRoles(profile: JsonRecord | null, titles: readonly string[]): JsonRecord | null {
+function omitTargetRoles(
+  profile: JsonRecord | null,
+  titles: readonly string[],
+): JsonRecord | null {
   if (!profile || titles.length === 0) return profile;
   const omitted = new Set(titles.map((title) => title.trim().toLowerCase()));
   const next = structuredClone(profile);
-  const current = targetRoles(next).filter((title) => !omitted.has(title.toLowerCase()));
+  const current = targetRoles(next).filter(
+    (title) => !omitted.has(title.toLowerCase()),
+  );
   setPathValue(next, "experience.target_role", current.join("; "));
   return next;
 }
@@ -314,17 +448,21 @@ function serializeProfileValues(values: ProfileFormValues): string {
 function jsonValuesEqual(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true;
   if (Array.isArray(left) || Array.isArray(right)) {
-    return Array.isArray(left)
-      && Array.isArray(right)
-      && left.length === right.length
-      && left.every((value, index) => jsonValuesEqual(value, right[index]));
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => jsonValuesEqual(value, right[index]))
+    );
   }
   if (isJsonRecord(left) || isJsonRecord(right)) {
     if (!isJsonRecord(left) || !isJsonRecord(right)) return false;
     const leftKeys = Object.keys(left).toSorted();
     const rightKeys = Object.keys(right).toSorted();
-    return jsonValuesEqual(leftKeys, rightKeys)
-      && leftKeys.every((key) => jsonValuesEqual(left[key], right[key]));
+    return (
+      jsonValuesEqual(leftKeys, rightKeys) &&
+      leftKeys.every((key) => jsonValuesEqual(left[key], right[key]))
+    );
   }
   return false;
 }
@@ -340,30 +478,41 @@ function rebaseIndexedTextArray(
   remote: readonly unknown[],
   path: string,
 ): ProfileRebaseResult {
-  const isUniqueText = (items: readonly unknown[]): items is readonly string[] =>
-    items.every((item) => typeof item === "string")
-    && new Set(items).size === items.length;
-  if (local.length < base.length || remote.length < base.length
-    || !isUniqueText(base) || !isUniqueText(local) || !isUniqueText(remote)) {
+  const isUniqueText = (
+    items: readonly unknown[],
+  ): items is readonly string[] =>
+    items.every((item) => typeof item === "string") &&
+    new Set(items).size === items.length;
+  if (
+    local.length < base.length ||
+    remote.length < base.length ||
+    !isUniqueText(base) ||
+    !isUniqueText(local) ||
+    !isUniqueText(remote)
+  ) {
     return { conflicts: [path], value: structuredClone(local) };
   }
   const originalIndexes = new Map(base.map((text, index) => [text, index]));
-  const movedOriginal = (items: readonly string[]) => items.some(
-    (text, index) => originalIndexes.has(text) && originalIndexes.get(text) !== index,
-  );
+  const movedOriginal = (items: readonly string[]) =>
+    items.some(
+      (text, index) =>
+        originalIndexes.has(text) && originalIndexes.get(text) !== index,
+    );
   if (movedOriginal(local) || movedOriginal(remote)) {
     return { conflicts: [path], value: structuredClone(local) };
   }
   const localTail = local.slice(base.length);
   const remoteTail = remote.slice(base.length);
-  const shorterTail = localTail.length <= remoteTail.length ? localTail : remoteTail;
-  const longerTail = localTail.length > remoteTail.length ? localTail : remoteTail;
+  const shorterTail =
+    localTail.length <= remoteTail.length ? localTail : remoteTail;
+  const longerTail =
+    localTail.length > remoteTail.length ? localTail : remoteTail;
   if (!shorterTail.every((text, index) => text === longerTail[index])) {
     return { conflicts: [path], value: structuredClone(local) };
   }
-  const merged = base.map((text, index) => rebaseProfileValue(
-    text, local[index], remote[index], `${path}[${index}]`,
-  ));
+  const merged = base.map((text, index) =>
+    rebaseProfileValue(text, local[index], remote[index], `${path}[${index}]`),
+  );
   const conflicts = merged.flatMap((item) => item.conflicts);
   const value = [...merged.map((item) => item.value), ...longerTail];
   if (new Set(value).size !== value.length) conflicts.push(path);
@@ -377,17 +526,30 @@ function rebaseExperienceEntries(
   path: string,
 ): ProfileRebaseResult {
   const ids = (items: readonly unknown[]): string[] | null => {
-    const result = items.map((item) => isJsonRecord(item) ? item.id : undefined);
-    return result.every((id) => typeof id === "string" && id.length > 0)
-      && new Set(result).size === result.length ? result as string[] : null;
+    const result = items.map((item) =>
+      isJsonRecord(item) ? item.id : undefined,
+    );
+    return result.every((id) => typeof id === "string" && id.length > 0) &&
+      new Set(result).size === result.length
+      ? (result as string[])
+      : null;
   };
   const baseIds = ids(base);
-  if (!baseIds || !jsonValuesEqual(ids(local), baseIds) || !jsonValuesEqual(ids(remote), baseIds)) {
+  if (
+    !baseIds ||
+    !jsonValuesEqual(ids(local), baseIds) ||
+    !jsonValuesEqual(ids(remote), baseIds)
+  ) {
     return { conflicts: [path], value: structuredClone(local) };
   }
-  const merged = base.map((entry, index) => rebaseProfileValue(
-    entry, local[index], remote[index], `${path}[${baseIds[index]}]`,
-  ));
+  const merged = base.map((entry, index) =>
+    rebaseProfileValue(
+      entry,
+      local[index],
+      remote[index],
+      `${path}[${baseIds[index]}]`,
+    ),
+  );
   return {
     conflicts: merged.flatMap((item) => item.conflicts),
     value: merged.map((item) => item.value),
@@ -400,7 +562,8 @@ function rebaseProfileValue(
   remote: unknown,
   path = "profile",
 ): ProfileRebaseResult {
-  if (jsonValuesEqual(local, base)) return { conflicts: [], value: structuredClone(remote) };
+  if (jsonValuesEqual(local, base))
+    return { conflicts: [], value: structuredClone(remote) };
   if (jsonValuesEqual(remote, base) || jsonValuesEqual(local, remote)) {
     return { conflicts: [], value: structuredClone(local) };
   }
@@ -408,15 +571,24 @@ function rebaseProfileValue(
     if (path === "form.profile.resume.experience_entries") {
       return rebaseExperienceEntries(base, local, remote, path);
     }
-    if ((path.startsWith("form.profile.resume.experience_entries[") && path.endsWith("].bullets"))
-      || path.startsWith("form.profile.resume.tailoring_rules.required_bullets_by_experience_id.")) {
+    if (
+      (path.startsWith("form.profile.resume.experience_entries[") &&
+        path.endsWith("].bullets")) ||
+      path.startsWith(
+        "form.profile.resume.tailoring_rules.required_bullets_by_experience_id.",
+      )
+    ) {
       return rebaseIndexedTextArray(base, local, remote, path);
     }
   }
   if (isJsonRecord(base) && isJsonRecord(local) && isJsonRecord(remote)) {
     const value = Object.create(null) as JsonRecord;
     const conflicts: string[] = [];
-    for (const key of new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)])) {
+    for (const key of new Set([
+      ...Object.keys(base),
+      ...Object.keys(local),
+      ...Object.keys(remote),
+    ])) {
       const rebased = rebaseProfileValue(
         Object.hasOwn(base, key) ? base[key] : undefined,
         Object.hasOwn(local, key) ? local[key] : undefined,
@@ -462,7 +634,8 @@ function plateTextArraysEqual(
   return (
     left.length === right.length &&
     left.every(
-      (text, index) => normalizedPlateText(text) === normalizedPlateText(right[index] ?? ""),
+      (text, index) =>
+        normalizedPlateText(text) === normalizedPlateText(right[index] ?? ""),
     )
   );
 }
@@ -474,7 +647,12 @@ function matchingTextSequenceIndexes(
   if (!sequence.length || sequence.length > values.length) return [];
   const matches: number[] = [];
   for (let index = 0; index <= values.length - sequence.length; index += 1) {
-    if (plateTextArraysEqual(values.slice(index, index + sequence.length), sequence)) {
+    if (
+      plateTextArraysEqual(
+        values.slice(index, index + sequence.length),
+        sequence,
+      )
+    ) {
       matches.push(index);
     }
   }
@@ -486,9 +664,13 @@ function profileWithPlateChanges(
   changes: readonly ProfilePlateTextChange[],
   previousState: PlateProfileProjectionState | null,
 ): PlateProfileProjectionResult {
-  const activeChanges = new Map(changes.map((change) => [change.semanticId, change]));
+  const activeChanges = new Map(
+    changes.map((change) => [change.semanticId, change]),
+  );
   const appliedTargets = new Map(previousState?.appliedTargets ?? []);
-  const unchangedResult = (conflictCount = 0): PlateProfileProjectionResult => ({
+  const unchangedResult = (
+    conflictCount = 0,
+  ): PlateProfileProjectionResult => ({
     conflictCount,
     unmappedCount: 0,
     profile: profileDraft,
@@ -503,19 +685,29 @@ function profileWithPlateChanges(
     const value = getPathValue(updatedProfile, path);
     return value == null ? "" : typeof value === "string" ? value : null;
   };
-  const findEntry = (path: string, id: string | undefined): { entry: JsonRecord; index: number } | undefined => {
+  const findEntry = (
+    path: string,
+    id: string | undefined,
+  ): { entry: JsonRecord; index: number } | undefined => {
     const entries = getPathValue(updatedProfile, path);
     if (!Array.isArray(entries)) return undefined;
-    const matches = entries.flatMap((entry, index) => isJsonRecord(entry) && entry["id"] === id ? [{ entry, index }] : []);
+    const matches = entries.flatMap((entry, index) =>
+      isJsonRecord(entry) && entry["id"] === id ? [{ entry, index }] : [],
+    );
     return matches.length === 1 ? matches[0] : undefined;
   };
-  const isTextArray = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
+  const isTextArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
   let changed = false;
   let conflictCount = 0;
   let unmappedCount = 0;
-  const appliedSkillItems = new Map<string, { items: string[]; index: number }>();
+  const appliedSkillItems = new Map<
+    string,
+    { items: string[]; index: number }
+  >();
   const effectiveChanges = [...activeChanges.values()];
-  for (const [semanticId, previousChange] of previousState?.activeChanges ?? []) {
+  for (const [semanticId, previousChange] of previousState?.activeChanges ??
+    []) {
     if (
       !activeChanges.has(semanticId) &&
       previousState?.appliedTargets.has(semanticId)
@@ -562,7 +754,10 @@ function profileWithPlateChanges(
   };
 
   for (const change of effectiveChanges) {
-    const personalMatch = /^personal:(full_name|address|city|postal_code|country|email|phone)$/.exec(change.semanticId);
+    const personalMatch =
+      /^personal:(full_name|address|city|postal_code|country|email|phone)$/.exec(
+        change.semanticId,
+      );
     if (personalMatch) {
       const key = personalMatch[1]!;
       applySingleText(change, readText(`personal.${key}`), (value) => {
@@ -570,18 +765,28 @@ function profileWithPlateChanges(
       });
       continue;
     }
-    if (change.semanticId === "summary" || change.semanticId === "executive_profile#0") {
+    if (
+      change.semanticId === "summary" ||
+      change.semanticId === "executive_profile#0"
+    ) {
       applySingleText(
         change,
         readText("resume.executive_profile.baseline_text"),
         (value) => {
-          setPathValue(updatedProfile, "resume.executive_profile.baseline_text", value);
+          setPathValue(
+            updatedProfile,
+            "resume.executive_profile.baseline_text",
+            value,
+          );
         },
       );
       continue;
     }
 
-    const experienceMatch = /^experience:(.+):(title|company|location|date_range|summary)$/.exec(change.semanticId);
+    const experienceMatch =
+      /^experience:(.+):(title|company|location|date_range|summary)$/.exec(
+        change.semanticId,
+      );
     if (experienceMatch) {
       const target = findEntry("resume.experience_entries", experienceMatch[1]);
       if (!target) {
@@ -589,7 +794,8 @@ function profileWithPlateChanges(
         conflictCount += 1;
         continue;
       }
-      const key = experienceMatch[2] as "title" | "company" | "location" | "date_range" | "summary";
+      const key = experienceMatch[2] as
+        "title" | "company" | "location" | "date_range" | "summary";
       const path = `resume.experience_entries.${target.index}.${key}`;
       applySingleText(change, readText(path), (value) => {
         setPathValue(updatedProfile, path, value);
@@ -597,7 +803,10 @@ function profileWithPlateChanges(
       continue;
     }
 
-    const educationMatch = /^education:(.+):(degree|institution|location|date)$/.exec(change.semanticId);
+    const educationMatch =
+      /^education:(.+):(degree|institution|location|date)$/.exec(
+        change.semanticId,
+      );
     if (educationMatch) {
       const target = findEntry("resume.education_entries", educationMatch[1]);
       if (!target) {
@@ -605,7 +814,8 @@ function profileWithPlateChanges(
         conflictCount += 1;
         continue;
       }
-      const key = educationMatch[2] as "degree" | "institution" | "location" | "date";
+      const key = educationMatch[2] as
+        "degree" | "institution" | "location" | "date";
       const path = `resume.education_entries.${target.index}.${key}`;
       applySingleText(change, readText(path), (value) => {
         setPathValue(updatedProfile, path, value);
@@ -613,7 +823,9 @@ function profileWithPlateChanges(
       continue;
     }
 
-    const skillMatch = /^skills:(.+):(label|item:([1-9]\d*))$/.exec(change.semanticId);
+    const skillMatch = /^skills:(.+):(label|item:([1-9]\d*))$/.exec(
+      change.semanticId,
+    );
     if (skillMatch) {
       const target = findEntry("resume.skill_categories", skillMatch[1]);
       if (!target) {
@@ -623,7 +835,9 @@ function profileWithPlateChanges(
       }
       const prefix = `resume.skill_categories.${target.index}`;
       if (skillMatch[2] === "label") {
-        applySingleText(change, readText(`${prefix}.label`), (value) => setPathValue(updatedProfile, `${prefix}.label`, value));
+        applySingleText(change, readText(`${prefix}.label`), (value) =>
+          setPathValue(updatedProfile, `${prefix}.label`, value),
+        );
       } else {
         const items = target.entry["items"];
         if (!isTextArray(items)) {
@@ -638,13 +852,22 @@ function profileWithPlateChanges(
         const incomingItems = getPathValue(profileDraft, `${prefix}.items`);
         // Keep following an edit through transient duplicates. If that item was
         // changed elsewhere, a remaining duplicate is not its replacement.
-        const index = previousIndex !== undefined && isTextArray(incomingItems) &&
-          plateTextArraysEqual(incomingItems, previousTarget?.skillItems ?? []) &&
-          plateTextArraysEqual(items.slice(previousIndex, previousIndex + 1), expected)
-          ? previousIndex
-          : indexes.length === 1 && previousTarget?.skillItemWasUnique !== false
-            ? indexes[0]
-            : undefined;
+        const index =
+          previousIndex !== undefined &&
+          isTextArray(incomingItems) &&
+          plateTextArraysEqual(
+            incomingItems,
+            previousTarget?.skillItems ?? [],
+          ) &&
+          plateTextArraysEqual(
+            items.slice(previousIndex, previousIndex + 1),
+            expected,
+          )
+            ? previousIndex
+            : indexes.length === 1 &&
+                previousTarget?.skillItemWasUnique !== false
+              ? indexes[0]
+              : undefined;
         if (index === undefined) {
           appliedTargets.delete(change.semanticId);
           conflictCount += 1;
@@ -660,16 +883,29 @@ function profileWithPlateChanges(
     }
 
     const entries = getPathValue(updatedProfile, "resume.experience_entries");
-    const targets = Array.isArray(entries) ? entries.flatMap((entry, entryIndex) => {
-      if (!isJsonRecord(entry) || !isTextArray(entry["bullets"]) || !isTextArray(entry["achievement_ids"])) return [];
-      const index = entry["achievement_ids"].indexOf(change.semanticId);
-      return index >= 0 ? [{ entryIndex, index, bullets: entry["bullets"] }] : [];
-    }) : [];
+    const targets = Array.isArray(entries)
+      ? entries.flatMap((entry, entryIndex) => {
+          if (
+            !isJsonRecord(entry) ||
+            !isTextArray(entry["bullets"]) ||
+            !isTextArray(entry["achievement_ids"])
+          )
+            return [];
+          const index = entry["achievement_ids"].indexOf(change.semanticId);
+          return index >= 0
+            ? [{ entryIndex, index, bullets: entry["bullets"] }]
+            : [];
+        })
+      : [];
     if (targets.length === 1 && change.plateTexts.length <= 1) {
       const target = targets[0]!;
       applySingleText(change, target.bullets[target.index] ?? null, (value) => {
         target.bullets[target.index] = value;
-        setPathValue(updatedProfile, `resume.experience_entries.${target.entryIndex}.bullets`, target.bullets);
+        setPathValue(
+          updatedProfile,
+          `resume.experience_entries.${target.entryIndex}.bullets`,
+          target.bullets,
+        );
       });
       continue;
     }
@@ -687,7 +923,8 @@ function profileWithPlateChanges(
         ...appliedTarget,
         skillItemIndex: index,
         skillItems: [...items],
-        skillItemWasUnique: matchingTextSequenceIndexes(items, appliedTarget.texts).length === 1,
+        skillItemWasUnique:
+          matchingTextSequenceIndexes(items, appliedTarget.texts).length === 1,
       });
     }
   }
@@ -700,10 +937,29 @@ function profileWithPlateChanges(
   };
 }
 
-export function ProfileForm({
+export function ProfileForm(props: ProfileFormProps) {
+  const tenant = useTenantId();
+  const { session } = usePorts();
+  const generation = useProfileDraftGeneration(session);
+  return (
+    <TenantProfileForm
+      key={`${profileSessionIdentity(session)}:${tenant}:${props.section ?? "profile"}:${generation}`}
+      {...props}
+    />
+  );
+}
+
+function TenantProfileForm({
   initial,
+  activeSection = "experience",
+  roleId,
+  achievementId,
+  achievementContent,
+  achievementWordings,
   onPlateTextControllerChange,
   onPreviewSourceChange,
+  onDirtyChange,
+  onRecoveryPendingChange,
   section = "profile",
   showSectionHeading = true,
 }: ProfileFormProps) {
@@ -712,29 +968,53 @@ export function ProfileForm({
   const [statusMessage, setStatusMessage] = useState("");
   const [statusTone, setStatusTone] = useState<"saved" | "warning">("saved");
   const [resetToken, setResetToken] = useState(0);
-  const [formBaseVersion, setFormBaseVersion] = useState(initial.profileVersion);
+  const [formBaseVersion, setFormBaseVersion] = useState(
+    initial.profileVersion,
+  );
   const formBaseVersionRef = useRef(formBaseVersion);
   formBaseVersionRef.current = formBaseVersion;
   const [suggestionDerivedDraft, setSuggestionDerivedDraft] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const formBaseResponseRef = useRef<ProfileConfigResponse>(initial);
-  const formBaseValuesRef = useRef<ProfileFormValues>(structuredClone(toProfileFormValues(initial)));
-  const suggestionAddedRolesRef = useRef<readonly {
-    profileVersion: number;
-    title: string;
-  }[]>([]);
-  const suggestionAddedPreferencesRef = useRef<readonly (TargetPreferenceRow & {
-    profileVersion: number;
-  })[]>([]);
+  const formBaseValuesRef = useRef<ProfileFormValues>(
+    structuredClone(toProfileFormValues(initial)),
+  );
+  const suggestionAddedRolesRef = useRef<
+    readonly {
+      profileVersion: number;
+      title: string;
+    }[]
+  >([]);
+  const suggestionAddedPreferencesRef = useRef<
+    readonly (TargetPreferenceRow & {
+      profileVersion: number;
+    })[]
+  >([]);
   const suggestionReviewRequiredRef = useRef(false);
-  const suggestionReviewResolvedVersionRef = useRef<number | undefined>(undefined);
-  const plateProfileProjectionRef = useRef<PlateProfileProjectionState | null>(null);
-  const acceptedCandidateInterpretationRef = useRef<string | undefined>(undefined);
+  const suggestionReviewResolvedVersionRef = useRef<number | undefined>(
+    undefined,
+  );
+  const plateProfileProjectionRef = useRef<PlateProfileProjectionState | null>(
+    null,
+  );
+  const acceptedCandidateInterpretationRef = useRef<string | undefined>(
+    undefined,
+  );
   const expectedProfileVersionRef = useRef<number | undefined>(undefined);
   const requiredAcceptPendingRef = useRef(false);
   const profileSaveVersionFenceRef = useRef<number | undefined>(undefined);
-  const requiredPinConflictRef = useRef<PendingRequiredPinConflict | null>(null);
+  const requiredPinConflictRef = useRef<PendingRequiredPinConflict | null>(
+    null,
+  );
   const isProfileSection = section === "profile";
+  const [recoveryPending, setRecoveryPending] = useState(true);
+  const handleRecoveryPending = useCallback(
+    (pending: boolean) => {
+      setRecoveryPending(pending);
+      onRecoveryPendingChange?.(pending);
+    },
+    [onRecoveryPendingChange],
+  );
   const saveLabel = "Save changes";
   const discardLabel = "Discard changes";
   const savedMessage =
@@ -752,29 +1032,37 @@ export function ProfileForm({
     }
   }, [updateProfile.error, updateProfile.reset]);
 
-  const reconcileSuggestionProvenance = useCallback((profile: JsonRecord | null) => {
-    const baseProfile = formBaseValuesRef.current.profile;
-    if (jsonValuesEqual(targetRoles(profile), targetRoles(baseProfile))) {
-      suggestionAddedRolesRef.current = [];
-    }
-    if (jsonValuesEqual(targetPreferenceRows(profile), targetPreferenceRows(baseProfile))) {
-      suggestionAddedPreferencesRef.current = [];
-    }
-    if (
-      suggestionAddedRolesRef.current.length === 0
-      && suggestionAddedPreferencesRef.current.length === 0
-      && !suggestionReviewRequiredRef.current
-      && suggestionReviewResolvedVersionRef.current === undefined
-    ) {
-      expectedProfileVersionRef.current = undefined;
-      acceptedCandidateInterpretationRef.current = undefined;
-      setSuggestionDerivedDraft(false);
-    }
-    return {
-      roles: suggestionAddedRolesRef.current,
-      preferences: suggestionAddedPreferencesRef.current,
-    };
-  }, []);
+  const reconcileSuggestionProvenance = useCallback(
+    (profile: JsonRecord | null) => {
+      const baseProfile = formBaseValuesRef.current.profile;
+      if (jsonValuesEqual(targetRoles(profile), targetRoles(baseProfile))) {
+        suggestionAddedRolesRef.current = [];
+      }
+      if (
+        jsonValuesEqual(
+          targetPreferenceRows(profile),
+          targetPreferenceRows(baseProfile),
+        )
+      ) {
+        suggestionAddedPreferencesRef.current = [];
+      }
+      if (
+        suggestionAddedRolesRef.current.length === 0 &&
+        suggestionAddedPreferencesRef.current.length === 0 &&
+        !suggestionReviewRequiredRef.current &&
+        suggestionReviewResolvedVersionRef.current === undefined
+      ) {
+        expectedProfileVersionRef.current = undefined;
+        acceptedCandidateInterpretationRef.current = undefined;
+        setSuggestionDerivedDraft(false);
+      }
+      return {
+        roles: suggestionAddedRolesRef.current,
+        preferences: suggestionAddedPreferencesRef.current,
+      };
+    },
+    [],
+  );
 
   const form = useForm({
     // TanStack Form reapplies changed defaults to a clean form during render.
@@ -786,52 +1074,76 @@ export function ProfileForm({
       onSubmit: ({ value }) => validateProfileForm(value),
     },
     onSubmit: async ({ value, formApi }) => {
-      if (requiredAcceptPendingRef.current) {
+      if (recoveryPending) {
         setStatusTone("warning");
-        setStatusMessage("Wait for the Required bullet save to finish. Your manual edits remain pending.");
+        setStatusMessage(
+          "Restore or discard the retained Profile draft before editing or saving.",
+        );
         return;
       }
-      if ((initial.profileVersion !== null
-          && (formBaseVersion === null || initial.profileVersion > formBaseVersion))
-        || (profileSaveVersionFenceRef.current !== undefined
-          && profileSaveVersionFenceRef.current !== formBaseVersion)) {
+      if (requiredAcceptPendingRef.current) {
         setStatusTone("warning");
-        setStatusMessage("The saved profile changed. Rebase your manual edits before saving.");
+        setStatusMessage(
+          "Wait for the Required bullet save to finish. Your manual edits remain pending.",
+        );
+        return;
+      }
+      if (
+        (initial.profileVersion !== null &&
+          (formBaseVersion === null ||
+            initial.profileVersion > formBaseVersion)) ||
+        (profileSaveVersionFenceRef.current !== undefined &&
+          profileSaveVersionFenceRef.current !== formBaseVersion)
+      ) {
+        setStatusTone("warning");
+        setStatusMessage(
+          "The saved profile changed. Rebase your manual edits before saving.",
+        );
         return;
       }
       if (requiredPinConflictRef.current && value.profile) {
         const correctedProfile = structuredClone(value.profile);
-        const pinStatus = reconcilePendingRequiredPin(correctedProfile, requiredPinConflictRef.current);
+        const pinStatus = reconcilePendingRequiredPin(
+          correctedProfile,
+          requiredPinConflictRef.current,
+        );
         if (pinStatus === "blocked") {
           setStatusTone("warning");
-          setStatusMessage("The edited Required bullet has an ambiguous pin. Make its text unique or discard the draft before saving.");
+          setStatusMessage(
+            "The edited Required bullet has an ambiguous pin. Make its text unique or discard the draft before saving.",
+          );
           return;
         }
         if (pinStatus === "updated") {
-          const bullet = getPathValue(correctedProfile,
-            `resume.experience_entries.${requiredPinConflictRef.current.entryIndex}.bullets.${requiredPinConflictRef.current.bulletIndex}`);
+          const bullet = getPathValue(
+            correctedProfile,
+            `resume.experience_entries.${requiredPinConflictRef.current.entryIndex}.bullets.${requiredPinConflictRef.current.bulletIndex}`,
+          );
           if (typeof bullet === "string") {
-            requiredPinConflictRef.current = { ...requiredPinConflictRef.current, previousText: bullet };
+            requiredPinConflictRef.current = {
+              ...requiredPinConflictRef.current,
+              previousText: bullet,
+            };
           }
           formApi.setFieldValue("profile", correctedProfile);
           setStatusTone("warning");
-          setStatusMessage("The Required pin now follows your edited bullet. Review it and save again.");
+          setStatusMessage(
+            "The Required pin now follows your edited bullet. Review it and save again.",
+          );
           return;
         }
       }
       setStatusMessage("");
       const submittedSuggestions = reconcileSuggestionProvenance(value.profile);
       const requiresSuggestionAuthority =
-        submittedSuggestions.roles.length > 0
-        || submittedSuggestions.preferences.length > 0
-        || suggestionReviewRequiredRef.current
-        || suggestionReviewResolvedVersionRef.current !== undefined;
+        submittedSuggestions.roles.length > 0 ||
+        submittedSuggestions.preferences.length > 0 ||
+        suggestionReviewRequiredRef.current ||
+        suggestionReviewResolvedVersionRef.current !== undefined;
       if (
-        requiresSuggestionAuthority
-        && (
-          expectedProfileVersionRef.current === undefined
-          || formBaseVersion !== initial.profileVersion
-        )
+        requiresSuggestionAuthority &&
+        (expectedProfileVersionRef.current === undefined ||
+          formBaseVersion !== initial.profileVersion)
       ) {
         setStatusTone("warning");
         setStatusMessage(
@@ -848,8 +1160,17 @@ export function ProfileForm({
           profileResponse = await updateProfile.mutateAsync(
             // Every full-profile edit is conditional on the snapshot that
             // actually supplied this form, including an empty profile.
-            { ...toUpdateRequest(value, formBaseVersion),
-              ...((submittedSuggestions.roles.length > 0 || submittedSuggestions.preferences.length > 0) && acceptedCandidateInterpretationRef.current ? {acceptedCandidateInterpretationId: acceptedCandidateInterpretationRef.current} : {}) },
+            {
+              ...toUpdateRequest(value, formBaseVersion),
+              ...((submittedSuggestions.roles.length > 0 ||
+                submittedSuggestions.preferences.length > 0) &&
+              acceptedCandidateInterpretationRef.current
+                ? {
+                    acceptedCandidateInterpretationId:
+                      acceptedCandidateInterpretationRef.current,
+                  }
+                : {}),
+            },
           );
         } catch {
           // The mutation owns the displayed error and rollback. Keep the local
@@ -858,14 +1179,17 @@ export function ProfileForm({
         }
       }
       if (shouldUpdateProfile) {
-        profileSaveVersionFenceRef.current = profileResponse.profileVersion ?? profileSaveVersionFenceRef.current;
+        profileSaveVersionFenceRef.current =
+          profileResponse.profileVersion ?? profileSaveVersionFenceRef.current;
       }
       if (serializeProfileValues(formApi.state.values) === submittedValues) {
         expectedProfileVersionRef.current = undefined;
-      acceptedCandidateInterpretationRef.current = undefined;
+        acceptedCandidateInterpretationRef.current = undefined;
         requiredPinConflictRef.current = null;
         formBaseResponseRef.current = profileResponse;
-        formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
+        formBaseValuesRef.current = structuredClone(
+          toProfileFormValues(profileResponse),
+        );
         suggestionAddedRolesRef.current = [];
         suggestionAddedPreferencesRef.current = [];
         suggestionReviewRequiredRef.current = false;
@@ -879,44 +1203,69 @@ export function ProfileForm({
         setStatusMessage(savedMessage);
       } else {
         formBaseResponseRef.current = profileResponse;
-        formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
+        formBaseValuesRef.current = structuredClone(
+          toProfileFormValues(profileResponse),
+        );
         reconcileSuggestionProvenance(formApi.state.values.profile);
         const submittedSuggestionKeys = new Set(
           submittedSuggestions.roles.map(({ title }) => title.toLowerCase()),
         );
-        suggestionAddedRolesRef.current = suggestionAddedRolesRef.current.filter(
-          ({ title }) => !submittedSuggestionKeys.has(title.toLowerCase()),
-        );
+        suggestionAddedRolesRef.current =
+          suggestionAddedRolesRef.current.filter(
+            ({ title }) => !submittedSuggestionKeys.has(title.toLowerCase()),
+          );
         const submittedPreferenceKeys = new Set(
           submittedSuggestions.preferences.map(preferenceRowKey),
         );
-        suggestionAddedPreferencesRef.current = suggestionAddedPreferencesRef.current.filter(
-          (row) => !submittedPreferenceKeys.has(preferenceRowKey(row)),
-        );
+        suggestionAddedPreferencesRef.current =
+          suggestionAddedPreferencesRef.current.filter(
+            (row) => !submittedPreferenceKeys.has(preferenceRowKey(row)),
+          );
         setFormBaseVersion(profileResponse.profileVersion);
         const staleSuggestionRoles = suggestionAddedRolesRef.current.filter(
-          ({ profileVersion }) => profileVersion !== profileResponse.profileVersion,
+          ({ profileVersion }) =>
+            profileVersion !== profileResponse.profileVersion,
         );
-        const staleSuggestionPreferences = suggestionAddedPreferencesRef.current.filter(
-          ({ profileVersion }) => profileVersion !== profileResponse.profileVersion,
-        );
-        if (staleSuggestionRoles.length > 0 || staleSuggestionPreferences.length > 0) {
+        const staleSuggestionPreferences =
+          suggestionAddedPreferencesRef.current.filter(
+            ({ profileVersion }) =>
+              profileVersion !== profileResponse.profileVersion,
+          );
+        if (
+          staleSuggestionRoles.length > 0 ||
+          staleSuggestionPreferences.length > 0
+        ) {
           const currentProfile = formApi.state.values.profile;
-          const currentRoles = new Set(targetRoles(currentProfile).map((title) => title.toLowerCase()));
-          const currentPreferences = new Set(targetPreferenceRows(currentProfile).map(preferenceRowKey));
+          const currentRoles = new Set(
+            targetRoles(currentProfile).map((title) => title.toLowerCase()),
+          );
+          const currentPreferences = new Set(
+            targetPreferenceRows(currentProfile).map(preferenceRowKey),
+          );
           const editedStaleSuggestion =
-            staleSuggestionRoles.some(({ title }) => !currentRoles.has(title.toLowerCase()))
-            || staleSuggestionPreferences.some((row) => !currentPreferences.has(preferenceRowKey(row)));
+            staleSuggestionRoles.some(
+              ({ title }) => !currentRoles.has(title.toLowerCase()),
+            ) ||
+            staleSuggestionPreferences.some(
+              (row) => !currentPreferences.has(preferenceRowKey(row)),
+            );
           const cleanedProfile = omitTargetPreferences(
-            omitTargetRoles(currentProfile, staleSuggestionRoles.map(({ title }) => title)),
+            omitTargetRoles(
+              currentProfile,
+              staleSuggestionRoles.map(({ title }) => title),
+            ),
             staleSuggestionPreferences,
           );
-          suggestionAddedRolesRef.current = editedStaleSuggestion ? staleSuggestionRoles : [];
-          suggestionAddedPreferencesRef.current = editedStaleSuggestion ? staleSuggestionPreferences : [];
+          suggestionAddedRolesRef.current = editedStaleSuggestion
+            ? staleSuggestionRoles
+            : [];
+          suggestionAddedPreferencesRef.current = editedStaleSuggestion
+            ? staleSuggestionPreferences
+            : [];
           suggestionReviewRequiredRef.current = true;
           suggestionReviewResolvedVersionRef.current = undefined;
           expectedProfileVersionRef.current = undefined;
-      acceptedCandidateInterpretationRef.current = undefined;
+          acceptedCandidateInterpretationRef.current = undefined;
           setSuggestionDerivedDraft(true);
           if (!jsonValuesEqual(cleanedProfile, currentProfile)) {
             formApi.setFieldValue("profile", cleanedProfile);
@@ -931,14 +1280,18 @@ export function ProfileForm({
         }
         suggestionReviewRequiredRef.current = false;
         suggestionReviewResolvedVersionRef.current = undefined;
-        if (suggestionAddedRolesRef.current.length > 0 || suggestionAddedPreferencesRef.current.length > 0) {
+        if (
+          suggestionAddedRolesRef.current.length > 0 ||
+          suggestionAddedPreferencesRef.current.length > 0
+        ) {
           expectedProfileVersionRef.current = (
-            suggestionAddedRolesRef.current[0] ?? suggestionAddedPreferencesRef.current[0]
+            suggestionAddedRolesRef.current[0] ??
+            suggestionAddedPreferencesRef.current[0]
           )?.profileVersion;
           setSuggestionDerivedDraft(true);
         } else {
           expectedProfileVersionRef.current = undefined;
-      acceptedCandidateInterpretationRef.current = undefined;
+          acceptedCandidateInterpretationRef.current = undefined;
           setSuggestionDerivedDraft(false);
         }
         setStatusTone("warning");
@@ -949,6 +1302,7 @@ export function ProfileForm({
 
   const applyPlateTextChanges = useCallback(
     (changes: readonly ProfilePlateTextChange[]) => {
+      if (recoveryPending) return;
       const currentProfile = form.state.values.profile;
       const projection = profileWithPlateChanges(
         currentProfile,
@@ -958,10 +1312,20 @@ export function ProfileForm({
       plateProfileProjectionRef.current = projection.state;
       if (projection.conflictCount > 0 || projection.unmappedCount > 0) {
         setStatusTone("warning");
-        setStatusMessage([
-          ...(projection.conflictCount > 0 ? ["Some resume editor changes were not applied because the matching Profile data changed. Save or discard those Profile changes, then reopen the resume editor."] : []),
-          ...(projection.unmappedCount > 0 ? ["Some parts of the preview cannot be edited here. Edit those fields in Profile data instead."] : []),
-        ].join(" "));
+        setStatusMessage(
+          [
+            ...(projection.conflictCount > 0
+              ? [
+                  "Some resume editor changes were not applied because the matching Profile data changed. Save or discard those Profile changes, then reopen the resume editor.",
+                ]
+              : []),
+            ...(projection.unmappedCount > 0
+              ? [
+                  "Some parts of the preview cannot be edited here. Edit those fields in Profile data instead.",
+                ]
+              : []),
+          ].join(" "),
+        );
       } else {
         clearTransientStatus();
       }
@@ -969,7 +1333,7 @@ export function ProfileForm({
         form.setFieldValue("profile", projection.profile);
       }
     },
-    [clearTransientStatus, form],
+    [clearTransientStatus, form, recoveryPending],
   );
 
   useEffect(() => {
@@ -984,16 +1348,22 @@ export function ProfileForm({
     // pending. A failed accept can also roll its optimistic query patch back
     // at the same version. Neither snapshot should replace the known form base
     // or clear the version fence/reviewed suggestion.
-    if (savedFence !== undefined
-      && (initial.profileVersion === null || initial.profileVersion <= savedFence)) {
+    if (
+      savedFence !== undefined &&
+      (initial.profileVersion === null || initial.profileVersion <= savedFence)
+    ) {
       return;
     }
-    if (requiredAcceptPendingRef.current || form.state.isDirty || form.state.isSubmitting) {
+    if (
+      requiredAcceptPendingRef.current ||
+      form.state.isDirty ||
+      form.state.isSubmitting
+    ) {
       return;
     }
     plateProfileProjectionRef.current = null;
     expectedProfileVersionRef.current = undefined;
-      acceptedCandidateInterpretationRef.current = undefined;
+    acceptedCandidateInterpretationRef.current = undefined;
     profileSaveVersionFenceRef.current = undefined;
     requiredPinConflictRef.current = null;
     const initialValues = toProfileFormValues(initial);
@@ -1011,21 +1381,35 @@ export function ProfileForm({
   }, [form, initial, onPreviewSourceChange]);
 
   const rebaseOntoSavedProfile = useCallback(() => {
-    if (initial.profileVersion === null
-      || (formBaseVersionRef.current !== null
-        && initial.profileVersion <= formBaseVersionRef.current)) {
+    if (
+      initial.profileVersion === null ||
+      (formBaseVersionRef.current !== null &&
+        initial.profileVersion <= formBaseVersionRef.current)
+    ) {
       setStatusTone("warning");
-      setStatusMessage("Wait for a newer saved profile before rebasing this draft.");
+      setStatusMessage(
+        "Wait for a newer saved profile before rebasing this draft.",
+      );
       return;
     }
     const remoteValues = toProfileFormValues(initial);
     const localValues = structuredClone(form.state.values);
-    const trackedSuggestions = reconcileSuggestionProvenance(localValues.profile);
-    const localRoles = new Set(targetRoles(localValues.profile).map((title) => title.toLowerCase()));
-    const localPreferences = new Set(targetPreferenceRows(localValues.profile).map(preferenceRowKey));
+    const trackedSuggestions = reconcileSuggestionProvenance(
+      localValues.profile,
+    );
+    const localRoles = new Set(
+      targetRoles(localValues.profile).map((title) => title.toLowerCase()),
+    );
+    const localPreferences = new Set(
+      targetPreferenceRows(localValues.profile).map(preferenceRowKey),
+    );
     if (
-      trackedSuggestions.roles.some(({ title }) => !localRoles.has(title.toLowerCase()))
-      || trackedSuggestions.preferences.some((row) => !localPreferences.has(preferenceRowKey(row)))
+      trackedSuggestions.roles.some(
+        ({ title }) => !localRoles.has(title.toLowerCase()),
+      ) ||
+      trackedSuggestions.preferences.some(
+        (row) => !localPreferences.has(preferenceRowKey(row)),
+      )
     ) {
       setStatusTone("warning");
       setStatusMessage(
@@ -1034,9 +1418,9 @@ export function ProfileForm({
       return;
     }
     const requiresSuggestionReview =
-      trackedSuggestions.roles.length > 0
-      || trackedSuggestions.preferences.length > 0
-      || suggestionReviewRequiredRef.current;
+      trackedSuggestions.roles.length > 0 ||
+      trackedSuggestions.preferences.length > 0 ||
+      suggestionReviewRequiredRef.current;
     localValues.profile = omitTargetPreferences(
       omitTargetRoles(
         localValues.profile,
@@ -1053,8 +1437,8 @@ export function ProfileForm({
     if (rebased.conflicts.length > 0) {
       setStatusTone("warning");
       setStatusMessage(
-        `Saved and local edits overlap at ${rebased.conflicts.slice(0, 3).join(", ")}. `
-          + "Discard or resolve those fields before requesting new suggestions.",
+        `Saved and local edits overlap at ${rebased.conflicts.slice(0, 3).join(", ")}. ` +
+          "Discard or resolve those fields before requesting new suggestions.",
       );
       return;
     }
@@ -1067,7 +1451,7 @@ export function ProfileForm({
     suggestionReviewResolvedVersionRef.current = undefined;
     setFormBaseVersion(initial.profileVersion);
     expectedProfileVersionRef.current = undefined;
-      acceptedCandidateInterpretationRef.current = undefined;
+    acceptedCandidateInterpretationRef.current = undefined;
     if (profileSaveVersionFenceRef.current !== undefined) {
       profileSaveVersionFenceRef.current = initial.profileVersion ?? undefined;
     }
@@ -1090,11 +1474,15 @@ export function ProfileForm({
   }, [form, initial, reconcileSuggestionProvenance]);
 
   const rebaseProfileDraft = useCallback(() => {
-    if (initial.profileVersion === null
-      || (formBaseVersionRef.current !== null
-        && initial.profileVersion <= formBaseVersionRef.current)) {
+    if (
+      initial.profileVersion === null ||
+      (formBaseVersionRef.current !== null &&
+        initial.profileVersion <= formBaseVersionRef.current)
+    ) {
       setStatusTone("warning");
-      setStatusMessage("Wait for a newer saved profile before rebasing this draft.");
+      setStatusMessage(
+        "Wait for a newer saved profile before rebasing this draft.",
+      );
       return;
     }
     const remoteValues = toProfileFormValues(initial);
@@ -1107,8 +1495,8 @@ export function ProfileForm({
     if (rebased.conflicts.length > 0) {
       setStatusTone("warning");
       setStatusMessage(
-        `Saved and local edits overlap at ${rebased.conflicts.slice(0, 3).join(", ")}. `
-          + "Resolve those fields manually or discard the draft before saving.",
+        `Saved and local edits overlap at ${rebased.conflicts.slice(0, 3).join(", ")}. ` +
+          "Resolve those fields manually or discard the draft before saving.",
       );
       return;
     }
@@ -1134,275 +1522,379 @@ export function ProfileForm({
     onPreviewSourceChange?.(initial);
     setResetToken((token) => token + 1);
     setStatusTone("warning");
-    setStatusMessage("Draft rebased onto the latest saved profile. Review and save your pending edits.");
+    setStatusMessage(
+      "Draft rebased onto the latest saved profile. Review and save your pending edits.",
+    );
   }, [form, initial, onPreviewSourceChange]);
 
-  const resolveSuggestionReviewWithoutAcceptance = useCallback((expectedProfileVersion: number) => {
-    if (
-      !suggestionDerivedDraft
-      || suggestionAddedRolesRef.current.length > 0
-      || suggestionAddedPreferencesRef.current.length > 0
-      || !suggestionReviewRequiredRef.current
-      || expectedProfileVersion !== initial.profileVersion
-    ) return;
-    suggestionAddedRolesRef.current = [];
-    suggestionAddedPreferencesRef.current = [];
-    suggestionReviewRequiredRef.current = false;
-    suggestionReviewResolvedVersionRef.current = expectedProfileVersion;
-    expectedProfileVersionRef.current = expectedProfileVersion;
-    setSuggestionDerivedDraft(false);
-    setStatusTone("warning");
-    setStatusMessage("Suggestion review completed. Rebased manual edits can now be saved.");
-  }, [initial.profileVersion, suggestionDerivedDraft]);
-
-  const acceptRequiredBulletSuggestion = useCallback(async (
-    suggestion: RequiredBulletSuggestion,
-    expectedProfileVersion: number,
-  ): Promise<boolean> => {
-    if (
-      requiredAcceptPendingRef.current
-      || requiredPinConflictRef.current !== null
-      || form.state.isDirty
-      || form.state.isSubmitting
-      || expectedProfileVersion !== initial.profileVersion
-      || expectedProfileVersion !== formBaseVersion
-      || suggestion.kind !== "grammar"
-      || !suggestion.canApply
-      || suggestion.proposedText === null
-    ) return false;
-    const parsed = ProfileSchema.safeParse(form.state.values.profile);
-    if (!parsed.success) return false;
-    const entryIndex = parsed.data.resume.experience_entries.findIndex(
-      (candidate) => candidate.id === suggestion.source.experienceId,
-    );
-    const matches = parsed.data.resume.experience_entries.filter((candidate) => candidate.id === suggestion.source.experienceId);
-    const role = wordingLibrary.data?.roles.find((candidate) => candidate.role_id === suggestion.source.experienceId);
-    const pinned = parsed.data.resume.tailoring_rules?.required_bullets_by_experience_id?.[suggestion.source.experienceId];
-    const applicable = wordingLibrary.data?.profileVersion === expectedProfileVersion
-      && matches.length === 1 && entryIndex >= 0 && suggestion.source.identityKind === "canonical_achievement"
-      && role?.achievements[suggestion.source.bulletIndex]?.achievement_id === suggestion.source.sourceId
-      && matches[0]?.bullets[suggestion.source.bulletIndex] === suggestion.originalText
-      && pinned?.[suggestion.source.requiredBulletIndex] === suggestion.originalText
-      && pinned.filter((item) => item === suggestion.originalText).length === 1
-      && suggestion.proposedText === suggestion.originalText.trim().replace(/\s+/g, " ");
-    if (!applicable) {
-      setStatusTone("warning");
-      setStatusMessage("The saved Required bullet no longer matches this suggestion. Inspect it again.");
-      return false;
-    }
-
-    const entry = parsed.data.resume.experience_entries[entryIndex]!;
-    const submittedBase = structuredClone(form.state.values);
-    const nextValues = structuredClone(submittedBase);
-    if (!nextValues.profile) return false;
-    const bulletPath = `resume.experience_entries.${entryIndex}.bullets.${suggestion.source.bulletIndex}`;
-    setPathValue(nextValues.profile, bulletPath, suggestion.proposedText);
-    if (!setRequiredBulletText(
-      nextValues.profile,
-      suggestion.source.experienceId,
-      suggestion.source.requiredBulletIndex,
-      suggestion.proposedText,
-    )) return false;
-    requiredAcceptPendingRef.current = true;
-    profileSaveVersionFenceRef.current = expectedProfileVersion;
-    try {
-      const response = await updateProfile.mutateAsync(toUpdateRequest(nextValues, expectedProfileVersion));
-      // The optimistic query patch can show either snapshot while the request
-      // is pending. Neither one is a manual edit to the accepted bullet.
-      const baselineBulletTexts = new Set([suggestion.originalText, suggestion.proposedText]);
-      formBaseResponseRef.current = response;
-      formBaseValuesRef.current = structuredClone(toProfileFormValues(response));
-      setFormBaseVersion(response.profileVersion);
-      expectedProfileVersionRef.current = response.profileVersion ?? undefined;
-      profileSaveVersionFenceRef.current = response.profileVersion ?? undefined;
-      if (jsonValuesEqual(form.state.values, submittedBase)
-        || jsonValuesEqual(form.state.values, nextValues)) {
-        expectedProfileVersionRef.current = undefined;
-      acceptedCandidateInterpretationRef.current = undefined;
-        requiredPinConflictRef.current = null;
-        plateProfileProjectionRef.current = null;
-        form.reset(toProfileFormValues(response));
-        onPreviewSourceChange?.(response);
-        setResetToken((token) => token + 1);
-        setStatusTone("saved");
-        setStatusMessage("Required bullet suggestion accepted and saved");
-      } else {
-        const currentValues = structuredClone(form.state.values);
-        const currentProfile = ProfileSchema.safeParse(currentValues.profile);
-        const parsedCurrentProfile = currentProfile.success ? currentProfile.data : null;
-        const currentEntry = parsedCurrentProfile
-          ? parsedCurrentProfile.resume.experience_entries.filter(
-            (candidate) => candidate.id === suggestion.source.experienceId,
-          )
-          : [];
-        const currentRequired = currentEntry.length === 1 && parsedCurrentProfile
-          ? ownRequiredBullets(parsedCurrentProfile, suggestion.source.experienceId)
-          : undefined;
-        const originalBulletIndexes = currentEntry[0]?.bullets.flatMap((bullet, index) =>
-          bullet === suggestion.originalText ? [index] : []) ?? [];
-        const proposedBulletIndexes = currentEntry[0]?.bullets.flatMap((bullet, index) =>
-          bullet === suggestion.proposedText ? [index] : []) ?? [];
-        const sourceIndex = suggestion.source.bulletIndex;
-        const sourceAtOriginalIndex = baselineBulletTexts.has(
-          currentEntry[0]?.bullets[sourceIndex] ?? "",
-        );
-        const acceptedBulletIndexes = sourceAtOriginalIndex
-          ? [sourceIndex]
-          : originalBulletIndexes.length > 0 ? originalBulletIndexes : proposedBulletIndexes;
-        const acceptedBulletIndex = acceptedBulletIndexes.length === 1
-          ? acceptedBulletIndexes[0]! : null;
-        const moveIsProven = acceptedBulletIndex !== null
-          && (acceptedBulletIndex === sourceIndex || isProvenBulletReorder(
-            entry.bullets.map((bullet, index) =>
-              index === sourceIndex && currentEntry[0]?.bullets[acceptedBulletIndex] === suggestion.proposedText
-                ? suggestion.proposedText! : bullet),
-            currentEntry[0]?.bullets ?? [],
-            sourceIndex,
-            currentEntry[0]?.bullets[acceptedBulletIndex] ?? "",
-          ));
-        let pinAmbiguous = false;
-        const acceptedFieldOverlaps = currentEntry.length !== 1
-          || parsedCurrentProfile?.resume.experience_entries.findIndex(
-            (candidate) => candidate.id === suggestion.source.experienceId,
-          ) !== entryIndex
-          || currentEntry[0]!.title !== suggestion.source.experienceTitle
-          || currentEntry[0]!.company !== suggestion.source.experienceCompany
-          || !moveIsProven
-          || !baselineBulletTexts.has(currentRequired?.[suggestion.source.requiredBulletIndex] ?? "");
-        if (!acceptedFieldOverlaps && currentValues.profile) {
-          setPathValue(
-            currentValues.profile,
-            `resume.experience_entries.${entryIndex}.bullets.${acceptedBulletIndex!}`,
-            suggestion.proposedText,
-          );
-          setRequiredBulletText(
-            currentValues.profile,
-            suggestion.source.experienceId,
-            suggestion.source.requiredBulletIndex,
-            suggestion.proposedText,
-          );
-          requiredPinConflictRef.current = {
-            experienceId: suggestion.source.experienceId,
-            entryIndex,
-            bulletIndex: acceptedBulletIndex!,
-            requiredBulletIndex: suggestion.source.requiredBulletIndex,
-            previousText: suggestion.proposedText,
-            baselineBullets: currentEntry[0]!.bullets.map((bullet, index) =>
-              index === acceptedBulletIndex ? suggestion.proposedText! : bullet),
-          };
-        } else if (
-          currentValues.profile
-          && baselineBulletTexts.has(currentRequired?.[suggestion.source.requiredBulletIndex] ?? "")
-        ) {
-          const conflict = {
-            experienceId: suggestion.source.experienceId,
-            entryIndex,
-            bulletIndex: suggestion.source.bulletIndex,
-            requiredBulletIndex: suggestion.source.requiredBulletIndex,
-            previousText: currentRequired![suggestion.source.requiredBulletIndex]!,
-            baselineBullets: [...entry.bullets],
-          };
-          pinAmbiguous = reconcilePendingRequiredPin(currentValues.profile, conflict) === "blocked";
-          requiredPinConflictRef.current = conflict;
-        } else {
-          requiredPinConflictRef.current = null;
-        }
-        const rebasedProfile = ProfileSchema.safeParse(currentValues.profile);
-        const rebasedEntry = rebasedProfile.success
-          ? rebasedProfile.data.resume.experience_entries[entryIndex]
-          : undefined;
-        const rebasedRequired = rebasedProfile.success
-          ? ownRequiredBullets(rebasedProfile.data, suggestion.source.experienceId)
-          : undefined;
-        if (rebasedEntry?.id === suggestion.source.experienceId
-          && rebasedRequired?.[suggestion.source.requiredBulletIndex] === suggestion.proposedText
-          && (rebasedEntry.bullets.filter((bullet) => bullet === suggestion.proposedText).length !== 1
-            || rebasedRequired.filter((bullet) => bullet === suggestion.proposedText).length !== 1)) {
-          requiredPinConflictRef.current = {
-            experienceId: suggestion.source.experienceId,
-            entryIndex,
-            bulletIndex: rebasedEntry.bullets.indexOf(suggestion.proposedText),
-            requiredBulletIndex: suggestion.source.requiredBulletIndex,
-            previousText: suggestion.proposedText,
-            baselineBullets: [...rebasedEntry.bullets],
-          };
-          pinAmbiguous = true;
-        }
-        const responseValues = toProfileFormValues(response);
-        form.reset(responseValues);
-        if (!jsonValuesEqual(currentValues.profile, responseValues.profile)) {
-          form.setFieldValue("profile", currentValues.profile);
-        }
-        if (!jsonValuesEqual(currentValues.style, responseValues.style)) {
-          form.setFieldValue("style", currentValues.style);
-        }
-        if (currentValues.templateText !== responseValues.templateText) {
-          form.setFieldValue("templateText", currentValues.templateText);
-        }
-        onPreviewSourceChange?.(response);
-        setStatusTone("warning");
-        setStatusMessage(
-          pinAmbiguous
-            ? "Suggestion saved, but a manual edit makes the Required pin ambiguous. Make the bullet text unique before saving the pending draft."
-            : acceptedFieldOverlaps
-            ? "Suggestion saved, but a newer manual edit overlaps that Required bullet. The manual edit remains pending on the updated profile version."
-            : "Suggestion saved and rebased into newer non-overlapping manual edits. Those edits remain pending on the updated profile version.",
-        );
-      }
-      return true;
-    } catch {
-      // A timeout can follow a committed write. Keep subsequent manual saves
-      // bound to the inspected version until a refreshed snapshot is rebased.
-      expectedProfileVersionRef.current = formBaseVersionRef.current ?? expectedProfileVersion;
-      profileSaveVersionFenceRef.current = expectedProfileVersion;
-      requiredPinConflictRef.current = {
-        experienceId: suggestion.source.experienceId,
-        entryIndex,
-        bulletIndex: suggestion.source.bulletIndex,
-        requiredBulletIndex: suggestion.source.requiredBulletIndex,
-        previousText: suggestion.originalText,
-        baselineBullets: [...entry.bullets],
-      };
-      let pinNeedsResolution = false;
-      const draftProfile = form.state.values.profile;
-      const parsedDraft = ProfileSchema.safeParse(draftProfile);
-      if (draftProfile && parsedDraft.success) {
-        const draftEntries = parsedDraft.data.resume.experience_entries;
-        const draftEntry = draftEntries[entryIndex];
-        const draftPin = ownRequiredBullets(parsedDraft.data, suggestion.source.experienceId)
-          ?.[suggestion.source.requiredBulletIndex];
-        if (draftEntry?.id === suggestion.source.experienceId && typeof draftPin === "string") {
-          const conflict = {
-            experienceId: suggestion.source.experienceId,
-            entryIndex,
-            bulletIndex: suggestion.source.bulletIndex,
-            requiredBulletIndex: suggestion.source.requiredBulletIndex,
-            previousText: draftPin,
-            baselineBullets: [...entry.bullets],
-          };
-          requiredPinConflictRef.current = conflict;
-          const correctedProfile = structuredClone(draftProfile);
-          const pinStatus = reconcilePendingRequiredPin(correctedProfile, conflict);
-          if (pinStatus === "blocked") {
-            pinNeedsResolution = true;
-          } else if (pinStatus === "updated") {
-            form.setFieldValue("profile", correctedProfile);
-          }
-        } else if (draftPin === undefined) {
-          // The user explicitly removed this pin during the pending request.
-          requiredPinConflictRef.current = null;
-        }
-      }
+  const resolveSuggestionReviewWithoutAcceptance = useCallback(
+    (expectedProfileVersion: number) => {
+      if (
+        !suggestionDerivedDraft ||
+        suggestionAddedRolesRef.current.length > 0 ||
+        suggestionAddedPreferencesRef.current.length > 0 ||
+        !suggestionReviewRequiredRef.current ||
+        expectedProfileVersion !== initial.profileVersion
+      )
+        return;
+      suggestionAddedRolesRef.current = [];
+      suggestionAddedPreferencesRef.current = [];
+      suggestionReviewRequiredRef.current = false;
+      suggestionReviewResolvedVersionRef.current = expectedProfileVersion;
+      expectedProfileVersionRef.current = expectedProfileVersion;
+      setSuggestionDerivedDraft(false);
       setStatusTone("warning");
       setStatusMessage(
-        "The suggestion save did not return a confirmed result. Rebase or reload the saved profile before retrying; manual editing remains available."
-        + (pinNeedsResolution ? " Resolve the ambiguous Required pin before saving." : ""),
+        "Suggestion review completed. Rebased manual edits can now be saved.",
       );
-      return false;
-    } finally {
-      requiredAcceptPendingRef.current = false;
-    }
-  }, [form, formBaseVersion, initial.profileVersion, onPreviewSourceChange, updateProfile, wordingLibrary.data]);
+    },
+    [initial.profileVersion, suggestionDerivedDraft],
+  );
+
+  const acceptRequiredBulletSuggestion = useCallback(
+    async (
+      suggestion: RequiredBulletSuggestion,
+      expectedProfileVersion: number,
+    ): Promise<boolean> => {
+      if (
+        requiredAcceptPendingRef.current ||
+        requiredPinConflictRef.current !== null ||
+        form.state.isDirty ||
+        form.state.isSubmitting ||
+        expectedProfileVersion !== initial.profileVersion ||
+        expectedProfileVersion !== formBaseVersion ||
+        suggestion.kind !== "grammar" ||
+        !suggestion.canApply ||
+        suggestion.proposedText === null
+      )
+        return false;
+      const parsed = ProfileSchema.safeParse(form.state.values.profile);
+      if (!parsed.success) return false;
+      const entryIndex = parsed.data.resume.experience_entries.findIndex(
+        (candidate) => candidate.id === suggestion.source.experienceId,
+      );
+      const matches = parsed.data.resume.experience_entries.filter(
+        (candidate) => candidate.id === suggestion.source.experienceId,
+      );
+      const role = wordingLibrary.data?.roles.find(
+        (candidate) => candidate.role_id === suggestion.source.experienceId,
+      );
+      const pinned =
+        parsed.data.resume.tailoring_rules?.required_bullets_by_experience_id?.[
+          suggestion.source.experienceId
+        ];
+      const applicable =
+        wordingLibrary.data?.profileVersion === expectedProfileVersion &&
+        matches.length === 1 &&
+        entryIndex >= 0 &&
+        suggestion.source.identityKind === "canonical_achievement" &&
+        role?.achievements[suggestion.source.bulletIndex]?.achievement_id ===
+          suggestion.source.sourceId &&
+        matches[0]?.bullets[suggestion.source.bulletIndex] ===
+          suggestion.originalText &&
+        pinned?.[suggestion.source.requiredBulletIndex] ===
+          suggestion.originalText &&
+        pinned.filter((item) => item === suggestion.originalText).length ===
+          1 &&
+        suggestion.proposedText ===
+          suggestion.originalText.trim().replace(/\s+/g, " ");
+      if (!applicable) {
+        setStatusTone("warning");
+        setStatusMessage(
+          "The saved Required bullet no longer matches this suggestion. Inspect it again.",
+        );
+        return false;
+      }
+
+      const entry = parsed.data.resume.experience_entries[entryIndex]!;
+      const submittedBase = structuredClone(form.state.values);
+      const nextValues = structuredClone(submittedBase);
+      if (!nextValues.profile) return false;
+      const bulletPath = `resume.experience_entries.${entryIndex}.bullets.${suggestion.source.bulletIndex}`;
+      setPathValue(nextValues.profile, bulletPath, suggestion.proposedText);
+      if (
+        !setRequiredBulletText(
+          nextValues.profile,
+          suggestion.source.experienceId,
+          suggestion.source.requiredBulletIndex,
+          suggestion.proposedText,
+        )
+      )
+        return false;
+      requiredAcceptPendingRef.current = true;
+      profileSaveVersionFenceRef.current = expectedProfileVersion;
+      try {
+        const response = await updateProfile.mutateAsync(
+          toUpdateRequest(nextValues, expectedProfileVersion),
+        );
+        // The optimistic query patch can show either snapshot while the request
+        // is pending. Neither one is a manual edit to the accepted bullet.
+        const baselineBulletTexts = new Set([
+          suggestion.originalText,
+          suggestion.proposedText,
+        ]);
+        formBaseResponseRef.current = response;
+        formBaseValuesRef.current = structuredClone(
+          toProfileFormValues(response),
+        );
+        setFormBaseVersion(response.profileVersion);
+        expectedProfileVersionRef.current =
+          response.profileVersion ?? undefined;
+        profileSaveVersionFenceRef.current =
+          response.profileVersion ?? undefined;
+        if (
+          jsonValuesEqual(form.state.values, submittedBase) ||
+          jsonValuesEqual(form.state.values, nextValues)
+        ) {
+          expectedProfileVersionRef.current = undefined;
+          acceptedCandidateInterpretationRef.current = undefined;
+          requiredPinConflictRef.current = null;
+          plateProfileProjectionRef.current = null;
+          form.reset(toProfileFormValues(response));
+          onPreviewSourceChange?.(response);
+          setResetToken((token) => token + 1);
+          setStatusTone("saved");
+          setStatusMessage("Required bullet suggestion accepted and saved");
+        } else {
+          const currentValues = structuredClone(form.state.values);
+          const currentProfile = ProfileSchema.safeParse(currentValues.profile);
+          const parsedCurrentProfile = currentProfile.success
+            ? currentProfile.data
+            : null;
+          const currentEntry = parsedCurrentProfile
+            ? parsedCurrentProfile.resume.experience_entries.filter(
+                (candidate) => candidate.id === suggestion.source.experienceId,
+              )
+            : [];
+          const currentRequired =
+            currentEntry.length === 1 && parsedCurrentProfile
+              ? ownRequiredBullets(
+                  parsedCurrentProfile,
+                  suggestion.source.experienceId,
+                )
+              : undefined;
+          const originalBulletIndexes =
+            currentEntry[0]?.bullets.flatMap((bullet, index) =>
+              bullet === suggestion.originalText ? [index] : [],
+            ) ?? [];
+          const proposedBulletIndexes =
+            currentEntry[0]?.bullets.flatMap((bullet, index) =>
+              bullet === suggestion.proposedText ? [index] : [],
+            ) ?? [];
+          const sourceIndex = suggestion.source.bulletIndex;
+          const sourceAtOriginalIndex = baselineBulletTexts.has(
+            currentEntry[0]?.bullets[sourceIndex] ?? "",
+          );
+          const acceptedBulletIndexes = sourceAtOriginalIndex
+            ? [sourceIndex]
+            : originalBulletIndexes.length > 0
+              ? originalBulletIndexes
+              : proposedBulletIndexes;
+          const acceptedBulletIndex =
+            acceptedBulletIndexes.length === 1
+              ? acceptedBulletIndexes[0]!
+              : null;
+          const moveIsProven =
+            acceptedBulletIndex !== null &&
+            (acceptedBulletIndex === sourceIndex ||
+              isProvenBulletReorder(
+                entry.bullets.map((bullet, index) =>
+                  index === sourceIndex &&
+                  currentEntry[0]?.bullets[acceptedBulletIndex] ===
+                    suggestion.proposedText
+                    ? suggestion.proposedText!
+                    : bullet,
+                ),
+                currentEntry[0]?.bullets ?? [],
+                sourceIndex,
+                currentEntry[0]?.bullets[acceptedBulletIndex] ?? "",
+              ));
+          let pinAmbiguous = false;
+          const acceptedFieldOverlaps =
+            currentEntry.length !== 1 ||
+            parsedCurrentProfile?.resume.experience_entries.findIndex(
+              (candidate) => candidate.id === suggestion.source.experienceId,
+            ) !== entryIndex ||
+            currentEntry[0]!.title !== suggestion.source.experienceTitle ||
+            currentEntry[0]!.company !== suggestion.source.experienceCompany ||
+            !moveIsProven ||
+            !baselineBulletTexts.has(
+              currentRequired?.[suggestion.source.requiredBulletIndex] ?? "",
+            );
+          if (!acceptedFieldOverlaps && currentValues.profile) {
+            setPathValue(
+              currentValues.profile,
+              `resume.experience_entries.${entryIndex}.bullets.${acceptedBulletIndex!}`,
+              suggestion.proposedText,
+            );
+            setRequiredBulletText(
+              currentValues.profile,
+              suggestion.source.experienceId,
+              suggestion.source.requiredBulletIndex,
+              suggestion.proposedText,
+            );
+            requiredPinConflictRef.current = {
+              experienceId: suggestion.source.experienceId,
+              entryIndex,
+              bulletIndex: acceptedBulletIndex!,
+              requiredBulletIndex: suggestion.source.requiredBulletIndex,
+              previousText: suggestion.proposedText,
+              baselineBullets: currentEntry[0]!.bullets.map((bullet, index) =>
+                index === acceptedBulletIndex
+                  ? suggestion.proposedText!
+                  : bullet,
+              ),
+            };
+          } else if (
+            currentValues.profile &&
+            baselineBulletTexts.has(
+              currentRequired?.[suggestion.source.requiredBulletIndex] ?? "",
+            )
+          ) {
+            const conflict = {
+              experienceId: suggestion.source.experienceId,
+              entryIndex,
+              bulletIndex: suggestion.source.bulletIndex,
+              requiredBulletIndex: suggestion.source.requiredBulletIndex,
+              previousText:
+                currentRequired![suggestion.source.requiredBulletIndex]!,
+              baselineBullets: [...entry.bullets],
+            };
+            pinAmbiguous =
+              reconcilePendingRequiredPin(currentValues.profile, conflict) ===
+              "blocked";
+            requiredPinConflictRef.current = conflict;
+          } else {
+            requiredPinConflictRef.current = null;
+          }
+          const rebasedProfile = ProfileSchema.safeParse(currentValues.profile);
+          const rebasedEntry = rebasedProfile.success
+            ? rebasedProfile.data.resume.experience_entries[entryIndex]
+            : undefined;
+          const rebasedRequired = rebasedProfile.success
+            ? ownRequiredBullets(
+                rebasedProfile.data,
+                suggestion.source.experienceId,
+              )
+            : undefined;
+          if (
+            rebasedEntry?.id === suggestion.source.experienceId &&
+            rebasedRequired?.[suggestion.source.requiredBulletIndex] ===
+              suggestion.proposedText &&
+            (rebasedEntry.bullets.filter(
+              (bullet) => bullet === suggestion.proposedText,
+            ).length !== 1 ||
+              rebasedRequired.filter(
+                (bullet) => bullet === suggestion.proposedText,
+              ).length !== 1)
+          ) {
+            requiredPinConflictRef.current = {
+              experienceId: suggestion.source.experienceId,
+              entryIndex,
+              bulletIndex: rebasedEntry.bullets.indexOf(
+                suggestion.proposedText,
+              ),
+              requiredBulletIndex: suggestion.source.requiredBulletIndex,
+              previousText: suggestion.proposedText,
+              baselineBullets: [...rebasedEntry.bullets],
+            };
+            pinAmbiguous = true;
+          }
+          const responseValues = toProfileFormValues(response);
+          form.reset(responseValues);
+          if (!jsonValuesEqual(currentValues.profile, responseValues.profile)) {
+            form.setFieldValue("profile", currentValues.profile);
+          }
+          if (!jsonValuesEqual(currentValues.style, responseValues.style)) {
+            form.setFieldValue("style", currentValues.style);
+          }
+          if (currentValues.templateText !== responseValues.templateText) {
+            form.setFieldValue("templateText", currentValues.templateText);
+          }
+          onPreviewSourceChange?.(response);
+          setStatusTone("warning");
+          setStatusMessage(
+            pinAmbiguous
+              ? "Suggestion saved, but a manual edit makes the Required pin ambiguous. Make the bullet text unique before saving the pending draft."
+              : acceptedFieldOverlaps
+                ? "Suggestion saved, but a newer manual edit overlaps that Required bullet. The manual edit remains pending on the updated profile version."
+                : "Suggestion saved and rebased into newer non-overlapping manual edits. Those edits remain pending on the updated profile version.",
+          );
+        }
+        return true;
+      } catch {
+        // A timeout can follow a committed write. Keep subsequent manual saves
+        // bound to the inspected version until a refreshed snapshot is rebased.
+        expectedProfileVersionRef.current =
+          formBaseVersionRef.current ?? expectedProfileVersion;
+        profileSaveVersionFenceRef.current = expectedProfileVersion;
+        requiredPinConflictRef.current = {
+          experienceId: suggestion.source.experienceId,
+          entryIndex,
+          bulletIndex: suggestion.source.bulletIndex,
+          requiredBulletIndex: suggestion.source.requiredBulletIndex,
+          previousText: suggestion.originalText,
+          baselineBullets: [...entry.bullets],
+        };
+        let pinNeedsResolution = false;
+        const draftProfile = form.state.values.profile;
+        const parsedDraft = ProfileSchema.safeParse(draftProfile);
+        if (draftProfile && parsedDraft.success) {
+          const draftEntries = parsedDraft.data.resume.experience_entries;
+          const draftEntry = draftEntries[entryIndex];
+          const draftPin = ownRequiredBullets(
+            parsedDraft.data,
+            suggestion.source.experienceId,
+          )?.[suggestion.source.requiredBulletIndex];
+          if (
+            draftEntry?.id === suggestion.source.experienceId &&
+            typeof draftPin === "string"
+          ) {
+            const conflict = {
+              experienceId: suggestion.source.experienceId,
+              entryIndex,
+              bulletIndex: suggestion.source.bulletIndex,
+              requiredBulletIndex: suggestion.source.requiredBulletIndex,
+              previousText: draftPin,
+              baselineBullets: [...entry.bullets],
+            };
+            requiredPinConflictRef.current = conflict;
+            const correctedProfile = structuredClone(draftProfile);
+            const pinStatus = reconcilePendingRequiredPin(
+              correctedProfile,
+              conflict,
+            );
+            if (pinStatus === "blocked") {
+              pinNeedsResolution = true;
+            } else if (pinStatus === "updated") {
+              form.setFieldValue("profile", correctedProfile);
+            }
+          } else if (draftPin === undefined) {
+            // The user explicitly removed this pin during the pending request.
+            requiredPinConflictRef.current = null;
+          }
+        }
+        setStatusTone("warning");
+        setStatusMessage(
+          "The suggestion save did not return a confirmed result. Rebase or reload the saved profile before retrying; manual editing remains available." +
+            (pinNeedsResolution
+              ? " Resolve the ambiguous Required pin before saving."
+              : ""),
+        );
+        return false;
+      } finally {
+        requiredAcceptPendingRef.current = false;
+      }
+    },
+    [
+      form,
+      formBaseVersion,
+      initial.profileVersion,
+      onPreviewSourceChange,
+      updateProfile,
+      wordingLibrary.data,
+    ],
+  );
 
   return (
     <form
@@ -1416,16 +1908,25 @@ export function ProfileForm({
         event.preventDefault();
         plateProfileProjectionRef.current = null;
         expectedProfileVersionRef.current = undefined;
-      acceptedCandidateInterpretationRef.current = undefined;
+        acceptedCandidateInterpretationRef.current = undefined;
         requiredPinConflictRef.current = null;
         const savedFence = profileSaveVersionFenceRef.current;
-        const useSavedResponse = savedFence !== undefined
-          && formBaseVersionRef.current === savedFence
-          && (initial.profileVersion === null || initial.profileVersion < savedFence);
-        const baseResponse = useSavedResponse ? formBaseResponseRef.current : initial;
-        const initialValues = structuredClone(toProfileFormValues(baseResponse));
-        if (savedFence !== undefined
-          && initial.profileVersion !== null && initial.profileVersion > savedFence) {
+        const useSavedResponse =
+          savedFence !== undefined &&
+          formBaseVersionRef.current === savedFence &&
+          (initial.profileVersion === null ||
+            initial.profileVersion < savedFence);
+        const baseResponse = useSavedResponse
+          ? formBaseResponseRef.current
+          : initial;
+        const initialValues = structuredClone(
+          toProfileFormValues(baseResponse),
+        );
+        if (
+          savedFence !== undefined &&
+          initial.profileVersion !== null &&
+          initial.profileVersion > savedFence
+        ) {
           profileSaveVersionFenceRef.current = undefined;
         }
         formBaseResponseRef.current = baseResponse;
@@ -1452,16 +1953,48 @@ export function ProfileForm({
           {statusMessage}
         </div>
       ) : null}
-      {isProfileSection && initial.legacyEvidenceReview ? <Alert role="status">
-        <AlertDescription>
-          {initial.legacyEvidenceReview.count} saved achievement records need confirmation review because their legacy provenance is unknown.
-          Your original text and saved confirmations are retained. New evidence-based preparation waits for this review;
-          accepted materials remain available. Review these records with the local <code>jobctrl legacy-evidence</code> command.
-        </AlertDescription>
-      </Alert> : null}
-      {isProfileSection && initial.candidateInterpretation ? <div className="status-line candidate-interpretation-status" data-typography="metadata" role="status">
-        {initial.candidateInterpretation.determination ? <>Candidate interpretation {initial.candidateInterpretation.status === "confirmed" ? "confirmed" : "awaits your confirmation"}. Model {initial.candidateInterpretation.determination.model}; prompt {initial.candidateInterpretation.determination.prompt_version}; input {initial.candidateInterpretation.determination.input_fingerprint}. Review the target-role suggestions before saving them.</> : <>Candidate interpretation unavailable{initial.candidateInterpretation.failureCode ? `: ${initial.candidateInterpretation.failureCode}` : " until a model determination is recorded"}. Request target-role suggestions in Discovery when you want them.</>}
-      </div> : null}
+      {isProfileSection && initial.legacyEvidenceReview ? (
+        <Alert role="status">
+          <AlertDescription>
+            {initial.legacyEvidenceReview.count} saved achievement records need
+            confirmation review because their legacy provenance is unknown. Your
+            original text and saved confirmations are retained. New
+            evidence-based preparation waits for this review; accepted materials
+            remain available. Review these records with the local{" "}
+            <code>jobctrl legacy-evidence</code> command.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {isProfileSection && initial.candidateInterpretation ? (
+        <div
+          className="status-line candidate-interpretation-status"
+          data-typography="metadata"
+          role="status"
+        >
+          {initial.candidateInterpretation.determination ? (
+            <>
+              Candidate interpretation{" "}
+              {initial.candidateInterpretation.status === "confirmed"
+                ? "confirmed"
+                : "awaits your confirmation"}
+              . Model {initial.candidateInterpretation.determination.model};
+              prompt{" "}
+              {initial.candidateInterpretation.determination.prompt_version};
+              input{" "}
+              {initial.candidateInterpretation.determination.input_fingerprint}.
+              Review the target-role suggestions before saving them.
+            </>
+          ) : (
+            <>
+              Candidate interpretation unavailable
+              {initial.candidateInterpretation.failureCode
+                ? `: ${initial.candidateInterpretation.failureCode}`
+                : " until a model determination is recorded"}
+              . Request target-role suggestions in Discovery when you want them.
+            </>
+          )}
+        </div>
+      ) : null}
       <form.Subscribe
         selector={(state) => ({
           isDirty: state.isDirty,
@@ -1470,193 +2003,356 @@ export function ProfileForm({
         })}
       >
         {({ isDirty, isSubmitting, values }) => (
-          <AutosaveUndoController
-            formRef={formRef}
-            isDirty={isDirty}
-            isSubmitting={isSubmitting}
-            resetToken={resetToken}
-            restoreValues={(nextValues) => {
-              reconcileSuggestionProvenance(nextValues.profile);
-              form.reset(nextValues, { keepDefaultValues: true });
-            }}
-            setStatusMessage={setStatusMessage}
-            submit={() => form.handleSubmit()}
-            values={values}
-          />
-        )}
-      </form.Subscribe>
-      {isProfileSection ? (
-        <div className="profile-route-actions">
-          <Button
-            nativeButton={false}
-            render={<Link to="/profile/import/upload" role="link" />}
-            variant="secondary"
-          >
-            Import resume
-          </Button>
-        </div>
-      ) : null}
-      <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
-        {({ isDirty, isSubmitting }) =>
-          isDirty || isSubmitting ? (
-            <div className="editor-bulk-actions" data-state={isSubmitting ? "saving" : "dirty"}>
-              <span data-typography="strong-body" role="status">
-                {isSubmitting ? "Saving changes" : "Unsaved changes"}
-              </span>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "Saving changes" : saveLabel}
-              </Button>
-              <Button type="reset" variant="secondary" disabled={isSubmitting}>
-                {discardLabel}
-              </Button>
-            </div>
-          ) : null
-        }
-      </form.Subscribe>
-      {section !== "target-search" && initial.profileVersion !== null
-        && (formBaseVersion === null || initial.profileVersion > formBaseVersion) ? (
-        <div className="editor-bulk-actions">
-          <Button type="button" variant="secondary" onClick={rebaseProfileDraft}>
-            Rebase edits onto saved profile
-          </Button>
-        </div>
-      ) : null}
-      {isProfileSection ? (
-        <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
-          {({ isDirty, isSubmitting }) => (
-            <RequiredBulletSuggestions
-              isDraftClean={!isDirty && !isSubmitting && !updateProfile.isPending
-                && formBaseVersion === initial.profileVersion && !requiredAcceptPendingRef.current}
-              profileVersion={initial.profileVersion}
-              resetToken={resetToken}
-              onAccept={acceptRequiredBulletSuggestion}
+          <>
+            <ProfileDraftRecovery
+              base={formBaseResponseRef.current}
+              canonical={initial}
+              values={values}
+              section={section}
+              isDirty={isDirty}
+              isSubmitting={isSubmitting}
+              onRecoveryPendingChange={handleRecoveryPending}
+              {...(onDirtyChange ? { onDirtyChange } : {})}
+              onRestore={(record, sessionDraft, force) => {
+                // Every retained patch is reviewed against the current canonical
+                // snapshot. Secrets/unknown unchanged fields come from that
+                // snapshot, never a browser recovery payload.
+                const canonical = initial;
+                const current = toProfileFormValues(canonical);
+                const restored = restoreProfileChanges(record, current, force);
+                if (restored.conflicts.length) {
+                  setStatusTone("warning");
+                  setStatusMessage(
+                    `Saved and retained edits overlap at ${restored.conflicts.slice(0, 4).join(", ")}. Review before restoring those values.`,
+                  );
+                  return false;
+                }
+                const recovered = sessionDraft
+                  ? (restoreSessionPrivateFields(
+                      toProfileFormValues(sessionDraft.base),
+                      sessionDraft.values,
+                      restored.values,
+                    ) as ProfileFormValues)
+                  : restored.values;
+                const privateSkipped =
+                  sessionDraft &&
+                  hasPrivateDraftChanges(sessionDraft.values, recovered);
+                formBaseResponseRef.current = canonical;
+                formBaseValuesRef.current = structuredClone(current);
+                setFormBaseVersion(canonical.profileVersion);
+                form.reset(current);
+                form.setFieldValue("profile", recovered.profile);
+                form.setFieldValue("style", recovered.style);
+                form.setFieldValue("templateText", recovered.templateText);
+                setResetToken((token) => token + 1);
+                setStatusTone("warning");
+                setStatusMessage(
+                  privateSkipped
+                    ? "Profile changes restored. A saved credential changed; re-enter the credential edit before saving. The canonical credential is preserved."
+                    : "Unfinished changes restored onto the current saved Profile. Review before saving; browser recovery contains no credentials.",
+                );
+                return true;
+              }}
             />
-          )}
-        </form.Subscribe>
-      ) : null}
-      <form.Field name="profile">
-        {(profileField) => (
-          <form.Field name="style">
-            {(styleField) => (
-              <>
-                {section === "target-search" ? (
-                  <form.Subscribe selector={(state) => state.isSubmitting}>
-                    {(isSaving) => (
-                      <TargetRoleSuggestions
-                        formBaseVersion={formBaseVersion}
-                        profileVersion={initial.profileVersion}
-                        isSaving={isSaving}
-                        onRebase={rebaseOntoSavedProfile}
-                        onResolveWithoutAcceptance={resolveSuggestionReviewWithoutAcceptance}
-                        onAccept={(titles, preferences, expectedProfileVersion, determinationId) => {
-                          acceptedCandidateInterpretationRef.current = determinationId;
-                          const rolesBefore = targetRoles(profileField.state.value);
-                          const preferencesBefore = targetPreferenceRows(profileField.state.value);
-                          const nextProfile = appendTargetPreferences(
-                            appendTargetRoles(profileField.state.value, titles),
-                            preferences,
-                          );
-                          const beforeKeys = new Set(rolesBefore.map((title) => title.toLowerCase()));
-                          const beforePreferenceKeys = new Set(preferencesBefore.map(preferenceRowKey));
-                          const addedTitles = targetRoles(nextProfile).filter(
-                            (title) => !beforeKeys.has(title.toLowerCase()),
-                          );
-                          const addedPreferences = targetPreferenceRows(nextProfile).filter(
-                            (row) => !beforePreferenceKeys.has(preferenceRowKey(row)),
-                          );
-                          suggestionAddedRolesRef.current = [
-                            ...suggestionAddedRolesRef.current,
-                            ...addedTitles
-                              .filter((title) => !suggestionAddedRolesRef.current.some(
-                                (existing) => existing.title.toLowerCase() === title.toLowerCase(),
-                              ))
-                              .map((title) => ({ profileVersion: expectedProfileVersion, title })),
-                          ];
-                          suggestionAddedPreferencesRef.current = [
-                            ...suggestionAddedPreferencesRef.current,
-                            ...addedPreferences
-                              .filter((row) => !suggestionAddedPreferencesRef.current.some(
-                                (existing) => preferenceRowKey(existing) === preferenceRowKey(row),
-                              ))
-                              .map((row) => ({ ...row, profileVersion: expectedProfileVersion })),
-                          ];
-                          clearTransientStatus();
-                          profileField.handleChange(nextProfile);
-                          if (suggestionAddedRolesRef.current.length > 0 || suggestionAddedPreferencesRef.current.length > 0) {
-                            suggestionReviewRequiredRef.current = false;
-                            suggestionReviewResolvedVersionRef.current = undefined;
-                            expectedProfileVersionRef.current = expectedProfileVersion;
-                            setSuggestionDerivedDraft(true);
-                          } else {
-                            resolveSuggestionReviewWithoutAcceptance(expectedProfileVersion);
-                          }
-                        }}
-                      />
-                    )}
-                  </form.Subscribe>
-                ) : null}
-                <StructuredProfileEditor
-                  mode={section}
-                  showSectionHeading={showSectionHeading}
-                  profile={profileField.state.value}
-                  style={styleField.state.value}
-                  onProfileChange={(value) => {
-                    clearTransientStatus();
-                    const conflict = requiredPinConflictRef.current;
-                    if (!conflict || !value) {
-                      profileField.handleChange(value);
-                      return;
-                    }
-                    if (explicitlyRemovedRequiredPin(profileField.state.value, value, conflict)) {
-                      requiredPinConflictRef.current = null;
-                      profileField.handleChange(value);
-                      return;
-                    }
-                    const correctedProfile = structuredClone(value);
-                    const pinStatus = reconcilePendingRequiredPin(correctedProfile, conflict);
-                    if (pinStatus === "updated") {
-                      const bullet = getPathValue(correctedProfile,
-                        `resume.experience_entries.${conflict.entryIndex}.bullets.${conflict.bulletIndex}`);
-                      if (typeof bullet === "string") {
-                        requiredPinConflictRef.current = { ...conflict, previousText: bullet };
-                      }
-                      profileField.handleChange(correctedProfile);
-                    } else {
-                      profileField.handleChange(value);
-                      if (pinStatus === "blocked" && ProfileSchema.safeParse(value).success) {
-                        setStatusTone("warning");
-                        setStatusMessage("The edited Required bullet has an ambiguous pin. Make its text unique or discard the draft before saving.");
-                      }
-                    }
-                  }}
-                  onStyleChange={(value) => {
-                    clearTransientStatus();
-                    styleField.handleChange(value);
-                  }}
-                />
-              </>
-            )}
-          </form.Field>
+            <AutosaveUndoController
+              formRef={formRef}
+              isDirty={isDirty && !recoveryPending}
+              isSubmitting={isSubmitting}
+              resetToken={resetToken}
+              restoreValues={(nextValues) => {
+                reconcileSuggestionProvenance(nextValues.profile);
+                form.reset(nextValues, { keepDefaultValues: true });
+              }}
+              setStatusMessage={setStatusMessage}
+              submit={() => form.handleSubmit()}
+              values={values}
+            />
+          </>
         )}
-      </form.Field>
-      <form.Subscribe selector={(state) => state.errors}>
-        {(errors) => {
-          const message = errors
-            .flat()
-            .filter((entry): entry is string => typeof entry === "string")
-            .at(0);
-          return message ? (
-            <Alert className="inline" variant="destructive">
-              <AlertDescription>{message}</AlertDescription>
-            </Alert>
-          ) : null;
-        }}
       </form.Subscribe>
-      {updateProfile.error ? (
-        <Alert className="inline" variant="destructive">
-          <AlertDescription>{updateProfile.error.message}</AlertDescription>
-        </Alert>
-      ) : null}
+      <fieldset
+        disabled={recoveryPending}
+        inert={recoveryPending}
+        className="profile-editing-boundary"
+        aria-label="Profile editing"
+      >
+        <form.Subscribe
+          selector={(state) => ({
+            isDirty: state.isDirty,
+            isSubmitting: state.isSubmitting,
+          })}
+        >
+          {({ isDirty, isSubmitting }) =>
+            isDirty || isSubmitting ? (
+              <div
+                className="editor-bulk-actions"
+                data-state={isSubmitting ? "saving" : "dirty"}
+              >
+                <span data-typography="strong-body" role="status">
+                  {isSubmitting ? "Saving changes" : "Unsaved changes"}
+                </span>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Saving changes" : saveLabel}
+                </Button>
+                <Button
+                  type="reset"
+                  variant="secondary"
+                  disabled={isSubmitting}
+                >
+                  {discardLabel}
+                </Button>
+              </div>
+            ) : null
+          }
+        </form.Subscribe>
+        {section !== "target-search" &&
+        initial.profileVersion !== null &&
+        (formBaseVersion === null ||
+          initial.profileVersion > formBaseVersion) ? (
+          <div className="editor-bulk-actions">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={rebaseProfileDraft}
+            >
+              Rebase edits onto saved profile
+            </Button>
+          </div>
+        ) : null}
+        <form.Field name="profile">
+          {(profileField) => (
+            <form.Field name="style">
+              {(styleField) => (
+                <>
+                  {section === "target-search" ? (
+                    <form.Subscribe selector={(state) => state.isSubmitting}>
+                      {(isSaving) => (
+                        <TargetRoleSuggestions
+                          formBaseVersion={formBaseVersion}
+                          profileVersion={initial.profileVersion}
+                          isSaving={isSaving}
+                          onRebase={rebaseOntoSavedProfile}
+                          onResolveWithoutAcceptance={
+                            resolveSuggestionReviewWithoutAcceptance
+                          }
+                          onAccept={(
+                            titles,
+                            preferences,
+                            expectedProfileVersion,
+                            determinationId,
+                          ) => {
+                            acceptedCandidateInterpretationRef.current =
+                              determinationId;
+                            const rolesBefore = targetRoles(
+                              profileField.state.value,
+                            );
+                            const preferencesBefore = targetPreferenceRows(
+                              profileField.state.value,
+                            );
+                            const nextProfile = appendTargetPreferences(
+                              appendTargetRoles(
+                                profileField.state.value,
+                                titles,
+                              ),
+                              preferences,
+                            );
+                            const beforeKeys = new Set(
+                              rolesBefore.map((title) => title.toLowerCase()),
+                            );
+                            const beforePreferenceKeys = new Set(
+                              preferencesBefore.map(preferenceRowKey),
+                            );
+                            const addedTitles = targetRoles(nextProfile).filter(
+                              (title) => !beforeKeys.has(title.toLowerCase()),
+                            );
+                            const addedPreferences = targetPreferenceRows(
+                              nextProfile,
+                            ).filter(
+                              (row) =>
+                                !beforePreferenceKeys.has(
+                                  preferenceRowKey(row),
+                                ),
+                            );
+                            suggestionAddedRolesRef.current = [
+                              ...suggestionAddedRolesRef.current,
+                              ...addedTitles
+                                .filter(
+                                  (title) =>
+                                    !suggestionAddedRolesRef.current.some(
+                                      (existing) =>
+                                        existing.title.toLowerCase() ===
+                                        title.toLowerCase(),
+                                    ),
+                                )
+                                .map((title) => ({
+                                  profileVersion: expectedProfileVersion,
+                                  title,
+                                })),
+                            ];
+                            suggestionAddedPreferencesRef.current = [
+                              ...suggestionAddedPreferencesRef.current,
+                              ...addedPreferences
+                                .filter(
+                                  (row) =>
+                                    !suggestionAddedPreferencesRef.current.some(
+                                      (existing) =>
+                                        preferenceRowKey(existing) ===
+                                        preferenceRowKey(row),
+                                    ),
+                                )
+                                .map((row) => ({
+                                  ...row,
+                                  profileVersion: expectedProfileVersion,
+                                })),
+                            ];
+                            clearTransientStatus();
+                            profileField.handleChange(nextProfile);
+                            if (
+                              suggestionAddedRolesRef.current.length > 0 ||
+                              suggestionAddedPreferencesRef.current.length > 0
+                            ) {
+                              suggestionReviewRequiredRef.current = false;
+                              suggestionReviewResolvedVersionRef.current =
+                                undefined;
+                              expectedProfileVersionRef.current =
+                                expectedProfileVersion;
+                              setSuggestionDerivedDraft(true);
+                            } else {
+                              resolveSuggestionReviewWithoutAcceptance(
+                                expectedProfileVersion,
+                              );
+                            }
+                          }}
+                        />
+                      )}
+                    </form.Subscribe>
+                  ) : null}
+                  <StructuredProfileEditor
+                    mode={section}
+                    activeSection={activeSection}
+                    {...(roleId ? { roleId } : {})}
+                    {...(achievementId ? { achievementId } : {})}
+                    {...(achievementContent ? { achievementContent } : {})}
+                    {...(achievementWordings ? { achievementWordings } : {})}
+                    showSectionHeading={showSectionHeading}
+                    profile={profileField.state.value}
+                    style={styleField.state.value}
+                    onProfileChange={(value) => {
+                      clearTransientStatus();
+                      const conflict = requiredPinConflictRef.current;
+                      if (!conflict || !value) {
+                        profileField.handleChange(value);
+                        return;
+                      }
+                      if (
+                        explicitlyRemovedRequiredPin(
+                          profileField.state.value,
+                          value,
+                          conflict,
+                        )
+                      ) {
+                        requiredPinConflictRef.current = null;
+                        profileField.handleChange(value);
+                        return;
+                      }
+                      const correctedProfile = structuredClone(value);
+                      const pinStatus = reconcilePendingRequiredPin(
+                        correctedProfile,
+                        conflict,
+                      );
+                      if (pinStatus === "updated") {
+                        const bullet = getPathValue(
+                          correctedProfile,
+                          `resume.experience_entries.${conflict.entryIndex}.bullets.${conflict.bulletIndex}`,
+                        );
+                        if (typeof bullet === "string") {
+                          requiredPinConflictRef.current = {
+                            ...conflict,
+                            previousText: bullet,
+                          };
+                        }
+                        profileField.handleChange(correctedProfile);
+                      } else {
+                        profileField.handleChange(value);
+                        if (
+                          pinStatus === "blocked" &&
+                          ProfileSchema.safeParse(value).success
+                        ) {
+                          setStatusTone("warning");
+                          setStatusMessage(
+                            "The edited Required bullet has an ambiguous pin. Make its text unique or discard the draft before saving.",
+                          );
+                        }
+                      }
+                    }}
+                    onStyleChange={(value) => {
+                      clearTransientStatus();
+                      styleField.handleChange(value);
+                    }}
+                  />
+                </>
+              )}
+            </form.Field>
+          )}
+        </form.Field>
+        {isProfileSection ? (
+          <details className="profile-secondary-tools">
+            <summary>Import and writing suggestions</summary>
+            {isProfileSection ? (
+              <div className="profile-route-actions">
+                <Button
+                  nativeButton={false}
+                  render={<Link to="/profile/import/upload" role="link" />}
+                  variant="secondary"
+                >
+                  Import resume
+                </Button>
+              </div>
+            ) : null}
+            {isProfileSection && activeSection === "experience" ? (
+              <form.Subscribe
+                selector={(state) => ({
+                  isDirty: state.isDirty,
+                  isSubmitting: state.isSubmitting,
+                })}
+              >
+                {({ isDirty, isSubmitting }) => (
+                  <RequiredBulletSuggestions
+                    isDraftClean={
+                      !isDirty &&
+                      !isSubmitting &&
+                      !updateProfile.isPending &&
+                      formBaseVersion === initial.profileVersion &&
+                      !requiredAcceptPendingRef.current
+                    }
+                    profileVersion={initial.profileVersion}
+                    resetToken={resetToken}
+                    onAccept={acceptRequiredBulletSuggestion}
+                  />
+                )}
+              </form.Subscribe>
+            ) : null}
+          </details>
+        ) : null}
+        <form.Subscribe selector={(state) => state.errors}>
+          {(errors) => {
+            const message = errors
+              .flat()
+              .filter((entry): entry is string => typeof entry === "string")
+              .at(0);
+            return message ? (
+              <Alert className="inline" variant="destructive">
+                <AlertDescription>{message}</AlertDescription>
+              </Alert>
+            ) : null;
+          }}
+        </form.Subscribe>
+        {updateProfile.error ? (
+          <Alert className="inline" variant="destructive">
+            <AlertDescription>{updateProfile.error.message}</AlertDescription>
+          </Alert>
+        ) : null}
+      </fieldset>
     </form>
   );
 }

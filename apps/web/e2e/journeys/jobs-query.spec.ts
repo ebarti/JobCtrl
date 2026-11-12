@@ -224,15 +224,43 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
   ).toBeVisible();
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   const table = page.getByRole("table", { name: "Jobs table", exact: true });
-  await expect(page.getByLabel("Search jobs", { exact: true })).toHaveValue("");
+  await expect(
+    page.getByLabel("Filter saved jobs", { exact: true }),
+  ).toHaveValue("");
   await expect(
     page.getByRole("combobox", { name: "Saved table view", exact: true }),
   ).not.toContainText(legacyViewName);
   await expect(table.locator("tbody tr")).toHaveCount(50);
+  expect(
+    await table
+      .locator("thead th")
+      .evaluateAll((columns) =>
+        columns.map((column) => column.getAttribute("data-column-id")),
+      ),
+  ).toEqual([
+    "select",
+    "title",
+    "company",
+    "location",
+    "posted_compensation",
+    "fit_score",
+    "apply_status",
+  ]);
   await expect(
     table.getByRole("link", { name: targetTitle, exact: true }),
   ).toHaveCount(0);
 
+  await page
+    .getByRole("button", { name: "Configure table columns", exact: true })
+    .click();
+  const columnsDialog = page.getByRole("dialog", {
+    name: "Columns",
+    exact: true,
+  });
+  await columnsDialog
+    .getByRole("checkbox", { name: "Stage", exact: true })
+    .check();
+  await page.keyboard.press("Escape");
   await table
     .getByRole("button", { name: "Filter Stage column", exact: true })
     .click();
@@ -296,7 +324,9 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
   await expect(backgroundTable.locator("tbody tr")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(table.locator("tbody tr")).toHaveCount(1);
-  await page.getByText("Job filters", { exact: true }).click();
+  await page
+    .getByText("Filter by fit, compensation and job state", { exact: true })
+    .click();
   await page
     .getByRole("combobox", { name: "Fit assessment", exact: true })
     .selectOption("current");
@@ -323,6 +353,11 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
     table.getByRole("link", { name: targetTitle, exact: true }),
   ).toBeVisible();
 
+  const customColumnIds = await table
+    .locator("thead th")
+    .evaluateAll((columns) =>
+      columns.map((column) => column.getAttribute("data-column-id")),
+    );
   await page.getByRole("button", { name: "Save as view", exact: true }).click();
   const save = page.getByRole("dialog", { name: "Save view", exact: true });
   await save.getByLabel("Name", { exact: true }).fill("Global fit and pay");
@@ -345,6 +380,13 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
     page.getByRole("combobox", { name: "Saved table view", exact: true }),
   ).toContainText("Global fit and pay");
   await expect(table.locator("tbody tr")).toHaveCount(1);
+  expect(
+    await table
+      .locator("thead th")
+      .evaluateAll((columns) =>
+        columns.map((column) => column.getAttribute("data-column-id")),
+      ),
+  ).toEqual(customColumnIds);
   await expect(
     table.getByRole("link", { name: targetTitle, exact: true }),
   ).toBeVisible();
@@ -358,7 +400,9 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
     "aria-sort",
     "descending",
   );
-  await page.getByText("Job filters", { exact: true }).click();
+  await page
+    .getByText("Filter by fit, compensation and job state", { exact: true })
+    .click();
   await expect(
     page.getByLabel("Minimum person fit (1–10)", { exact: true }),
   ).toHaveValue("10");
@@ -369,6 +413,35 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
     page.getByLabel("Market annual minimum at least (€)", { exact: true }),
   ).toHaveValue("85000");
   const filteredSearch = new URL(page.url()).search;
+  const beforeSearchNavigation = app.external.calls.filter(
+    (call) => call.path === "/model",
+  ).length;
+  await page
+    .getByRole("link", { name: "Search preferences", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Search for jobs",
+      level: 1,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Target roles 1", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("link", { name: "Back to jobs", exact: true }).click();
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  expect(new URL(page.url()).search).toBe(filteredSearch);
+  expect(
+    await table
+      .locator("thead th")
+      .evaluateAll((columns) =>
+        columns.map((column) => column.getAttribute("data-column-id")),
+      ),
+  ).toEqual(customColumnIds);
+  expect(
+    app.external.calls.filter((call) => call.path === "/model"),
+  ).toHaveLength(beforeSearchNavigation);
   await table
     .getByRole("checkbox", { name: `Select ${target.title}`, exact: true })
     .check();
@@ -376,7 +449,28 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
   await expect(
     page.getByRole("main", { name: "Job details", exact: true }),
   ).toBeVisible();
-  expect(new URL(page.url()).search).toBe(filteredSearch);
+  const detailSearch = new URL(page.url()).searchParams;
+  detailSearch.delete("jobTab");
+  expect(Object.fromEntries(detailSearch)).toEqual(
+    Object.fromEntries(new URLSearchParams(filteredSearch)),
+  );
+  await expect(table).toBeVisible();
+  await expect(
+    table.getByRole("checkbox", {
+      name: `Select ${target.title}`,
+      exact: true,
+    }),
+  ).toBeChecked();
+  // The comparison pane has real horizontal scrolling on desktop. Mobile
+  // deliberately renders stacked cells, so it has no horizontal overflow.
+  const horizontalScroll = page.locator(".filterable-data-grid-scroll");
+  await horizontalScroll.evaluate((element) => {
+    element.scrollLeft = 24;
+  });
+  const retainedScroll = await horizontalScroll.evaluate(
+    (element) => element.scrollLeft,
+  );
+  expect(retainedScroll).toBeGreaterThan(0);
   await page.getByRole("button", { name: "Back to jobs", exact: true }).click();
   await expect(table.locator("tbody tr")).toHaveCount(1);
   expect(new URL(page.url()).search).toBe(filteredSearch);
@@ -386,11 +480,31 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
       exact: true,
     }),
   ).toBeChecked();
+  expect(await horizontalScroll.evaluate((element) => element.scrollLeft)).toBe(
+    retainedScroll,
+  );
   await table.scrollIntoViewIfNeeded();
   await testInfo.attach("jobs-global-filter-saved-view", {
     contentType: "image/png",
     body: await page.screenshot(),
   });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await table.getByRole("link", { name: targetTitle, exact: true }).click();
+  await expect(
+    page.getByRole("main", { name: "Job details", exact: true }),
+  ).toBeVisible();
+  await expect(table).toBeHidden();
+  await page.getByRole("button", { name: "Back to jobs", exact: true }).click();
+  await expect(table).toBeVisible();
+  await expect(
+    table.getByRole("checkbox", {
+      name: `Select ${target.title}`,
+      exact: true,
+    }),
+  ).toBeChecked();
+  expect(new URL(page.url()).search).toBe(filteredSearch);
+  await page.setViewportSize({ width: 1440, height: 1000 });
 
   // Exercise the real continuation UI: changed sources must not mix page two
   // with the first page's earlier owner snapshot.
@@ -483,7 +597,22 @@ test.describe("Jobs without optional read owners", () => {
       table.getByRole("button", { name: "Sort by Person fit", exact: true }),
     ).toHaveCount(0);
 
-    await page.getByText("Job filters", { exact: true }).click();
+    const filterOptions = page.locator("details.jobs-filter-options");
+    const openFilters = async () => {
+      if (
+        !(await filterOptions.evaluate(
+          (element) => (element as HTMLDetailsElement).open,
+        ))
+      )
+        await filterOptions
+          .locator("summary")
+          .filter({ hasText: /^Filter by fit, compensation and job state$/ })
+          .click();
+      await expect(
+        page.getByRole("form", { name: "Job filters", exact: true }),
+      ).toBeVisible();
+    };
+    await openFilters();
     await page
       .getByRole("combobox", { name: "Posted pay", exact: true })
       .selectOption("known");
@@ -602,7 +731,7 @@ test.describe("Jobs without optional read owners", () => {
     await expect(
       table.getByRole("link", { name: target.title, exact: true }),
     ).toHaveCount(0);
-    await page.getByText("Job filters", { exact: true }).click();
+    await openFilters();
     await page
       .getByRole("combobox", { name: "Job state", exact: true })
       .selectOption("deleted");

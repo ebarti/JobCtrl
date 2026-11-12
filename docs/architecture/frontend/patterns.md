@@ -12,6 +12,12 @@ Hooks use the shared HTTP port and TanStack Query; components render public hook
 
 Routes validate and map URL search state, and delegate prefetch or required reads to feature-owned helpers. Loader dependencies expose only the transport methods and Query operations required for that read, never a raw capability to a view. Prefetch stays best effort; a required detail read propagates its error. Start independent reads concurrently and avoid per-row fetches where a bulk public read exists.
 
+The Original shell uses validated job return state rather than reconstructing
+query/filter/sort/page after a detail visit. Search preferences and Connections
+carry the same return context without launching the task. Requirements retains
+its selected canonical ID/filter when opening an exact Profile role/achievement.
+Private text and personal multi-step drafts never belong in the URL.
+
 ## 4.5 View Composition
 
 Dashboard, Activity, Settings, Evidence Map and job workspaces combine public panels and queries. Each panel owns its loading, empty, failure and retry states. Optional contributions are explicitly selected by the shell and injected into a core workspace through public slots; removing a contribution must not change the core feature's imports or behavior.
@@ -35,3 +41,12 @@ Tailwind utilities and the CSS-first theme bridge in `styles/globals.css` consum
 Use local state for transient interaction, URL state for shareable navigation and Query for server state. Persist only navigation-surviving multi-step state in Zustand. Do not use client state to imply that an external action completed.
 
 UI preferences, saved table views and intentionally recoverable multi-step drafts have their own persisted records. A saved table view is a presentation template: applying it writes its filters and sort to the route, while reopening a link respects that URL instead of silently replaying a saved filter. Bulk selection remains transient. Profile import records retain their version and transaction boundaries; personal drafts are not placed in a URL.
+
+App appearance is browser-local UI state: light/dark, density, ten color and ten
+font choices, initially Graphite + Geist. Shared semantic tokens and actual font
+resources apply to the app; document style remains isolated under the resume
+template. Recoverable drafts retain source-version fences and visible storage/
+refusal failures. Profile/preference durable recovery uses non-secret patches;
+secret edits stay session-local and require saving before reload/close. A
+recovery copy cannot overwrite a newer accepted revision or another tab's owned
+copy. Demo recovery is scoped to its synthetic workspace and reset epoch.

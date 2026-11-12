@@ -1,10 +1,10 @@
 import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SavedTableView } from "@jobctrl/contracts";
 import { z } from "zod";
 
-import { useJobActions, useJobBulkActions, useComposedJobs, useJobGridSelectionStore, type JobGridQuery, type PostingSnapshot } from "../../contexts/jobs/index.js";
+import { useJobActions, useJobBulkActions, useComposedJobs, useJobs, useJobGridNavigationStore, useJobGridSelectionStore, type JobGridQuery, type PostingSnapshot } from "../../contexts/jobs/index.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
@@ -82,14 +82,24 @@ function CaptureJob() {
   </section>;
 }
 
-export function JobsView({ optionalBulkActions, optionalGlobalActions, navigation = null, onNavigationChange }: {
+export function JobsView({ optionalBulkActions, optionalGlobalActions, navigation = null, onNavigationChange, normalizeNavigation = false, activeJobId = null, searchAction, attention, showHeading = true }: {
   optionalBulkActions?: (selectedJobIds: readonly string[]) => ReactNode;
   optionalGlobalActions?: ReactNode;
   navigation?: JobGridQuery | null;
   onNavigationChange?: (next: JobGridQuery) => string | null;
+  normalizeNavigation?: boolean;
+  activeJobId?: string | null;
+  searchAction?: ReactNode;
+  attention?: ReactNode;
+  showHeading?: boolean;
 } = {}) {
   const [initial] = useState(initialSavedView);
-  const [fallback] = useState(() => gridQuery(initial.criteria, initial.filters, initial.sort, 0, initial.pageSize, null));
+  const { session } = usePorts();
+  const tenant = useTenantId();
+  const [fallback] = useState(() => {
+    const saved = useJobGridNavigationStore.getState().current;
+    return saved?.session === session && saved.tenant === tenant ? saved.query : gridQuery(initial.criteria, initial.filters, initial.sort, 0, initial.pageSize, null);
+  });
   const [unrouted, setUnrouted] = useState(fallback);
   const [navigationError, setNavigationError] = useState("");
   const queryInput = navigation ?? unrouted;
@@ -101,8 +111,9 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
   const [confirmation, setConfirmation] = useState("");
   const [previewScope, setPreviewScope] = useState<string | null>(null);
   const [filtersVersion, setFiltersVersion] = useState(0);
-  const { session } = usePorts();
-  const tenant = useTenantId();
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const scrollRestored = useRef(false);
+  const previousJob = useRef(activeJobId);
   const streamStatus = useEventStreamStatus();
   const selection = useJobGridSelectionStore((state) => state.current);
   const updateSelection = useJobGridSelectionStore((state) => state.update);
@@ -112,12 +123,37 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
   const presentation = usePythonJobsTableViewsStore((state) => state.presentationByTable[JOBS_TABLE_ID]) ?? DEFAULT_PRESENTATION;
   const setPresentation = usePythonJobsTableViewsStore((state) => state.setTablePresentation);
   const jobs = useComposedJobs(queryInput);
+  const inventory = useJobs("", 0, 1, "all");
   const currentJobs = jobs.isPlaceholderData ? undefined : jobs.data;
   const filterMetadata = streamStatus === "workspace_changed" ? undefined : jobs.data;
   const { bulk, previewDelete, permanentDelete } = useJobBulkActions();
   useEffect(() => { if (!navigation && onNavigationChange) { const error = onNavigationChange(fallback); if (error) setNavigationError(error); } }, [navigation, onNavigationChange, fallback]);
+  useEffect(() => {
+    if (normalizeNavigation && navigation && currentJobs && onNavigationChange) {
+      const error = onNavigationChange({ ...queryInput, ...(queryInput.offset > 0 ? { query_revision: currentJobs.query_revision } : {}) });
+      if (error) setNavigationError(error);
+    }
+  }, [normalizeNavigation, navigation, currentJobs, onNavigationChange, queryInput]);
   useEffect(() => { setDraft(criteria.q); }, [criteria.q]);
   useEffect(() => { if (streamStatus === "workspace_changed") clearStoredSelection(session, tenant); }, [streamStatus, clearStoredSelection, session, tenant]);
+  useEffect(() => {
+    if (streamStatus === "workspace_changed") { useJobGridNavigationStore.getState().clear(session, tenant); return; }
+    useJobGridNavigationStore.getState().remember(session, tenant, queryInput);
+  }, [queryInput, session, tenant, streamStatus]);
+  useEffect(() => {
+    if (scrollRestored.current || !currentJobs || !workspaceRef.current) return;
+    const saved = useJobGridNavigationStore.getState().current;
+    if (saved?.session === session && saved.tenant === tenant) {
+      workspaceRef.current.scrollTop = saved.scroll.listTop;
+      const table = workspaceRef.current.querySelector<HTMLElement>(".filterable-data-grid-scroll");
+      if (table) table.scrollLeft = saved.scroll.tableLeft;
+    }
+    scrollRestored.current = true;
+  }, [currentJobs, session, tenant]);
+  useEffect(() => {
+    if (previousJob.current && !activeJobId) workspaceRef.current?.focus({ preventScroll: true });
+    previousJob.current = activeJobId;
+  }, [activeJobId]);
   const selectedRows = Object.values(selected); const selectedIds = selectedRows.map((job) => job.job_id);
   const selectionFingerprint = JSON.stringify(selectedRows.map((job) => [job.job_id, job.revision, job.state_revision]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))));
   const preview = previewScope === selectionFingerprint ? previewDelete.data : undefined;
@@ -146,17 +182,27 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
   const unavailableFields = unavailableFieldsSchema.safeParse(errorBody);
   const unavailable = currentJobs ? (["fit", "preparation", "compensation", "applications", "resumes"] as const)
     .flatMap((name) => { const state = currentJobs.modules[name]; return state && (!state.enabled || !state.available) ? [{ name, state }] : []; }) : [];
-  return <div className="route-page">
-    <PageHead eyebrow="Search" title="Jobs" subtitle="Captured postings and their saved source snapshots" />
-    <CaptureJob />
+  const hasFilters = Object.values(filters).some(isActiveDataGridFilter) || Object.entries(criteria).some(([key, value]) => value !== defaultCriteria[key as keyof GridCriteria]);
+  const firstUse = !inventory.error && inventory.data?.total === 0;
+  const emptyMessage = firstUse ? "Your saved jobs will appear here." : hasFilters ? "No saved jobs match these filters." : "No jobs in this view.";
+  return <div className="route-page jobs-list-workspace" ref={workspaceRef} tabIndex={-1} onScrollCapture={(event) => {
+    const target = event.target as HTMLElement;
+    if (target === event.currentTarget) useJobGridNavigationStore.getState().scroll(session, tenant, { listTop: target.scrollTop });
+    else if (target.classList.contains("filterable-data-grid-scroll")) useJobGridNavigationStore.getState().scroll(session, tenant, { tableLeft: target.scrollLeft });
+  }}>
+    {showHeading ? <PageHead title="Jobs" subtitle="Compare saved opportunities and choose your next step." actions={searchAction} /> : null}
+    {attention}
+    {firstUse ? <section className="jobs-first-use" aria-label="Find your first job"><h2>Find your first opportunity</h2><p>Search with your saved preferences, import a posting URL, or add its text below.</p></section> : null}
+    <details className="jobs-intake"><summary>Add a job by URL or text</summary><CaptureJob /></details>
     <section className="card" aria-label="Captured jobs">
-      {optionalGlobalActions ? <div className="toolbar" aria-label="Job maintenance">{optionalGlobalActions}</div> : null}
+      <div className="jobs-table-tools">
+      {optionalGlobalActions ? <details><summary>Job maintenance</summary><div className="toolbar" aria-label="Job maintenance">{optionalGlobalActions}</div></details> : null}
       <form onSubmit={(event) => { event.preventDefault(); updateCriteria({ ...criteria, q: draft }); }}>
-        <label>Search jobs<input value={draft} onChange={(event) => setDraft(event.currentTarget.value)} /></label>
-        <Button type="submit" variant="outline">Search</Button>
+        <label>Filter saved jobs<input aria-label="Filter saved jobs" value={draft} onChange={(event) => setDraft(event.currentTarget.value)} /></label>
+        <Button type="submit" variant="outline">Filter</Button>
       </form>
-      <AdvancedJobFilters key={`${filtersVersion}:${JSON.stringify({ ...criteria, q: "" })}`} criteria={criteria} onApply={updateCriteria} />
-      <Button type="button" variant="outline" onClick={() => { if (changeQuery(gridQuery(defaultCriteria, {}, { columnId: "discovered_at", direction: "desc" }, 0, pageSize, null))) setFiltersVersion((version) => version + 1); }}>Clear all filters</Button>
+      <details className="jobs-filter-options"><summary>Filter by fit, compensation and job state</summary><AdvancedJobFilters key={`${filtersVersion}:${JSON.stringify({ ...criteria, q: "" })}`} criteria={criteria} onApply={updateCriteria} /></details>
+      {hasFilters ? <Button type="button" variant="outline" onClick={() => { if (changeQuery(gridQuery(defaultCriteria, {}, { columnId: "discovered_at", direction: "desc" }, 0, pageSize, null))) setFiltersVersion((version) => version + 1); }}>Clear all filters</Button> : null}
       {navigationError ? <p role="alert">{navigationError}</p> : null}
       {jobs.isPlaceholderData ? <p role="status">Updating jobs. Filter options reflect the previous results until loading finishes.</p> : null}
       {unavailable.length ? <p role="status">Unavailable features: {unavailable.map(({ name, state }) => `${name} (${state.enabled ? "unavailable" : "disabled"})`).join(", ")}. Their saved criteria remain in effect and can be cleared.</p> : null}
@@ -181,7 +227,8 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
         <Button type="button" disabled={pending || confirmation !== "DELETE"} onClick={() => { const submittedSelection = selection; permanentDelete.mutate({ selectionId: preview.selectionId, jobIds: preview.jobIds }, { onSuccess: () => { if (useJobGridSelectionStore.getState().current === submittedSelection) clearSelection(); } }); }}>Permanently delete reviewed jobs</Button>
       </section> : null}
       {jobs.error ? <div role="alert">{jobs.error.message}{unavailableFields.success ? ` Unavailable criteria: ${unavailableFields.data.error.details.fields.join(", ")}.` : ""}{currentJobs ? " Showing the previously loaded page." : ""}{" "}<Button type="button" variant="outline" disabled={jobs.isFetching} onClick={() => void jobs.refetch()}>Retry loading jobs</Button>{offset > 0 ? <Button type="button" variant="outline" onClick={() => { changeQuery(gridQuery(criteria, filters, sort, 0, pageSize, null), false); }}>Reload from first page</Button> : null}</div> : null}
-      <ComposedJobsGrid data={currentJobs} filterMetadata={filterMetadata} loading={jobs.isPending || jobs.isFetching} error={Boolean(jobs.error)} selected={selected}
+      </div>
+      <ComposedJobsGrid data={currentJobs} filterMetadata={filterMetadata} loading={jobs.isPending || jobs.isFetching} error={Boolean(jobs.error)} selected={selected} activeJobId={activeJobId} emptyMessage={emptyMessage}
         onSelectionChange={(rows, checked) => { updateSelection(session, tenant, selectionScope, rows, checked); previewDelete.reset(); setPreviewScope(null); setConfirmation(""); }}
         filters={filters} onFiltersChange={(next) => { changeQuery(gridQuery(criteria, next, sort, 0, pageSize, null)); }}
         sort={sort} onSortChange={(next) => { changeQuery(gridQuery(criteria, filters, next, 0, pageSize, null)); }}

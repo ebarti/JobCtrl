@@ -1,25 +1,25 @@
 # Configuration & Credentials
 
-Most people use [Discovery](discovery.md) and [Apply](apply.md) for
-feature-specific setup. This page owns the shared configuration boundary:
-effective-value precedence, local storage, LLM providers and model policy, the
-daily LLM spend ceiling, compensation-source policy, and advanced operator
-controls. A single ready Codex, Claude, or Google provider is sufficient for
-every core AI stage, including employer-analysis synthesis. A second provider
-can add ensemble diversity, but it is not mandatory.
+Use **Settings** for shared connections, budgets, automation, appearance and
+workspace diagnostics. Feature-specific saved targets and source scope live in
+**My profile → Search preferences** and the Jobs search task. Those screens
+compose the existing owners; they do not establish a second business authority.
 
-JobCtrl configuration is intentionally local. Every value edited anywhere on
-`/discovery` lives in SQLite. Every non-secret desired value edited anywhere
-under `/settings/**` lives in `config.json`. Secrets entered through Settings
-remain in the native OS credential store or native provider stores; operator-supplied `.env` and
-launch-environment secrets stay outside the saved Settings document. Everything
-here is optional unless a feature you want depends on it.
+This page follows the Original redesign source candidate. Its
+[acceptance ledger](../plans/2026-11-11-original-app-redesign.md) records actual
+implementation and verification. The
+[published release](https://github.com/ebarti/JobCtrl/releases/latest) establishes
+installed availability, not a source build or demo illustration.
+
+Shared non-secret runtime settings are revisioned `app_settings` records in
+`jobctrl.db`. Profile, Discovery, Compensation and other features retain their
+own SQLite settings. Secrets use the native credential/provider boundary.
+Appearance and presentation preferences save in this browser. The historical
+`config.json` file is not an alternate current Python settings authority.
 
 ::: info Command spelling
-Command blocks on this page use the canonical installed spelling,
-`jobctrl <command>`. The native executable is both the app launcher and the
-domain CLI from any directory after either curl or Homebrew acquisition.
-Contributors running from source can use the checkout-prefixed commands in
+Commands use `jobctrl <command>`. The native executable handles installed
+lifecycle and domain commands; contributor commands are in
 [Local Development](../local-development.md).
 :::
 
@@ -27,23 +27,23 @@ Contributors running from source can use the checkout-prefixed commands in
 
 | You want to change… | Use |
 | --- | --- |
-| Candidate facts and resume evidence | **Profile** (`/profile`) |
-| Work model, application, or writing preferences | **Preferences** (`/preferences`) |
-| Target roles/locations, runtime, sources, schedules, quarantine, manual capture, or crawl identity | [**Discovery**](discovery.md) (`/discovery`) |
-| Materials, application fields, approval modes, browser automation, or Gmail | [**Apply**](apply.md) |
-| Spend/capacity, scoring guidance, or compensation source policy | **Settings → General** (`/settings`) |
-| Provider secret or cloud mode | **Settings → Credentials** (`/settings/credentials`); shell overrides for ephemeral CI/headless use |
-| Preferred provider model or employer-analysis perspectives | **Settings → Model selection** (`/settings/models`); see [Employer Analysis Perspectives](discovery.md#employer-analysis-perspectives) for how the selection is used during Discover preparation |
-| Optional extension pairing and connection status | **Settings → Browser & extension** (`/settings/browser`); Discovery and Enrich prefer the selected connected extension and can otherwise use guarded public HTTP/anonymous Playwright. See [source limits](discovery.md#crawl-politeness). |
-
-The rest of this page is a shared-settings lookup. [Data, Privacy & Safety](data-and-safety.md)
-explains what is stored or sent; [Security](security.md) explains the controls
-around risky actions.
+| Candidate facts, evidence and exact wording | **My profile → Experience**, **Skills**, **Education** or **Personal details**; [Candidate Profile](candidate-profile.md). |
+| Target roles, career tracks/levels, locations/work arrangements, boards and search limits | **My profile → Search preferences**, or **Edit search preferences** from Jobs; [Discovery](discovery.md). |
+| Application/writing preferences and document templates | Retained Profile/search preference tools and the actual resume editor; template appearance is document-local. |
+| Provider credentials/cloud mode, live preferred models or browser/extension | **Settings → Connections** (`/settings`). Existing `/settings/credentials`, `/settings/models` and `/settings/browser` deep links reveal their corresponding panel. |
+| Daily spend, per-application budget and exact-model pricing quotes | **Settings → Budgets** (`/settings/budgets`). |
+| Deliberate standing work, runtime capacity, scoring guidance or compensation-source policy | **Settings → Automation** (`/settings/automation`). Saving does not grant a new application approval. |
+| App mode, density, color or fonts | **Settings → Appearance** (`/settings/appearance`); browser-local presentation only. |
+| Workspace controls, retained history or operational inspection | **Settings → Data & diagnostics** (`/settings/data`). |
 
 ### How a setting becomes effective
 
-For non-secret values editable in the UI, JobCtrl uses the first available
-value from the top of this hierarchy:
+The effective owner applies explicit per-action input, its saved value and its
+packaged default in that order where that field supports overrides. A saved
+revision is not proof of effective dispatch or provider readiness. Read the
+field's saved/effective/pending state; normal schedule edits are reconciled by
+the worker rather than requiring a restart. Worker activity slots remain a
+process-start capacity setting.
 
 <script setup>
 import SettingsPrecedence from "../.vitepress/theme/SettingsPrecedence.vue";
@@ -51,28 +51,40 @@ import SettingsPrecedence from "../.vitepress/theme/SettingsPrecedence.vue";
 
 <SettingsPrecedence />
 
-Environment variables are not an alternate persistence store for non-secret UI
-settings. Secret loading is separate: a non-empty environment secret can take
-precedence over the OS credential store at process startup. Hard deny switches such as
-`LANGFUSE_DISABLE=1` are also authoritative: they can force a corresponding
-feature off, but cannot turn it on.
+A nonempty environment secret can remain authoritative for a running process.
+Hard deny switches can force a feature off; they cannot enable it. Credentials
+are never ordinary settings. A stale save refuses rather than overwriting a
+newer revision; failed saves retain the draft and previous saved state.
 
-| Surface | Storage | API | When a saved change applies |
-| --- | --- | --- | --- |
-| Settings → General | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings` | Live, next poll/run/workflow, or restart, as labeled; worker activity slots show desired versus active values |
-| Settings → Credentials | Non-secret desired values in `config.json`; secrets in the native OS credential store, the launch environment, or native provider stores | `/v1/credentials` | The in-progress Python target resolves saved credentials on the next execution; a nonempty launch-environment value remains authoritative and read-only in Settings. Integration verification is pending. |
-| Settings → Model selection | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings`; `/v1/providers/models` | Newly started work; no worker restart |
-| Settings → Browser & extension | Non-secret Apply-browser choices and adopted executable configuration in `config.json`; the pairing token and mode-`0600` selected-extension installation ID remain separate; live Discovery task status is transient | `/v1/browser-capabilities`; `/v1/extension/pairing-token`; `/v1/extension/discovery/claim`; `/v1/discovery/browser-extension/status` | Saving the token from an extension explicitly selects that Chrome installation; token rotation clears it. Discovery and Enrich prefer the selected installation while it is connected; offline launches remain available through guarded public HTTP/anonymous Playwright, subject to worker readiness and source policy. Settings does not create a LinkedIn profile copy. |
+| Surface | Authority | When it applies |
+| --- | --- | --- |
+| Connections, Budgets and shared Automation policy | Revisioned SQLite settings plus separate credential/capability owners | New work or owning reconciliation, as labeled; process-start capacity is explicit. |
+| Profile and Search preferences | Profile or Discovery's versioned SQLite records | Next explicitly admitted task; reads/saves launch no search or matching. |
+| Compensation-source permissions | Compensation-owned records | Next explicitly authorized refresh or enabled reconciliation. |
+| Appearance | Browser UI preferences | Immediately in this browser; no Profile/document mutation. |
 
-[Discovery](discovery.md) and [Apply](apply.md) document the storage and
-activation timing for their feature-specific controls.
+## Appearance
+
+![Source candidate Appearance settings using Graphite and Geist](../assets/screenshots/original-appearance.png)
+
+The default is **Graphite + Geist**. Color choices are Graphite, Cobalt, Teal,
+Forest, Indigo, Plum, Rose, Terracotta, Amber and Ocean. Font choices are Geist,
+Inter, Manrope, DM Sans, IBM Plex Sans, Source Sans 3, Work Sans, Lato,
+Merriweather + Inter and Newsreader + DM Sans. The app loads actual font resources;
+the choice is not just a renamed CSS fallback.
+
+Light/dark mode, compact/regular/comfy density and scheme changes apply
+immediately and save automatically in this browser. **Restore Graphite & Geist**
+restores the defaults. Resume typography, template layout and accepted export
+bytes stay under the document owner, independent from app appearance.
 
 ## Configuration Sources
 
 | Source | Purpose |
 | --- | --- |
-| `~/.jobctrl/jobctrl.db` | Candidate profile, every field edited on `/discovery`, preferences, tailoring controls, jobs, events, projections, and artifact metadata. |
-| [`~/.jobctrl/config.json`](../api/profile-and-settings.md#config-json-field-reference) | Every non-secret desired value edited under `/settings/**`, including budgets and capacity, application runtime, scoring guidance, model policy, browser capability choices, and compensation source policy. It never owns a field shown on `/discovery`. |
+| `~/.jobctrl/jobctrl.db` | Profile, Discovery controls, sources, Compensation permissions, jobs, events, projections and document metadata in their owning feature tables. |
+| [`app_settings` in `~/.jobctrl/jobctrl.db`](../api/profile-and-settings.md#config-json-field-reference) | Shared non-secret budgets/capacity, application runtime, scoring guidance and provider/model policy with one settings revision. Other feature preferences retain their own public owner. |
+| This browser's UI preferences | Appearance, density, table presentation and separately scoped private recovery drafts. These are not shared runtime settings or accepted documents. |
 | `~/.jobctrl/.env` | Legacy plaintext provider keys until migration, plus runtime environment configuration. |
 | repo `.env` | Development-only overrides for the current checkout. |
 | shell environment | Ephemeral overrides for commands, CI, and headless operation; not the normal persistent credential store. |
@@ -82,12 +94,12 @@ The development launcher loads `$JOBCTRL_DIR/.env` (default `~/.jobctrl/.env`),
 repo `.env`, and `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`) before
 starting local services.
 
-**Settings → Credentials** is the preferred guided provider setup. It stores
+**Settings → Connections** is the preferred guided provider setup. It stores
 API keys in macOS Keychain, Windows Credential Manager, or Linux Secret Service.
-Non-secret provider-mode settings are stored in `config.json`. Codex uses an
+Non-secret provider-mode settings are stored in revisioned SQLite settings. Codex uses an
 authenticated Codex CLI, and AWS, Google, and Azure credentials stay in their native CLI-managed stores; JobCtrl records only
 the activation flags and non-secret identifiers needed to select those routes
-in `config.json`.
+in revisioned SQLite settings.
 
 The in-progress Python target resolves native-store credentials for each new
 provider execution. A nonempty value in the launch environment takes precedence
@@ -207,7 +219,7 @@ other locations. Protect those separately.
 
 ## Local Data
 
-JobCtrl stores its local database, settings, provider environment file,
+JobCtrl stores its local database and feature settings, provider environment file,
 generated artifacts, logs, and browser state under `~/.jobctrl` by default.
 Most users should leave this location unchanged. Advanced users can set
 `JOBCTRL_DIR` before starting JobCtrl to relocate the entire local data
@@ -224,7 +236,7 @@ Local/custom endpoints are not currently supported or configurable. The
 defines the containment, capability, accounting, and product proof required
 before any such provider can become available; it does not enable one.
 
-Choose one provider in **Settings → Credentials** and check its readiness. The pipeline model spec defaults to `default`, which resolves
+Choose one provider in **Settings → Connections** and check its readiness. The pipeline model spec defaults to `default`, which resolves
 through a ready provider. Explicit model specs use `codex:`, `claude:`, or
 `google:`; `gemini:` remains an alias for the Google SDK route.
 
@@ -245,12 +257,12 @@ provider runtimes that execute the work: Codex App Server `model/list`, Claude
 Agent SDK initialization metadata, and the Google SDK model list. JobCtrl does
 not maintain a second hard-coded model registry. The picker shows the exact
 runtime model ID alongside a friendly name when they differ. Only provider and
-model IDs are written to `config.json`; credentials remain on the credential
+model IDs are written to revisioned SQLite settings; credentials remain on the credential
 boundary. A model absent from the active runtime catalog is intentionally not
 selectable, even if that model exists in the provider's broader product lineup.
-The pickers refresh the catalog every minute while visible. A saved ID missing
-from that catalog is explained beside the control and is never added to its
-options. A pinned provider client can expose a different catalog from a newer
+Use **Refresh model catalog** to check current provider availability. A saved ID
+missing from that catalog remains visibly saved/unavailable; displaying it does
+not claim that the active runtime can use it. A pinned provider client can expose a different catalog from a newer
 installed client using the same account; check the active JobCtrl runtime before
 concluding the account lacks a model.
 
@@ -267,7 +279,7 @@ A saved preference is scoped to its provider and cannot change which provider
 JobCtrl selects. Newly constructed adapters use this precedence:
 
 1. explicit non-default workflow model;
-2. **Default model** saved under Settings → Model selection;
+2. **Default model** saved under Settings → Connections → Models and providers;
 3. saved preference for the selected ready provider;
 4. that provider's default.
 
@@ -380,10 +392,16 @@ officially loadable ADC types (including `authorized_user`) remain supported.
 
 ### Daily LLM budget {#runtime-setting-daily-llm-budget}
 
-The daily LLM budget is stored in `config.json` and edited in **Settings →
-General** (`dailyBudgetUsd`, default `25`; `0` means unlimited). Workflows that spend LLM tokens run a
+The daily LLM budget is stored in revisioned SQLite settings and edited in **Settings →
+Budgets** (`dailyBudgetUsd`, default `25`; `0` means unlimited). Workflows that spend LLM tokens run a
 budget preflight before their heavy activities and stop with a non-retryable
 budget error once the estimated daily spend reaches the ceiling.
+
+A finite monetary budget requires provider-reported cost or a sourced quote for
+the exact selected provider/model. **Model pricing quotes** retains input/output
+USD rates, source and revision; JobCtrl does not guess missing prices. Unknown or
+unsettled cost remains unknown and may refuse new budgeted work. Per-operation
+item/call/deadline limits are separate from an externally guaranteed charge cap.
 `laneTokenLimits` adds an independent daily observed-token threshold for each
 product lane: `discovery`, `enrichment`, `scoring`, `tailoring`, `apply`,
 `contact`, `interview`, `profile`, and `compensation`. Omitted lanes and a value
@@ -433,7 +451,7 @@ Settings separates pipeline parallelism from the worker capacity that executes
 it. Increasing either value does not create provider quota or bypass the daily
 budget.
 
-In **Settings → General → Cost and capacity**, an edited draft is autosaved
+In **Settings → Automation**, an edited draft is autosaved
 after five seconds without an edit. If saving fails, the unsaved values and
 error remain visible. JobCtrl does not automatically repeat the unchanged
 draft; choose **Save changes** to retry, or edit it to schedule another attempt.
@@ -442,30 +460,25 @@ draft; choose **Save changes** to retry, or edit it to schedule another attempt.
 
 **Concurrent applications** (`applyConcurrency`, default `1`) limits how many
 application jobs the standing Apply loop may process at the same time. The loop
-re-reads the saved value from `config.json` on its next poll. It does not control
+re-reads the saved value from revisioned SQLite settings on its next poll. It does not control
 Score, Tailor, or the number of Temporal activities the worker can run.
 
 ### Pipeline internal concurrency {#runtime-setting-pipeline-internal-concurrency}
 
-**Pipeline internal concurrency** (`pipelineInternalConcurrency`, default `1`)
-is one saved value used by manual Pipeline actions and automatic preparation
-recovery. Changing it on the Pipelines page saves the same `config.json` value
-shown under **Settings → General**. Existing workflows keep their original input.
-Profile edits themselves do not start scoring or material preparation.
-
-Manual batches use it to bound parallel work within the batch. Concurrent
-automatic recovery batches share that budget: newly dispatched work receives
-only the parallelism left by other active automatic cohorts. This lets unrelated
-jobs recover while preparation continues without multiplying model parallelism
-for each recovery batch. Worker activity slots and source politeness still
-apply independently. See [Automatic preparation recovery](../architecture/pipeline/operations.md#automatic-preparation-recovery).
+This retained documentation anchor no longer denotes a separate
+`pipelineInternalConcurrency` shared setting in the Python application. Bounded
+preparation recipes, feature-owned item/call limits, lane concurrency and worker
+activity slots govern their actual execution scopes. Ordinary preparation uses
+one **Prepare resume** action rather than stage-by-stage concurrency setup.
+Existing admitted work retains its own captured input and allowance.
 
 ### Worker activity slots {#runtime-setting-worker-activity-slots}
 
 **Worker activity slots** (`workerActivitySlots`, default `4`) is the desired
 total Temporal activity capacity for the Python worker. A saved change requires
-a worker restart. The Settings screen shows both the desired value and the
-active value reported by the worker so pending restart state is explicit.
+a worker restart. The saved value is desired capacity; use the loaded worker's
+readiness/diagnostic evidence to establish active capacity. Saving alone cannot
+prove that a running worker adopted it.
 
 This capacity is distinct from **Pipeline internal concurrency**:
 activity slots bound how many activities can execute at once, while internal
@@ -474,8 +487,8 @@ work above the active slot count.
 
 ## Compensation Sources
 
-**Settings → General → Compensation sources** stores the non-secret source and
-access-policy choices in `config.json`. Saving the setting changes policy only;
+**Settings → Automation → Compensation sources** stores source and
+access-policy choices in Compensation-owned SQLite records. Saving the setting changes policy only;
 it does not connect to a provider or fetch a feed.
 
 [Compensation Evidence](compensation-evidence.md) owns the source modes,

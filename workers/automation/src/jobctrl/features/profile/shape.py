@@ -1,6 +1,11 @@
 """Structural defaults for the retained Profile editor, without inferred facts."""
 
 from copy import deepcopy
+from collections import Counter
+from datetime import datetime
+import math
+
+from jobctrl.app.errors import AppError
 
 DEFAULT_STYLE = {
     "document_font_size": "11pt", "paper_size": "a4paper", "font_family": "sans",
@@ -24,6 +29,59 @@ POLICY_DEFAULTS = {"mode": "balanced", "allow_title_reframing": False, "allow_ac
                    "allow_adjacent_achievement_drafts": False}
 
 
+def target_location_bindings(experience):
+    """Validate selected provider places; a changed literal text loses its binding.
+
+    This is a user-selected map identity, never a work-authorization or employer
+    eligibility judgment. Old text-only locations remain valid and unverified.
+    """
+    bindings = experience.get("target_location_bindings")
+    if bindings is None:
+        return []
+    if not isinstance(bindings, list) or len(bindings) > 100:
+        raise AppError("invalid_profile", "Target location bindings must be a list of up to 100 places.")
+    raw_locations = experience.get("target_locations", "")
+    if not isinstance(raw_locations, str):
+        raise AppError("invalid_profile", "Target locations must contain text.")
+    locations = [text.strip() for text in raw_locations.replace(";", "\n").split("\n")]
+    location_counts = Counter(locations)
+    binding_counts = Counter(binding.get("text") for binding in bindings if isinstance(binding, dict) and isinstance(binding.get("text"), str))
+    ambiguous_texts = {text for text, count in binding_counts.items() if count > location_counts[text]}
+    accepted = []
+    seen = set()
+    expected = {"rowIndex", "text", "provider", "placeId", "displayName", "latitude", "longitude", "selectedAt", "provenance"}
+    for binding in bindings:
+        if not isinstance(binding, dict) or set(binding) != expected:
+            raise AppError("invalid_profile", "A target location binding has an invalid structure.")
+        row_index = binding["rowIndex"]
+        if type(row_index) is not int or not 0 <= row_index < 100:
+            raise AppError("invalid_profile", "A target location binding requires its row identity.")
+        for field, maximum in (("text", 300), ("placeId", 200), ("displayName", 1000), ("selectedAt", 80)):
+            if not isinstance(binding[field], str) or not binding[field].strip() or len(binding[field]) > maximum:
+                raise AppError("invalid_profile", "A target location binding has an invalid value.")
+        if binding["provider"] != "photon" or binding["provenance"] != "user_selected":
+            raise AppError("invalid_profile", "A target location must retain its selected provider provenance.")
+        for field, minimum, maximum in (("latitude", -90, 90), ("longitude", -180, 180)):
+            number = binding[field]
+            if type(number) not in (int, float) or not math.isfinite(number) or not minimum <= number <= maximum:
+                raise AppError("invalid_profile", "A target location must have finite map coordinates.")
+        try:
+            selected_at = datetime.fromisoformat(binding["selectedAt"].replace("Z", "+00:00"))
+            if selected_at.tzinfo is None:
+                raise ValueError("missing timezone")
+        except ValueError:
+            raise AppError("invalid_profile", "A target location requires its selection time.") from None
+        # Old clients can change target_locations without understanding bindings.
+        # Drop those stale identities rather than attaching them to changed text.
+        if row_index in seen:
+            raise AppError("invalid_profile", "A target location row cannot have multiple place bindings.")
+        seen.add(row_index)
+        if binding["text"] in ambiguous_texts or row_index >= len(locations) or binding["text"] != locations[row_index]:
+            continue
+        accepted.append(deepcopy(binding))
+    return accepted
+
+
 def canonical_profile(value):
     """Add only empty/unknown form fields. Preserve authored values and extras."""
     result = deepcopy(value)
@@ -31,6 +89,8 @@ def canonical_profile(value):
         result.setdefault(section, {})
         for key in keys.split():
             result[section].setdefault(key, "Decline to self-identify" if section == "eeo_voluntary" else "USD" if section == "compensation" and key == "salary_currency" else "")
+    if "target_location_bindings" in result["experience"]:
+        result["experience"]["target_location_bindings"] = target_location_bindings(result["experience"])
     result.setdefault("application_attestations", {})
     for key in ("age_18_plus", "background_check_consent", "felony_conviction", "previously_worked_at_employer"):
         result["application_attestations"].setdefault(key, None)

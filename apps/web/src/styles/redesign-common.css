@@ -12,7 +12,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 16px;
-  margin-bottom: 12px;
+  margin-bottom: 20px;
 }
 
 .page-head-text {
@@ -59,10 +59,10 @@
 }
 
 .page-head-subtitle {
-  grid-column: 2;
-  max-width: 76ch;
-  padding-left: 10px;
-  border-left: 1px solid var(--border);
+  max-width: 74ch;
+  padding-left: 0;
+  border-left: 0;
+  color: var(--muted-foreground);
   font-size: var(--jh-type-body-size);
   font-weight: var(--jh-type-body-weight);
   letter-spacing: normal;
@@ -78,8 +78,8 @@
 
 .card {
   border-color: var(--border);
-  border-top: 2px solid var(--foreground);
-  border-radius: calc(var(--radius) * 1.25);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius);
   box-shadow: var(--shadow-panel);
 }
 
@@ -158,11 +158,11 @@
 select,
 input,
 textarea {
-  min-height: 38px;
+  min-height: 36px;
   border-color: var(--input);
   border-radius: calc(var(--radius) * 0.8);
   background: var(--card);
-  padding: 8px 11px;
+  padding: 6px 11px;
   box-shadow: none;
   transition:
     border-color 140ms ease,
@@ -272,4 +272,11 @@ input[type="radio"] {
     padding-left: 0;
     border-left: 0;
   }
+}
+
+/* Coarse-pointer controls need a generous touch target at every density. */
+@media (pointer: coarse) and (max-width: 820px) {
+  .app-shell[data-density] { --jh-control-height: 44px; --jh-target-min-size: 44px; }
+  .app-shell[data-density] :where(.jh-control-sm, [data-slot="select-trigger"][data-size="sm"]) { height: 44px; min-height: 44px; }
+  .app-shell :where(input:not([type="checkbox"]):not([type="radio"]), select, .tab) { min-height: 44px; }
 }
