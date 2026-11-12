@@ -298,3 +298,30 @@ matrix and offline demo. Earlier failures and the corrected cancellation race
 remain in the [QA ledger](../developer/qa/python-journeys.md#direct-jobs-search-and-inline-progress-11-november-2026).
 Full qualification of the new 60-case inventory belongs to the pushed PR checks;
 this does not imply merge, deployment or release.
+
+### Final-QA simplification and provider isolation — 12 November 2026
+
+The follow-up removes the duplicate full-page Jobs filters; each column now owns
+its criteria, including a picker for hidden columns and one active-filter summary.
+Achievement cards lead with their saved/current wording and Edit wording. Edit
+facts opens the factual source record; coaching, ordering and removal move to
+Achievement options, while exact provenance and revisions remain under Approval
+and history. The inherited wording textarea grid-placement defect is repaired
+and checked at desktop/mobile widths. No wording authority or accepted artifact
+is changed by these presentation repairs.
+
+Valid Remote and posting-age settings no longer block the whole search. Isolated
+board requests preserve saved criteria, enforce the original date cutoff from
+recorded metadata and retain safe source-specific failures. Canonical settlement
+preserves failures and fulfilled bounded work after restart, even when another
+source has filled the shared job budget. Browser ATS requests retain broker
+policy while omitting forbidden headers and GET bodies.
+
+The [owning QA record](../developer/qa/python-journeys.md#final-qa-corrections-12-november-2026)
+records 19 distinct affected journeys with passing observations, the earlier
+failed attempts, final source/build hashes and boundary limits. The current
+inventory is 65 cases; this follow-up does not assert a complete 65-case pass.
+Owning requirements, API/architecture references, Profile/Discovery/normal-flow
+guides, synthetic tour images and the offline demo are updated together.
+The local source app is available for continued product QA. Hosted whole-head
+qualification, merge, release and deployment remain separately reported.

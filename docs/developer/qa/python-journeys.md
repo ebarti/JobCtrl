@@ -46,11 +46,100 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current source inventory is **60 journeys in 25 spec files**: the earlier
-57 plus three direct-Jobs search journeys. They exercise saved launch and live
+The current source inventory is **65 journeys in 26 spec files**: the earlier
+57 plus three direct-Jobs search journeys and five provider-isolation/recovery
+journeys. The direct-Jobs cases exercise saved launch and live
 counts across navigation/reload/tabs, lost-acknowledgement recovery and exact-run
 stop, and simultaneous two-tab admission. Historical complete-suite results
 below retain their original 57-case scope; they do not qualify the new inventory.
+
+### Final QA corrections — 12 November 2026
+
+This follow-up to the Original redesign addresses the reported disabled search,
+duplicated Jobs filters and overcomplicated achievement cards. Valid Remote and
+posting-age preferences now reach isolated board requests; source restrictions
+and failures are recorded per source without disabling compatible acquisition.
+Jobs uses column-owned criteria with one active-filter summary. Achievements
+lead with saved/current wording and Edit wording, with factual editing, coaching,
+ordering, removal and audit history available through named secondary controls.
+
+The new [provider journeys](../../../apps/web/e2e/journeys/discovery-provider-scopes.spec.ts)
+run the installed JobStreaming 0.0.5 request/parser/checkpoint implementation
+against an owned loopback transport. They retain real Temporal, Python HTTP,
+repositories, SQLite receipts and worker processes. The ATS cases drive the
+public extension pairing, claim, task, DNS and result protocol; they do not
+replace the registered adapter or claim execution by an actual Chrome extension.
+
+| Added journey | Observed boundary |
+| --- | --- |
+| Remote posting age and isolated failures | Indeed retains Remote while its incompatible acquisition age parameter is omitted. Local admission honors the exact saved 73-hour cutoff and recorded date precision. Old, unknown, ambiguous and future dates are excluded with receipts. ZipRecruiter's actual missing-auth refusal and Glassdoor's unsupported scope remain attributed to their boards in both selected orders. All-failed differs from an empty completed source plus a failed source. |
+| Committed cursor recovery and cancellation | Wait for the actual persisted SDK cursor and three explicit acknowledgements, including one accepted and two filtered receipts, then crash the worker. The replacement resumes that cursor under the same run and cutoff reference, preserves unique accepted jobs and refuses jobs delivered after settled cancellation. |
+| Board failure after full capacity | A prior board failure survives worker loss after Indeed fills the shared new-job limit. Recovery makes no additional provider request and retains a partial result. |
+| Completed ATS plus failed board | An actual registered ATS completes through the public extension protocol and fills capacity; another acquisition remains interrupted. After worker loss, canonical completed/budget-exhausted units and the failed board produce partial rather than failed. |
+| Failed ATS plus completed board | A registered ATS records `request_failed` before Indeed fills capacity. Recovery retains the exact source ID/code, accepted job and partial result, making no additional external call. |
+
+The existing Jobs journey additionally exercises column bounds/availability,
+hidden-column access, simultaneous canonical and literal predicates, atomic
+clear, saved views, exact timestamp preservation, return selection/scroll and
+mobile filter geometry. The Profile journey exercises compact desktop/mobile
+cards, factual editing, wording proposals, the immediate reload/recovery race,
+exact approvals, history and full-width textarea geometry. The offline demo
+retains actual editing and its accepted PDF flow through the renamed controls.
+
+Observed source runs, with **one worker and zero retries** throughout:
+
+| Run | Result | Build / journeys / total (ms) | Scope |
+| --- | --- | --- | --- |
+| `e2e-QM8ccy` | 14 passed / 3 failed | 9,211 / 262,484 / 273,073 | Initial 17 affected cases, including the 26-surface/four-width matrix and 104 captures. Failures were SDK recovery observation timing, a viewport changed before a retained-scroll assertion, and old demo control names. |
+| `e2e-0BaV1j` | 3/3 passed | 8,513 / 67,808 / 77,601 | Jobs, Profile and offline demo after viewport/name repairs and the inspected wording textarea CSS repair. |
+| `e2e-SEp88O` | 3 passed / 3 failed | 7,802 / 109,006 / 118,163 | Remote-age/failure isolation, capacity recovery and generic Discovery passed. Cursor recovery crashed before the checkpoint commit; the two new ATS journeys incorrectly read raw source arrays from an aggregate telemetry response. |
+| `e2e-fzI11x` | 3/3 passed | 7,581 / 125,357 / 134,217 | Corrected committed-cursor/cancellation and both registered-source restart journeys. |
+
+There are **19 distinct affected journeys with passing observations** across
+these runs. This does not claim a single full 65-case pass. No skipped, flaky or
+retried cases occurred. The failed attempts remain failures in this record.
+The ordinary 90-second case, 150-second demo and 720-second global limits remain.
+The explicit post-crash observation now permits 45 seconds, matching the existing
+terminal observer and allowing the real 30-second heartbeat expiry; no production
+timeout changed. The corrected cursor test waits for committed checkpoint state
+through a bounded, read-only observer restricted to its owned synthetic workspace.
+It does not infer acknowledgement from the next outbound request. ATS barriers
+use the existing public aggregate telemetry and exact source-registry fields.
+
+Image inspection found an actual inherited CSS defect after the initial passing
+Profile assertions: a legacy textarea grid area pushed the wording editor into
+half its container. The owning Profile style now resets that grid placement.
+The final 1440/390 captures and geometry assertions passed. Filter screenshots
+disable transition animations so they show the settled dialog. Public guide
+images contain only owned synthetic state; private local-QA data is excluded.
+
+| Final recorded boundary | SHA-256 |
+| --- | --- |
+| Python package, `e2e-fzI11x` | `c80730f1d6ca07560e7de5a388d791d592ad6f28a43955141e7233fda260efbe` |
+| Runtime capability policy | `7d360eeba42582a39895f98b5596eaf26621be4b8061fc3067918cd33dafa8fd` |
+| Web build, all three final focused runs | `c994af31aa43f1b6df517a28e9d605119fab85ab9a8734161066dc4dec1c7de3` |
+
+The final two provider runs have identical Python code; only the feature README
+changed their package hashes (`e2e-SEp88O` was
+`8976e8d0c732fc8b8daaf7d36b0d66db2da221153cf4e39f167eec072ca60fca`).
+Locks and built assets remained unchanged within each run. The runner was macOS
+arm64, 12 CPUs, Node 26.13.0. Web type checking and boundary lint, Python Ruff and
+whitespace checks passed. Independent review closed the canonical failure/
+fulfilled-unit recovery defects and the browser GET/header serialization repair.
+Independent process/listener readback found no remaining owned-run process,
+recorded initial worker or API listener across all four runs: 58 recorded
+worker/API process IDs and 31 API ports were checked. Five failed synthetic
+workspaces remain for diagnosis; successful workspaces were removed. The local
+interactive QA app is separately owned and remains running.
+The documentation build resolved 16,175 references across 476 emitted files.
+The first rendered-docs attempt lost its preview connection after a concurrent
+documentation rebuild replaced that preview's output. That attempt is invalid
+as complete qualification; the final check is run against a fresh preview after
+the build finishes, with no concurrent output changes.
+These checks do not establish live Indeed availability, successful live
+Glassdoor/ZipRecruiter authentication, semantic model accuracy, participant
+usability, installed-release qualification or deployment. Hosted whole-head
+qualification remains a separate delivery gate.
 
 ### Direct Jobs search and inline progress — 11 November 2026
 
