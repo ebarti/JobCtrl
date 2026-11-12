@@ -44,6 +44,10 @@ operator-verified HTTPS candidate after all three completed original mirror
 HTTP probes fail and a bounded candidate GET exits zero with HTTP 200.
 An exit-zero original HTTP 200–399 response or an indeterminate original result
 retains the originals. Incomplete/unknown results cannot authorize fallback.
+If any required original mirror URL is absent, the optional priority rewrite is
+skipped with a sanitized diagnostic and the mirror file stays byte-for-byte
+unchanged. This does not admit fallback; normal verified APT installation must
+still succeed before the actual documentation or browser checks run.
 Original mirrors, suites,
 `Signed-By`, archive keys and signature/hash/freshness verification remain, as
 do setup/test caps and required cases. HTTP reachability does not qualify archive
