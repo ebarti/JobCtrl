@@ -11,6 +11,7 @@ import { useSearchReadiness } from "./useSearchReadiness.js";
 type JobsSearchHeaderProps = {
   readonly preferencesAction: ReactNode;
   readonly connectionAction: ReactNode;
+  readonly spendingAction: ReactNode;
 };
 
 export function JobsSearchHeader(props: JobsSearchHeaderProps) {
@@ -19,7 +20,7 @@ export function JobsSearchHeader(props: JobsSearchHeaderProps) {
   return <ConnectedJobsSearchHeader {...props} />;
 }
 
-function ConnectedJobsSearchHeader({ preferencesAction, connectionAction }: JobsSearchHeaderProps) {
+function ConnectedJobsSearchHeader({ preferencesAction, connectionAction, spendingAction }: JobsSearchHeaderProps) {
   const runtime = useRuntimeHealth();
   const preferences = useSavedSearchPreferencesState(runtime.data?.databaseInstanceId);
   const settings = useSavedDiscoverySearchSettingsState(runtime.data?.databaseInstanceId);
@@ -28,7 +29,7 @@ function ConnectedJobsSearchHeader({ preferencesAction, connectionAction }: Jobs
     preferencesLoading: preferences.loading, settingsLoading: settings.loading,
     preferencesError: preferences.error, settingsError: settings.error,
   });
-  return <SavedDiscoverySearch workspaceIdentity={runtime.data?.databaseInstanceId} profileVersion={preferences.state.profileVersion} disabledReason={readiness.disabledReason}>
+  return <SavedDiscoverySearch workspaceIdentity={runtime.data?.databaseInstanceId} profileVersion={preferences.state.profileVersion} disabledReason={readiness.disabledReason} accountingSetupReason={readiness.accountingSetupReason} spendingAction={spendingAction}>
     {({ action, feedback }) => <>
       <PageHead title="Jobs" subtitle="Compare saved opportunities and choose your next step."
         actions={<>{preferencesAction}{action}</>} />

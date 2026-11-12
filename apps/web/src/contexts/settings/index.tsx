@@ -32,6 +32,10 @@ const settingsSchema = z.object({
   scoreCriteria: z.string(),
   targetCriteria: z.string(),
   codexReasoningEfforts: z.record(z.string(), z.enum(["low", "medium", "high", "xhigh", "max"])),
+  modelAccounting: z.object({
+    provider: z.string(), model: z.string().nullable(), available: z.boolean(),
+    costSource: z.string().nullable(),
+  }).optional(),
   modelPricingQuotes: z.record(z.string(), z.object({
     inputUsdPerMillion: z.number().nonnegative(), outputUsdPerMillion: z.number().nonnegative(),
     source: z.string().min(1).max(500), revision: z.string().min(1).max(500),
@@ -371,7 +375,9 @@ function SettingsForm({ saved, section, active, refresh }: { readonly saved: App
         <p>Enter JSON objects. Lane limits and concurrency use numbers; reasoning efforts and provider configuration use strings.</p>
         {(section === "models" ? ["codexReasoningEfforts", "providerConfiguration"] as const : ["laneTokenLimits", "laneConcurrency"] as const).map((name) => <form.Field key={name} name={name}>{(field) => <label>{({ laneTokenLimits: "Lane token limits", laneConcurrency: "Lane concurrency", codexReasoningEfforts: "Codex reasoning by model", providerConfiguration: "Provider configuration (non-secret)" })[name]}<textarea value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></label>}</form.Field>)}
       </details> : null}
-      {section === "models" || section === "budgets" ? <details><summary>Model pricing quotes</summary>
+      {section === "models" || section === "budgets" ? <details open={section === "budgets" && saved.dailyBudgetUsd > 0 && saved.modelAccounting?.available === false ? true : undefined}><summary>Model pricing quotes</summary>
+        <p>Selected model: <strong>{saved.defaultProvider}:{saved.providerModels[saved.defaultProvider] ?? "no model selected"}</strong>. {saved.dailyBudgetUsd > 0 ? `Your daily model budget is $${saved.dailyBudgetUsd}.` : "No daily monetary cap is configured."} Saving a quote preserves your selected model and budget. Cost tracking does not verify provider sign-in or live availability.</p>
+        {saved.dailyBudgetUsd > 0 && saved.modelAccounting?.available === false ? <p>Before this model can prepare search queries, enter its exact sourced input and output token prices below. Use only pricing that applies to this exact model and account; a subscription price does not establish token prices.</p> : null}
         <p>For a finite daily budget, add a sourced quote for each Codex or Google model you use. Each JSON key is the exact provider:model identifier; each value has inputUsdPerMillion, outputUsdPerMillion, source and revision. Quotes are supplied by you and are not guessed.</p>
         <form.Field name="modelPricingQuotes">{(field) => <label>Model pricing quotes<textarea value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.target.value)} /></label>}</form.Field>
       </details> : null}

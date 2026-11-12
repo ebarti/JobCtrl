@@ -11,7 +11,7 @@ there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 | --- | --- |
 | `GET /v1/health` | Application/schema/workspace identity, selected features, live worker heartbeat and model accounting. |
 | `GET /v1/setup/status` | Public Profile/provider/browser/Temporal/policy readiness; configuration and verified readiness are distinct. |
-| `GET /v1/settings` | Direct non-secret settings snapshot with integer `revision`. |
+| `GET /v1/settings` | Direct non-secret settings snapshot with integer `revision` and derived read-only `modelAccounting` (selected provider/model, availability, cost source and exact quote). Derivation does not contact providers or inspect credentials. |
 | `PATCH /v1/settings` | Partial top-level values plus required `expectedRevision`; returns a new snapshot or 409 for stale input. Nested maps replace the supplied map. |
 | `GET /v1/credentials` | Credential configuration/status metadata and shared settings revision; never secret values. |
 | `PATCH /v1/credentials` or `/v1/credentials/batch` | Requires `expectedRevision`; stale input performs no native mutation. |

@@ -39,5 +39,11 @@ export function useSearchReadiness({ preferences, settings, runtime, preferences
   else if (needsFreshModelPlan && application.error) disabledReason = "The saved model configuration could not be checked. Review connections before starting this search.";
   else if (needsFreshModelPlan && (!application.data?.aiExecutionPolicy.enabled || !application.data.providerModels[application.data.defaultProvider])) disabledReason = "Choose a model and enable model operations to prepare queries from your selected tracks, levels and areas of interest.";
   const needsConnectionReview = !isDemo && (Boolean(runtime.error) || runtime.data?.worker.healthy === false || (needsFreshModelPlan && (Boolean(application.error) || Boolean(application.data && (!application.data.aiExecutionPolicy.enabled || !application.data.providerModels[application.data.defaultProvider])))));
-  return { currentPlan, needsConnectionReview, disabledReason, sources };
+  const accounting = application.data?.modelAccounting;
+  const accountingSetupReason = !disabledReason && needsFreshModelPlan && application.data && application.data.dailyBudgetUsd > 0
+    && accounting?.available === false && accounting.provider === application.data.defaultProvider
+    && accounting.model === application.data.providerModels[application.data.defaultProvider]
+    ? `Preparing search queries needs cost tracking for ${accounting.provider}:${accounting.model}. Your $${application.data.dailyBudgetUsd} daily budget is still in place. Add an exact sourced pricing quote in Budgets, then return here to start your search.`
+    : undefined;
+  return { currentPlan, needsConnectionReview, disabledReason, accountingSetupReason, sources };
 }

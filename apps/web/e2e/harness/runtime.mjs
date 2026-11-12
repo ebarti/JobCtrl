@@ -311,6 +311,7 @@ export async function applicationStack(
   {
     features,
     discoveryTransport = "http",
+    nativeAccountingPreflight = false,
     preflight = false,
     pythonExecutable = process.env.JOBCTRL_E2E_PYTHON ?? python,
     staticDir = process.env.JOBCTRL_E2E_STATIC_DIR ??
@@ -353,6 +354,16 @@ export async function applicationStack(
     JOBCTRL_E2E_DNS_URL: `${external.url}/dns`,
     JOBCTRL_POSTING_PROVIDER_ENDPOINT: `${external.url}/posting-page`,
   };
+  if (nativeAccountingPreflight) {
+    // Exercise the ordinary native cost gate, never a model execution. The
+    // journey uses only settings/profile/Discovery and denies credential and
+    // provider routes; HOME is owned and outbound proxy access remains denied.
+    for (const key of Object.keys(env)) {
+      if (key === "JOBCTRL_SYNTHETIC_BOUNDARIES" || key.startsWith("JOBCTRL_E2E_")
+          || key === "JOBCTRL_GMAIL_API_ROOT" || key.startsWith("JOBCTRL_DISCOVERY_PROVIDER_")
+          || key === "JOBCTRL_POSTING_PROVIDER_ENDPOINT") delete env[key];
+    }
+  }
   if (discoveryTransport === "jobstreaming") {
     delete env.JOBCTRL_DISCOVERY_PROVIDER_ENDPOINT;
     env.JOBCTRL_JOBSTREAMING_PROVIDER_ENDPOINT = `${external.url}/jobstreaming`;
@@ -434,7 +445,7 @@ export async function applicationStack(
       `#!${pythonExecutable}\nimport json, os, pathlib, sys\nroot = pathlib.Path(__file__).parent\noperation, key = sys.argv[1:]\nstore = root / 'synthetic-credential-store.json'\nvalue = json.loads(store.read_text()) if store.exists() else {}\nif (root / 'fail-credential-helper').exists(): sys.exit(70)\nif operation in ('inspect', 'read'):\n if key not in value: sys.exit(44)\n if operation == 'read': sys.stdout.write(value[key])\nelif operation == 'set':\n value[key] = sys.stdin.read()\n temporary = store.with_suffix('.pending')\n fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)\n with os.fdopen(fd, 'w') as stream:\n  json.dump(value, stream); stream.flush(); os.fsync(stream.fileno())\n os.replace(temporary, store)\nelif operation == 'delete':\n value.pop(key, None)\n store.write_text(json.dumps(value)); store.chmod(0o600)\nelse: sys.exit(64)\n`,
       { mode: 0o700, flag: "wx" },
     );
-    env.JOBCTRL_E2E_CREDENTIAL_HELPER = credentialHelper;
+    if (!nativeAccountingPreflight) env.JOBCTRL_E2E_CREDENTIAL_HELPER = credentialHelper;
     const server = await launch(
       "api",
       pythonExecutable,

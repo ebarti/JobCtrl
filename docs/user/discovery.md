@@ -24,6 +24,18 @@ shared spend policy.
 
 <DiscoveryPipeline />
 
+When saved tracks, levels or areas of interest need a fresh model-generated
+query plan, **Start search** checks the selected model's recorded cost-accounting
+capability. If a finite daily cap has no supported cost source, the action opens
+an explicit setup dialog. **Review spending setup** opens Budgets and preserves
+the originating Jobs filters or Search preferences view. Add an exact sourced
+`provider:model` pricing quote, save, and use the return link to start deliberately.
+The app does not guess a price, switch providers, remove the cap or retry the
+search automatically. A saved quote establishes accounting configuration, not
+provider sign-in or live model availability. Literal role queries and current accepted plans do not
+need this query-planning setup. A prior `cost_accounting_unavailable` failure is
+shown as a cost-tracking setup problem, before job-source acquisition.
+
 ## Saved Search Preferences
 
 Add target roles as independent repeatable inputs; Enter adds a row and moves

@@ -122,3 +122,10 @@ unknown boards cannot create a production adapter. Only addresses and synthetic
 auth are configured: parsing, request filters, stream delivery, checkpointing,
 limits and cancellation remain the installed SDK. The generic HTTP provider
 protocol is not evidence of pinned-SDK behavior.
+
+Saved-search launch composes model accounting capability from the read-only
+settings snapshot when a fresh semantic query plan is needed. Missing native
+accounting under a finite cap opens a setup action rather than disabling Start
+search or submitting a known-to-fail action. The ModelGateway admission gate
+remains authoritative. Pricing setup preserves criteria, provider, cap and the
+originating route; saving never retries the search.

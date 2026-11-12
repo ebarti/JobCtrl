@@ -60,9 +60,9 @@ class ModelGateway:
             raise AppError("model_unavailable", "Select a model for this provider.", 503)
         return {"provider": provider, "model": selected}
 
-    def accounting_capability(self, model: str | None = None, *, selection: dict | None = None) -> dict:
+    def accounting_capability(self, model: str | None = None, *, selection: dict | None = None, settings: dict | None = None) -> dict:
         selected = selection or self.selection(model)
-        quote = self.settings.get("modelPricingQuotes", {}).get(f"{selected['provider']}:{selected['model']}")
+        quote = (settings if settings is not None else self.settings.snapshot()).get("modelPricingQuotes", {}).get(f"{selected['provider']}:{selected['model']}")
         source = "provider_reported" if self.synthetic else "sdk_estimate" if selected["provider"] == "claude" else "configured_pricing_estimate" if quote is not None else None
         return {**selected, "available": source is not None,
                 "costSource": source,

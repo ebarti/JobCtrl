@@ -19,10 +19,11 @@ import { useSearchReadiness } from "./useSearchReadiness.js";
 import "./search-preferences.css";
 
 /** The shared, connected task reached from both Preferences and Search for jobs. */
-export function SearchPreferencesWorkspace({ sourceTable, returnAction, connectionAction, purpose = "preferences" }: {
+export function SearchPreferencesWorkspace({ sourceTable, returnAction, connectionAction, spendingAction, purpose = "preferences" }: {
   readonly sourceTable?: DiscoverySourceTableControls | undefined;
   readonly returnAction?: ReactNode;
   readonly connectionAction?: ReactNode;
+  readonly spendingAction?: ReactNode;
   readonly purpose?: "search" | "preferences";
 } = {}) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -35,7 +36,7 @@ export function SearchPreferencesWorkspace({ sourceTable, returnAction, connecti
   const savedSettings = useSavedDiscoverySearchSettingsState(runtime.data?.databaseInstanceId);
   const preferences = savedPreferences.state;
   const settings = savedSettings.state;
-  const { currentPlan, needsConnectionReview, disabledReason, sources } = useSearchReadiness({
+  const { currentPlan, needsConnectionReview, disabledReason, accountingSetupReason, sources } = useSearchReadiness({
     preferences, settings, runtime, preferencesLoading: savedPreferences.loading, settingsLoading: savedSettings.loading,
     preferencesError: savedPreferences.error, settingsError: savedSettings.error,
   });
@@ -47,7 +48,7 @@ export function SearchPreferencesWorkspace({ sourceTable, returnAction, connecti
   return <div className="search-preferences-workspace">
     <PageHead eyebrow={purpose === "search" ? "Jobs" : "My profile"} title={purpose === "search" ? "Search for jobs" : "Search preferences"} subtitle="The work you want, and where to look for it." actions={<>{returnAction}<span className="search-preferences-autosave"><IconCheck aria-hidden="true" />Changes save automatically</span></>} />
     <div className="search-preferences-launch" ref={searchRef}>
-        <DiscoveryRunsPanel compact workspaceIdentity={runtime.data?.databaseInstanceId} profileVersion={preferences.profileVersion} disabledReason={disabledReason} readiness={<div className="search-launch-helper">
+        <DiscoveryRunsPanel compact workspaceIdentity={runtime.data?.databaseInstanceId} profileVersion={preferences.profileVersion} disabledReason={disabledReason} accountingSetupReason={accountingSetupReason} spendingAction={spendingAction ?? <Link to="/settings/budgets" search={{ returnTo: "preferences" }}>Review spending setup</Link>} readiness={<div className="search-launch-helper">
           <p>{currentPlan ? "Uses your current saved search plan." : preferences.needsModel ? "Preparing additional search queries may use your model and spending budget. Connection and spending limits are checked when you start." : preferences.hasTargets ? "Uses your exact saved role titles." : "Add the criteria for your next search."}</p>
           {needsConnectionReview ? connectionAction ?? <Link to="/settings" search={{ returnTo: "preferences" }}>Review connections</Link> : null}
           {runtime.error ? <Button type="button" size="sm" variant="ghost" onClick={() => { void runtime.refetch(); }}>Retry connection check</Button> : null}

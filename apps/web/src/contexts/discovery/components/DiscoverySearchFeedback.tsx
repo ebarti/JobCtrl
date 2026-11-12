@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { Button } from "../../../shared/ui/button.js";
 import { Progress } from "../../../shared/ui/progress.js";
 import type { DiscoverySearchController } from "../hooks/useDiscoverySearchController.js";
@@ -17,11 +19,12 @@ function sourceLabel(failure: DiscoverySearchController["sourceFailures"][number
 }
 
 /** Shared factual feedback for the Jobs header and the independent run panel. */
-export function DiscoverySearchFeedback({ controller }: { readonly controller: DiscoverySearchController }) {
+export function DiscoverySearchFeedback({ controller, spendingAction }: { readonly controller: DiscoverySearchController; readonly spendingAction?: ReactNode }) {
   const { status, action, recovery, counts } = controller;
   const active = ["queueing", "pending", "queued", "running", "cancel-requested"].includes(status);
   const needsReconciliation = Boolean(recovery.record && (["unconfirmed", "status-unavailable", "start_failed"].includes(status) || controller.hasUnconfirmedRequest));
-  const label = STATUS_LABELS[status] ?? (controller.blockedReason ? "Search needs attention" : "Ready to search");
+  const accountingFailure = status === "failed" && action?.errorCode === "cost_accounting_unavailable";
+  const label = accountingFailure ? "Search stopped for missing cost tracking" : STATUS_LABELS[status] ?? (controller.blockedReason ? "Search needs attention" : "Ready to search");
   return <section className="discovery-search-feedback" aria-label="Job search progress" data-search-state={status}>
     <div className="discovery-search-status" aria-live="polite" aria-atomic="true">
       <div className="discovery-search-status-row" role="status"><h2>{label}</h2>{counts ? <p className="discovery-search-counts">{controller.countsStale ? <span>Last recorded:</span> : null}<span>{counts.newJobs} new jobs</span><span>{counts.observedJobs} observed</span></p> : null}</div>
@@ -30,7 +33,7 @@ export function DiscoverySearchFeedback({ controller }: { readonly controller: D
     {status === "idle" && !controller.blockedReason ? <p>Uses your saved Search preferences. Saving preferences does not start a search.</p> : null}
     {status === "partial" ? <p>Some sources did not finish. Jobs already saved by the search remain available.</p> : null}
     {controller.sourceFailures.length > 0 ? <ul aria-label="Search source failures">{controller.sourceFailures.map((failure, index) => <li key={`${failure.sourceId ?? failure.boards?.join(",") ?? "source"}:${index}`}><strong>{sourceLabel(failure)}</strong>: {failure.message ?? failure.code}</li>)}</ul> : null}
-    {status === "failed" ? <p>The search did not complete. Any jobs already saved remain available.</p> : null}
+    {accountingFailure ? <div><p>Search query preparation stopped because the selected model had no configured monetary cost tracking. Job sources were not searched. Review the exact model pricing quote in Budgets, then start again. Your saved preferences and spending cap are unchanged.</p>{spendingAction}</div> : status === "failed" ? <p>The search did not complete. Any jobs already saved remain available.</p> : null}
     {status === "cancel-requested" ? <p>The stop request was received. The search remains active until it settles.</p> : null}
     {status === "status-unavailable" ? <p role="alert">Current search status could not be checked. Any counts shown are the last recorded values; another search remains blocked.</p> : null}
     {controller.historyError && !controller.statusUnavailable ? <p role="alert">Search history could not be refreshed.{counts ? " The last recorded counts remain visible." : " Job counts are unavailable."}</p> : null}

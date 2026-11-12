@@ -66,6 +66,7 @@ type Fixtures = {
   consoleErrors: string[];
   features: string | undefined;
   discoveryTransport: "http" | "jobstreaming";
+  nativeAccountingPreflight: boolean;
   expectedTransportFailures: {
     request: Request;
     errorText: "net::ERR_FAILED";
@@ -81,6 +82,7 @@ type Fixtures = {
 export const test = base.extend<Fixtures, WorkerFixtures>({
   features: [undefined, { option: true }],
   discoveryTransport: ["http", { option: true }],
+  nativeAccountingPreflight: [false, { option: true }],
   expectedTransportFailures: async ({}, use) => {
     await use([]);
   },
@@ -134,10 +136,10 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: "worker", timeout: 60_000 },
   ],
   app: [
-    async ({ temporal, features, discoveryTransport }, use, testInfo) => {
+    async ({ temporal, features, discoveryTransport, nativeAccountingPreflight }, use, testInfo) => {
       const runtime: ApplicationStack = await applicationStack(
         temporal.address,
-        { features, discoveryTransport },
+        { features, discoveryTransport, nativeAccountingPreflight },
       );
       await testInfo.attach("runtime-setup", {
         contentType: "application/json",

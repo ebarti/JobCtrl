@@ -46,9 +46,9 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current source inventory is **65 journeys in 26 spec files**: the earlier
-57 plus three direct-Jobs search journeys and five provider-isolation/recovery
-journeys. The direct-Jobs cases exercise saved launch and live
+The current source inventory is **66 journeys in 27 spec files**: the earlier
+57 plus three direct-Jobs search journeys, five provider-isolation/recovery
+journeys and one native accounting-setup journey. The direct-Jobs cases exercise saved launch and live
 counts across navigation/reload/tabs, lost-acknowledgement recovery and exact-run
 stop, and simultaneous two-tab admission. Historical complete-suite results
 below retain their original 57-case scope; they do not qualify the new inventory.
@@ -882,3 +882,22 @@ merge. This preparation snapshot does not infer either result from earlier runs.
 A controlled HTTP boundary cannot prove those outcomes. Record the exact
 commands, candidate, runner, timings and
 unverified gaps without inferring readiness from test deletion or a green build.
+
+### Native Discovery accounting setup
+
+`discovery-accounting.spec.ts` runs a fresh owned application with the ordinary
+native model preflight and isolated HOME. A real worker action with a finite cap
+and missing quote refuses before model execution or source acquisition. The UI
+keeps Start search actionable, explains the refusal, opens contextual Budgets,
+saves an explicitly synthetic exact quote, and returns to the same Jobs filters.
+Assertions retain profile, provider, monetary cap and the single failed action;
+no model or source request is launched after saving. Browser credential, provider
+and setup-status routes are forbidden by a transport sentinel. This proves
+admission and recovery UX, not real provider pricing, authentication or model
+execution. Ordinary externally-accounted Discovery remains separately exercised.
+
+Focused verification on 12 November 2026 passed the native accounting setup
+(1.0 seconds) and existing Settings draft/navigation journey (3.2 seconds),
+20.432 seconds total with zero retries. The ordinary saved Jobs search also
+passed (2.1 seconds) in the preceding focused run. This does not claim a new
+complete 66-case run or real provider execution.
