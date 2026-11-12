@@ -90,7 +90,12 @@ Glassdoor cannot verify a location together with Remote, so that board reports
 an unsupported scope while compatible boards continue. This does not infer
 remote-work eligibility from a location label. Missing credentials and other
 provider failures are also recorded per board, with source-specific remedies in
-the progress strip. A search is partial when a source completes or the new-job limit ends
+the progress strip. Repeated failures with the same source identity, error code
+and recorded message appear once with the number of affected query/location
+combinations.
+**Search details** retains every recorded failure and its query-unit identity;
+different boards, codes or messages remain separate notices.
+A search is partial when a source completes or the new-job limit ends
 acquisition, and another source fails. If no source completes or fulfils bounded
 work, it is failed. Accepted jobs remain available in
 either case. A result limit bounds fetched observations, including those later

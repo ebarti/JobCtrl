@@ -22,7 +22,7 @@ const SearchActionSchema = z.object({
 }).passthrough();
 const ActionPageSchema = z.object({ runs: z.array(SearchActionSchema) });
 const StartReceiptSchema = z.object({ runId: z.string().min(1), workflowId: z.string().min(1), status: z.enum([...ACTIVE, ...TERMINAL]) });
-const SourceFailureSchema = z.object({ boards: z.array(z.string()).optional(), sourceId: z.string().optional(), code: z.string(), message: z.string().optional() });
+const SourceFailureSchema = z.object({ boards: z.array(z.string()).optional(), sourceId: z.string().optional(), sourceFamily: z.string().optional(), unitId: z.string().optional(), code: z.string(), message: z.string().optional() });
 const RunListSchema = z.object({ ok: z.literal(true), runs: z.array(z.object({
   runId: z.string().min(1), status: z.string(), newJobs: z.number().int().nonnegative(),
   failures: z.array(SourceFailureSchema).optional(), observedJobs: z.number().int().nonnegative(), failureCode: z.string().nullable(), createdAt: z.string(), updatedAt: z.string(),

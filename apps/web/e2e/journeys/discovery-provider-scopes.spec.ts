@@ -5,7 +5,7 @@ import type { APIRequestContext } from "@playwright/test";
 
 test.use({ discoveryTransport: "jobstreaming" });
 
-type SearchResult = { status: string; newJobs: number; observedJobs: number; jobIds: string[]; failures: { boards: string[]; code: string; message: string }[] };
+type SearchResult = { status: string; newJobs: number; observedJobs: number; jobIds: string[]; failures: { boards: string[]; code: string; message: string; sourceFamily?: string; unitId?: string; sourceId?: string }[] };
 
 async function settings(api: APIRequestContext, boards: string[], overrides: Record<string, unknown> = {}) {
   const before = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
@@ -98,6 +98,63 @@ test("Remote posting-age search uses the pinned SDK, isolates auth and unsupport
   const empty = await action(api, "discovery.search", scopedBody);
   (await indeedRequest(app)).respond(pageOf([]));
   expect(await runResult(api, empty.runId)).toMatchObject({ status: "partial", newJobs: 0, observedJobs: 0 });
+
+  // Repeated per-query receipts remain canonical, while the normal Jobs strip
+  // exposes each exact actionable board failure only once.
+  await settings(api, ["zip_recruiter", "glassdoor", "indeed"]);
+  const queries = ["Synthetic Reliability Engineer", "Synthetic Platform Engineer"];
+  const locations = [{ location: "Madrid", remote: true }, { location: "Barcelona", remote: true }];
+  const multi = await action(api, "discovery.search", { queries: queries.map((query) => ({ query, source_scope: ["broad_boards"] })), locations });
+  const combinations = queries.flatMap((query) => locations.map(({ location }) => ({ query, location })));
+  for (const [index, { query, location }] of combinations.entries()) {
+    const provider = await app.external.next();
+    expect(provider.path).toBe("/jobstreaming/indeed");
+    expect(String(provider.body["query"])).toContain(`what: "${query}"`);
+    expect(String(provider.body["query"])).toContain(`where: "${location}"`);
+    provider.respond(pageOf([posting(`Compact${index}`, Date.now())]));
+  }
+  const multiResult = await runResult(api, multi.runId);
+  expect(multiResult).toMatchObject({ status: "partial", newJobs: 4, observedJobs: 4 });
+  expect(multiResult.failures).toHaveLength(8);
+  expect(new Set(multiResult.failures.map((failure) => failure.unitId)).size).toBe(8);
+  for (const board of ["zip_recruiter", "glassdoor"]) {
+    const failures = multiResult.failures.filter((failure) => failure.boards.includes(board));
+    expect(failures).toHaveLength(4);
+    expect(new Set(failures.map((failure) => JSON.stringify([failure.sourceFamily, failure.boards, failure.code, failure.message]))).size).toBe(1);
+  }
+  await page.goto("/jobs");
+  const progress = page.getByRole("region", { name: "Job search progress", exact: true });
+  await expect(progress).toContainText("Search completed · some sources unavailable");
+  await expect(progress).toContainText("4 new jobs");
+  await expect(progress).toContainText("4 observed");
+  const notices = progress.getByRole("list", { name: "Search source failures", exact: true }).getByRole("listitem");
+  await expect(notices).toHaveCount(2);
+  await expect(notices.filter({ hasText: "ZipRecruiter" })).toContainText("4 query/location combinations affected");
+  await expect(notices.filter({ hasText: "Glassdoor" })).toContainText("4 query/location combinations affected");
+  for (const key of ["Compact0", "Compact1", "Compact2", "Compact3"]) await expect(page.getByRole("link", { name: `Synthetic ${key} Engineer`, exact: true })).toBeVisible();
+  await progress.getByText("Search details", { exact: true }).click();
+  const recorded = progress.getByRole("list", { name: "Recorded source failures", exact: true }).getByRole("listitem");
+  await expect(recorded).toHaveCount(8);
+  for (const failure of multiResult.failures) {
+    expect(failure.unitId).toBeTruthy();
+    const receipt = recorded.filter({ hasText: failure.unitId! });
+    await expect(receipt).toContainText(failure.code);
+    await expect(receipt).toContainText(`Boards: ${failure.boards.join(", ")}`);
+    await expect(receipt).toContainText(failure.message);
+    await expect(receipt).toContainText(failure.sourceFamily!);
+  }
+  await progress.getByText("Search details", { exact: true }).click();
+  await page.reload();
+  await expect(notices).toHaveCount(2);
+  const recordedRuns = await json<{ runs: { runId: string; failures: SearchResult["failures"] }[] }>(api, "get", "/v1/discovery/runs");
+  expect(recordedRuns.runs.find((run) => run.runId === multi.runId)?.failures).toEqual(multiResult.failures);
+  const viewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const table = page.getByRole("table", { name: "Jobs table", exact: true });
+  await expect(table).toBeVisible();
+  expect((await table.boundingBox())!.y).toBeLessThan(1000);
+  await testInfo.attach("multi-query-source-failures-compact-desktop", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+  await page.setViewportSize(viewport);
 });
 
 test("pinned SDK Discovery retains its run and acknowledged cursor across worker restart, and cancellation preserves accepted jobs", async ({ api, app, page }, testInfo) => {

@@ -901,3 +901,36 @@ Focused verification on 12 November 2026 passed the native accounting setup
 20.432 seconds total with zero retries. The ordinary saved Jobs search also
 passed (2.1 seconds) in the preceding focused run. This does not claim a new
 complete 66-case run or real provider execution.
+
+### Compact multi-query source-failure feedback
+
+Jobs groups repeated source failures for presentation by recorded source family,
+board set/source identity, error code and exact message. It reports affected
+query/location combinations rather than inferring unique authored-query counts
+from opaque unit IDs. Search details retains every recorded failure, raw board
+identity and available source/family/unit provenance. Partial or failed status,
+canonical job counts, receipts and accepted jobs are unchanged.
+
+The existing pinned-SDK provider-scope journey now runs two literal queries over
+two locations. Eight recorded board failures render as two actionable notices,
+four combinations each. It opens all eight detailed receipts, verifies their
+IDs/codes/messages, closes and reloads the page, and reads back the unchanged
+canonical failure list. Its settled 1440×1000 capture shows the table in the
+first viewport. No live source request, private workspace or internal API mock
+participates.
+
+Focused run `e2e-9sFZDr` passed **1/1** on 12 November 2026: 3.2 seconds for the
+case, 8.529 seconds for the runner phase and 17.364 seconds total, including a
+7.491-second web build. Retries, skipped, unexpected and flaky results were zero;
+web build and dependency locks stayed unchanged. The 151-file web bundle SHA-256
+is `589ed43206fe9516cfc0d50f8bc36a656af3d7a86bd2a13a0f0be093292bae56`.
+Frontend type and boundary checks passed with zero boundary violations.
+
+The first focused attempt, `e2e-C44Jqm`, exposed a test-request scope mistake:
+plain queries legitimately included an ATS source registered earlier in the
+same case and produced a ninth independent failure. The corrected request uses
+the case's explicit broad-board scope; exact receipt-count assertions remain.
+The initial sandbox-only attempt stopped before any journey because loopback
+listeners were denied. These attempts are retained as setup history, not passing
+runtime observations. This focused result does not claim a new complete-suite,
+hosted, release or deployment qualification.
